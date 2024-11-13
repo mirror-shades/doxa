@@ -72,6 +72,11 @@ def test_change_const():
     stdout, stderr = run_merve('tests/negetive/n_test_change_const.mer')
     assert stderr != "", f"Expected error, but got: '{stdout}'"
     print("✅ test_change_const passed")
+    
+def test_open_bracket():
+    stdout, stderr = run_merve('tests/negetive/n_test_open_bracket.mer')
+    assert stderr != "", f"Expected error, but got: '{stdout}'"
+    print("✅ test_open_bracket passed")
 
 ########################################################
 
@@ -90,6 +95,7 @@ def run_all_tests():
         ("missing semicolon", test_missing_semicolon),
         ("wrong extension", test_wrong_extension),
         ("change constant", test_change_const),
+        ("open bracket", test_open_bracket),
     ]
     
     passed_tests = 0
