@@ -81,7 +81,7 @@ pub const Interpreter = struct {
 
     pub fn shouldPrintResult(self: *const Interpreter, source: []const u8) bool {
         _ = self;
-        const trimmed = std.mem.trim(u8, source, " \t\r");
+        const trimmed = std.mem.trim(u8, source, " \t\r\n");
         return !std.mem.endsWith(u8, trimmed, ";");
     }
 };

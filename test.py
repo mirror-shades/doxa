@@ -13,7 +13,6 @@ def run_merve(file_path):
     return stdout.strip(), stderr.strip()
 
 def test_print():
-    # Add file existence check
     file_path = 'tests/positive/p_test_print.mer'
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"Test file not found: {file_path}")
@@ -26,6 +25,11 @@ def test_offset_semicolon():
     stdout, stderr = run_merve('tests/positive/p_test_offset_semicolon.mer')
     assert stdout == '5', f"Expected '5', but got '{stdout}'"
     print("✅ test_offset_semicolon passed")
+
+def test_math():
+    stdout, stderr = run_merve('tests/positive/p_test_math.mer')
+    assert stdout == '5', f"Expected '5', but got '{stdout}'"
+    print("✅ test_math passed")
 
 def test_missing_semicolon():
     stdout, stderr = run_merve('tests/negetive/n_test_w_semicolon.mer')
@@ -40,20 +44,39 @@ def test_wrong_extension():
 
 # Optional: Run all tests in the positive directory
 def run_all_tests():
-    try:
-        print("Running positive tests")
-        print("Running test: basic print test")
-        test_print()
-        print("Running test: offset semicolon")
-        test_offset_semicolon()
-        print("--------------------------------")
-        print("Running negative tests")
-        print("Running test: missing semicolon")
-        test_missing_semicolon()
-        print("Running test: wrong extension")
-        test_wrong_extension()
-    except AssertionError as e:
-        print(f"Test failed: {e}")
+    positive_tests = [
+        ("basic print test", test_print),
+        ("math", test_math),
+        ("offset semicolon", test_offset_semicolon),
+    ]
+    
+    negative_tests = [
+        ("missing semicolon", test_missing_semicolon),
+        ("wrong extension", test_wrong_extension),
+    ]
+    
+    passed_tests = 0
+    total_tests = len(positive_tests) + len(negative_tests)
+    
+    def run_test_suite(test_list, suite_name):
+        nonlocal passed_tests
+        print(f"Running {suite_name} tests")
+        for test_name, test_func in test_list:
+            print(f"Running test: {test_name}")
+            try:
+                test_func()
+                passed_tests += 1
+            except AssertionError as e:
+                print(f"❌ Test failed: {e}")
+            except Exception as e:
+                print(f"❌ Test error: {e}")
+    
+    run_test_suite(positive_tests, "positive")
+    print("--------------------------------")
+    run_test_suite(negative_tests, "negative")
+    
+    print(f"\nTests passed: {passed_tests}/{total_tests}")
+    if passed_tests < total_tests:
         exit(1)
 
 def main():
