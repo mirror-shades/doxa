@@ -43,6 +43,19 @@ pub const Node = union(enum) {
     Block: struct {
         statements: []*Node,
     },
+
+    pub fn typ(self: *const Node) Type {
+        return switch (self.*) {
+            .Number => |n| n.typ,
+            .String => |s| s.typ,
+            .Binary => |b| b.typ,
+            .Assignment => |a| a.typ,
+            .Variable => |v| v.typ,
+            .Declaration => |d| d.typ,
+            .Print => .Auto, // or whatever default type makes sense
+            .Block => .Auto, // or whatever default type makes sense
+        };
+    }
 };
 
 pub const PrintStatement = struct {
