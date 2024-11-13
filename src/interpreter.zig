@@ -7,8 +7,13 @@ pub const Interpreter = struct {
     allocator: *std.mem.Allocator,
     scopes: ArrayList(std.StringHashMap(Variable)),
 
+    const Value = union(enum) {
+        number: f64,
+        string: []const u8,
+    };
+
     const Variable = struct {
-        value: f64,
+        value: Value,
         is_mutable: bool,
     };
 
@@ -46,7 +51,7 @@ pub const Interpreter = struct {
         return null;
     }
 
-    pub fn evaluate(self: *Interpreter, node: *Node) !f64 {
+    pub fn evaluate(self: *Interpreter, node: *Node) !Value {
         return self.evalNode(node);
     }
 
@@ -61,23 +66,32 @@ pub const Interpreter = struct {
         self.scopes.deinit();
     }
 
-    fn evalNode(self: *Interpreter, node: *Node) !f64 {
+    fn evalNode(self: *Interpreter, node: *Node) !Value {
         return switch (node.*) {
-            .Number => |n| n.value,
+            .Number => |n| Value{ .number = n.value },
+            .String => |s| Value{ .string = s.value },
             .Binary => |binary| {
                 const left = try self.evalNode(binary.left);
                 const right = try self.evalNode(binary.right);
-                return switch (binary.operator) {
-                    .Plus => left + right,
-                    .Minus => left - right,
-                    .Star => left * right,
-                    .Slash => left / right,
-                    .NumberType, .FloatType, .StringType, 
-                    .BoolType, .Colon,
-                    .LeftParen, .RightParen, .Identifier, 
-                    .Equal, .Number, .EOF => error.InvalidOperator,
-                    else => unreachable,
-                };
+
+                if (binary.operator == .Plus) {
+                    if (left == .string and right == .string) {
+                        const result = try std.fmt.allocPrint(self.allocator.*, "{s}{s}", .{ left.string, right.string });
+                        return Value{ .string = result };
+                    }
+                }
+
+                if (left == .number and right == .number) {
+                    return Value{ .number = switch (binary.operator) {
+                        .Plus => left.number + right.number,
+                        .Minus => left.number - right.number,
+                        .Star => left.number * right.number,
+                        .Slash => left.number / right.number,
+                        else => return error.InvalidOperator,
+                    } };
+                }
+
+                return error.TypeMismatch;
             },
             .Declaration => |decl| {
                 const value = try self.evalNode(decl.value);
@@ -113,14 +127,17 @@ pub const Interpreter = struct {
             .Print => |print_node| {
                 const value = try self.evalNode(print_node.expression);
                 const stdout = std.io.getStdOut().writer();
-                try stdout.print("{d}\n", .{value});
+                switch (value) {
+                    .number => |n| try stdout.print("{d}\n", .{n}),
+                    .string => |s| try stdout.print("{s}\n", .{s}),
+                }
                 return value;
             },
             .Block => |block| {
                 try self.pushScope();
                 defer self.popScope();
-                
-                var last_value: f64 = 0;
+
+                var last_value: Value = Value{ .number = 0 };
                 for (block.statements) |stmt| {
                     last_value = try self.evalNode(stmt);
                 }
@@ -137,10 +154,15 @@ pub const Interpreter = struct {
 
     pub fn debugPrintState(self: *Interpreter) !void {
         const stdout = std.io.getStdOut().writer();
-        
-        var it = self.getCurrentScope().iterator();  // Now it will work since `self` is mutable.
+
+        var it = self.getCurrentScope().iterator();
         while (it.next()) |entry| {
-            try stdout.print("  {s} = {d}\n", .{entry.key_ptr.*, entry.value_ptr.value});
+            try stdout.print("  {s} = ", .{entry.key_ptr.*});
+            switch (entry.value_ptr.value) {
+                .number => |n| try stdout.print("{d}", .{n}),
+                .string => |s| try stdout.print("{s}", .{s}),
+            }
+            try stdout.print("\n", .{});
         }
     }
 };

@@ -35,7 +35,10 @@ pub fn startREPL(allocator: *std.mem.Allocator) !void {
         };
 
         if (interpreter.shouldPrintResult(line)) {
-            try stdout.print("{d}\n", .{result});
+            switch (result) {
+                .number => |n| try stdout.print("{d}\n", .{n}),
+                .string => |s| try stdout.print("{s}\n", .{s}),
+            }
         }
     }
 }

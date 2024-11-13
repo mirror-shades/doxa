@@ -257,6 +257,18 @@ pub const Parser = struct {
                 self.advance(); // Consume ')'
                 return expr;
             },
+            .String => {
+                const value = self.current_token.lexeme;
+                const new_node = try self.allocator.create(Node);
+                new_node.* = Node{
+                    .String = .{
+                        .value = value,
+                        .typ = .String,
+                    },
+                };
+                self.advance();
+                return new_node;
+            },
             else => {
                 return Error.UnexpectedToken;
             },
@@ -276,11 +288,9 @@ pub const Parser = struct {
         }
 
         const block_node = try self.allocator.create(Node);
-        block_node.* = .{ 
-            .Block = .{
-                .statements = try statements.toOwnedSlice(),
-            }
-        };
+        block_node.* = .{ .Block = .{
+            .statements = try statements.toOwnedSlice(),
+        } };
         return block_node;
     }
 };
