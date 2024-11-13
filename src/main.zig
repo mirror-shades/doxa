@@ -78,7 +78,8 @@ pub fn main() !void {
         if (interpreter.shouldPrintResult(source_code)) {
             const stdout = std.io.getStdOut().writer();
             switch (result) {
-                .number => |n| try stdout.print("{d}\n", .{n}),
+                .integer => |n| try stdout.print("{d}\n", .{n}),
+                .float => |n| try stdout.print("{d:.1}\n", .{n}),
                 .string => |s| try stdout.print("{s}\n", .{s}),
             }
         }

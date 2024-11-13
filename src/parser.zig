@@ -190,7 +190,7 @@ pub const Parser = struct {
                     .left = node,
                     .operator = op,
                     .right = right,
-                    .typ = .Auto,
+                    .typ = if (node.typ() == .Float or right.typ() == .Float) Type.Float else Type.Number,
                 },
             };
             node = new_node;
@@ -211,7 +211,7 @@ pub const Parser = struct {
                     .left = node,
                     .operator = op,
                     .right = right,
-                    .typ = .Auto,
+                    .typ = if (node.typ() == .Float or right.typ() == .Float or op == .Slash) Type.Float else Type.Number,
                 },
             };
             node = new_node;
@@ -227,10 +227,13 @@ pub const Parser = struct {
                     error.InvalidCharacter => return Error.InvalidNumber,
                 };
                 const new_node = try self.allocator.create(Node);
+
+                // Check if the lexeme contains a decimal point to determine if it's a float
+                const is_float = std.mem.indexOf(u8, self.current_token.lexeme, ".") != null;
                 new_node.* = Node{
                     .Number = .{
                         .value = value,
-                        .typ = .Number,
+                        .typ = if (is_float) Type.Float else Type.Number,
                     },
                 };
                 self.advance();

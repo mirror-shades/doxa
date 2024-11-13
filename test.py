@@ -42,7 +42,7 @@ def test_offset_semicolon():
 
 def test_math():
     stdout, stderr = run_merve(os.path.join('tests', 'positive', 'p_test_math.mer'))
-    assert stdout == '5', f"Expected '5', but got '{stdout}'"
+    assert stdout == '5.0', f"Expected '5.0', but got '{stdout}'"
     print("✅ test_math passed")
 
 def test_var_num():
