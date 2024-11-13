@@ -22,6 +22,14 @@ pub const Interpreter = struct {
         return self.evalNode(node);
     }
 
+    pub fn deinit(self: *Interpreter) void {
+        var it = self.variables.iterator();
+        while (it.next()) |entry| {
+            self.allocator.free(entry.key_ptr.*);
+        }
+        self.variables.deinit();
+    }
+
     fn evalNode(self: *Interpreter, node: *Node) !f64 {
         return switch (node.*) {
             .Number => |n| n.value,
@@ -42,7 +50,8 @@ pub const Interpreter = struct {
             },
             .Declaration => |decl| {
                 const value = try self.evalNode(decl.value);
-                try self.variables.put(decl.name, .{
+                const key = try self.allocator.dupe(u8, decl.name);
+                try self.variables.put(key, .{
                     .value = value,
                     .is_mutable = decl.is_mutable,
                 });
@@ -83,5 +92,14 @@ pub const Interpreter = struct {
         _ = self;
         const trimmed = std.mem.trim(u8, source, " \t\r\n");
         return !std.mem.endsWith(u8, trimmed, ";");
+    }
+
+    pub fn debugPrintState(self: *const Interpreter) !void {
+        const stdout = std.io.getStdOut().writer();
+        
+        var it = self.variables.iterator();
+        while (it.next()) |entry| {
+            try stdout.print("  {s} = {d}\n", .{entry.key_ptr.*, entry.value_ptr.value});
+        }
     }
 };

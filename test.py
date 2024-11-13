@@ -2,7 +2,7 @@
 
 import os
 import subprocess
-
+import shutil
 def run_merve(file_path):
     mer_path = os.path.join('zig-out', 'bin', 'merve.exe')
     process = subprocess.Popen(['cmd', '/c', mer_path, file_path], 
@@ -12,6 +12,9 @@ def run_merve(file_path):
     stdout, stderr = process.communicate()
     return stdout.strip(), stderr.strip()
 
+########################################################
+
+# positive tests
 def test_print():
     file_path = 'tests/positive/p_test_print.mer'
     if not os.path.exists(file_path):
@@ -31,6 +34,24 @@ def test_math():
     assert stdout == '5', f"Expected '5', but got '{stdout}'"
     print("✅ test_math passed")
 
+def test_var_num():
+    stdout, stderr = run_merve('tests/positive/p_test_var_num.mer')
+    assert stdout == '5', f"Expected '5', but got '{stdout}'"
+    print("✅ test_var_num passed")
+
+def test_const_num():
+    stdout, stderr = run_merve('tests/positive/p_test_const_num.mer')
+    assert stdout == '5', f"Expected '5', but got '{stdout}'"
+    print("✅ test_const_num passed")
+
+def test_var_change():
+    stdout, stderr = run_merve('tests/positive/p_test_var_change.mer')
+    assert stdout == '5', f"Expected '5', but got '{stdout}'"
+    print("✅ test_var_change passed")
+
+########################################################
+
+# negative tests    
 def test_missing_semicolon():
     stdout, stderr = run_merve('tests/negetive/n_test_w_semicolon.mer')
     assert stderr != "", f"Expected error, but got: '{stdout}'"
@@ -42,17 +63,27 @@ def test_wrong_extension():
     assert "Error: File must have .mer extension" in stderr, f"Expected error message about .mer extension, but got: '{stderr}'"
     print("✅ test_wrong_extension passed")
 
-# Optional: Run all tests in the positive directory
+def test_change_const():
+    stdout, stderr = run_merve('tests/negetive/n_test_change_const.mer')
+    assert stderr != "", f"Expected error, but got: '{stdout}'"
+    print("✅ test_change_const passed")
+
+########################################################
+
 def run_all_tests():
     positive_tests = [
         ("basic print test", test_print),
         ("math", test_math),
         ("offset semicolon", test_offset_semicolon),
+        ("variable number", test_var_num),
+        ("constant number", test_const_num),
+        ("variable change", test_var_change),
     ]
     
     negative_tests = [
         ("missing semicolon", test_missing_semicolon),
         ("wrong extension", test_wrong_extension),
+        ("change constant", test_change_const),
     ]
     
     passed_tests = 0
@@ -72,14 +103,28 @@ def run_all_tests():
                 print(f"❌ Test error: {e}")
     
     run_test_suite(positive_tests, "positive")
-    print("--------------------------------")
+    print("\n--------------------------------\n")
     run_test_suite(negative_tests, "negative")
     
     print(f"\nTests passed: {passed_tests}/{total_tests}")
     if passed_tests < total_tests:
         exit(1)
 
+def build():
+    if os.path.exists('zig-out'):
+        print("Removing existing build...")
+        shutil.rmtree('zig-out')
+    print("Building...")
+    try:    
+        subprocess.run(['zig', 'build'], check=True)
+        print("Build successful\n")
+    except subprocess.CalledProcessError as e:
+        print(f"Build failed: {e}")
+        exit(1)
+
 def main():
+    #add titles
+    build()
     run_all_tests()
 
 if __name__ == "__main__":
