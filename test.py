@@ -65,6 +65,16 @@ def test_bracket_scope():
     assert stdout == '5', f"Expected '5', but got '{stdout}'"
     print("✅ test_bracket_scope passed")
 
+def test_var_str():
+    stdout, stderr = run_merve(os.path.join('tests', 'positive', 'p_test_var_str.mer'))
+    assert stdout == 'five', f"Expected 'five', but got '{stdout}'"
+    print("✅ test_var_str passed")
+
+def test_const_float():
+    stdout, stderr = run_merve(os.path.join('tests', 'positive', 'p_test_const_float.mer'))
+    assert stdout == '5.5', f"Expected '5.5', but got '{stdout}'"
+    print("✅ test_const_float passed")
+
 ########################################################
 
 # negative tests    
@@ -99,6 +109,8 @@ def run_all_tests():
         ("constant number", test_const_num),
         ("variable change", test_var_change),
         ("bracket scope", test_bracket_scope),
+        ("variable string", test_var_str),
+        ("constant float", test_const_float),
     ]
     
     negative_tests = [

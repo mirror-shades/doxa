@@ -2,33 +2,39 @@ const std = @import("std");
 
 pub const TokenKind = enum {
     // Single-character tokens
-    Plus,        // '+'
-    Minus,       // '-'
-    Star,        // '*'
-    Slash,       // '/'
-    LeftParen,   // '('
-    RightParen,  // ')'
-    Equal,       // '='
-    Colon,       // ':'
-    Semicolon,   // ';'
-    LeftBrace,   // '{'
-    RightBrace,  // '}'
+    Plus, // '+'
+    Minus, // '-'
+    Star, // '*'
+    Slash, // '/'
+    LeftParen, // '('
+    RightParen, // ')'
+    Equal, // '='
+    Colon, // ':'
+    Semicolon, // ';'
+    LeftBrace, // '{'
+    RightBrace, // '}'
+    Comma, // ','
+    Dot, // '.'
+    Quote, // '"'
 
     // Keywords and identifiers
-    Identifier,  // [a-zA-Z_][a-zA-Z0-9_]*
-    Var,         // 'var'
-    Const,       // 'const'
-    Print,       // 'print'
-    NumberType,  // 'number'
-    FloatType,   // 'float'
-    StringType,  // 'string'
-    BoolType,    // 'bool'
+    Identifier, // [a-zA-Z_][a-zA-Z0-9_]*
+    Var, // 'var'
+    Const, // 'const'
+    Print, // 'print'
+    NumberType, // 'number'
+    FloatType, // 'float'
+    StringType, // 'string'
+    BoolType, // 'bool'
 
     // Literals
     Number,
 
     // End of file
     EOF,
+
+    // Add String token
+    String,
 };
 
 pub const Token = struct {
@@ -69,6 +75,9 @@ pub const Lexer = struct {
             ';' => return Token{ .kind = .Semicolon, .lexeme = ";" },
             '{' => return Token{ .kind = .LeftBrace, .lexeme = "{" },
             '}' => return Token{ .kind = .RightBrace, .lexeme = "}" },
+            ',' => return Token{ .kind = .Comma, .lexeme = "," },
+            '.' => return Token{ .kind = .Dot, .lexeme = "." },
+            '"' => return self.string(),
             else => {},
         }
 
@@ -145,10 +154,38 @@ pub const Lexer = struct {
 
     fn number(self: *Lexer) Token {
         const start = self.current;
+
+        // Process digits before decimal point
         while (!self.isAtEnd() and std.ascii.isDigit(self.source[self.current])) {
             self.current += 1;
         }
+
+        // Look for decimal point
+        if (!self.isAtEnd() and self.source[self.current] == '.') {
+            // Consume the decimal point
+            self.current += 1;
+
+            // Process digits after decimal point
+            while (!self.isAtEnd() and std.ascii.isDigit(self.source[self.current])) {
+                self.current += 1;
+            }
+        }
+
         const lexeme = self.source[start..self.current];
         return Token{ .kind = .Number, .lexeme = lexeme };
+    }
+
+    fn string(self: *Lexer) Token {
+        const start = self.current;
+        while (!self.isAtEnd() and self.source[self.current] != '"') {
+            self.current += 1;
+        }
+        const lexeme = self.source[start..self.current];
+
+        if (!self.isAtEnd()) {
+            self.current += 1; // consume closing quote
+        }
+
+        return Token{ .kind = .String, .lexeme = lexeme };
     }
 };

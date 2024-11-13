@@ -61,23 +61,26 @@ pub fn main() !void {
             if (err == error.UnexpectedToken) {
                 // Check if we're at the end of input with only whitespace/semicolons remaining
                 const token = lexer.peek();
-                if (token == .EOF) break;  // Exit if we're at EOF
+                if (token == .EOF) break; // Exit if we're at EOF
                 if (token == .Semicolon) {
-                    _ = lexer.nextToken();  // consume the semicolon
-                    continue;  // Skip this iteration and continue parsing
+                    _ = lexer.nextToken(); // consume the semicolon
+                    continue; // Skip this iteration and continue parsing
                 }
                 std.debug.print("Unexpected token encountered\n", .{});
                 return err;
             }
             return err;
         };
-        
+
         // Now that we have the interpreter, evaluate the AST
         const result = try interpreter.evaluate(ast);
 
         if (interpreter.shouldPrintResult(source_code)) {
             const stdout = std.io.getStdOut().writer();
-            try stdout.print("{d}\n", .{result});
+            switch (result) {
+                .number => |n| try stdout.print("{d}\n", .{n}),
+                .string => |s| try stdout.print("{s}\n", .{s}),
+            }
         }
     }
 }

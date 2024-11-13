@@ -14,6 +14,10 @@ pub const Node = union(enum) {
         value: f64,
         typ: Type,
     },
+    String: struct {
+        value: []const u8,
+        typ: Type,
+    },
     Binary: struct {
         left: *Node,
         operator: TokenKind,
