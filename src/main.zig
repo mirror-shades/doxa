@@ -45,14 +45,14 @@ pub fn main() !void {
     // Convert buffer to string slice
     const source_code = buffer;
 
-    // Initialize the interpreter once
-    var interpreter = Interpreter.init(&allocator);
-
     // Initialize the lexer for the entire source code
     var lexer = Lexer.init(source_code);
 
     // Initialize the parser
     var parser = Parser.init(&lexer, &allocator);
+
+    // Initialize the interpreter once
+    var interpreter = try Interpreter.init(&allocator);
 
     // Parse and evaluate until we reach the end of the file
     while (true) {
@@ -71,6 +71,8 @@ pub fn main() !void {
             }
             return err;
         };
+        
+        // Now that we have the interpreter, evaluate the AST
         const result = try interpreter.evaluate(ast);
 
         if (interpreter.shouldPrintResult(source_code)) {

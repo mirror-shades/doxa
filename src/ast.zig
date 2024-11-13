@@ -1,11 +1,12 @@
 const TokenKind = @import("lexer.zig").TokenKind;
 
 pub const Type = enum {
-    Unknown,
+    Auto,
     Number,
     Float,
     String,
     Bool,
+    Array,
 };
 
 pub const Node = union(enum) {
@@ -35,6 +36,9 @@ pub const Node = union(enum) {
         is_mutable: bool,
     },
     Print: PrintStatement,
+    Block: struct {
+        statements: []*Node,
+    },
 };
 
 pub const PrintStatement = struct {

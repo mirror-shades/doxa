@@ -11,6 +11,8 @@ pub const TokenKind = enum {
     Equal,       // '='
     Colon,       // ':'
     Semicolon,   // ';'
+    LeftBrace,   // '{'
+    RightBrace,  // '}'
 
     // Keywords and identifiers
     Identifier,  // [a-zA-Z_][a-zA-Z0-9_]*
@@ -65,6 +67,8 @@ pub const Lexer = struct {
             '=' => return Token{ .kind = .Equal, .lexeme = "=" },
             ':' => return Token{ .kind = .Colon, .lexeme = ":" },
             ';' => return Token{ .kind = .Semicolon, .lexeme = ";" },
+            '{' => return Token{ .kind = .LeftBrace, .lexeme = "{" },
+            '}' => return Token{ .kind = .RightBrace, .lexeme = "}" },
             else => {},
         }
 

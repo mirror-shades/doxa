@@ -17,6 +17,7 @@ pub const Parser = struct {
         EndOfFile,
         OutOfMemory,
         InvalidNumber,
+        UnmatchedBrace,
     };
 
     lexer: *Lexer,
@@ -76,7 +77,10 @@ pub const Parser = struct {
     pub fn parseStatement(self: *Parser) !*Node {
         var node: *Node = undefined;
 
-        if (self.match(.Print)) {
+        if (self.match(.LeftBrace)) {
+            node = try self.parseBlock();
+            return node;
+        } else if (self.match(.Print)) {
             node = try self.parsePrintStatement();
         } else if (self.current_token.kind == .Var or self.current_token.kind == .Const) {
             node = try self.parseVariableDeclaration();
@@ -115,7 +119,7 @@ pub const Parser = struct {
         self.advance(); // Consume identifier
 
         // Optional type annotation
-        var var_type: Type = .Unknown;
+        var var_type: Type = .Auto;
         if (self.current_token.kind == .Colon) {
             self.advance(); // Consume ':'
 
@@ -141,7 +145,7 @@ pub const Parser = struct {
             .Declaration = .{
                 .name = var_name,
                 .value = expr,
-                .typ = var_type,
+                .typ = if (var_type != .Auto) var_type else .Auto,
                 .is_mutable = is_mutable,
             },
         };
@@ -163,7 +167,7 @@ pub const Parser = struct {
             .Assignment = .{
                 .name = var_name,
                 .value = expr,
-                .typ = .Unknown,
+                .typ = .Auto,
             },
         };
         return new_node;
@@ -186,7 +190,7 @@ pub const Parser = struct {
                     .left = node,
                     .operator = op,
                     .right = right,
-                    .typ = .Unknown,
+                    .typ = .Auto,
                 },
             };
             node = new_node;
@@ -207,7 +211,7 @@ pub const Parser = struct {
                     .left = node,
                     .operator = op,
                     .right = right,
-                    .typ = .Unknown,
+                    .typ = .Auto,
                 },
             };
             node = new_node;
@@ -238,7 +242,7 @@ pub const Parser = struct {
                 new_node.* = Node{
                     .Variable = .{
                         .name = name,
-                        .typ = .Unknown,
+                        .typ = .Auto,
                     },
                 };
                 self.advance();
@@ -257,5 +261,26 @@ pub const Parser = struct {
                 return Error.UnexpectedToken;
             },
         }
+    }
+
+    fn parseBlock(self: *Parser) Error!*Node {
+        var statements = ArrayList(*Node).init(self.allocator.*);
+
+        while (!self.check(.RightBrace) and !self.check(.EOF)) {
+            const stmt = try self.parseStatement();
+            try statements.append(stmt);
+        }
+
+        if (!self.match(.RightBrace)) {
+            return Error.UnmatchedBrace;
+        }
+
+        const block_node = try self.allocator.create(Node);
+        block_node.* = .{ 
+            .Block = .{
+                .statements = try statements.toOwnedSlice(),
+            }
+        };
+        return block_node;
     }
 };

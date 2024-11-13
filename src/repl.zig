@@ -6,7 +6,7 @@ const Interpreter = @import("interpreter.zig").Interpreter;
 pub fn startREPL(allocator: *std.mem.Allocator) !void {
     var stdin = std.io.getStdIn().reader();
     var stdout = std.io.getStdOut().writer();
-    var interpreter = Interpreter.init(allocator);
+    var interpreter = try Interpreter.init(allocator);
     defer interpreter.deinit();
 
     while (true) {
