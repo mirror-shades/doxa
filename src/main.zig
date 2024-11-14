@@ -82,6 +82,8 @@ pub fn main() !void {
                 .Float => |n| try stdout.print("{d:.1}\n", .{n}),
                 .String => |s| try stdout.print("{s}\n", .{s}),
                 .Nothing => try stdout.print("nothing\n", .{}),
+                .True => try stdout.print("true\n", .{}),
+                .False => try stdout.print("false\n", .{}),
             }
         }
     }

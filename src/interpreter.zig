@@ -12,6 +12,8 @@ pub const Interpreter = struct {
         Float: f64,
         String: []const u8,
         Nothing,
+        True,
+        False,
     };
 
     const Variable = struct {
@@ -73,6 +75,8 @@ pub const Interpreter = struct {
             .Int => |i| Value{ .Int = i.value },
             .Float => |f| Value{ .Float = f.value },
             .String => |s| Value{ .String = s.value },
+            .True => Value{ .True = {} },
+            .False => Value{ .False = {} },
             .Binary => |binary| {
                 const left = try self.evalNode(binary.left);
                 const right = try self.evalNode(binary.right);
@@ -98,8 +102,12 @@ pub const Interpreter = struct {
                         .Minus => left_val - right_val,
                         .Star => left_val * right_val,
                         .Slash => left_val / right_val,
-                        .EqualEqual => if (left_val == right_val and left_typ == right_typ) 1 else 0,
-                        .NotEqual => if (left_val != right_val or left_typ != right_typ) 1 else 0,
+                        .EqualEqual => {
+                            return if (left_val == right_val and left_typ == right_typ) Value{ .True = {} } else Value{ .False = {} };
+                        },
+                        .NotEqual => {
+                            return if (left_val != right_val or left_typ != right_typ) Value{ .True = {} } else Value{ .False = {} };
+                        },
                         else => return error.InvalidOperator,
                     } };
                 } else {
@@ -111,8 +119,8 @@ pub const Interpreter = struct {
                         .Minus => Value{ .Int = left_val - right_val },
                         .Star => Value{ .Int = left_val * right_val },
                         .Slash => Value{ .Float = @as(f64, @floatFromInt(left_val)) / @as(f64, @floatFromInt(right_val)) },
-                        .EqualEqual => Value{ .Int = if (left_val == right_val) 1 else 0 },
-                        .NotEqual => Value{ .Int = if (left_val != right_val) 1 else 0 },
+                        .EqualEqual => if (left_val == right_val) Value{ .True = {} } else Value{ .False = {} },
+                        .NotEqual => if (left_val != right_val) Value{ .True = {} } else Value{ .False = {} },
                         else => return error.InvalidOperator,
                     };
                 }
@@ -129,6 +137,8 @@ pub const Interpreter = struct {
                         .Float => if (decl.typ != .Float) return error.TypeMismatch,
                         .String => if (decl.typ != .String) return error.TypeMismatch,
                         .Nothing => {}, // Allow Nothing for any type
+                        .True => if (decl.typ != .Bool) return error.TypeMismatch,
+                        .False => if (decl.typ != .Bool) return error.TypeMismatch,
                     }
                 }
                 
@@ -169,6 +179,8 @@ pub const Interpreter = struct {
                     .Float => |n| try stdout.print("{d:.1}\n", .{n}),
                     .String => |s| try stdout.print("{s}\n", .{s}),
                     .Nothing => try stdout.print("nothing\n", .{}),
+                    .True => try stdout.print("true\n", .{}),
+                    .False => try stdout.print("false\n", .{}),
                 }
                 return value;
             },
@@ -201,7 +213,9 @@ pub const Interpreter = struct {
                 .Int => |n| try stdout.print("{d}", .{n}),
                 .Float => |n| try stdout.print("{d:.1}", .{n}),
                 .String => |s| try stdout.print("{s}", .{s}),
-                    .Nothing => try stdout.print("nothing\n", .{}),
+                .Nothing => try stdout.print("nothing\n", .{}),
+                .True => try stdout.print("true\n", .{}),
+                .False => try stdout.print("false\n", .{}),
             }
             try stdout.print("\n", .{});
         }

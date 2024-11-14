@@ -213,7 +213,7 @@ pub const Parser = struct {
                     .left = node,
                     .operator = op,
                     .right = right,
-                    .typ = Type.Bool, // Equality operations result in a boolean type
+                    .typ = Type.Bool, 
                 },
             };
             node = new_node;
@@ -335,6 +335,18 @@ pub const Parser = struct {
             .Nothing => {
                 const new_node = try self.allocator.create(Node);
                 new_node.* = Node{ .Nothing = .{} };
+                self.advance();
+                return new_node;
+            },
+            .True => {
+                const new_node = try self.allocator.create(Node);
+                new_node.* = Node{ .True = .{} };
+                self.advance();
+                return new_node;
+            },
+            .False => {
+                const new_node = try self.allocator.create(Node);
+                new_node.* = Node{ .False = .{} };
                 self.advance();
                 return new_node;
             },
