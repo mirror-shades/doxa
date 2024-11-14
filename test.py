@@ -100,6 +100,13 @@ def test_div_noremain():
     print("got: ", stdout)
     print("✅ test_div_noremain passed")
 
+def test_var_assign_nothing():
+    stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_var_assign_nothing.doxa'))
+    assert stdout == 'nothing', f"Expected 'nothing', but got '{stdout}'"
+    print("expected: nothing")
+    print("got: ", stdout)
+    print("✅ test_var_assign_nothing passed")
+
 ########################################################
 
 # negative tests    
@@ -122,6 +129,18 @@ def test_open_bracket():
     stdout, stderr = run_doxa(os.path.join('tests', 'negetive', 'n_test_open_bracket.doxa'))
     assert stderr != "", f"Expected error, but got: '{stdout}'"
     print("✅ test_open_bracket passed")
+    
+def test_const_assign_nothing():
+    stdout, stderr = run_doxa(os.path.join('tests', 'negetive', 'n_test_const_assign_nothing.doxa'))
+    assert stderr != "", f"Expected error, but got: '{stdout}'"
+    print("✅ test_const_assign_nothing passed")
+
+def test_comments():
+    stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_comments.doxa'))
+    assert stdout == '5', f"Expected '5', but got '{stdout}'"
+    print("expected: 5")
+    print("got: ", stdout)
+    print("✅ test_comments passed")
 
 ########################################################
 
@@ -137,6 +156,8 @@ def run_all_tests():
         ("variable string", test_var_str),
         ("constant float", test_const_float),
         ("division no remain", test_div_noremain),
+        ("variable assign nothing", test_var_assign_nothing),
+        ("comments", test_comments),
     ]
     
     negative_tests = [
@@ -144,6 +165,7 @@ def run_all_tests():
         ("wrong extension", test_wrong_extension),
         ("change constant", test_change_const),
         ("open bracket", test_open_bracket),
+        ("constant assign nothing", test_const_assign_nothing),
     ]
     
     passed_tests = 0

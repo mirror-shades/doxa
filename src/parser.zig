@@ -18,6 +18,7 @@ pub const Parser = struct {
         OutOfMemory,
         InvalidNumber,
         UnmatchedBrace,
+        EmptyConstantDeclaration
     };
 
     lexer: *Lexer,
@@ -74,8 +75,13 @@ pub const Parser = struct {
         return statements.toOwnedSlice();
     }
 
-    pub fn parseStatement(self: *Parser) !*Node {
+    pub fn parseStatement(self: *Parser) Error!*Node {
         var node: *Node = undefined;
+
+        if (self.current_token.kind == .EOF) {
+            // Nothing to parse; return null or an appropriate value
+            return error.EndOfFile;
+        }
 
         if (self.match(.LeftBrace)) {
             node = try self.parseBlock();
@@ -98,6 +104,7 @@ pub const Parser = struct {
 
         return node;
     }
+
 
     fn parsePrintStatement(self: *Parser) !*Node {
         const expression = try self.parseExpression();
@@ -140,9 +147,19 @@ pub const Parser = struct {
             self.advance(); // Consume '='
             expr = try self.parseExpression();
         } else {
-            // No initializer provided; set the value to 'nothing'
-            expr = try self.allocator.create(Node);
-            expr.* = Node{ .Nothing = .{} };
+            // No initializer provided
+            if (is_mutable) {   
+                // set the value to 'nothing'
+                expr = try self.allocator.create(Node);
+                expr.* = Node{ .Nothing = .{} };
+            } else {
+                return Error.EmptyConstantDeclaration;
+            }
+        }
+
+        // If no explicit type but has initializer, infer type from expression
+        if (var_type == .Auto and expr.* != .Nothing) {
+            var_type = expr.typ();
         }
 
         const new_node = try self.allocator.create(Node);
