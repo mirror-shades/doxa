@@ -41,6 +41,7 @@ pub fn startREPL(allocator: *std.mem.Allocator) !void {
                 .String => |s| try stdout.print("{s}\n", .{s}),
                 .Nothing => try stdout.print("nothing\n", .{}),
             }
+            try stdout.print("\n", .{});
         }
     }
 }
