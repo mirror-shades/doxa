@@ -159,8 +159,8 @@ pub const Interpreter = struct {
                 const value = try self.evalNode(print_node.expression);
                 const stdout = std.io.getStdOut().writer();
                 switch (value) {
-                    .Int => |n| try stdout.print("{d}", .{n}),
-                    .Float => |n| try stdout.print("{d:.1}", .{n}),
+                    .Int => |n| try stdout.print("{d}\n", .{n}),
+                    .Float => |n| try stdout.print("{d:.1}\n", .{n}),
                     .String => |s| try stdout.print("{s}\n", .{s}),
                     .Nothing => try stdout.print("nothing\n", .{}),
                 }
