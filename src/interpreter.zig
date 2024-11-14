@@ -114,6 +114,18 @@ pub const Interpreter = struct {
             .Nothing => Value{ .Nothing = {} },
             .Declaration => |decl| {
                 const value = try self.evalNode(decl.value);
+                
+                // Type checking
+                if (decl.typ != .Auto) {
+                    // Verify value matches declared type
+                    switch (value) {
+                        .Int => if (decl.typ != .Int) return error.TypeMismatch,
+                        .Float => if (decl.typ != .Float) return error.TypeMismatch,
+                        .String => if (decl.typ != .String) return error.TypeMismatch,
+                        .Nothing => {}, // Allow Nothing for any type
+                    }
+                }
+                
                 const key = try self.allocator.dupe(u8, decl.name);
                 try self.getCurrentScope().put(key, .{
                     .value = value,

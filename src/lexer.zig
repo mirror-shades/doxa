@@ -16,6 +16,7 @@ pub const TokenKind = enum {
     Comma, // ','
     Dot, // '.'
     Quote, // '"'
+    Newline, // '\n'
 
     // Keywords and identifiers
     Identifier, // [a-zA-Z_][a-zA-Z0-9_]*
@@ -67,7 +68,6 @@ pub const Lexer = struct {
             '+' => return Token{ .kind = .Plus, .lexeme = "+" },
             '-' => return Token{ .kind = .Minus, .lexeme = "-" },
             '*' => return Token{ .kind = .Star, .lexeme = "*" },
-            '/' => return Token{ .kind = .Slash, .lexeme = "/" },
             '(' => return Token{ .kind = .LeftParen, .lexeme = "(" },
             ')' => return Token{ .kind = .RightParen, .lexeme = ")" },
             '=' => return Token{ .kind = .Equal, .lexeme = "=" },
@@ -77,7 +77,17 @@ pub const Lexer = struct {
             '}' => return Token{ .kind = .RightBrace, .lexeme = "}" },
             ',' => return Token{ .kind = .Comma, .lexeme = "," },
             '.' => return Token{ .kind = .Dot, .lexeme = "." },
+            '/' => {
+                if (!self.isAtEnd() and self.peekChar() == '/') {
+                    _ = self.advance(); // Consume the second '/'
+                    self.skipComment(); // Skip the comment
+                    return self.nextToken(); // Get the next token after the comment
+                } else {
+                    return Token{ .kind = .Slash, .lexeme = "/" };
+                }
+            },
             '"' => return self.string(),
+            '\n' => return Token{ .kind = .Newline, .lexeme = "\n" },
             else => {},
         }
 
@@ -94,11 +104,24 @@ pub const Lexer = struct {
         }
     }
 
+    fn skipComment(self: *Lexer) void {
+        while (!self.isAtEnd() and self.peekChar() != '\n') {
+            _ = self.advance();
+        }
+        if (!self.isAtEnd() and self.peekChar() == '\n') {
+            _ = self.advance();
+        }
+    }
+
     pub fn peek(self: *Lexer) TokenKind {
         const saved_current = self.current;
         const token = self.nextToken();
         self.current = saved_current;
         return token.kind;
+    }
+
+    fn peekChar(self: *Lexer) u8 {
+        return self.source[self.current];
     }
 
     fn isAtEnd(self: *Lexer) bool {
