@@ -14,6 +14,8 @@ pub const Interpreter = struct {
         Nothing,
         True,
         False,
+        And,
+        Or,
         Array: []Value,
     };
 
@@ -66,7 +68,6 @@ pub const Interpreter = struct {
             while (it.next()) |entry| {
                 // Free variable names
                 self.allocator.free(entry.key_ptr.*);
-
                 // Free string values within variables
                 const variable = entry.value_ptr.*;
                 self.freeValue(variable.value);
@@ -91,6 +92,14 @@ pub const Interpreter = struct {
         }
     }
 
+    fn _and(a: Value, b: Value) !Value {
+        return if (a == .True and b == .True) Value{ .True = {} } else Value{ .False = {} };
+    }
+
+    fn _or(a: Value, b: Value) !Value {
+        return if (a == .True or b == .True) Value{ .True = {} } else Value{ .False = {} };
+    }
+
     fn valuesEqual(a: Value, b: Value) bool {
         return switch (a) {
             .Int => |ai| switch (b) { .Int => |bi| ai == bi, else => false },
@@ -99,6 +108,8 @@ pub const Interpreter = struct {
             .Nothing => switch (b) { .Nothing => true, else => false },
             .True => switch (b) { .True => true, else => false },
             .False => switch (b) { .False => true, else => false },
+            .And => switch (b) { .And => try _and(a, b), else => false },
+            .Or => switch (b) { .Or => try _or(a, b), else => false },
             .Array => |aa| switch (b) {
                 .Array => |ba| {
                     if (aa.len != ba.len) return false;
@@ -184,6 +195,8 @@ pub const Interpreter = struct {
                         .True => if (decl.typ != .Bool) return error.TypeMismatch,
                         .False => if (decl.typ != .Bool) return error.TypeMismatch,
                         .Array => |_| if (decl.typ != .Array) return error.TypeMismatch,
+                        .And => if (decl.typ != .Bool) return error.TypeMismatch,
+                        .Or => if (decl.typ != .Bool) return error.TypeMismatch,
                     }
                 }
                 
@@ -243,6 +256,16 @@ pub const Interpreter = struct {
 
                 return Value{ .Array = try evaluated_elements.toOwnedSlice() };
             },
+            .And => |and_node| {
+                const left = try self.evalNode(and_node.left);
+                const right = try self.evalNode(and_node.right);
+                return try _and(left, right);
+            },
+            .Or => |or_node| {
+                const left = try self.evalNode(or_node.left);
+                const right = try self.evalNode(or_node.right);
+                return try _or(left, right);
+            },
         };
     }
 
@@ -273,6 +296,8 @@ pub const Interpreter = struct {
                 }
                 try stdout.print("]", .{});
             },
+            .And => try stdout.print("and", .{}),
+            .Or => try stdout.print("or", .{}),
         }
     }
 

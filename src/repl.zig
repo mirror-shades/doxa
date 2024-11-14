@@ -42,6 +42,8 @@ pub fn startREPL(allocator: *std.mem.Allocator) !void {
                 .Nothing => try stdout.print("nothing\n", .{}),
                 .True => try stdout.print("true\n", .{}),
                 .False => try stdout.print("false\n", .{}),
+                .And => try stdout.print("and\n", .{}),
+                .Or => try stdout.print("or\n", .{}),
                 .Array => |arr| {
                     try stdout.print("[", .{});
                     var i: i64 = 0;

@@ -105,7 +105,6 @@ pub const Parser = struct {
         return node;
     }
 
-
     fn parsePrintStatement(self: *Parser) !*Node {
         const expression = try self.parseExpression();
 
@@ -187,8 +186,6 @@ pub const Parser = struct {
         return new_node;
     }
 
-
-
     fn parseAssignment(self: *Parser) !*Node {
         const var_name = self.current_token.lexeme;
         self.advance(); // Consume identifier
@@ -211,7 +208,25 @@ pub const Parser = struct {
     }
 
     pub fn parseExpression(self: *Parser) Error!*Node {
-        return self.parseEquality();
+        return self.parseLogical();
+    }
+
+    fn parseLogical(self: *Parser) Error!*Node {
+        var node = try self.parseEquality();
+
+        while (self.current_token.kind == .And or self.current_token.kind == .Or) {
+            const op = self.current_token.kind;
+            self.advance();
+            const right = try self.parseEquality();
+            const new_node = try self.allocator.create(Node);
+            new_node.* = switch (op) {
+                .And => Node{ .And = .{ .left = node, .right = right } },
+                .Or => Node{ .Or = .{ .left = node, .right = right } },
+                else => unreachable,
+            };
+            node = new_node;
+        }
+        return node;
     }
 
     fn parseEquality(self: *Parser) Error!*Node {
@@ -227,7 +242,7 @@ pub const Parser = struct {
                     .left = node,
                     .operator = op,
                     .right = right,
-                    .typ = Type.Bool, 
+                    .typ = .Bool,
                 },
             };
             node = new_node;

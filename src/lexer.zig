@@ -23,6 +23,8 @@ pub const TokenKind = enum {
     False, // 'false'
     LeftBracket, // '['
     RightBracket, // ']'
+    And, // 'and'
+    Or, // 'or'
 
     // Keywords and identifiers
     Identifier, // [a-zA-Z_][a-zA-Z0-9_]*
@@ -117,6 +119,16 @@ pub const Lexer = struct {
             'f' => {
                 if (std.mem.eql(u8, self.peekWord(), "alse")) {
                     return Token{ .kind = .False, .lexeme = "false" };
+                }
+            },
+            'a' => {
+                if (std.mem.eql(u8, self.peekWord(), "nd")) {
+                    return Token{ .kind = .And, .lexeme = "and" };
+                }
+            },
+            'o' => {
+                if (std.mem.eql(u8, self.peekWord(), "r")) {
+                    return Token{ .kind = .Or, .lexeme = "or" };
                 }
             },
             else => {},

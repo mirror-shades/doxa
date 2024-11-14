@@ -10,6 +10,8 @@ pub const Type = enum {
     Nothing,
     True,
     False,
+    And,
+    Or,
 };
 
 pub const Node = union(enum) {
@@ -57,6 +59,14 @@ pub const Node = union(enum) {
         elements: []*Node,
         typ: Type,
     },
+    And: struct {
+        left: *Node,
+        right: *Node,
+    },
+    Or: struct {
+        left: *Node,
+        right: *Node,
+    },
 
     pub fn typ(self: *const Node) Type {
         return switch (self.*) {
@@ -73,6 +83,8 @@ pub const Node = union(enum) {
             .True => .Bool,
             .False => .Bool,
             .Array => |arr| arr.typ,
+            .And => .Bool,
+            .Or => .Bool,
         };
     }
 };
