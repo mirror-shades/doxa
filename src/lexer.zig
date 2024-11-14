@@ -19,6 +19,8 @@ pub const TokenKind = enum {
     Dot, // '.'
     Quote, // '"'
     Newline, // '\n'
+    True, // 'true'
+    False, // 'false'
 
     // Keywords and identifiers
     Identifier, // [a-zA-Z_][a-zA-Z0-9_]*
@@ -103,6 +105,16 @@ pub const Lexer = struct {
             },
             '"' => return self.string(),
             '\n' => return Token{ .kind = .Newline, .lexeme = "\n" },
+            't' => {
+                if (std.mem.eql(u8, self.peekWord(), "rue")) {
+                    return Token{ .kind = .True, .lexeme = "true" };
+                }
+            },
+            'f' => {
+                if (std.mem.eql(u8, self.peekWord(), "alse")) {
+                    return Token{ .kind = .False, .lexeme = "false" };
+                }
+            },
             else => {},
         }
 
@@ -137,6 +149,14 @@ pub const Lexer = struct {
 
     fn peekChar(self: *Lexer) u8 {
         return self.source[self.current];
+    }
+
+    fn peekWord(self: *Lexer) []const u8 {
+        var end = self.current;
+        while (end < self.source.len and self.isIdentifierChar(self.source[end])) {
+            end += 1;
+        }
+        return self.source[self.current..end];
     }
 
     fn isAtEnd(self: *Lexer) bool {
