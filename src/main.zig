@@ -26,8 +26,8 @@ pub fn main() !void {
     }
 
     // Check file extension
-    if (!std.mem.endsWith(u8, filename.?, ".mer")) {
-        std.debug.print("Error: File must have .mer extension\n", .{});
+    if (!std.mem.endsWith(u8, filename.?, ".doxa")) {
+        std.debug.print("Error: File must have .doxa extension\n", .{});
         std.process.exit(1);
         return;
     }
@@ -78,9 +78,10 @@ pub fn main() !void {
         if (interpreter.shouldPrintResult(source_code)) {
             const stdout = std.io.getStdOut().writer();
             switch (result) {
-                .integer => |n| try stdout.print("{d}\n", .{n}),
-                .float => |n| try stdout.print("{d:.1}\n", .{n}),
-                .string => |s| try stdout.print("{s}\n", .{s}),
+                .Int => |n| try stdout.print("{d}\n", .{n}),
+                .Float => |n| try stdout.print("{d:.1}\n", .{n}),
+                .String => |s| try stdout.print("{s}\n", .{s}),
+                .Nothing => try stdout.print("nothing\n", .{}),
             }
         }
     }

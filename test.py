@@ -27,7 +27,7 @@ def run_merve(file_path):
 
 # positive tests
 def test_print():
-    file_path = os.path.join('tests', 'positive', 'p_test_print.mer')
+    file_path = os.path.join('tests', 'positive', 'p_test_print.doxa')
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"Test file not found: {file_path}")
     
@@ -38,63 +38,63 @@ def test_print():
     print("✅ test_print passed")
 
 def test_offset_semicolon():
-    stdout, stderr = run_merve(os.path.join('tests', 'positive', 'p_test_offset_semicolon.mer'))
+    stdout, stderr = run_merve(os.path.join('tests', 'positive', 'p_test_offset_semicolon.doxa'))
     assert stdout == '5', f"Expected '5', but got '{stdout}'"
     print("expected: 5")
     print("got: ", stdout)
     print("✅ test_offset_semicolon passed")
 
 def test_math():
-    stdout, stderr = run_merve(os.path.join('tests', 'positive', 'p_test_math.mer'))
+    stdout, stderr = run_merve(os.path.join('tests', 'positive', 'p_test_math.doxa'))
     assert stdout == '5.0', f"Expected '5.0', but got '{stdout}'"
     print("expected: 5.0")
     print("got: ", stdout)
     print("✅ test_math passed")
 
 def test_var_num():
-    stdout, stderr = run_merve(os.path.join('tests', 'positive', 'p_test_var_num.mer'))
+    stdout, stderr = run_merve(os.path.join('tests', 'positive', 'p_test_var_num.doxa'))
     assert stdout == '5', f"Expected '5', but got '{stdout}'"
     print("expected: 5")
     print("got: ", stdout)
     print("✅ test_var_num passed")
 
 def test_const_num():
-    stdout, stderr = run_merve(os.path.join('tests', 'positive', 'p_test_const_num.mer'))
+    stdout, stderr = run_merve(os.path.join('tests', 'positive', 'p_test_const_num.doxa'))
     assert stdout == '5', f"Expected '5', but got '{stdout}'"
     print("expected: 5")
     print("got: ", stdout)
     print("✅ test_const_num passed")
 
 def test_var_change():
-    stdout, stderr = run_merve(os.path.join('tests', 'positive', 'p_test_var_change.mer'))
+    stdout, stderr = run_merve(os.path.join('tests', 'positive', 'p_test_var_change.doxa'))
     assert stdout == '5', f"Expected '5', but got '{stdout}'"
     print("expected: 5")
     print("got: ", stdout)
     print("✅ test_var_change passed")
 
 def test_bracket_scope():
-    stdout, stderr = run_merve(os.path.join('tests', 'positive', 'p_test_bracket_scope.mer'))
+    stdout, stderr = run_merve(os.path.join('tests', 'positive', 'p_test_bracket_scope.doxa'))
     assert stdout == '5', f"Expected '5', but got '{stdout}'"
     print("expected: 5")
     print("got: ", stdout)
     print("✅ test_bracket_scope passed")
 
 def test_var_str():
-    stdout, stderr = run_merve(os.path.join('tests', 'positive', 'p_test_var_str.mer'))
+    stdout, stderr = run_merve(os.path.join('tests', 'positive', 'p_test_var_str.doxa'))
     assert stdout == 'five', f"Expected 'five', but got '{stdout}'"
     print("expected: five")
     print("got: ", stdout)
     print("✅ test_var_str passed")
 
 def test_const_float():
-    stdout, stderr = run_merve(os.path.join('tests', 'positive', 'p_test_const_float.mer'))
+    stdout, stderr = run_merve(os.path.join('tests', 'positive', 'p_test_const_float.doxa'))
     assert stdout == '5.5', f"Expected '5.5', but got '{stdout}'"
     print("expected: 5.5")
     print("got: ", stdout)
     print("✅ test_const_float passed")
 
 def test_div_noremain():
-    stdout, stderr = run_merve(os.path.join('tests', 'positive', 'p_test_div_noremain.mer'))
+    stdout, stderr = run_merve(os.path.join('tests', 'positive', 'p_test_div_noremain.doxa'))
     assert stdout == '5.0', f"Expected '5.0', but got '{stdout}'"
     print("expected: 5.0")
     print("got: ", stdout)
@@ -104,22 +104,22 @@ def test_div_noremain():
 
 # negative tests    
 def test_missing_semicolon():
-    stdout, stderr = run_merve(os.path.join('tests', 'negetive', 'n_test_w_semicolon.mer'))
+    stdout, stderr = run_merve(os.path.join('tests', 'negetive', 'n_test_w_semicolon.doxa'))
     assert stderr != "", f"Expected error, but got: '{stdout}'"
     print("✅ test_semicolon passed")
 
 def test_wrong_extension():
     stdout, stderr = run_merve(os.path.join('tests', 'negative', 'n_test_w_ext.met'))
-    assert "Error: File must have .mer extension" in stderr, f"Expected error message about .mer extension, but got: '{stderr}'"
+    assert "Error: File must have .doxa extension" in stderr, f"Expected error message about .doxa extension, but got: '{stderr}'"
     print("✅ test_wrong_extension passed")
 
 def test_change_const():
-    stdout, stderr = run_merve(os.path.join('tests', 'negetive', 'n_test_change_const.mer'))
+    stdout, stderr = run_merve(os.path.join('tests', 'negetive', 'n_test_change_const.doxa'))
     assert stderr != "", f"Expected error, but got: '{stdout}'"
     print("✅ test_change_const passed")
     
 def test_open_bracket():
-    stdout, stderr = run_merve(os.path.join('tests', 'negetive', 'n_test_open_bracket.mer'))
+    stdout, stderr = run_merve(os.path.join('tests', 'negetive', 'n_test_open_bracket.doxa'))
     assert stderr != "", f"Expected error, but got: '{stdout}'"
     print("✅ test_open_bracket passed")
 

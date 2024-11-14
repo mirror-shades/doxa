@@ -36,9 +36,10 @@ pub fn startREPL(allocator: *std.mem.Allocator) !void {
 
         if (interpreter.shouldPrintResult(line)) {
             switch (result) {
-                .integer => |n| try stdout.print("{d}\n", .{n}),
-                .float => |n| try stdout.print("{d:.1}\n", .{n}),
-                .string => |s| try stdout.print("{s}\n", .{s}),
+                .Int => |n| try stdout.print("{d}\n", .{n}),
+                .Float => |n| try stdout.print("{d:.1}\n", .{n}),
+                .String => |s| try stdout.print("{s}\n", .{s}),
+                .Nothing => try stdout.print("nothing\n", .{}),
             }
         }
     }

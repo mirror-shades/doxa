@@ -125,7 +125,7 @@ pub const Parser = struct {
 
             // Parse the type
             switch (self.current_token.kind) {
-                .NumberType => var_type = .Number,
+                .IntType => var_type = .Int,
                 .FloatType => var_type = .Float,
                 .StringType => var_type = .String,
                 .BoolType => var_type = .Bool,
@@ -190,7 +190,7 @@ pub const Parser = struct {
                     .left = node,
                     .operator = op,
                     .right = right,
-                    .typ = if (node.typ() == .Float or right.typ() == .Float) Type.Float else Type.Number,
+                    .typ = if (node.typ() == .Float or right.typ() == .Float) Type.Float else Type.Int,
                 },
             };
             node = new_node;
@@ -211,7 +211,10 @@ pub const Parser = struct {
                     .left = node,
                     .operator = op,
                     .right = right,
-                    .typ = if (node.typ() == .Float or right.typ() == .Float or op == .Slash) Type.Float else Type.Number,
+                    // TODO: Handle division by zero
+                    // TODO: Handle overflow
+                    // this is a trying to force the type to be float if any of the operands is a float
+                    .typ = if (node.typ() == .Float or right.typ() == .Float or op == .Slash) Type.Float else Type.Int,
                 },
             };
             node = new_node;
@@ -221,21 +224,36 @@ pub const Parser = struct {
 
     fn parsePrimary(self: *Parser) Error!*Node {
         switch (self.current_token.kind) {
-            .Number => {
-                // Parse the number value
-                const value = std.fmt.parseFloat(f64, self.current_token.lexeme) catch |err| switch (err) {
-                    error.InvalidCharacter => return Error.InvalidNumber,
-                };
+            .IntType => {
+                const lexeme = self.current_token.lexeme;
                 const new_node = try self.allocator.create(Node);
 
-                // Check if the lexeme contains a decimal point to determine if it's a float
-                const is_float = std.mem.indexOf(u8, self.current_token.lexeme, ".") != null;
-                new_node.* = Node{
-                    .Number = .{
-                        .value = value,
-                        .typ = if (is_float) Type.Float else Type.Number,
-                    },
-                };
+                // Check if the lexeme contains a decimal point
+                if (std.mem.indexOf(u8, lexeme, ".")) |_| {
+                    // Parse as float
+                    const value = std.fmt.parseFloat(f64, lexeme) catch |err| switch (err) {
+                        error.InvalidCharacter => return Error.InvalidNumber,
+                        else => unreachable,
+                    };
+                    new_node.* = Node{
+                        .Float = .{
+                            .value = value,
+                            .typ = Type.Float,
+                        },
+                    };
+                } else {
+                    // Parse as integer
+                    const value = std.fmt.parseInt(i64, lexeme, 10) catch |err| switch (err) {
+                        error.InvalidCharacter => return Error.InvalidNumber,
+                        else => unreachable,
+                    };
+                    new_node.* = Node{
+                        .Int = .{
+                            .value = value,
+                            .typ = Type.Int,
+                        },
+                    };
+                }
                 self.advance();
                 return new_node;
             },
@@ -269,6 +287,12 @@ pub const Parser = struct {
                         .typ = .String,
                     },
                 };
+                self.advance();
+                return new_node;
+            },
+            .Nothing => {
+                const new_node = try self.allocator.create(Node);
+                new_node.* = Node{ .Nothing = .{} };
                 self.advance();
                 return new_node;
             },
