@@ -162,6 +162,19 @@ pub const Parser = struct {
             var_type = expr.typ();
         }
 
+        // Handle deep copy for arrays
+        if (expr.* == .Array) {
+            const array_elements = expr.Array.elements;
+            var new_elements = try self.allocator.alloc(*Node, array_elements.len);
+            var i: usize = 0;
+            for (array_elements) |el| {
+                new_elements[i] = try self.deepCopy(el);
+                i += 1;
+            }
+            expr = try self.allocator.create(Node);
+            expr.* = .{ .Array = .{ .elements = new_elements, .typ = .Array } };
+        }
+
         const new_node = try self.allocator.create(Node);
         new_node.* = Node{
             .Declaration = .{
@@ -173,6 +186,7 @@ pub const Parser = struct {
         };
         return new_node;
     }
+
 
 
     fn parseAssignment(self: *Parser) !*Node {
@@ -322,10 +336,13 @@ pub const Parser = struct {
             },
             .String => {
                 const value = self.current_token.lexeme;
+                // Duplicate the string to ensure it remains valid
+                const duped_value = try self.allocator.dupe(u8, value);
+
                 const new_node = try self.allocator.create(Node);
                 new_node.* = Node{
                     .String = .{
-                        .value = value,
+                        .value = duped_value,
                         .typ = .String,
                     },
                 };
@@ -399,5 +416,13 @@ pub const Parser = struct {
             .statements = try statements.toOwnedSlice(),
         } };
         return block_node;
+    }
+
+    fn deepCopy(self: *Parser, node: *Node) !*Node {
+        // Implement the logic to deep copy a node
+        const new_node = try self.allocator.create(Node);
+        // Assuming Node has a method or logic to copy itself
+        new_node.* = node.*; // This is a placeholder; actual implementation may vary
+        return new_node;
     }
 };
