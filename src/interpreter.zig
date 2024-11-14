@@ -76,8 +76,10 @@ pub const Interpreter = struct {
             .Binary => |binary| {
                 const left = try self.evalNode(binary.left);
                 const right = try self.evalNode(binary.right);
+                const left_typ = binary.left.typ();
+                const right_typ = binary.right.typ();
 
-                const use_float = (left == .Float or right == .Float);
+                const use_float = (left_typ == .Float or right_typ == .Float);
 
                 if (use_float) {
                     const left_val = switch (left) {
@@ -96,6 +98,8 @@ pub const Interpreter = struct {
                         .Minus => left_val - right_val,
                         .Star => left_val * right_val,
                         .Slash => left_val / right_val,
+                        .EqualEqual => if (left_val == right_val and left_typ == right_typ) 1 else 0,
+                        .NotEqual => if (left_val != right_val or left_typ != right_typ) 1 else 0,
                         else => return error.InvalidOperator,
                     } };
                 } else {
@@ -107,6 +111,8 @@ pub const Interpreter = struct {
                         .Minus => Value{ .Int = left_val - right_val },
                         .Star => Value{ .Int = left_val * right_val },
                         .Slash => Value{ .Float = @as(f64, @floatFromInt(left_val)) / @as(f64, @floatFromInt(right_val)) },
+                        .EqualEqual => Value{ .Int = if (left_val == right_val) 1 else 0 },
+                        .NotEqual => Value{ .Int = if (left_val != right_val) 1 else 0 },
                         else => return error.InvalidOperator,
                     };
                 }

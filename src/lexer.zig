@@ -9,6 +9,8 @@ pub const TokenKind = enum {
     LeftParen, // '('
     RightParen, // ')'
     Equal, // '='
+    EqualEqual, // '=='
+    NotEqual, // '!='
     Colon, // ':'
     Semicolon, // ';'
     LeftBrace, // '{'
@@ -70,7 +72,20 @@ pub const Lexer = struct {
             '*' => return Token{ .kind = .Star, .lexeme = "*" },
             '(' => return Token{ .kind = .LeftParen, .lexeme = "(" },
             ')' => return Token{ .kind = .RightParen, .lexeme = ")" },
-            '=' => return Token{ .kind = .Equal, .lexeme = "=" },
+            '=' => {
+                if (!self.isAtEnd() and self.peekChar() == '=') {
+                    _ = self.advance(); // Consume the second '='
+                    return Token{ .kind = .EqualEqual, .lexeme = "==" };
+                } else {
+                    return Token{ .kind = .Equal, .lexeme = "=" };
+                }
+            },
+            '!' => {
+                if (!self.isAtEnd() and self.peekChar() == '=') {
+                    _ = self.advance(); // Consume the second '='
+                    return Token{ .kind = .NotEqual, .lexeme = "!=" };
+                }
+            },
             ':' => return Token{ .kind = .Colon, .lexeme = ":" },
             ';' => return Token{ .kind = .Semicolon, .lexeme = ";" },
             '{' => return Token{ .kind = .LeftBrace, .lexeme = "{" },
