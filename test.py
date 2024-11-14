@@ -33,47 +33,72 @@ def test_print():
     
     stdout, stderr = run_merve(file_path)
     assert stdout == '5', f"Expected '5', but got '{stdout}'"
+    print("expected: 5")
+    print("got: ", stdout)
     print("✅ test_print passed")
 
 def test_offset_semicolon():
     stdout, stderr = run_merve(os.path.join('tests', 'positive', 'p_test_offset_semicolon.mer'))
     assert stdout == '5', f"Expected '5', but got '{stdout}'"
+    print("expected: 5")
+    print("got: ", stdout)
     print("✅ test_offset_semicolon passed")
 
 def test_math():
     stdout, stderr = run_merve(os.path.join('tests', 'positive', 'p_test_math.mer'))
     assert stdout == '5.0', f"Expected '5.0', but got '{stdout}'"
+    print("expected: 5.0")
+    print("got: ", stdout)
     print("✅ test_math passed")
 
 def test_var_num():
     stdout, stderr = run_merve(os.path.join('tests', 'positive', 'p_test_var_num.mer'))
     assert stdout == '5', f"Expected '5', but got '{stdout}'"
+    print("expected: 5")
+    print("got: ", stdout)
     print("✅ test_var_num passed")
 
 def test_const_num():
     stdout, stderr = run_merve(os.path.join('tests', 'positive', 'p_test_const_num.mer'))
     assert stdout == '5', f"Expected '5', but got '{stdout}'"
+    print("expected: 5")
+    print("got: ", stdout)
     print("✅ test_const_num passed")
 
 def test_var_change():
     stdout, stderr = run_merve(os.path.join('tests', 'positive', 'p_test_var_change.mer'))
     assert stdout == '5', f"Expected '5', but got '{stdout}'"
+    print("expected: 5")
+    print("got: ", stdout)
     print("✅ test_var_change passed")
 
 def test_bracket_scope():
     stdout, stderr = run_merve(os.path.join('tests', 'positive', 'p_test_bracket_scope.mer'))
     assert stdout == '5', f"Expected '5', but got '{stdout}'"
+    print("expected: 5")
+    print("got: ", stdout)
     print("✅ test_bracket_scope passed")
 
 def test_var_str():
     stdout, stderr = run_merve(os.path.join('tests', 'positive', 'p_test_var_str.mer'))
     assert stdout == 'five', f"Expected 'five', but got '{stdout}'"
+    print("expected: five")
+    print("got: ", stdout)
     print("✅ test_var_str passed")
 
 def test_const_float():
     stdout, stderr = run_merve(os.path.join('tests', 'positive', 'p_test_const_float.mer'))
     assert stdout == '5.5', f"Expected '5.5', but got '{stdout}'"
+    print("expected: 5.5")
+    print("got: ", stdout)
     print("✅ test_const_float passed")
+
+def test_div_noremain():
+    stdout, stderr = run_merve(os.path.join('tests', 'positive', 'p_test_div_noremain.mer'))
+    assert stdout == '5.0', f"Expected '5.0', but got '{stdout}'"
+    print("expected: 5.0")
+    print("got: ", stdout)
+    print("✅ test_div_noremain passed")
 
 ########################################################
 
@@ -111,6 +136,7 @@ def run_all_tests():
         ("bracket scope", test_bracket_scope),
         ("variable string", test_var_str),
         ("constant float", test_const_float),
+        ("division no remain", test_div_noremain),
     ]
     
     negative_tests = [
