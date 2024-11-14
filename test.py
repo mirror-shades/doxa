@@ -135,6 +135,13 @@ def test_inequality_false():
     print("got: ", stdout)
     print("✅ test_inequality_false passed")
 
+def test_array():
+    stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_array.doxa'))
+    assert stdout == '[1, 2, 3]', f"Expected '[1, 2, 3]', but got '{stdout}'"
+    print("expected: [1, 2, 3]")
+    print("got: ", stdout)
+    print("✅ test_array passed")
+
 ########################################################
 
 # negative tests    
@@ -170,6 +177,13 @@ def test_comments():
     print("got: ", stdout)
     print("✅ test_comments passed")
 
+def test_reassign_string():
+    stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_reassign_string.doxa'))
+    assert stdout == 'five', f"Expected 'five', but got '{stdout}'"
+    print("expected: five")
+    print("got: ", stdout)
+    print("✅ test_reassign_string passed")
+
 ########################################################
 
 def run_all_tests():
@@ -190,6 +204,7 @@ def run_all_tests():
         ("equality false", test_equality_false),
         ("inequality false", test_inequality_false),
         ("inequality true", test_inequality_true),
+        ("reassign string", test_reassign_string),
     ]
     
     negative_tests = [
