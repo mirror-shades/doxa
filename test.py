@@ -142,6 +142,11 @@ def test_array():
     print("got: ", stdout)
     print("✅ test_array passed")
 
+def test_equality_bools_true():
+    stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_equality_bools_true.doxa'))
+    assert stdout == 'true', f"Expected 'true', but got '{stdout}'"
+    print("✅ test_equality_bools_true passed")
+
 ########################################################
 
 # negative tests    
@@ -205,6 +210,7 @@ def run_all_tests():
         ("inequality false", test_inequality_false),
         ("inequality true", test_inequality_true),
         ("reassign string", test_reassign_string),
+        ("equality bools true", test_equality_bools_true),
     ]
     
     negative_tests = [
