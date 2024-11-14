@@ -21,6 +21,8 @@ pub const TokenKind = enum {
     Newline, // '\n'
     True, // 'true'
     False, // 'false'
+    LeftBracket, // '['
+    RightBracket, // ']'
 
     // Keywords and identifiers
     Identifier, // [a-zA-Z_][a-zA-Z0-9_]*
@@ -74,6 +76,8 @@ pub const Lexer = struct {
             '*' => return Token{ .kind = .Star, .lexeme = "*" },
             '(' => return Token{ .kind = .LeftParen, .lexeme = "(" },
             ')' => return Token{ .kind = .RightParen, .lexeme = ")" },
+            '[' => return Token{ .kind = .LeftBracket, .lexeme = "[" },
+            ']' => return Token{ .kind = .RightBracket, .lexeme = "]" },
             '=' => {
                 if (!self.isAtEnd() and self.peekChar() == '=') {
                     _ = self.advance(); // Consume the second '='

@@ -5,8 +5,8 @@ pub const Type = enum {
     Int,
     Float,
     String,
-    Bool,
     Array,
+    Bool,
     Nothing,
     True,
     False,
@@ -53,7 +53,10 @@ pub const Node = union(enum) {
     },
     True: struct {},
     False: struct {},
-
+    Array: struct {
+        elements: []*Node,
+        typ: Type,
+    },
 
     pub fn typ(self: *const Node) Type {
         return switch (self.*) {
@@ -69,6 +72,7 @@ pub const Node = union(enum) {
             .Block => .Auto, // or whatever default type makes sense
             .True => .Bool,
             .False => .Bool,
+            .Array => |arr| arr.typ,
         };
     }
 };

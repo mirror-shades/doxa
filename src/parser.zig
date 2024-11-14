@@ -350,6 +350,32 @@ pub const Parser = struct {
                 self.advance();
                 return new_node;
             },
+            .LeftBracket => {
+                self.advance(); // Consume '['
+                var elements = ArrayList(*Node).init(self.allocator.*);
+
+                while (!self.check(.RightBracket) and !self.check(.EOF)) {
+                    const element = try self.parseExpression();
+                    try elements.append(element);
+
+                    if (!self.match(.Comma) and !self.check(.RightBracket)) {
+                        return Error.UnexpectedToken;
+                    }
+                }
+
+                if (!self.match(.RightBracket)) {
+                    return Error.UnmatchedBrace;
+                }
+
+                const array_node = try self.allocator.create(Node);
+                array_node.* = Node{
+                    .Array = .{
+                        .elements = try elements.toOwnedSlice(),
+                        .typ = .Array,
+                    },
+                };
+                return array_node;
+            },
             else => {
                 return Error.UnexpectedToken;
             },

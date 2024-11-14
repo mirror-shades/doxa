@@ -107,6 +107,34 @@ def test_var_assign_nothing():
     print("got: ", stdout)
     print("✅ test_var_assign_nothing passed")
 
+def test_equality_true():
+    stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_equality_true.doxa'))
+    assert stdout == 'true', f"Expected 'true', but got '{stdout}'"
+    print("expected: true")
+    print("got: ", stdout)
+    print("✅ test_equality_true passed")
+
+def test_equality_false():
+    stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_equality_false.doxa'))
+    assert stdout == 'false', f"Expected 'false', but got '{stdout}'"
+    print("expected: false")
+    print("got: ", stdout)
+    print("✅ test_equality_false passed")
+
+def test_inequality_true():
+    stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_inequality_true.doxa'))
+    assert stdout == 'true', f"Expected 'true', but got '{stdout}'"
+    print("expected: true")
+    print("got: ", stdout)
+    print("✅ test_inequality_true passed")
+
+def test_inequality_false():
+    stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_inequality_false.doxa'))
+    assert stdout == 'false', f"Expected 'false', but got '{stdout}'"
+    print("expected: false")
+    print("got: ", stdout)
+    print("✅ test_inequality_false passed")
+
 ########################################################
 
 # negative tests    
@@ -158,6 +186,10 @@ def run_all_tests():
         ("division no remain", test_div_noremain),
         ("variable assign nothing", test_var_assign_nothing),
         ("comments", test_comments),
+        ("equality true", test_equality_true),
+        ("equality false", test_equality_false),
+        ("inequality false", test_inequality_false),
+        ("inequality true", test_inequality_true),
     ]
     
     negative_tests = [
