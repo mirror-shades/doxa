@@ -64,11 +64,31 @@ pub const Interpreter = struct {
         for (self.scopes.items) |*scope| {
             var it = scope.iterator();
             while (it.next()) |entry| {
+                // Free variable names
                 self.allocator.free(entry.key_ptr.*);
+
+                // Free string values within variables
+                const variable = entry.value_ptr.*;
+                self.freeValue(variable.value);
             }
             scope.deinit();
         }
         self.scopes.deinit();
+    }
+
+    fn freeValue(self: *Interpreter, value: Value) void {
+        switch (value) {
+            .String => |s| self.allocator.free(s),
+            .Array => |arr| {
+                // Recursively free elements of the array
+                for (arr) |element| {
+                    self.freeValue(element);
+                }
+                // Free the array itself
+                self.allocator.free(arr);
+            },
+            else => {},
+        }
     }
 
     fn valuesEqual(a: Value, b: Value) bool {
@@ -198,56 +218,8 @@ pub const Interpreter = struct {
             },
             .Print => |print_node| {
                 const value = try self.evalNode(print_node.expression);
-                const stdout = std.io.getStdOut().writer();
-                switch (value) {
-                    .Int => |n| try stdout.print("{d}\n", .{n}),
-                    .Float => |n| try stdout.print("{d:.1}\n", .{n}),
-                    .String => |s| try stdout.print("{s}\n", .{s}),
-                    .Nothing => try stdout.print("nothing\n", .{}),
-                    .True => try stdout.print("true\n", .{}),
-                    .False => try stdout.print("false\n", .{}),
-                    .Array => |arr| {
-                        try stdout.print("[", .{});
-                        var i: i64 = 0;
-                        for (arr) |element| {
-                            if (i != 0) try stdout.print(", ", .{});
-                            switch (element) {
-                                .Int => |n| try stdout.print("{d}", .{n}),
-                                .Float => |n| try stdout.print("{d:.1}", .{n}),
-                                .String => |s| try stdout.print("\"{s}\"", .{s}),
-                                .True => try stdout.print("true", .{}),
-                                .False => try stdout.print("false", .{}),
-                                .Nothing => try stdout.print("nothing", .{}),
-                                .Array => |nestedArr| {
-                                    // Recursive call to print nested arrays
-                                    try stdout.print("[", .{});
-                                    var j: i64 = 0;
-                                    for (nestedArr) |nestedElement| {
-                                        if (j != 0) try stdout.print(", ", .{});
-                                        // Assuming a recursive function or similar logic to print nested elements
-                                        switch (nestedElement) {
-                                            .Int => |n| try stdout.print("{d}", .{n}),
-                                            .Float => |n| try stdout.print("{d:.1}", .{n}),
-                                            .String => |s| try stdout.print("\"{s}\"", .{s}),
-                                            .True => try stdout.print("true", .{}),
-                                            .False => try stdout.print("false", .{}),
-                                            .Nothing => try stdout.print("nothing", .{}),
-                                            .Array => |innerArr| {
-                                                // Handle deeper nested arrays if needed
-                                                // This can be a recursive call to the same logic
-                                                _ = innerArr;
-                                            },
-                                        }
-                                        j += 1;
-                                    }
-                                    try stdout.print("]", .{});
-                                },
-                            }
-                            i += 1;
-                        }
-                        try stdout.print("]\n", .{});
-                    },
-                }
+                try self.printValue(value);
+                try std.io.getStdOut().writer().print("\n", .{});
                 return value;
             },
             .Block => |block| {
@@ -280,61 +252,36 @@ pub const Interpreter = struct {
         return !std.mem.endsWith(u8, trimmed, ";");
     }
 
+    fn printValue(self: *Interpreter, value: Value) !void {
+        const stdout = std.io.getStdOut().writer();
+        switch (value) {
+            .Int => |n| try stdout.print("{d}", .{n}),
+            .Float => |n| try stdout.print("{d:.1}", .{n}),
+            .String => |s| {
+                try stdout.print("{s}", .{s});
+            },
+            .Nothing => try stdout.print("nothing", .{}),
+            .True => try stdout.print("true", .{}),
+            .False => try stdout.print("false", .{}),
+            .Array => |arr| {
+                try stdout.print("[", .{});
+                var i: i64 = 0;
+                for (arr) |element| {
+                    if (i != 0) try stdout.print(", ", .{});
+                    try self.printValue(element); // Ensure recursive call to print nested arrays
+                    i += 1;
+                }
+                try stdout.print("]", .{});
+            },
+        }
+    }
+
     pub fn debugPrintState(self: *Interpreter) !void {
         const stdout = std.io.getStdOut().writer();
-
         var it = self.getCurrentScope().iterator();
         while (it.next()) |entry| {
             try stdout.print("  {s} = ", .{entry.key_ptr.*});
-            switch (entry.value_ptr.value) {
-                .Int => |n| try stdout.print("{d}", .{n}),
-                .Float => |n| try stdout.print("{d:.1}", .{n}),
-                .String => |s| try stdout.print("{s}", .{s}),
-                .Nothing => try stdout.print("nothing\n", .{}),
-                .True => try stdout.print("true\n", .{}),
-                .False => try stdout.print("false\n", .{}),
-                .Array => |arr| {
-                    try stdout.print("[", .{});
-                    var i: i64 = 0;
-                    for (arr) |element| {
-                        if (i != 0) try stdout.print(", ", .{});
-                        switch (element) {
-                            .Int => |n| try stdout.print("{d}", .{n}),
-                            .Float => |n| try stdout.print("{d:.1}", .{n}),
-                            .String => |s| try stdout.print("\"{s}\"", .{s}),
-                            .True => try stdout.print("true", .{}),
-                            .False => try stdout.print("false", .{}),
-                            .Nothing => try stdout.print("nothing", .{}),
-                            .Array => |nestedArr| {
-                                // Recursive call to print nested arrays
-                                try stdout.print("[", .{});
-                                var j: i64 = 0;
-                                for (nestedArr) |nestedElement| {
-                                    if (j != 0) try stdout.print(", ", .{});
-                                    // Assuming a recursive function or similar logic to print nested elements
-                                    switch (nestedElement) {
-                                        .Int => |n| try stdout.print("{d}", .{n}),
-                                        .Float => |n| try stdout.print("{d:.1}", .{n}),
-                                        .String => |s| try stdout.print("\"{s}\"", .{s}),
-                                        .True => try stdout.print("true", .{}),
-                                        .False => try stdout.print("false", .{}),
-                                        .Nothing => try stdout.print("nothing", .{}),
-                                        .Array => |innerArr| {
-                                            // Handle deeper nested arrays if needed
-                                            // This can be a recursive call to the same logic
-                                            _ = innerArr;
-                                        },
-                                    }
-                                    j += 1;
-                                }
-                                try stdout.print("]", .{});
-                            },
-                        }
-                        i += 1;
-                    }
-                    try stdout.print("]\n", .{});
-                },
-            }
+            try self.printValue(entry.value_ptr.value);
             try stdout.print("\n", .{});
         }
     }
