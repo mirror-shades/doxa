@@ -197,7 +197,28 @@ pub const Parser = struct {
     }
 
     pub fn parseExpression(self: *Parser) Error!*Node {
-        return self.parseTerm();
+        return self.parseEquality();
+    }
+
+    fn parseEquality(self: *Parser) Error!*Node {
+        var node = try self.parseTerm();
+
+        while (self.current_token.kind == .EqualEqual or self.current_token.kind == .NotEqual) {
+            const op = self.current_token.kind;
+            self.advance();
+            const right = try self.parseTerm();
+            const new_node = try self.allocator.create(Node);
+            new_node.* = Node{
+                .Binary = .{
+                    .left = node,
+                    .operator = op,
+                    .right = right,
+                    .typ = Type.Bool, // Equality operations result in a boolean type
+                },
+            };
+            node = new_node;
+        }
+        return node;
     }
 
     fn parseTerm(self: *Parser) Error!*Node {
@@ -234,9 +255,7 @@ pub const Parser = struct {
                     .left = node,
                     .operator = op,
                     .right = right,
-                    // TODO: Handle division by zero
-                    // TODO: Handle overflow
-                    // this is a trying to force the type to be float if any of the operands is a float
+                    // this will force the type to be float if any of the operands is a float
                     .typ = if (node.typ() == .Float or right.typ() == .Float or op == .Slash) Type.Float else Type.Int,
                 },
             };
