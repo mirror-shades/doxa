@@ -22,19 +22,19 @@ pub const TokenKind = enum {
     Var, // 'var'
     Const, // 'const'
     Print, // 'print'
-    NumberType, // 'number'
+    IntType, // 'int'
     FloatType, // 'float'
     StringType, // 'string'
     BoolType, // 'bool'
 
     // Literals
     Number,
+    String,
+    Nothing,
 
     // End of file
     EOF,
 
-    // Add String token
-    String,
 };
 
 pub const Token = struct {
@@ -83,7 +83,7 @@ pub const Lexer = struct {
 
         if (std.ascii.isDigit(c)) {
             self.current -= 1; // Step back to include the digit
-            return self.number();
+            return self.int();
         } else if (std.ascii.isAlphabetic(c) or c == '_') {
             self.current -= 1; // Step back to include the character
             return self.identifier();
@@ -134,8 +134,8 @@ pub const Lexer = struct {
             TokenKind.Const
         else if (std.mem.eql(u8, lexeme, "print"))
             TokenKind.Print
-        else if (std.mem.eql(u8, lexeme, "number"))
-            TokenKind.NumberType
+        else if (std.mem.eql(u8, lexeme, "int"))
+            TokenKind.IntType
         else if (std.mem.eql(u8, lexeme, "float"))
             TokenKind.FloatType
         else if (std.mem.eql(u8, lexeme, "string"))
@@ -152,7 +152,7 @@ pub const Lexer = struct {
         return std.ascii.isAlphabetic(c) or std.ascii.isDigit(c) or c == '_';
     }
 
-    fn number(self: *Lexer) Token {
+    fn int(self: *Lexer) Token {
         const start = self.current;
 
         // Process digits before decimal point
@@ -172,7 +172,7 @@ pub const Lexer = struct {
         }
 
         const lexeme = self.source[start..self.current];
-        return Token{ .kind = .Number, .lexeme = lexeme };
+        return Token{ .kind = .IntType, .lexeme = lexeme };
     }
 
     fn string(self: *Lexer) Token {

@@ -8,9 +8,10 @@ pub const Interpreter = struct {
     scopes: ArrayList(std.StringHashMap(Variable)),
 
     const Value = union(enum) {
-        integer: i64,
-        float: f64,
-        string: []const u8,
+        Int: i64,
+        Float: f64,
+        String: []const u8,
+        Nothing,
     };
 
     const Variable = struct {
@@ -69,33 +70,28 @@ pub const Interpreter = struct {
 
     fn evalNode(self: *Interpreter, node: *Node) !Value {
         return switch (node.*) {
-            .Number => |n| {
-                if (std.math.floor(n.value) == n.value) {
-                    return Value{ .integer = @intFromFloat(n.value) };
-                } else {
-                    return Value{ .float = n.value };
-                }
-            },
-            .String => |s| Value{ .string = s.value },
+            .Int => |i| Value{ .Int = i.value },
+            .Float => |f| Value{ .Float = f.value },
+            .String => |s| Value{ .String = s.value },
             .Binary => |binary| {
                 const left = try self.evalNode(binary.left);
                 const right = try self.evalNode(binary.right);
 
-                const use_float = (left == .float or right == .float);
+                const use_float = (left == .Float or right == .Float);
 
                 if (use_float) {
                     const left_val = switch (left) {
-                        .integer => |i| @as(f64, @floatFromInt(i)),
-                        .float => |f| f,
+                        .Int => |i| @as(f64, @floatFromInt(i)),
+                        .Float => |f| f,
                         else => return error.TypeMismatch,
                     };
                     const right_val = switch (right) {
-                        .integer => |i| @as(f64, @floatFromInt(i)),
-                        .float => |f| f,
+                        .Int => |i| @as(f64, @floatFromInt(i)),
+                        .Float => |f| f,
                         else => return error.TypeMismatch,
                     };
 
-                    return Value{ .float = switch (binary.operator) {
+                    return Value{ .Float = switch (binary.operator) {
                         .Plus => left_val + right_val,
                         .Minus => left_val - right_val,
                         .Star => left_val * right_val,
@@ -103,18 +99,19 @@ pub const Interpreter = struct {
                         else => return error.InvalidOperator,
                     } };
                 } else {
-                    const left_val = left.integer;
-                    const right_val = right.integer;
+                    const left_val = left.Int;
+                    const right_val = right.Int;
 
                     return switch (binary.operator) {
-                        .Plus => Value{ .integer = left_val + right_val },
-                        .Minus => Value{ .integer = left_val - right_val },
-                        .Star => Value{ .integer = left_val * right_val },
-                        .Slash => Value{ .float = @as(f64, @floatFromInt(left_val)) / @as(f64, @floatFromInt(right_val)) },
+                        .Plus => Value{ .Int = left_val + right_val },
+                        .Minus => Value{ .Int = left_val - right_val },
+                        .Star => Value{ .Int = left_val * right_val },
+                        .Slash => Value{ .Float = @as(f64, @floatFromInt(left_val)) / @as(f64, @floatFromInt(right_val)) },
                         else => return error.InvalidOperator,
                     };
                 }
             },
+            .Nothing => Value{ .Nothing = {} },
             .Declaration => |decl| {
                 const value = try self.evalNode(decl.value);
                 const key = try self.allocator.dupe(u8, decl.name);
@@ -150,9 +147,10 @@ pub const Interpreter = struct {
                 const value = try self.evalNode(print_node.expression);
                 const stdout = std.io.getStdOut().writer();
                 switch (value) {
-                    .integer => |n| try stdout.print("{d}", .{n}),
-                    .float => |n| try stdout.print("{d:.1}", .{n}),
-                    .string => |s| try stdout.print("{s}\n", .{s}),
+                    .Int => |n| try stdout.print("{d}", .{n}),
+                    .Float => |n| try stdout.print("{d:.1}", .{n}),
+                    .String => |s| try stdout.print("{s}\n", .{s}),
+                    .Nothing => try stdout.print("nothing\n", .{}),
                 }
                 return value;
             },
@@ -160,7 +158,7 @@ pub const Interpreter = struct {
                 try self.pushScope();
                 defer self.popScope();
 
-                var last_value: Value = Value{ .integer = 0 };
+                var last_value: Value = Value{ .Int = 0 };
                 for (block.statements) |stmt| {
                     last_value = try self.evalNode(stmt);
                 }
@@ -182,9 +180,10 @@ pub const Interpreter = struct {
         while (it.next()) |entry| {
             try stdout.print("  {s} = ", .{entry.key_ptr.*});
             switch (entry.value_ptr.value) {
-                .integer => |n| try stdout.print("{d}", .{n}),
-                .float => |n| try stdout.print("{d:.1}", .{n}),
-                .string => |s| try stdout.print("{s}", .{s}),
+                .Int => |n| try stdout.print("{d}", .{n}),
+                .Float => |n| try stdout.print("{d:.1}", .{n}),
+                .String => |s| try stdout.print("{s}", .{s}),
+                    .Nothing => try stdout.print("nothing\n", .{}),
             }
             try stdout.print("\n", .{});
         }
