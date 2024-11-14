@@ -134,23 +134,29 @@ pub const Parser = struct {
             self.advance(); // Consume type
         }
 
-        if (self.current_token.kind != .Equal) {
-            return Error.ExpectedEqual;
-        }
-        self.advance(); // Consume '='
+        var expr: *Node = undefined;
 
-        const expr = try self.parseExpression();
+        if (self.current_token.kind == .Equal) {
+            self.advance(); // Consume '='
+            expr = try self.parseExpression();
+        } else {
+            // No initializer provided; set the value to 'nothing'
+            expr = try self.allocator.create(Node);
+            expr.* = Node{ .Nothing = .{} };
+        }
+
         const new_node = try self.allocator.create(Node);
         new_node.* = Node{
             .Declaration = .{
                 .name = var_name,
                 .value = expr,
-                .typ = if (var_type != .Auto) var_type else .Auto,
+                .typ = var_type,
                 .is_mutable = is_mutable,
             },
         };
         return new_node;
     }
+
 
     fn parseAssignment(self: *Parser) !*Node {
         const var_name = self.current_token.lexeme;
