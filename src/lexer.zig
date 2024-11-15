@@ -246,7 +246,7 @@ pub const Lexer = struct {
         }
 
         const lexeme = self.source[start..self.current];
-        return Token{ .kind = .IntType, .lexeme = lexeme };
+        return Token{ .kind = .Number, .lexeme = lexeme };
     }
 
     fn string(self: *Lexer) Token {

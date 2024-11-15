@@ -135,6 +135,15 @@ pub const Interpreter = struct {
             .Binary => |binary| {
                 const left = try self.evalNode(binary.left);
                 const right = try self.evalNode(binary.right);
+
+                // Handle logical operators first
+                if (binary.operator == .And) {
+                    return try _and(left, right);
+                }
+                if (binary.operator == .Or) {
+                    return try _or(left, right);
+                }
+
                 const left_typ = binary.left.typ();
                 const right_typ = binary.right.typ();
 
@@ -152,19 +161,21 @@ pub const Interpreter = struct {
                         else => return error.TypeMismatch,
                     };
 
-                    return Value{ .Float = switch (binary.operator) {
-                        .Plus => left_val + right_val,
-                        .Minus => left_val - right_val,
-                        .Star => left_val * right_val,
-                        .Slash => left_val / right_val,
-                        .EqualEqual => {
-                            return if (left_val == right_val and left_typ == right_typ) Value{ .True = {} } else Value{ .False = {} };
-                        },
-                        .NotEqual => {
-                            return if (left_val != right_val or left_typ != right_typ) Value{ .True = {} } else Value{ .False = {} };
-                        },
-                        else => return error.InvalidOperator,
-                    } };
+                    return Value{ 
+                        .Float = switch (binary.operator) {
+                            .Plus => left_val + right_val,
+                            .Minus => left_val - right_val,
+                            .Star => left_val * right_val,
+                            .Slash => left_val / right_val,
+                            .EqualEqual => {
+                                return if (left_val == right_val and left_typ == right_typ) Value{ .True = {} } else Value{ .False = {} };
+                            },
+                            .NotEqual => {
+                                return if (left_val != right_val or left_typ != right_typ) Value{ .True = {} } else Value{ .False = {} };
+                            },
+                            else => return error.InvalidOperator,
+                        } 
+                    };
                 } else {
                     const left_val = left.Int;
                     const right_val = right.Int;
