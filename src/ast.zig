@@ -5,13 +5,9 @@ pub const Type = enum {
     Int,
     Float,
     String,
-    Array,
     Bool,
+    Array,
     Nothing,
-    True,
-    False,
-    And,
-    Or,
 };
 
 pub const Node = union(enum) {
@@ -72,7 +68,11 @@ pub const Node = union(enum) {
         operand: *Node,
         typ: Type,
     },
-    
+    If: struct {
+        condition: *Node,
+        then_branch: *Node,
+        else_branch: *Node,
+    },
 
     pub fn typ(self: *const Node) Type {
         return switch (self.*) {
@@ -92,6 +92,14 @@ pub const Node = union(enum) {
             .And => .Bool,
             .Or => .Bool,
             .Unary => |u| u.typ,
+            .If => |ifnode| {
+                const then_branch = ifnode.then_branch.typ();
+                const else_branch = ifnode.else_branch.typ();
+                if (then_branch == else_branch) {
+                    return then_branch;
+                }
+                return .Nothing;
+            },
         };
     }
 };

@@ -127,6 +127,19 @@ pub const Interpreter = struct {
 
     fn evalNode(self: *Interpreter, node: *Node) !Value {
         return switch (node.*) {
+            .If => |if_node| {
+                const condition_value = try self.evalNode(if_node.condition);
+                const is_true = switch (condition_value) {
+                    .True => true,
+                    .False => false,
+                    else => return error.InvalidConditionType,
+                };
+                if (is_true) {
+                    return try self.evalNode(if_node.then_branch);
+                } else {
+                    return try self.evalNode(if_node.else_branch);
+                }
+            },
             .Int => |i| Value{ .Int = i.value },
             .Float => |f| Value{ .Float = f.value },
             .String => |s| Value{ .String = s.value },

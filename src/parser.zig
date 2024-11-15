@@ -18,17 +18,25 @@ pub const Parser = struct {
         OutOfMemory,
         InvalidNumber,
         UnmatchedBrace,
-        EmptyConstantDeclaration
+        EmptyConstantDeclaration,
+        ExpectedLeftParen,
+        ExpectedRightParen,
+        ExpectedThen,
+        ExpectedElse,
+        InvalidAssignmentTarget,
     };
 
     lexer: *Lexer,
     current_token: Token,
     allocator: *std.mem.Allocator,
 
-    pub fn init(lexer: *Lexer, allocator: *std.mem.Allocator) Parser {
+    pub fn init(allocator: *std.mem.Allocator, lexer: *Lexer) Parser {
         var parser = Parser{
             .lexer = lexer,
-            .current_token = Token{ .kind = .EOF, .lexeme = "" },
+            .current_token = Token{
+                .kind = .EOF,
+                .lexeme = "",
+            },
             .allocator = allocator,
         };
         parser.advance();
@@ -80,7 +88,6 @@ pub const Parser = struct {
         var node: *Node = undefined;
 
         if (self.current_token.kind == .EOF) {
-            // Nothing to parse; return null or an appropriate value
             return error.EndOfFile;
         }
 
@@ -91,17 +98,14 @@ pub const Parser = struct {
             node = try self.parsePrintStatement();
         } else if (self.current_token.kind == .Var or self.current_token.kind == .Const) {
             node = try self.parseVariableDeclaration();
-        } else if (self.current_token.kind == .Identifier and self.peekToken().kind == .Equal) {
-            node = try self.parseAssignment();
         } else {
             node = try self.parseExpression();
         }
 
-        // Expect semicolon after the statement
         if (self.current_token.kind != .Semicolon) {
             return Error.ExpectedSemicolon;
         }
-        self.advance(); // Consume ';'
+        self.advance();
 
         return node;
     }
@@ -187,31 +191,6 @@ pub const Parser = struct {
         return new_node;
     }
 
-    fn parseAssignment(self: *Parser) !*Node {
-        const var_name = self.current_token.lexeme;
-        self.advance(); // Consume identifier
-
-        if (self.current_token.kind != .Equal) {
-            return Error.ExpectedEqual;
-        }
-        self.advance(); // Consume '='
-
-        const expr = try self.parseExpression();
-        const new_node = try self.allocator.create(Node);
-        new_node.* = Node{
-            .Assignment = .{
-                .name = var_name,
-                .value = expr,
-                .typ = .Auto,
-            },
-        };
-        return new_node;
-    }
-
-    pub fn parseExpression(self: *Parser) Error!*Node {
-        return self.parseUnary();
-    }
-
     fn parseUnary(self: *Parser) Error!*Node {
         if (self.match(.Bang)) {
             const expr = try self.parseUnary();
@@ -239,6 +218,83 @@ pub const Parser = struct {
         return self.parseLogical();
     }
 
+    fn parseExpression(self: *Parser) Error!*Node {
+        return self.parseAssignment();
+    }
+
+    fn parseAssignment(self: *Parser) Error!*Node {
+        const node = try self.parseIfExpression();
+
+        if (self.match(.Equal)) {
+            // Ensure that the left-hand side is a valid assignment target
+            if (node.* != .Variable) {
+                return Error.InvalidAssignmentTarget;
+            }
+            const value = try self.parseAssignment();
+            const assignment_node = try self.allocator.create(Node);
+            assignment_node.* = Node{
+                .Assignment = .{
+                    .name = node.Variable.name,
+                    .value = value,
+                    .typ = .Auto,
+                },
+            };
+            return assignment_node;
+        }
+
+        return node;
+    }
+
+    fn parseIfExpression(self: *Parser) Error!*Node {
+        if (self.match(.If)) {
+            if (!self.match(.LeftParen)) {
+                return error.ExpectedLeftParen;
+            }
+
+            const condition = try self.parseExpression();
+
+            if (!self.match(.RightParen)) {
+                return error.ExpectedRightParen;
+            }
+
+            if (!self.match(.Then)) {
+                return error.ExpectedThen;
+            }
+
+            const then_branch = try self.parseThenOrElseBranch();
+
+            var else_branch: *Node = undefined;
+            if (self.match(.Else)) {
+                else_branch = try self.parseThenOrElseBranch();
+            } else {
+                // If no else branch, default to 'nothing'
+                else_branch = try self.allocator.create(Node);
+                else_branch.* = Node{ .Nothing = .{} };
+            }
+
+            const if_node = try self.allocator.create(Node);
+            if_node.* = .{
+                .If = .{
+                    .condition = condition,
+                    .then_branch = then_branch,
+                    .else_branch = else_branch,
+                },
+            };
+            return if_node;
+        } else {
+            return self.parseLogical();
+        }
+    }
+
+    // New helper function
+    fn parseThenOrElseBranch(self: *Parser) Error!*Node {
+        if (self.current_token.kind == .LeftBrace) {
+            return self.parseBlock();
+        } else {
+            return self.parseExpression();
+        }
+    }
+
     fn parseLogical(self: *Parser) Error!*Node {
         var node = try self.parseEquality();
 
@@ -257,6 +313,12 @@ pub const Parser = struct {
             };
             node = new_node;
         }
+
+        // Stop parsing if we encounter an 'Else' token
+        if (self.current_token.kind == .Else) {
+            return node;
+        }
+
         return node;
     }
 

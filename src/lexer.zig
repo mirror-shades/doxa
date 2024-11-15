@@ -30,6 +30,9 @@ pub const TokenKind = enum {
     NotEqual, // '!='
     And, // 'and'
     Or, // 'or'
+    If, // 'if'
+    Then, // 'then'
+    Else, // 'else'
 
     // Keywords and identifiers
     Identifier, // [a-zA-Z_][a-zA-Z0-9_]*
@@ -138,7 +141,7 @@ pub const Lexer = struct {
 
         if (std.ascii.isDigit(c)) {
             self.current -= 1; // Step back to include the digit
-            return self.int();
+            return self.number();
         } else if (std.ascii.isAlphabetic(c) or c == '_') {
             self.current -= 1; // Step back to include the character
             return self.identifier();
@@ -222,6 +225,12 @@ pub const Lexer = struct {
             TokenKind.And
         else if (std.mem.eql(u8, lexeme, "or"))
             TokenKind.Or
+        else if (std.mem.eql(u8, lexeme, "if"))
+            TokenKind.If
+        else if (std.mem.eql(u8, lexeme, "then"))
+            TokenKind.Then
+        else if (std.mem.eql(u8, lexeme, "else"))
+            TokenKind.Else
         else if (std.mem.eql(u8, lexeme, "true"))
             TokenKind.True
         else if (std.mem.eql(u8, lexeme, "false"))
@@ -235,23 +244,17 @@ pub const Lexer = struct {
     }
 
     fn isIdentifierChar(_: *Lexer, c: u8) bool {
-        return std.ascii.isAlphabetic(c) or std.ascii.isDigit(c) or c == '_';
+        return std.ascii.isAlphanumeric(c) or c == '_';
     }
 
-    fn int(self: *Lexer) Token {
+    fn number(self: *Lexer) Token {
         const start = self.current;
-
-        // Process digits before decimal point
         while (!self.isAtEnd() and std.ascii.isDigit(self.source[self.current])) {
             self.current += 1;
         }
 
-        // Look for decimal point
         if (!self.isAtEnd() and self.source[self.current] == '.') {
-            // Consume the decimal point
-            self.current += 1;
-
-            // Process digits after decimal point
+            self.current += 1; // Consume the '.'
             while (!self.isAtEnd() and std.ascii.isDigit(self.source[self.current])) {
                 self.current += 1;
             }

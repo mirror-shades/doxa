@@ -49,7 +49,7 @@ pub fn main() !void {
     var lexer = Lexer.init(source_code);
 
     // Initialize the parser
-    var parser = Parser.init(&lexer, &allocator);
+    var parser = Parser.init(&allocator, &lexer);
 
     // Initialize the interpreter once
     var interpreter = try Interpreter.init(&allocator);

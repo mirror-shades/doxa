@@ -20,7 +20,7 @@ pub fn startREPL(allocator: *std.mem.Allocator) !void {
         }
 
         var lexer = Lexer.init(line);
-        var parser = Parser.init(&lexer, allocator);
+        var parser = Parser.init(allocator, &lexer);
 
         const ast = parser.parseStatement() catch |err| {
             if (err == error.EndOfFile) continue;
