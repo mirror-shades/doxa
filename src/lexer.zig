@@ -22,6 +22,8 @@ pub const TokenKind = enum {
     False, // 'false'
     LeftBracket, // '['
     RightBracket, // ']'
+    Ampersand, // '&'
+    Pipe, // '|'
 
     // Comparison operators
     EqualEqual, // '=='
@@ -86,6 +88,22 @@ pub const Lexer = struct {
                     return self.nextToken(); // Get the next token after the comment
                 } else {
                     return Token{ .kind = .Slash, .lexeme = "/" };
+                }
+            },
+            '&' => {
+                if (!self.isAtEnd() and self.peekChar() == '&') {
+                    _ = self.advance(); // Consume the second '&'
+                    return Token{ .kind = .And, .lexeme = "and" };
+                } else {
+                    return Token{ .kind = .Ampersand, .lexeme = "&" };
+                }
+            },
+            '|' => {
+                if (!self.isAtEnd() and self.peekChar() == '|') {
+                    _ = self.advance(); // Consume the second '|'
+                    return Token{ .kind = .Or, .lexeme = "or" };
+                } else {
+                    return Token{ .kind = .Pipe, .lexeme = "|" };
                 }
             },
             '(' => return Token{ .kind = .LeftParen, .lexeme = "(" },

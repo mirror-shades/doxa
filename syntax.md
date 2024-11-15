@@ -135,3 +135,7 @@ no cross-type assignments are allowed for strict variables
 var x: auto = 5;          //int
 x = "five";               //error, given value does not match type int
 ```
+
+## General syntax
+
+both `||` and `&&` are supported alongside `and` and `or`. a clarity warning is given if both are used in the same file.
