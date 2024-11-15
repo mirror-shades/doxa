@@ -132,6 +132,18 @@ pub const Interpreter = struct {
             .String => |s| Value{ .String = s.value },
             .True => Value{ .True = {} },
             .False => Value{ .False = {} },
+            .Unary => |u| {
+                const operand = try self.evalNode(u.operand);
+                return switch (u.operator) {
+                    .Minus => switch (operand) {
+                        .Int => |i| Value{ .Int = -i },
+                        .Float => |f| Value{ .Float = -f },
+                        else => return error.InvalidOperator,
+                    },
+                    .Bang => if (operand == .True) Value{ .False = {} } else Value{ .True = {} },
+                    else => return error.InvalidOperator,
+                };
+            },
             .Binary => |binary| {
                 const left = try self.evalNode(binary.left);
                 const right = try self.evalNode(binary.right);
