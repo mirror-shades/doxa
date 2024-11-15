@@ -39,6 +39,7 @@ pub const Parser = struct {
         self.current_token = self.lexer.nextToken();
     }
 
+
     fn peekToken(self: *Parser) Token {
         // Save the current lexer state
         const saved_current = self.lexer.current;
@@ -208,6 +209,33 @@ pub const Parser = struct {
     }
 
     pub fn parseExpression(self: *Parser) Error!*Node {
+        return self.parseUnary();
+    }
+
+    fn parseUnary(self: *Parser) Error!*Node {
+        if (self.match(.Bang)) {
+            const expr = try self.parseUnary();
+            const new_node = try self.allocator.create(Node);
+            new_node.* = Node{
+                .Unary = .{
+                    .operator = .Bang,
+                    .operand = expr,
+                    .typ = .Bool,
+                },
+            };
+            return new_node;
+        } else if (self.match(.Minus)) {
+            const expr = try self.parseUnary();
+            const new_node = try self.allocator.create(Node);
+            new_node.* = Node{
+                .Unary = .{
+                    .operator = .Minus,
+                    .operand = expr,
+                    .typ = expr.typ(),
+                },
+            };
+            return new_node;
+        }
         return self.parseLogical();
     }
 

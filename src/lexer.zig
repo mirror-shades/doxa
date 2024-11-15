@@ -114,7 +114,7 @@ pub const Lexer = struct {
             '}' => return Token{ .kind = .RightBrace, .lexeme = "}" },
             '=' => {
                 if (!self.isAtEnd() and self.peekChar() == '=') {
-                    _ = self.advance(); // Consume the second '='
+                    _ = self.advance();
                     return Token{ .kind = .EqualEqual, .lexeme = "==" };
                 } else {
                     return Token{ .kind = .Equal, .lexeme = "=" };
@@ -122,10 +122,9 @@ pub const Lexer = struct {
             },
             '!' => {
                 if (!self.isAtEnd() and self.peekChar() == '=') {
-                    _ = self.advance(); // Consume the second '='
+                    _ = self.advance(); 
                     return Token{ .kind = .NotEqual, .lexeme = "!=" };
                 } else {
-                    // Handle '!' alone if needed
                     return Token{ .kind = .Bang, .lexeme = "!" };
                 }
             },

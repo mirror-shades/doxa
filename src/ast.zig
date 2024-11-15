@@ -67,6 +67,12 @@ pub const Node = union(enum) {
         left: *Node,
         right: *Node,
     },
+    Unary: struct {
+        operator: TokenKind,
+        operand: *Node,
+        typ: Type,
+    },
+    
 
     pub fn typ(self: *const Node) Type {
         return switch (self.*) {
@@ -85,6 +91,7 @@ pub const Node = union(enum) {
             .Array => |arr| arr.typ,
             .And => .Bool,
             .Or => .Bool,
+            .Unary => |u| u.typ,
         };
     }
 };
