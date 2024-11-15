@@ -142,10 +142,25 @@ def test_array():
     print("got: ", stdout)
     print("✅ test_array passed")
 
-def test_equality_bools_true():
-    stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_equality_bools_true.doxa'))
+def test_and_bools_true():
+    stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_and_bools_true.doxa'))
     assert stdout == 'true', f"Expected 'true', but got '{stdout}'"
-    print("✅ test_equality_bools_true passed")
+    print("✅ test_and_bools_true passed")
+
+def test_and_bools_false():
+    stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_and_bools_false.doxa'))
+    assert stdout == 'false', f"Expected 'false', but got '{stdout}'"
+    print("✅ test_and_bools_false passed")
+
+def test_or_bools_true():
+    stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_or_bools_true.doxa'))
+    assert stdout == 'true', f"Expected 'true', but got '{stdout}'"
+    print("✅ test_or_bools_true passed")   
+
+def test_or_bools_false():
+    stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_or_bools_false.doxa'))
+    assert stdout == 'false', f"Expected 'false', but got '{stdout}'"
+    print("✅ test_or_bools_false passed")
 
 ########################################################
 
@@ -210,7 +225,10 @@ def run_all_tests():
         ("inequality false", test_inequality_false),
         ("inequality true", test_inequality_true),
         ("reassign string", test_reassign_string),
-        ("equality bools true", test_equality_bools_true),
+        ("and bools true", test_and_bools_true),
+        ("and bools false", test_and_bools_false),
+        ("or bools true", test_or_bools_true),
+        ("or bools false", test_or_bools_false),
     ]
     
     negative_tests = [

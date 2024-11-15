@@ -9,8 +9,7 @@ pub const TokenKind = enum {
     LeftParen, // '('
     RightParen, // ')'
     Equal, // '='
-    EqualEqual, // '=='
-    NotEqual, // '!='
+    Bang, // '!'
     Colon, // ':'
     Semicolon, // ';'
     LeftBrace, // '{'
@@ -23,6 +22,10 @@ pub const TokenKind = enum {
     False, // 'false'
     LeftBracket, // '['
     RightBracket, // ']'
+
+    // Comparison operators
+    EqualEqual, // '=='
+    NotEqual, // '!='
     And, // 'and'
     Or, // 'or'
 
@@ -76,10 +79,21 @@ pub const Lexer = struct {
             '+' => return Token{ .kind = .Plus, .lexeme = "+" },
             '-' => return Token{ .kind = .Minus, .lexeme = "-" },
             '*' => return Token{ .kind = .Star, .lexeme = "*" },
+            '/' => {
+                if (!self.isAtEnd() and self.peekChar() == '/') {
+                    _ = self.advance(); // Consume the second '/'
+                    self.skipComment(); // Skip the comment
+                    return self.nextToken(); // Get the next token after the comment
+                } else {
+                    return Token{ .kind = .Slash, .lexeme = "/" };
+                }
+            },
             '(' => return Token{ .kind = .LeftParen, .lexeme = "(" },
             ')' => return Token{ .kind = .RightParen, .lexeme = ")" },
             '[' => return Token{ .kind = .LeftBracket, .lexeme = "[" },
             ']' => return Token{ .kind = .RightBracket, .lexeme = "]" },
+            '{' => return Token{ .kind = .LeftBrace, .lexeme = "{" },
+            '}' => return Token{ .kind = .RightBrace, .lexeme = "}" },
             '=' => {
                 if (!self.isAtEnd() and self.peekChar() == '=') {
                     _ = self.advance(); // Consume the second '='
@@ -92,45 +106,16 @@ pub const Lexer = struct {
                 if (!self.isAtEnd() and self.peekChar() == '=') {
                     _ = self.advance(); // Consume the second '='
                     return Token{ .kind = .NotEqual, .lexeme = "!=" };
+                } else {
+                    // Handle '!' alone if needed
+                    return Token{ .kind = .Bang, .lexeme = "!" };
                 }
             },
             ':' => return Token{ .kind = .Colon, .lexeme = ":" },
             ';' => return Token{ .kind = .Semicolon, .lexeme = ";" },
-            '{' => return Token{ .kind = .LeftBrace, .lexeme = "{" },
-            '}' => return Token{ .kind = .RightBrace, .lexeme = "}" },
             ',' => return Token{ .kind = .Comma, .lexeme = "," },
             '.' => return Token{ .kind = .Dot, .lexeme = "." },
-            '/' => {
-                if (!self.isAtEnd() and self.peekChar() == '/') {
-                    _ = self.advance(); // Consume the second '/'
-                    self.skipComment(); // Skip the comment
-                    return self.nextToken(); // Get the next token after the comment
-                } else {
-                    return Token{ .kind = .Slash, .lexeme = "/" };
-                }
-            },
             '"' => return self.string(),
-            '\n' => return Token{ .kind = .Newline, .lexeme = "\n" },
-            't' => {
-                if (std.mem.eql(u8, self.peekWord(), "rue")) {
-                    return Token{ .kind = .True, .lexeme = "true" };
-                }
-            },
-            'f' => {
-                if (std.mem.eql(u8, self.peekWord(), "alse")) {
-                    return Token{ .kind = .False, .lexeme = "false" };
-                }
-            },
-            'a' => {
-                if (std.mem.eql(u8, self.peekWord(), "nd")) {
-                    return Token{ .kind = .And, .lexeme = "and" };
-                }
-            },
-            'o' => {
-                if (std.mem.eql(u8, self.peekWord(), "r")) {
-                    return Token{ .kind = .Or, .lexeme = "or" };
-                }
-            },
             else => {},
         }
 
@@ -201,7 +186,7 @@ pub const Lexer = struct {
         }
         const lexeme = self.source[start..self.current];
 
-        // Replace string switch with if-else comparisons
+        // Include all keywords in the checks
         const token_kind = if (std.mem.eql(u8, lexeme, "var"))
             TokenKind.Var
         else if (std.mem.eql(u8, lexeme, "const"))
@@ -216,6 +201,16 @@ pub const Lexer = struct {
             TokenKind.StringType
         else if (std.mem.eql(u8, lexeme, "bool"))
             TokenKind.BoolType
+        else if (std.mem.eql(u8, lexeme, "and"))
+            TokenKind.And
+        else if (std.mem.eql(u8, lexeme, "or"))
+            TokenKind.Or
+        else if (std.mem.eql(u8, lexeme, "true"))
+            TokenKind.True
+        else if (std.mem.eql(u8, lexeme, "false"))
+            TokenKind.False
+        else if (std.mem.eql(u8, lexeme, "nothing"))
+            TokenKind.Nothing
         else
             TokenKind.Identifier;
 
