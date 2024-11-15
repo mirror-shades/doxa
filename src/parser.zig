@@ -219,10 +219,13 @@ pub const Parser = struct {
             self.advance();
             const right = try self.parseEquality();
             const new_node = try self.allocator.create(Node);
-            new_node.* = switch (op) {
-                .And => Node{ .And = .{ .left = node, .right = right } },
-                .Or => Node{ .Or = .{ .left = node, .right = right } },
-                else => unreachable,
+            new_node.* = Node{
+                .Binary = .{
+                    .left = node,
+                    .operator = op,
+                    .right = right,
+                    .typ = .Bool,
+                },
             };
             node = new_node;
         }
@@ -295,12 +298,12 @@ pub const Parser = struct {
 
     fn parsePrimary(self: *Parser) Error!*Node {
         switch (self.current_token.kind) {
-            .IntType => {
+            .Number => {
                 const lexeme = self.current_token.lexeme;
                 const new_node = try self.allocator.create(Node);
 
                 // Check if the lexeme contains a decimal point
-                if (std.mem.indexOf(u8, lexeme, ".")) |_| {
+                if (std.mem.indexOfScalar(u8, lexeme, '.')) |_| {
                     // Parse as float
                     const value = std.fmt.parseFloat(f64, lexeme) catch |err| switch (err) {
                         error.InvalidCharacter => return Error.InvalidNumber,
