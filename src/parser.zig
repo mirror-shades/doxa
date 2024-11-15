@@ -215,7 +215,7 @@ pub const Parser = struct {
             };
             return new_node;
         }
-        return self.parseLogical();
+        return self.parsePrimary();
     }
 
     fn parseExpression(self: *Parser) Error!*Node {
@@ -247,18 +247,11 @@ pub const Parser = struct {
 
     fn parseIfExpression(self: *Parser) Error!*Node {
         if (self.match(.If)) {
-            if (!self.match(.LeftParen)) {
-                return error.ExpectedLeftParen;
-            }
 
             const condition = try self.parseExpression();
 
-            if (!self.match(.RightParen)) {
-                return error.ExpectedRightParen;
-            }
-
             if (!self.match(.Then)) {
-                return error.ExpectedThen;
+                return Error.ExpectedThen;
             }
 
             const then_branch = try self.parseThenOrElseBranch();
@@ -286,7 +279,6 @@ pub const Parser = struct {
         }
     }
 
-    // New helper function
     fn parseThenOrElseBranch(self: *Parser) Error!*Node {
         if (self.current_token.kind == .LeftBrace) {
             return self.parseBlock();
@@ -340,6 +332,12 @@ pub const Parser = struct {
             };
             node = new_node;
         }
+
+        // Stop parsing if we encounter 'Then', 'Else', or ')'
+        if (self.current_token.kind == .Then or self.current_token.kind == .Else or self.current_token.kind == .RightParen) {
+            return node;
+        }
+
         return node;
     }
 
@@ -361,28 +359,39 @@ pub const Parser = struct {
             };
             node = new_node;
         }
+
+        // Stop parsing if we encounter 'Then', 'Else', or ')'
+        if (self.current_token.kind == .Then or self.current_token.kind == .Else or self.current_token.kind == .RightParen) {
+            return node;
+        }
+
         return node;
     }
 
     fn parseFactor(self: *Parser) Error!*Node {
-        var node = try self.parsePrimary();
+        var node = try self.parseUnary();
 
         while (self.current_token.kind == .Star or self.current_token.kind == .Slash) {
             const op = self.current_token.kind;
             self.advance();
-            const right = try self.parsePrimary();
+            const right = try self.parseUnary();
             const new_node = try self.allocator.create(Node);
             new_node.* = Node{
                 .Binary = .{
                     .left = node,
                     .operator = op,
                     .right = right,
-                    // this will force the type to be float if any of the operands is a float
                     .typ = if (node.typ() == .Float or right.typ() == .Float or op == .Slash) Type.Float else Type.Int,
                 },
             };
             node = new_node;
         }
+
+        // Stop parsing if we encounter 'Then', 'Else', or ')'
+        if (self.current_token.kind == .Then or self.current_token.kind == .Else or self.current_token.kind == .RightParen) {
+            return node;
+        }
+
         return node;
     }
 
@@ -483,7 +492,7 @@ pub const Parser = struct {
                     const element = try self.parseExpression();
                     try elements.append(element);
 
-                    if (!self.match(.Comma) and !self.check(.RightBracket)) {
+                    if (!self.match(.Comma) and !self.check(.RightBracket) ) {
                         return Error.UnexpectedToken;
                     }
                 }
