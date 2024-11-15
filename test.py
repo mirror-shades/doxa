@@ -33,113 +33,91 @@ def test_print():
     
     stdout, stderr = run_doxa(file_path)
     assert stdout == '5', f"Expected '5', but got '{stdout}'"
-    print("expected: 5")
-    print("got: ", stdout)
     print("✅ test_print passed")
 
 def test_offset_semicolon():
     stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_offset_semicolon.doxa'))
     assert stdout == '5', f"Expected '5', but got '{stdout}'"
-    print("expected: 5")
-    print("got: ", stdout)
     print("✅ test_offset_semicolon passed")
 
 def test_math():
     stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_math.doxa'))
     assert stdout == '5.0', f"Expected '5.0', but got '{stdout}'"
-    print("expected: 5.0")
-    print("got: ", stdout)
     print("✅ test_math passed")
 
 def test_var_num():
     stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_var_num.doxa'))
     assert stdout == '5', f"Expected '5', but got '{stdout}'"
-    print("expected: 5")
-    print("got: ", stdout)
     print("✅ test_var_num passed")
 
 def test_const_num():
     stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_const_num.doxa'))
     assert stdout == '5', f"Expected '5', but got '{stdout}'"
-    print("expected: 5")
-    print("got: ", stdout)
     print("✅ test_const_num passed")
 
 def test_var_change():
     stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_var_change.doxa'))
     assert stdout == '5', f"Expected '5', but got '{stdout}'"
-    print("expected: 5")
-    print("got: ", stdout)
     print("✅ test_var_change passed")
 
 def test_bracket_scope():
     stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_bracket_scope.doxa'))
     assert stdout == '5', f"Expected '5', but got '{stdout}'"
-    print("expected: 5")
-    print("got: ", stdout)
     print("✅ test_bracket_scope passed")
 
 def test_var_str():
     stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_var_str.doxa'))
     assert stdout == 'five', f"Expected 'five', but got '{stdout}'"
-    print("expected: five")
-    print("got: ", stdout)
     print("✅ test_var_str passed")
+
+def test_comments():
+    stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_comments.doxa'))
+    assert stdout == '5', f"Expected '5', but got '{stdout}'"
+    print("✅ test_comments passed")
+
+def test_reassign_string():
+    stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_reassign_string.doxa'))
+    assert stdout == 'five', f"Expected 'five', but got '{stdout}'"
+    print("✅ test_reassign_string passed")
 
 def test_const_float():
     stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_const_float.doxa'))
     assert stdout == '5.5', f"Expected '5.5', but got '{stdout}'"
-    print("expected: 5.5")
-    print("got: ", stdout)
     print("✅ test_const_float passed")
 
 def test_div_noremain():
     stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_div_noremain.doxa'))
     assert stdout == '5.0', f"Expected '5.0', but got '{stdout}'"
-    print("expected: 5.0")
-    print("got: ", stdout)
     print("✅ test_div_noremain passed")
 
 def test_var_assign_nothing():
     stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_var_assign_nothing.doxa'))
     assert stdout == 'nothing', f"Expected 'nothing', but got '{stdout}'"
-    print("expected: nothing")
-    print("got: ", stdout)
     print("✅ test_var_assign_nothing passed")
 
 def test_equality_true():
     stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_equality_true.doxa'))
     assert stdout == 'true', f"Expected 'true', but got '{stdout}'"
-    print("expected: true")
-    print("got: ", stdout)
     print("✅ test_equality_true passed")
 
 def test_equality_false():
     stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_equality_false.doxa'))
     assert stdout == 'false', f"Expected 'false', but got '{stdout}'"
-    print("expected: false")
-    print("got: ", stdout)
     print("✅ test_equality_false passed")
 
 def test_inequality_true():
     stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_inequality_true.doxa'))
     assert stdout == 'true', f"Expected 'true', but got '{stdout}'"
-    print("expected: true")
-    print("got: ", stdout)
     print("✅ test_inequality_true passed")
 
 def test_inequality_false():
     stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_inequality_false.doxa'))
     assert stdout == 'false', f"Expected 'false', but got '{stdout}'"
-    print("expected: false")
-    print("got: ", stdout)
     print("✅ test_inequality_false passed")
 
 def test_array():
     stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_array.doxa'))
     assert stdout == '[1, 2, 3]', f"Expected '[1, 2, 3]', but got '{stdout}'"
-    print("expected: [1, 2, 3]")
-    print("got: ", stdout)
     print("✅ test_array passed")
 
 def test_and_bools_true():
@@ -161,6 +139,18 @@ def test_or_bools_false():
     stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_or_bools_false.doxa'))
     assert stdout == 'false', f"Expected 'false', but got '{stdout}'"
     print("✅ test_or_bools_false passed")
+
+def test_if_else_true_unscoped():
+    stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_if_else_true_unscoped.doxa'))
+    assert stdout == '5', f"Expected '5', but got '{stdout}'"
+    print("✅ test_if_else_true_unscoped passed")
+
+def test_if_else_true_scoped():
+    stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_if_else_true_scoped.doxa'))
+    assert stdout == '5', f"Expected '5', but got '{stdout}'"
+    print("✅ test_if_else_true_scoped passed")
+
+
 
 ########################################################
 
@@ -190,19 +180,6 @@ def test_const_assign_nothing():
     assert stderr != "", f"Expected error, but got: '{stdout}'"
     print("✅ test_const_assign_nothing passed")
 
-def test_comments():
-    stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_comments.doxa'))
-    assert stdout == '5', f"Expected '5', but got '{stdout}'"
-    print("expected: 5")
-    print("got: ", stdout)
-    print("✅ test_comments passed")
-
-def test_reassign_string():
-    stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_reassign_string.doxa'))
-    assert stdout == 'five', f"Expected 'five', but got '{stdout}'"
-    print("expected: five")
-    print("got: ", stdout)
-    print("✅ test_reassign_string passed")
 
 ########################################################
 
@@ -229,6 +206,8 @@ def run_all_tests():
         ("and bools false", test_and_bools_false),
         ("or bools true", test_or_bools_true),
         ("or bools false", test_or_bools_false),
+        ("if else true unscoped", test_if_else_true_unscoped),
+        ("if else true scoped", test_if_else_true_scoped),
     ]
     
     negative_tests = [
