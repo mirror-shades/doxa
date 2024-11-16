@@ -1,5 +1,7 @@
 const std = @import("std");
 const Lexer = @import("lexer.zig").Lexer;
+const Parser = @import("parser.zig").Parser;
+
 const EXIT_CODE_USAGE = 64;
 const EXIT_CODE_ERROR = 65;
 const MAX_REPL_LINE_LENGTH = 1024;
@@ -50,7 +52,6 @@ pub fn reportError(line: usize, where: []const u8, message: []const u8) void {
 fn run(allocator: std.mem.Allocator, source: []const u8) !void {
     // init lexer
     var lexer = Lexer.init(allocator, source);
-    // load keywords into a static map
     try lexer.initKeywords();
     defer lexer.deinit();
 
@@ -77,6 +78,26 @@ fn run(allocator: std.mem.Allocator, source: []const u8) !void {
         },
         else => |e| return e,
     };
+
+
+    // Parser
+    var parser = Parser.init(allocator, tokens.items);
+    defer parser.deinit();
+    const ast = parser.parse() catch |err| {
+        reportError(parser.tokens[parser.current].line, "", "Parsing error.");
+        return err;
+    };
+    _ = ast;
+
+    // // Code Generator
+    // var code_generator = CodeGenerator.init(allocator);
+    // defer code_generator.deinit();
+
+    // try code_generator.generate(ast);
+
+    // Optionally, you can now execute the instructions with a virtual machine
+    // var vm = VM.init(code_generator.instructions.toOwnedSlice());
+    // try vm.run();
     
     // Debug print all tokens
     for (tokens.items) |tok| {
