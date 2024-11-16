@@ -37,34 +37,37 @@ pub const TokenType = enum {
     LESS_EQUAL,     // <=
 
     // keywords
-    VAR,
-    CONST,
-    FUNCTION,
-    RETURN,
-    BREAK,
-    CONTINUE,
-    THROW,
-    TRY,
-    CATCH,
-    WHILE,
-    FOR,
-    FOREACH,
-    IN,
+    VAR,            // var
+    CONST,          // const
+    FUNCTION,       // function
+    RETURN,         // return
+    BREAK,          // break
+    CONTINUE,       // continue
+    THROW,          // throw
+    TRY,            // try
+    CATCH,          // catch
+    WHILE,          // while
+    FOR,            // for
+    FOREACH,        // foreach
+    IN,             // in
 
     // logical operators
-    IF,
-    THEN,
-    ELSE,
-    AND,
-    OR,
+    IF,             // if
+    THEN,           // then
+    ELSE,           // else
+    AND,            // and
+    OR,             // or
 
     // literals
+    ASSIGN,         // =
     IDENTIFIER,  // identifier
     INT,         // integer
     FLOAT,       // float
     STRING,      // string
     ARRAY,       // array
-    BOOL,       // boolean
+    BOOL,          // boolean
+    AUTO,          // auto
+    NOTHING,       // nothing
 
     EOF
 };
@@ -94,9 +97,8 @@ pub const Token = struct {
         };
     }
 
-    pub fn toString(self: Token, allocator: std.mem.Allocator) ![]const u8 {
+    pub fn toString(self: Token) ![]const u8 {
         return std.fmt.allocPrint(
-            allocator,
             "{} {} {}",
             .{ self.type, self.lexeme, self.literal }
         );
