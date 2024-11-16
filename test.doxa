@@ -1,5 +1,5 @@
 /
-// hello world
+// everything following the SLASH_SLASH is a comment and will be ignored by the lexer
 /=
 (
 )
