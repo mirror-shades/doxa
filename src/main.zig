@@ -8,6 +8,7 @@ const MAX_REPL_LINE_LENGTH = 1024;
 const DOXA_EXTENSION = ".doxa";
 
 var hadError: bool = false;
+var debugLexer: bool = false;
 
 pub const LexerError = error{
     UnterminatedString,
@@ -79,15 +80,14 @@ fn run(allocator: std.mem.Allocator, source: []const u8) !void {
         else => |e| return e,
     };
 
-
     // Parser
-    var parser = Parser.init(allocator, tokens.items);
-    defer parser.deinit();
-    const ast = parser.parse() catch |err| {
-        reportError(parser.tokens[parser.current].line, "", "Parsing error.");
-        return err;
-    };
-    _ = ast;
+    // var parser = Parser.init(allocator, tokens.items);
+    // defer parser.deinit();
+    // const ast = parser.parse() catch |err| {
+    //     reportError(parser.tokens[parser.current].line, "", "Parsing error.");
+    //     return err;
+    // };
+    // _ = ast;
 
     // // Code Generator
     // var code_generator = CodeGenerator.init(allocator);
@@ -98,11 +98,13 @@ fn run(allocator: std.mem.Allocator, source: []const u8) !void {
     // Optionally, you can now execute the instructions with a virtual machine
     // var vm = VM.init(code_generator.instructions.toOwnedSlice());
     // try vm.run();
-    
-    // Debug print all tokens
-    for (tokens.items) |tok| {
-        std.debug.print("Token: {any} '{s}'\n", .{ tok.type, tok.lexeme });
+
+    if (debugLexer) {
+        for (tokens.items) |tok| {
+            std.debug.print("Token: {any} '{s}' {any}\n", .{ tok.type, tok.lexeme, tok.literal });
+        }
     }
+
 }
 
 
@@ -136,17 +138,29 @@ pub fn main() !void {
         if (leaked == .leak) std.debug.print("Warning: Memory leak detected!\n", .{});
     }
     const allocator = gpa.allocator();
-    const args = try std.process.argsAlloc(allocator);
+ const args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);
-    if (args.len > 2) {
-        std.debug.print("Usage: doxa [script]\n", .{});
-        std.process.exit(EXIT_CODE_USAGE);
-    } else if (args.len == 2) {
-        if (!std.mem.endsWith(u8, args[1], DOXA_EXTENSION)) {
-            std.debug.print("Error: {s} is not a doxa file\n", .{args[1]});
+    // Skip the executable name
+    var script_path: ?[]const u8 = null;
+    var i: usize = 1;
+    while (i < args.len) : (i += 1) {
+        if (std.mem.eql(u8, args[i], "--debug-lexer")) {
+            debugLexer = true;
+        } else {
+            // Assume it's a script path
+            if (script_path != null) {
+                std.debug.print("Usage: doxa [--debug-lexer] [script]\n", .{});
+                std.process.exit(EXIT_CODE_USAGE);
+            }
+            script_path = args[i];
+        }
+    }
+    if (script_path) |path| {
+        if (!std.mem.endsWith(u8, path, DOXA_EXTENSION)) {
+            std.debug.print("Error: {s} is not a doxa file\n", .{path});
             std.process.exit(EXIT_CODE_USAGE);
         }
-        try runFile(allocator, args[1]);
+        try runFile(allocator, path);
     } else {
         try runRepl(allocator);
     }

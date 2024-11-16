@@ -64,6 +64,7 @@ pub const Lexer = struct {
         try self.keywords.put("catch", .CATCH);
         try self.keywords.put("and", .AND);
         try self.keywords.put("or", .OR);
+        try self.keywords.put("nothing", .NOTHING);
     }
 
     // ========add token========
@@ -136,8 +137,11 @@ pub const Lexer = struct {
                     while (!self.isAtEnd() and self.peek() != '\n') {
                         self.advance();
                     }
-                } else if (self.peekChar('=')) {
-                    self.advance();  // consume the equals
+                    if (!self.isAtEnd() and self.peek() == '\n') {
+                        self.line += 1;
+                        self.advance();
+                    }
+                } else if (self.match('=')) {
                     try self.addMinimalToken(.SLASH_EQUAL);
                 } else {
                     try self.addMinimalToken(.SLASH);
