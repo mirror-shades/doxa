@@ -1,5 +1,6 @@
 /
 // hello world
+/=
 (
 )
 {
@@ -55,4 +56,5 @@ myVariable
 3.14
 "hello"
 true
+nothing
 [1, 2, 3]
