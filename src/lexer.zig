@@ -1,280 +1,360 @@
 const std = @import("std");
 
-pub const TokenKind = enum {
-    // Single-character tokens
-    Plus, // '+'
-    Minus, // '-'
-    Star, // '*'
-    Slash, // '/'
-    LeftParen, // '('
-    RightParen, // ')'
-    Equal, // '='
-    Bang, // '!'
-    Colon, // ':'
-    Semicolon, // ';'
-    LeftBrace, // '{'
-    RightBrace, // '}'
-    Comma, // ','
-    Dot, // '.'
-    Quote, // '"'
-    Newline, // '\n'
-    True, // 'true'
-    False, // 'false'
-    LeftBracket, // '['
-    RightBracket, // ']'
-    Ampersand, // '&'
-    Pipe, // '|'
+const token = @import("token.zig");
+const TokenType = token.TokenType;
+const Token = token.Token;
+const TokenLiteral = token.TokenLiteral;
 
-    // Comparison operators
-    EqualEqual, // '=='
-    NotEqual, // '!='
-    And, // 'and'
-    Or, // 'or'
-    If, // 'if'
-    Then, // 'then'
-    Else, // 'else'
-
-    // Keywords and identifiers
-    Identifier, // [a-zA-Z_][a-zA-Z0-9_]*
-    Var, // 'var'
-    Const, // 'const'
-    Print, // 'print'
-    IntType, // 'int'
-    FloatType, // 'float'
-    StringType, // 'string'
-    BoolType, // 'bool'
-
-    // Literals
-    Number,
-    String,
-    Nothing,
-
-    // End of file
-    EOF,
-
-};
-
-pub const Token = struct {
-    kind: TokenKind,
-    lexeme: []const u8,
+pub const LexerError = error{
+    UnterminatedString,
+    UnterminatedArray,
+    ExpectedCommaOrClosingBracket,
+    InvalidNumber,
+    UnexpectedCharacter,
+    Overflow,
+    InvalidCharacter,
 };
 
 pub const Lexer = struct {
-    source: []const u8,
-    current: usize,
 
-    pub fn init(source: []const u8) Lexer {
+    keywords: std.StringHashMap(TokenType),
+
+    source: []const u8,
+    start: usize,
+    current: usize,
+    line: usize,
+    allocator: std.mem.Allocator,
+    tokens: std.ArrayList(Token),
+
+    pub fn init(allocator: std.mem.Allocator, source: []const u8) Lexer {
         return Lexer{
             .source = source,
+            .start = 0,
             .current = 0,
+            .line = 1,
+            .allocator = allocator,
+            .tokens = std.ArrayList(Token).init(allocator),
+            .keywords = std.StringHashMap(TokenType).init(allocator),
         };
     }
-
-    pub fn nextToken(self: *Lexer) Token {
-        self.skipWhitespace();
-
-        if (self.isAtEnd()) {
-            return Token{ .kind = .EOF, .lexeme = "" };
-        }
-
-        const c = self.advance();
-
-        // Handle single-character tokens
-        switch (c) {
-            '+' => return Token{ .kind = .Plus, .lexeme = "+" },
-            '-' => return Token{ .kind = .Minus, .lexeme = "-" },
-            '*' => return Token{ .kind = .Star, .lexeme = "*" },
-            '/' => {
-                if (!self.isAtEnd() and self.peekChar() == '/') {
-                    _ = self.advance(); // Consume the second '/'
-                    self.skipComment(); // Skip the comment
-                    return self.nextToken(); // Get the next token after the comment
-                } else {
-                    return Token{ .kind = .Slash, .lexeme = "/" };
-                }
-            },
-            '&' => {
-                if (!self.isAtEnd() and self.peekChar() == '&') {
-                    _ = self.advance(); // Consume the second '&'
-                    return Token{ .kind = .And, .lexeme = "and" };
-                } else {
-                    return Token{ .kind = .Ampersand, .lexeme = "&" };
-                }
-            },
-            '|' => {
-                if (!self.isAtEnd() and self.peekChar() == '|') {
-                    _ = self.advance(); // Consume the second '|'
-                    return Token{ .kind = .Or, .lexeme = "or" };
-                } else {
-                    return Token{ .kind = .Pipe, .lexeme = "|" };
-                }
-            },
-            '(' => return Token{ .kind = .LeftParen, .lexeme = "(" },
-            ')' => return Token{ .kind = .RightParen, .lexeme = ")" },
-            '[' => return Token{ .kind = .LeftBracket, .lexeme = "[" },
-            ']' => return Token{ .kind = .RightBracket, .lexeme = "]" },
-            '{' => return Token{ .kind = .LeftBrace, .lexeme = "{" },
-            '}' => return Token{ .kind = .RightBrace, .lexeme = "}" },
-            '=' => {
-                if (!self.isAtEnd() and self.peekChar() == '=') {
-                    _ = self.advance();
-                    return Token{ .kind = .EqualEqual, .lexeme = "==" };
-                } else {
-                    return Token{ .kind = .Equal, .lexeme = "=" };
-                }
-            },
-            '!' => {
-                if (!self.isAtEnd() and self.peekChar() == '=') {
-                    _ = self.advance(); 
-                    return Token{ .kind = .NotEqual, .lexeme = "!=" };
-                } else {
-                    return Token{ .kind = .Bang, .lexeme = "!" };
-                }
-            },
-            ':' => return Token{ .kind = .Colon, .lexeme = ":" },
-            ';' => return Token{ .kind = .Semicolon, .lexeme = ";" },
-            ',' => return Token{ .kind = .Comma, .lexeme = "," },
-            '.' => return Token{ .kind = .Dot, .lexeme = "." },
-            '"' => return self.string(),
-            else => {},
-        }
-
-        if (std.ascii.isDigit(c)) {
-            self.current -= 1; // Step back to include the digit
-            return self.number();
-        } else if (std.ascii.isAlphabetic(c) or c == '_') {
-            self.current -= 1; // Step back to include the character
-            return self.identifier();
-        } else {
-            // Handle unexpected character
-            std.debug.print("Unexpected character: {c}\n", .{c});
-            return Token{ .kind = .EOF, .lexeme = "" };
-        }
+    
+    pub fn deinit(self: *Lexer) void {
+        self.tokens.deinit();
+        self.keywords.deinit();
     }
 
-    fn skipComment(self: *Lexer) void {
-        while (!self.isAtEnd() and self.peekChar() != '\n') {
-            _ = self.advance();
-        }
-        if (!self.isAtEnd() and self.peekChar() == '\n') {
-            _ = self.advance();
-        }
+    pub fn initKeywords(self: *Lexer) !void {
+        try self.keywords.put("true", .BOOL);
+        try self.keywords.put("false", .BOOL);
+        try self.keywords.put("if", .IF);
+        try self.keywords.put("then", .THEN);
+        try self.keywords.put("else", .ELSE);
+        try self.keywords.put("while", .WHILE);
+        try self.keywords.put("for", .FOR);
+        try self.keywords.put("foreach", .FOREACH);
+        try self.keywords.put("in", .IN);
+        try self.keywords.put("fn", .FUNCTION);
+        try self.keywords.put("return", .RETURN);
+        try self.keywords.put("const", .CONST);
+        try self.keywords.put("var", .VAR);
+        try self.keywords.put("break", .BREAK);
+        try self.keywords.put("continue", .CONTINUE);
+        try self.keywords.put("throw", .THROW);
+        try self.keywords.put("try", .TRY);
+        try self.keywords.put("catch", .CATCH);
+        try self.keywords.put("and", .AND);
+        try self.keywords.put("or", .OR);
     }
 
-    pub fn peek(self: *Lexer) TokenKind {
-        const saved_current = self.current;
-        const token = self.nextToken();
-        self.current = saved_current;
-        return token.kind;
+    // ========add token========
+    fn addMinimalToken(self: *Lexer, token_type: TokenType) !void {
+        try self.addToken(token_type, .nothing);
     }
 
-    fn peekChar(self: *Lexer) u8 {
+    fn addToken(self: *Lexer, token_type: TokenType, literal: TokenLiteral) !void {
+        try self.tokens.append(Token.init(token_type, self.source[self.start..self.current], literal, self.line));
+    }
+
+    // ========peek========
+    
+    fn peek(self: *Lexer) u8 {
         return self.source[self.current];
     }
 
-    fn peekWord(self: *Lexer) []const u8 {
-        var end = self.current;
-        while (end < self.source.len and self.isIdentifierChar(self.source[end])) {
-            end += 1;
-        }
-        return self.source[self.current..end];
+    fn peekChar(self: *Lexer, expected: u8) bool {
+        return self.source[self.current+1] == expected;
     }
 
-    fn isAtEnd(self: *Lexer) bool {
+    fn peekNext(self: *Lexer) u8 {
+        if (self.current + 1 >= self.source.len) return 0;
+        return self.source[self.current + 1];
+    }
+
+    fn peekKeyword(self: *Lexer, keyword: []const u8) bool {
+        if (self.current + keyword.len > self.source.len) return false;
+        const slice = self.source[self.current..self.current + keyword.len];
+        if (std.mem.eql(u8, slice, keyword)) {
+            self.current += keyword.len;
+            return true;
+        }
+        return false;
+    }
+
+    // ========helpers========
+    pub fn isAtEnd(self: *Lexer) bool {
         return self.current >= self.source.len;
-    }
-
-    fn advance(self: *Lexer) u8 {
-        const c = self.source[self.current];
+    } 
+    
+    fn advance(self: *Lexer) void {
         self.current += 1;
-        return c;
     }
 
-    fn skipWhitespace(self: *Lexer) void {
+    fn advanceBy(self: *Lexer, amount: usize) void {
+        self.current += amount;
+    }
+
+    // ========lex tokens========
+    pub fn lexTokens(self: *Lexer) !std.ArrayList(Token) {
         while (!self.isAtEnd()) {
-            switch (self.source[self.current]) {
-                ' ', '\r', '\t', '\n' => self.current += 1,
-                else => return,
+            try self.getNextToken();
+        }
+        try self.tokens.append(Token.init(.EOF, "", .auto, self.line));
+        return self.tokens;
+    }
+
+    // lexes the next token
+    pub fn getNextToken(self: *Lexer) (LexerError || std.mem.Allocator.Error)!void {
+        self.start = self.current;
+        const c = self.source[self.current];
+        self.advance();
+        switch (c) {
+
+            '/' => {
+                if (self.peek() == '/') {
+                    self.advance();
+                    try self.addToken(.SLASH_SLASH, .nothing);
+                    while (!self.isAtEnd() and self.peek() != '\n') {
+                        self.advance();
+                    }
+                } else if (self.peekChar('=')) {
+                    self.advance();  // consume the equals
+                    try self.addMinimalToken(.SLASH_EQUAL);
+                } else {
+                    try self.addMinimalToken(.SLASH);
+                }
+            },
+
+
+            '(' => try self.addMinimalToken(.LEFT_PAREN),
+            ')' => try self.addMinimalToken(.RIGHT_PAREN),
+            '{' => try self.addMinimalToken(.LEFT_BRACE),
+            '}' => try self.addMinimalToken(.RIGHT_BRACE),
+            ',' => try self.addMinimalToken(.COMMA),
+            '.' => try self.addMinimalToken(.DOT),
+            ';' => try self.addMinimalToken(.SEMICOLON),
+            '%' => try self.addMinimalToken(.MODULO),
+            '^' => {
+                if (self.match('=')) {
+                    try self.addMinimalToken(.POWER_EQUAL);
+                } else {
+                    try self.addMinimalToken(.POWER);
+                }
+            },
+            '*' => {
+                if (self.match('=')) {
+                    try self.addMinimalToken(.ASTERISK_EQUAL);
+                } else {
+                    try self.addMinimalToken(.ASTERISK);
+                }
+            },
+            '!' => {
+                if (self.match('=')) {
+                    try self.addMinimalToken(.BANG_EQUAL);
+                } else {
+                    try self.addMinimalToken(.BANG);
+                }
+            },
+            '=' => {
+                if (self.match('=')) {
+                    try self.addMinimalToken(.EQUAL_EQUAL);
+                } else {
+                    try self.addMinimalToken(.EQUAL);
+                }
+            },
+            '<' => {
+                if (self.match('=')) {
+                    try self.addMinimalToken(.LESS_EQUAL);
+                } else {
+                    try self.addMinimalToken(.LESS);
+                }
+            },
+            '>' => {
+                if (self.match('=')) {
+                    try self.addMinimalToken(.GREATER_EQUAL);
+                } else {
+                    try self.addMinimalToken(.GREATER);
+                }
+            },
+            '+' => {
+                if (self.match('+')) {
+                    try self.addMinimalToken(.PLUS_PLUS);
+                } else if (self.match('=')) {
+                    try self.addMinimalToken(.PLUS_EQUAL);
+                } else {
+                    try self.addMinimalToken(.PLUS);
+                }
+            },
+            '-' => {
+                if (self.match('-')) {
+                    try self.addMinimalToken(.MINUS_MINUS);
+                } else if (self.match('=')) {
+                    try self.addMinimalToken(.MINUS_EQUAL);
+                } else {
+                    try self.addMinimalToken(.MINUS);
+                }
+            },
+            //numbers
+            '0'...'9' => try self.number(),
+            //strings
+            '"' => try self.string(),
+            //arrays
+            '[' => try self.array(),
+            ']' => try self.addMinimalToken(.RIGHT_BRACKET),
+            //whitespace
+            ' ', '\r', '\t' => self.advance(),
+            '\n' => {
+                self.line += 1;
+                self.advance();
+            },
+            //identifier or keyword
+            else => {
+                if (isAlpha(c)) {
+                    try self.identifier();
+                } else {
+                    std.debug.print("Unexpected character: {c}\n", .{c});
+                    return error.UnexpectedCharacter;
+                }
+            },
+        }
+    }
+
+    fn identifier(self: *Lexer) !void {
+        while (!self.isAtEnd() and (isAlpha(self.peek()) or isDigit(self.peek()))) {
+            self.advance();
+        }
+        const text = self.source[self.start..self.current];
+        
+        // Check if it's a keyword
+        if (self.keywords.get(text)) |keyword_type| {
+            switch (keyword_type) {
+                .BOOL => try self.addToken(.BOOL, .{ .boolean = std.mem.eql(u8, text, "true") }),
+                else => try self.addMinimalToken(keyword_type),
+            }
+        } else {
+            try self.addToken(.IDENTIFIER, .{ .string = text });
+        }
+    }
+
+    fn isAlpha(c: u8) bool {
+        return (c >= 'a' and c <= 'z') or
+               (c >= 'A' and c <= 'Z') or
+               c == '_';
+    }
+
+    fn isDigit(c: u8) bool {
+        return c >= '0' and c <= '9';
+    }
+
+    fn match(self: *Lexer, expected: u8) bool {
+        if (self.isAtEnd()) return false;
+        if (self.source[self.current] != expected) return false;
+        self.advance();
+        return true;
+    }
+
+    fn boolean(self: *Lexer) !void {
+        try self.addToken(.BOOLEAN, .{ .boolean = self.source[self.start..self.current] });
+    }
+
+    fn array(self: *Lexer) !void {
+        try self.addMinimalToken(.LEFT_BRACKET);
+        
+        while (!self.isAtEnd() and self.peek() != ']') {
+            // Skip whitespace
+            while (!self.isAtEnd() and (self.peek() == ' ' or self.peek() == '\r' or self.peek() == '\t' or self.peek() == '\n')) {
+                if (self.peek() == '\n') self.line += 1;
+                self.advance();
+            }
+            
+            if (self.peek() == ']') break;
+            
+            try self.getNextToken();
+            
+            // Skip whitespace after element
+            while (!self.isAtEnd() and (self.peek() == ' ' or self.peek() == '\r' or self.peek() == '\t' or self.peek() == '\n')) {
+                if (self.peek() == '\n') self.line += 1;
+                self.advance();
+            }
+            
+            // Check for comma or end of array
+            if (self.peek() == ',') {
+                self.start = self.current; // Set start position
+                self.advance();  // Advance past the comma
+                try self.addMinimalToken(.COMMA);  // Add token after advancing
+            } else if (self.peek() != ']') {
+                return error.ExpectedCommaOrClosingBracket;
             }
         }
-    }
 
-    fn identifier(self: *Lexer) Token {
-        const start = self.current;
-        while (!self.isAtEnd() and self.isIdentifierChar(self.source[self.current])) {
-            self.current += 1;
-        }
-        const lexeme = self.source[start..self.current];
-
-        // Include all keywords in the checks
-        const token_kind = if (std.mem.eql(u8, lexeme, "var"))
-            TokenKind.Var
-        else if (std.mem.eql(u8, lexeme, "const"))
-            TokenKind.Const
-        else if (std.mem.eql(u8, lexeme, "print"))
-            TokenKind.Print
-        else if (std.mem.eql(u8, lexeme, "int"))
-            TokenKind.IntType
-        else if (std.mem.eql(u8, lexeme, "float"))
-            TokenKind.FloatType
-        else if (std.mem.eql(u8, lexeme, "string"))
-            TokenKind.StringType
-        else if (std.mem.eql(u8, lexeme, "bool"))
-            TokenKind.BoolType
-        else if (std.mem.eql(u8, lexeme, "and"))
-            TokenKind.And
-        else if (std.mem.eql(u8, lexeme, "or"))
-            TokenKind.Or
-        else if (std.mem.eql(u8, lexeme, "if"))
-            TokenKind.If
-        else if (std.mem.eql(u8, lexeme, "then"))
-            TokenKind.Then
-        else if (std.mem.eql(u8, lexeme, "else"))
-            TokenKind.Else
-        else if (std.mem.eql(u8, lexeme, "true"))
-            TokenKind.True
-        else if (std.mem.eql(u8, lexeme, "false"))
-            TokenKind.False
-        else if (std.mem.eql(u8, lexeme, "nothing"))
-            TokenKind.Nothing
-        else
-            TokenKind.Identifier;
-
-        return Token{ .kind = token_kind, .lexeme = lexeme };
-    }
-
-    fn isIdentifierChar(_: *Lexer, c: u8) bool {
-        return std.ascii.isAlphanumeric(c) or c == '_';
-    }
-
-    fn number(self: *Lexer) Token {
-        const start = self.current;
-        while (!self.isAtEnd() and std.ascii.isDigit(self.source[self.current])) {
-            self.current += 1;
+        if (self.isAtEnd()) {
+            return error.UnterminatedArray;
         }
 
-        if (!self.isAtEnd() and self.source[self.current] == '.') {
-            self.current += 1; // Consume the '.'
-            while (!self.isAtEnd() and std.ascii.isDigit(self.source[self.current])) {
-                self.current += 1;
+        self.start = self.current; // Set start position to current before consuming right bracket
+        self.advance(); // consume closing bracket
+        try self.addMinimalToken(.RIGHT_BRACKET);
+    }
+
+    fn string(self: *Lexer) !void {
+        self.advance(); // Skip opening quote
+        while (!self.isAtEnd() and self.peek() != '"') {
+            if (self.peek() == '\\') { // Handle escape sequence
+                self.advance();
+                if (!self.isAtEnd()) {
+                    self.advance();
+                }
+            } else {
+                if (self.peek() == '\n') self.line += 1;
+                self.advance();
             }
         }
 
-        const lexeme = self.source[start..self.current];
-        return Token{ .kind = .Number, .lexeme = lexeme };
-    }
-
-    fn string(self: *Lexer) Token {
-        const start = self.current;
-        while (!self.isAtEnd() and self.source[self.current] != '"') {
-            self.current += 1;
-        }
-        const lexeme = self.source[start..self.current];
-
-        if (!self.isAtEnd()) {
-            self.current += 1; // consume closing quote
+        if (self.isAtEnd()) {
+            return error.UnterminatedString;
         }
 
-        return Token{ .kind = .String, .lexeme = lexeme };
+        self.advance(); // Skip closing quote
+        const string_value = self.source[self.start + 1 .. self.current - 1];
+        try self.addToken(.STRING, .{ .string = string_value });
     }
+
+    fn number(self: *Lexer) !void {
+        while (isDigit(self.peek())) self.advance();
+
+        // Look for decimal
+        if (self.peek() == '.' and isDigit(self.peekNext())) {
+            self.advance(); // Consume the dot
+            while (isDigit(self.peek())) self.advance();
+            
+            const num_str = self.source[self.start..self.current];
+            const float_val = try std.fmt.parseFloat(f64, num_str);
+            try self.addToken(.FLOAT, .{ .float = float_val });
+        } else {
+            const num_str = self.source[self.start..self.current];
+            const int_val = try std.fmt.parseInt(i64, num_str, 10);
+            try self.addToken(.INT, .{ .int = int_val });
+        }
+    }
+
+
 };
