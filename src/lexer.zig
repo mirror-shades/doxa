@@ -1,3 +1,13 @@
+// TODO:
+// - add support for multi line comments
+// - add support for multi line strings
+// - add support for escape sequences in strings
+// - add support for unicode identifiers
+// - add support for scientific notation in numbers
+// - add support for hexadecimal numbers (0x...)
+// - add support for binary numbers (0b...)
+// - add support for underscores in numbers (1_000_000)
+// - add support for raw strings (r"...")
 const std = @import("std");
 
 const token = @import("token.zig");
