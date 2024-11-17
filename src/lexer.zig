@@ -18,7 +18,9 @@ const TokenLiteral = token.TokenLiteral;
 pub const LexerError = error{
     UnterminatedString,
     UnterminatedArray,
+    UnterminatedParenthesis,
     ExpectedCommaOrClosingBracket,
+    ExpectedCommaOrClosingParenthesis,
     InvalidNumber,
     UnexpectedCharacter,
     Overflow,
@@ -37,6 +39,13 @@ pub const Lexer = struct {
     tokens: std.ArrayList(Token),
 
     pub fn init(allocator: std.mem.Allocator, source: []const u8) Lexer {
+        // Debug print the source content
+        std.debug.print("Source content: ", .{});
+        for (source) |c| {
+            std.debug.print("{x:0>2} ", .{c});
+        }
+        std.debug.print("\n", .{});
+
         return Lexer{
             .source = source,
             .start = 0,
@@ -79,6 +88,10 @@ pub const Lexer = struct {
 
     // ========add token========
     fn addMinimalToken(self: *Lexer, token_type: TokenType) !void {
+        std.debug.print("Adding token: {s} with lexeme '{s}'\n", .{
+            @tagName(token_type),
+            self.source[self.start..self.current]
+        });
         try self.addToken(token_type, .nothing);
     }
 
@@ -89,6 +102,7 @@ pub const Lexer = struct {
     // ========peek========
     
     fn peek(self: *Lexer) u8 {
+        if (self.isAtEnd()) return 0;
         return self.source[self.current];
     }
 
@@ -135,15 +149,33 @@ pub const Lexer = struct {
 
     // lexes the next token
     pub fn getNextToken(self: *Lexer) (LexerError || std.mem.Allocator.Error)!void {
+        // Skip whitespace
+        while (!self.isAtEnd() and (self.peek() == ' ' or self.peek() == '\r' or self.peek() == '\t' or self.peek() == '\n')) {
+            if (self.peek() == '\n') self.line += 1;
+            self.advance();
+        }
+        
+        if (self.isAtEnd()) {
+            self.start = self.current;
+            try self.addMinimalToken(.EOF);
+            return;
+        }
+
         self.start = self.current;
         const c = self.source[self.current];
+        std.debug.print("Processing character: '{c}' (hex: {x:0>2})\n", .{c, c});
         self.advance();
-        switch (c) {
 
+        switch (c) {
             '/' => {
-                if (self.peek() == '/') {
-                    self.advance();
-                    try self.addToken(.SLASH_SLASH, .nothing);
+                std.debug.print("Found first slash at position {d}\n", .{self.current});
+                
+                // Look ahead for another slash without advancing
+                if (!self.isAtEnd() and self.source[self.current] == '/') {
+                    std.debug.print("Found consecutive slash, entering comment mode\n", .{});
+                    self.advance();  // consume the second slash
+                    try self.addMinimalToken(.SLASH_SLASH);
+                    // Skip the rest of the line
                     while (!self.isAtEnd() and self.peek() != '\n') {
                         self.advance();
                     }
@@ -154,12 +186,18 @@ pub const Lexer = struct {
                 } else if (self.match('=')) {
                     try self.addMinimalToken(.SLASH_EQUAL);
                 } else {
+                    std.debug.print("Treating as single slash\n", .{});
                     try self.addMinimalToken(.SLASH);
+                    // Skip any whitespace after the slash
+                    while (!self.isAtEnd() and (self.peek() == ' ' or self.peek() == '\r' or self.peek() == '\t' or self.peek() == '\n')) {
+                        if (self.peek() == '\n') self.line += 1;
+                        self.advance();
+                    }
                 }
             },
 
 
-            '(' => try self.addMinimalToken(.LEFT_PAREN),
+            '(' => try self.parenthesis(),
             ')' => try self.addMinimalToken(.RIGHT_PAREN),
             '{' => try self.addMinimalToken(.LEFT_BRACE),
             '}' => try self.addMinimalToken(.RIGHT_BRACE),
@@ -235,10 +273,10 @@ pub const Lexer = struct {
             '[' => try self.array(),
             ']' => try self.addMinimalToken(.RIGHT_BRACKET),
             //whitespace
-            ' ', '\r', '\t' => self.advance(),
+            ' ', '\r', '\t' => {}, // Skip whitespace without creating tokens
             '\n' => {
                 self.line += 1;
-                self.advance();
+                // Don't create a token for newlines
             },
             //identifier or keyword
             else => {
@@ -290,6 +328,10 @@ pub const Lexer = struct {
         try self.addToken(.BOOLEAN, .{ .boolean = self.source[self.start..self.current] });
     }
 
+    fn parenthesis(self: *Lexer) !void {
+        try self.addMinimalToken(.LEFT_PAREN);
+    }
+
     fn array(self: *Lexer) !void {
         try self.addMinimalToken(.LEFT_BRACKET);
         
@@ -330,16 +372,25 @@ pub const Lexer = struct {
     }
 
     fn string(self: *Lexer) !void {
-        self.advance(); // Skip opening quote
         while (!self.isAtEnd() and self.peek() != '"') {
             if (self.peek() == '\\') { // Handle escape sequence
-                self.advance();
+                self.advance(); // Skip '\'
                 if (!self.isAtEnd()) {
-                    self.advance();
+                    self.advance(); // Skip next character
                 }
             } else {
-                if (self.peek() == '\n') self.line += 1;
-                self.advance();
+                if (self.peek() == '\r') {
+                    self.advance(); // Consume '\r'
+                    if (!self.isAtEnd() and self.peek() == '\n') {
+                        self.advance(); // Consume '\n'
+                    }
+                    self.line += 1;
+                } else if (self.peek() == '\n') {
+                    self.line += 1;
+                    self.advance();
+                } else {
+                    self.advance();
+                }
             }
         }
 
