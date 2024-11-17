@@ -1,5 +1,4 @@
 // TODO:
-// - add support for unicode identifiers
 // - add support for scientific notation in numbers
 // - add support for hexadecimal numbers (0x...)
 // - add support for binary numbers (0b...)
@@ -224,7 +223,15 @@ pub const Lexer = struct {
             '{' => try self.addMinimalToken(.LEFT_BRACE),
             '}' => try self.addMinimalToken(.RIGHT_BRACE),
             ',' => try self.addMinimalToken(.COMMA),
-            '.' => try self.addMinimalToken(.DOT),
+            '.' => {
+                if (isDigit(self.peek())) {
+                    self.current -= 1; // back up to include the dot
+                    self.start = self.current;
+                    try self.number();
+                } else {
+                    try self.addMinimalToken(.DOT);
+                }
+            },
             ':' => try self.addMinimalToken(.COLON),
             ';' => try self.addMinimalToken(.SEMICOLON),
             '%' => try self.addMinimalToken(.MODULO),
@@ -296,7 +303,9 @@ pub const Lexer = struct {
                 }
             },
             '-' => {
-                if (self.match('-')) {
+                if (isDigit(self.peek())) {
+                    try self.number();
+                } else if (self.match('-')) {
                     try self.addMinimalToken(.MINUS_MINUS);
                 } else if (self.match('=')) {
                     try self.addMinimalToken(.MINUS_EQUAL);
@@ -304,7 +313,6 @@ pub const Lexer = struct {
                     try self.addMinimalToken(.MINUS);
                 }
             },
-            //numbers
             '0'...'9' => try self.number(),
 
             '"' => try self.string(),
@@ -533,22 +541,226 @@ pub const Lexer = struct {
     }
 
     fn number(self: *Lexer) !void {
-        while (isDigit(self.peek())) self.advance();
+        var has_digits = false;
+        var has_decimal = false;
+        var is_negative = false;
 
-        // Look for decimal
-        if (self.peek() == '.' and isDigit(self.peekNext())) {
-            self.advance(); // Consume the dot
-            while (isDigit(self.peek())) self.advance();
+        // Handle negative numbers
+        if (self.peekBack() == '-' and self.current > 0) {
+            // Only include the minus sign if it's not preceded by whitespace or another operator
+            if (self.current < 2 or !isWhitespace(self.source[self.current - 2])) {
+                is_negative = true;
+                self.start -= 1;  // Include the minus sign in the lexeme
+            }
+        }
+
+        // Set has_digits if we start with a digit
+        const first_char = if (is_negative and self.start + 1 < self.source.len) 
+            self.source[self.start + 1]
+        else 
+            self.source[self.start];
+        
+        if (isDigit(first_char)) {
+            has_digits = true;
+        }
+
+        // Handle hex numbers
+        if (self.current < self.source.len - 1 and 
+            ((is_negative and self.source[self.current] == '0' and self.source[self.current + 1] == 'x') or
+             (self.source[self.current - 1] == '0' and self.source[self.current] == 'x'))) {
+            // If we're at 'x', back up to include the '0'
+            if (self.source[self.current] == 'x') {
+                self.current -= 1;
+            }
+            self.advance(); // consume '0'
+            self.advance(); // consume 'x'
+            if (!isHexDigit(self.peek())) return error.InvalidNumber;
             
-            const num_str = self.source[self.start..self.current];
-            const float_val = try std.fmt.parseFloat(f64, num_str);
+            // Remember where the actual hex digits start
+            const digits_start = self.current;
+            
+            has_digits = true;  // We have at least one digit
+            while (isHexDigit(self.peek()) or self.peek() == '_') {
+                self.advance();
+            }
+            
+            // Get just the hex digits
+            const hex_digits = self.source[digits_start..self.current];
+            
+            // Remove underscores from the hex digits
+            const clean_hex = try self.removeUnderscores(hex_digits);
+            defer self.allocator.free(clean_hex);
+
+            // Debug print
+            std.debug.print("Parsing hex digits: '{s}' (from '{s}')\n", .{clean_hex, self.source[self.start..self.current]});
+
+            var int_val = std.fmt.parseInt(i64, clean_hex, 16) catch |err| switch (err) {
+                error.InvalidCharacter => return error.InvalidNumber,
+                else => return err,
+            };
+            
+            if (is_negative) int_val = -int_val;
+            try self.addToken(.INT, .{ .int = int_val });
+            return;
+        }
+
+        // Handle binary numbers (similar approach)
+        if (self.current < self.source.len - 1 and 
+            ((is_negative and self.source[self.current] == '0' and self.source[self.current + 1] == 'b') or
+             (self.source[self.current - 1] == '0' and self.source[self.current] == 'b'))) {
+            // If we're at 'b', back up to include the '0'
+            if (self.source[self.current] == 'b') {
+                self.current -= 1;
+            }
+            self.advance(); // consume '0'
+            self.advance(); // consume 'b'
+            if (!isBinaryDigit(self.peek())) return error.InvalidNumber;
+            
+            // Remember where the actual binary digits start
+            const digits_start = self.current;
+            
+            has_digits = true;  // We have at least one digit
+            while (isBinaryDigit(self.peek()) or self.peek() == '_') {
+                self.advance();
+            }
+            
+            // Get just the binary digits
+            const bin_digits = self.source[digits_start..self.current];
+            
+            // Remove underscores from the binary digits
+            const clean_bin = try self.removeUnderscores(bin_digits);
+            defer self.allocator.free(clean_bin);
+
+            // Debug print
+            std.debug.print("Parsing binary digits: '{s}' (from '{s}')\n", .{clean_bin, self.source[self.start..self.current]});
+
+            var int_val = std.fmt.parseInt(i64, clean_bin, 2) catch |err| switch (err) {
+                error.InvalidCharacter => return error.InvalidNumber,
+                else => return err,
+            };
+            
+            if (is_negative) int_val = -int_val;
+            try self.addToken(.INT, .{ .int = int_val });
+            return;
+        }
+
+        // Process digits before decimal point
+        while (isDigit(self.peek()) or self.peek() == '_') {
+            if (isDigit(self.peek())) has_digits = true;
+            self.advance();
+        }
+
+        // Look for decimal point
+        if (self.peek() == '.') {
+            has_decimal = true;
+            self.advance(); // consume the decimal point
+
+            // Process digits after decimal point
+            while (isDigit(self.peek()) or self.peek() == '_') {
+                if (isDigit(self.peek())) has_digits = true;
+                self.advance();
+            }
+        }
+
+        // Look for scientific notation
+        if (self.peek() == 'e' or self.peek() == 'E') {
+            const next = self.peekNext();
+            if (isDigit(next) or next == '+' or next == '-') {
+                has_decimal = true;
+                self.advance(); // consume 'e' or 'E'
+
+                if (self.peek() == '+' or self.peek() == '-') {
+                    self.advance();
+                }
+
+                if (!isDigit(self.peek())) return error.InvalidNumber;
+
+                while (isDigit(self.peek()) or self.peek() == '_') {
+                    self.advance();
+                }
+            }
+        }
+
+        if (!has_digits) return error.InvalidNumber;
+
+        const raw_str = self.source[self.start..self.current];
+        const num_str = try self.removeUnderscores(raw_str);
+        defer self.allocator.free(num_str);
+
+        // Debug print
+        std.debug.print("Attempting to parse number: '{s}' (raw: '{s}')\n", .{num_str, raw_str});
+
+        if (has_decimal) {
+            const float_val = std.fmt.parseFloat(f64, num_str) catch |err| switch (err) {
+                error.InvalidCharacter => return error.InvalidNumber,
+                else => return err,
+            };
             try self.addToken(.FLOAT, .{ .float = float_val });
         } else {
-            const num_str = self.source[self.start..self.current];
-            const int_val = try std.fmt.parseInt(i64, num_str, 10);
+            const int_val = std.fmt.parseInt(i64, num_str, 10) catch |err| switch (err) {
+                error.InvalidCharacter => return error.InvalidNumber,
+                else => return err,
+            };
             try self.addToken(.INT, .{ .int = int_val });
         }
     }
 
+    fn isWhitespace(c: u8) bool {
+        return c == ' ' or c == '\r' or c == '\t' or c == '\n';
+    }
+
+    fn isHexDigit(c: u8) bool {
+        return isDigit(c) or (c >= 'a' and c <= 'f') or (c >= 'A' and c <= 'F');
+    }
+
+    fn isBinaryDigit(c: u8) bool {
+        return c == '0' or c == '1';
+    }
+
+    fn removeUnderscores(self: *Lexer, input: []const u8) ![]const u8 {
+        var result = std.ArrayList(u8).init(self.allocator);
+        errdefer result.deinit();
+        
+        // Handle negative sign if present
+        var i: usize = 0;
+        if (input.len > 0 and input[0] == '-') {
+            try result.append('-');
+            i = 1;
+        }
+        
+        // Handle prefixes (0x, 0b)
+        if (input.len - i >= 2 and input[i] == '0') {
+            try result.append('0');
+            const prefix = input[i + 1];
+            if (prefix == 'x' or prefix == 'b') {
+                try result.append(prefix);
+                // Skip the prefix in the input
+                i += 2;
+                // Process the rest of the digits
+                while (i < input.len) : (i += 1) {
+                    if (input[i] != '_') {
+                        try result.append(input[i]);
+                    }
+                }
+            } else {
+                // Regular number starting with 0
+                i += 1;
+                while (i < input.len) : (i += 1) {
+                    if (input[i] != '_') {
+                        try result.append(input[i]);
+                    }
+                }
+            }
+        } else {
+            // Regular number not starting with 0
+            while (i < input.len) : (i += 1) {
+                if (input[i] != '_') {
+                    try result.append(input[i]);
+                }
+            }
+        }
+        
+        return result.toOwnedSlice();
+    }
 
 };

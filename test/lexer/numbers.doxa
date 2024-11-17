@@ -1,0 +1,43 @@
+// Integer literals
+0
+42
+1234567890
+-42
+
+// Numbers with underscores (should be ignored)
+1_000_000
+1_2_3_4_5
+1____2____3
+
+// Hexadecimal numbers
+0x0
+0xdead
+0xBEEF
+0xCAFE_BABE
+0x1234_5678
+-0xFF
+
+// Binary numbers
+0b0
+0b1
+0b1010
+0b1111_0000
+0b1010_1010
+-0b1010
+
+// Floating point numbers
+0.0
+3.14
+-0.5
+42.0
+3.141_592_654
+.5      // Leading zero optional
+5.      // Trailing zero optional
+1_234.567_89
+
+// Scientific notation
+1e5
+1.23e4
+1.23e-4
+-1.23e+4
+1_234.567_89e-10
