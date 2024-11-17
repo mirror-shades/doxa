@@ -1,5 +1,4 @@
 // TODO:
-// - add support for raw strings (r"...")
 // - add support for unicode identifiers
 // - add support for scientific notation in numbers
 // - add support for hexadecimal numbers (0x...)
@@ -403,10 +402,7 @@ pub const Lexer = struct {
         try self.addMinimalToken(.RIGHT_BRACKET);
     }
 
-    fn rawString(self: *Lexer) !void {
-        std.debug.print("\nStarting raw string at pos {d}\n", .{self.current});
-        std.debug.print("Current string content: {s}\n", .{self.source[self.current..]});
-        
+    fn rawString(self: *Lexer) !void {        
         self.advance(); // Consume the 'r'
         self.advance(); // Consume the opening quote
         var result = std.ArrayList(u8).init(self.allocator);
@@ -414,11 +410,8 @@ pub const Lexer = struct {
 
         // For raw strings, consume everything literally until an unescaped closing quote
         while (!self.isAtEnd()) {
-            const ch = self.peek();
-            std.debug.print("Processing char: {c} at pos {d}\n", .{ch, self.current});
-            
+            const ch = self.peek();            
             if (ch == '"' and (self.current == 0 or self.source[self.current - 1] != '\\')) {
-                std.debug.print("Found closing quote at pos {d}\n", .{self.current});
                 break;
             }
             try result.append(ch);
@@ -430,9 +423,7 @@ pub const Lexer = struct {
         }
 
         self.advance(); // consume closing quote
-        const lexeme = self.source[self.start..self.current];
-        std.debug.print("Final lexeme: {s}\n", .{lexeme});
-        
+        const lexeme = self.source[self.start..self.current];        
         const string_content = try result.toOwnedSlice();
         try self.addLongToken(.STRING, .{ .string = string_content }, lexeme);
     }
