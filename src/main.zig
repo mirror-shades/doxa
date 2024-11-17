@@ -2,13 +2,25 @@ const std = @import("std");
 const Lexer = @import("lexer.zig").Lexer;
 const Parser = @import("parser.zig").Parser;
 
+///==========================================================================
+/// Constants
+///==========================================================================
+
 const EXIT_CODE_USAGE = 64;
 const EXIT_CODE_ERROR = 65;
 const MAX_REPL_LINE_LENGTH = 1024;
 const DOXA_EXTENSION = ".doxa";
 
+///==========================================================================
+/// Variables
+///==========================================================================
+
 var hadError: bool = false;
 var debugLexer: bool = false;
+
+///==========================================================================
+/// Types & Errors
+///==========================================================================
 
 pub const LexerError = error{
     UnterminatedString,
@@ -41,6 +53,10 @@ const SourceFile = struct {
     }
 };
 
+///==========================================================================
+/// Error Reporting
+///==========================================================================
+
 pub fn reportMinimalError(line: usize, message: []const u8) void {
     reportError(line, "", message);
 }
@@ -49,6 +65,10 @@ pub fn reportError(line: usize, where: []const u8, message: []const u8) void {
     std.debug.print("[line {}] {s} Error: {s}\n", .{line, where, message});
     hadError = true;
 }
+
+///==========================================================================
+/// Run
+///==========================================================================
 
 fn run(allocator: std.mem.Allocator, source: []const u8) !void {
     // init lexer
@@ -107,7 +127,6 @@ fn run(allocator: std.mem.Allocator, source: []const u8) !void {
 
 }
 
-
 fn runRepl(allocator: std.mem.Allocator) !void {
     const stdin = std.io.getStdIn().reader();
     while (true) {
@@ -130,6 +149,10 @@ fn runFile(allocator: std.mem.Allocator, path: []const u8) !void {
         std.process.exit(EXIT_CODE_ERROR);
     }
 }
+
+///==========================================================================
+/// Main
+///==========================================================================
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};

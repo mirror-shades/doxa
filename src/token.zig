@@ -20,7 +20,7 @@ pub const TokenType = enum {
     //one or two character tokens
     AMPERSAND,      // &
     PIPE,           // |
-    ARROW,          // -> not yet implemented
+    ARROW,          // ->
     SLASH,          // /
     SLASH_EQUAL,    // /=
     ASTERISK,       // *
@@ -67,6 +67,7 @@ pub const TokenType = enum {
     AWAIT,          // await
     TYPEOF,         // typeof
     DOT_DOT,        // ..
+
     // keywords with alternate tokens
     AND_KEYWORD,    // and
     AND_SYMBOL,     // &&
@@ -93,7 +94,7 @@ pub const TokenType = enum {
     AUTO,          // auto
     NOTHING,       // nothing
 
-    EOF
+    EOF,            // end of file
 };
 
 pub const TokenLiteral = union(enum) {
@@ -102,8 +103,8 @@ pub const TokenLiteral = union(enum) {
     string: []const u8,           // For string literals like "hello"
     boolean: bool,                // For boolean literals like true or false
     array: []const TokenLiteral,  // Changed from []const u8 to allow nested arrays and mixed types
-    auto,                         // For tokens that don't need a literal value
-    nothing,                      // For tokens that don't need a literal value
+    auto,                         // For identifiers that are not explicitly typed
+    nothing,                      // For tokens that don't have a literal value
 };
 
 pub const Token = struct {
@@ -113,6 +114,7 @@ pub const Token = struct {
     line: usize,
     column: usize,
 
+    //==init==
     pub fn init(token_type: TokenType, lexeme: []const u8, literal: TokenLiteral, line: usize, column: usize) Token {
         return Token{
             .type = token_type,
@@ -121,13 +123,6 @@ pub const Token = struct {
             .line = line,
             .column = column,
         };
-    }
-
-    pub fn toString(self: Token) ![]const u8 {
-        return std.fmt.allocPrint(
-            "{} {} {}",
-            .{ self.type, self.lexeme, self.literal }
-        );
     }
 
     pub fn deinit(self: Token, allocator: std.mem.Allocator) void {
@@ -139,5 +134,13 @@ pub const Token = struct {
             },
             else => {},
         }
+    }
+
+    //==string representation==
+    pub fn toString(self: Token) ![]const u8 {
+        return std.fmt.allocPrint(
+            "{} {} {}",
+            .{ self.type, self.lexeme, self.literal }
+        );
     }
 };
