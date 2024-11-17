@@ -120,4 +120,15 @@ pub const Token = struct {
             .{ self.type, self.lexeme, self.literal }
         );
     }
+
+    pub fn deinit(self: Token, allocator: std.mem.Allocator) void {
+        switch (self.literal) {
+            .string => |str| {
+                if (!std.mem.eql(u8, str, self.lexeme)) {
+                    allocator.free(str);
+                }
+            },
+            else => {},
+        }
+    }
 };

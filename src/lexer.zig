@@ -1,11 +1,10 @@
 // TODO:
-// - add support for escape sequences in strings
+// - add support for raw strings (r"...")
 // - add support for unicode identifiers
 // - add support for scientific notation in numbers
 // - add support for hexadecimal numbers (0x...)
 // - add support for binary numbers (0b...)
 // - add support for underscores in numbers (1_000_000)
-// - add support for raw strings (r"...")
 const std = @import("std");
 
 const token = @import("token.zig");
@@ -21,6 +20,7 @@ pub const LexerError = error{
     ExpectedCommaOrClosingBracket,
     ExpectedCommaOrClosingParenthesis,
     InvalidNumber,
+    InvalidEscapeSequence,
     UnexpectedCharacter,
     Overflow,
     InvalidCharacter,
@@ -51,6 +51,10 @@ pub const Lexer = struct {
     }
     
     pub fn deinit(self: *Lexer) void {
+        // Free the memory for each token's string literal
+        for (self.tokens.items) |item| {
+            item.deinit(self.allocator);
+        }
         self.tokens.deinit();
         self.keywords.deinit();
     }
@@ -96,6 +100,10 @@ pub const Lexer = struct {
 
     fn addToken(self: *Lexer, token_type: TokenType, literal: TokenLiteral) !void {
         try self.tokens.append(Token.init(token_type, self.source[self.start..self.current], literal, self.line));
+    }
+
+    fn addLongToken(self: *Lexer, token_type: TokenType, literal: TokenLiteral, lexeme: []const u8) !void {
+        try self.tokens.append(Token.init(token_type, lexeme, literal, self.line));
     }
 
     // ========peek========
@@ -381,36 +389,48 @@ pub const Lexer = struct {
     }
 
     fn string(self: *Lexer) !void {
+        var result = std.ArrayList(u8).init(self.allocator);
+        errdefer result.deinit();
+        
         while (!self.isAtEnd() and self.peek() != '"') {
-            if (self.peek() == '\\') { // Handle escape sequence
-                self.advance(); // Skip '\'
-                if (!self.isAtEnd()) {
-                    self.advance(); // Skip next character
-                }
+            const current = self.peek();
+            const next = self.peekNext();
+            
+            if (current == '\n') {
+                self.line += 1;
+                try result.append('\n');
+            } else if (current == '\\' and next == 'n') {
+                try result.append('\n');
+                self.advance();
+            } else if (current == '\\' and next == 't') {
+                try result.append('\t');
+                self.advance();
+            } else if (current == '\\' and next == 'r') {
+                try result.append('\r');
+                self.advance();
+            } else if (current == '\\' and next == '"') {
+                try result.append('"');
+                self.advance();
+            } else if (current == '\\' and next == '\\') {
+                try result.append('\\');
+                self.advance();
             } else {
-                if (self.peek() == '\r') {
-                    self.advance(); // Consume '\r'
-                    if (!self.isAtEnd() and self.peek() == '\n') {
-                        self.advance(); // Consume '\n'
-                    }
-                    self.line += 1;
-                } else if (self.peek() == '\n') {
-                    self.line += 1;
-                    self.advance();
-                } else {
-                    self.advance();
-                }
+                try result.append(current);
             }
+            self.advance();
         }
-
 
         if (self.isAtEnd()) {
             return error.UnterminatedString;
         }
 
-        self.advance(); // Skip closing quote
-        const string_value = self.source[self.start + 1 .. self.current - 1];
-        try self.addToken(.STRING, .{ .string = string_value });
+        self.advance(); // consume closing quote
+        
+        // Get both the lexeme (including quotes) and the processed string content
+        const lexeme = self.source[self.start..self.current];
+        const string_content = try result.toOwnedSlice();
+        
+        try self.addLongToken(.STRING, .{ .string = string_content }, lexeme);
     }
 
     fn number(self: *Lexer) !void {
