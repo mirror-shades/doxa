@@ -10,11 +10,15 @@ pub const TokenType = enum {
     RIGHT_BRACKET,  // ]
     COMMA,          // ,
     DOT,            // .
+    COLON,          // :
     SEMICOLON,      // ;
     MODULO,         // %
     HASH,           // #
 
     //one or two character tokens
+    AMPERSAND,      // &
+    PIPE,           // |
+    ARROW,          // -> not yet implemented
     SLASH,          // /
     SLASH_SLASH,    // //
     SLASH_EQUAL,    // /=
@@ -41,7 +45,6 @@ pub const TokenType = enum {
     VAR,            // var
     CONST,          // const
     STRUCT,         // struct
-    FUNCTION,       // function
     IMPORT,         // import
     PUBLIC,         // public
     ASSERT,         // assert
@@ -56,22 +59,31 @@ pub const TokenType = enum {
     FOR,            // for
     FOREACH,        // foreach
     IN,             // in
+    ASYNC,          // async
+    AWAIT,          // await
+
+    // keywords with alternate tokens
+    AND_KEYWORD,    // and
+    AND_SYMBOL,     // &&
+    OR_KEYWORD,     // or
+    OR_SYMBOL,      // ||
+    FN_KEYWORD,     // fn
+    FUNCTION_KEYWORD, // function
 
     // logical operators
     IF,             // if
     THEN,           // then
     ELSE,           // else
-    AND,            // and
-    OR,             // or
 
     // literals
-    ASSIGN,         // =
-    IDENTIFIER,  // identifier
-    INT,         // integer
-    FLOAT,       // float
-    STRING,      // string
-    ARRAY,       // array
+    ASSIGN,        // =
+    IDENTIFIER,    // identifier
+    INT,           // integer
+    FLOAT,         // float
+    STRING,        // string
+    ARRAY,         // array
     BOOL,          // boolean
+    ENUM,          // enum
     AUTO,          // auto
     NOTHING,       // nothing
 
