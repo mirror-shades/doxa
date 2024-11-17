@@ -71,9 +71,7 @@ or
 myVariable
 42
 3.14
-"
-hello
-"
+"hello"
 true
 nothing
 [1, 2, 3]
