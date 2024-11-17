@@ -4,3 +4,21 @@ string"
 "escaped \"quotes\""
 "tabs\ttabs\ttabs"
 "back\\slash"
+
+"
+multiline
+string
+"
+
+
+r"hello world"
+r"multiline
+string"
+r"quotes \"still literal\""
+r"backslashes \ and \n are literal"
+r"tabs\ttabs\ttabs"
+r"
+multiline
+raw
+string
+"
