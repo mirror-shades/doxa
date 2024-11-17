@@ -20,7 +20,6 @@ pub const TokenType = enum {
     PIPE,           // |
     ARROW,          // -> not yet implemented
     SLASH,          // /
-    SLASH_SLASH,    // //
     SLASH_EQUAL,    // /=
     ASTERISK,       // *
     ASTERISK_EQUAL, // *=

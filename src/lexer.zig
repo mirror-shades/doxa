@@ -1,6 +1,4 @@
 // TODO:
-// - add support for multi line comments
-// - add support for multi line strings
 // - add support for escape sequences in strings
 // - add support for unicode identifiers
 // - add support for scientific notation in numbers
@@ -19,6 +17,7 @@ pub const LexerError = error{
     UnterminatedString,
     UnterminatedArray,
     UnterminatedParenthesis,
+    UnterminatedMultilineComment,
     ExpectedCommaOrClosingBracket,
     ExpectedCommaOrClosingParenthesis,
     InvalidNumber,
@@ -106,23 +105,9 @@ pub const Lexer = struct {
         return self.source[self.current];
     }
 
-    fn peekChar(self: *Lexer, expected: u8) bool {
-        return self.source[self.current+1] == expected;
-    }
-
     fn peekNext(self: *Lexer) u8 {
         if (self.current + 1 >= self.source.len) return 0;
         return self.source[self.current + 1];
-    }
-
-    fn peekKeyword(self: *Lexer, keyword: []const u8) bool {
-        if (self.current + keyword.len > self.source.len) return false;
-        const slice = self.source[self.current..self.current + keyword.len];
-        if (std.mem.eql(u8, slice, keyword)) {
-            self.current += keyword.len;
-            return true;
-        }
-        return false;
     }
 
     // ========helpers========
@@ -132,10 +117,6 @@ pub const Lexer = struct {
     
     fn advance(self: *Lexer) void {
         self.current += 1;
-    }
-
-    fn advanceBy(self: *Lexer, amount: usize) void {
-        self.current += amount;
     }
 
     // ========lex tokens========
@@ -166,14 +147,35 @@ pub const Lexer = struct {
             '/' => {                
                 if (!self.isAtEnd() and self.source[self.current] == '/') {
                     self.advance();  // consume the second slash
-                    try self.addMinimalToken(.SLASH_SLASH);
-                    // Skip the rest of the line
                     while (!self.isAtEnd() and self.peek() != '\n') {
                         self.advance();
                     }
                     if (!self.isAtEnd() and self.peek() == '\n') {
                         self.line += 1;
                         self.advance();
+                    }
+                } else if (self.match('*')) {
+                    var nesting: usize = 1;
+                    
+                    while (nesting > 0 and !self.isAtEnd()) {
+                        if (self.peek() == '/' and self.peekNext() == '*') {
+                            self.advance();  // consume /
+                            self.advance();  // consume *
+                            nesting += 1;
+                        } else if (self.peek() == '*' and self.peekNext() == '/') {
+                            self.advance();  // consume *
+                            self.advance();  // consume /
+                            nesting -= 1;
+                        } else {
+                            if (self.peek() == '\n') {
+                                self.line += 1;
+                            }
+                            self.advance();
+                        }
+                    }
+
+                    if (nesting > 0) {
+                        return error.UnterminatedMultilineComment;
                     }
                 } else if (self.match('=')) {
                     try self.addMinimalToken(.SLASH_EQUAL);
@@ -400,6 +402,7 @@ pub const Lexer = struct {
                 }
             }
         }
+
 
         if (self.isAtEnd()) {
             return error.UnterminatedString;

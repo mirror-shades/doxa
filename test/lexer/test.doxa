@@ -1,5 +1,8 @@
 /
 // everything following the SLASH_SLASH is a comment and will be ignored by the lexer
+/* 
+multiline comment 
+*/
 /=
 (
 )
@@ -68,7 +71,9 @@ or
 myVariable
 42
 3.14
-"hello"
+"
+hello
+"
 true
 nothing
 [1, 2, 3]
