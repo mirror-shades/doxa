@@ -1,4 +1,5 @@
 const std = @import("std");
+const lexer = @import("lexer");
 
 // Although this function looks imperative, note that its job is to
 // declaratively construct a build graph that will be executed by an external
@@ -63,4 +64,20 @@ pub fn build(b: *std.Build) void {
     // running the unit tests.
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_exe_unit_tests.step);
+
+    const lexer_module = b.createModule(.{
+        .root_source_file = b.path("src/lexer.zig"),
+    });
+
+    // Create a separate test executable for test/test.zig
+    const integration_tests = b.addTest(.{
+        .root_source_file = b.path("test/test.zig"),
+    });
+    integration_tests.root_module.addImport("lexer", lexer_module);
+    
+    // Create a run artifact for the integration tests
+    const run_integration_tests = b.addRunArtifact(integration_tests);
+    
+    // Add the integration tests to the test step
+    test_step.dependOn(&run_integration_tests.step);
 }
