@@ -14,6 +14,13 @@ Memory management is handled via garbage collection.
 
 No classes, only structs and composition.
 
+Doxa has some choice code keywords:
+- `function` and `fn` are functionally identical
+- `and` and `&&` are functionally identical
+- `or` and `||` are functionally identical
+
+warnings are given for projects that mix symbolic and keyword conditionals.
+
 ``` 
 struct Animal {
     name: string
