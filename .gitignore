@@ -1,4 +1,9 @@
 .zig-cache/*
 zig-cache/*
+zig-cache
 .zig-out/*
+zig-out/*
+zig-out
+.zig-build/*
 zig-build/*
+zig-build
