@@ -388,6 +388,10 @@ pub const Lexer = struct {
         return c >= '0' and c <= '9';
     }
 
+    fn isOperator(c: u8) bool {
+     return c == '+' or c == '-' or c == '*' or c == '/' or c == '%' or c == '^' or c == '&' or c == '|' or c == '!' or c == '=' or c == '<' or c == '>';
+    }
+
     fn match(self: *Lexer, expected: u8) bool {
         if (self.isAtEnd()) return false;
         if (self.source[self.current] != expected) return false;
@@ -541,28 +545,24 @@ pub const Lexer = struct {
     }
 
     fn number(self: *Lexer) !void {
-        // Track whether we've seen any digits, decimal points, or negative signs
         var has_digits = false;
         var has_decimal = false;
         var is_negative = false;
 
-        // BUG: The negative sign handling is not properly handling cases where
-        // a negative sign appears before a hex/binary number that's being parsed as a
-        // separate token. For example "-0xFF" is parsed as ["-0", "xFF"] instead
-        // of a single negative hex number.
-
         // Check if this number starts with a negative sign
-        // We need to verify it's not just a minus operator by checking what comes before it
-        if (self.peekBack() == '-' and self.current > 0) {
-            // Only treat as negative if not preceded by whitespace/operator
-            // This helps distinguish between "-5" and "3 - 5"
-            if (self.current < 2 or !isWhitespace(self.source[self.current - 2])) {
+        // Treat '-' as a negative sign if it's at the start or preceded by whitespace/operator
+        if (self.current > 0 and self.peekBack() == '-') {
+            // Ensure we don't go out of bounds
+            if (self.current < 2 or isWhitespace(self.source[self.current - 2]) or isOperator(self.source[self.current - 2])) {
                 is_negative = true;
-                self.start -= 1;  // Include the minus sign in the final token
+                // Ensure self.start does not underflow
+                if (self.start > 0) {
+                    self.start = self.current - 1;  // Include the minus sign in the final token
+                }
             }
         }
 
-        // Determine the first actual digit character, accounting for negative sign
+        // Determine the first actual character, accounting for negative sign
         const first_char = if (is_negative and self.start + 1 < self.source.len) 
             self.source[self.start + 1]  // Skip the negative sign
         else 
@@ -574,10 +574,9 @@ pub const Lexer = struct {
         }
 
         // Special handling for hexadecimal numbers (0x...)
-        // Need to handle both "-0x123" and "0x123" formats
         if (self.current < self.source.len - 1 and 
             ((is_negative and self.source[self.current] == '0' and self.source[self.current + 1] == 'x') or
-             (self.source[self.current - 1] == '0' and self.source[self.current] == 'x'))) {
+            (self.source[self.current - 1] == '0' and self.source[self.current] == 'x'))) {
             // Ensure we capture the full "0x" prefix
             if (self.source[self.current] == 'x') {
                 self.current -= 1;  // Back up to include the '0'
@@ -594,7 +593,6 @@ pub const Lexer = struct {
             has_digits = true;  // We know we have at least one digit
             
             // Consume all hex digits and underscores
-            // Underscores are allowed as visual separators (0xDEAD_BEEF)
             while (isHexDigit(self.peek()) or self.peek() == '_') {
                 self.advance();
             }
@@ -624,11 +622,9 @@ pub const Lexer = struct {
         }
 
         // Handle binary numbers (similar approach)
-        // BUG: Similar to hex numbers, negative binary numbers like "-0b1010"
-        // are parsed as separate tokens ["-0", "b1010"] instead of a single negative binary number
         if (self.current < self.source.len - 1 and 
             ((is_negative and self.source[self.current] == '0' and self.source[self.current + 1] == 'b') or
-             (self.source[self.current - 1] == '0' and self.source[self.current] == 'b'))) {
+            (self.source[self.current - 1] == '0' and self.source[self.current] == 'b'))) {
             // If we're at 'b', back up to include the '0'
             if (self.source[self.current] == 'b') {
                 self.current -= 1;
@@ -725,6 +721,7 @@ pub const Lexer = struct {
             try self.addToken(.INT, .{ .int = int_val });
         }
     }
+
 
     fn isWhitespace(c: u8) bool {
         return c == ' ' or c == '\r' or c == '\t' or c == '\n';
