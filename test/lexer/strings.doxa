@@ -22,3 +22,10 @@ multiline
 raw
 string
 "
+
+r"Unicode raw: こんにちは世界"
+r"Raw emojis: 🎈 🎉 🎊"
+"Unicode: こんにちは世界"
+"Mixed ASCII and Unicode: Hello 世界"
+"Emojis: 👋 🌍 ⭐"
+"Unicode escapes: \u{3053}\u{3093}"

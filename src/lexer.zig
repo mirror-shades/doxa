@@ -23,6 +23,14 @@ pub const LexerError = error{
     UnexpectedCharacter,
     Overflow,
     InvalidCharacter,
+    Utf8InvalidStartByte,
+    Utf8ExpectedContinuation,
+    Utf8OverlongEncoding,
+    Utf8InvalidCodepoint,
+    Utf8CodepointTooLarge,
+    InvalidUnicodeEscape,
+    CodepointTooLarge,
+    Utf8CannotEncodeSurrogateHalf,
 };
 
 pub const Lexer = struct {
@@ -322,9 +330,32 @@ pub const Lexer = struct {
     }
 
     fn identifier(self: *Lexer) !void {
-        while (!self.isAtEnd() and (isAlpha(self.peek()) or isDigit(self.peek()))) {
-            self.advance();
+        while (!self.isAtEnd()) {
+            const remaining = self.source[self.current..];
+            // First check if we have a valid UTF-8 sequence
+            const sequence_length = try std.unicode.utf8ByteSequenceLength(remaining[0]);
+            if (sequence_length > remaining.len) break;
+            
+            // Try to decode the codepoint
+            const view = std.unicode.Utf8View.init(remaining[0..sequence_length]) catch break;
+            var iterator = view.iterator();
+            if (iterator.nextCodepoint()) |codepoint| {
+                // Check if it's a letter, number, or underscore
+                if ((codepoint >= 'a' and codepoint <= 'z') or
+                    (codepoint >= 'A' and codepoint <= 'Z') or
+                    (codepoint >= '0' and codepoint <= '9') or
+                    codepoint == '_' or
+                    codepoint > 127) {  // Accept all Unicode characters above ASCII
+                    var i: usize = 0;
+                    while (i < sequence_length) : (i += 1) {
+                        self.advance();
+                    }
+                    continue;
+                }
+            }
+            break;
         }
+        
         const text = self.source[self.start..self.current];
         
         // Check if it's a keyword
@@ -341,7 +372,8 @@ pub const Lexer = struct {
     fn isAlpha(c: u8) bool {
         return (c >= 'a' and c <= 'z') or
                (c >= 'A' and c <= 'Z') or
-               c == '_';
+               c == '_' or
+               c > 127;  // Accept all Unicode characters above ASCII
     }
 
     fn isDigit(c: u8) bool {
@@ -428,6 +460,8 @@ pub const Lexer = struct {
         try self.addLongToken(.STRING, .{ .string = string_content }, lexeme);
     }
 
+
+
     fn string(self: *Lexer) !void {
         var result = std.ArrayList(u8).init(self.allocator);
         errdefer result.deinit();
@@ -448,6 +482,37 @@ pub const Lexer = struct {
                     '\\' => try result.append('\\'),
                     'n' => try result.append('\n'),
                     't' => try result.append('\t'),
+                    'u' => {
+                        // Handle Unicode escape sequences
+                        if (self.peek() != '{') return error.InvalidUnicodeEscape;
+                        self.advance(); // consume '{'
+                        
+                        // Read hex digits until '}'
+                        var codepoint: u21 = 0;
+                        var digit_count: u8 = 0;
+                        while (!self.isAtEnd() and self.peek() != '}' and digit_count < 6) {
+                            const digit = switch (self.peek()) {
+                                '0'...'9' => self.peek() - '0',
+                                'a'...'f' => self.peek() - 'a' + 10,
+                                'A'...'F' => self.peek() - 'A' + 10,
+                                else => return error.InvalidUnicodeEscape,
+                            };
+                            codepoint = (codepoint << 4) | digit;
+                            digit_count += 1;
+                            self.advance();
+                        }
+                        
+                        if (self.peek() != '}') return error.InvalidUnicodeEscape;
+                        self.advance(); // consume '}'
+                        
+                        // Validate and encode the codepoint
+                        if (codepoint > 0x10FFFF) return error.CodepointTooLarge;
+                        
+                        var buf: [4]u8 = undefined;
+                        const len = try std.unicode.utf8Encode(codepoint, &buf);
+                        try result.appendSlice(buf[0..len]);
+                        continue;
+                    },
                     else => return error.InvalidEscapeSequence,
                 }
             } else {
