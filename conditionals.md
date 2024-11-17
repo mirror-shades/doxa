@@ -30,6 +30,6 @@ print(x); // prints the 'nothing' value
 if statements without an else branch default to `nothing`. the following are functionally equivalent:
 
 ```
-var x = if (false) { y = 1 };
+var x = if (false) { y = 1 }; // warning raised about possible 'nothing' return value
 var x = if (false) { y = 1 } else nothing;
 ```
