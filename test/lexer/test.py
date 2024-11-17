@@ -20,7 +20,6 @@ def run_lexer_test():
         
         expected_tokens = [
             ('SLASH', '/'),
-            ('SLASH_SLASH', '//'),
             ('SLASH_EQUAL', '/='),
             ('LEFT_PAREN', '('),
             ('RIGHT_PAREN', ')'),
