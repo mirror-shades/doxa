@@ -1,0 +1,5 @@
+id: z5n2ufh153q4cywfzg3bchxat2t9pobohzcthh59dt7g41yj
+name: doxa
+license: GPL-2.0
+description: A flexible programming language based around gradualized type safety
+root_dependencies:
