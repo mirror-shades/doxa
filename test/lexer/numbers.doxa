@@ -43,3 +43,12 @@
 1.23e-4
 -1.23e+4
 1_234.567_89e-10
+
+// Octal numbers
+0o0
+0o7
+0o10
+0o755      // Common file permission
+0o1234
+0o1234_5670
+-0o777
