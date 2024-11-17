@@ -1,4 +1,95 @@
-strict mode is signalled by a declaration at the top of the file #strict
+# Doxa 
+
+Doxa is a highly flexible compiled language focused on simplicity, readability, and gradualized type safety. It enables seamless transition from prototype to production code through strict and normal directives.
+
+By default, Doxa runs in normal mode. Strict mode is enabled via `#strict` at the file start. To preserve type safety, strict files can only import other strict files. There is an intermediate mode called `warn` which compiles files in normal mode but gives warnings when strict conventions are not followed.
+
+## General syntax
+
+both `||` and `&&` are supported alongside `and` and `or`. a clarity warning is given if both are used in the same file.
+
+No operator or function overloading.
+
+Memory management is handled via garbage collection.
+
+No classes, only structs and composition.
+
+``` 
+struct Animal {
+    name: string
+}
+
+struct Dog {
+    // Composition instead of inheritance
+    animal: Animal,
+    breed: string,
+    
+    fn bark(self) {
+        print("${self.animal.name} says woof!");
+    }
+}
+
+var dog = Dog {
+    animal: Animal { name: "Spot" },
+    breed: "Labrador"
+};
+```
+
+modules are supported. strict files can only import other strict files. normal files can import both strict and normal files.
+
+```
+// math.doxa
+#strict
+
+// Explicit exports
+export fn add(a: int, b: int) -> int {
+    return a + b;
+}
+
+// main.doxa
+import { add } from "./math.doxa";
+
+// Explicit usage
+var sum = add(1, 2);
+```
+
+match is supported rather than switch.
+
+```
+enum Number {
+    ONE,
+    TWO,
+    UNKNOWN
+}
+
+match x {
+    .ONE => print("one"),
+    .TWO => print("two"),
+    .UNKNOWN => print("unknown")
+}
+```
+
+else is supported
+
+```
+// this is functionally identical to the previous example
+match x {
+    .ONE => print("one"),
+    .TWO => print("two"),
+    else => print("unknown")
+}
+```
+
+all cases must be covered
+
+```
+//this is an error, as one or more cases are not covered
+match x {
+    .ONE => print("one"),
+    .TWO => print("two")
+}
+```
+
 
 ## Doxa normal syntax
 
@@ -62,15 +153,18 @@ var x = 5;                //auto
 x = "five";               //auto
 ```
 
+arrays can be declared either with a homogeneous type or a mixed type
+
+```
+// Homogeneous arrays (recommended)
+var nums = [1, 2, 3];              // auto array of ints
+var strs: []string = ["a", "b"];   // explicit array of strings
+
+// Mixed arrays (allowed but discouraged)
+var mixed = [1, "two", true];      // raises a warning about heterogeneous arrays
+```
+
 ## Doxa strict syntax
-
-strict mode is signalled by a declaration at the top of the file #strict
-strict files can only include other strict files
-
-all variables are typed by default
-
-constants cannot be declared without a value and a type
-
 ```
 const x;                  //error, needs a type and a value
 const x: int;             //error, needs a value
@@ -136,49 +230,14 @@ var x: auto = 5;          //int
 x = "five";               //error, given value does not match type int
 ```
 
-## General syntax
-
-both `||` and `&&` are supported alongside `and` and `or`. a clarity warning is given if both are used in the same file.
-
-No operator or function overloading.
-
-No classes, only structs and composition.
-
-``` 
-struct Animal {
-    name: string
-}
-
-struct Dog {
-    // Composition instead of inheritance
-    animal: Animal,
-    breed: string,
-    
-    fn bark(self) {
-        print("${self.animal.name} says woof!");
-    }
-}
-
-var dog = Dog {
-    animal: Animal { name: "Spot" },
-    breed: "Labrador"
-};
-```
-
-modules are supported. strict files can only import other strict files. normal files can import both strict and normal files.
+arrays can only be declared with a homogeneous type
 
 ```
-// math.doxa
-#strict
+// Only homogeneous arrays allowed
+var nums: []int = [1, 2, 3];       // OK
+var strs: []string = ["a", "b"];   // OK
 
-// Explicit exports
-export fn add(a: int, b: int) -> int {
-    return a + b;
-}
-
-// main.doxa
-import { add } from "./math.doxa";
-
-// Explicit usage
-var sum = add(1, 2);
+// These would be errors
+var mixed = [1, "two", true];      // Error: mixed types in array
+var noType = [1, 2, 3];            // Error: array type must be explicit
 ```

@@ -66,7 +66,8 @@ pub const Lexer = struct {
         try self.keywords.put("for", .FOR);
         try self.keywords.put("foreach", .FOREACH);
         try self.keywords.put("in", .IN);
-        try self.keywords.put("fn", .FUNCTION);
+        try self.keywords.put("fn", .FN_KEYWORD);
+        try self.keywords.put("function", .FUNCTION_KEYWORD);
         try self.keywords.put("return", .RETURN);
         try self.keywords.put("const", .CONST);
         try self.keywords.put("var", .VAR);
@@ -76,14 +77,17 @@ pub const Lexer = struct {
         try self.keywords.put("throw", .THROW);
         try self.keywords.put("try", .TRY);
         try self.keywords.put("catch", .CATCH);
-        try self.keywords.put("and", .AND);
-        try self.keywords.put("or", .OR);
+        try self.keywords.put("and", .AND_KEYWORD);
+        try self.keywords.put("or", .OR_KEYWORD);
         try self.keywords.put("nothing", .NOTHING);
         try self.keywords.put("import", .IMPORT);
         try self.keywords.put("public", .PUBLIC);
         try self.keywords.put("import", .IMPORT);
         try self.keywords.put("assert", .ASSERT);
         try self.keywords.put("match", .MATCH);
+        try self.keywords.put("enum", .ENUM);
+        try self.keywords.put("async", .ASYNC);
+        try self.keywords.put("await", .AWAIT);
     }
 
     // ========add token========
@@ -183,16 +187,31 @@ pub const Lexer = struct {
                 }
             },
 
-
             '(' => try self.parenthesis(),
             ')' => try self.addMinimalToken(.RIGHT_PAREN),
             '{' => try self.addMinimalToken(.LEFT_BRACE),
             '}' => try self.addMinimalToken(.RIGHT_BRACE),
             ',' => try self.addMinimalToken(.COMMA),
             '.' => try self.addMinimalToken(.DOT),
+            ':' => try self.addMinimalToken(.COLON),
             ';' => try self.addMinimalToken(.SEMICOLON),
             '%' => try self.addMinimalToken(.MODULO),
             '#' => try self.addMinimalToken(.HASH),
+
+            '&' => {
+                if (self.match('&')) {
+                    try self.addMinimalToken(.AND_SYMBOL);
+                } else {
+                    try self.addMinimalToken(.AMPERSAND);
+                }
+            },
+            '|' => {
+                if (self.match('|')) {
+                    try self.addMinimalToken(.OR_SYMBOL);
+                } else {
+                    try self.addMinimalToken(.PIPE);
+                }
+            },
             '^' => {
                 if (self.match('=')) {
                     try self.addMinimalToken(.POWER_EQUAL);

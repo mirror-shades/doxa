@@ -9,6 +9,7 @@
 ]
 ,
 .
+:
 ;
 %
 #
@@ -34,7 +35,10 @@
 
 var
 const
+struct
+enum
 fn
+function
 return
 break
 continue
@@ -49,13 +53,17 @@ match
 import
 public
 assert
+async
+await
 
 if
 then
 else
 and
+&&
 or
-struct
+||
+
 
 myVariable
 42
