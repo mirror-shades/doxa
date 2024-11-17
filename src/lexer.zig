@@ -29,6 +29,9 @@ pub const LexerError = error{
     InvalidUnicodeEscape,
     CodepointTooLarge,
     Utf8CannotEncodeSurrogateHalf,
+    LeadingZeros,
+    MultipleExponents,
+    InvalidExponent,
 };
 
 pub const Lexer = struct {
@@ -281,6 +284,14 @@ pub const Lexer = struct {
                     try self.addMinimalToken(.PLUS_PLUS);
                 } else if (self.match('=')) {
                     try self.addMinimalToken(.PLUS_EQUAL);
+                } else if (isDigit(self.peekAt(0)) or self.peekAt(0) == '.' or 
+                          (self.peekAt(0) == '0' and 
+                           (self.peekAt(1) == 'x' or 
+                            self.peekAt(1) == 'b' or 
+                            self.peekAt(1) == 'o'))) {
+                    self.current -= 1;
+                    self.start = self.current;
+                    try self.number();
                 } else {
                     try self.addMinimalToken(.PLUS);
                 }
@@ -614,17 +625,21 @@ pub const Lexer = struct {
     fn number(self: *Lexer) !void {
         var has_digits = false;
         var has_decimal = false;
+        var has_exponent = false;
         var is_negative = false;
+        var has_sign = false;
 
         // Check if this number starts with a negative sign
         if (self.source[self.start] == '-') {
             is_negative = true;
-            self.advance();  // Move past the minus sign
         }
-
+        if (self.source[self.start] == '+' or self.source[self.start] == '-') {
+            has_sign = true;
+            self.advance();
+        }
         // Determine the first actual character, accounting for negative sign
-        const first_char = if (is_negative and self.start + 1 < self.source.len) 
-            self.source[self.start + 1]  // Skip the negative sign
+        const first_char = if (has_sign and self.start + 1 < self.source.len) 
+            self.source[self.start + 1]  // Skip the sign
         else 
             self.source[self.start];
         
@@ -633,41 +648,29 @@ pub const Lexer = struct {
             has_digits = true;
         }
 
-        // Handle octal numbers (0o...)
+        // Handle special bases (hex, binary, octal)
         if (self.current < self.source.len - 1 and 
-            ((is_negative and self.source[self.current] == '0' and self.source[self.current + 1] == 'o') or
-            (self.source[self.current - 1] == '0' and self.source[self.current] == 'o'))) {
-            try self.handleOctal(is_negative);
-            return;
-        }
-
-        // Special handling for hexadecimal numbers (0x...)
-        if (self.current < self.source.len - 1 and 
-            ((is_negative and self.source[self.current] == '0' and self.source[self.current + 1] == 'x') or
-            (self.source[self.current - 1] == '0' and self.source[self.current] == 'x'))) {
-            try self.handleHex(is_negative);
-            return;
-        }
-
-        // Handle binary numbers (similar approach)
-        if (self.current < self.source.len - 1 and 
-            ((is_negative and self.source[self.current] == '0' and self.source[self.current + 1] == 'b') or
-            (self.source[self.current - 1] == '0' and self.source[self.current] == 'b'))) {
-            try self.handleBinary(is_negative);
-            return;
-        }
-
-        // Handle Octal numbers (0o...)
-        if (self.current < self.source.len - 1 and 
-            ((is_negative and self.source[self.current] == '0' and self.source[self.current + 1] == 'o') or
-            (self.source[self.current - 1] == '0' and self.source[self.current] == 'o'))) {
-            try self.handleOctal(is_negative);
-            return;
+            ((has_sign and self.source[self.current] == '0') or 
+             self.source[self.current - 1] == '0')) {
+            const next_char = if (has_sign) self.peekAt(1) else self.peekAt(0);
+            switch (next_char) {
+                'x' => { try self.handleHex(is_negative); return; },
+                'b' => { try self.handleBinary(is_negative); return; },
+                'o' => { try self.handleOctal(is_negative); return; },
+                else => {},
+            }
         }
 
         // Process digits before decimal point
         while (isDigit(self.peekAt(0)) or self.peekAt(0) == '_') {
-            if (isDigit(self.peekAt(0))) has_digits = true;
+            if (isDigit(self.peekAt(0))) {
+                // Check for leading zeros
+                if (has_digits == false and self.peekAt(0) == '0' and 
+                    isDigit(self.peekAt(1))) {
+                    return error.LeadingZeros;
+                }
+                has_digits = true;
+            }
             self.advance();
         }
 
@@ -683,22 +686,36 @@ pub const Lexer = struct {
             }
         }
 
+        // Look for decimal point
+        if (self.peekAt(0) == '.') {
+            has_decimal = true;
+            self.advance();
+
+            // Must have at least one digit after decimal
+            if (!isDigit(self.peekAt(0)) or self.peekAt(0) != '.') return error.InvalidNumber;
+
+            while (isDigit(self.peekAt(0)) or self.peekAt(0) == '_') {
+                if (isDigit(self.peekAt(0))) has_digits = true;
+                self.advance();
+            }
+        }
+
         // Look for scientific notation
         if (self.peekAt(0) == 'e' or self.peekAt(0) == 'E') {
-            const next = self.peekAt(1);
-            if (isDigit(next) or next == '+' or next == '-') {
-                has_decimal = true;
-                self.advance(); // consume 'e' or 'E'
+            if (has_exponent) return error.MultipleExponents;
+            has_exponent = true;
+            has_decimal = true;  // Treat as float
+            self.advance();
 
-                if (self.peekAt(0) == '+' or self.peekAt(0) == '-') {
-                    self.advance();
-                }
+            if (self.peekAt(0) == '+' or self.peekAt(0) == '-') {
+                self.advance();
+            }
 
-                if (!isDigit(self.peekAt(0))) return error.InvalidNumber;
+            // Must have at least one digit in exponent
+            if (!isDigit(self.peekAt(0))) return error.InvalidExponent;
 
-                while (isDigit(self.peekAt(0)) or self.peekAt(0) == '_') {
-                    self.advance();
-                }
+            while (isDigit(self.peekAt(0)) or self.peekAt(0) == '_') {
+                self.advance();
             }
         }
 
