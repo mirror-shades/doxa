@@ -117,6 +117,10 @@ pub const Lexer = struct {
         if (self.current + 1 >= self.source.len) return 0;
         return self.source[self.current + 1];
     }
+    fn peekBack(self: *Lexer) u8 {
+        if(self.current == 0) return 0;
+        return self.source[self.current - 1];
+    }
 
     // ========helpers========
     pub fn isAtEnd(self: *Lexer) bool {
@@ -144,7 +148,6 @@ pub const Lexer = struct {
             self.advance();
         }
         
-        // If we're at the end of the source, return. the EOF token will be added in the previous call
         if (self.isAtEnd()) return;
 
         self.start = self.current;
@@ -152,6 +155,18 @@ pub const Lexer = struct {
         self.advance();
 
         switch (c) {
+
+            //strings
+            'r' => {
+                if (self.peek() == '"') {
+                    self.current = self.start;  // Reset current to include 'r'
+                    try self.rawString();
+                } else {
+                    // This is just an identifier starting with 'r'
+                    try self.identifier();
+                }
+            },
+
             '/' => {                
                 if (!self.isAtEnd() and self.source[self.current] == '/') {
                     self.advance();  // consume the second slash
@@ -284,7 +299,7 @@ pub const Lexer = struct {
             },
             //numbers
             '0'...'9' => try self.number(),
-            //strings
+
             '"' => try self.string(),
             //arrays
             '[' => try self.array(),
@@ -388,35 +403,25 @@ pub const Lexer = struct {
         try self.addMinimalToken(.RIGHT_BRACKET);
     }
 
-    fn string(self: *Lexer) !void {
+    fn rawString(self: *Lexer) !void {
+        std.debug.print("\nStarting raw string at pos {d}\n", .{self.current});
+        std.debug.print("Current string content: {s}\n", .{self.source[self.current..]});
+        
+        self.advance(); // Consume the 'r'
+        self.advance(); // Consume the opening quote
         var result = std.ArrayList(u8).init(self.allocator);
         errdefer result.deinit();
-        
-        while (!self.isAtEnd() and self.peek() != '"') {
-            const current = self.peek();
-            const next = self.peekNext();
+
+        // For raw strings, consume everything literally until an unescaped closing quote
+        while (!self.isAtEnd()) {
+            const ch = self.peek();
+            std.debug.print("Processing char: {c} at pos {d}\n", .{ch, self.current});
             
-            if (current == '\n') {
-                self.line += 1;
-                try result.append('\n');
-            } else if (current == '\\' and next == 'n') {
-                try result.append('\n');
-                self.advance();
-            } else if (current == '\\' and next == 't') {
-                try result.append('\t');
-                self.advance();
-            } else if (current == '\\' and next == 'r') {
-                try result.append('\r');
-                self.advance();
-            } else if (current == '\\' and next == '"') {
-                try result.append('"');
-                self.advance();
-            } else if (current == '\\' and next == '\\') {
-                try result.append('\\');
-                self.advance();
-            } else {
-                try result.append(current);
+            if (ch == '"' and (self.current == 0 or self.source[self.current - 1] != '\\')) {
+                std.debug.print("Found closing quote at pos {d}\n", .{self.current});
+                break;
             }
+            try result.append(ch);
             self.advance();
         }
 
@@ -425,8 +430,46 @@ pub const Lexer = struct {
         }
 
         self.advance(); // consume closing quote
+        const lexeme = self.source[self.start..self.current];
+        std.debug.print("Final lexeme: {s}\n", .{lexeme});
         
-        // Get both the lexeme (including quotes) and the processed string content
+        const string_content = try result.toOwnedSlice();
+        try self.addLongToken(.STRING, .{ .string = string_content }, lexeme);
+    }
+
+    fn string(self: *Lexer) !void {
+        var result = std.ArrayList(u8).init(self.allocator);
+        errdefer result.deinit();
+
+        while (!self.isAtEnd() and self.peek() != '"') {
+            const c = self.peek();
+            self.advance();
+            
+            if (c == '\\') {
+                if (self.isAtEnd()) {
+                    return error.UnterminatedString;
+                }
+                
+                const escaped = self.peek();
+                self.advance();
+                switch (escaped) {
+                    '"' => try result.append('"'),
+                    '\\' => try result.append('\\'),
+                    'n' => try result.append('\n'),
+                    't' => try result.append('\t'),
+                    else => return error.InvalidEscapeSequence,
+                }
+            } else {
+                try result.append(c);
+            }
+        }
+
+        if (self.isAtEnd()) {
+            return error.UnterminatedString;
+        }
+
+        self.advance(); // consume closing quote
+        
         const lexeme = self.source[self.start..self.current];
         const string_content = try result.toOwnedSlice();
         
