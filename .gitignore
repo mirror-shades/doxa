@@ -7,3 +7,6 @@ zig-out
 .zig-build/*
 zig-build/*
 zig-build
+.zigmod
+deps.zig
+files.zig

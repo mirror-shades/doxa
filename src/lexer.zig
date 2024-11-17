@@ -5,6 +5,10 @@ const TokenType = token.TokenType;
 const Token = token.Token;
 const TokenLiteral = token.TokenLiteral;
 
+///==========================================================================
+/// Types & Errors
+///==========================================================================
+
 pub const LexerError = error{
     UnterminatedString,
     UnterminatedArray,
@@ -28,15 +32,21 @@ pub const LexerError = error{
 };
 
 pub const Lexer = struct {
-
+    //======================================================================
+    // Fields
+    //======================================================================
+    
     keywords: std.StringHashMap(TokenType),
-
+    tokens: std.ArrayList(Token),
     source: []const u8,
     start: usize,
     current: usize,
     line: usize,
     allocator: std.mem.Allocator,
-    tokens: std.ArrayList(Token),
+
+    //======================================================================
+    // Initialization
+    //======================================================================
 
     pub fn init(allocator: std.mem.Allocator, source: []const u8) Lexer {
 
@@ -99,52 +109,10 @@ pub const Lexer = struct {
         try self.keywords.put("auto", .AUTO);
     }
 
-    // ========add token========
-    fn addMinimalToken(self: *Lexer, token_type: TokenType) !void {
-        try self.addToken(token_type, .nothing);
-    }
+    //======================================================================
+    // Public Interface
+    //======================================================================
 
-    fn addToken(self: *Lexer, token_type: TokenType, literal: TokenLiteral) !void {
-            try self.tokens.append(Token.init(token_type, self.source[self.start..self.current], literal, self.line, self.current));
-        }
-
-    fn addLongToken(self: *Lexer, token_type: TokenType, literal: TokenLiteral, lexeme: []const u8) !void {
-        try self.tokens.append(Token.init(token_type, lexeme, literal, self.line, self.current));
-    }
-
-    // ========peek========
-    
-    fn peek(self: *Lexer) u8 {
-        if (self.isAtEnd()) return 0;
-        return self.source[self.current];
-    }
-
-    fn peekNext(self: *Lexer) u8 {
-        if (self.current + 1 >= self.source.len) return 0;
-        return self.source[self.current + 1];
-    }
-
-    //surely not the best way to do this
-    fn peekNextNext(self: *Lexer) u8 {
-        if (self.current + 2 >= self.source.len) return 0;
-        return self.source[self.current + 2];
-    }
-
-    fn peekBack(self: *Lexer) u8 {
-        if(self.current == 0) return 0;
-        return self.source[self.current - 1];
-    }
-
-    // ========helpers========
-    pub fn isAtEnd(self: *Lexer) bool {
-        return self.current >= self.source.len;
-    } 
-    
-    fn advance(self: *Lexer) void {
-        self.current += 1;
-    }
-
-    // ========lex tokens========
     pub fn lexTokens(self: *Lexer) !std.ArrayList(Token) {
         while (!self.isAtEnd()) {
             try self.getNextToken();
@@ -154,10 +122,10 @@ pub const Lexer = struct {
     }
 
     // lexes the next token
-    pub fn getNextToken(self: *Lexer) (LexerError || std.mem.Allocator.Error)!void {
+    fn getNextToken(self: *Lexer) (LexerError || std.mem.Allocator.Error)!void {
         // Skip whitespace
-        while (!self.isAtEnd() and (self.peek() == ' ' or self.peek() == '\r' or self.peek() == '\t' or self.peek() == '\n')) {
-            if (self.peek() == '\n') self.line += 1;
+        while (!self.isAtEnd() and (self.peekAt(0) == ' ' or self.peekAt(0) == '\r' or self.peekAt(0) == '\t' or self.peekAt(0) == '\n')) {
+            if (self.peekAt(0) == '\n') self.line += 1;
             self.advance();
         }
         
@@ -171,7 +139,7 @@ pub const Lexer = struct {
 
             //strings
             'r' => {
-                if (self.peek() == '"') {
+                if (self.peekAt(0) == '"') {
                     self.current = self.start;  // Reset current to include 'r'
                     try self.rawString();
                 } else {
@@ -183,10 +151,10 @@ pub const Lexer = struct {
             '/' => {                
                 if (!self.isAtEnd() and self.source[self.current] == '/') {
                     self.advance();  // consume the second slash
-                    while (!self.isAtEnd() and self.peek() != '\n') {
+                    while (!self.isAtEnd() and self.peekAt(0) != '\n') {
                         self.advance();
                     }
-                    if (!self.isAtEnd() and self.peek() == '\n') {
+                    if (!self.isAtEnd() and self.peekAt(0) == '\n') {
                         self.line += 1;
                         self.advance();
                     }
@@ -194,16 +162,16 @@ pub const Lexer = struct {
                     var nesting: usize = 1;
                     
                     while (nesting > 0 and !self.isAtEnd()) {
-                        if (self.peek() == '/' and self.peekNext() == '*') {
+                        if (self.peekAt(0) == '/' and self.peekAt(1) == '*') {
                             self.advance();  // consume /
                             self.advance();  // consume *
                             nesting += 1;
-                        } else if (self.peek() == '*' and self.peekNext() == '/') {
+                        } else if (self.peekAt(0) == '*' and self.peekAt(1) == '/') {
                             self.advance();  // consume *
                             self.advance();  // consume /
                             nesting -= 1;
                         } else {
-                            if (self.peek() == '\n') {
+                            if (self.peekAt(0) == '\n') {
                                 self.line += 1;
                             }
                             self.advance();
@@ -218,8 +186,8 @@ pub const Lexer = struct {
                 } else {
                     try self.addMinimalToken(.SLASH);
                     // Skip any whitespace after the slash
-                    while (!self.isAtEnd() and (self.peek() == ' ' or self.peek() == '\r' or self.peek() == '\t' or self.peek() == '\n')) {
-                        if (self.peek() == '\n') self.line += 1;
+                    while (!self.isAtEnd() and (self.peekAt(0) == ' ' or self.peekAt(0) == '\r' or self.peekAt(0) == '\t' or self.peekAt(0) == '\n')) {
+                        if (self.peekAt(0) == '\n') self.line += 1;
                         self.advance();
                     }
                 }
@@ -231,15 +199,15 @@ pub const Lexer = struct {
             '}' => try self.addMinimalToken(.RIGHT_BRACE),
             ',' => try self.addMinimalToken(.COMMA),
             '.' => {
-                if (self.peek() == '.') {
+                if (self.peekAt(0) == '.') {
                     self.advance(); // consume second dot
-                    if (self.peek() == '.') {
+                    if (self.peekAt(0) == '.') {
                         self.advance(); // consume third dot
                         try self.addMinimalToken(.SPREAD);
                     } else {
                         try self.addMinimalToken(.DOT_DOT);
                     }
-                } else if (isDigit(self.peek())) {
+                } else if (isDigit(self.peekAt(0))) {
                     self.current -= 1; // back up to include the dot
                     self.start = self.current;
                     try self.number();
@@ -354,6 +322,94 @@ pub const Lexer = struct {
         }
     }
 
+    //======================================================================
+    // Token Generation
+    //======================================================================
+
+    fn addMinimalToken(self: *Lexer, token_type: TokenType) !void {
+        try self.addToken(token_type, .nothing);
+    }
+
+    fn addToken(self: *Lexer, token_type: TokenType, literal: TokenLiteral) !void {
+            try self.tokens.append(Token.init(token_type, self.source[self.start..self.current], literal, self.line, self.current));
+    }
+
+    fn addLongToken(self: *Lexer, token_type: TokenType, literal: TokenLiteral, lexeme: []const u8) !void {
+        try self.tokens.append(Token.init(token_type, lexeme, literal, self.line, self.current));
+    }
+
+    //======================================================================
+    // Lexer State Management
+    //======================================================================
+
+    fn peekAt(self: *Lexer, offset: isize) u8 {
+        // For negative offsets, check if we'd go before start of string
+        if (offset < 0) {
+            const abs_offset = @abs(offset);
+            if (abs_offset > self.current) return 0;
+            return self.source[self.current - @as(usize, abs_offset)];
+        }
+        
+        // For zero or positive offsets
+        if (offset >= 0) {
+            const pos = self.current + @as(usize, @intCast(offset));
+            if (pos >= self.source.len) return 0;
+            return self.source[pos];
+        }
+        
+        return 0;
+    }
+
+    fn isAtEnd(self: *Lexer) bool {
+        return self.current >= self.source.len;
+    } 
+    
+    fn advance(self: *Lexer) void {
+        self.current += 1;
+    }
+
+    fn match(self: *Lexer, expected: u8) bool {
+        if (self.isAtEnd()) return false;
+        if (self.source[self.current] != expected) return false;
+        self.advance();
+        return true;
+    }
+
+    //======================================================================
+    // Character Classification
+    //======================================================================
+
+    fn isAlpha(c: u8) bool {
+        return (c >= 'a' and c <= 'z') or
+               (c >= 'A' and c <= 'Z') or
+               c == '_' or
+               c > 127;  // Accept all Unicode characters above ASCII
+    }
+
+    fn isDigit(c: u8) bool {
+        return c >= '0' and c <= '9';
+    }
+
+    fn isOperator(c: u8) bool {
+     return c == '+' or c == '-' or c == '*' or c == '/' or c == '%' or c == '^' or c == '&' or c == '|' or c == '!' or c == '=' or c == '<' or c == '>';
+    }
+
+    fn isWhitespace(c: u8) bool {
+        return c == ' ' or c == '\r' or c == '\t' or c == '\n';
+    }
+
+    fn isHexDigit(c: u8) bool {
+        return isDigit(c) or (c >= 'a' and c <= 'f') or (c >= 'A' and c <= 'F');
+    }
+
+    fn isBinaryDigit(c: u8) bool {
+        return c == '0' or c == '1';
+    }
+
+    //======================================================================
+    // Token Handlers
+    //======================================================================
+
     fn identifier(self: *Lexer) !void {
         while (!self.isAtEnd()) {
             const remaining = self.source[self.current..];
@@ -394,28 +450,6 @@ pub const Lexer = struct {
         }
     }
 
-    fn isAlpha(c: u8) bool {
-        return (c >= 'a' and c <= 'z') or
-               (c >= 'A' and c <= 'Z') or
-               c == '_' or
-               c > 127;  // Accept all Unicode characters above ASCII
-    }
-
-    fn isDigit(c: u8) bool {
-        return c >= '0' and c <= '9';
-    }
-
-    fn isOperator(c: u8) bool {
-     return c == '+' or c == '-' or c == '*' or c == '/' or c == '%' or c == '^' or c == '&' or c == '|' or c == '!' or c == '=' or c == '<' or c == '>';
-    }
-
-    fn match(self: *Lexer, expected: u8) bool {
-        if (self.isAtEnd()) return false;
-        if (self.source[self.current] != expected) return false;
-        self.advance();
-        return true;
-    }
-
     fn boolean(self: *Lexer) !void {
         try self.addToken(.BOOLEAN, .{ .boolean = self.source[self.start..self.current] });
     }
@@ -427,29 +461,29 @@ pub const Lexer = struct {
     fn array(self: *Lexer) !void {
         try self.addMinimalToken(.LEFT_BRACKET);
         
-        while (!self.isAtEnd() and self.peek() != ']') {
+        while (!self.isAtEnd() and self.peekAt(0) != ']') {
             // Skip whitespace
-            while (!self.isAtEnd() and (self.peek() == ' ' or self.peek() == '\r' or self.peek() == '\t' or self.peek() == '\n')) {
-                if (self.peek() == '\n') self.line += 1;
+            while (!self.isAtEnd() and (self.peekAt(0) == ' ' or self.peekAt(0) == '\r' or self.peekAt(0) == '\t' or self.peekAt(0) == '\n')) {
+                if (self.peekAt(0) == '\n') self.line += 1;
                 self.advance();
             }
             
-            if (self.peek() == ']') break;
+            if (self.peekAt(0) == ']') break;
             
             try self.getNextToken();
             
             // Skip whitespace after element
-            while (!self.isAtEnd() and (self.peek() == ' ' or self.peek() == '\r' or self.peek() == '\t' or self.peek() == '\n')) {
-                if (self.peek() == '\n') self.line += 1;
+            while (!self.isAtEnd() and (self.peekAt(0) == ' ' or self.peekAt(0) == '\r' or self.peekAt(0) == '\t' or self.peekAt(0) == '\n')) {
+                if (self.peekAt(0) == '\n') self.line += 1;
                 self.advance();
             }
             
             // Check for comma or end of array
-            if (self.peek() == ',') {
+            if (self.peekAt(0) == ',') {
                 self.start = self.current; // Set start position
                 self.advance();  // Advance past the comma
                 try self.addMinimalToken(.COMMA);  // Add token after advancing
-            } else if (self.peek() != ']') {
+            } else if (self.peekAt(0) != ']') {
                 return error.ExpectedCommaOrClosingBracket;
             }
         }
@@ -463,40 +497,12 @@ pub const Lexer = struct {
         try self.addMinimalToken(.RIGHT_BRACKET);
     }
 
-    fn rawString(self: *Lexer) !void {        
-        self.advance(); // Consume the 'r'
-        self.advance(); // Consume the opening quote
-        var result = std.ArrayList(u8).init(self.allocator);
-        errdefer result.deinit();
-
-        // For raw strings, consume everything literally until an unescaped closing quote
-        while (!self.isAtEnd()) {
-            const ch = self.peek();            
-            if (ch == '"' and (self.current == 0 or self.source[self.current - 1] != '\\')) {
-                break;
-            }
-            try result.append(ch);
-            self.advance();
-        }
-
-        if (self.isAtEnd()) {
-            return error.UnterminatedString;
-        }
-
-        self.advance(); // consume closing quote
-        const lexeme = self.source[self.start..self.current];        
-        const string_content = try result.toOwnedSlice();
-        try self.addLongToken(.STRING, .{ .string = string_content }, lexeme);
-    }
-
-
-
     fn string(self: *Lexer) !void {
         var result = std.ArrayList(u8).init(self.allocator);
         errdefer result.deinit();
 
-        while (!self.isAtEnd() and self.peek() != '"') {
-            const c = self.peek();
+        while (!self.isAtEnd() and self.peekAt(0) != '"') {
+            const c = self.peekAt(0);
             self.advance();
             
             if (c == '\\') {
@@ -504,7 +510,7 @@ pub const Lexer = struct {
                     return error.UnterminatedString;
                 }
                 
-                const escaped = self.peek();
+                const escaped = self.peekAt(0);
                 self.advance();
                 switch (escaped) {
                     '"' => try result.append('"'),
@@ -513,17 +519,17 @@ pub const Lexer = struct {
                     't' => try result.append('\t'),
                     'u' => {
                         // Handle Unicode escape sequences
-                        if (self.peek() != '{') return error.InvalidUnicodeEscape;
+                        if (self.peekAt(0) != '{') return error.InvalidUnicodeEscape;
                         self.advance(); // consume '{'
                         
                         // Read hex digits until '}'
                         var codepoint: u21 = 0;
                         var digit_count: u8 = 0;
-                        while (!self.isAtEnd() and self.peek() != '}' and digit_count < 6) {
-                            const digit = switch (self.peek()) {
-                                '0'...'9' => self.peek() - '0',
-                                'a'...'f' => self.peek() - 'a' + 10,
-                                'A'...'F' => self.peek() - 'A' + 10,
+                        while (!self.isAtEnd() and self.peekAt(0) != '}' and digit_count < 6) {
+                            const digit = switch (self.peekAt(0)) {
+                                '0'...'9' => self.peekAt(0) - '0',
+                                'a'...'f' => self.peekAt(0) - 'a' + 10,
+                                'A'...'F' => self.peekAt(0) - 'A' + 10,
                                 else => return error.InvalidUnicodeEscape,
                             };
                             codepoint = (codepoint << 4) | digit;
@@ -531,7 +537,7 @@ pub const Lexer = struct {
                             self.advance();
                         }
                         
-                        if (self.peek() != '}') return error.InvalidUnicodeEscape;
+                        if (self.peekAt(0) != '}') return error.InvalidUnicodeEscape;
                         self.advance(); // consume '}'
                         
                         // Validate and encode the codepoint
@@ -561,6 +567,32 @@ pub const Lexer = struct {
         try self.addLongToken(.STRING, .{ .string = string_content }, lexeme);
     }
 
+    fn rawString(self: *Lexer) !void {        
+        self.advance(); // Consume the 'r'
+        self.advance(); // Consume the opening quote
+        var result = std.ArrayList(u8).init(self.allocator);
+        errdefer result.deinit();
+
+        // For raw strings, consume everything literally until an unescaped closing quote
+        while (!self.isAtEnd()) {
+            const ch = self.peekAt(0);            
+            if (ch == '"' and (self.current == 0 or self.source[self.current - 1] != '\\')) {
+                break;
+            }
+            try result.append(ch);
+            self.advance();
+        }
+
+        if (self.isAtEnd()) {
+            return error.UnterminatedString;
+        }
+
+        self.advance(); // consume closing quote
+        const lexeme = self.source[self.start..self.current];        
+        const string_content = try result.toOwnedSlice();
+        try self.addLongToken(.STRING, .{ .string = string_content }, lexeme);
+    }
+
     fn number(self: *Lexer) !void {
         var has_digits = false;
         var has_decimal = false;
@@ -568,7 +600,7 @@ pub const Lexer = struct {
 
         // Check if this number starts with a negative sign
         // Treat '-' as a negative sign if it's at the start or preceded by whitespace/operator
-        if (self.current > 0 and self.peekBack() == '-') {
+        if (self.current > 0 and self.peekAt(-1) == '-') {
             // Ensure we don't go out of bounds
             if (self.current < 2 or isWhitespace(self.source[self.current - 2]) or isOperator(self.source[self.current - 2])) {
                 is_negative = true;
@@ -602,7 +634,7 @@ pub const Lexer = struct {
             self.advance(); // Move past 'x'
             
             // Must have at least one hex digit after 0x
-            if (!isHexDigit(self.peek())) return error.InvalidNumber;
+            if (!isHexDigit(self.peekAt(0))) return error.InvalidNumber;
             
             // Mark where the actual hex digits begin (after 0x)
             const digits_start = self.current;
@@ -610,7 +642,7 @@ pub const Lexer = struct {
             has_digits = true;  // We know we have at least one digit
             
             // Consume all hex digits and underscores
-            while (isHexDigit(self.peek()) or self.peek() == '_') {
+            while (isHexDigit(self.peekAt(0)) or self.peekAt(0) == '_') {
                 self.advance();
             }
             
@@ -648,13 +680,13 @@ pub const Lexer = struct {
             }
             self.advance(); // consume '0'
             self.advance(); // consume 'b'
-            if (!isBinaryDigit(self.peek())) return error.InvalidNumber;
+            if (!isBinaryDigit(self.peekAt(0))) return error.InvalidNumber;
             
             // Remember where the actual binary digits start
             const digits_start = self.current;
             
             has_digits = true;  // We have at least one digit
-            while (isBinaryDigit(self.peek()) or self.peek() == '_') {
+            while (isBinaryDigit(self.peekAt(0)) or self.peekAt(0) == '_') {
                 self.advance();
             }
             
@@ -679,37 +711,37 @@ pub const Lexer = struct {
         }
 
         // Process digits before decimal point
-        while (isDigit(self.peek()) or self.peek() == '_') {
-            if (isDigit(self.peek())) has_digits = true;
+        while (isDigit(self.peekAt(0)) or self.peekAt(0) == '_') {
+            if (isDigit(self.peekAt(0))) has_digits = true;
             self.advance();
         }
 
         // Look for decimal point
-        if (self.peek() == '.') {
+        if (self.peekAt(0) == '.') {
             has_decimal = true;
             self.advance(); // consume the decimal point
 
             // Process digits after decimal point
-            while (isDigit(self.peek()) or self.peek() == '_') {
-                if (isDigit(self.peek())) has_digits = true;
+            while (isDigit(self.peekAt(0)) or self.peekAt(0) == '_') {
+                if (isDigit(self.peekAt(0))) has_digits = true;
                 self.advance();
             }
         }
 
         // Look for scientific notation
-        if (self.peek() == 'e' or self.peek() == 'E') {
-            const next = self.peekNext();
+        if (self.peekAt(0) == 'e' or self.peekAt(0) == 'E') {
+            const next = self.peekAt(1);
             if (isDigit(next) or next == '+' or next == '-') {
                 has_decimal = true;
                 self.advance(); // consume 'e' or 'E'
 
-                if (self.peek() == '+' or self.peek() == '-') {
+                if (self.peekAt(0) == '+' or self.peekAt(0) == '-') {
                     self.advance();
                 }
 
-                if (!isDigit(self.peek())) return error.InvalidNumber;
+                if (!isDigit(self.peekAt(0))) return error.InvalidNumber;
 
-                while (isDigit(self.peek()) or self.peek() == '_') {
+                while (isDigit(self.peekAt(0)) or self.peekAt(0) == '_') {
                     self.advance();
                 }
             }
@@ -739,18 +771,9 @@ pub const Lexer = struct {
         }
     }
 
-
-    fn isWhitespace(c: u8) bool {
-        return c == ' ' or c == '\r' or c == '\t' or c == '\n';
-    }
-
-    fn isHexDigit(c: u8) bool {
-        return isDigit(c) or (c >= 'a' and c <= 'f') or (c >= 'A' and c <= 'F');
-    }
-
-    fn isBinaryDigit(c: u8) bool {
-        return c == '0' or c == '1';
-    }
+    //======================================================================
+    // Utilities
+    //======================================================================
 
     fn removeUnderscores(self: *Lexer, input: []const u8) ![]const u8 {
         var result = std.ArrayList(u8).init(self.allocator);
@@ -797,5 +820,4 @@ pub const Lexer = struct {
         
         return result.toOwnedSlice();
     }
-
 };
