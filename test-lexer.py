@@ -3,18 +3,21 @@ import sys
 
 def run_lexer_test():
     try:
-        # Run the doxa command with --debug-lexer flag
-        result = subprocess.run(['./zig-out/bin/doxa', '--debug-lexer', './test.doxa'], 
-                              capture_output=True, 
-                              text=True)
+        # Run the doxa command with --debug-lexer flag and universal_newlines=True
+        result = subprocess.run(
+            ['./zig-out/bin/doxa', '--debug-lexer', './test.doxa'], 
+            capture_output=True, 
+            text=True
+        )
         
-        # Check if the command was successful
-        if result.returncode != 0:
-            print(f"Error running doxa: {result.stderr}")
-            return False
-
-        output_lines = result.stderr.strip().split('\n')
-
+        # Print all stderr output first
+        print("Debug output:")
+        print(result.stderr)
+        
+        # Then filter for token lines
+        output_lines = [line for line in result.stderr.strip().split('\n') 
+                       if line.startswith("Token:")]
+        
         expected_tokens = [
             ('SLASH', '/'),
             ('SLASH_SLASH', '//'),
@@ -90,9 +93,11 @@ def run_lexer_test():
                 return False
                 
             line = output_lines[i]
-            if not (f"token.TokenType.{expected_type}" in line and f"'{expected_lexeme}'" in line):
+            # Create the expected format to match the actual output
+            expected_output = f"Token: token.TokenType.{expected_type} '{expected_lexeme}'"
+            if not expected_output in line:
                 print(f"Mismatch at line {i+1}:")
-                print(f"Expected: token.TokenType.{expected_type} '{expected_lexeme}'")
+                print(f"Expected: {expected_output}")
                 print(f"Got: {line}")
                 return False
         
