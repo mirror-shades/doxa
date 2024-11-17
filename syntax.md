@@ -14,6 +14,8 @@ Memory management is handled via garbage collection.
 
 No classes, only structs and composition.
 
+Try catch is based on Zig's error union model which allows for safeetr
+
 Doxa has some choice code keywords:
 - `function` and `fn` are functionally identical
 - `and` and `&&` are functionally identical
@@ -98,6 +100,18 @@ match x {
 ```
 
 
+arrays can only be declared with a homogeneous type. Heterogeneous arrays are not supported. Structs are the preferred way to group different types.
+
+```
+// Only homogeneous arrays allowed
+var nums: []int = [1, 2, 3];       // OK
+var strs: []string = ["a", "b"];   // OK
+
+// These would be errors
+var mixed = [1, "two", true];      // Error: mixed types in array
+var noType = [1, 2, 3];            // Error: array type must be explicit
+```
+
 ## Doxa normal syntax
 
 constants are declared with the const keyword
@@ -162,13 +176,6 @@ x = "five";               //auto
 
 arrays can be declared either with a homogeneous type or a mixed type
 
-```
-// Homogeneous arrays (recommended)
-var nums = [1, 2, 3];              // auto array of ints
-var strs: []string = ["a", "b"];   // explicit array of strings
-
-// Mixed arrays (allowed but discouraged)
-var mixed = [1, "two", true];      // raises a warning about heterogeneous arrays
 ```
 
 ## Doxa strict syntax
@@ -235,16 +242,4 @@ no cross-type assignments are allowed for strict variables
 ```
 var x: auto = 5;          //int
 x = "five";               //error, given value does not match type int
-```
-
-arrays can only be declared with a homogeneous type
-
-```
-// Only homogeneous arrays allowed
-var nums: []int = [1, 2, 3];       // OK
-var strs: []string = ["a", "b"];   // OK
-
-// These would be errors
-var mixed = [1, "two", true];      // Error: mixed types in array
-var noType = [1, 2, 3];            // Error: array type must be explicit
 ```
