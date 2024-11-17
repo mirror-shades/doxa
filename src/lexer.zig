@@ -541,70 +541,91 @@ pub const Lexer = struct {
     }
 
     fn number(self: *Lexer) !void {
+        // Track whether we've seen any digits, decimal points, or negative signs
         var has_digits = false;
         var has_decimal = false;
         var is_negative = false;
 
-        // Handle negative numbers
+        // BUG: The negative sign handling is not properly handling cases where
+        // a negative sign appears before a hex/binary number that's being parsed as a
+        // separate token. For example "-0xFF" is parsed as ["-0", "xFF"] instead
+        // of a single negative hex number.
+
+        // Check if this number starts with a negative sign
+        // We need to verify it's not just a minus operator by checking what comes before it
         if (self.peekBack() == '-' and self.current > 0) {
-            // Only include the minus sign if it's not preceded by whitespace or another operator
+            // Only treat as negative if not preceded by whitespace/operator
+            // This helps distinguish between "-5" and "3 - 5"
             if (self.current < 2 or !isWhitespace(self.source[self.current - 2])) {
                 is_negative = true;
-                self.start -= 1;  // Include the minus sign in the lexeme
+                self.start -= 1;  // Include the minus sign in the final token
             }
         }
 
-        // Set has_digits if we start with a digit
+        // Determine the first actual digit character, accounting for negative sign
         const first_char = if (is_negative and self.start + 1 < self.source.len) 
-            self.source[self.start + 1]
+            self.source[self.start + 1]  // Skip the negative sign
         else 
             self.source[self.start];
         
+        // Mark if we start with a valid digit
         if (isDigit(first_char)) {
             has_digits = true;
         }
 
-        // Handle hex numbers
+        // Special handling for hexadecimal numbers (0x...)
+        // Need to handle both "-0x123" and "0x123" formats
         if (self.current < self.source.len - 1 and 
             ((is_negative and self.source[self.current] == '0' and self.source[self.current + 1] == 'x') or
              (self.source[self.current - 1] == '0' and self.source[self.current] == 'x'))) {
-            // If we're at 'x', back up to include the '0'
+            // Ensure we capture the full "0x" prefix
             if (self.source[self.current] == 'x') {
-                self.current -= 1;
+                self.current -= 1;  // Back up to include the '0'
             }
-            self.advance(); // consume '0'
-            self.advance(); // consume 'x'
+            self.advance(); // Move past '0'
+            self.advance(); // Move past 'x'
+            
+            // Must have at least one hex digit after 0x
             if (!isHexDigit(self.peek())) return error.InvalidNumber;
             
-            // Remember where the actual hex digits start
+            // Mark where the actual hex digits begin (after 0x)
             const digits_start = self.current;
             
-            has_digits = true;  // We have at least one digit
+            has_digits = true;  // We know we have at least one digit
+            
+            // Consume all hex digits and underscores
+            // Underscores are allowed as visual separators (0xDEAD_BEEF)
             while (isHexDigit(self.peek()) or self.peek() == '_') {
                 self.advance();
             }
             
-            // Get just the hex digits
+            // Extract just the hex digits portion
             const hex_digits = self.source[digits_start..self.current];
             
-            // Remove underscores from the hex digits
+            // Clean up the hex string by removing underscores
             const clean_hex = try self.removeUnderscores(hex_digits);
-            defer self.allocator.free(clean_hex);
+            defer self.allocator.free(clean_hex);  // Clean up allocated memory
 
-            // Debug print
+            // Debug output to help with troubleshooting
             std.debug.print("Parsing hex digits: '{s}' (from '{s}')\n", .{clean_hex, self.source[self.start..self.current]});
 
+            // Convert the hex string to an integer
             var int_val = std.fmt.parseInt(i64, clean_hex, 16) catch |err| switch (err) {
                 error.InvalidCharacter => return error.InvalidNumber,
                 else => return err,
             };
             
+            // Apply negative sign if needed
             if (is_negative) int_val = -int_val;
+            
+            // Create the final token and return
             try self.addToken(.INT, .{ .int = int_val });
             return;
         }
 
         // Handle binary numbers (similar approach)
+        // BUG: Similar to hex numbers, negative binary numbers like "-0b1010"
+        // are parsed as separate tokens ["-0", "b1010"] instead of a single negative binary number
         if (self.current < self.source.len - 1 and 
             ((is_negative and self.source[self.current] == '0' and self.source[self.current + 1] == 'b') or
              (self.source[self.current - 1] == '0' and self.source[self.current] == 'b'))) {
