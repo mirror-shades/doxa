@@ -5,7 +5,7 @@ def run_lexer_test():
     try:
         # Run the doxa command with --debug-lexer flag and universal_newlines=True
         result = subprocess.run(
-            ['./zig-out/bin/doxa', '--debug-lexer', './test.doxa'], 
+            ['./zig-out/bin/doxa', '--debug-lexer', './test/lexer/test.doxa'], 
             capture_output=True, 
             text=True
         )

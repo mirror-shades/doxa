@@ -39,12 +39,6 @@ pub const Lexer = struct {
     tokens: std.ArrayList(Token),
 
     pub fn init(allocator: std.mem.Allocator, source: []const u8) Lexer {
-        // Debug print the source content
-        std.debug.print("Source content: ", .{});
-        for (source) |c| {
-            std.debug.print("{x:0>2} ", .{c});
-        }
-        std.debug.print("\n", .{});
 
         return Lexer{
             .source = source,
@@ -88,10 +82,6 @@ pub const Lexer = struct {
 
     // ========add token========
     fn addMinimalToken(self: *Lexer, token_type: TokenType) !void {
-        std.debug.print("Adding token: {s} with lexeme '{s}'\n", .{
-            @tagName(token_type),
-            self.source[self.start..self.current]
-        });
         try self.addToken(token_type, .nothing);
     }
 
@@ -155,24 +145,16 @@ pub const Lexer = struct {
             self.advance();
         }
         
-        if (self.isAtEnd()) {
-            self.start = self.current;
-            try self.addMinimalToken(.EOF);
-            return;
-        }
+        // If we're at the end of the source, return. the EOF token will be added in the previous call
+        if (self.isAtEnd()) return;
 
         self.start = self.current;
         const c = self.source[self.current];
-        std.debug.print("Processing character: '{c}' (hex: {x:0>2})\n", .{c, c});
         self.advance();
 
         switch (c) {
-            '/' => {
-                std.debug.print("Found first slash at position {d}\n", .{self.current});
-                
-                // Look ahead for another slash without advancing
+            '/' => {                
                 if (!self.isAtEnd() and self.source[self.current] == '/') {
-                    std.debug.print("Found consecutive slash, entering comment mode\n", .{});
                     self.advance();  // consume the second slash
                     try self.addMinimalToken(.SLASH_SLASH);
                     // Skip the rest of the line
@@ -186,7 +168,6 @@ pub const Lexer = struct {
                 } else if (self.match('=')) {
                     try self.addMinimalToken(.SLASH_EQUAL);
                 } else {
-                    std.debug.print("Treating as single slash\n", .{});
                     try self.addMinimalToken(.SLASH);
                     // Skip any whitespace after the slash
                     while (!self.isAtEnd() and (self.peek() == ' ' or self.peek() == '\r' or self.peek() == '\t' or self.peek() == '\n')) {
