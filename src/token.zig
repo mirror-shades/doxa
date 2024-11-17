@@ -12,6 +12,7 @@ pub const TokenType = enum {
     DOT,            // .
     SEMICOLON,      // ;
     MODULO,         // %
+    HASH,           // #
 
     //one or two character tokens
     SLASH,          // /
@@ -39,10 +40,15 @@ pub const TokenType = enum {
     // keywords
     VAR,            // var
     CONST,          // const
+    STRUCT,         // struct
     FUNCTION,       // function
+    IMPORT,         // import
+    PUBLIC,         // public
+    ASSERT,         // assert
     RETURN,         // return
     BREAK,          // break
     CONTINUE,       // continue
+    MATCH,          // match
     THROW,          // throw
     TRY,            // try
     CATCH,          // catch

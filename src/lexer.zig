@@ -70,6 +70,7 @@ pub const Lexer = struct {
         try self.keywords.put("return", .RETURN);
         try self.keywords.put("const", .CONST);
         try self.keywords.put("var", .VAR);
+        try self.keywords.put("struct", .STRUCT);
         try self.keywords.put("break", .BREAK);
         try self.keywords.put("continue", .CONTINUE);
         try self.keywords.put("throw", .THROW);
@@ -78,6 +79,11 @@ pub const Lexer = struct {
         try self.keywords.put("and", .AND);
         try self.keywords.put("or", .OR);
         try self.keywords.put("nothing", .NOTHING);
+        try self.keywords.put("import", .IMPORT);
+        try self.keywords.put("public", .PUBLIC);
+        try self.keywords.put("import", .IMPORT);
+        try self.keywords.put("assert", .ASSERT);
+        try self.keywords.put("match", .MATCH);
     }
 
     // ========add token========
@@ -186,6 +192,7 @@ pub const Lexer = struct {
             '.' => try self.addMinimalToken(.DOT),
             ';' => try self.addMinimalToken(.SEMICOLON),
             '%' => try self.addMinimalToken(.MODULO),
+            '#' => try self.addMinimalToken(.HASH),
             '^' => {
                 if (self.match('=')) {
                     try self.addMinimalToken(.POWER_EQUAL);

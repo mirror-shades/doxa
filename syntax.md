@@ -139,3 +139,46 @@ x = "five";               //error, given value does not match type int
 ## General syntax
 
 both `||` and `&&` are supported alongside `and` and `or`. a clarity warning is given if both are used in the same file.
+
+No operator or function overloading.
+
+No classes, only structs and composition.
+
+``` 
+struct Animal {
+    name: string
+}
+
+struct Dog {
+    // Composition instead of inheritance
+    animal: Animal,
+    breed: string,
+    
+    fn bark(self) {
+        print("${self.animal.name} says woof!");
+    }
+}
+
+var dog = Dog {
+    animal: Animal { name: "Spot" },
+    breed: "Labrador"
+};
+```
+
+modules are supported. strict files can only import other strict files. normal files can import both strict and normal files.
+
+```
+// math.doxa
+#strict
+
+// Explicit exports
+export fn add(a: int, b: int) -> int {
+    return a + b;
+}
+
+// main.doxa
+import { add } from "./math.doxa";
+
+// Explicit usage
+var sum = add(1, 2);
+```
