@@ -1,8 +1,3 @@
-// TODO:
-// - add support for scientific notation in numbers
-// - add support for hexadecimal numbers (0x...)
-// - add support for binary numbers (0b...)
-// - add support for underscores in numbers (1_000_000)
 const std = @import("std");
 
 const token = @import("token.zig");
@@ -97,6 +92,11 @@ pub const Lexer = struct {
         try self.keywords.put("enum", .ENUM);
         try self.keywords.put("async", .ASYNC);
         try self.keywords.put("await", .AWAIT);
+        try self.keywords.put("typeof", .TYPEOF);
+        try self.keywords.put("is", .IS);
+        try self.keywords.put("as", .AS);
+        try self.keywords.put("from", .FROM);
+        try self.keywords.put("auto", .AUTO);
     }
 
     // ========add token========
@@ -105,11 +105,11 @@ pub const Lexer = struct {
     }
 
     fn addToken(self: *Lexer, token_type: TokenType, literal: TokenLiteral) !void {
-        try self.tokens.append(Token.init(token_type, self.source[self.start..self.current], literal, self.line));
-    }
+            try self.tokens.append(Token.init(token_type, self.source[self.start..self.current], literal, self.line, self.current));
+        }
 
     fn addLongToken(self: *Lexer, token_type: TokenType, literal: TokenLiteral, lexeme: []const u8) !void {
-        try self.tokens.append(Token.init(token_type, lexeme, literal, self.line));
+        try self.tokens.append(Token.init(token_type, lexeme, literal, self.line, self.current));
     }
 
     // ========peek========
@@ -123,6 +123,13 @@ pub const Lexer = struct {
         if (self.current + 1 >= self.source.len) return 0;
         return self.source[self.current + 1];
     }
+
+    //surely not the best way to do this
+    fn peekNextNext(self: *Lexer) u8 {
+        if (self.current + 2 >= self.source.len) return 0;
+        return self.source[self.current + 2];
+    }
+
     fn peekBack(self: *Lexer) u8 {
         if(self.current == 0) return 0;
         return self.source[self.current - 1];
@@ -142,7 +149,7 @@ pub const Lexer = struct {
         while (!self.isAtEnd()) {
             try self.getNextToken();
         }
-        try self.tokens.append(Token.init(.EOF, "", .auto, self.line));
+        try self.tokens.append(Token.init(.EOF, "", .auto, self.line, self.current));
         return self.tokens;
     }
 
@@ -224,7 +231,15 @@ pub const Lexer = struct {
             '}' => try self.addMinimalToken(.RIGHT_BRACE),
             ',' => try self.addMinimalToken(.COMMA),
             '.' => {
-                if (isDigit(self.peek())) {
+                if (self.peek() == '.') {
+                    self.advance(); // consume second dot
+                    if (self.peek() == '.') {
+                        self.advance(); // consume third dot
+                        try self.addMinimalToken(.SPREAD);
+                    } else {
+                        try self.addMinimalToken(.DOT_DOT);
+                    }
+                } else if (isDigit(self.peek())) {
                     self.current -= 1; // back up to include the dot
                     self.start = self.current;
                     try self.number();
@@ -303,8 +318,8 @@ pub const Lexer = struct {
                 }
             },
             '-' => {
-                if (isDigit(self.peek())) {
-                    try self.number();
+                if (self.match('>')) {
+                    try self.addMinimalToken(.ARROW);
                 } else if (self.match('-')) {
                     try self.addMinimalToken(.MINUS_MINUS);
                 } else if (self.match('=')) {
@@ -334,6 +349,8 @@ pub const Lexer = struct {
                     return error.UnexpectedCharacter;
                 }
             },
+            '~' => try self.addMinimalToken(.TILDE),
+            '?' => try self.addMinimalToken(.QUESTION),
         }
     }
 

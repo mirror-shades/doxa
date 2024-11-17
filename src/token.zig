@@ -14,6 +14,8 @@ pub const TokenType = enum {
     SEMICOLON,      // ;
     MODULO,         // %
     HASH,           // #
+    TILDE,          // ~
+    QUESTION,       // ?
 
     //one or two character tokens
     AMPERSAND,      // &
@@ -57,10 +59,14 @@ pub const TokenType = enum {
     WHILE,          // while
     FOR,            // for
     FOREACH,        // foreach
+    FROM,           // from
     IN,             // in
+    IS,             // is
+    AS,             // as
     ASYNC,          // async
     AWAIT,          // await
-
+    TYPEOF,         // typeof
+    DOT_DOT,        // ..
     // keywords with alternate tokens
     AND_KEYWORD,    // and
     AND_SYMBOL,     // &&
@@ -77,6 +83,7 @@ pub const TokenType = enum {
     // literals
     ASSIGN,        // =
     IDENTIFIER,    // identifier
+    SPREAD,        // ...
     INT,           // integer
     FLOAT,         // float
     STRING,        // string
@@ -104,13 +111,15 @@ pub const Token = struct {
     lexeme: []const u8,
     literal: TokenLiteral,
     line: usize,
+    column: usize,
 
-    pub fn init(token_type: TokenType, lexeme: []const u8, literal: TokenLiteral, line: usize) Token {
+    pub fn init(token_type: TokenType, lexeme: []const u8, literal: TokenLiteral, line: usize, column: usize) Token {
         return Token{
             .type = token_type,
             .lexeme = lexeme,
             .literal = literal,
             .line = line,
+            .column = column,
         };
     }
 

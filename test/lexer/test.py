@@ -96,6 +96,21 @@ def run_lexer_test():
             ('COMMA', ','),
             ('INT', '3'),
             ('RIGHT_BRACKET', ']'),
+
+            ('TILDE', '~'),
+            ('QUESTION', '?'),
+            ('ARROW', '->'),
+            ('DOT_DOT', '..'),
+            ('SPREAD', '...'), 
+
+            ('FROM', 'from'),
+            ('IS', 'is'),
+            ('AS', 'as'),   
+            ('TYPEOF', 'typeof'),
+            ('AUTO', 'auto'),
+
+
+
             ('EOF', ''),
         ]
         
