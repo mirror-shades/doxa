@@ -607,7 +607,6 @@ pub const Lexer = struct {
         try self.addLongToken(.STRING, .{ .string = string_content }, lexeme);
     }
 
-
     //======================================================================
     // Number Handling
     //======================================================================
@@ -634,6 +633,14 @@ pub const Lexer = struct {
             has_digits = true;
         }
 
+        // Handle octal numbers (0o...)
+        if (self.current < self.source.len - 1 and 
+            ((is_negative and self.source[self.current] == '0' and self.source[self.current + 1] == 'o') or
+            (self.source[self.current - 1] == '0' and self.source[self.current] == 'o'))) {
+            try self.handleOctal(is_negative);
+            return;
+        }
+
         // Special handling for hexadecimal numbers (0x...)
         if (self.current < self.source.len - 1 and 
             ((is_negative and self.source[self.current] == '0' and self.source[self.current + 1] == 'x') or
@@ -647,6 +654,14 @@ pub const Lexer = struct {
             ((is_negative and self.source[self.current] == '0' and self.source[self.current + 1] == 'b') or
             (self.source[self.current - 1] == '0' and self.source[self.current] == 'b'))) {
             try self.handleBinary(is_negative);
+            return;
+        }
+
+        // Handle Octal numbers (0o...)
+        if (self.current < self.source.len - 1 and 
+            ((is_negative and self.source[self.current] == '0' and self.source[self.current + 1] == 'o') or
+            (self.source[self.current - 1] == '0' and self.source[self.current] == 'o'))) {
+            try self.handleOctal(is_negative);
             return;
         }
 
@@ -785,6 +800,45 @@ pub const Lexer = struct {
 
         // Convert the binary string to an integer
         var int_val = std.fmt.parseInt(i64, clean_bin, 2) catch |err| switch (err) {
+            error.InvalidCharacter => return error.InvalidNumber,
+            else => return err,
+        };
+        
+        if (is_negative) int_val = -int_val;
+        try self.addToken(.INT, .{ .int = int_val });
+    }
+
+    fn handleOctal(self: *Lexer, is_negative: bool) !void {
+        // If we're at 'o', back up to include the '0'
+        if (self.source[self.current] == 'o') {
+            self.current -= 1;
+        }
+        self.advance(); // consume '0'
+        self.advance(); // consume 'o'
+        
+        // Must have at least one octal digit after 0o
+        if (!isOctalDigit(self.peekAt(0))) return error.InvalidNumber;
+        
+        // Mark where the actual octal digits begin (after 0o)
+        const digits_start = self.current;
+        
+        // Consume all octal digits and underscores
+        while (isOctalDigit(self.peekAt(0)) or self.peekAt(0) == '_') {
+            self.advance();
+        }
+        
+        // Extract just the octal digits portion
+        const oct_digits = self.source[digits_start..self.current];
+        
+        // Clean up the octal string by removing underscores
+        const clean_oct = try self.removeUnderscores(oct_digits);
+        defer self.allocator.free(clean_oct);
+
+        // Debug output
+        std.debug.print("Parsing octal digits: '{s}' (from '{s}')\n", .{clean_oct, self.source[self.start..self.current]});
+
+        // Convert the octal string to an integer
+        var int_val = std.fmt.parseInt(i64, clean_oct, 8) catch |err| switch (err) {
             error.InvalidCharacter => return error.InvalidNumber,
             else => return err,
         };
