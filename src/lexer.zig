@@ -507,6 +507,10 @@ pub const Lexer = struct {
         try self.addMinimalToken(.RIGHT_BRACKET);
     }
 
+    //======================================================================
+    // String Handling
+    //======================================================================
+
     fn string(self: *Lexer) !void {
         var result = std.ArrayList(u8).init(self.allocator);
         errdefer result.deinit();
@@ -603,11 +607,15 @@ pub const Lexer = struct {
         try self.addLongToken(.STRING, .{ .string = string_content }, lexeme);
     }
 
+
+    //======================================================================
+    // Number Handling
+    //======================================================================
+
     fn number(self: *Lexer) !void {
         var has_digits = false;
         var has_decimal = false;
         var is_negative = false;
-        var digits_start: usize = self.current;
 
         // Check if this number starts with a negative sign
         if (self.source[self.start] == '-') {
@@ -630,90 +638,17 @@ pub const Lexer = struct {
         if (self.current < self.source.len - 1 and 
             ((is_negative and self.source[self.current] == '0' and self.source[self.current + 1] == 'x') or
             (self.source[self.current - 1] == '0' and self.source[self.current] == 'x'))) {
-            // If we're at 'x', back up to include the '0'
-            if (self.source[self.current] == 'x') {
-                self.current -= 1;
-            }
-            self.advance(); // Move past '0'
-            self.advance(); // Move past 'x'
-            
-            // Must have at least one hex digit after 0x
-            if (!isHexDigit(self.peekAt(0))) return error.InvalidNumber;
-            
-            // Mark where the actual hex digits begin (after 0x)
-            digits_start = self.current;  // Update digits_start to after the 0x prefix
-
-            has_digits = true;  // We know we have at least one digit
-            
-            // Consume all hex digits and underscores
-            while (isHexDigit(self.peekAt(0)) or self.peekAt(0) == '_') {
-                self.advance();
-            }
-            
-            // Extract just the hex digits portion
-            const hex_digits = self.source[digits_start..self.current];
-            
-            // Clean up the hex string by removing underscores
-            const clean_hex = try self.removeUnderscores(hex_digits);
-            defer self.allocator.free(clean_hex);
-
-            // Debug output to help with troubleshooting
-            std.debug.print("Parsing hex digits: '{s}' (from '{s}')\n", .{clean_hex, self.source[self.start..self.current]});
-
-            // Convert the hex string to an integer
-            var int_val = std.fmt.parseInt(i64, clean_hex, 16) catch |err| switch (err) {
-                error.InvalidCharacter => return error.InvalidNumber,
-                else => return err,
-            };
-            
-            // Apply negative sign if needed
-            if (is_negative) int_val = -int_val;
-            
-            // Create the final token and return
-            try self.addToken(.INT, .{ .int = int_val });
+            try self.handleHex(is_negative);
             return;
         }
 
-    // Handle binary numbers (similar approach)
-    if (self.current < self.source.len - 1 and 
-        ((is_negative and self.source[self.current] == '0' and self.source[self.current + 1] == 'b') or
-        (self.source[self.current - 1] == '0' and self.source[self.current] == 'b'))) {
-        // If we're at 'b', back up to include the '0'
-        if (self.source[self.current] == 'b') {
-            self.current -= 1;
+        // Handle binary numbers (similar approach)
+        if (self.current < self.source.len - 1 and 
+            ((is_negative and self.source[self.current] == '0' and self.source[self.current + 1] == 'b') or
+            (self.source[self.current - 1] == '0' and self.source[self.current] == 'b'))) {
+            try self.handleBinary(is_negative);
+            return;
         }
-        self.advance(); // consume '0'
-        self.advance(); // consume 'b'
-        if (!isBinaryDigit(self.peekAt(0))) return error.InvalidNumber;
-        
-        // Mark where the actual binary digits begin (after 0b)
-        digits_start = self.current;
-        
-        has_digits = true;  // We have at least one digit
-        while (isBinaryDigit(self.peekAt(0)) or self.peekAt(0) == '_') {
-            self.advance();
-        }
-        
-        // Get just the binary digits
-        const bin_digits = self.source[digits_start..self.current];
-        
-        // Remove underscores from the binary digits
-        const clean_bin = try self.removeUnderscores(bin_digits);
-        defer self.allocator.free(clean_bin);
-
-        // Debug output to help with troubleshooting
-        std.debug.print("Parsing binary digits: '{s}' (from '{s}')\n", .{clean_bin, self.source[self.start..self.current]});
-
-        // Convert the binary string to an integer
-        var int_val = std.fmt.parseInt(i64, clean_bin, 2) catch |err| switch (err) {
-            error.InvalidCharacter => return error.InvalidNumber,
-            else => return err,
-        };
-        
-        if (is_negative) int_val = -int_val;
-        try self.addToken(.INT, .{ .int = int_val });
-        return;
-    }
 
         // Process digits before decimal point
         while (isDigit(self.peekAt(0)) or self.peekAt(0) == '_') {
@@ -774,6 +709,88 @@ pub const Lexer = struct {
             };
             try self.addToken(.INT, .{ .int = int_val });
         }
+    }
+
+    fn handleHex(self: *Lexer, is_negative: bool) !void {
+        var digits_start: usize = self.current;
+        // If we're at 'x', back up to include the '0'
+        if (self.source[self.current] == 'x') {
+            self.current -= 1;
+        }
+        self.advance(); // Move past '0'
+        self.advance(); // Move past 'x'
+        
+        // Must have at least one hex digit after 0x
+        if (!isHexDigit(self.peekAt(0))) return error.InvalidNumber;
+        
+        // Mark where the actual hex digits begin (after 0x)
+        digits_start = self.current;  // Update digits_start to after the 0x prefix
+        
+        // Consume all hex digits and underscores
+        while (isHexDigit(self.peekAt(0)) or self.peekAt(0) == '_') {
+            self.advance();
+        }
+        
+        // Extract just the hex digits portion
+        const hex_digits = self.source[digits_start..self.current];
+        
+        // Clean up the hex string by removing underscores
+        const clean_hex = try self.removeUnderscores(hex_digits);
+        defer self.allocator.free(clean_hex);
+
+        // Debug output to help with troubleshooting
+        std.debug.print("Parsing hex digits: '{s}' (from '{s}')\n", .{clean_hex, self.source[self.start..self.current]});
+
+        // Convert the hex string to an integer
+        var int_val = std.fmt.parseInt(i64, clean_hex, 16) catch |err| switch (err) {
+            error.InvalidCharacter => return error.InvalidNumber,
+            else => return err,
+        };
+        
+        // Apply negative sign if needed
+        if (is_negative) int_val = -int_val;
+        
+        // Create the final token and return
+        try self.addToken(.INT, .{ .int = int_val });
+    }
+
+    fn handleBinary(self: *Lexer, is_negative: bool) !void {
+        // If we're at 'b', back up to include the '0'
+        if (self.source[self.current] == 'b') {
+            self.current -= 1;
+        }
+        self.advance(); // consume '0'
+        self.advance(); // consume 'b'
+        
+        // Must have at least one binary digit after 0b
+        if (!isBinaryDigit(self.peekAt(0))) return error.InvalidNumber;
+        
+        // Mark where the actual binary digits begin (after 0b)
+        const digits_start = self.current;
+        
+        // Consume all binary digits and underscores
+        while (isBinaryDigit(self.peekAt(0)) or self.peekAt(0) == '_') {
+            self.advance();
+        }
+        
+        // Extract just the binary digits portion
+        const bin_digits = self.source[digits_start..self.current];
+        
+        // Clean up the binary string by removing underscores
+        const clean_bin = try self.removeUnderscores(bin_digits);
+        defer self.allocator.free(clean_bin);
+
+        // Debug output to help with troubleshooting
+        std.debug.print("Parsing binary digits: '{s}' (from '{s}')\n", .{clean_bin, self.source[self.start..self.current]});
+
+        // Convert the binary string to an integer
+        var int_val = std.fmt.parseInt(i64, clean_bin, 2) catch |err| switch (err) {
+            error.InvalidCharacter => return error.InvalidNumber,
+            else => return err,
+        };
+        
+        if (is_negative) int_val = -int_val;
+        try self.addToken(.INT, .{ .int = int_val });
     }
 
     //======================================================================
