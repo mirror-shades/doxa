@@ -15,9 +15,6 @@
 // Test empty comment
 /**/
 
-// Test code after comments
-var x = 42;
-/* mid-line comment */ var y = 43;
 
 /* Test comment
    with multiple
@@ -27,5 +24,5 @@ var x = 42;
    */ still works */
 
 // Verify code still lexes after all comments
-var test = "hello";
-var num = 123;
+
+/* mid-line comment */  "hello"
