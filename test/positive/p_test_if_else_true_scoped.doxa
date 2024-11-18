@@ -1,3 +1,0 @@
-var x = 1;
-if (true) then { x = 5 } else { x = 10 };
-print(x);

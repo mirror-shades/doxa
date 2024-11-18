@@ -35,7 +35,6 @@ pub const LexerError = error{
 };
 
 pub const Lexer = struct {
-
     //======================================================================
     // Fields
     //======================================================================
@@ -687,6 +686,20 @@ pub const Lexer = struct {
             }
         }
 
+        // Look for decimal point
+        if (self.peekAt(0) == '.') {
+            has_decimal = true;
+            self.advance();
+
+            // Must have at least one digit after decimal
+            if (!isDigit(self.peekAt(0)) or self.peekAt(0) != '.') return error.InvalidNumber;
+
+            while (isDigit(self.peekAt(0)) or self.peekAt(0) == '_') {
+                if (isDigit(self.peekAt(0))) has_digits = true;
+                self.advance();
+            }
+        }
+
         // Look for scientific notation
         if (self.peekAt(0) == 'e' or self.peekAt(0) == 'E') {
             if (has_exponent) return error.MultipleExponents;
@@ -754,6 +767,9 @@ pub const Lexer = struct {
         const clean_hex = try self.removeUnderscores(hex_digits);
         defer self.allocator.free(clean_hex);
 
+        // Debug output to help with troubleshooting
+        std.debug.print("Parsing hex digits: '{s}' (from '{s}')\n", .{clean_hex, self.source[self.start..self.current]});
+
         // Convert the hex string to an integer
         var int_val = std.fmt.parseInt(i64, clean_hex, 16) catch |err| switch (err) {
             error.InvalidCharacter => return error.InvalidNumber,
@@ -793,6 +809,9 @@ pub const Lexer = struct {
         const clean_bin = try self.removeUnderscores(bin_digits);
         defer self.allocator.free(clean_bin);
 
+        // Debug output to help with troubleshooting
+        std.debug.print("Parsing binary digits: '{s}' (from '{s}')\n", .{clean_bin, self.source[self.start..self.current]});
+
         // Convert the binary string to an integer
         var int_val = std.fmt.parseInt(i64, clean_bin, 2) catch |err| switch (err) {
             error.InvalidCharacter => return error.InvalidNumber,
@@ -812,9 +831,7 @@ pub const Lexer = struct {
         self.advance(); // consume 'o'
         
         // Must have at least one octal digit after 0o
-        if (!isOctalDigit(self.peekAt(0))) {
-            return error.InvalidNumber;
-        }
+        if (!isOctalDigit(self.peekAt(0))) return error.InvalidNumber;
         
         // Mark where the actual octal digits begin (after 0o)
         const digits_start = self.current;
@@ -831,24 +848,16 @@ pub const Lexer = struct {
         const clean_oct = try self.removeUnderscores(oct_digits);
         defer self.allocator.free(clean_oct);
 
-        // Try parsing as u64 first to handle the full range
-        const unsigned_val = std.fmt.parseInt(u64, clean_oct, 8) catch |err| switch (err) {
+        // Debug output
+        std.debug.print("Parsing octal digits: '{s}' (from '{s}')\n", .{clean_oct, self.source[self.start..self.current]});
+
+        // Convert the octal string to an integer
+        var int_val = std.fmt.parseInt(i64, clean_oct, 8) catch |err| switch (err) {
             error.InvalidCharacter => return error.InvalidNumber,
-            error.Overflow => return error.Overflow,
+            else => return err,
         };
-
-        // For negative numbers, we need one extra bit for the sign
-        if (!is_negative and unsigned_val > std.math.maxInt(i64)) {
-            return error.Overflow;
-        } else if (is_negative and unsigned_val > @as(u64, @intCast(std.math.maxInt(i64))) + 1) {
-            return error.Overflow;
-        }
-
-        const int_val: i64 = if (is_negative)
-            -@as(i64, @intCast(unsigned_val))
-        else
-            @intCast(unsigned_val);
         
+        if (is_negative) int_val = -int_val;
         try self.addToken(.INT, .{ .int = int_val });
     }
 
@@ -859,16 +868,46 @@ pub const Lexer = struct {
     fn removeUnderscores(self: *Lexer, input: []const u8) ![]const u8 {
         var result = std.ArrayList(u8).init(self.allocator);
         errdefer result.deinit();
-
-        // Process each character
+        
+        // Handle negative sign if present
         var i: usize = 0;
-        while (i < input.len) : (i += 1) {
-            const c = input[i];
-            if (c != '_') {
-                try result.append(c);
+        if (input.len > 0 and input[0] == '-') {
+            try result.append('-');
+            i = 1;
+        }
+        
+        // Handle prefixes (0x, 0b)
+        if (input.len - i >= 2 and input[i] == '0') {
+            try result.append('0');
+            const prefix = input[i + 1];
+            if (prefix == 'x' or prefix == 'b') {
+                try result.append(prefix);
+                // Skip the prefix in the input
+                i += 2;
+                // Process the rest of the digits
+                while (i < input.len) : (i += 1) {
+                    if (input[i] != '_') {
+                        try result.append(input[i]);
+                    }
+                }
+            } else {
+                // Regular number starting with 0
+                i += 1;
+                while (i < input.len) : (i += 1) {
+                    if (input[i] != '_') {
+                        try result.append(input[i]);
+                    }
+                }
+            }
+        } else {
+            // Regular number not starting with 0
+            while (i < input.len) : (i += 1) {
+                if (input[i] != '_') {
+                    try result.append(input[i]);
+                }
             }
         }
-
+        
         return result.toOwnedSlice();
     }
 };
