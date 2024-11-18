@@ -1,3 +1,4 @@
+// Basic strings
 "hello world"
 "multiline
 string"
@@ -5,12 +6,21 @@ string"
 "tabs\ttabs\ttabs"
 "back\\slash"
 
+// Empty strings
+""
+"
+"
+
+// Multiline strings with different whitespace
 "
 multiline
 string
 "
+"   padded   
+   multiline   
+   string   "
 
-
+// Raw strings
 r"hello world"
 r"multiline
 string"
@@ -23,9 +33,31 @@ raw
 string
 "
 
+// Empty raw strings
+r""
+r"
+"
+
+// Unicode handling
 r"Unicode raw: こんにちは世界"
 r"Raw emojis: 🎈 🎉 🎊"
 "Unicode: こんにちは世界"
 "Mixed ASCII and Unicode: Hello 世界"
 "Emojis: 👋 🌍 ⭐"
 "Unicode escapes: \u{3053}\u{3093}"
+
+// More Unicode escape sequences
+"Multiple escapes: \u{1F600}\u{1F601}\u{1F602}"
+"Mixed escapes and raw: \u{1F600} 😀 \u{1F601}"
+"Max unicode value: \u{10FFFF}"
+
+// Special escape sequences
+"All escapes: \n\t\\\""
+"Mixed escapes: line1\nline2\tindented\\backslash\"quote"
+"Multiple lines\nwith\nescapes"
+
+// Edge cases
+"String with null byte: \u{0000}"
+"String with control chars: \u{0001}\u{001F}"
+"Very long string: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+"Mixed everything: Hello\n\t世界\u{1F600}\\\"🌍"

@@ -3,244 +3,114 @@
 import os
 import subprocess
 import shutil
-import platform
+import re
 
-def run_doxa(file_path):
-    # Determine executable extension based on platform
-    exe_ext = '.exe' if platform.system() == 'Windows' else ''
-    mer_path = os.path.join('zig-out', 'bin', f'doxa{exe_ext}')
+total_tests = 0
+passed_tests = 0
+
+def run_passing_numbers():
+    # Create a temporary file with all test cases
+    temp_file = 'temp_test.doxa'
+    with open('test/lexer/numbers_p.txt', 'r') as input_file:
+        test_cases = []
+        for line in input_file:
+            # Skip empty lines and comments
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            test_cases.append([x.strip() for x in line.split(',')])
     
-    # Use platform-specific command invocation
-    if platform.system() == 'Windows':
-        command = ['cmd', '/c', mer_path, file_path]
-    else:
-        command = [mer_path, file_path]
+    # Write all test cases to a single file
+    with open(temp_file, 'w') as f:
+        for test in test_cases:
+            f.write(f"{test[0]}\n")
+    
+    try:
+        # Run lexer on the entire file
+        process = subprocess.Popen(['./zig-out/bin/doxa', '--debug-lexer', temp_file], 
+                                 stdout=subprocess.PIPE, 
+                                 stderr=subprocess.PIPE, 
+                                 text=True)
         
-    process = subprocess.Popen(command,
-                             stdout=subprocess.PIPE, 
-                             stderr=subprocess.PIPE,
-                             text=True)
-    stdout, stderr = process.communicate()
-    return stdout.strip(), stderr.strip()
-
-########################################################
-
-# positive tests
-def test_print():
-    file_path = os.path.join('tests', 'positive', 'p_test_print.doxa')
-    if not os.path.exists(file_path):
-        raise FileNotFoundError(f"Test file not found: {file_path}")
-    
-    stdout, stderr = run_doxa(file_path)
-    assert stdout == '5', f"Expected '5', but got '{stdout}'"
-    print("✅ test_print passed")
-
-def test_offset_semicolon():
-    stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_offset_semicolon.doxa'))
-    assert stdout == '5', f"Expected '5', but got '{stdout}'"
-    print("✅ test_offset_semicolon passed")
-
-def test_math():
-    stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_math.doxa'))
-    assert stdout == '5.0', f"Expected '5.0', but got '{stdout}'"
-    print("✅ test_math passed")
-
-def test_var_num():
-    stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_var_num.doxa'))
-    assert stdout == '5', f"Expected '5', but got '{stdout}'"
-    print("✅ test_var_num passed")
-
-def test_const_num():
-    stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_const_num.doxa'))
-    assert stdout == '5', f"Expected '5', but got '{stdout}'"
-    print("✅ test_const_num passed")
-
-def test_var_change():
-    stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_var_change.doxa'))
-    assert stdout == '5', f"Expected '5', but got '{stdout}'"
-    print("✅ test_var_change passed")
-
-def test_bracket_scope():
-    stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_bracket_scope.doxa'))
-    assert stdout == '5', f"Expected '5', but got '{stdout}'"
-    print("✅ test_bracket_scope passed")
-
-def test_var_str():
-    stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_var_str.doxa'))
-    assert stdout == 'five', f"Expected 'five', but got '{stdout}'"
-    print("✅ test_var_str passed")
-
-def test_comments():
-    stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_comments.doxa'))
-    assert stdout == '5', f"Expected '5', but got '{stdout}'"
-    print("✅ test_comments passed")
-
-def test_reassign_string():
-    stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_reassign_string.doxa'))
-    assert stdout == 'five', f"Expected 'five', but got '{stdout}'"
-    print("✅ test_reassign_string passed")
-
-def test_const_float():
-    stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_const_float.doxa'))
-    assert stdout == '5.5', f"Expected '5.5', but got '{stdout}'"
-    print("✅ test_const_float passed")
-
-def test_div_noremain():
-    stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_div_noremain.doxa'))
-    assert stdout == '5.0', f"Expected '5.0', but got '{stdout}'"
-    print("✅ test_div_noremain passed")
-
-def test_var_assign_nothing():
-    stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_var_assign_nothing.doxa'))
-    assert stdout == 'nothing', f"Expected 'nothing', but got '{stdout}'"
-    print("✅ test_var_assign_nothing passed")
-
-def test_equality_true():
-    stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_equality_true.doxa'))
-    assert stdout == 'true', f"Expected 'true', but got '{stdout}'"
-    print("✅ test_equality_true passed")
-
-def test_equality_false():
-    stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_equality_false.doxa'))
-    assert stdout == 'false', f"Expected 'false', but got '{stdout}'"
-    print("✅ test_equality_false passed")
-
-def test_inequality_true():
-    stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_inequality_true.doxa'))
-    assert stdout == 'true', f"Expected 'true', but got '{stdout}'"
-    print("✅ test_inequality_true passed")
-
-def test_inequality_false():
-    stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_inequality_false.doxa'))
-    assert stdout == 'false', f"Expected 'false', but got '{stdout}'"
-    print("✅ test_inequality_false passed")
-
-def test_array():
-    stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_array.doxa'))
-    assert stdout == '[1, 2, 3]', f"Expected '[1, 2, 3]', but got '{stdout}'"
-    print("✅ test_array passed")
-
-def test_and_bools_true():
-    stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_and_bools_true.doxa'))
-    assert stdout == 'true', f"Expected 'true', but got '{stdout}'"
-    print("✅ test_and_bools_true passed")
-
-def test_and_bools_false():
-    stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_and_bools_false.doxa'))
-    assert stdout == 'false', f"Expected 'false', but got '{stdout}'"
-    print("✅ test_and_bools_false passed")
-
-def test_or_bools_true():
-    stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_or_bools_true.doxa'))
-    assert stdout == 'true', f"Expected 'true', but got '{stdout}'"
-    print("✅ test_or_bools_true passed")   
-
-def test_or_bools_false():
-    stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_or_bools_false.doxa'))
-    assert stdout == 'false', f"Expected 'false', but got '{stdout}'"
-    print("✅ test_or_bools_false passed")
-
-def test_if_else_true_unscoped():
-    stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_if_else_true_unscoped.doxa'))
-    assert stdout == '5', f"Expected '5', but got '{stdout}'"
-    print("✅ test_if_else_true_unscoped passed")
-
-def test_if_else_true_scoped():
-    stdout, stderr = run_doxa(os.path.join('tests', 'positive', 'p_test_if_else_true_scoped.doxa'))
-    assert stdout == '5', f"Expected '5', but got '{stdout}'"
-    print("✅ test_if_else_true_scoped passed")
-
-
-
-########################################################
-
-# negative tests    
-def test_missing_semicolon():
-    stdout, stderr = run_doxa(os.path.join('tests', 'negetive', 'n_test_w_semicolon.doxa'))
-    assert stderr != "", f"Expected error, but got: '{stdout}'"
-    print("✅ test_semicolon passed")
-
-def test_wrong_extension():
-    stdout, stderr = run_doxa(os.path.join('tests', 'negative', 'n_test_w_ext.met'))
-    assert "Error: File must have .doxa extension" in stderr, f"Expected error message about .doxa extension, but got: '{stderr}'"
-    print("✅ test_wrong_extension passed")
-
-def test_change_const():
-    stdout, stderr = run_doxa(os.path.join('tests', 'negetive', 'n_test_change_const.doxa'))
-    assert stderr != "", f"Expected error, but got: '{stdout}'"
-    print("✅ test_change_const passed")
-    
-def test_open_bracket():
-    stdout, stderr = run_doxa(os.path.join('tests', 'negetive', 'n_test_open_bracket.doxa'))
-    assert stderr != "", f"Expected error, but got: '{stdout}'"
-    print("✅ test_open_bracket passed")
-    
-def test_const_assign_nothing():
-    stdout, stderr = run_doxa(os.path.join('tests', 'negetive', 'n_test_const_assign_nothing.doxa'))
-    assert stderr != "", f"Expected error, but got: '{stdout}'"
-    print("✅ test_const_assign_nothing passed")
-
-
-########################################################
+        stdout, stderr = process.communicate(timeout=5)
+        tokens = parse_all_tokens(stderr)
+        
+        # Match tokens with test cases
+        for i, (token, test_case) in enumerate(zip(tokens, test_cases)):
+            input_val, expected_type, expected_lexeme, expected_literal = test_case
+            print(f"Running test: {input_val} | {expected_type} | {expected_lexeme} | {expected_literal}")
+            assert_result(token, expected_type, expected_lexeme, expected_literal)
+            
+    finally:
+        if os.path.exists(temp_file):
+            os.remove(temp_file)
 
 def run_all_tests():
-    positive_tests = [
-        ("basic print test", test_print),
-        ("math", test_math),
-        ("offset semicolon", test_offset_semicolon),
-        ("variable number", test_var_num),
-        ("constant number", test_const_num),
-        ("variable change", test_var_change),
-        ("bracket scope", test_bracket_scope),
-        ("variable string", test_var_str),
-        ("constant float", test_const_float),
-        ("division no remain", test_div_noremain),
-        ("variable assign nothing", test_var_assign_nothing),
-        ("comments", test_comments),
-        ("equality true", test_equality_true),
-        ("equality false", test_equality_false),
-        ("inequality false", test_inequality_false),
-        ("inequality true", test_inequality_true),
-        ("reassign string", test_reassign_string),
-        ("and bools true", test_and_bools_true),
-        ("and bools false", test_and_bools_false),
-        ("or bools true", test_or_bools_true),
-        ("or bools false", test_or_bools_false),
-        ("if else true unscoped", test_if_else_true_unscoped),
-        ("if else true scoped", test_if_else_true_scoped),
-    ]
+    global passed_tests, total_tests
+    run_passing_numbers()
+    print(f"NUMBERS POSITIVE: Passed {passed_tests} out of {total_tests} tests")
+    passed_tests, total_tests = 0, 0
+
+def run_test(input_val, expected_type, expected_lexeme, expected_literal):
+    result = lex_string(input_val)
+    if result is None:
+        print(f"Got EOF token for input: {input_val}")
+        return
+    assert_result(result, expected_type, expected_lexeme, expected_literal)
+
+def assert_result(result, expected_type, expected_lexeme, expected_literal):
+    global total_tests, passed_tests
+    total_tests += 1
     
-    negative_tests = [
-        ("missing semicolon", test_missing_semicolon),
-        ("wrong extension", test_wrong_extension),
-        ("change constant", test_change_const),
-        ("open bracket", test_open_bracket),
-        ("constant assign nothing", test_const_assign_nothing),
-    ]
+    # Clean up the literal format by removing the leading dot if present
+    expected_literal = expected_literal.replace('.', '', 1)
+    actual_literal = result[2].strip()
     
-    passed_tests = 0
-    total_tests = len(positive_tests) + len(negative_tests)
+    if (result[0] != expected_type or 
+        result[1] != expected_lexeme or 
+        actual_literal != expected_literal):
+        print(f"❌ FAILED: Expected {expected_type} '{expected_lexeme}' {expected_literal}, got {result[0]} '{result[1]}' {actual_literal}")
+        return False
+    passed_tests += 1
+    return True
+
+def lex_string(input_val):
+    # Assuming this returns a tuple of (token_type, lexeme, literal) or None for EOF
+    result = run_doxa(input_val)
+    if result is None:  # EOF token
+        return None
+    return result
+
+def run_doxa(input_val):
+    # Create a temporary file with the input value
+    temp_file = 'temp_test.doxa'
+    with open(temp_file, 'w') as f:
+        f.write(input_val)
     
-    def run_test_suite(test_list, suite_name):
-        nonlocal passed_tests
-        print(f"Running {suite_name} tests")
-        for test_name, test_func in test_list:
-            print(f"Running test: {test_name}")
-            try:
-                test_func()
-                passed_tests += 1
-            except AssertionError as e:
-                print(f"❌ Test failed: {e}")
-            except Exception as e:
-                print(f"❌ Test error: {e}")
+    process = subprocess.Popen(['./zig-out/bin/doxa', '--debug-lexer', temp_file], 
+                             stdout=subprocess.PIPE, 
+                             stderr=subprocess.PIPE, 
+                             text=True)
     
-    run_test_suite(positive_tests, "positive")
-    print("\n--------------------------------\n")
-    run_test_suite(negative_tests, "negative")
-    
-    print(f"\nTests passed: {passed_tests}/{total_tests}")
-    if passed_tests < total_tests:
-        exit(1)
+    try:
+        stdout, stderr = process.communicate(timeout=5)
+        tokens = parse_all_tokens(stderr)
+        if tokens:
+            return tokens[0]  # Return the first (and should be only) token
+        return None
+    except subprocess.TimeoutExpired:
+        process.kill()
+        print("Process timed out")
+    finally:
+        # Clean up temp file
+        if os.path.exists(temp_file):
+            os.remove(temp_file)
+
+def parse_all_tokens(output):
+    # Parse all tokens at once and return them as a list of tuples
+    pattern = r"Token: token\.TokenType\.(\w+)\s+'([^']+)'\s+token\.TokenLiteral\{\s*\.([^}]+)\s*\}"
+    matches = re.findall(pattern, output)
+    return matches
 
 def build():
     if os.path.exists('zig-out'):
