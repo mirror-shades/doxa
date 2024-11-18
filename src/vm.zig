@@ -69,9 +69,76 @@ pub const VM = struct {
                 // push constant
                 instructions.OpCode.OP_CONST => {
                     const value = self.read_byte();
-                    const constant = instructions.Instruction{ .OP_CONST = value };
-                    self.push(constant);
+                    self.push(instructions.Instruction{ .OP_CONST = value });
                     std.debug.print("Pushed constant: {}\n", .{value});
+                },
+                // add
+                instructions.OpCode.OP_ADD => {
+                    const b = self.pop().?;
+                    const a = self.pop().?;
+                    switch (a) {
+                        .OP_CONST => |a_val| {
+                            switch (b) {
+                                .OP_CONST => |b_val| {
+                                    const result = instructions.Instruction{ .OP_CONST = a_val + b_val };
+                                    self.push(result);
+                                },
+                                else => self.reporter.reportFatalError("Expected constant value", .{}),
+                            }
+                        },
+                        else => self.reporter.reportFatalError("Expected constant value", .{}),
+                    }
+                },
+                // sub
+                instructions.OpCode.OP_SUB => {
+                    const b = self.pop().?;
+                    const a = self.pop().?;
+                    switch (a) {
+                        .OP_CONST => |a_val| {
+                            switch (b) {
+                                .OP_CONST => |b_val| {
+                                    const result = instructions.Instruction{ .OP_CONST = a_val - b_val };
+                                    self.push(result);
+                                },
+                                else => self.reporter.reportFatalError("Expected constant value", .{}),
+                            }
+                        },
+                        else => self.reporter.reportFatalError("Expected constant value", .{}),
+                    }
+                },
+                // mul
+                instructions.OpCode.OP_MUL => {
+                    const b = self.pop().?;
+                    const a = self.pop().?;
+                    switch (a) {
+                        .OP_CONST => |a_val| {
+                            switch (b) {
+                                .OP_CONST => |b_val| {
+                                    const result = instructions.Instruction{ .OP_CONST = a_val * b_val };
+                                    self.push(result);
+                                },
+                                else => self.reporter.reportFatalError("Expected constant value", .{}),
+                            }
+                        },
+                        else => self.reporter.reportFatalError("Expected constant value", .{}),
+                    }
+                },
+                // div
+                instructions.OpCode.OP_DIV => {
+                    const b = self.pop().?;
+                    const a = self.pop().?;
+                    switch (a) {
+                        .OP_CONST => |a_val| {
+                            switch (b) {
+                                .OP_CONST => |b_val| {
+                                    const result = instructions.Instruction{ .OP_CONST = a_val / b_val };
+                                    self.push(result);
+                                },
+                                else => self.reporter.reportFatalError("Expected constant value", .{}),
+                            }
+                        },
+                        else => self.reporter.reportFatalError("Expected constant value", .{}),
+                    }
                 },
             }
         }
@@ -101,6 +168,9 @@ pub fn main() void {
     const code = [_]u8{
         instructions.OpCode.OP_CONST.encode(),
         42,
+        instructions.OpCode.OP_CONST.encode(),
+        42,
+        instructions.OpCode.OP_DIV.encode(),
         instructions.OpCode.OP_HALT.encode()
     };
     const constants = [_]u8{42};
@@ -109,7 +179,10 @@ pub fn main() void {
     var vm = VM.init(&code, &constants, &reporter);
     
     if (vm.eval()) |result| {
-        std.debug.print("Thanks for using my VM! the answer is {any}\n", .{result.OP_CONST});
+        switch (result) {
+            .OP_CONST => |value| std.debug.print("Thanks for using my VM! The answer is {}\n", .{value}),
+            else => std.debug.print("Unexpected result type\n", .{}),
+        }
     } else {
         std.debug.print("VM halted with empty stack\n", .{});
     }
