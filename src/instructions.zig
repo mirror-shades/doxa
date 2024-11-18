@@ -1,50 +1,32 @@
 const std = @import("std");
 
-pub const Instruction = union(enum) {
-    // Stack Manipulation
-    PushInt: i64,
-    PushFloat: f64,
-    PushBool: bool,
-    PushString: []const u8,
-    Pop,
+pub const OpCode = enum(u8) {
+    // Halt the program.
+    OP_HALT = 0x00,
+
+    // push a constant value into the stack.
+    OP_CONST = 0x01,
+
+        
+    pub fn encode(op: OpCode) u8 {
+        return @intFromEnum(op);
+    }
     
-    // Arithmetic Operations
-    Add,
-    Subtract,
-    Multiply,
-    Divide,
-    Modulo,
-    Power,
-    
-    // Comparison Operations
-    Equal,
-    NotEqual,
-    GreaterThan,
-    LessThan,
-    GreaterEqual,
-    LessEqual,
-    
-    // Logical Operations
-    And,
-    Or,
-    Not,
-    
-    // Control Flow
-    Jump: usize,
-    JumpIfTrue: usize,
-    JumpIfFalse: usize,
-    
-    // Function Calls
-    CallFunction: []const u8,
-    Return,
-    
-    // Variable Operations
-    LoadVariable: []const u8,
-    StoreVariable: []const u8,
-    
-    // Miscellaneous
-    Print,
-    Halt,
+    pub fn fromByte(byte: u8) !OpCode {
+        return std.meta.intToEnum(OpCode, byte);
+    }
+};
+
+// If you need additional data for instructions, you can use a union
+pub const Instruction = union(OpCode) {
+    OP_HALT: void,
+    OP_CONST: u8,
+    // Add more instruction variants here
+
+    pub fn int(value: u8) Instruction {
+        return Instruction{ .OP_CONST = value };
+    }
+
 };
 
 pub const InstructionSet = []const Instruction{
