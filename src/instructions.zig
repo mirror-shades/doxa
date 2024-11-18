@@ -7,6 +7,18 @@ pub const OpCode = enum(u8) {
     // push a constant value into the stack.
     OP_CONST = 0x01,
 
+    // add two values on the stack.
+    OP_ADD = 0x02,
+
+    // subtract two values on the stack.
+    OP_SUB = 0x03,
+
+    // multiply two values on the stack.
+    OP_MUL = 0x04,
+
+    // divide two values on the stack.
+    OP_DIV = 0x05,
+
         
     pub fn encode(op: OpCode) u8 {
         return @intFromEnum(op);
@@ -20,7 +32,11 @@ pub const OpCode = enum(u8) {
 // If you need additional data for instructions, you can use a union
 pub const Instruction = union(OpCode) {
     OP_HALT: void,
-    OP_CONST: u8,
+    OP_CONST: u32,
+    OP_ADD: void,
+    OP_SUB: void,
+    OP_MUL: void,
+    OP_DIV: void,
     // Add more instruction variants here
 
     pub fn int(value: u8) Instruction {
@@ -30,5 +46,12 @@ pub const Instruction = union(OpCode) {
 };
 
 pub const InstructionSet = []const Instruction{
-    // Add all instructions here if needed
+    Instruction.OP_HALT,
+    Instruction.OP_CONST,
+    Instruction.OP_ADD,
+    Instruction.OP_SUB,
+    Instruction.OP_MUL,
+    Instruction.OP_DIV,
+
+
 };
