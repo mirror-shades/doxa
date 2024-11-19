@@ -37,14 +37,14 @@ const Frame = struct {
         };
     }
 
-    pub fn initStruct(allocator: std.mem.Allocator, type_name: []const u8, num_fields: u8) !Frame {
+    pub fn initStruct(allocator: std.mem.Allocator, type_name: []const u8, num_fields: u32) !Frame {
         const struct_value = instructions.Value{
             .type = .STRUCT,
             .data = .{
                 .struct_val = .{
                     .type_name = try allocator.dupe(u8, type_name),
                     .fields = std.StringHashMap(instructions.Value).init(allocator),
-                    .num_fields = num_fields,
+                    .num_fields = num_fields,  // This should be u8 in instructions.zig
                 },
             },
         };
@@ -121,12 +121,12 @@ const Frame = struct {
     }
 };
 
-const STACK_SIZE = 512;
-const MAX_FRAMES = 64; // Or whatever maximum call depth you want to support
+const STACK_SIZE: u16 = 1024;
+const MAX_FRAMES: u16 = 1024;
 
 const Stack = struct {
     data: [STACK_SIZE]Frame,
-    sp:  u32 = 0,
+    sp:  u16 = 0,
 
     pub fn init() Stack {
         var stack = Stack{
@@ -186,8 +186,8 @@ const Stack = struct {
 
 const CallFrame = struct {
     ip:  u32,              // Instruction pointer for this frame
-    bp:  u32,              // Base pointer (start of this frame's stack space)
-    sp:  u32,              // Stack pointer for this frame
+    bp:  u16,              // Base pointer (start of this frame's stack space)
+    sp:  u16,              // Stack pointer for this frame
     function: *const instructions.Function, // Reference to the function being executed
     return_addr:  u32,     // Where to return to in the caller's code
 };
@@ -200,8 +200,8 @@ pub const VM = struct {
     variables: std.ArrayList(Frame),
     functions: std.ArrayList(*instructions.Function),
     frames: std.ArrayList(CallFrame),
-    frame_count:  u32,
-    sp:  u32,
+    frame_count: u16,
+    sp: u16,
     ip:  u32,
     reporter: *Reporting,
     call_stack: std.ArrayList(CallFrame),
