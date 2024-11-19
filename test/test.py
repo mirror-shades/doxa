@@ -14,7 +14,7 @@ current_passed_tests = 0
 
 def run_passing_numbers():
     # Create a temporary file with all test cases
-    temp_file = 'temp_test.doxa'
+    temp_file = 'temp_test.doxa'    
     with open('test/lexer/numbers_p.txt', 'r') as input_file:
         test_cases = []
         for line in input_file:
@@ -31,6 +31,7 @@ def run_passing_numbers():
     
     try:
         # Run lexer on the entire file
+        print("\nRunning lexer...")
         process = subprocess.Popen(['./zig-out/bin/doxa', '--debug-lexer', temp_file], 
                                  stdout=subprocess.PIPE, 
                                  stderr=subprocess.PIPE, 
