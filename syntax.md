@@ -1,12 +1,18 @@
-# Doxa 
+# Doxa
 
-Doxa is a highly flexible compiled language focused on simplicity, readability, and gradualized type safety. It enables seamless transition from prototype to production code through strict and normal directives.
+Doxa is a highly flexible compiled language focused on simplicity, readability,
+and gradualized type safety. It enables seamless transition from prototype to
+production code through strict and normal directives.
 
-By default, Doxa runs in normal mode. Strict mode is enabled via `#strict` at the file start. To preserve type safety, strict files can only import other strict files. There is an intermediate mode called `warn` which compiles files in normal mode but gives warnings when strict conventions are not followed.
+By default, Doxa runs in normal mode. Strict mode is enabled via `#strict` at the
+file start. To preserve type safety, strict files can only import other strict files.
+There is an intermediate mode called `warn` which compiles files in normal mode but
+gives warnings when strict conventions are not followed.
 
 ## General syntax
 
-both `||` and `&&` are supported alongside `and` and `or`. a clarity warning is given if both are used in the same file.
+both `||` and `&&` are supported alongside `and` and `or`. a clarity warning is given
+if both are used in the same file.
 
 No operator or function overloading.
 
@@ -17,13 +23,17 @@ No classes, only structs and composition.
 Try catch is based on Zig's error union model which allows for safeetr
 
 Doxa has some choice code keywords:
+
 - `function` and `fn` are functionally identical
 - `and` and `&&` are functionally identical
 - `or` and `||` are functionally identical
 
 warnings are given for projects that mix symbolic and keyword conditionals.
 
-``` 
+There are no classes or inheritance. Structs can be used to compose
+complex types and methods can be added to structs.
+
+```
 struct Animal {
     name: string
 }
@@ -32,7 +42,7 @@ struct Dog {
     // Composition instead of inheritance
     animal: Animal,
     breed: string,
-    
+
     fn bark(self) {
         print("${self.animal.name} says woof!");
     }
@@ -44,7 +54,8 @@ var dog = Dog {
 };
 ```
 
-modules are supported. strict files can only import other strict files. normal files can import both strict and normal files.
+modules are supported. strict files can only import other strict files.
+normal files can import both strict and normal files.
 
 ```
 // math.doxa
@@ -99,8 +110,23 @@ match x {
 }
 ```
 
+functions can use default parameters but the use of default arguments is not
+supported. all default arguments are explicitly declared using the `~` operator.
 
-arrays can only be declared with a homogeneous type. Heterogeneous arrays are not supported. Structs are the preferred way to group different types.
+```
+fn add(a: int = 1, b: int) -> int {
+    return a + b;
+}
+
+
+add(~, 2); // returns 3
+add(2, 2); // returns 4
+add(2, ~); // error, b is not a default parameter
+add(2);    // error, expected 2 arguments, got 1
+```
+
+arrays can only be declared with a homogeneous type. Heterogeneous arrays
+are not supported. Structs are the preferred way to group different types.
 
 ```
 // Only homogeneous arrays allowed
@@ -177,69 +203,114 @@ x = "five";               //auto
 arrays can be declared either with a homogeneous type or a mixed type
 
 ```
+var x: []int = [1, 2, 3]; //homogeneous
+var x: []auto = [1, "two", true]; //mixed
+```
+
+if additional type safety is needed, functions can be marked as `safe` which
+will check the types of all arguments and return values.
+
+```
+fn add(a, b) {
+    return a + b;
+}
+add(1, 2); // Returns 3
+add(1, "2"); // Runtime error: Cannot add int and string
+add("1", "2"); // Returns "12" (string concatenation)
+
+// this fails at compile time due to undefined parameter and return types
+safe fn add(a, b) {
+    return a + b;
+}
+
+safe fn add(a: int, b: int) returns(int) {
+    return a + b;
+}
+add(1, 2); // Returns 3
+add(1, "2"); // Runtime error: expected int, got string
+add("1", "2"); // Runtime error: expected int, got string
+```
 
 ## Doxa strict syntax
+
+Doxa strict is similar to normal syntax but with much more strict type safety.
+Use the `#warn` directive to help gradually transition normal files to strict mode.
+
+constants must be declared with a type and a value
+
 ```
-const x;                  //error, needs a type and a value
-const x: int;             //error, needs a value
+const x; //error, needs a type and a value
+const x: int; //error, needs a value
 ```
 
 constants can be declared with an auto type
 
 ```
-const x: auto;            //auto
+const x: auto; //auto
 ```
 
 variables can be declared without a value as long as they are given an explicit type
 
 ```
-var x: int;               //int
-var x = "two";            //error, needs explicit type
-var x = 3.14;             //error, needs explicit type
-var x = true;             //error, needs explicit type
-var x = [1, 2, 3];        //error, needs explicit type
+var x: int; //int
+var x = "two"; //error, needs explicit type
+var x = 3.14; //error, needs explicit type
+var x = true; //error, needs explicit type
+var x = [1, 2, 3]; //error, needs explicit type
 ```
 
 type declarations are required, same as normal syntax
 
 ```
-var x: int = 1;           //int
-var x: string = "two";    //string
-var x: float = 3.14;      //float
-var x: bool = true;       //bool
+var x: int = 1; //int
+var x: string = "two"; //string
+var x: float = 3.14; //float
+var x: bool = true; //bool
 var x: []int = [1, 2, 3]; //array
 ```
 
 variables can be declared without a value as long as they are given an explicit type
 
 ```
-var x: int;               //int
-var x: string;            //string
-var x: float;             //float
-var x: bool;              //bool
-var x: []int;             //array
+var x: int; //int
+var x: string; //string
+var x: float; //float
+var x: bool; //bool
+var x: []int; //array
 ```
 
 auto variables can be declared without a type but it is cast to the type of the value
 
 ```
-var x: auto = 5;          //int
-var x: auto = "five";     //string
-var x: auto = 3.14;       //float
-var x: auto = true;       //bool
-var x: auto = [1, 2, 3];  //array
+var x: auto = 5; //int
+var x: auto = "five"; //string
+var x: auto = 3.14; //float
+var x: auto = true; //bool
+var x: auto = [1, 2, 3]; //array
 ```
 
 variables cannot be declared without a type
 
 ```
-var x;                    //error, needs explicit type
-var x: auto;              //error, needs explicit type
+var x; //error, needs explicit type
+var x: auto; //error, needs explicit type
 ```
 
 no cross-type assignments are allowed for strict variables
 
 ```
-var x: auto = 5;          //int
-x = "five";               //error, given value does not match type int
+var x: auto = 5; //int
+x = "five"; //error, given value does not match type int
+```
+
+all functions must be declared with parameter and return types
+
+```
+fn add(a, b) { //error, undefined parameter and return types
+    return a + b;
+}
+
+fn add(a: int, b: int) returns(int) {
+    return a + b;
+}
 ```

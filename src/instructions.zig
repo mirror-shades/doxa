@@ -9,24 +9,32 @@ pub const OpCode = enum(u8) {
     OP_CONST = 0x01,
     // push a variable value into the stack.
     OP_VAR = 0x02,
+    // set a variable to a constant value.
+    OP_SET_VAR = 0x03,
     // add two values on the stack.
-    OP_IADD = 0x03,
+    OP_IADD = 0x04,
     // subtract two values on the stack.
-    OP_ISUB = 0x04,
+    OP_ISUB = 0x05,
     // multiply two values on the stack.
-    OP_IMUL = 0x05,
+    OP_IMUL = 0x06,
     // divide two values on the stack.
-    OP_IDIV = 0x06,
+    OP_IDIV = 0x07,
 
     // Separate opcodes for integer and float operations
-    OP_FADD = 0x07,  // float add
-    OP_FSUB = 0x08,  // float subtract
-    OP_FMUL = 0x09,  // float multiply
-    OP_FDIV = 0x0A,  // float division
+    OP_FADD = 0x08,  // float add
+    OP_FSUB = 0x09,  // float subtract
+    OP_FMUL = 0x0A,  // float multiply
+    OP_FDIV = 0x0B,  // float division
 
     // Type conversion operations
-    OP_I2F = 0x0B,   // convert int to float
-    OP_F2I = 0x0C,   // convert float to int (truncate)
+    OP_I2F = 0x0C,   // convert int to float
+    OP_F2I = 0x0D,   // convert float to int (truncate)
+
+    // conditional operations
+    OP_GREATER = 0x0E,
+    OP_LESS = 0x0F,
+    OP_EQUAL = 0x10,
+    OP_NOTEQUAL = 0x11,
 
     pub fn encode(op: OpCode) u8 {
         return @intFromEnum(op);
@@ -34,6 +42,10 @@ pub const OpCode = enum(u8) {
     
     pub fn fromByte(byte: u8) !OpCode {
         return std.meta.intToEnum(OpCode, byte);
+    }
+
+    pub fn isBinary(self: OpCode) bool {
+        return self == .OP_IADD or self == .OP_ISUB or self == .OP_IMUL or self == .OP_IDIV or self == .OP_FADD or self == .OP_FSUB or self == .OP_FMUL or self == .OP_FDIV;
     }
 };
 
