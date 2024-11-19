@@ -4,35 +4,42 @@ const Reporting = @import("reporting.zig").Reporting;
 
 const Frame = struct {
     value: instructions.Value,
+    allocator: ?std.mem.Allocator,
     
     // Helper functions
     pub fn initInt(x: i64) Frame {
         return Frame{
             .value = instructions.Value{ .type = .INT, .data = .{ .int = x } },
+            .allocator = null,
         };
     }
 
     pub fn initFloat(x: f64) Frame {
         return Frame{
             .value = instructions.Value{ .type = .FLOAT, .data = .{ .float = x } },
+            .allocator = null,
         };
     }
 
-    pub fn initString(x: []const u8) Frame {
+    pub fn initString(allocator: std.mem.Allocator, x: []const u8) !Frame {
+        const duped_string = try allocator.dupe(u8, x);
         return Frame{
-            .value = instructions.Value{ .type = .STRING, .data = .{ .string = x } },
+            .value = instructions.Value{ .type = .STRING, .data = .{ .string = duped_string } },
+            .allocator = allocator,
         };
     }
 
     pub fn initBoolean(x: bool) Frame {
         return Frame{
             .value = instructions.Value{ .type = .BOOL, .data = .{ .boolean = x } },
+            .allocator = null,
         };
     }
 
     pub fn initNothing() Frame {
         return Frame{
             .value = instructions.Value{ .type = .NOTHING, .data = .{ .nothing = {} } },
+            .allocator = null,
         };
     }
 
@@ -67,6 +74,15 @@ const Frame = struct {
         }
         return self.value.data.string;
     }
+
+    pub fn deinit(self: *Frame) void {
+        if (self.allocator) |alloc| {
+            switch (self.value.type) {
+                .STRING => alloc.free(self.value.data.string),
+                else => {},
+            }
+        }
+    }
 };
 
 const STACK_SIZE = 512;
@@ -85,7 +101,7 @@ pub const VM = struct {
     allocator: std.mem.Allocator,
     code: []const u8,
     stack: [STACK_SIZE]Frame,
-    constants: []const Frame,
+    constants: []Frame,
     variables: std.ArrayList(Frame),
     functions: std.ArrayList(*instructions.Function),
     frames: std.ArrayList(CallFrame),
@@ -97,7 +113,7 @@ pub const VM = struct {
     current_frame: ?*CallFrame,  // Points to the active frame
     global_constants: []instructions.Value,  // Add this field to track global constants
 
-    pub fn init(allocator: std.mem.Allocator, code: []const u8, constants: []const Frame, reporter: *Reporting) VM {
+    pub fn init(allocator: std.mem.Allocator, code: []const u8, constants: []Frame, reporter: *Reporting) VM {
         var vm = VM{
             .allocator = allocator,
             .code = code,
@@ -149,6 +165,16 @@ pub const VM = struct {
     }
 
     pub fn deinit(self: *VM) void {
+        // Clean up stack frames
+        for (self.stack[0..self.sp]) |*frame| {
+            frame.deinit();
+        }
+        
+        // Clean up constants
+        for (self.constants) |*constant| {
+            constant.deinit();
+        }
+        
         // Free the global function that was created in init
         if (self.call_stack.items.len > 0) {
             const global_frame = self.call_stack.items[0];
@@ -189,7 +215,10 @@ pub const VM = struct {
                 return null;
             }
             const constant_value = frame.function.constants[index];
-            return Frame{ .value = constant_value };
+            return Frame{ 
+                .value = constant_value,
+                .allocator = null,  // Constants don't need allocation
+            };
         } else {
             // Fallback to global constants
             if (index >= self.constants.len) {
@@ -200,7 +229,7 @@ pub const VM = struct {
         }
     }
 
-    fn eval(self: *VM) !?Frame {
+    pub fn eval(self: *VM) !?Frame {
         while (true) {
             // Get instruction from current frame
             if (self.current_frame) |frame| {
@@ -478,6 +507,31 @@ pub const VM = struct {
                     self.current_frame = &self.call_stack.items[self.call_stack.items.len - 1];
                     continue;
                 },  
+                instructions.OpCode.OP_CONCAT => {
+                    const b = self.pop().?;
+                    const a = self.pop().?;
+                    const result = concat(self.allocator, a, b) catch return null;
+                    self.push(result);
+                },
+                instructions.OpCode.OP_STR_EQ => {
+                    const b = self.pop().?;
+                    const a = self.pop().?;
+                    const result = str_eq(a, b) catch return null;
+                    self.push(result);
+                },
+                instructions.OpCode.OP_STR_LEN => {
+                    const a = self.pop().?;
+                    const result = str_len(a) catch return null;
+                    self.push(result);
+                },
+                instructions.OpCode.OP_SUBSTR => {
+                    const start = self.read_byte();
+                    const len = self.read_byte();
+                    var a = self.pop().?;
+                    const result = substr(self.allocator, a, start, len) catch return null;
+                    a.deinit();
+                    self.push(result);
+                },
             }
 
             // Your existing debug print code
@@ -521,7 +575,7 @@ pub const VM = struct {
             return error.IntegerOverflow;
         }
         return Frame.initInt(a + b);
-    }
+     }   
 
     fn i_sub(a: i64, b: i64) !Frame {
         // Check for overflow: if b is positive, a must not be less than MIN + b
@@ -794,6 +848,57 @@ pub const VM = struct {
         self.ip = self.current_frame.?.return_addr;
     }
 
+    fn concat(allocator: std.mem.Allocator, a: Frame, b: Frame) !Frame {
+        if (a.value.type == .STRING and b.value.type == .STRING) {
+            const a_str = try a.asString();
+            const b_str = try b.asString();
+            
+            var result = try std.ArrayList(u8).initCapacity(allocator, a_str.len + b_str.len);
+            try result.appendSlice(a_str);
+            try result.appendSlice(b_str);
+            
+            // Create frame with the concatenated string
+            const frame = try Frame.initString(allocator, result.items);
+            result.deinit();
+            return frame;
+        }
+        return error.TypeError;
+    }
+
+    fn str_eq(a: Frame, b: Frame) !Frame {
+        if (a.value.type == .STRING and b.value.type == .STRING) {
+            const a_str = try a.asString();
+            const b_str = try b.asString();
+            return Frame.initBoolean(std.mem.eql(u8, a_str, b_str));
+        }
+        return error.TypeError;
+    }
+
+    fn str_len(a: Frame) !Frame {
+        if (a.value.type == .STRING) {  
+            const a_str = try a.asString();
+            return Frame.initInt(@as(i64, @intCast(a_str.len)));
+        }
+        return error.TypeError;
+    }
+
+    fn substr(allocator: std.mem.Allocator, a: Frame, start: u8, len: u8) !Frame {
+        if (a.value.type == .STRING) {
+            const a_str = try a.asString();
+            const start_idx = @as(usize, start);
+            const length = @as(usize, len);
+            
+            // Add bounds checking
+            if (start_idx >= a_str.len or start_idx + length > a_str.len) {
+                return error.IndexOutOfBounds;
+            }
+            
+            // Create a new string with the substring
+            return Frame.initString(allocator, a_str[start_idx..][0..length]);
+        }
+        return error.TypeError;
+    }
+
     // Helper methods for stack operations relative to current frame
     fn pushValue(self: *VM, value: Frame) !void {
         if (self.sp >= STACK_SIZE) {
@@ -858,61 +963,61 @@ pub fn main() !void {
     const allocator = gpa.allocator();
     defer {
         const leaked = gpa.deinit();
-        if (leaked == .leak) {
-            @panic("Memory leak detected!");
-        }
+        if (leaked == .leak) @panic("Memory leak detected!");
     }
 
-    // Example constants for the global scope
-    const constants = [_]Frame{
-        Frame.initInt(5),    // constant[0]: argument to pass to function
+    // Create an array to store our constants
+    var constants_array = [_]Frame{
+        try Frame.initString(allocator, "Hello"),    // constant[0]
+        try Frame.initString(allocator, " World"),   // constant[1]
+        try Frame.initString(allocator, "Hello"),    // constant[2]
     };
+    
+    // No need for separate defer block as VM will handle cleanup
 
-    // Function-specific constants
-    const fn_constants = [_]instructions.Value{
-        .{ .type = .INT, .data = .{ .int = 1 } },  // constant[0]: value to add
-    };
-
-    // Create a function that adds 1 to its argument
-    var add_one_fn = instructions.Function{
-        .arity = 1,
-        .code = &[_]u8{
-            @intFromEnum(instructions.OpCode.OP_VAR), 0,     // Load argument (5)
-            @intFromEnum(instructions.OpCode.OP_CONST), 0,   // Push constant[0] (1)
-            @intFromEnum(instructions.OpCode.OP_IADD),       // Add them
-            @intFromEnum(instructions.OpCode.OP_RETURN),     // Return result
-        },
-        .constants = &fn_constants,
-        .name = "add_one",
-    };
-
-    // Main program bytecode:
+    // Test program that exercises all string operations
     const code = [_]u8{
-        @intFromEnum(instructions.OpCode.OP_CONST), 0,    // Push 5
-        @intFromEnum(instructions.OpCode.OP_CALL), 0,     // Call function at index 0
-        @intFromEnum(instructions.OpCode.OP_HALT),        // End program immediately after function return
+        // Test concatenation: "Hello" + " World"
+        @intFromEnum(instructions.OpCode.OP_CONST), 0,    // Push "Hello"
+        @intFromEnum(instructions.OpCode.OP_CONST), 1,    // Push " World"
+        @intFromEnum(instructions.OpCode.OP_CONCAT),      // Concatenate
+        
+        // Test string equality: "Hello" == "Hello"
+        @intFromEnum(instructions.OpCode.OP_CONST), 0,    // Push "Hello"
+        @intFromEnum(instructions.OpCode.OP_CONST), 2,    // Push "Hello" again
+        @intFromEnum(instructions.OpCode.OP_STR_EQ),      // Compare equality
+        
+        // Test string length: len("Hello")
+        @intFromEnum(instructions.OpCode.OP_CONST), 0,    // Push "Hello"
+        @intFromEnum(instructions.OpCode.OP_STR_LEN),     // Get length
+        
+        // Test substring: "Hello"[1:3] (should get "el")
+        @intFromEnum(instructions.OpCode.OP_CONST), 0,    // Push "Hello"
+        @intFromEnum(instructions.OpCode.OP_SUBSTR), 1, 2,// Get substring from index 1, length 2
+        
+        @intFromEnum(instructions.OpCode.OP_HALT),
     };
 
     var reporter = Reporting.initStderr();
-    var vm = VM.init(allocator, &code, &constants, &reporter);
+    var vm = VM.init(allocator, &code, &constants_array, &reporter);
     defer vm.deinit();
 
-    // Register the function
-    try vm.functions.append(&add_one_fn);
-    
-    const result = try vm.eval();
-    
-    if (result) |frame| {
-        switch (frame.value.type) {
-            .INT => std.debug.print("Result: {}\n", .{frame.value.data.int}),
-            .FLOAT => std.debug.print("Result: {d}\n", .{frame.value.data.float}),
-            .BOOL => std.debug.print("Result: {}\n", .{frame.value.data.boolean}),
-            .STRING => std.debug.print("Result: {s}\n", .{frame.value.data.string}),
-            .NOTHING => std.debug.print("Result: nothing\n", .{}),
-            else => std.debug.print("Unsupported result type\n", .{}),
+    // Run the VM and print results after each operation
+    var ip: usize = 0;
+    while (ip < code.len) {
+        if (try vm.eval()) |mut_frame| {  // Changed to mut_frame to indicate it's mutable
+            var frame = mut_frame;  // Create mutable copy
+            // Print the result
+            switch (frame.value.type) {
+                .STRING => std.debug.print("String result: \"{s}\"\n", .{frame.value.data.string}),
+                .BOOL => std.debug.print("Boolean result: {}\n", .{frame.value.data.boolean}),
+                .INT => std.debug.print("Integer result: {}\n", .{frame.value.data.int}),
+                else => std.debug.print("Other type result\n", .{}),
+            }
+            // Clean up the result frame
+            frame.deinit();
         }
-    } else {
-        std.debug.print("VM halted with empty stack\n", .{});
+        ip = vm.ip;
     }
 }
 
