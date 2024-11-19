@@ -45,6 +45,12 @@ pub const OpCode = enum(u8) {
     OP_CALL = 0x15,
     OP_RETURN = 0x16,
 
+    // string operations
+    OP_CONCAT,      // Concatenate two strings
+    OP_STR_EQ,      // String equality comparison
+    OP_STR_LEN,     // Get string length
+    OP_SUBSTR,      // Get substring
+
     pub fn encode(op: OpCode) u8 {
         return @intFromEnum(op);
     }
