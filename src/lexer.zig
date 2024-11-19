@@ -726,10 +726,31 @@ pub const Lexer = struct {
         defer self.allocator.free(num_str);
 
         if (has_decimal) {
-            const float_val = std.fmt.parseFloat(f32, num_str) catch |err| switch (err) {
-                error.InvalidCharacter => return error.InvalidNumber,
-                else => return err,
+            // Handle special floating point values like infinity and NaN
+            const num_str_buf = try self.allocator.alloc(u8, num_str.len);
+            defer self.allocator.free(num_str_buf);
+            const num_str_lower = std.ascii.lowerString(num_str_buf, num_str);
+            
+            if (std.mem.eql(u8, num_str_lower, "inf") or std.mem.eql(u8, num_str_lower, "infinity")) {
+                const float_val = if (is_negative) -std.math.inf(f32) else std.math.inf(f32);
+                try self.addToken(.FLOAT, .{ .float = float_val });
+                return;
+            }
+            if (std.mem.eql(u8, num_str_lower, "nan")) {
+                try self.addToken(.FLOAT, .{ .float = std.math.nan(f32) });
+                return;
+            }
+
+            // Parse the float value
+            const float_val = std.fmt.parseFloat(f32, num_str) catch {
+                return error.InvalidNumber;
             };
+            
+            // Check for underflow/overflow
+            if (std.math.isInf(float_val) or std.math.isNan(float_val)) {
+                return error.InvalidNumber;
+            }
+            
             try self.addToken(.FLOAT, .{ .float = float_val });
         } else {
             const int_val = std.fmt.parseInt(i32, num_str, 10) catch |err| switch (err) {
@@ -912,5 +933,78 @@ pub const Lexer = struct {
         }
         
         return result.toOwnedSlice();
+    }
+
+    fn validateUnderscores(input: []const u8) !void {
+        var last_was_underscore = false;
+        var has_digit = false;
+        
+        for (input, 0..) |c, i| {
+            if (c == '_') {
+                if (last_was_underscore) return error.InvalidNumber; // Double underscore
+                if (i == 0 or i == input.len - 1) return error.InvalidNumber; // Leading/trailing underscore
+                last_was_underscore = true;
+            } else {
+                last_was_underscore = false;
+                if (std.ascii.isDigit(c)) has_digit = true;
+            }
+        }
+        
+        if (!has_digit) return error.InvalidNumber;
+    }
+
+    fn handleExponent(self: *Lexer) !void {
+        self.advance(); // consume 'e' or 'E'
+        
+        // Handle optional sign
+        var exp_is_negative = false;
+        if (self.peekAt(0) == '+' or self.peekAt(0) == '-') {
+            exp_is_negative = self.peekAt(0) == '-';
+            self.advance();
+        }
+        
+        // Must have at least one digit
+        if (!isDigit(self.peekAt(0))) return error.InvalidExponent;
+        
+        var exp_value: i32 = 0;
+        var has_digit = false;
+        
+        while (isDigit(self.peekAt(0)) or self.peekAt(0) == '_') {
+            if (isDigit(self.peekAt(0))) {
+                exp_value = exp_value * 10 + (self.peekAt(0) - '0');
+                has_digit = true;
+                
+                // Check for exponent overflow
+                if (exp_value > 308) return error.Overflow; // Max double exponent
+            }
+            self.advance();
+        }
+        
+        if (!has_digit) return error.InvalidExponent;
+        if (exp_is_negative) exp_value = -exp_value;
+        
+        return exp_value;
+    }
+
+    fn validateBasePrefix(self: *Lexer) !enum { Decimal, Hex, Binary, Octal } {
+        if (self.peekAt(0) != '0') return .Decimal;
+        
+        const next_char = self.peekAt(1);
+        switch (next_char) {
+            'x', 'X' => {
+                if (!isHexDigit(self.peekAt(2))) return error.InvalidNumber;
+                return .Hex;
+            },
+            'b', 'B' => {
+                if (!isBinaryDigit(self.peekAt(2))) return error.InvalidNumber;
+                return .Binary;
+            },
+            'o', 'O' => {
+                if (!isOctalDigit(self.peekAt(2))) return error.InvalidNumber;
+                return .Octal;
+            },
+            '0'...'9' => return error.LeadingZeros,
+            else => return .Decimal,
+        }
     }
 };
