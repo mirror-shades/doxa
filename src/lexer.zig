@@ -42,9 +42,9 @@ pub const Lexer = struct {
     keywords: std.StringHashMap(TokenType),
     tokens: std.ArrayList(Token),
     source: []const u8,
-    start: usize,
-    current: usize,
-    line: usize,
+    start: u32,
+    current: u32,
+    line: u32,
     allocator: std.mem.Allocator,
 
     //======================================================================
@@ -162,7 +162,7 @@ pub const Lexer = struct {
                         self.advance();
                     }
                 } else if (self.match('*')) {
-                    var nesting: usize = 1;
+                    var nesting: u32 = 1;
                     
                     while (nesting > 0 and !self.isAtEnd()) {
                         if (self.peekAt(0) == '/' and self.peekAt(1) == '*') {
@@ -359,17 +359,17 @@ pub const Lexer = struct {
     // Lexer State Management
     //======================================================================
 
-    fn peekAt(self: *Lexer, offset: isize) u8 {
+    fn peekAt(self: *Lexer, offset: i32) u8 {
         // For negative offsets, check if we'd go before start of string
         if (offset < 0) {
             const abs_offset = @abs(offset);
             if (abs_offset > self.current) return 0;
-            return self.source[self.current - @as(usize, abs_offset)];
+            return self.source[self.current - @as(u32, abs_offset)];
         }
         
         // For zero or positive offsets
         if (offset >= 0) {
-            const pos = self.current + @as(usize, @intCast(offset));
+            const pos = self.current + @as(u32, @intCast(offset));
             if (pos >= self.source.len) return 0;
             return self.source[pos];
         }
@@ -448,7 +448,7 @@ pub const Lexer = struct {
                     (codepoint >= '0' and codepoint <= '9') or
                     codepoint == '_' or
                     codepoint > 127) {  // Accept all Unicode characters above ASCII
-                    var i: usize = 0;
+                    var i: u32 = 0;
                     while (i < sequence_length) : (i += 1) {
                         self.advance();
                     }
@@ -726,13 +726,13 @@ pub const Lexer = struct {
         defer self.allocator.free(num_str);
 
         if (has_decimal) {
-            const float_val = std.fmt.parseFloat(f64, num_str) catch |err| switch (err) {
+            const float_val = std.fmt.parseFloat(f32, num_str) catch |err| switch (err) {
                 error.InvalidCharacter => return error.InvalidNumber,
                 else => return err,
             };
             try self.addToken(.FLOAT, .{ .float = float_val });
         } else {
-            const int_val = std.fmt.parseInt(i64, num_str, 10) catch |err| switch (err) {
+            const int_val = std.fmt.parseInt(i32, num_str, 10) catch |err| switch (err) {
                 error.InvalidCharacter => return error.InvalidNumber,
                 else => return err,
             };
@@ -741,7 +741,7 @@ pub const Lexer = struct {
     }
 
     fn handleHex(self: *Lexer, is_negative: bool) !void {
-        var digits_start: usize = self.current;
+        var digits_start: u32 = self.current;
         // If we're at 'x', back up to include the '0'
         if (self.source[self.current] == 'x') {
             self.current -= 1;
@@ -767,11 +767,14 @@ pub const Lexer = struct {
         const clean_hex = try self.removeUnderscores(hex_digits);
         defer self.allocator.free(clean_hex);
 
-        // Debug output to help with troubleshooting
-        std.debug.print("Parsing hex digits: '{s}' (from '{s}')\n", .{clean_hex, self.source[self.start..self.current]});
+        // Special handling for MIN_INT (-0x80000000)
+        if (is_negative and std.mem.eql(u8, clean_hex, "80000000")) {
+            try self.addToken(.INT, .{ .int = std.math.minInt(i32) });
+            return;
+        }
 
         // Convert the hex string to an integer
-        var int_val = std.fmt.parseInt(i64, clean_hex, 16) catch |err| switch (err) {
+        var int_val = std.fmt.parseInt(i32, clean_hex, 16) catch |err| switch (err) {
             error.InvalidCharacter => return error.InvalidNumber,
             else => return err,
         };
@@ -809,11 +812,14 @@ pub const Lexer = struct {
         const clean_bin = try self.removeUnderscores(bin_digits);
         defer self.allocator.free(clean_bin);
 
-        // Debug output to help with troubleshooting
-        std.debug.print("Parsing binary digits: '{s}' (from '{s}')\n", .{clean_bin, self.source[self.start..self.current]});
+        // Special handling for MIN_INT (-0b10000000000000000000000000000000)
+        if (is_negative and std.mem.eql(u8, clean_bin, "10000000000000000000000000000000")) {
+            try self.addToken(.INT, .{ .int = std.math.minInt(i32) });
+            return;
+        }
 
         // Convert the binary string to an integer
-        var int_val = std.fmt.parseInt(i64, clean_bin, 2) catch |err| switch (err) {
+        var int_val = std.fmt.parseInt(i32, clean_bin, 2) catch |err| switch (err) {
             error.InvalidCharacter => return error.InvalidNumber,
             else => return err,
         };
@@ -848,11 +854,8 @@ pub const Lexer = struct {
         const clean_oct = try self.removeUnderscores(oct_digits);
         defer self.allocator.free(clean_oct);
 
-        // Debug output
-        std.debug.print("Parsing octal digits: '{s}' (from '{s}')\n", .{clean_oct, self.source[self.start..self.current]});
-
         // Convert the octal string to an integer
-        var int_val = std.fmt.parseInt(i64, clean_oct, 8) catch |err| switch (err) {
+        var int_val = std.fmt.parseInt(i32, clean_oct, 8) catch |err| switch (err) {
             error.InvalidCharacter => return error.InvalidNumber,
             else => return err,
         };
@@ -870,7 +873,7 @@ pub const Lexer = struct {
         errdefer result.deinit();
         
         // Handle negative sign if present
-        var i: usize = 0;
+        var i: u32 = 0;
         if (input.len > 0 and input[0] == '-') {
             try result.append('-');
             i = 1;

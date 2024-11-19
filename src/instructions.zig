@@ -51,6 +51,11 @@ pub const OpCode = enum(u8) {
     OP_STR_LEN,     // Get string length
     OP_SUBSTR,      // Get substring
 
+    // struct operations
+    OP_STRUCT_NEW,  // Create a new struct
+    OP_SET_FIELD,   // Set a field in a struct
+    OP_GET_FIELD,   // Get a field from a struct (optional for now)
+
     pub fn encode(op: OpCode) u8 {
         return @intFromEnum(op);
     }
@@ -77,6 +82,7 @@ pub const ValueType = enum {
     BOOL,
     ARRAY,
     STRING,
+    STRUCT,
     ENUM,
     AUTO,
     NOTHING,
@@ -86,8 +92,8 @@ pub const ValueType = enum {
 pub const Value = struct {
     type: ValueType,
     data: union {
-        int: i64,
-        float: f64,
+        int: i32,
+        float: f32,
         boolean: bool,
         array: []const Value,
         string: []const u8,
@@ -98,8 +104,40 @@ pub const Value = struct {
         auto: *Value,
         nothing: void,
         function: *Function,
+        struct_val: StructValue,
     },
+};
 
+// 3. Add a StructValue type
+const StructValue = struct {
+    fields: std.StringHashMap(Value),  // This expects a StringHashMap, not an array
+    type_name: []const u8,
+    num_fields: usize,
+    
+    pub fn init(allocator: std.mem.Allocator, type_name: []const u8) !*StructValue {
+        const sv = try allocator.create(StructValue);
+        sv.* = .{
+            .fields = std.StringHashMap(Value).init(allocator),  // Initialize as HashMap
+            .type_name = try allocator.dupe(u8, type_name),
+            .num_fields = 0,
+        };
+        return sv;
+    }
+     
+    pub fn deinit(self: *StructValue, allocator: std.mem.Allocator) void {
+        var iter = self.fields.iterator();
+        while (iter.next()) |entry| {
+            // Recursively clean up field values
+            switch (entry.value_ptr.type) {
+                .STRING => allocator.free(entry.value_ptr.data.string),
+                .STRUCT => entry.value_ptr.data.struct_val.deinit(allocator),
+                else => {},
+            }
+        }
+        self.fields.deinit();
+        allocator.free(self.type_name);
+        allocator.destroy(self);
+    }
 };
 
 // If you need additional data for instructions, you can use a union
@@ -117,11 +155,13 @@ pub const Instruction = union(OpCode) {
     OP_FDIV: void,
     OP_I2F: void,
     OP_F2I: void,
+    OP_STRUCT_NEW: void,
+    OP_SET_FIELD: void,
 
 
     const reporter = Reporting;
     
-    pub fn int(x: i64) Instruction {
+    pub fn int(x: i32) Instruction {
         return Instruction{ 
             .OP_CONST = .{
                 .type = .INT,
@@ -130,7 +170,7 @@ pub const Instruction = union(OpCode) {
         };
     }
 
-    pub fn float(x: f64) Instruction {
+    pub fn float(x: f32) Instruction {
         return Instruction{ 
             .OP_CONST = .{
                 .type = .FLOAT,
@@ -162,6 +202,8 @@ pub const InstructionSet = []const Instruction{
     Instruction.OP_FDIV,
     Instruction.OP_I2F,
     Instruction.OP_F2I,
+    Instruction.OP_STRUCT_NEW,
+    Instruction.OP_SET_FIELD,
 
 
 };

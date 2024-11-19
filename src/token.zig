@@ -98,8 +98,8 @@ pub const TokenType = enum {
 };
 
 pub const TokenLiteral = union(enum) {
-    int: i64,                     // For integer literals like 123
-    float: f64,                   // For numeric literals like "123.45"
+    int: i32,                     // For integer literals like 123
+    float: f32,                   // For numeric literals like "123.45"
     string: []const u8,           // For string literals like "hello"
     boolean: bool,                // For boolean literals like true or false
     array: []const TokenLiteral,  // Changed from []const u8 to allow nested arrays and mixed types

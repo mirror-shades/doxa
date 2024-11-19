@@ -5,16 +5,17 @@ const Reporting = @import("reporting.zig").Reporting;
 const Frame = struct {
     value: instructions.Value,
     allocator: ?std.mem.Allocator,
+    owns_value: bool = true,
     
     // Helper functions
-    pub fn initInt(x: i64) Frame {
+    pub fn initInt(x:  i32) Frame {
         return Frame{
             .value = instructions.Value{ .type = .INT, .data = .{ .int = x } },
             .allocator = null,
         };
     }
 
-    pub fn initFloat(x: f64) Frame {
+    pub fn initFloat(x: f32) Frame {
         return Frame{
             .value = instructions.Value{ .type = .FLOAT, .data = .{ .float = x } },
             .allocator = null,
@@ -36,6 +37,25 @@ const Frame = struct {
         };
     }
 
+    pub fn initStruct(allocator: std.mem.Allocator, type_name: []const u8, num_fields: u8) !Frame {
+        const struct_value = instructions.Value{
+            .type = .STRUCT,
+            .data = .{
+                .struct_val = .{
+                    .type_name = try allocator.dupe(u8, type_name),
+                    .fields = std.StringHashMap(instructions.Value).init(allocator),
+                    .num_fields = num_fields,
+                },
+            },
+        };
+
+        return Frame{
+            .value = struct_value,
+            .allocator = allocator,
+            .owns_value = true,
+        };
+    }
+
     pub fn initNothing() Frame {
         return Frame{
             .value = instructions.Value{ .type = .NOTHING, .data = .{ .nothing = {} } },
@@ -47,14 +67,14 @@ const Frame = struct {
         return self.value.type == expected;
     }
     
-    pub fn asInt(self: Frame) !i64 {
+    pub fn asInt(self: Frame) ! i32 {
         if (!self.typeIs(.INT)) {
             return error.TypeError;
         }
         return self.value.data.int;
     }
 
-    pub fn asFloat(self: Frame) !f64 {
+    pub fn asFloat(self: Frame) !f32 {
         if (!self.typeIs(.FLOAT)) {
             return error.TypeError;
         }
@@ -76,12 +96,28 @@ const Frame = struct {
     }
 
     pub fn deinit(self: *Frame) void {
+        if (!self.owns_value) return;
+        
         if (self.allocator) |alloc| {
             switch (self.value.type) {
                 .STRING => alloc.free(self.value.data.string),
+                .STRUCT => {
+                    // Free the type name
+                    alloc.free(self.value.data.struct_val.type_name);
+                    // Deinit the fields hash map
+                    self.value.data.struct_val.fields.deinit();
+                },
                 else => {},
             }
         }
+    }
+
+    pub fn reference(value: instructions.Value) Frame {
+        return Frame{
+            .value = value,
+            .allocator = null,
+            .owns_value = false,
+        };
     }
 };
 
@@ -90,7 +126,7 @@ const MAX_FRAMES = 64; // Or whatever maximum call depth you want to support
 
 const Stack = struct {
     data: [STACK_SIZE]Frame,
-    sp: usize = 0,
+    sp:  u32 = 0,
 
     pub fn init() Stack {
         var stack = Stack{
@@ -105,11 +141,9 @@ const Stack = struct {
     }
 
     pub fn deinit(self: *Stack) void {
-        var i: usize = 0;
+        var i:  u32 = 0;
         while (i < self.sp) : (i += 1) {
-            if (self.data[i].allocator != null) {
-                self.data[i].deinit();
-            }
+            self.data[i].deinit();
         }
         self.sp = 0;
     }
@@ -137,7 +171,7 @@ const Stack = struct {
         return self.data[self.sp - 1];
     }
 
-    pub fn size(self: Stack) usize {
+    pub fn size(self: Stack)  u32 {
         return self.sp;
     }
 
@@ -151,11 +185,11 @@ const Stack = struct {
 };
 
 const CallFrame = struct {
-    ip: usize,              // Instruction pointer for this frame
-    bp: usize,              // Base pointer (start of this frame's stack space)
-    sp: usize,              // Stack pointer for this frame
+    ip:  u32,              // Instruction pointer for this frame
+    bp:  u32,              // Base pointer (start of this frame's stack space)
+    sp:  u32,              // Stack pointer for this frame
     function: *const instructions.Function, // Reference to the function being executed
-    return_addr: usize,     // Where to return to in the caller's code
+    return_addr:  u32,     // Where to return to in the caller's code
 };
 
 pub const VM = struct {
@@ -166,9 +200,9 @@ pub const VM = struct {
     variables: std.ArrayList(Frame),
     functions: std.ArrayList(*instructions.Function),
     frames: std.ArrayList(CallFrame),
-    frame_count: usize,
-    sp: usize,
-    ip: usize,
+    frame_count:  u32,
+    sp:  u32,
+    ip:  u32,
     reporter: *Reporting,
     call_stack: std.ArrayList(CallFrame),
     current_frame: ?*CallFrame,  // Points to the active frame
@@ -193,7 +227,7 @@ pub const VM = struct {
         };
 
         // Initialize stack with NOTHING values if needed
-        var i: usize = 0;
+        var i:  u32 = 0;
         while (i < STACK_SIZE) : (i += 1) {
             vm.stack.data[i] = Frame.initNothing();
         }
@@ -227,32 +261,30 @@ pub const VM = struct {
     }
 
     pub fn deinit(self: *VM) void {
-        // First clean up the stack
-        self.stack.deinit();
-        
-        // Clean up variables
+        // Clean up variables first
         for (self.variables.items) |*var_frame| {
-            if (var_frame.allocator != null) {
-                var_frame.deinit();
-            }
+            var_frame.deinit();
         }
         self.variables.deinit();
         
-        // Clean up functions
-        self.functions.deinit();
+        // Clean up stack
+        self.stack.deinit();
         
-        // Clean up frames
+        // Clean up other resources
+        self.functions.deinit();
         self.frames.deinit();
         
-        // Clean up call stack and global function
         if (self.call_stack.items.len > 0) {
             const global_frame = &self.call_stack.items[0];
             self.allocator.destroy(global_frame.function);
         }
         self.call_stack.deinit();
         
-        // Finally, free global constants
         self.allocator.free(self.global_constants);
+    }
+
+    fn initStruct(self: *VM, type_name: []const u8, num_fields: u8) !Frame {
+        return Frame.initStruct(self.allocator, type_name, num_fields);
     }
 
     fn push(self: *VM, value: Frame) void {
@@ -308,18 +340,31 @@ pub const VM = struct {
                 switch (opcode) {
                     .OP_HALT => {
                         if (self.stack.size() > 0) {
-                            // Get the top value from the stack
                             const top_value = try self.stack.peek();
                             
                             // Create a new Frame on the heap for the return value
                             const result = try self.allocator.create(Frame);
                             
-                            // Create a deep copy if it's a string
+                            // Create a deep copy if needed
                             if (top_value.value.type == .STRING) {
                                 const str = try top_value.asString();
                                 result.* = try Frame.initString(self.allocator, str);
+                            } else if (top_value.value.type == .STRUCT) {
+                                // For structs, we need to do a deep copy
+                                const type_name = top_value.value.data.struct_val.type_name;
+                                result.* = try self.initStruct(type_name, top_value.value.data.struct_val.num_fields);
+                                
+                                // Copy all fields
+                                var it = top_value.value.data.struct_val.fields.iterator();
+                                while (it.next()) |entry| {
+                                    try result.value.data.struct_val.fields.put(entry.key_ptr.*, entry.value_ptr.*);
+                                }
                             } else {
-                                result.* = top_value;  // Copy the value for other types
+                                result.* = Frame{ 
+                                    .value = top_value.value,
+                                    .allocator = null,
+                                    .owns_value = true,
+                                };
                             }
                             
                             std.debug.print("Returning value of type: {}\n", .{result.value.type});
@@ -372,8 +417,8 @@ pub const VM = struct {
                                 .OP_IMUL => i_mul(a.asInt() catch return null, b.asInt() catch return null),
                                 .OP_IDIV => blk: {
                                     // Always convert to floats for division
-                                    const a_float = @as(f64, @floatFromInt(a.asInt() catch return null));
-                                    const b_float = @as(f64, @floatFromInt(b.asInt() catch return null));
+                                    const a_float = @as(f32, @floatFromInt(a.asInt() catch return null));
+                                    const b_float = @as(f32, @floatFromInt(b.asInt() catch return null));
                                     break :blk f_div(a_float, b_float) catch return null;
                                 },
                                 else => unreachable,
@@ -386,7 +431,7 @@ pub const VM = struct {
                         switch (a.value.type) {
                             .INT => switch (b.value.type) {
                                 .FLOAT => {
-                                    const a_float = @as(f64, @floatFromInt(a.asInt() catch return null));
+                                    const a_float = @as(f32, @floatFromInt(a.asInt() catch return null));
                                     const result = switch (opcode) {
                                         .OP_IADD => f_add(a_float, b.asFloat() catch return null),
                                         .OP_ISUB => f_sub(a_float, b.asFloat() catch return null),
@@ -403,7 +448,7 @@ pub const VM = struct {
                             },
                             .FLOAT => switch (b.value.type) {
                                 .INT => {
-                                    const b_float = @as(f64, @floatFromInt(b.asInt() catch return null));
+                                    const b_float = @as(f32, @floatFromInt(b.asInt() catch return null));
                                     const result = switch (opcode) {
                                         .OP_IADD => f_add(a.asFloat() catch return null, b_float),
                                         .OP_ISUB => f_sub(a.asFloat() catch return null, b_float),
@@ -442,18 +487,18 @@ pub const VM = struct {
                         const a = self.pop().?;
 
                         // Convert operands to float if needed
-                        const a_val: f64 = switch (a.value.type) {
+                        const a_val: f32 = switch (a.value.type) {
                             .FLOAT => a.asFloat() catch return null,
-                            .INT => @as(f64, @floatFromInt(a.asInt() catch return null)),
+                            .INT => @as(f32, @floatFromInt(a.asInt() catch return null)),
                             else => {
                                 self.reporter.reportFatalError("Invalid type for float operation", .{});
                                 return null;
                             },
                         };
 
-                        const b_val: f64 = switch (b.value.type) {
+                        const b_val: f32 = switch (b.value.type) {
                             .FLOAT => b.asFloat() catch return null,
-                            .INT => @as(f64, @floatFromInt(b.asInt() catch return null)),
+                            .INT => @as(f32, @floatFromInt(b.asInt() catch return null)),
                             else => {
                                 self.reporter.reportFatalError("Invalid type for float operation", .{});
                                 return null;
@@ -492,7 +537,7 @@ pub const VM = struct {
                             return null;
                         }
                         const int_val = value.asInt() catch return null;
-                        const float_val = @as(f64, @floatFromInt(int_val));
+                        const float_val = @as(f32, @floatFromInt(int_val));
                         self.push(Frame.initFloat(float_val));
                         std.debug.print("I2F: Converted {} to {d}\n", .{int_val, float_val});
                     },
@@ -500,7 +545,7 @@ pub const VM = struct {
                     instructions.OpCode.OP_F2I => {
                         const value = self.pop() orelse return null;
                         const float_val = value.asFloat() catch return null;
-                        const int_val = @as(i64, @intFromFloat(std.math.trunc(float_val)));
+                        const int_val = @as( i32, @intFromFloat(std.math.trunc(float_val)));
                         self.push(Frame.initInt(int_val));
                     },
                     // equal
@@ -623,11 +668,75 @@ pub const VM = struct {
                         const result = try substr(self.allocator, &a, start, len);
                         self.push(result);
                     },
+                    instructions.OpCode.OP_STRUCT_NEW => {
+                        const num_fields = self.read_byte();
+                        const type_name_idx = self.read_byte();
+                        std.debug.print("Creating struct with {} fields, type name at index {}\n", .{num_fields, type_name_idx});
+                        const type_name_frame = self.get_constant(type_name_idx) orelse return null;
+                        const type_name = type_name_frame.asString() catch {
+                            self.reporter.reportFatalError("Expected string constant for struct type name", .{});
+                            return null;
+                        };
+                        const result = try self.initStruct(type_name, num_fields);
+                        self.push(result);
+                    },
+                    instructions.OpCode.OP_SET_FIELD => {
+                        std.debug.print("Setting field - Stack size: {}\n", .{self.stack.size()});
+                        const value = self.pop() orelse return null;
+                        const field_name_frame = self.pop() orelse return null;
+                        var struct_frame = self.pop() orelse return null;
+                        
+                        if (struct_frame.value.type != .STRUCT) {
+                            self.reporter.reportFatalError("Expected struct for field assignment", .{});
+                            return null;
+                        }
+                        
+                        const field_name = field_name_frame.asString() catch {
+                            self.reporter.reportFatalError("Expected string for field name", .{});
+                            return null;
+                        };
+                        
+                        // Set the field in the struct
+                        try struct_frame.value.data.struct_val.fields.put(
+                            field_name,
+                            value.value
+                        );
+                        
+                        // Push the struct back onto the stack
+                        self.push(struct_frame);
+                    },
+                    instructions.OpCode.OP_GET_FIELD => {
+                        const field_name_frame = self.pop() orelse return null;
+                        const struct_frame = self.pop() orelse return null;
+                        
+                        if (struct_frame.value.type != .STRUCT) {
+                            self.reporter.reportFatalError("Expected struct for field access", .{});
+                            return null;
+                        }
+                        
+                        const field_name = field_name_frame.asString() catch {
+                            self.reporter.reportFatalError("Expected string for field name", .{});
+                            return null;
+                        };
+                        
+                        // Get the field from the struct
+                        if (struct_frame.value.data.struct_val.fields.get(field_name)) |field_value| {
+                            // Create a new frame for the field value
+                            const result = Frame{
+                                .value = field_value,
+                                .allocator = null,  // Field values don't own their memory
+                            };
+                            self.push(result);
+                        } else {
+                            self.reporter.reportFatalError("Field not found in struct", .{});
+                            return null;
+                        }
+                    },
                 }
 
                 // Your existing debug print code
                 std.debug.print("Stack after operation: ", .{});
-                var i: usize = 0;
+                var i:  u32 = 0;
                 while (i < self.sp) : (i += 1) {
                 // ... rest of debug printing ...
                 }
@@ -648,39 +757,39 @@ pub const VM = struct {
         @panic("No active frame");
     }
 
-    fn i2f(self: *VM, a: i64) !void {
-        const result: f64 = @as(f64, @floatFromInt(a));
+    fn i2f(self: *VM, a:  i32) !void {
+        const result: f32 = @as(f32, @floatFromInt(a));
         self.push(Frame.initFloat(result));
     }
 
-    fn f2i(self: *VM, a: f64) !void {
-        const result: i64 = @intFromFloat(std.math.trunc(a));
+    fn f2i(self: *VM, a: f32) !void {
+        const result:  i32 = @intFromFloat(std.math.trunc(a));
         self.push(Frame.initInt(result));
     }
 
-   fn i_add(a: i64, b: i64) !Frame {
-        if (b > 0 and a > std.math.maxInt(i64) - b) {
+   fn i_add(a:  i32, b:  i32) !Frame {
+        if (b > 0 and a > std.math.maxInt( i32) - b) {
             return error.IntegerOverflow;
         }
-        if (b < 0 and a < std.math.minInt(i64) - b) {
+        if (b < 0 and a < std.math.minInt( i32) - b) {
             return error.IntegerOverflow;
         }
         return Frame.initInt(a + b);
      }   
 
-    fn i_sub(a: i64, b: i64) !Frame {
+    fn i_sub(a:  i32, b:  i32) !Frame {
         // Check for overflow: if b is positive, a must not be less than MIN + b
         // if b is negative, a must not be greater than MAX + b
-        if (b > 0 and a < std.math.minInt(i64) + b) {
+        if (b > 0 and a < std.math.minInt( i32) + b) {
             return error.IntegerOverflow;
         }
-        if (b < 0 and a > std.math.maxInt(i64) + b) {
+        if (b < 0 and a > std.math.maxInt( i32) + b) {
             return error.IntegerOverflow;
         }
         return Frame.initInt(a - b);
     }
 
-    fn i_mul(a: i64, b: i64) !Frame {
+    fn i_mul(a:  i32, b:  i32) !Frame {
         // Special cases first
         if (a == 0 or b == 0) return Frame.initInt(0);
         if (a == 1) return Frame.initInt(b);
@@ -689,42 +798,42 @@ pub const VM = struct {
         // Check for overflow
         if (a > 0) {
             if (b > 0) {
-                if (a > @divTrunc(std.math.maxInt(i64), b)) return error.IntegerOverflow;
+                if (a > @divTrunc(std.math.maxInt( i32), b)) return error.IntegerOverflow;
             } else {
-                if (b < @divTrunc(std.math.minInt(i64), a)) return error.IntegerOverflow;
+                if (b < @divTrunc(std.math.minInt( i32), a)) return error.IntegerOverflow;
             }
         } else {
             if (b > 0) {
-                if (a < @divTrunc(std.math.minInt(i64), b)) return error.IntegerOverflow;
+                if (a < @divTrunc(std.math.minInt( i32), b)) return error.IntegerOverflow;
             } else {
-                if (a != 0 and b < @divTrunc(std.math.maxInt(i64), a)) return error.IntegerOverflow;
+                if (a != 0 and b < @divTrunc(std.math.maxInt( i32), a)) return error.IntegerOverflow;
             }
         }
         return Frame.initInt(a * b);
     }
 
-    fn f_add(a: f64, b: f64) !Frame {
-        if (a + b < -std.math.floatMax(f64) or a + b > std.math.floatMax(f64)) {
+    fn f_add(a: f32, b: f32) !Frame {
+        if (a + b < -std.math.floatMax(f32) or a + b > std.math.floatMax(f32)) {
             return error.FloatOverflow;
         }
         return Frame.initFloat(a + b);
     }
 
-    fn f_sub(a: f64, b: f64) !Frame {
-        if (a - b < -std.math.floatMax(f64) or a - b > std.math.floatMax(f64)) {
+    fn f_sub(a: f32, b: f32) !Frame {
+        if (a - b < -std.math.floatMax(f32) or a - b > std.math.floatMax(f32)) {
             return error.FloatOverflow;
         }
         return Frame.initFloat(a - b);
     }
 
-    fn f_mul(a: f64, b: f64) !Frame {
-        if (a * b < -std.math.floatMax(f64) or a * b > std.math.floatMax(f64)) {
+    fn f_mul(a: f32, b: f32) !Frame {
+        if (a * b < -std.math.floatMax(f32) or a * b > std.math.floatMax(f32)) {
             return error.FloatOverflow;
         }
         return Frame.initFloat(a * b);
     }
 
-    fn f_div(a: f64, b: f64) !Frame {
+    fn f_div(a: f32, b: f32) !Frame {
         if (b == 0) {
             return error.DivisionByZero;
         }
@@ -732,41 +841,41 @@ pub const VM = struct {
     }
 
     fn greater(a: Frame, b: Frame) !Frame {
-    // If both are the same type, compare directly
-    if (a.value.type == b.value.type) {
-        return switch (a.value.type) {
-            .INT => {
-                const a_val = try a.asInt();
-                const b_val = try b.asInt();
-                return Frame.initBoolean(a_val > b_val);
-            },
-            .FLOAT => {
-                const a_val = try a.asFloat();
-                const b_val = try b.asFloat();
-                return Frame.initBoolean(a_val > b_val);
-            },
-            else => error.TypeError,
-        };
-    }
+        // If both are the same type, compare directly
+        if (a.value.type == b.value.type) {
+            return switch (a.value.type) {
+                .INT => {
+                    const a_val = try a.asInt();
+                    const b_val = try b.asInt();
+                    return Frame.initBoolean(a_val > b_val);
+                },
+                .FLOAT => {
+                    const a_val = try a.asFloat();
+                    const b_val = try b.asFloat();
+                    return Frame.initBoolean(a_val > b_val);
+                },
+                else => error.TypeError,
+            };
+        }
 
-    // Handle mixed INT/FLOAT comparisons
-    if ((a.value.type == .INT and b.value.type == .FLOAT) or 
-        (a.value.type == .FLOAT and b.value.type == .INT)) {
-        // Convert both to floats for comparison
-        const a_val: f64 = if (a.value.type == .INT)
-            @as(f64, @floatFromInt(try a.asInt()))
-        else
-            try a.asFloat();
+        // Handle mixed INT/FLOAT comparisons
+        if ((a.value.type == .INT and b.value.type == .FLOAT) or 
+            (a.value.type == .FLOAT and b.value.type == .INT)) {
+            // Convert both to floats for comparison
+            const a_val: f32 = if (a.value.type == .INT)
+                @as(f32, @floatFromInt(try a.asInt()))
+            else
+                try a.asFloat();
 
-        const b_val: f64 = if (b.value.type == .INT)
-            @as(f64, @floatFromInt(try b.asInt()))
-        else
-            try b.asFloat();
+            const b_val: f32 = if (b.value.type == .INT)
+                @as(f32, @floatFromInt(try b.asInt()))
+            else
+                try b.asFloat();
 
-        return Frame.initBoolean(a_val > b_val);
-    }
+            return Frame.initBoolean(a_val > b_val);
+        }
 
-    return error.TypeError;
+        return error.TypeError;
     }
 
     fn less(a: Frame, b: Frame) !Frame {
@@ -791,13 +900,13 @@ pub const VM = struct {
         if ((a.value.type == .INT and b.value.type == .FLOAT) or 
             (a.value.type == .FLOAT and b.value.type == .INT)) {
             // Convert both to floats for comparison
-            const a_val: f64 = if (a.value.type == .INT)
-                @as(f64, @floatFromInt(try a.asInt()))
+            const a_val: f32 = if (a.value.type == .INT)
+                @as(f32, @floatFromInt(try a.asInt()))
             else
                 try a.asFloat();
 
-            const b_val: f64 = if (b.value.type == .INT)
-                @as(f64, @floatFromInt(try b.asInt()))
+            const b_val: f32 = if (b.value.type == .INT)
+                @as(f32, @floatFromInt(try b.asInt()))
             else
                 try b.asFloat();
 
@@ -840,13 +949,13 @@ pub const VM = struct {
         if ((a.value.type == .INT and b.value.type == .FLOAT) or 
             (a.value.type == .FLOAT and b.value.type == .INT)) {
             // Convert both to floats for comparison
-            const a_val: f64 = if (a.value.type == .INT)
-                @as(f64, @floatFromInt(try a.asInt()))
+            const a_val: f32 = if (a.value.type == .INT)
+                @as(f32, @floatFromInt(try a.asInt()))
             else
                 try a.asFloat();
 
-            const b_val: f64 = if (b.value.type == .INT)
-                @as(f64, @floatFromInt(try b.asInt()))
+            const b_val: f32 = if (b.value.type == .INT)
+                @as(f32, @floatFromInt(try b.asInt()))
             else
                 try b.asFloat();
 
@@ -967,7 +1076,7 @@ pub const VM = struct {
     fn str_len(a: Frame) !Frame {
         if (a.value.type == .STRING) {  
             const a_str = try a.asString();
-            return Frame.initInt(@as(i64, @intCast(a_str.len)));
+            return Frame.initInt(@as( i32, @intCast(a_str.len)));
         }
         return error.TypeError;
     }
@@ -975,8 +1084,8 @@ pub const VM = struct {
     fn substr(allocator: std.mem.Allocator, a: *Frame, start: u8, len: u8) !Frame {
         if (a.value.type == .STRING) {
             const a_str = try a.asString();
-            const start_idx = @as(usize, start);
-            const length = @as(usize, len);
+            const start_idx = @as( u32, start);
+            const length = @as( u32, len);
             
             if (start_idx >= a_str.len or start_idx + length > a_str.len) {
                 return error.IndexOutOfBounds;
@@ -1036,7 +1145,7 @@ pub const VM = struct {
     // Add debug printing for stack contents
     fn printStack(self: *VM) void {
         std.debug.print("Stack contents ({} items):\n", .{self.sp});
-        var i: usize = 0;
+        var i:  u32 = 0;
         while (i < self.sp) : (i += 1) {
             const value = self.stack.data[i].value;
             switch (value.type) {
@@ -1071,55 +1180,70 @@ pub fn main() !void {
         if (leaked == .leak) @panic("Memory leak detected!");
     }
 
-    // Create an array to store our constants
+    // Create constants including struct type name
     var constants_array = [_]Frame{
-        Frame.initString(allocator, "Hello") catch unreachable,    // constant[0]
-        Frame.initString(allocator, " World") catch unreachable,   // constant[1]
-        Frame.initString(allocator, "Hello") catch unreachable,    // constant[2]
+        try Frame.initString(allocator, "Person"),    // constant[0] - struct type name
+        try Frame.initString(allocator, "name"),      // constant[1] - field name
+        try Frame.initString(allocator, "John"),      // constant[2] - field value
     };
     
-    // Ensure constants are cleaned up
     defer {
         for (&constants_array) |*constant| {
             constant.deinit();
         }
     }
 
-    // Add debug prints to see what's happening
-    std.debug.print("Starting VM execution\n", .{});
-    
+    // Create bytecode that:
+    // 1. Creates a new Person struct
+    // 2. Sets the name field
+    // 3. Halts
     const code = [_]u8{
-        // Test concatenation: "Hello" + " World"
-        @intFromEnum(instructions.OpCode.OP_CONST), 0,    // Push "Hello"
-        @intFromEnum(instructions.OpCode.OP_CONST), 1,    // Push " World"
-        @intFromEnum(instructions.OpCode.OP_CONCAT),      // Concatenate
-        @intFromEnum(instructions.OpCode.OP_HALT),        // Stop after concatenation
+        @intFromEnum(instructions.OpCode.OP_CONST), 0,         // Push "Person" type name
+        @intFromEnum(instructions.OpCode.OP_STRUCT_NEW), 1, 0, // Create new struct with 1 field, using constant 0
+        @intFromEnum(instructions.OpCode.OP_CONST), 1,         // Push "name" field name
+        @intFromEnum(instructions.OpCode.OP_CONST), 2,         // Push "John" field value
+        @intFromEnum(instructions.OpCode.OP_SET_FIELD),        // Set the field
+        @intFromEnum(instructions.OpCode.OP_HALT),            // Halt with struct on stack
     };
 
-    std.debug.print("Code length: {}\n", .{code.len});
+    std.debug.print("Starting VM execution with struct test\n", .{});
 
     var reporter = Reporting.initStderr();
     var vm = VM.init(allocator, &code, &constants_array, &reporter);
     defer vm.deinit();
 
+    // Add debug prints for VM state
+    std.debug.print("Initial VM state:\n", .{});
+    std.debug.print("Code length: {}\n", .{vm.code.len});
+    std.debug.print("Constants length: {}\n", .{vm.constants.len});
+
     // Run the VM and handle results
     if (vm.eval()) |maybe_result| {
         if (maybe_result) |result| {
             std.debug.print("Result type: {}\n", .{result.value.type});
-            // Print the result
-            switch (result.value.type) {
-                .STRING => std.debug.print("String result: \"{s}\"\n", .{result.value.data.string}),
-                .BOOL => std.debug.print("Boolean result: {}\n", .{result.value.data.boolean}),
-                .INT => std.debug.print("Integer result: {}\n", .{result.value.data.int}),
-                .FLOAT => std.debug.print("Float result: {d}\n", .{result.value.data.float}),
-                .NOTHING => std.debug.print("Nothing result\n", .{}),
-                else => std.debug.print("Other type result\n", .{}),
+            
+            // Print the struct contents
+            if (result.value.type == .STRUCT) {
+                const struct_val = result.value.data.struct_val;
+                std.debug.print("Struct type: {s}\n", .{struct_val.type_name});
+                std.debug.print("Number of fields: {}\n", .{struct_val.num_fields});
+                
+                // Print all fields
+                var it = struct_val.fields.iterator();
+                while (it.next()) |entry| {
+                    std.debug.print("Field {s}: ", .{entry.key_ptr.*});
+                    switch (entry.value_ptr.*.type) {
+                        .STRING => std.debug.print("{s}\n", .{entry.value_ptr.*.data.string}),
+                        .INT => std.debug.print("{}\n", .{entry.value_ptr.*.data.int}),
+                        .FLOAT => std.debug.print("{d}\n", .{entry.value_ptr.*.data.float}),
+                        .BOOL => std.debug.print("{}\n", .{entry.value_ptr.*.data.boolean}),
+                        else => std.debug.print("<other type>\n", .{}),
+                    }
+                }
             }
             
             // Clean up the result
-            if (result.value.type == .STRING) {
-                result.deinit();
-            }
+            result.deinit();
             allocator.destroy(result);
         } else {
             std.debug.print("No result returned\n", .{});
@@ -1128,6 +1252,3 @@ pub fn main() !void {
         std.debug.print("Error: {}\n", .{err});
     }
 }
-
-
-           
