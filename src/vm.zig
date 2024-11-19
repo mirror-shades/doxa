@@ -70,17 +70,31 @@ const Frame = struct {
 };
 
 const STACK_SIZE = 512;
+const MAX_FRAMES = 64; // Or whatever maximum call depth you want to support
+
+const Function = struct {
+    code: []const u8,         // The bytecode for this function
+    constants: []const Frame, // Constants used by this function
+    arity: u8,               // Number of parameters
+    name: []const u8,        // Function name (for debugging)
+};
+
+const CallFrame = struct {
+    ip: usize,              // Instruction pointer for this frame
+    bp: usize,              // Base pointer (for local variables)
+    function: *const Function, // Reference to the function being executed (made const)
+    return_addr: usize,     // Where to return to in the caller's code
+};
 
 pub const VM = struct {
     allocator: std.mem.Allocator,
     code: []const u8,
+    stack: [STACK_SIZE]Frame,
     constants: []const Frame,
     variables: std.ArrayList(Frame),
-    //stack
-    stack: [STACK_SIZE]Frame,
-    //stack pointer
+    frames: std.ArrayList(CallFrame),
+    frame_count: usize,
     sp: usize,
-    //instruction pointer
     ip: usize,
     reporter: *Reporting,
 
@@ -94,9 +108,11 @@ pub const VM = struct {
         return VM{
             .allocator = allocator,
             .code = code,
+            .stack = stack,
             .constants = constants,
             .variables = std.ArrayList(Frame).init(allocator),
-            .stack = stack,
+            .frames = std.ArrayList(CallFrame).init(allocator),
+            .frame_count = 0,
             .ip = 0,
             .sp = 0,
             .reporter = reporter,
@@ -105,6 +121,7 @@ pub const VM = struct {
 
     pub fn deinit(self: *VM) void {
         self.variables.deinit();
+        self.frames.deinit();
     }
 
     fn push(self: *VM, value: Frame) void {
@@ -133,7 +150,7 @@ pub const VM = struct {
         return self.constants[index];
     }
 
-    fn eval(self: *VM) ?Frame {
+    fn eval(self: *VM) !?Frame {
         while (true) {
             const opcode: instructions.OpCode = @enumFromInt(self.read_byte());
             std.debug.print("Opcode: {}, Stack size: {}\n", .{opcode, self.sp});
@@ -333,6 +350,42 @@ pub const VM = struct {
                     }
                     
                     self.variables.items[var_index] = value;
+                },
+                instructions.OpCode.OP_JUMP => {
+                    const jump_offset = self.read_byte();
+                    self.ip += jump_offset;
+                },
+                instructions.OpCode.OP_JUMP_IF => {
+                    const jump_address = self.read_byte();
+                    const condition = self.pop().?;
+                    if (condition.value.type != .BOOL) {
+                        self.reporter.reportFatalError("Expected boolean for JUMP_IF", .{});
+                        return null;
+                    }
+                    const bool_value = condition.asBoolean() catch return null;
+                    if (bool_value) {
+                        self.ip += jump_address;
+                    }
+                },
+                instructions.OpCode.OP_JUMP_IF_FALSE => {
+                    const jump_address = self.read_byte();
+                    const condition = self.pop().?;
+                    if (condition.value.type != .BOOL) {
+                        self.reporter.reportFatalError("Expected boolean for JUMP_IF_FALSE", .{});
+                        return null;
+                    }
+                    const bool_value = condition.asBoolean() catch return null;
+                    if (!bool_value) {
+                        self.ip += jump_address;
+                    }
+                },
+                instructions.OpCode.OP_RETURN => {
+                    if (try self.executeReturn()) |final_return| {
+                        return final_return;
+                    } else {
+                        self.reporter.reportFatalError("Returned null", .{});
+                        return null;
+                    }
                 },
             }
 
@@ -577,61 +630,97 @@ pub const VM = struct {
         self.push(Frame.initNothing());
     }
 
+    fn executeReturn(self: *VM) !?Frame {
+        // 1. Validate stack state
+        if (self.sp == 0) {
+            return error.StackUnderflow;
+        } 
+
+        // 2. Get the return value from top of stack
+        const return_value = self.pop() orelse return error.StackUnderflow;
+        
+        // 3. Handle top-level return
+        if (self.frame_count == 0) {
+            // Ensure stack is empty except for return value
+            if (self.sp != 0) {
+                self.reporter.reportWarning("Stack not empty at top-level return", .{});
+                // Clean up remaining stack
+                self.sp = 0;
+            }
+            return return_value;
+        }
+        
+        // 4. Get current frame
+        if (self.frame_count > self.frames.items.len) {
+            return error.FrameStackCorruption;
+        }
+        const current_frame = &self.frames.items[self.frame_count - 1];
+        
+        // 5. Validate frame state
+        if (current_frame.bp > self.sp) {
+            return error.FrameStackMismatch;
+        }
+        
+        // 6. Clean up current frame's stack
+        self.sp = current_frame.bp; // Reset stack pointer to base pointer
+        
+        // 7. Push return value to previous frame's stack
+        self.push(return_value);
+        
+        // 8. Restore previous frame
+        self.frame_count -= 1;
+        if (self.frame_count > 0) {
+            const prev_frame = &self.frames.items[self.frame_count - 1];
+            if (prev_frame.return_addr >= self.code.len) {
+                return error.InvalidReturnAddress;
+            }
+            self.ip = prev_frame.return_addr;
+        }
+        
+        return null; // Continue execution
+    }
+
 };
 
 
 
-pub fn main() void {
+pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
     defer _ = gpa.deinit();
 
     // Example constants
     const constants = [_]Frame{
-        Frame.initInt(42),
-        Frame.initFloat(3.14),
-        Frame.initString("hello"),
+        Frame.initBoolean(false),    // constant[0]: true
+        Frame.initInt(42),          // constant[1]: 42
+        Frame.initInt(24),          // constant[2]: 24
     };
 
-    // Example bytecode that uses variables and constants
+    // Example bytecode for:
+    // if (true) { 
+    //     return 42; 
+    // } else { 
+    //     return 24; 
+    // }
     const code = [_]u8{
-        // Store 2 in variable 0
-        @intFromEnum(instructions.OpCode.OP_CONST), 0,    // Push 2
-        @intFromEnum(instructions.OpCode.OP_SET_VAR), 0,  // Store in var[0]
-        
-        // Store 2 in variable 1
-        @intFromEnum(instructions.OpCode.OP_CONST), 0,    // Push 2
-        @intFromEnum(instructions.OpCode.OP_SET_VAR), 1,  // Store in var[1]
-        
-        // First addition (2 + 2 = 4)
-        @intFromEnum(instructions.OpCode.OP_VAR), 0,      // Push var[0] (2)
-        @intFromEnum(instructions.OpCode.OP_VAR), 1,      // Push var[1] (2)
-        @intFromEnum(instructions.OpCode.OP_IADD),        // Add them
-        
-        // Change variable 1 to 5
-        @intFromEnum(instructions.OpCode.OP_CONST), 1,    // Push 5
-        @intFromEnum(instructions.OpCode.OP_SET_VAR), 1,  // Store in var[1]
-        
-        // Second addition (2 + 5 = 7)
-        @intFromEnum(instructions.OpCode.OP_VAR), 0,      // Push var[0] (2)
-        @intFromEnum(instructions.OpCode.OP_VAR), 1,      // Push var[1] (now 5)
-        @intFromEnum(instructions.OpCode.OP_IADD),        // Add them
-        
-        @intFromEnum(instructions.OpCode.OP_HALT),
+        @intFromEnum(instructions.OpCode.OP_CONST), 0,    // Push true
+        @intFromEnum(instructions.OpCode.OP_JUMP_IF_FALSE), 4,  // Jump to else branch if false (skip next 4 bytes)
+        @intFromEnum(instructions.OpCode.OP_CONST), 1,    // Push 42
+        @intFromEnum(instructions.OpCode.OP_JUMP), 2,     // Jump to end (skip next 2 bytes)
+        @intFromEnum(instructions.OpCode.OP_CONST), 2,    // Push 24 (else branch)
+        @intFromEnum(instructions.OpCode.OP_HALT),        // End program
     };
 
-    var reporter = Reporting.init();
+    var reporter = Reporting.initStderr();
     var vm = VM.init(allocator, &code, &constants, &reporter);
     defer vm.deinit();
     
-    if (vm.eval()) |frame| {
+    const result = try vm.eval();
+    
+    if (result) |frame| {
         switch (frame.value.type) {
-            .INT => std.debug.print("Thanks for using my VM! The answer is {}\n", .{frame.value.data.int}),
-            .FLOAT => std.debug.print("Thanks for using my VM! The answer is {d}\n", .{frame.value.data.float}),
-            .STRING => std.debug.print("Thanks for using my VM! The answer is {s}\n", .{frame.value.data.string}),
-            .BOOL => std.debug.print("Thanks for using my VM! The answer is {}\n", .{frame.value.data.boolean}),
-            .NOTHING => std.debug.print("VM halted with nothing\n", .{}),
-            else => std.debug.print("Unknown result type\n", .{}),
+            .INT => std.debug.print("Result: {}\n", .{frame.value.data.int}), // Should print 42
+            else => std.debug.print("Unexpected result type\n", .{}),
         }
     } else {
         std.debug.print("VM halted with empty stack\n", .{});

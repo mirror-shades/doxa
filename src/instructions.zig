@@ -36,6 +36,14 @@ pub const OpCode = enum(u8) {
     OP_EQUAL = 0x10,
     OP_NOTEQUAL = 0x11,
 
+    // Jump operations
+    OP_JUMP = 0x12,         // Unconditional jump
+    OP_JUMP_IF = 0x13,      // Jump if top of stack is true
+    OP_JUMP_IF_FALSE = 0x14,// Jump if top of stack is false
+
+    // return from a function
+    OP_RETURN = 0x15,
+
     pub fn encode(op: OpCode) u8 {
         return @intFromEnum(op);
     }
