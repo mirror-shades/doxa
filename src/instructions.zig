@@ -41,8 +41,9 @@ pub const OpCode = enum(u8) {
     OP_JUMP_IF = 0x13,      // Jump if top of stack is true
     OP_JUMP_IF_FALSE = 0x14,// Jump if top of stack is false
 
-    // return from a function
-    OP_RETURN = 0x15,
+    // function operations
+    OP_CALL = 0x15,
+    OP_RETURN = 0x16,
 
     pub fn encode(op: OpCode) u8 {
         return @intFromEnum(op);
@@ -57,6 +58,13 @@ pub const OpCode = enum(u8) {
     }
 };
 
+pub const Function = struct {
+    code: []const u8,
+    constants: []const Value,
+    arity: u8,
+    name: []const u8,
+};
+
 pub const ValueType = enum {
     INT,
     FLOAT,
@@ -66,6 +74,7 @@ pub const ValueType = enum {
     ENUM,
     AUTO,
     NOTHING,
+    FUNCTION,
 };
 
 pub const Value = struct {
@@ -82,6 +91,7 @@ pub const Value = struct {
         },
         auto: *Value,
         nothing: void,
+        function: *Function,
     },
 
 };

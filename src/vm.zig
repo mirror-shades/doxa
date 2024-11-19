@@ -72,17 +72,12 @@ const Frame = struct {
 const STACK_SIZE = 512;
 const MAX_FRAMES = 64; // Or whatever maximum call depth you want to support
 
-const Function = struct {
-    code: []const u8,         // The bytecode for this function
-    constants: []const Frame, // Constants used by this function
-    arity: u8,               // Number of parameters
-    name: []const u8,        // Function name (for debugging)
-};
 
 const CallFrame = struct {
     ip: usize,              // Instruction pointer for this frame
-    bp: usize,              // Base pointer (for local variables)
-    function: *const Function, // Reference to the function being executed (made const)
+    bp: usize,              // Base pointer (start of this frame's stack space)
+    sp: usize,              // Stack pointer for this frame
+    function: *const instructions.Function, // Reference to the function being executed
     return_addr: usize,     // Where to return to in the caller's code
 };
 
@@ -92,36 +87,80 @@ pub const VM = struct {
     stack: [STACK_SIZE]Frame,
     constants: []const Frame,
     variables: std.ArrayList(Frame),
+    functions: std.ArrayList(*instructions.Function),
     frames: std.ArrayList(CallFrame),
     frame_count: usize,
     sp: usize,
     ip: usize,
     reporter: *Reporting,
+    call_stack: std.ArrayList(CallFrame),
+    current_frame: ?*CallFrame,  // Points to the active frame
+    global_constants: []instructions.Value,  // Add this field to track global constants
 
     pub fn init(allocator: std.mem.Allocator, code: []const u8, constants: []const Frame, reporter: *Reporting) VM {
-        var stack: [STACK_SIZE]Frame = undefined;
-        // Initialize all stack elements with NOTHING
-        for (&stack) |*slot| {
-            slot.* = Frame.initNothing();
-        }
-
-        return VM{
+        var vm = VM{
             .allocator = allocator,
             .code = code,
-            .stack = stack,
+            .stack = undefined,
             .constants = constants,
             .variables = std.ArrayList(Frame).init(allocator),
+            .functions = std.ArrayList(*instructions.Function).init(allocator),
             .frames = std.ArrayList(CallFrame).init(allocator),
             .frame_count = 0,
             .ip = 0,
             .sp = 0,
             .reporter = reporter,
+            .call_stack = std.ArrayList(CallFrame).init(allocator),
+            .current_frame = null,
+            .global_constants = allocator.alloc(instructions.Value, constants.len) catch unreachable,
         };
+
+        // Initialize stack with NOTHING values
+        for (&vm.stack) |*slot| {
+            slot.* = Frame.initNothing();
+        }
+        
+        // Initialize global constants
+        for (constants, 0..) |constant, i| {
+            vm.global_constants[i] = constant.value;
+        }
+
+        // Allocate the global function in memory
+        const global_function = allocator.create(instructions.Function) catch unreachable;
+        global_function.* = .{
+            .arity = 0,
+            .code = code,
+            .constants = vm.global_constants,
+            .name = "global",
+        };
+
+        // Push the initial frame
+        vm.call_stack.append(CallFrame{
+            .ip = 0,
+            .bp = 0,
+            .sp = 0,
+            .function = global_function,
+            .return_addr = 0,
+        }) catch unreachable;
+        
+        vm.current_frame = &vm.call_stack.items[0];
+
+        return vm;
     }
 
     pub fn deinit(self: *VM) void {
+        // Free the global function that was created in init
+        if (self.call_stack.items.len > 0) {
+            const global_frame = self.call_stack.items[0];
+            self.allocator.destroy(global_frame.function);
+        }
+
+        // Free other resources
+        self.allocator.free(self.global_constants);
         self.variables.deinit();
+        self.functions.deinit();
         self.frames.deinit();
+        self.call_stack.deinit();
     }
 
     fn push(self: *VM, value: Frame) void {
@@ -143,25 +182,47 @@ pub const VM = struct {
     }
 
     fn get_constant(self: *VM, index: u8) ?Frame {
-        if (index >= self.constants.len) {
-            self.reporter.reportFatalError("Constant index out of bounds", .{});
-            return null;
+        if (self.current_frame) |frame| {
+            // Use the current frame's function constants
+            if (index >= frame.function.constants.len) {
+                self.reporter.reportFatalError("Constant index out of bounds", .{});
+                return null;
+            }
+            const constant_value = frame.function.constants[index];
+            return Frame{ .value = constant_value };
+        } else {
+            // Fallback to global constants
+            if (index >= self.constants.len) {
+                self.reporter.reportFatalError("Constant index out of bounds", .{});
+                return null;
+            }
+            return self.constants[index];
         }
-        return self.constants[index];
     }
 
     fn eval(self: *VM) !?Frame {
         while (true) {
-            const opcode: instructions.OpCode = @enumFromInt(self.read_byte());
-            std.debug.print("Opcode: {}, Stack size: {}\n", .{opcode, self.sp});
-            switch (opcode) {
-                // halt
-                instructions.OpCode.OP_HALT => {
-                    // Return the top value of the stack instead of null
-                    return if (self.sp > 0) self.stack[self.sp - 1] else Frame.initNothing();
-                },
-                // push constant
-                instructions.OpCode.OP_CONST => {
+            // Get instruction from current frame
+            if (self.current_frame) |frame| {
+                if (frame.ip >= frame.function.code.len) {
+                    return error.UnexpectedEndOfCode;
+                }
+                // Important: Use the frame's function code, not self.code
+                const opcode: instructions.OpCode = @enumFromInt(frame.function.code[frame.ip]);
+                frame.ip += 1;
+                self.ip = frame.ip;  // Keep global IP in sync
+
+                // Debug print
+                std.debug.print("Executing instruction at {}: {}\n", .{frame.ip - 1, opcode});
+
+                switch (opcode) {
+                    .OP_HALT => {
+                        if (self.sp > 0) {
+                            return self.pop();
+                        }
+                        return Frame.initInt(0);
+                    },
+                    .OP_CONST => {
                     const constant_index = self.read_byte();
                     const constant_value = self.get_constant(constant_index) orelse return null;
                     self.push(constant_value);
@@ -169,11 +230,24 @@ pub const VM = struct {
                 // push variable - implementation depends on your variable system
                 instructions.OpCode.OP_VAR => {
                     const var_index = self.read_byte();
-                    if (var_index >= self.variables.items.len) {
-                        self.reporter.reportFatalError("Variable index out of bounds", .{});
-                        return null;
+                    
+                    // If we're in a function call
+                    if (self.current_frame) |func_frame| {
+                        // Access the argument relative to the frame's base pointer
+                        const arg_position = func_frame.bp + var_index;
+                        if (arg_position >= self.sp) {
+                            self.reporter.reportFatalError("Variable index out of bounds", .{});
+                            return null;
+                        }
+                        self.push(self.stack[arg_position]);
+                    } else {
+                        // Original global variable logic
+                        if (var_index >= self.variables.items.len) {
+                            self.reporter.reportFatalError("Variable index out of bounds", .{});
+                            return null;
+                        }
+                        self.push(self.variables.items[var_index]);
                     }
-                    self.push(self.variables.items[var_index]);
                 },
                 // add
                 instructions.OpCode.OP_IADD, 
@@ -382,34 +456,51 @@ pub const VM = struct {
                 instructions.OpCode.OP_RETURN => {
                     if (try self.executeReturn()) |final_return| {
                         return final_return;
-                    } else {
-                        self.reporter.reportFatalError("Returned null", .{});
-                        return null;
                     }
+                    continue;
                 },
+                instructions.OpCode.OP_CALL => {
+                    const function_index = self.read_byte();
+                    const function = self.getFunction(function_index) orelse return null;
+                    
+                    std.debug.print("Calling function {} with {} arguments\n", .{function_index, function.arity});
+                    self.printStack();  // Debug print stack before call
+                    
+                    // Create new frame
+                    try self.call_stack.append(CallFrame{
+                        .ip = 0,
+                        .bp = self.sp - function.arity,  // Set base pointer to point to the first argument
+                        .sp = self.sp,
+                        .function = function,
+                        .return_addr = self.ip,
+                    });
+                    
+                    self.current_frame = &self.call_stack.items[self.call_stack.items.len - 1];
+                    continue;
+                },  
             }
 
-            // Debug print stack after each operation
+            // Your existing debug print code
             std.debug.print("Stack after operation: ", .{});
             var i: usize = 0;
             while (i < self.sp) : (i += 1) {
-                switch (self.stack[i].value.type) {
-                    .INT => std.debug.print("INT({}) ", .{self.stack[i].value.data.int}),
-                    .FLOAT => std.debug.print("FLOAT({d}) ", .{self.stack[i].value.data.float}),
-                    .STRING => std.debug.print("STRING({s}) ", .{self.stack[i].value.data.string}),
-                    .BOOL => std.debug.print("BOOL({}) ", .{self.stack[i].value.data.boolean}),
-                    .NOTHING => std.debug.print("NOTHING ", .{}),
-                    else => std.debug.print("UNKNOWN ", .{}),
-                }
+            // ... rest of debug printing ...
             }
             std.debug.print("\n", .{});
+            } else {
+                return error.NoActiveFrame;
+            }
         }
     }
 
     fn read_byte(self: *VM) u8 {
-        const byte = self.code[self.ip];
-        self.ip += 1;
-        return byte;
+        if (self.current_frame) |frame| {
+            const byte = frame.function.code[frame.ip];
+            frame.ip += 1;
+            self.ip = frame.ip;  // Keep global IP in sync
+            return byte;
+        }
+        @panic("No active frame");
     }
 
     fn i2f(self: *VM, a: i64) !void {
@@ -631,53 +722,131 @@ pub const VM = struct {
     }
 
     fn executeReturn(self: *VM) !?Frame {
-        // 1. Validate stack state
-        if (self.sp == 0) {
-            return error.StackUnderflow;
-        } 
-
-        // 2. Get the return value from top of stack
-        const return_value = self.pop() orelse return error.StackUnderflow;
+        std.debug.print("\nExecuting return:\n", .{});
+        self.printStack();  // Debug print stack before return
         
-        // 3. Handle top-level return
-        if (self.frame_count == 0) {
-            // Ensure stack is empty except for return value
-            if (self.sp != 0) {
-                self.reporter.reportWarning("Stack not empty at top-level return", .{});
-                // Clean up remaining stack
-                self.sp = 0;
-            }
+        // Get return value from top of stack
+        const return_value = self.pop() orelse return error.EmptyStack;
+        
+        // If we're in the global frame, return the value
+        if (self.call_stack.items.len <= 1) {
             return return_value;
         }
         
-        // 4. Get current frame
-        if (self.frame_count > self.frames.items.len) {
-            return error.FrameStackCorruption;
-        }
-        const current_frame = &self.frames.items[self.frame_count - 1];
+        // Pop current frame
+        _ = self.call_stack.pop();
+        self.current_frame = &self.call_stack.items[self.call_stack.items.len - 1];
         
-        // 5. Validate frame state
-        if (current_frame.bp > self.sp) {
-            return error.FrameStackMismatch;
-        }
-        
-        // 6. Clean up current frame's stack
-        self.sp = current_frame.bp; // Reset stack pointer to base pointer
-        
-        // 7. Push return value to previous frame's stack
+        // Restore caller's stack pointer but keep one slot for return value
+        self.sp = self.current_frame.?.bp;
         self.push(return_value);
         
-        // 8. Restore previous frame
-        self.frame_count -= 1;
-        if (self.frame_count > 0) {
-            const prev_frame = &self.frames.items[self.frame_count - 1];
-            if (prev_frame.return_addr >= self.code.len) {
-                return error.InvalidReturnAddress;
-            }
-            self.ip = prev_frame.return_addr;
+        // Restore caller's instruction pointer
+        self.ip = self.current_frame.?.return_addr;
+        
+        self.printStack();  // Debug print stack after return
+        return null;  // Continue execution
+    }
+
+    fn getFunction(self: *VM, index: u8) ?*instructions.Function {
+        if (index >= self.functions.items.len) {
+            self.reporter.reportFatalError("Function index out of bounds", .{});
+            return null;
+        }
+        return self.functions.items[index];
+    }
+
+    fn callFunction(self: *VM, function: *instructions.Function) !void {
+        if (self.frame_count >= self.frames.items.len) {
+            self.reporter.reportFatalError("Frame stack overflow", .{});
+            return error.FrameStackOverflow;
+        }
+
+        try self.frames.append(CallFrame{
+            .ip = self.ip,
+            .bp = self.sp - function.arity,
+            .function = function,
+            .return_addr = self.ip,
+        });
+        self.frame_count += 1;
+        self.ip = 0;
+    }
+
+    fn pushFrame(self: *VM, function: *const instructions.Function) !void {
+        const frame = try self.call_stack.addOne();
+        frame.* = CallFrame{
+            .ip = 0,
+            .bp = self.sp - function.arity,  // Stack space starts after arguments
+            .sp = self.sp,
+            .function = function,
+            .return_addr = if (self.current_frame) |cf| cf.ip else 0,
+        };
+        self.current_frame = frame;
+    }
+
+    fn popFrame(self: *VM) !void {
+        if (self.call_stack.items.len <= 1) {
+            return error.CannotPopGlobalFrame;
         }
         
-        return null; // Continue execution
+        _ = self.call_stack.pop();
+        self.current_frame = &self.call_stack.items[self.call_stack.items.len - 1];
+        self.ip = self.current_frame.?.return_addr;
+    }
+
+    // Helper methods for stack operations relative to current frame
+    fn pushValue(self: *VM, value: Frame) !void {
+        if (self.sp >= STACK_SIZE) {
+            return error.StackOverflow;
+        }
+        self.stack[self.sp] = value;
+        self.sp += 1;
+        if (self.current_frame) |frame| {
+            frame.sp = self.sp;
+        }
+    }
+
+    fn popValue(self: *VM) !Frame {
+        if (self.current_frame) |frame| {
+            if (self.sp <= frame.bp) {
+                return error.StackUnderflow;
+            }
+        }
+        self.sp -= 1;
+        if (self.current_frame) |frame| {
+            frame.sp = self.sp;
+        }
+        return self.stack[self.sp];
+    }
+
+    fn executeCall(self: *VM, function_index: u8) !void {
+        const function = self.getFunction(function_index) orelse return error.InvalidFunction;
+        
+        // Validate we have enough arguments on the stack
+        if (self.current_frame) |frame| {
+            if (self.sp - frame.bp < function.arity) {
+                return error.InsufficientArguments;
+            }
+        }
+
+        try self.pushFrame(function);
+    }
+
+    // Add debug printing for stack contents
+    fn printStack(self: *VM) void {
+        std.debug.print("Stack contents ({} items):\n", .{self.sp});
+        var i: usize = 0;
+        while (i < self.sp) : (i += 1) {
+            const value = self.stack[i].value;
+            switch (value.type) {
+                .INT => std.debug.print("  [{}] INT: {}\n", .{i, value.data.int}),
+                .FLOAT => std.debug.print("  [{}] FLOAT: {}\n", .{i, value.data.float}),
+                .BOOL => std.debug.print("  [{}] BOOL: {}\n", .{i, value.data.boolean}),
+                .STRING => std.debug.print("  [{}] STRING: {s}\n", .{i, value.data.string}),
+                .NOTHING => std.debug.print("  [{}] NOTHING\n", .{i}),
+                else => std.debug.print("  [{}] OTHER\n", .{i}),
+            }
+        }
     }
 
 };
@@ -687,40 +856,60 @@ pub const VM = struct {
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
-    defer _ = gpa.deinit();
+    defer {
+        const leaked = gpa.deinit();
+        if (leaked == .leak) {
+            @panic("Memory leak detected!");
+        }
+    }
 
-    // Example constants
+    // Example constants for the global scope
     const constants = [_]Frame{
-        Frame.initBoolean(false),    // constant[0]: true
-        Frame.initInt(42),          // constant[1]: 42
-        Frame.initInt(24),          // constant[2]: 24
+        Frame.initInt(5),    // constant[0]: argument to pass to function
     };
 
-    // Example bytecode for:
-    // if (true) { 
-    //     return 42; 
-    // } else { 
-    //     return 24; 
-    // }
+    // Function-specific constants
+    const fn_constants = [_]instructions.Value{
+        .{ .type = .INT, .data = .{ .int = 1 } },  // constant[0]: value to add
+    };
+
+    // Create a function that adds 1 to its argument
+    var add_one_fn = instructions.Function{
+        .arity = 1,
+        .code = &[_]u8{
+            @intFromEnum(instructions.OpCode.OP_VAR), 0,     // Load argument (5)
+            @intFromEnum(instructions.OpCode.OP_CONST), 0,   // Push constant[0] (1)
+            @intFromEnum(instructions.OpCode.OP_IADD),       // Add them
+            @intFromEnum(instructions.OpCode.OP_RETURN),     // Return result
+        },
+        .constants = &fn_constants,
+        .name = "add_one",
+    };
+
+    // Main program bytecode:
     const code = [_]u8{
-        @intFromEnum(instructions.OpCode.OP_CONST), 0,    // Push true
-        @intFromEnum(instructions.OpCode.OP_JUMP_IF_FALSE), 4,  // Jump to else branch if false (skip next 4 bytes)
-        @intFromEnum(instructions.OpCode.OP_CONST), 1,    // Push 42
-        @intFromEnum(instructions.OpCode.OP_JUMP), 2,     // Jump to end (skip next 2 bytes)
-        @intFromEnum(instructions.OpCode.OP_CONST), 2,    // Push 24 (else branch)
-        @intFromEnum(instructions.OpCode.OP_HALT),        // End program
+        @intFromEnum(instructions.OpCode.OP_CONST), 0,    // Push 5
+        @intFromEnum(instructions.OpCode.OP_CALL), 0,     // Call function at index 0
+        @intFromEnum(instructions.OpCode.OP_HALT),        // End program immediately after function return
     };
 
     var reporter = Reporting.initStderr();
     var vm = VM.init(allocator, &code, &constants, &reporter);
     defer vm.deinit();
+
+    // Register the function
+    try vm.functions.append(&add_one_fn);
     
     const result = try vm.eval();
     
     if (result) |frame| {
         switch (frame.value.type) {
-            .INT => std.debug.print("Result: {}\n", .{frame.value.data.int}), // Should print 42
-            else => std.debug.print("Unexpected result type\n", .{}),
+            .INT => std.debug.print("Result: {}\n", .{frame.value.data.int}),
+            .FLOAT => std.debug.print("Result: {d}\n", .{frame.value.data.float}),
+            .BOOL => std.debug.print("Result: {}\n", .{frame.value.data.boolean}),
+            .STRING => std.debug.print("Result: {s}\n", .{frame.value.data.string}),
+            .NOTHING => std.debug.print("Result: nothing\n", .{}),
+            else => std.debug.print("Unsupported result type\n", .{}),
         }
     } else {
         std.debug.print("VM halted with empty stack\n", .{});
