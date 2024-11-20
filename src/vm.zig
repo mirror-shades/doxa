@@ -1215,9 +1215,7 @@ pub fn main() !void {
 
     // Create constants including struct type name
     var constants_array = [_]Frame{
-        try Frame.initString(&interner, "Person"),    // constant[0] - struct type name
-        try Frame.initString(&interner, "name"),      // constant[1] - field name
-        try Frame.initString(&interner, "John"),      // constant[2] - field value
+        Frame.initFloat(5.0),
     };
     
     defer {
@@ -1231,12 +1229,8 @@ pub fn main() !void {
     // 2. Sets the name field
     // 3. Halts
     const code = [_]u8{
-        @intFromEnum(instructions.OpCode.OP_CONST), 0,         // Push "Person" type name
-        @intFromEnum(instructions.OpCode.OP_STRUCT_NEW), 1, 0, // Create new struct with 1 field, using constant 0
-        @intFromEnum(instructions.OpCode.OP_CONST), 1,         // Push "name" field name
-        @intFromEnum(instructions.OpCode.OP_CONST), 2,         // Push "John" field value
-        @intFromEnum(instructions.OpCode.OP_SET_FIELD),        // Set the field
-        @intFromEnum(instructions.OpCode.OP_HALT),            // Halt with struct on stack
+        @intFromEnum(instructions.OpCode.OP_CONST), 0,         // Push constant[0]
+        @intFromEnum(instructions.OpCode.OP_HALT),            // Halt
     };
 
     std.debug.print("Starting VM execution with struct test\n", .{});
@@ -1253,28 +1247,8 @@ pub fn main() !void {
     if (vm.eval()) |maybe_result| {
         if (maybe_result) |result| {
             std.debug.print("Result type: {}\n", .{result.value.type});
-            
-            // Print the struct contents
-            if (result.value.type == .STRUCT) {
-                const struct_val = result.value.data.struct_val;
-                std.debug.print("Struct type: {s}\n", .{struct_val.type_name});
-                std.debug.print("Number of fields: {}\n", .{struct_val.num_fields});
-                
-                // Print all fields
-                var it = struct_val.fields.iterator();
-                while (it.next()) |entry| {
-                    std.debug.print("Field {s}: ", .{entry.key_ptr.*});
-                    switch (entry.value_ptr.*.type) {
-                        .STRING => std.debug.print("{s}\n", .{entry.value_ptr.*.data.string}),
-                        .INT => std.debug.print("{}\n", .{entry.value_ptr.*.data.int}),
-                        .FLOAT => std.debug.print("{d}\n", .{entry.value_ptr.*.data.float}),
-                        .BOOL => std.debug.print("{}\n", .{entry.value_ptr.*.data.boolean}),
-                        else => std.debug.print("<other type>\n", .{}),
-                    }
-                }
-            }
-            
-            // Clean up the result
+            std.debug.print("Result value: {}\n", .{result.value.nothing});
+            std.debug.print("Result value: {}\n", .{result.value.data.float});
             result.deinit();
             allocator.destroy(result);
         } else {
@@ -1284,3 +1258,5 @@ pub fn main() !void {
         std.debug.print("Error: {}\n", .{err});
     }
 }
+
+// need op_code for make nothing
