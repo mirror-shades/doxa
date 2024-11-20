@@ -54,6 +54,56 @@ var dog = Dog {
 };
 ```
 
+default typing is public but private fields are supported.
+
+```
+struct User {
+    name: string,
+    email: string,
+
+    fn get_hash(self) -> string {
+        return self.password_hash;  // OK - internal access
+    }
+
+    private:
+        password_hash: string,
+}
+
+var user = User {
+    name: "John",
+    email: "john@example.com",
+    password_hash: "abc123"  // Error cannot set private field
+};
+
+print(user.password_hash);  // Error cannot access private field
+print(user.get_hash());     // OK - using public method
+```
+
+Private and public work as switches and apply to all values and methods below.
+This provides a lot of flexibility on organization.
+
+```
+struct User {
+    name: string // public by default
+    email: string // public by default
+
+    fn get_hash(self) -> returns(string) {  // OK public by default
+        return self.password_hash;
+    }
+
+    private:
+        password_hash: string, // private by assignment
+
+        fn get_user(self) -> User { // private by assignment
+            return self;
+        }
+
+    public:
+        get_hash: fn(self: User) -> string, // public by assignment again
+
+}
+```
+
 modules are supported. strict files can only import other strict files.
 normal files can import both strict and normal files.
 
