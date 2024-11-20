@@ -30,8 +30,6 @@ def run_passing_numbers():
             f.write(f"{test[0]}\n")
     
     try:
-        # Run lexer on the entire file
-        print("\nRunning lexer...")
         process = subprocess.Popen(['./zig-out/bin/doxa', '--debug-lexer', temp_file], 
                                  stdout=subprocess.PIPE, 
                                  stderr=subprocess.PIPE, 

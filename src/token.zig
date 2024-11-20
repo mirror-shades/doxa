@@ -50,6 +50,7 @@ pub const TokenType = enum {
     PUBLIC,         // public
     ASSERT,         // assert
     RETURN,         // return
+    RETURNS,        // assign an expected return type
     BREAK,          // break
     CONTINUE,       // continue
     MATCH,          // match

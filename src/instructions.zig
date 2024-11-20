@@ -112,7 +112,7 @@ pub const Value = struct {
 const StructValue = struct {
     fields: std.StringHashMap(Value),  // This expects a StringHashMap, not an array
     type_name: []const u8,
-    num_fields: usize,
+    num_fields: u8,
     
     pub fn init(allocator: std.mem.Allocator, type_name: []const u8) !*StructValue {
         const sv = try allocator.create(StructValue);

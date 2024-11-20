@@ -22,11 +22,12 @@ const Frame = struct {
         };
     }
 
-    pub fn initString(allocator: std.mem.Allocator, x: []const u8) !Frame {
-        const duped_string = try allocator.dupe(u8, x);
+    pub fn initString(interner: *StringInterner, x: []const u8) !Frame {
+        const interned = try interner.intern(x);
         return Frame{
-            .value = instructions.Value{ .type = .STRING, .data = .{ .string = duped_string } },
-            .allocator = allocator,
+            .value = instructions.Value{ .type = .STRING, .data = .{ .string = interned } },
+            .allocator = null,  // No allocator needed since string is interned
+            .owns_value = false,  // Interned strings are owned by the interner
         };
     }
 
@@ -37,14 +38,14 @@ const Frame = struct {
         };
     }
 
-    pub fn initStruct(allocator: std.mem.Allocator, type_name: []const u8, num_fields: u32) !Frame {
+    pub fn initStruct(allocator: std.mem.Allocator, type_name: []const u8, num_fields: u8) !Frame {
         const struct_value = instructions.Value{
             .type = .STRUCT,
             .data = .{
                 .struct_val = .{
                     .type_name = try allocator.dupe(u8, type_name),
                     .fields = std.StringHashMap(instructions.Value).init(allocator),
-                    .num_fields = num_fields,  // This should be u8 in instructions.zig
+                    .num_fields = num_fields,
                 },
             },
         };
@@ -184,6 +185,35 @@ const Stack = struct {
     }
 };
 
+const StringInterner = struct {
+    strings: std.StringHashMap([]const u8),
+    allocator: std.mem.Allocator,
+    
+    pub fn init(allocator: std.mem.Allocator) StringInterner {
+        return StringInterner{
+            .strings = std.StringHashMap([]const u8).init(allocator),
+            .allocator = allocator,
+        };
+    }
+
+    pub fn deinit(self: *StringInterner) void {
+        var it = self.strings.iterator();
+        while (it.next()) |entry| {
+            self.allocator.free(entry.key_ptr.*);
+        }
+        self.strings.deinit();
+    }
+    
+    pub fn intern(self: *StringInterner, string: []const u8) ![]const u8 {
+        if (self.strings.get(string)) |existing| {
+            return existing;
+        }
+        const copy = try self.allocator.dupe(u8, string);
+        try self.strings.put(copy, copy);
+        return copy;
+    }
+};
+
 const CallFrame = struct {
     ip:  u32,              // Instruction pointer for this frame
     bp:  u16,              // Base pointer (start of this frame's stack space)
@@ -207,6 +237,7 @@ pub const VM = struct {
     call_stack: std.ArrayList(CallFrame),
     current_frame: ?*CallFrame,  // Points to the active frame
     global_constants: []instructions.Value,  // Add this field to track global constants
+    string_interner: StringInterner,
 
     pub fn init(allocator: std.mem.Allocator, code: []const u8, constants: []Frame, reporter: *Reporting) VM {
         var vm = VM{
@@ -224,6 +255,7 @@ pub const VM = struct {
             .call_stack = std.ArrayList(CallFrame).init(allocator),
             .current_frame = null,
             .global_constants = allocator.alloc(instructions.Value, constants.len) catch unreachable,
+            .string_interner = StringInterner.init(allocator),
         };
 
         // Initialize stack with NOTHING values if needed
@@ -283,17 +315,6 @@ pub const VM = struct {
         self.allocator.free(self.global_constants);
     }
 
-    fn initStruct(self: *VM, type_name: []const u8, num_fields: u8) !Frame {
-        return Frame.initStruct(self.allocator, type_name, num_fields);
-    }
-
-    fn push(self: *VM, value: Frame) void {
-        self.stack.push(value) catch {
-            self.reporter.reportFatalError("Stack overflow", .{});
-            return;
-        };
-    }
-
     fn pop(self: *VM) ?Frame {
         return self.stack.pop() catch {
             self.reporter.reportFatalError("Stack underflow", .{});
@@ -348,11 +369,11 @@ pub const VM = struct {
                             // Create a deep copy if needed
                             if (top_value.value.type == .STRING) {
                                 const str = try top_value.asString();
-                                result.* = try Frame.initString(self.allocator, str);
+                                result.* = try Frame.initString(&self.string_interner, str);
                             } else if (top_value.value.type == .STRUCT) {
                                 // For structs, we need to do a deep copy
                                 const type_name = top_value.value.data.struct_val.type_name;
-                                result.* = try self.initStruct(type_name, top_value.value.data.struct_val.num_fields);
+                                result.* = try Frame.initStruct(self.allocator, type_name, top_value.value.data.struct_val.num_fields);
                                 
                                 // Copy all fields
                                 var it = top_value.value.data.struct_val.fields.iterator();
@@ -378,7 +399,7 @@ pub const VM = struct {
                     .OP_CONST => {
                         const constant_index = self.read_byte();
                         const constant_value = self.get_constant(constant_index) orelse return null;
-                        self.push(constant_value);
+                        self.stack.push(constant_value) catch return null;
                     },
                     .OP_VAR => {
                         const var_index = self.read_byte();
@@ -391,14 +412,14 @@ pub const VM = struct {
                                 self.reporter.reportFatalError("Variable index out of bounds", .{});
                                 return null;
                             }
-                            self.push(self.stack.data[arg_position]);
+                            self.stack.push(self.stack.data[arg_position]) catch return null;
                         } else {
                             // Original global variable logic
                             if (var_index >= self.variables.items.len) {
                                 self.reporter.reportFatalError("Variable index out of bounds", .{});
                                 return null;
                             }
-                            self.push(self.variables.items[var_index]);
+                            self.stack.push(self.variables.items[var_index]) catch return null;
                         }
                     },
                     // add
@@ -423,7 +444,7 @@ pub const VM = struct {
                                 },
                                 else => unreachable,
                             } catch return null;
-                            self.push(result);
+                            self.stack.push(result) catch return null;
                             continue;
                         }
                         
@@ -439,7 +460,7 @@ pub const VM = struct {
                                         .OP_IDIV => f_div(a_float, b.asFloat() catch return null),
                                         else => unreachable,
                                     } catch return null;
-                                    self.push(result);
+                                    self.stack.push(result) catch return null;
                                 },
                                 else => {
                                     self.reporter.reportFatalError("Invalid type for arithmetic operation", .{});
@@ -456,7 +477,7 @@ pub const VM = struct {
                                         .OP_IDIV => f_div(a.asFloat() catch return null, b_float),
                                         else => unreachable,
                                     } catch return null;
-                                    self.push(result);
+                                    self.stack.push(result) catch return null;
                                 },
                                 .FLOAT => {
                                     const result = switch (opcode) {
@@ -466,7 +487,7 @@ pub const VM = struct {
                                         .OP_IDIV => f_div(a.asFloat() catch return null, b.asFloat() catch return null),
                                         else => unreachable,
                                     } catch return null;
-                                    self.push(result);
+                                    self.stack.push(result) catch return null;
                                 },
                                 else => {
                                     self.reporter.reportFatalError("Invalid type for arithmetic operation", .{});
@@ -512,21 +533,21 @@ pub const VM = struct {
                             .OP_FDIV => f_div(a_val, b_val),
                             else => unreachable,
                         } catch return null;
-                        self.push(result);
+                        self.stack.push(result) catch return null;
                     },  
                     // greater
                     instructions.OpCode.OP_GREATER => {
                         const b = self.pop().?;
                         const a = self.pop().?;
                         const result = greater(a, b) catch return null;
-                        self.push(result);
+                        self.stack.push(result) catch return null;
                     },
                     // less
                     instructions.OpCode.OP_LESS => {
                         const b = self.pop().?;
                         const a = self.pop().?;
                         const result = less(a, b) catch return null;
-                        self.push(result);
+                        self.stack.push(result) catch return null;
                     },
                     // i2f
                     instructions.OpCode.OP_I2F => {
@@ -538,7 +559,7 @@ pub const VM = struct {
                         }
                         const int_val = value.asInt() catch return null;
                         const float_val = @as(f32, @floatFromInt(int_val));
-                        self.push(Frame.initFloat(float_val));
+                        self.stack.push(Frame.initFloat(float_val)) catch return null;
                         std.debug.print("I2F: Converted {} to {d}\n", .{int_val, float_val});
                     },
                     // f2i
@@ -546,21 +567,21 @@ pub const VM = struct {
                         const value = self.pop() orelse return null;
                         const float_val = value.asFloat() catch return null;
                         const int_val = @as( i32, @intFromFloat(std.math.trunc(float_val)));
-                        self.push(Frame.initInt(int_val));
+                        self.stack.push(Frame.initInt(int_val)) catch return null;
                     },
                     // equal
                     instructions.OpCode.OP_EQUAL => {
                         const b = self.pop().?;
                         const a = self.pop().?;
                         const result = equal(a, b) catch return null;
-                        self.push(result);
+                        self.stack.push(result) catch return null;
                     },
                     // notequal
                     instructions.OpCode.OP_NOTEQUAL => {
                         const b = self.pop().?;
                         const a = self.pop().?;
                         const result = notEqual(a, b) catch return null;
-                        self.push(result);
+                        self.stack.push(result) catch return null;
                     },
                     // set variable
                     instructions.OpCode.OP_SET_VAR => {
@@ -643,30 +664,30 @@ pub const VM = struct {
                             b.deinit();
                             a.deinit();
                         }
-                        const result = try concat(self.allocator, &a, &b);
+                        const result = try self.concat(&a, &b);
                         std.debug.print("Concat result: ", .{});
                         debugPrintFrame(result);
                         std.debug.print("\n", .{});
-                        self.push(result);
+                        self.stack.push(result) catch return null;
                     },
                     instructions.OpCode.OP_STR_EQ => {
                         const b = self.pop().?;
                         const a = self.pop().?;
                         const result = str_eq(a, b) catch return null;
-                        self.push(result);
+                        self.stack.push(result) catch return null;
                     },
                     instructions.OpCode.OP_STR_LEN => {
                         const a = self.pop().?;
                         const result = str_len(a) catch return null;
-                        self.push(result);
+                        self.stack.push(result) catch return null;
                     },
                     instructions.OpCode.OP_SUBSTR => {
                         const start = self.read_byte();
                         const len = self.read_byte();
                         var a = self.pop() orelse return null;
-                        defer a.deinit();
-                        const result = try substr(self.allocator, &a, start, len);
-                        self.push(result);
+                            defer a.deinit();
+                        const result = try self.substr(&a, start, len);
+                        self.stack.push(result) catch return null;
                     },
                     instructions.OpCode.OP_STRUCT_NEW => {
                         const num_fields = self.read_byte();
@@ -677,8 +698,8 @@ pub const VM = struct {
                             self.reporter.reportFatalError("Expected string constant for struct type name", .{});
                             return null;
                         };
-                        const result = try self.initStruct(type_name, num_fields);
-                        self.push(result);
+                        const result = try Frame.initStruct(self.allocator, type_name, num_fields);
+                        self.stack.push(result) catch return null;
                     },
                     instructions.OpCode.OP_SET_FIELD => {
                         std.debug.print("Setting field - Stack size: {}\n", .{self.stack.size()});
@@ -703,7 +724,7 @@ pub const VM = struct {
                         );
                         
                         // Push the struct back onto the stack
-                        self.push(struct_frame);
+                        self.stack.push(struct_frame) catch return null;
                     },
                     instructions.OpCode.OP_GET_FIELD => {
                         const field_name_frame = self.pop() orelse return null;
@@ -726,21 +747,13 @@ pub const VM = struct {
                                 .value = field_value,
                                 .allocator = null,  // Field values don't own their memory
                             };
-                            self.push(result);
+                            self.stack.push(result) catch return null;
                         } else {
                             self.reporter.reportFatalError("Field not found in struct", .{});
                             return null;
                         }
                     },
                 }
-
-                // Your existing debug print code
-                std.debug.print("Stack after operation: ", .{});
-                var i:  u32 = 0;
-                while (i < self.sp) : (i += 1) {
-                // ... rest of debug printing ...
-                }
-                std.debug.print("\n", .{});
             } else {
                 return error.NoActiveFrame;
             }
@@ -759,12 +772,12 @@ pub const VM = struct {
 
     fn i2f(self: *VM, a:  i32) !void {
         const result: f32 = @as(f32, @floatFromInt(a));
-        self.push(Frame.initFloat(result));
+        self.stack.push(Frame.initFloat(result));
     }
 
     fn f2i(self: *VM, a: f32) !void {
         const result:  i32 = @intFromFloat(std.math.trunc(a));
-        self.push(Frame.initInt(result));
+        self.stack.push(Frame.initInt(result));
     }
 
    fn i_add(a:  i32, b:  i32) !Frame {
@@ -972,7 +985,7 @@ pub const VM = struct {
     }
 
     fn halt(self: *VM) !void {
-        self.push(Frame.initNothing());
+        self.stack.push(Frame.initNothing());
     }
 
     fn executeReturn(self: *VM) !?*Frame {
@@ -1046,20 +1059,20 @@ pub const VM = struct {
         self.ip = self.current_frame.?.return_addr;
     }
 
-    fn concat(allocator: std.mem.Allocator, a: *Frame, b: *Frame) !Frame {
+    fn concat(self: *VM, a: *Frame, b: *Frame) !Frame {
         if (a.value.type == .STRING and b.value.type == .STRING) {
             const a_str = try a.asString();
             const b_str = try b.asString();
             
-            // Allocate exactly the right amount of memory
-            const new_string = try allocator.alloc(u8, a_str.len + b_str.len);
+            // Allocate temporary buffer for concatenation
+            const new_string = try self.allocator.alloc(u8, a_str.len + b_str.len);
+            defer self.allocator.free(new_string); // Free temporary buffer
+            
             @memcpy(new_string[0..a_str.len], a_str);
             @memcpy(new_string[a_str.len..], b_str);
             
-            return Frame{
-                .value = .{ .type = .STRING, .data = .{ .string = new_string } },
-                .allocator = allocator,
-            };
+            // Create new frame with interned string
+            return Frame.initString(&self.string_interner, new_string);
         }
         return error.TypeError;
     }
@@ -1081,25 +1094,18 @@ pub const VM = struct {
         return error.TypeError;
     }
 
-    fn substr(allocator: std.mem.Allocator, a: *Frame, start: u8, len: u8) !Frame {
+    fn substr(self: *VM, a: *Frame, start: u8, len: u8) !Frame {
         if (a.value.type == .STRING) {
             const a_str = try a.asString();
-            const start_idx = @as( u32, start);
-            const length = @as( u32, len);
+            const start_idx = @as(u32, start);
+            const length = @as(u32, len);
             
             if (start_idx >= a_str.len or start_idx + length > a_str.len) {
                 return error.IndexOutOfBounds;
             }
             
-            // Create a new string with the substring
             const slice = a_str[start_idx..][0..length];
-            const new_string = try allocator.alloc(u8, length);
-            @memcpy(new_string, slice);
-            
-            return Frame{
-                .value = .{ .type = .STRING, .data = .{ .string = new_string } },
-                .allocator = allocator,
-            };
+            return Frame.initString(&self.string_interner, slice);
         }
         return error.TypeError;
     }
@@ -1174,17 +1180,23 @@ pub const VM = struct {
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    const allocator = gpa.allocator();
     defer {
         const leaked = gpa.deinit();
         if (leaked == .leak) @panic("Memory leak detected!");
     }
+    const allocator = gpa.allocator();
+
+    var reporter = Reporting.initStderr();
+
+    var interner = StringInterner.init(allocator);
+    defer interner.deinit();
+
 
     // Create constants including struct type name
     var constants_array = [_]Frame{
-        try Frame.initString(allocator, "Person"),    // constant[0] - struct type name
-        try Frame.initString(allocator, "name"),      // constant[1] - field name
-        try Frame.initString(allocator, "John"),      // constant[2] - field value
+        try Frame.initString(&interner, "Person"),    // constant[0] - struct type name
+        try Frame.initString(&interner, "name"),      // constant[1] - field name
+        try Frame.initString(&interner, "John"),      // constant[2] - field value
     };
     
     defer {
@@ -1208,14 +1220,13 @@ pub fn main() !void {
 
     std.debug.print("Starting VM execution with struct test\n", .{});
 
-    var reporter = Reporting.initStderr();
     var vm = VM.init(allocator, &code, &constants_array, &reporter);
     defer vm.deinit();
 
     // Add debug prints for VM state
     std.debug.print("Initial VM state:\n", .{});
-    std.debug.print("Code length: {}\n", .{vm.code.len});
-    std.debug.print("Constants length: {}\n", .{vm.constants.len});
+    std.debug.print("Code length: {}\n", .{code.len});
+    std.debug.print("Constants length: {}\n", .{constants_array.len});
 
     // Run the VM and handle results
     if (vm.eval()) |maybe_result| {
