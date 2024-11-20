@@ -85,12 +85,12 @@ pub const ValueType = enum {
     STRUCT,
     ENUM,
     AUTO,
-    NOTHING,
     FUNCTION,
 };
 
 pub const Value = struct {
     type: ValueType,
+    nothing: bool,
     data: union {
         int: i32,
         float: f32,
@@ -102,13 +102,11 @@ pub const Value = struct {
             type: u8,
         },
         auto: *Value,
-        nothing: void,
         function: *Function,
         struct_val: StructValue,
     },
 };
 
-// 3. Add a StructValue type
 const StructValue = struct {
     fields: std.StringHashMap(Value),  // This expects a StringHashMap, not an array
     type_name: []const u8,
@@ -140,7 +138,6 @@ const StructValue = struct {
     }
 };
 
-// If you need additional data for instructions, you can use a union
 pub const Instruction = union(OpCode) {
     OP_HALT: void,
     OP_CONST: Value,
@@ -165,7 +162,8 @@ pub const Instruction = union(OpCode) {
         return Instruction{ 
             .OP_CONST = .{
                 .type = .INT,
-                .data = .{ .int = x },
+                .nothing = false,
+                .data = .{ .value = x },
             }
         };
     }
@@ -174,7 +172,8 @@ pub const Instruction = union(OpCode) {
         return Instruction{ 
             .OP_CONST = .{
                 .type = .FLOAT,
-                .data = .{ .float = x },
+                .nothing = false,
+                .data = .{ .value = x },
             }
         };
     }
@@ -183,27 +182,11 @@ pub const Instruction = union(OpCode) {
         return Instruction{ 
             .OP_CONST = .{
                 .type = .BOOL,
-                .data = .{ .bool = x },
+                .nothing = false,
+                .data = .{ .value = x },
             }
         };
     }
-};
-
-pub const InstructionSet = []const Instruction{
-    Instruction.OP_HALT,
-    Instruction.OP_CONST,
-    Instruction.OP_IADD,
-    Instruction.OP_ISUB,
-    Instruction.OP_IMUL,
-    Instruction.OP_IDIV,
-    Instruction.OP_FADD,
-    Instruction.OP_FSUB,
-    Instruction.OP_FMUL,
-    Instruction.OP_FDIV,
-    Instruction.OP_I2F,
-    Instruction.OP_F2I,
-    Instruction.OP_STRUCT_NEW,
-    Instruction.OP_SET_FIELD,
 
 
 };
