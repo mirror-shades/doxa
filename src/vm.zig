@@ -2,6 +2,9 @@ const std = @import("std");
 const instructions = @import("instructions.zig");
 const Reporting = @import("reporting.zig").Reporting;
 
+const STACK_SIZE: u16 = 1024;
+const MAX_FRAMES: u16 = 1024;
+
 const Frame = struct {
     value: instructions.Value,
     allocator: ?std.mem.Allocator,
@@ -10,14 +13,14 @@ const Frame = struct {
     // Helper functions
     pub fn initInt(x:  i32) Frame {
         return Frame{
-            .value = instructions.Value{ .type = .INT, .data = .{ .int = x } },
+            .value = instructions.Value{ .type = .INT, .nothing = false, .data = .{ .int = x } },
             .allocator = null,
         };
     }
 
     pub fn initFloat(x: f32) Frame {
         return Frame{
-            .value = instructions.Value{ .type = .FLOAT, .data = .{ .float = x } },
+            .value = instructions.Value{ .type = .FLOAT, .nothing = false, .data = .{ .float = x } },
             .allocator = null,
         };
     }
@@ -25,7 +28,7 @@ const Frame = struct {
     pub fn initString(interner: *StringInterner, x: []const u8) !Frame {
         const interned = try interner.intern(x);
         return Frame{
-            .value = instructions.Value{ .type = .STRING, .data = .{ .string = interned } },
+            .value = instructions.Value{ .type = .STRING, .nothing = false, .data = .{ .string = interned } },
             .allocator = null,  // No allocator needed since string is interned
             .owns_value = false,  // Interned strings are owned by the interner
         };
@@ -33,7 +36,7 @@ const Frame = struct {
 
     pub fn initBoolean(x: bool) Frame {
         return Frame{
-            .value = instructions.Value{ .type = .BOOL, .data = .{ .boolean = x } },
+            .value = instructions.Value{ .type = .BOOL, .nothing = false, .data = .{ .boolean = x } },
             .allocator = null,
         };
     }
@@ -41,6 +44,7 @@ const Frame = struct {
     pub fn initStruct(allocator: std.mem.Allocator, type_name: []const u8, num_fields: u8) !Frame {
         const struct_value = instructions.Value{
             .type = .STRUCT,
+            .nothing = false,
             .data = .{
                 .struct_val = .{
                     .type_name = try allocator.dupe(u8, type_name),
@@ -57,11 +61,26 @@ const Frame = struct {
         };
     }
 
-    pub fn initNothing() Frame {
-        return Frame{
-            .value = instructions.Value{ .type = .NOTHING, .data = .{ .nothing = {} } },
-            .allocator = null,
-        };
+    pub fn initNothing(varType: instructions.ValueType) Frame {
+        switch (varType) {
+            .INT => return Frame{
+                .value = instructions.Value{ .type = .INT, .nothing = true, .data = .{ .int = 0 } },
+                .allocator = null,
+            },
+            .FLOAT => return Frame{
+                .value = instructions.Value{ .type = .FLOAT, .nothing = true, .data = .{ .float = 0.0 } },
+                .allocator = null,
+            },
+            .BOOL => return Frame{
+                .value = instructions.Value{ .type = .BOOL, .nothing = true, .data = .{ .boolean = false } },
+                .allocator = null,
+            },
+            .STRING => return Frame{
+                .value = instructions.Value{ .type = .STRING, .nothing = true, .data = .{ .string = "" } },
+                .allocator = null,
+            },
+            else => std.debug.panic("Invalid type for initNothing", .{}),
+        }
     }
 
     pub fn typeIs(self: Frame, expected: instructions.ValueType) bool {
@@ -122,9 +141,6 @@ const Frame = struct {
     }
 };
 
-const STACK_SIZE: u16 = 1024;
-const MAX_FRAMES: u16 = 1024;
-
 const Stack = struct {
     data: [STACK_SIZE]Frame,
     sp:  u16 = 0,
@@ -136,7 +152,7 @@ const Stack = struct {
         };
         // Initialize all frames to NOTHING
         for (&stack.data) |*frame| {
-            frame.* = Frame.initNothing();
+            frame.* = Frame.initNothing(.INT);
         }
         return stack;
     }
@@ -261,7 +277,7 @@ pub const VM = struct {
         // Initialize stack with NOTHING values if needed
         var i:  u32 = 0;
         while (i < STACK_SIZE) : (i += 1) {
-            vm.stack.data[i] = Frame.initNothing();
+            vm.stack.data[i] = Frame.initNothing(.INT);
         }
         
         // Initialize global constants
@@ -350,7 +366,7 @@ pub const VM = struct {
                 if (frame.ip >= frame.function.code.len) {
                     // Create a new frame with NOTHING value for empty returns
                     const result = try self.allocator.create(Frame);
-                    result.* = Frame.initNothing();
+                    result.* = Frame.initNothing(.INT);
                     return result;
                 }
                 
@@ -590,7 +606,7 @@ pub const VM = struct {
                         
                         // Grow variables array if needed
                         while (var_index >= self.variables.items.len) {
-                            self.variables.append(Frame.initNothing()) catch {
+                            self.variables.append(Frame.initNothing(.INT)) catch {
                                 self.reporter.reportFatalError("Failed to allocate variable", .{});
                                 return null;
                             };
@@ -953,7 +969,6 @@ pub const VM = struct {
                     const b_val = try b.asBoolean();
                     return Frame.initBoolean(a_val == b_val);
                 },
-                .NOTHING => return Frame.initBoolean(true), // NOTHING equals NOTHING
                 else => error.TypeError,
             };
         }
@@ -985,7 +1000,7 @@ pub const VM = struct {
     }
 
     fn halt(self: *VM) !void {
-        self.stack.push(Frame.initNothing());
+        self.stack.push(Frame.initNothing(.INT));
     }
 
     fn executeReturn(self: *VM) !?*Frame {
@@ -1154,25 +1169,31 @@ pub const VM = struct {
         var i:  u32 = 0;
         while (i < self.sp) : (i += 1) {
             const value = self.stack.data[i].value;
-            switch (value.type) {
-                .INT => std.debug.print("  [{}] INT: {}\n", .{i, value.data.int}),
-                .FLOAT => std.debug.print("  [{}] FLOAT: {}\n", .{i, value.data.float}),
-                .BOOL => std.debug.print("  [{}] BOOL: {}\n", .{i, value.data.boolean}),
-                .STRING => std.debug.print("  [{}] STRING: {s}\n", .{i, value.data.string}),
-                .NOTHING => std.debug.print("  [{}] NOTHING\n", .{i}),
-                else => std.debug.print("  [{}] OTHER\n", .{i}),
-            }
+            if (value.nothing) {    
+                std.debug.print("  [{}] NOTHING\n", .{i});
+            } else {
+                switch (value.type) {
+                    .INT => std.debug.print("  [{}] INT: {}\n", .{i, value.data.int}),
+                    .FLOAT => std.debug.print("  [{}] FLOAT: {}\n", .{i, value.data.float}),
+                    .BOOL => std.debug.print("  [{}] BOOL: {}\n", .{i, value.data.boolean}),
+                    .STRING => std.debug.print("  [{}] STRING: {s}\n", .{i, value.data.string}),
+                    else => std.debug.print("  [{}] OTHER\n", .{i}),
+                }
+            }   
         }
     }
 
     fn debugPrintFrame(frame: Frame) void {
-        switch (frame.value.type) {
-            .STRING => std.debug.print("STRING: \"{s}\"", .{frame.value.data.string}),
-            .INT => std.debug.print("INT: {}", .{frame.value.data.int}),
-            .FLOAT => std.debug.print("FLOAT: {d}", .{frame.value.data.float}),
-            .BOOL => std.debug.print("BOOL: {}", .{frame.value.data.boolean}),
-            .NOTHING => std.debug.print("NOTHING", .{}),
-            else => std.debug.print("OTHER", .{}),
+        if (frame.value.nothing) {  
+            std.debug.print("NOTHING", .{});
+        } else {
+            switch (frame.value.type) {
+                .STRING => std.debug.print("STRING: \"{s}\"", .{frame.value.data.string}),
+                .INT => std.debug.print("INT: {}", .{frame.value.data.int}),
+                .FLOAT => std.debug.print("FLOAT: {d}", .{frame.value.data.float}),
+                .BOOL => std.debug.print("BOOL: {}", .{frame.value.data.boolean}),
+                else => std.debug.print("OTHER", .{}),
+            }
         }
     }
 
