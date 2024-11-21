@@ -52,7 +52,7 @@ pub const OpCode = enum(u8) {
     OP_RETURN = 0x18,
 
     // string operations
-    OP_CONCAT = 0x19,      // Concatenate two strings
+    OP_STR_CONCAT = 0x19,      // Concatenate two strings
     OP_STR_EQ = 0x1A,      // String equality comparison
     OP_STR_LEN = 0x1B,     // Get string length
     OP_SUBSTR = 0x1C,      // Get substring
@@ -63,11 +63,12 @@ pub const OpCode = enum(u8) {
     OP_ARRAY_LEN = 0x1F,
     OP_ARRAY_GET = 0x20,
     OP_ARRAY_SET = 0x21,
+    OP_ARRAY_CONCAT = 0x22,
 
     // struct operations
-    OP_STRUCT_NEW = 0x22,  // Create a new struct
-    OP_SET_FIELD = 0x23,   // Set a field in a struct
-    OP_GET_FIELD = 0x24,   // Get a field from a struct (optional for now)
+    OP_STRUCT_NEW = 0x23,  // Create a new struct
+    OP_SET_FIELD = 0x24,   // Set a field in a struct
+    OP_GET_FIELD = 0x25,   // Get a field from a struct (optional for now)
 
 
     pub fn encode(op: OpCode) u8 {
@@ -170,6 +171,10 @@ pub const Instruction = union(OpCode) {
     OP_FDIV: void,
     OP_I2F: void,
     OP_F2I: void,
+    OP_STR_CONCAT: void,
+    OP_STR_EQ: void,
+    OP_STR_LEN: void,
+    OP_SUBSTR: void,
     OP_STRUCT_NEW: void,
     OP_SET_FIELD: void,
     OP_ARRAY_NEW: void,
