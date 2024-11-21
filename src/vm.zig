@@ -122,13 +122,13 @@ const Frame = struct {
             switch (self.value.type) {
                 .STRING => alloc.free(self.value.data.string),
                 .STRUCT => {
-                    // Free the type name
                     alloc.free(self.value.data.struct_val.type_name);
-                    // Deinit the fields hash map
                     self.value.data.struct_val.fields.deinit();
                 },
                 .ARRAY => {
-                    self.value.data.array_val.deinit();
+                    // First deinit the ArrayList
+                    self.value.data.array_val.items.deinit();
+                    // Then free the ArrayValue struct itself
                     alloc.destroy(self.value.data.array_val);
                 },
                 else => {},
@@ -144,11 +144,11 @@ const Frame = struct {
         };
     }
 
-    pub fn initArray(allocator: std.mem.Allocator, capacity: u8) !Frame {
+    pub fn initArray(allocator: std.mem.Allocator, size: u8) !Frame {
         const array = try allocator.create(instructions.ArrayValue);
         array.* = instructions.ArrayValue{
             .items = std.ArrayList(instructions.Value).init(allocator),
-            .capacity = capacity,
+            .capacity = size,
         };
         
         return Frame{
@@ -158,7 +158,7 @@ const Frame = struct {
                 .data = .{ .array_val = array },
             },
             .allocator = allocator,
-            .owns_value = true,
+            .owns_value = true,  // We own this array
         };
     }
 
@@ -262,6 +262,88 @@ const StringInterner = struct {
     }
 };
 
+const ArrayInterner = struct {
+    arrays: std.AutoHashMap(u64, *instructions.ArrayValue),
+    allocator: std.mem.Allocator,
+    
+    pub fn init(allocator: std.mem.Allocator) ArrayInterner {
+        return ArrayInterner{
+            .arrays = std.AutoHashMap(u64, *instructions.ArrayValue).init(allocator),
+            .allocator = allocator,
+        };
+    }
+
+    pub fn deinit(self: *ArrayInterner) void {
+        var it = self.arrays.iterator();
+        while (it.next()) |entry| {
+            entry.value_ptr.*.items.deinit();
+            self.allocator.destroy(entry.value_ptr.*);
+        }
+        self.arrays.deinit();
+    }
+
+    fn hashArray(array: *instructions.ArrayValue) u64 {
+        var hasher = std.hash.Wyhash.init(0);
+        
+        // Hash the capacity and length
+        hasher.update(std.mem.asBytes(&array.capacity));
+        const len = array.items.items.len;
+        hasher.update(std.mem.asBytes(&len));
+        
+        // Hash each item in the array, including its position
+        for (array.items.items, 0..) |item, i| {
+            // Hash the position first
+            hasher.update(std.mem.asBytes(&i));
+            
+            // Then hash the type
+            hasher.update(std.mem.asBytes(&item.type));
+            
+            // Then hash the value based on type
+            switch (item.type) {
+                .INT => {
+                    hasher.update(std.mem.asBytes(&item.data.int));
+                },
+                .FLOAT => {
+                    const float_bits = @as(u32, @bitCast(item.data.float));
+                    hasher.update(std.mem.asBytes(&float_bits));
+                },
+                .BOOL => {
+                    hasher.update(std.mem.asBytes(&item.data.boolean));
+                },
+                .STRING => {
+                    hasher.update(item.data.string);
+                },
+                .ARRAY => {
+                    // For nested arrays, just hash their length
+                    const nested_len = item.data.array_val.items.items.len;
+                    hasher.update(std.mem.asBytes(&nested_len));
+                },
+                else => {
+                    // For other types, hash their memory representation
+                    hasher.update(std.mem.asBytes(&item));
+                },
+            }
+        }
+        
+        return hasher.final();
+    }
+    
+    pub fn intern(self: *ArrayInterner, array: *instructions.ArrayValue) !*instructions.ArrayValue {
+        const hash = hashArray(array);
+        
+        // Check if we already have this array
+        if (self.arrays.get(hash)) |existing| {
+            array.items.deinit();
+            self.allocator.destroy(array);
+            return existing;
+        }
+        
+        // Store the new array
+        try self.arrays.put(hash, array);
+        return array;
+    }
+};
+
 const CallFrame = struct {
     ip:  u32,              // Instruction pointer for this frame
     bp:  u16,              // Base pointer (start of this frame's stack space)
@@ -286,6 +368,8 @@ pub const VM = struct {
     current_frame: ?*CallFrame,  // Points to the active frame
     global_constants: []instructions.Value,  // Add this field to track global constants
     string_interner: StringInterner,
+    array_interner: ArrayInterner,
+    global_function: ?*instructions.Function,
 
     pub fn init(allocator: std.mem.Allocator, code: []const u8, constants: []Frame, reporter: *Reporting) VM {
         var vm = VM{
@@ -304,6 +388,8 @@ pub const VM = struct {
             .current_frame = null,
             .global_constants = allocator.alloc(instructions.Value, constants.len) catch unreachable,
             .string_interner = StringInterner.init(allocator),
+            .array_interner = ArrayInterner.init(allocator),
+            .global_function = null,
         };
 
         // Initialize stack with NOTHING values if needed
@@ -337,30 +423,37 @@ pub const VM = struct {
         
         vm.current_frame = &vm.call_stack.items[0];
 
+        // Store the global function pointer
+        vm.global_function = global_function;
+
         return vm;
     }
 
     pub fn deinit(self: *VM) void {
-        // Clean up variables first
+        // Clean up variables
         for (self.variables.items) |*var_frame| {
             var_frame.deinit();
         }
         self.variables.deinit();
         
         // Clean up stack
-        self.stack.deinit();
+        var i: u32 = 0;
+        while (i < self.stack.sp) : (i += 1) {
+            self.stack.data[i].deinit();
+        }
         
         // Clean up other resources
         self.functions.deinit();
         self.frames.deinit();
-        
-        if (self.call_stack.items.len > 0) {
-            const global_frame = &self.call_stack.items[0];
-            self.allocator.destroy(global_frame.function);
-        }
         self.call_stack.deinit();
+        self.string_interner.deinit();
+        self.array_interner.deinit();
         
         self.allocator.free(self.global_constants);
+        
+        if (self.global_function) |func| {
+            self.allocator.destroy(func);
+        }
     }
 
     fn pop(self: *VM) ?Frame {
@@ -371,20 +464,20 @@ pub const VM = struct {
     }
 
     fn printStack(self: *VM) void {
-    std.debug.print("Stack contents ({} items):\n", .{self.stack.sp});
-    var i: u32 = 0;
-    while (i < self.stack.sp) : (i += 1) {
-        const value = self.stack.data[i].value;
-        if (value.nothing) {    
-            std.debug.print("  [{}] NOTHING\n", .{i});
-        } else {
-            switch (value.type) {
-                .INT => std.debug.print("  [{}] INT: {}\n", .{i, value.data.int}),
-                .FLOAT => std.debug.print("  [{}] FLOAT: {}\n", .{i, value.data.float}),
-                .BOOL => std.debug.print("  [{}] BOOL: {}\n", .{i, value.data.boolean}),
-                .STRING => std.debug.print("  [{}] STRING: {s}\n", .{i, value.data.string}),
-                .ARRAY => std.debug.print("  [{}] ARRAY (len={})\n", .{i, value.data.array_val.items.items.len}),
-                else => std.debug.print("  [{}] OTHER\n", .{i}),
+        std.debug.print("Stack contents ({} items):\n", .{self.stack.sp});
+        var i: u32 = 0;
+        while (i < self.stack.sp) : (i += 1) {
+            const value = self.stack.data[i].value;
+            if (value.nothing) {    
+                std.debug.print("  [{}] NOTHING\n", .{i});
+            } else {
+                switch (value.type) {
+                    .INT => std.debug.print("  [{}] INT: {}\n", .{i, value.data.int}),
+                    .FLOAT => std.debug.print("  [{}] FLOAT: {}\n", .{i, value.data.float}),
+                    .BOOL => std.debug.print("  [{}] BOOL: {}\n", .{i, value.data.boolean}),
+                    .STRING => std.debug.print("  [{}] STRING: {s}\n", .{i, value.data.string}),
+                    .ARRAY => std.debug.print("  [{}] ARRAY (len={})\n", .{i, value.data.array_val.items.items.len}),
+                    else => std.debug.print("  [{}] OTHER\n", .{i}),
                 }
             }   
         }
@@ -459,6 +552,11 @@ pub const VM = struct {
                                 while (it.next()) |entry| {
                                     try result.value.data.struct_val.fields.put(entry.key_ptr.*, entry.value_ptr.*);
                                 }
+                            } else if (top_value.value.type == .ARRAY) {
+                                // For arrays, we need to do a deep copy
+                                const array = top_value.value.data.array_val;
+                                result.* = try Frame.initArray(self.allocator, @intCast(array.items.items.len));
+                                try result.value.data.array_val.items.appendSlice(array.items.items);
                             } else {
                                 result.* = Frame{ 
                                     .value = top_value.value,
@@ -467,7 +565,10 @@ pub const VM = struct {
                                 };
                             }
                             
+                            // Clean up the stack
+                            self.stack.deinit();
                             std.debug.print("Returning value of type: {}\n", .{result.value.type});
+                            
                             return result;
                         }
                         // Only return 0 if stack is empty
@@ -730,11 +831,11 @@ pub const VM = struct {
                         self.current_frame = &self.call_stack.items[self.call_stack.items.len - 1];
                         continue;
                     },  
-                    instructions.OpCode.OP_CONCAT => {
-                        std.debug.print("Executing OP_CONCAT\n", .{});
+                    instructions.OpCode.OP_STR_CONCAT => {
+                        std.debug.print("Executing OP_STR_CONCAT\n", .{});
                         var b = self.pop() orelse return null;
                         var a = self.pop() orelse return null;
-                        std.debug.print("Concatenating: ", .{});
+                        std.debug.print("String concatenating: ", .{});
                         debugPrintFrame(a);
                         std.debug.print(" with ", .{});
                         debugPrintFrame(b);
@@ -743,8 +844,8 @@ pub const VM = struct {
                             b.deinit();
                             a.deinit();
                         }
-                        const result = try self.concat(&a, &b);
-                        std.debug.print("Concat result: ", .{});
+                        const result = try self.concatStrings(&a, &b);
+                        std.debug.print("concatStrings result: ", .{});
                         debugPrintFrame(result);
                         std.debug.print("\n", .{});
                         self.stack.push(result) catch return null;
@@ -835,7 +936,7 @@ pub const VM = struct {
                     instructions.OpCode.OP_ARRAY_NEW => {
                         const size = self.read_byte();
                         std.debug.print("Creating new array with capacity {}\n", .{size});
-                        const array_frame = try Frame.initArray(self.allocator, size);
+                        const array_frame = try Frame.initArray(self.allocator, size);  // Use interning for new arrays
                         try self.stack.push(array_frame);
                     },
                     instructions.OpCode.OP_ARRAY_PUSH => {
@@ -927,7 +1028,16 @@ pub const VM = struct {
                         std.debug.print("\nAfter OP_ARRAY_SET:\n", .{});
                         self.printStack();
                     },
-                    .OP_DUP => {
+                    instructions.OpCode.OP_ARRAY_CONCAT => {
+                        std.debug.print("\n=== Executing OP_ARRAY_CONCAT ===\n", .{});
+                        var b = self.pop() orelse return null;
+                        var a = self.pop() orelse return null;
+                        std.debug.print("Popped arrays from stack, concatenating...\n", .{});
+                        const result = try self.concatArrays(&a, &b);
+                        std.debug.print("Concatenation complete, pushing result\n", .{});
+                        self.stack.push(result) catch return null;
+                    },
+                    instructions.OpCode.OP_DUP => {
                         const value = try self.stack.peek();
                         try self.stack.push(Frame.reference(value.value));
                     },
@@ -940,6 +1050,7 @@ pub const VM = struct {
             }
         }
     }
+
     fn i2f(self: *VM, a:  i32) !void {
         const result: f32 = @as(f32, @floatFromInt(a));
         self.stack.push(Frame.initFloat(result));
@@ -1228,12 +1339,12 @@ pub const VM = struct {
         self.ip = self.current_frame.?.return_addr;
     }
 
-    fn concat(self: *VM, a: *Frame, b: *Frame) !Frame {
+    fn concatStrings(self: *VM, a: *Frame, b: *Frame) !Frame {
         if (a.value.type == .STRING and b.value.type == .STRING) {
             const a_str = try a.asString();
             const b_str = try b.asString();
             
-            // Allocate temporary buffer for concatenation
+            // Allocate temporary buffer for concatStringsenation
             const new_string = try self.allocator.alloc(u8, a_str.len + b_str.len);
             defer self.allocator.free(new_string); // Free temporary buffer
             
@@ -1242,6 +1353,39 @@ pub const VM = struct {
             
             // Create new frame with interned string
             return Frame.initString(&self.string_interner, new_string);
+        }
+        return error.TypeError;
+    }
+
+    fn concatArrays(self: *VM, a: *Frame, b: *Frame) !Frame {
+        if (a.value.type == .ARRAY and b.value.type == .ARRAY) {
+            const a_arr = a.value.data.array_val;
+            const b_arr = b.value.data.array_val;
+            
+            // Create new array with combined capacity
+            const array = try self.allocator.create(instructions.ArrayValue);
+            array.* = instructions.ArrayValue{
+                .items = std.ArrayList(instructions.Value).init(self.allocator),
+                .capacity = @intCast(a_arr.items.items.len + b_arr.items.items.len),
+            };
+            
+            // Copy items from both arrays
+            try array.items.appendSlice(a_arr.items.items);
+            try array.items.appendSlice(b_arr.items.items);
+            
+            // Clean up original arrays since we're done with them
+            a.deinit();
+            b.deinit();
+            
+            return Frame{
+                .value = instructions.Value{
+                    .type = .ARRAY,
+                    .nothing = false,
+                    .data = .{ .array_val = array },
+                },
+                .allocator = self.allocator,
+                .owns_value = true,
+            };
         }
         return error.TypeError;
     }
@@ -1333,7 +1477,6 @@ pub const VM = struct {
 
 };
 
-// ... existing code ...
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -1354,27 +1497,25 @@ pub fn main() !void {
         Frame.initInt(1),      // constant[1]: index to access
         Frame.initInt(99),     // constant[2]: new value to set
     };
-    
-    // Create bytecode for testing array get/set operations
+
     const code = [_]u8{
-        @intFromEnum(instructions.OpCode.OP_ARRAY_NEW), 5,     // Create array with capacity 5
+        // Create and populate first array [42, 42]
+        @intFromEnum(instructions.OpCode.OP_ARRAY_NEW), 2,     // Create array with capacity 2
         @intFromEnum(instructions.OpCode.OP_CONST), 0,         // Push 42
         @intFromEnum(instructions.OpCode.OP_ARRAY_PUSH),       // Push into array
         @intFromEnum(instructions.OpCode.OP_CONST), 0,         // Push 42 again
         @intFromEnum(instructions.OpCode.OP_ARRAY_PUSH),       // Push into array
         
-        // Print stack state
-        @intFromEnum(instructions.OpCode.OP_DUP),             // Duplicate array reference
+        // Create and populate second array [1, 99]
+        @intFromEnum(instructions.OpCode.OP_ARRAY_NEW), 2,     // Create array with capacity 2
+        @intFromEnum(instructions.OpCode.OP_CONST), 1,         // Push 1
+        @intFromEnum(instructions.OpCode.OP_ARRAY_PUSH),       // Push into array
+        @intFromEnum(instructions.OpCode.OP_CONST), 2,         // Push 99
+        @intFromEnum(instructions.OpCode.OP_ARRAY_PUSH),       // Push into array
         
-        // Get element at index 1
-        @intFromEnum(instructions.OpCode.OP_CONST), 1,         // Push index (1)
-        @intFromEnum(instructions.OpCode.OP_ARRAY_GET),        // Get element
-        @intFromEnum(instructions.OpCode.OP_POP),             // Pop the retrieved element
-        
-        // Set element at index 1 to 99
-        @intFromEnum(instructions.OpCode.OP_CONST), 1,         // Push index (1)
-        @intFromEnum(instructions.OpCode.OP_CONST), 2,         // Push new value (99)
-        @intFromEnum(instructions.OpCode.OP_ARRAY_SET),        // Set element
+        // Concat arrays
+        @intFromEnum(instructions.OpCode.OP_ARRAY_CONCAT),     // Concat the two arrays
+    
         
         @intFromEnum(instructions.OpCode.OP_HALT),            // Halt with array on top of stack
     };
