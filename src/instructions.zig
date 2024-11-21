@@ -71,6 +71,11 @@ pub const OpCode = enum(u8) {
     OP_SET_FIELD = 0x25,   // Set a field in a struct
     OP_GET_FIELD = 0x26,   // Get a field from a struct (optional for now)
 
+    // block operations
+    OP_BEGIN_BLOCK = 0x27, // Start a new block scope
+    OP_END_BLOCK = 0x28,   // End current block scope
+    
+
 
     pub fn encode(op: OpCode) u8 {
         return @intFromEnum(op);
