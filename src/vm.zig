@@ -115,7 +115,7 @@ const Frame = struct {
         return self.value.data.string;
     }
 
-    pub fn deinit(self: *Frame) void {
+    pub fn deinit(self: Frame) void {
         if (!self.owns_value) return;
         
         if (self.allocator) |alloc| {
@@ -123,11 +123,14 @@ const Frame = struct {
                 .STRING => alloc.free(self.value.data.string),
                 .STRUCT => {
                     alloc.free(self.value.data.struct_val.type_name);
-                    self.value.data.struct_val.fields.deinit();
+                    // Create a mutable copy of the fields before deiniting
+                    var fields = self.value.data.struct_val.fields;
+                    fields.deinit();
                 },
                 .ARRAY => {
-                    // First deinit the ArrayList
-                    self.value.data.array_val.items.deinit();
+                    // Create a mutable copy of the items before deiniting
+                    var items = self.value.data.array_val.items;
+                    items.deinit();
                     // Then free the ArrayValue struct itself
                     alloc.destroy(self.value.data.array_val);
                 },
@@ -188,9 +191,10 @@ const Stack = struct {
     }
 
     pub fn deinit(self: *Stack) void {
-        var i:  u32 = 0;
+        var i: u32 = 0;
         while (i < self.sp) : (i += 1) {
-            self.data[i].deinit();
+            var frame = self.data[i];
+            frame.deinit();
         }
         self.sp = 0;
     }
@@ -201,7 +205,13 @@ const Stack = struct {
         }
         self.data[self.sp] = value;
         self.sp += 1; 
-        std.debug.print("Stack push: type={}, sp={}\n", .{self.data[self.sp].value.type, self.sp});
+        
+        // More detailed debug output
+        switch (value.value.type) {
+            .INT => std.debug.print("Stack push: INT({}) sp={}\n", .{value.value.data.int, self.sp}),
+            .FLOAT => std.debug.print("Stack push: FLOAT({d}) sp={}\n", .{value.value.data.float, self.sp}),
+            else => std.debug.print("Stack push: type={}, sp={}\n", .{value.value.type, self.sp}),
+        }
     }
 
     pub fn pop(self: *Stack) !Frame {
@@ -209,8 +219,16 @@ const Stack = struct {
             return error.StackUnderflow;
         }
         self.sp -= 1;
-        std.debug.print("Stack pop: type={}, sp={}\n", .{self.data[self.sp].value.type, self.sp});
-        return self.data[self.sp];
+        const value = self.data[self.sp];
+        
+        // More detailed debug output
+        switch (value.value.type) {
+            .INT => std.debug.print("Stack pop: INT({}) sp={}\n", .{value.value.data.int, self.sp}),
+            .FLOAT => std.debug.print("Stack pop: FLOAT({d}) sp={}\n", .{value.value.data.float, self.sp}),
+            else => std.debug.print("Stack pop: type={}, sp={}\n", .{value.value.type, self.sp}),
+        }
+        
+        return value;
     }
 
     pub fn peek(self: Stack) !Frame {
@@ -352,6 +370,30 @@ const CallFrame = struct {
     return_addr:  u32,     // Where to return to in the caller's code
 };
 
+const BlockScope = struct {
+    start_ip: u32,      // Instruction pointer where block begins
+    end_ip: u32,        // Instruction pointer where block ends
+    base_sp: u16,       // Stack pointer at start of block (for cleaning up local variables)
+    parent: ?*BlockScope, // Link to enclosing block scope (for nested blocks)
+    
+    pub fn init(start: u32, base_sp: u16, parent: ?*BlockScope) BlockScope {
+        return BlockScope{
+            .start_ip = start,
+            .end_ip = undefined,  // Will be set when block ends
+            .base_sp = base_sp,
+            .parent = parent,
+        };
+    }
+    
+    pub fn cleanup(self: BlockScope, vm: *VM) void {
+        while (vm.sp > self.base_sp) {
+            if (vm.pop()) |frame| {
+                frame.deinit();
+            }
+        }
+    }
+};
+
 pub const VM = struct {
     allocator: std.mem.Allocator,
     code: []const u8,
@@ -370,6 +412,8 @@ pub const VM = struct {
     string_interner: StringInterner,
     array_interner: ArrayInterner,
     global_function: ?*instructions.Function,
+    block_stack: std.ArrayList(BlockScope),
+    current_scope_vars: std.ArrayList(Frame),
 
     pub fn init(allocator: std.mem.Allocator, code: []const u8, constants: []Frame, reporter: *Reporting) VM {
         var vm = VM{
@@ -390,6 +434,8 @@ pub const VM = struct {
             .string_interner = StringInterner.init(allocator),
             .array_interner = ArrayInterner.init(allocator),
             .global_function = null,
+            .block_stack = std.ArrayList(BlockScope).init(allocator),
+            .current_scope_vars = std.ArrayList(Frame).init(allocator),
         };
 
         // Initialize stack with NOTHING values if needed
@@ -426,10 +472,19 @@ pub const VM = struct {
         // Store the global function pointer
         vm.global_function = global_function;
 
+        // Initialize the global scope with some capacity
+        vm.current_scope_vars.ensureTotalCapacity(16) catch unreachable;
+        
         return vm;
     }
 
     pub fn deinit(self: *VM) void {
+        // Add cleanup for current scope variables
+        for (self.current_scope_vars.items) |*var_frame| {
+            var_frame.deinit();
+        }
+        self.current_scope_vars.deinit();
+        
         // Clean up variables
         for (self.variables.items) |*var_frame| {
             var_frame.deinit();
@@ -448,7 +503,7 @@ pub const VM = struct {
         self.call_stack.deinit();
         self.string_interner.deinit();
         self.array_interner.deinit();
-        
+        self.block_stack.deinit();
         self.allocator.free(self.global_constants);
         
         if (self.global_function) |func| {
@@ -584,23 +639,14 @@ pub const VM = struct {
                     .OP_VAR => {
                         const var_index = self.read_byte();
                         
-                        // If we're in a function call
-                        if (self.current_frame) |func_frame| {
-                            // Access the argument relative to the frame's base pointer
-                            const arg_position = func_frame.bp + var_index;
-                            if (arg_position >= self.sp) {
-                                self.reporter.reportFatalError("Variable index out of bounds", .{});
-                                return null;
-                            }
-                            self.stack.push(self.stack.data[arg_position]) catch return null;
-                        } else {
-                            // Original global variable logic
-                            if (var_index >= self.variables.items.len) {
-                                self.reporter.reportFatalError("Variable index out of bounds", .{});
-                                return null;
-                            }
-                            self.stack.push(self.variables.items[var_index]) catch return null;
+                        if (var_index >= self.current_scope_vars.items.len) {
+                            self.reporter.reportFatalError("Variable index out of bounds", .{});
+                            return null;
                         }
+                        
+                        // Create a reference to the variable's value
+                        const var_value = self.current_scope_vars.items[var_index];
+                        try self.stack.push(Frame.reference(var_value.value));
                     },
                     // add
                     instructions.OpCode.OP_IADD, 
@@ -768,15 +814,18 @@ pub const VM = struct {
                         const var_index = self.read_byte();
                         const value = self.pop() orelse return null;
                         
-                        // Grow variables array if needed
-                        while (var_index >= self.variables.items.len) {
-                            self.variables.append(Frame.initNothing(.INT)) catch {
-                                self.reporter.reportFatalError("Failed to allocate variable", .{});
-                                return null;
-                            };
+                        // Grow the current scope's variable array if needed
+                        while (var_index >= self.current_scope_vars.items.len) {
+                            try self.current_scope_vars.append(Frame.initNothing(.INT));
                         }
                         
-                        self.variables.items[var_index] = value;
+                        // Clean up any existing value
+                        if (var_index < self.current_scope_vars.items.len) {
+                            self.current_scope_vars.items[var_index].deinit();
+                        }
+                        
+                        // Store the new value
+                        self.current_scope_vars.items[var_index] = value;
                     },
                     instructions.OpCode.OP_JUMP => {
                         const jump_offset = self.read_byte();
@@ -836,9 +885,7 @@ pub const VM = struct {
                         var b = self.pop() orelse return null;
                         var a = self.pop() orelse return null;
                         std.debug.print("String concatenating: ", .{});
-                        debugPrintFrame(a);
                         std.debug.print(" with ", .{});
-                        debugPrintFrame(b);
                         std.debug.print("\n", .{});
                         defer {
                             b.deinit();
@@ -846,7 +893,6 @@ pub const VM = struct {
                         }
                         const result = try self.concatStrings(&a, &b);
                         std.debug.print("concatStrings result: ", .{});
-                        debugPrintFrame(result);
                         std.debug.print("\n", .{});
                         self.stack.push(result) catch return null;
                     },
@@ -1049,6 +1095,28 @@ pub const VM = struct {
                     },
                     instructions.OpCode.OP_POP => {
                         _ = try self.stack.pop();
+                    },
+                    instructions.OpCode.OP_BEGIN_BLOCK => {
+                        const parent = if (self.block_stack.items.len > 0) 
+                            &self.block_stack.items[self.block_stack.items.len - 1] 
+                        else 
+                            null;
+                        
+                        try self.block_stack.append(BlockScope.init(
+                            self.ip,
+                            self.sp,
+                            parent
+                        ));
+                    },
+                    instructions.OpCode.OP_END_BLOCK => {
+                        if (self.block_stack.items.len == 0) {
+                            self.reporter.reportFatalError("No block to end", .{});
+                            return null;
+                        }
+                        
+                        var block = self.block_stack.pop();
+                        block.end_ip = self.ip;
+                        block.cleanup(self);  // Clean up any local variables
                     },
                 }
             } else {
@@ -1491,20 +1559,6 @@ pub const VM = struct {
         try self.pushFrame(function);
     }
 
-    fn debugPrintFrame(frame: Frame) void {
-        if (frame.value.nothing) {  
-            std.debug.print("NOTHING", .{});
-        } else {
-            switch (frame.value.type) {
-                .STRING => std.debug.print("STRING: \"{s}\"", .{frame.value.data.string}),
-                .INT => std.debug.print("INT: {}", .{frame.value.data.int}),
-                .FLOAT => std.debug.print("FLOAT: {d}", .{frame.value.data.float}),
-                .BOOL => std.debug.print("BOOL: {}", .{frame.value.data.boolean}),
-                else => std.debug.print("OTHER", .{}),
-            }
-        }
-    }
-
 };
 
 
@@ -1521,38 +1575,35 @@ pub fn main() !void {
     var interner = StringInterner.init(allocator);
     defer interner.deinit();
 
-    // Create constants for our array get/set test
-    var constants_array = [_]Frame{
-        Frame.initInt(42),     // constant[0]: initial value
-        Frame.initInt(1),      // constant[1]: index to access
-        Frame.initInt(99),     // constant[2]: new value to set
-    };
-
     const code = [_]u8{
-        // Create and populate first array [42, 42]
-        @intFromEnum(instructions.OpCode.OP_ARRAY_NEW), 2,     // Create array with capacity 2
+        // Set initial value to 42
         @intFromEnum(instructions.OpCode.OP_CONST), 0,         // Push 42
-        @intFromEnum(instructions.OpCode.OP_ARRAY_PUSH),       // Push into array
-        @intFromEnum(instructions.OpCode.OP_CONST), 0,         // Push 42 again
-        @intFromEnum(instructions.OpCode.OP_ARRAY_PUSH),       // Push into array
+        @intFromEnum(instructions.OpCode.OP_SET_VAR), 0,      // Store in var 0
         
-        // Create and populate second array [1, 99]
-        @intFromEnum(instructions.OpCode.OP_ARRAY_NEW), 2,     // Create array with capacity 2
-        @intFromEnum(instructions.OpCode.OP_CONST), 1,         // Push 1
-        @intFromEnum(instructions.OpCode.OP_ARRAY_PUSH),       // Push into array
-        @intFromEnum(instructions.OpCode.OP_CONST), 2,         // Push 99
-        @intFromEnum(instructions.OpCode.OP_ARRAY_PUSH),       // Push into array
+        // Push condition (false)
+        @intFromEnum(instructions.OpCode.OP_CONST), 1,         // Push false
+        @intFromEnum(instructions.OpCode.OP_JUMP_IF_FALSE), 5, // Skip next 5 instructions if false
         
-        // Concat arrays
-        @intFromEnum(instructions.OpCode.OP_ARRAY_CONCAT),     // Concat the two arrays
+        // If block (5 instructions)
+        @intFromEnum(instructions.OpCode.OP_BEGIN_BLOCK),      // 1
+        @intFromEnum(instructions.OpCode.OP_CONST), 2,         // 2: Push 99
+        @intFromEnum(instructions.OpCode.OP_SET_VAR), 1,       // 3: Store in var 1
+        @intFromEnum(instructions.OpCode.OP_VAR), 1,          // 4: Access var 1
+        @intFromEnum(instructions.OpCode.OP_END_BLOCK),        // 5
         
-        // Slice the array
-        @intFromEnum(instructions.OpCode.OP_ARRAY_SLICE), 0, 3, // Slice from index 0 to 1
+        // After if block - can still access outer var
+        @intFromEnum(instructions.OpCode.OP_VAR), 0,          // Access var 0
         
-        @intFromEnum(instructions.OpCode.OP_HALT),            // Halt with array on top of stack
+        @intFromEnum(instructions.OpCode.OP_HALT),
     };
 
-    std.debug.print("\n=== Starting Array Get/Set Test ===\n", .{});
+    var constants_array = [_]Frame{
+        Frame.initInt(42),       // constant[0]: initial value
+        Frame.initBoolean(false), // constant[1]: condition
+        Frame.initInt(99),       // constant[2]: if block value
+    };
+
+    std.debug.print("\n=== Starting Conditional Block Test ===\n", .{});
 
     var vm = VM.init(allocator, &code, &constants_array, &reporter);
     defer vm.deinit();
@@ -1561,16 +1612,8 @@ pub fn main() !void {
     if (vm.eval()) |maybe_result| {
         if (maybe_result) |result| {
             std.debug.print("Final result type: {}\n", .{result.value.type});
-            if (result.value.type == .ARRAY) {
-                const array = result.value.data.array_val;
-                std.debug.print("Array contents ({} items):\n", .{array.items.items.len});
-                for (array.items.items, 0..) |item, i| {
-                    switch (item.type) {
-                        .INT => std.debug.print("  [{}] INT: {}\n", .{i, item.data.int}),
-                        .FLOAT => std.debug.print("  [{}] FLOAT: {d}\n", .{i, item.data.float}),
-                        else => std.debug.print("  [{}] OTHER\n", .{i}),
-                    }
-                }
+            if (result.value.type == .INT) {
+                std.debug.print("Final value: {}\n", .{result.value.data.int});
             }
             result.deinit();
             allocator.destroy(result);
