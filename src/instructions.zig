@@ -1,60 +1,74 @@
 const std = @import("std");
-const Reporting = @import("reporting.zig").Reporting;
 
 pub const OpCode = enum(u8) {
     // Halt the program.
     OP_HALT = 0x00,
+    // pop the top value from the stack.
+    OP_POP = 0x01,
+    // duplicate the top value on the stack.
+    OP_DUP = 0x02,
 
     // push a constant value into the stack.
-    OP_CONST = 0x01,
+    OP_CONST = 0x03,
     // push a variable value into the stack.
-    OP_VAR = 0x02,
+    OP_VAR = 0x04,
     // set a variable to a constant value.
-    OP_SET_VAR = 0x03,
+    OP_SET_VAR = 0x05,
+    
     // add two values on the stack.
-    OP_IADD = 0x04,
+    OP_IADD = 0x06,
     // subtract two values on the stack.
-    OP_ISUB = 0x05,
+    OP_ISUB = 0x07,
     // multiply two values on the stack.
-    OP_IMUL = 0x06,
+    OP_IMUL = 0x08,
     // divide two values on the stack.
-    OP_IDIV = 0x07,
-
-    // Separate opcodes for integer and float operations
-    OP_FADD = 0x08,  // float add
-    OP_FSUB = 0x09,  // float subtract
-    OP_FMUL = 0x0A,  // float multiply
-    OP_FDIV = 0x0B,  // float division
+    OP_IDIV = 0x09,
+    // float add
+    OP_FADD = 0x0A,
+    // float subtract
+    OP_FSUB = 0x0B,
+    // float multiply
+    OP_FMUL = 0x0C,
+    // float division
+    OP_FDIV = 0x0D,
 
     // Type conversion operations
-    OP_I2F = 0x0C,   // convert int to float
-    OP_F2I = 0x0D,   // convert float to int (truncate)
+    OP_I2F = 0x0E,   // convert int to float
+    OP_F2I = 0x0F,   // convert float to int (truncate)
 
     // conditional operations
-    OP_GREATER = 0x0E,
-    OP_LESS = 0x0F,
-    OP_EQUAL = 0x10,
-    OP_NOTEQUAL = 0x11,
+    OP_GREATER = 0x10,
+    OP_LESS = 0x11,
+    OP_EQUAL = 0x12,
+    OP_NOTEQUAL = 0x13,
 
     // Jump operations
-    OP_JUMP = 0x12,         // Unconditional jump
-    OP_JUMP_IF = 0x13,      // Jump if top of stack is true
-    OP_JUMP_IF_FALSE = 0x14,// Jump if top of stack is false
+    OP_JUMP = 0x14,         // Unconditional jump
+    OP_JUMP_IF = 0x15,      // Jump if top of stack is true
+    OP_JUMP_IF_FALSE = 0x16,// Jump if top of stack is false
 
     // function operations
-    OP_CALL = 0x15,
-    OP_RETURN = 0x16,
+    OP_CALL = 0x17,
+    OP_RETURN = 0x18,
 
     // string operations
-    OP_CONCAT,      // Concatenate two strings
-    OP_STR_EQ,      // String equality comparison
-    OP_STR_LEN,     // Get string length
-    OP_SUBSTR,      // Get substring
+    OP_CONCAT = 0x19,      // Concatenate two strings
+    OP_STR_EQ = 0x1A,      // String equality comparison
+    OP_STR_LEN = 0x1B,     // Get string length
+    OP_SUBSTR = 0x1C,      // Get substring
+
+    // array operations
+    OP_ARRAY_NEW = 0x1D,
+    OP_ARRAY_PUSH = 0x1E,
+    OP_ARRAY_LEN = 0x1F,
+    OP_ARRAY_GET = 0x20,
+    OP_ARRAY_SET = 0x21,
 
     // struct operations
-    OP_STRUCT_NEW,  // Create a new struct
-    OP_SET_FIELD,   // Set a field in a struct
-    OP_GET_FIELD,   // Get a field from a struct (optional for now)
+    OP_STRUCT_NEW = 0x22,  // Create a new struct
+    OP_SET_FIELD = 0x23,   // Set a field in a struct
+    OP_GET_FIELD = 0x24,   // Get a field from a struct (optional for now)
+
 
     pub fn encode(op: OpCode) u8 {
         return @intFromEnum(op);
@@ -88,6 +102,15 @@ pub const ValueType = enum {
     FUNCTION,
 };
 
+pub const ArrayValue = struct {
+    items: std.ArrayList(Value),
+    capacity: u8,
+    
+    pub fn deinit(self: *ArrayValue) void {
+        self.items.deinit();
+    }
+};
+
 pub const Value = struct {
     type: ValueType,
     nothing: bool,
@@ -95,15 +118,9 @@ pub const Value = struct {
         int: i32,
         float: f32,
         boolean: bool,
-        array: []const Value,
         string: []const u8,
-        enumeration: struct {
-            value: u8,
-            type: u8,
-        },
-        auto: *Value,
-        function: *Function,
         struct_val: StructValue,
+        array_val: *ArrayValue,
     },
 };
 
@@ -140,6 +157,7 @@ const StructValue = struct {
 
 pub const Instruction = union(OpCode) {
     OP_HALT: void,
+    OP_POP: void,
     OP_CONST: Value,
     OP_VAR: Value,
     OP_IADD: void,
@@ -154,10 +172,13 @@ pub const Instruction = union(OpCode) {
     OP_F2I: void,
     OP_STRUCT_NEW: void,
     OP_SET_FIELD: void,
+    OP_ARRAY_NEW: void,
+    OP_ARRAY_PUSH: void,
+    OP_ARRAY_LEN: void,
+    OP_ARRAY_GET: void,
+    OP_ARRAY_SET: void,
 
 
-    const reporter = Reporting;
-    
     pub fn int(x: i32) Instruction {
         return Instruction{ 
             .OP_CONST = .{

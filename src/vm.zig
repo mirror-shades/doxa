@@ -127,12 +127,42 @@ const Frame = struct {
                     // Deinit the fields hash map
                     self.value.data.struct_val.fields.deinit();
                 },
+                .ARRAY => {
+                    self.value.data.array_val.deinit();
+                    alloc.destroy(self.value.data.array_val);
+                },
                 else => {},
             }
         }
     }
 
     pub fn reference(value: instructions.Value) Frame {
+        return Frame{
+            .value = value,
+            .allocator = null,
+            .owns_value = false,
+        };
+    }
+
+    pub fn initArray(allocator: std.mem.Allocator, capacity: u8) !Frame {
+        const array = try allocator.create(instructions.ArrayValue);
+        array.* = instructions.ArrayValue{
+            .items = std.ArrayList(instructions.Value).init(allocator),
+            .capacity = capacity,
+        };
+        
+        return Frame{
+            .value = instructions.Value{
+                .type = .ARRAY,
+                .nothing = false,
+                .data = .{ .array_val = array },
+            },
+            .allocator = allocator,
+            .owns_value = true,
+        };
+    }
+
+    pub fn initValue(value: instructions.Value) Frame {
         return Frame{
             .value = value,
             .allocator = null,
@@ -170,7 +200,8 @@ const Stack = struct {
             return error.StackOverflow;
         }
         self.data[self.sp] = value;
-        self.sp += 1;
+        self.sp += 1; 
+        std.debug.print("Stack push: type={}, sp={}\n", .{self.data[self.sp].value.type, self.sp});
     }
 
     pub fn pop(self: *Stack) !Frame {
@@ -178,6 +209,7 @@ const Stack = struct {
             return error.StackUnderflow;
         }
         self.sp -= 1;
+        std.debug.print("Stack pop: type={}, sp={}\n", .{self.data[self.sp].value.type, self.sp});
         return self.data[self.sp];
     }
 
@@ -338,6 +370,26 @@ pub const VM = struct {
         };
     }
 
+    fn printStack(self: *VM) void {
+    std.debug.print("Stack contents ({} items):\n", .{self.stack.sp});
+    var i: u32 = 0;
+    while (i < self.stack.sp) : (i += 1) {
+        const value = self.stack.data[i].value;
+        if (value.nothing) {    
+            std.debug.print("  [{}] NOTHING\n", .{i});
+        } else {
+            switch (value.type) {
+                .INT => std.debug.print("  [{}] INT: {}\n", .{i, value.data.int}),
+                .FLOAT => std.debug.print("  [{}] FLOAT: {}\n", .{i, value.data.float}),
+                .BOOL => std.debug.print("  [{}] BOOL: {}\n", .{i, value.data.boolean}),
+                .STRING => std.debug.print("  [{}] STRING: {s}\n", .{i, value.data.string}),
+                .ARRAY => std.debug.print("  [{}] ARRAY (len={})\n", .{i, value.data.array_val.items.items.len}),
+                else => std.debug.print("  [{}] OTHER\n", .{i}),
+                }
+            }   
+        }
+    }
+
     fn get_constant(self: *VM, index: u8) ?Frame {
         if (self.current_frame) |frame| {
             // Use the current frame's function constants
@@ -359,6 +411,17 @@ pub const VM = struct {
             return self.constants[index];
         }
     }
+
+    fn read_byte(self: *VM) u8 {
+        if (self.current_frame) |frame| {
+            const byte = frame.function.code[frame.ip];
+            frame.ip += 1;
+            self.ip = frame.ip;  // Keep global IP in sync
+            return byte;
+        }
+        @panic("No active frame");
+    }
+
 
     pub fn eval(self: *VM) !?*Frame {
         while (true) {
@@ -769,23 +832,114 @@ pub const VM = struct {
                             return null;
                         }
                     },
+                    instructions.OpCode.OP_ARRAY_NEW => {
+                        const size = self.read_byte();
+                        std.debug.print("Creating new array with capacity {}\n", .{size});
+                        const array_frame = try Frame.initArray(self.allocator, size);
+                        try self.stack.push(array_frame);
+                    },
+                    instructions.OpCode.OP_ARRAY_PUSH => {
+                        const value = self.pop() orelse return null;
+                        var array_frame = self.pop() orelse return null;
+                        
+                        if (array_frame.value.type != .ARRAY) {
+                            self.reporter.reportFatalError("Expected array for push operation", .{});
+                            return null;
+                        }
+                        
+                        std.debug.print("Pushing value of type {} onto array\n", .{value.value.type});
+                        try array_frame.value.data.array_val.items.append(value.value);
+                        try self.stack.push(array_frame);  // Push the array back onto the stack
+                    },
+                    instructions.OpCode.OP_ARRAY_LEN => {
+                        const array_frame = self.pop() orelse return null;
+                        
+                        if (array_frame.value.type != .ARRAY) {
+                            self.reporter.reportFatalError("Expected array for length operation", .{});
+                            return null;
+                        }
+                        
+                        const len = @as(i32, @intCast(array_frame.value.data.array_val.items.items.len));
+                        std.debug.print("Array length is {}\n", .{len});
+                        
+                        // Push back just the array (we don't need the length for the next operation)
+                        try self.stack.push(array_frame);
+                        try self.stack.push(Frame.initInt(len)); // Push the length of the array back onto the stack
+                    },
+                    .OP_ARRAY_GET => {
+                        std.debug.print("\n=== OP_ARRAY_GET ===\n", .{});
+                        self.printStack();
+                        
+                        const index = try self.stack.pop();
+                        const array_frame = try self.stack.pop();
+                        
+                        if (array_frame.value.type != .ARRAY) {
+                            std.debug.print("TypeError: Expected array but got {}\n", .{array_frame.value.type});
+                            return error.TypeError;
+                        }
+                        if (index.value.type != .INT) {
+                            std.debug.print("TypeError: Expected integer index but got {}\n", .{index.value.type});
+                            return error.TypeError;
+                        }
+                        
+                        const array = array_frame.value.data.array_val;
+                        const idx = @as(usize, @intCast(index.value.data.int));
+                        
+                        if (idx >= array.items.items.len) {
+                            return error.IndexOutOfBounds;
+                        }
+                        
+                        const value = array.items.items[idx];
+                        try self.stack.push(array_frame);  // Push array back first
+                        try self.stack.push(Frame.initValue(value));  // Then push the value
+                        
+                        std.debug.print("\nAfter OP_ARRAY_GET:\n", .{});
+                        self.printStack();
+                    },
+
+                    .OP_ARRAY_SET => {
+                        std.debug.print("\n=== OP_ARRAY_SET ===\n", .{});
+                        self.printStack();
+                        
+                        const new_value = try self.stack.pop();
+                        const index = try self.stack.pop();
+                        const array_frame = try self.stack.pop();
+                        
+                        if (array_frame.value.type != .ARRAY) {
+                            std.debug.print("TypeError: Expected array but got {}\n", .{array_frame.value.type});
+                            return error.TypeError;
+                        }
+                        if (index.value.type != .INT) {
+                            std.debug.print("TypeError: Expected integer index but got {}\n", .{index.value.type});
+                            return error.TypeError;
+                        }
+                        
+                        const array = array_frame.value.data.array_val;
+                        const idx = @as(usize, @intCast(index.value.data.int));
+                        
+                        if (idx >= array.items.items.len) {
+                            return error.IndexOutOfBounds;
+                        }
+                        
+                        array.items.items[idx] = new_value.value;
+                        try self.stack.push(array_frame);  // Put the array back on the stack
+                        
+                        std.debug.print("\nAfter OP_ARRAY_SET:\n", .{});
+                        self.printStack();
+                    },
+                    .OP_DUP => {
+                        const value = try self.stack.peek();
+                        try self.stack.push(Frame.reference(value.value));
+                    },
+                    instructions.OpCode.OP_POP => {
+                        _ = try self.stack.pop();
+                    },
                 }
             } else {
                 return error.NoActiveFrame;
             }
         }
     }
-
-    fn read_byte(self: *VM) u8 {
-        if (self.current_frame) |frame| {
-            const byte = frame.function.code[frame.ip];
-            frame.ip += 1;
-            self.ip = frame.ip;  // Keep global IP in sync
-            return byte;
-        }
-        @panic("No active frame");
-    }
-
     fn i2f(self: *VM, a:  i32) !void {
         const result: f32 = @as(f32, @floatFromInt(a));
         self.stack.push(Frame.initFloat(result));
@@ -796,7 +950,7 @@ pub const VM = struct {
         self.stack.push(Frame.initInt(result));
     }
 
-   fn i_add(a:  i32, b:  i32) !Frame {
+    fn i_add(a:  i32, b:  i32) !Frame {
         if (b > 0 and a > std.math.maxInt( i32) - b) {
             return error.IntegerOverflow;
         }
@@ -804,7 +958,7 @@ pub const VM = struct {
             return error.IntegerOverflow;
         }
         return Frame.initInt(a + b);
-     }   
+    }   
 
     fn i_sub(a:  i32, b:  i32) !Frame {
         // Check for overflow: if b is positive, a must not be less than MIN + b
@@ -1163,26 +1317,6 @@ pub const VM = struct {
         try self.pushFrame(function);
     }
 
-    // Add debug printing for stack contents
-    fn printStack(self: *VM) void {
-        std.debug.print("Stack contents ({} items):\n", .{self.sp});
-        var i:  u32 = 0;
-        while (i < self.sp) : (i += 1) {
-            const value = self.stack.data[i].value;
-            if (value.nothing) {    
-                std.debug.print("  [{}] NOTHING\n", .{i});
-            } else {
-                switch (value.type) {
-                    .INT => std.debug.print("  [{}] INT: {}\n", .{i, value.data.int}),
-                    .FLOAT => std.debug.print("  [{}] FLOAT: {}\n", .{i, value.data.float}),
-                    .BOOL => std.debug.print("  [{}] BOOL: {}\n", .{i, value.data.boolean}),
-                    .STRING => std.debug.print("  [{}] STRING: {s}\n", .{i, value.data.string}),
-                    else => std.debug.print("  [{}] OTHER\n", .{i}),
-                }
-            }   
-        }
-    }
-
     fn debugPrintFrame(frame: Frame) void {
         if (frame.value.nothing) {  
             std.debug.print("NOTHING", .{});
@@ -1199,6 +1333,8 @@ pub const VM = struct {
 
 };
 
+// ... existing code ...
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer {
@@ -1212,51 +1348,61 @@ pub fn main() !void {
     var interner = StringInterner.init(allocator);
     defer interner.deinit();
 
-
-    // Create constants including struct type name
+    // Create constants for our array get/set test
     var constants_array = [_]Frame{
-        Frame.initFloat(5.0),
+        Frame.initInt(42),     // constant[0]: initial value
+        Frame.initInt(1),      // constant[1]: index to access
+        Frame.initInt(99),     // constant[2]: new value to set
     };
     
-    defer {
-        for (&constants_array) |*constant| {
-            constant.deinit();
-        }
-    }
-
-    // Create bytecode that:
-    // 1. Creates a new Person struct
-    // 2. Sets the name field
-    // 3. Halts
+    // Create bytecode for testing array get/set operations
     const code = [_]u8{
-        @intFromEnum(instructions.OpCode.OP_CONST), 0,         // Push constant[0]
-        @intFromEnum(instructions.OpCode.OP_HALT),            // Halt
+        @intFromEnum(instructions.OpCode.OP_ARRAY_NEW), 5,     // Create array with capacity 5
+        @intFromEnum(instructions.OpCode.OP_CONST), 0,         // Push 42
+        @intFromEnum(instructions.OpCode.OP_ARRAY_PUSH),       // Push into array
+        @intFromEnum(instructions.OpCode.OP_CONST), 0,         // Push 42 again
+        @intFromEnum(instructions.OpCode.OP_ARRAY_PUSH),       // Push into array
+        
+        // Print stack state
+        @intFromEnum(instructions.OpCode.OP_DUP),             // Duplicate array reference
+        
+        // Get element at index 1
+        @intFromEnum(instructions.OpCode.OP_CONST), 1,         // Push index (1)
+        @intFromEnum(instructions.OpCode.OP_ARRAY_GET),        // Get element
+        @intFromEnum(instructions.OpCode.OP_POP),             // Pop the retrieved element
+        
+        // Set element at index 1 to 99
+        @intFromEnum(instructions.OpCode.OP_CONST), 1,         // Push index (1)
+        @intFromEnum(instructions.OpCode.OP_CONST), 2,         // Push new value (99)
+        @intFromEnum(instructions.OpCode.OP_ARRAY_SET),        // Set element
+        
+        @intFromEnum(instructions.OpCode.OP_HALT),            // Halt with array on top of stack
     };
 
-    std.debug.print("Starting VM execution with struct test\n", .{});
+    std.debug.print("\n=== Starting Array Get/Set Test ===\n", .{});
 
     var vm = VM.init(allocator, &code, &constants_array, &reporter);
     defer vm.deinit();
 
-    // Add debug prints for VM state
-    std.debug.print("Initial VM state:\n", .{});
-    std.debug.print("Code length: {}\n", .{code.len});
-    std.debug.print("Constants length: {}\n", .{constants_array.len});
-
     // Run the VM and handle results
     if (vm.eval()) |maybe_result| {
         if (maybe_result) |result| {
-            std.debug.print("Result type: {}\n", .{result.value.type});
-            std.debug.print("Result value: {}\n", .{result.value.nothing});
-            std.debug.print("Result value: {}\n", .{result.value.data.float});
+            std.debug.print("Final result type: {}\n", .{result.value.type});
+            if (result.value.type == .ARRAY) {
+                const array = result.value.data.array_val;
+                std.debug.print("Array contents ({} items):\n", .{array.items.items.len});
+                for (array.items.items, 0..) |item, i| {
+                    switch (item.type) {
+                        .INT => std.debug.print("  [{}] INT: {}\n", .{i, item.data.int}),
+                        .FLOAT => std.debug.print("  [{}] FLOAT: {d}\n", .{i, item.data.float}),
+                        else => std.debug.print("  [{}] OTHER\n", .{i}),
+                    }
+                }
+            }
             result.deinit();
             allocator.destroy(result);
-        } else {
-            std.debug.print("No result returned\n", .{});
         }
     } else |err| {
         std.debug.print("Error: {}\n", .{err});
     }
 }
-
-// need op_code for make nothing
