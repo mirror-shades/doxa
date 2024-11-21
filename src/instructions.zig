@@ -64,11 +64,12 @@ pub const OpCode = enum(u8) {
     OP_ARRAY_GET = 0x20,
     OP_ARRAY_SET = 0x21,
     OP_ARRAY_CONCAT = 0x22,
+    OP_ARRAY_SLICE = 0x23,
 
     // struct operations
-    OP_STRUCT_NEW = 0x23,  // Create a new struct
-    OP_SET_FIELD = 0x24,   // Set a field in a struct
-    OP_GET_FIELD = 0x25,   // Get a field from a struct (optional for now)
+    OP_STRUCT_NEW = 0x24,  // Create a new struct
+    OP_SET_FIELD = 0x25,   // Set a field in a struct
+    OP_GET_FIELD = 0x26,   // Get a field from a struct (optional for now)
 
 
     pub fn encode(op: OpCode) u8 {
@@ -182,6 +183,8 @@ pub const Instruction = union(OpCode) {
     OP_ARRAY_LEN: void,
     OP_ARRAY_GET: void,
     OP_ARRAY_SET: void,
+    OP_ARRAY_CONCAT: void,
+    OP_ARRAY_SLICE: void,
 
 
     pub fn int(x: i32) Instruction {
