@@ -997,7 +997,6 @@ pub const VM = struct {
                         std.debug.print("\nAfter OP_ARRAY_GET:\n", .{});
                         self.printStack();
                     },
-
                     .OP_ARRAY_SET => {
                         std.debug.print("\n=== OP_ARRAY_SET ===\n", .{});
                         self.printStack();
@@ -1035,6 +1034,13 @@ pub const VM = struct {
                         std.debug.print("Popped arrays from stack, concatenating...\n", .{});
                         const result = try self.concatArrays(&a, &b);
                         std.debug.print("Concatenation complete, pushing result\n", .{});
+                        self.stack.push(result) catch return null;
+                    },
+                    instructions.OpCode.OP_ARRAY_SLICE => {
+                        const start = self.read_byte();
+                        const end = self.read_byte();
+                        var array_frame = self.pop() orelse return null;
+                        const result = try self.sliceArray(&array_frame, start, end);
                         self.stack.push(result) catch return null;
                     },
                     instructions.OpCode.OP_DUP => {
@@ -1363,29 +1369,53 @@ pub const VM = struct {
             const b_arr = b.value.data.array_val;
             
             // Create new array with combined capacity
-            const array = try self.allocator.create(instructions.ArrayValue);
-            array.* = instructions.ArrayValue{
-                .items = std.ArrayList(instructions.Value).init(self.allocator),
-                .capacity = @intCast(a_arr.items.items.len + b_arr.items.items.len),
-            };
+            var result = try Frame.initArray(self.allocator, @intCast(a_arr.items.items.len + b_arr.items.items.len));
+            errdefer result.deinit();
             
             // Copy items from both arrays
-            try array.items.appendSlice(a_arr.items.items);
-            try array.items.appendSlice(b_arr.items.items);
+            try result.value.data.array_val.items.appendSlice(a_arr.items.items);
+            try result.value.data.array_val.items.appendSlice(b_arr.items.items);
             
-            // Clean up original arrays since we're done with them
+            // Intern the new array
+            result.value.data.array_val = try self.array_interner.intern(result.value.data.array_val);
+            result.owns_value = false;  // Array is now owned by the interner
+            
+            // Clean up original arrays
             a.deinit();
             b.deinit();
             
-            return Frame{
-                .value = instructions.Value{
-                    .type = .ARRAY,
-                    .nothing = false,
-                    .data = .{ .array_val = array },
-                },
-                .allocator = self.allocator,
-                .owns_value = true,
-            };
+            return result;
+        }
+        return error.TypeError;
+    }
+
+
+    fn sliceArray(self: *VM, a: *Frame, start: u8, end: u8) !Frame {
+        if (a.value.type == .ARRAY) {
+            const array = a.value.data.array_val;
+            const start_idx = @as(u32, start);
+            const end_idx = @as(u32, end);
+            
+            // Bounds checking
+            if (start_idx > end_idx or end_idx > array.items.items.len) {
+                return error.IndexOutOfBounds;
+            }
+            
+            // Create new array with the correct size
+            var result = try Frame.initArray(self.allocator, @intCast(end_idx - start_idx));
+            errdefer result.deinit();
+            
+            // Copy the slice of elements from the source array
+            try result.value.data.array_val.items.appendSlice(
+                array.items.items[start_idx..end_idx]
+            );
+            
+            // Intern the new array
+            result.value.data.array_val = try self.array_interner.intern(result.value.data.array_val);
+            result.owns_value = false;  // Array is now owned by the interner
+            
+            // Don't deinit the original array since it's still on the stack
+            return result;
         }
         return error.TypeError;
     }
@@ -1515,7 +1545,9 @@ pub fn main() !void {
         
         // Concat arrays
         @intFromEnum(instructions.OpCode.OP_ARRAY_CONCAT),     // Concat the two arrays
-    
+        
+        // Slice the array
+        @intFromEnum(instructions.OpCode.OP_ARRAY_SLICE), 0, 3, // Slice from index 0 to 1
         
         @intFromEnum(instructions.OpCode.OP_HALT),            // Halt with array on top of stack
     };
