@@ -11,8 +11,13 @@ gives warnings when strict conventions are not followed.
 
 ## General syntax
 
-both `||` and `&&` are supported alongside `and` and `or`. a clarity warning is given
-if both are used in the same file.
+Entry point can be declared with the `->` operator. if no entry point is declared in normal
+mode, the file runs line by line as a script. an entry point must be declared in strict
+mode.
+
+The following are interchangeable: `function` and `fn`, `and` and `&&`, `or` and `||`.
+
+If both syntaxes are used in the same file, a clarity warning is given.
 
 No operator or function overloading.
 

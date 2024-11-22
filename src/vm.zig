@@ -1,6 +1,7 @@
 const std = @import("std");
 const instructions = @import("instructions.zig");
 const Reporting = @import("reporting.zig").Reporting;
+const GC = @import("gc.zig").GC;
 
 const STACK_SIZE: u16 = 1024;
 const MAX_FRAMES: u16 = 1024;
@@ -25,8 +26,8 @@ const Frame = struct {
         };
     }
 
-    pub fn initString(interner: *StringInterner, x: []const u8) !Frame {
-        const interned = try interner.intern(x);
+    pub fn initString(interner: *StringInterner, value: []const u8, gc: *GC) !Frame {
+        const interned = try interner.intern(value, gc);
         return Frame{
             .value = instructions.Value{ .type = .STRING, .nothing = false, .data = .{ .string = interned } },
             .allocator = null,  // No allocator needed since string is interned
@@ -177,11 +178,13 @@ const Frame = struct {
 const Stack = struct {
     data: [STACK_SIZE]Frame,
     sp:  u16 = 0,
+    gc: *GC,
 
-    pub fn init() Stack {
+    pub fn init(gc: *GC) Stack {
         var stack = Stack{
             .data = undefined,
             .sp = 0,
+            .gc = gc,
         };
         // Initialize all frames to NOTHING
         for (&stack.data) |*frame| {
@@ -212,6 +215,9 @@ const Stack = struct {
             .FLOAT => std.debug.print("Stack push: FLOAT({d}) sp={}\n", .{value.value.data.float, self.sp}),
             else => std.debug.print("Stack push: type={}, sp={}\n", .{value.value.type, self.sp}),
         }
+        
+        // Maybe collect after stack operations
+        self.gc.maybeCollect();
     }
 
     pub fn pop(self: *Stack) !Frame {
@@ -270,12 +276,18 @@ const StringInterner = struct {
         self.strings.deinit();
     }
     
-    pub fn intern(self: *StringInterner, string: []const u8) ![]const u8 {
+    pub fn intern(self: *StringInterner, string: []const u8, garbage_collector: *GC) ![]const u8 {
         if (self.strings.get(string)) |existing| {
+            try garbage_collector.incRef(existing);
             return existing;
         }
         const copy = try self.allocator.dupe(u8, string);
         try self.strings.put(copy, copy);
+        try garbage_collector.incRef(copy);
+        
+        // Maybe collect after creating new strings
+        garbage_collector.maybeCollect();
+        
         return copy;
     }
 };
@@ -346,17 +358,19 @@ const ArrayInterner = struct {
         return hasher.final();
     }
     
-    pub fn intern(self: *ArrayInterner, array: *instructions.ArrayValue) !*instructions.ArrayValue {
+    pub fn intern(self: *ArrayInterner, array: *instructions.ArrayValue, garbage_collector: *GC) !*instructions.ArrayValue {
         const hash = hashArray(array);
         
         // Check if we already have this array
         if (self.arrays.get(hash)) |existing| {
+            try garbage_collector.incRef(existing);  // Use the GC's incRef method
             array.items.deinit();
             self.allocator.destroy(array);
             return existing;
         }
         
-        // Store the new array
+        // Store the new array and register it with GC
+        try garbage_collector.incRef(array);  // Register new array with GC
         try self.arrays.put(hash, array);
         return array;
     }
@@ -414,12 +428,13 @@ pub const VM = struct {
     global_function: ?*instructions.Function,
     block_stack: std.ArrayList(BlockScope),
     current_scope_vars: std.ArrayList(Frame),
+    garbage_collector: *GC,
 
-    pub fn init(allocator: std.mem.Allocator, code: []const u8, constants: []Frame, reporter: *Reporting) VM {
+    pub fn init(allocator: std.mem.Allocator, code: []const u8, constants: []Frame, reporter: *Reporting, garbage_collector: *GC) VM {
         var vm = VM{
             .allocator = allocator,
             .code = code,
-            .stack = Stack.init(),  // Now this will work
+            .stack = Stack.init(garbage_collector),  // Pass GC here
             .constants = constants,
             .variables = std.ArrayList(Frame).init(allocator),
             .functions = std.ArrayList(*instructions.Function).init(allocator),
@@ -436,6 +451,7 @@ pub const VM = struct {
             .global_function = null,
             .block_stack = std.ArrayList(BlockScope).init(allocator),
             .current_scope_vars = std.ArrayList(Frame).init(allocator),
+            .garbage_collector = garbage_collector,
         };
 
         // Initialize stack with NOTHING values if needed
@@ -573,6 +589,11 @@ pub const VM = struct {
 
     pub fn eval(self: *VM) !?*Frame {
         while (true) {
+            // Check for collection every N instructions
+            if (self.ip % 1000 == 0) {  // Adjust frequency as needed
+                self.garbage_collector.maybeCollect();
+            }
+
             if (self.current_frame) |frame| {
                 if (frame.ip >= frame.function.code.len) {
                     // Create a new frame with NOTHING value for empty returns
@@ -596,7 +617,7 @@ pub const VM = struct {
                             // Create a deep copy if needed
                             if (top_value.value.type == .STRING) {
                                 const str = try top_value.asString();
-                                result.* = try Frame.initString(&self.string_interner, str);
+                                result.* = try Frame.initString(&self.string_interner, str, self.garbage_collector);
                             } else if (top_value.value.type == .STRUCT) {
                                 // For structs, we need to do a deep copy
                                 const type_name = top_value.value.data.struct_val.type_name;
@@ -851,8 +872,34 @@ pub const VM = struct {
                             return null;
                         }
                         const bool_value = condition.asBoolean() catch return null;
+                        std.debug.print("JUMP_IF_FALSE: condition={}, current_ip={}, jump_offset={}\n", 
+                            .{bool_value, self.ip, jump_address});
                         if (!bool_value) {
-                            self.ip += jump_address;
+                            // Skip past the entire block
+                            if (self.current_frame) |inner_frame| {
+                                // Guard against jumping past end of code
+                                if (inner_frame.ip + jump_address >= inner_frame.function.code.len) {
+                                    self.reporter.reportFatalError("Jump would exceed code bounds", .{});
+                                    return null;
+                                }
+
+                                // Guard against accessing variables that don't exist
+                                if (self.current_scope_vars.items.len == 0) {
+                                    self.reporter.reportFatalError("No variables in current scope", .{});
+                                    return null;
+                                }
+
+                                inner_frame.ip += jump_address;
+                                self.ip = inner_frame.ip;
+
+                                // Only push reference if we need to
+                                if (jump_address > 0) {
+                                    try self.stack.push(Frame.reference(self.current_scope_vars.items[0].value));
+                                }
+                            } else {
+                                self.reporter.reportFatalError("No active frame for jump", .{});
+                                return null;
+                            }
                         }
                     },
                     instructions.OpCode.OP_RETURN => {
@@ -1426,7 +1473,7 @@ pub const VM = struct {
             @memcpy(new_string[a_str.len..], b_str);
             
             // Create new frame with interned string
-            return Frame.initString(&self.string_interner, new_string);
+            return Frame.initString(&self.string_interner, new_string, self.garbage_collector);
         }
         return error.TypeError;
     }
@@ -1445,9 +1492,8 @@ pub const VM = struct {
             try result.value.data.array_val.items.appendSlice(b_arr.items.items);
             
             // Intern the new array
-            result.value.data.array_val = try self.array_interner.intern(result.value.data.array_val);
+            result.value.data.array_val = try self.array_interner.intern(result.value.data.array_val, self.garbage_collector);
             result.owns_value = false;  // Array is now owned by the interner
-            
             // Clean up original arrays
             a.deinit();
             b.deinit();
@@ -1479,7 +1525,7 @@ pub const VM = struct {
             );
             
             // Intern the new array
-            result.value.data.array_val = try self.array_interner.intern(result.value.data.array_val);
+            result.value.data.array_val = try self.array_interner.intern(result.value.data.array_val, self.garbage_collector);
             result.owns_value = false;  // Array is now owned by the interner
             
             // Don't deinit the original array since it's still on the stack
@@ -1516,7 +1562,7 @@ pub const VM = struct {
             }
             
             const slice = a_str[start_idx..][0..length];
-            return Frame.initString(&self.string_interner, slice);
+            return Frame.initString(&self.string_interner, slice, self.garbage_collector);
         }
         return error.TypeError;
     }
@@ -1575,37 +1621,40 @@ pub fn main() !void {
     var interner = StringInterner.init(allocator);
     defer interner.deinit();
 
+    var garbage_collector = GC.init(allocator, .{ .growth_factor = 2.0 });
+    defer garbage_collector.deinit();
+
     const code = [_]u8{
         // Set initial value to 42
         @intFromEnum(instructions.OpCode.OP_CONST), 0,         // Push 42
         @intFromEnum(instructions.OpCode.OP_SET_VAR), 0,      // Store in var 0
         
-        // Push condition (false)
-        @intFromEnum(instructions.OpCode.OP_CONST), 1,         // Push false
-        @intFromEnum(instructions.OpCode.OP_JUMP_IF_FALSE), 5, // Skip next 5 instructions if false
+        // Push condition
+        @intFromEnum(instructions.OpCode.OP_CONST), 1,         // Push condition
+        @intFromEnum(instructions.OpCode.OP_JUMP_IF_FALSE), 6, // Skip 6 bytes if false
         
-        // If block (5 instructions)
-        @intFromEnum(instructions.OpCode.OP_BEGIN_BLOCK),      // 1
-        @intFromEnum(instructions.OpCode.OP_CONST), 2,         // 2: Push 99
-        @intFromEnum(instructions.OpCode.OP_SET_VAR), 1,       // 3: Store in var 1
-        @intFromEnum(instructions.OpCode.OP_VAR), 1,          // 4: Access var 1
-        @intFromEnum(instructions.OpCode.OP_END_BLOCK),        // 5
+        // If block
+        @intFromEnum(instructions.OpCode.OP_CONST), 2,         // Push 99
+        @intFromEnum(instructions.OpCode.OP_SET_VAR), 0,      // Store 99 in var 0
         
-        // After if block - can still access outer var
-        @intFromEnum(instructions.OpCode.OP_VAR), 0,          // Access var 0
-        
+        // This gets executed in both cases
+        @intFromEnum(instructions.OpCode.OP_VAR), 0,          // Load var 0
         @intFromEnum(instructions.OpCode.OP_HALT),
     };
 
+    // Create constants with error handling
+    const hello = try Frame.initString(&interner, "Hello, World!", &garbage_collector);
+    const goodbye = try Frame.initString(&interner, "Goodbye, World!", &garbage_collector);
+    
     var constants_array = [_]Frame{
-        Frame.initInt(42),       // constant[0]: initial value
+        hello,                // constant[0]: initial value
         Frame.initBoolean(false), // constant[1]: condition
-        Frame.initInt(99),       // constant[2]: if block value
+        goodbye,              // constant[2]: if block value
     };
 
     std.debug.print("\n=== Starting Conditional Block Test ===\n", .{});
 
-    var vm = VM.init(allocator, &code, &constants_array, &reporter);
+    var vm = VM.init(allocator, &code, &constants_array, &reporter, &garbage_collector);
     defer vm.deinit();
 
     // Run the VM and handle results
