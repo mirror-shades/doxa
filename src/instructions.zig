@@ -131,7 +131,7 @@ pub const Value = struct {
     },
 };
 
-const StructValue = struct {
+pub const StructValue = struct {
     fields: std.StringHashMap(Value),  // This expects a StringHashMap, not an array
     type_name: []const u8,
     num_fields: u8,
