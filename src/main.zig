@@ -100,9 +100,9 @@ fn run(allocator: std.mem.Allocator, source: []const u8) !void {
         else => |e| return e,
     };
 
-    var parser = Parser.init(allocator, tokens.items);
-    defer parser.deinit();
-    try parser.parse();
+    // var parser = Parser.init(allocator, tokens.items);
+    // defer parser.deinit();
+    // try parser.parse();
     // const ast = parser.parse() catch |err| {
     //     reportError(parser.tokens[parser.current].line, "", "Parsing error.");
     //     return err;
