@@ -2,7 +2,7 @@ const std = @import("std");
 const instructions = @import("instructions.zig");
 
 pub const GCConfig = struct {
-    initial_threshold: usize = 100,
+    initial_threshold: usize = 3,
     growth_factor: f32 = 1.5,  // Grow threshold after each collection
 };
 
@@ -11,8 +11,12 @@ pub const GC = struct {
     objects: std.ArrayList(*GCObject),
     collection_threshold: usize,
     config: GCConfig,
+    roots: std.ArrayList(*anyopaque),  // Track root objects that shouldn't be collected
+    paused: bool = false,              // Allow pausing collection for critical sections
+    marked: std.AutoHashMap(*GCObject, void),
 
     pub const GCObject = struct {
+        gc: *GC,
         ref_count: u32,
         type: instructions.ValueType,
         data: union {
@@ -35,6 +39,7 @@ pub const GC = struct {
                 .{self.type, self.ref_count});
             if (self.ref_count == 0) {
                 std.debug.print("GC: Object of type {} ready for collection\n", .{self.type});
+                self.gc.collect();
             }
         }
     };
@@ -43,37 +48,43 @@ pub const GC = struct {
         return GC{
             .allocator = allocator,
             .objects = std.ArrayList(*GCObject).init(allocator),
+            .roots = std.ArrayList(*anyopaque).init(allocator),  // Initialize roots
             .collection_threshold = config.initial_threshold,
             .config = config,
+            .paused = false,
+            .marked = std.AutoHashMap(*GCObject, void).init(allocator),
         };
     }
 
     pub fn deinit(self: *GC) void {
-        for (self.objects.items) |obj| {
-            obj.decRef();
-            self.allocator.destroy(obj);
-        }
         self.objects.deinit();
+        self.roots.deinit();
+        self.marked.deinit();
     }
 
     pub fn incRef(self: *GC, obj: anytype) !void {
         const T = @TypeOf(obj);
+        var found_obj: ?*GCObject = null;  // Track the object we're working with
+        
         switch (T) {
             *instructions.ArrayValue => {
                 std.debug.print("GC: Tracking array object\n", .{});
                 for (self.objects.items) |gc_obj| {
                     if (gc_obj.type == .ARRAY and gc_obj.data.array == obj) {
                         gc_obj.incRef();
+                        found_obj = gc_obj;
                         return;
                     }
                 }
-                const new_obj = try self.allocator.create(GCObject);
-                new_obj.* = .{
+                const gc_obj = try self.allocator.create(GCObject);
+                gc_obj.* = .{
+                    .gc = self,
                     .ref_count = 1,
                     .type = .ARRAY,
                     .data = .{ .array = obj },
                 };
-                try self.objects.append(new_obj);
+                try self.objects.append(gc_obj);
+                found_obj = gc_obj;
                 std.debug.print("GC: Created new array object, total objects: {}\n", 
                     .{self.objects.items.len});
             },
@@ -82,63 +93,51 @@ pub const GC = struct {
                 for (self.objects.items) |gc_obj| {
                     if (gc_obj.type == .STRING and std.mem.eql(u8, gc_obj.data.string, obj)) {
                         gc_obj.incRef();
+                        found_obj = gc_obj;
                         return;
                     }
                 }
-                const new_obj = try self.allocator.create(GCObject);
-                new_obj.* = .{
+                const string_copy = try self.allocator.dupe(u8, obj);
+                const gc_obj = try self.allocator.create(GCObject);
+                gc_obj.* = .{
+                    .gc = self,
                     .ref_count = 1,
                     .type = .STRING,
-                    .data = .{ .string = obj },
+                    .data = .{ .string = string_copy },
                 };
-                try self.objects.append(new_obj);
+                try self.objects.append(gc_obj);
+                found_obj = gc_obj;
                 std.debug.print("GC: Created new string object, total objects: {}\n", 
                     .{self.objects.items.len});
+            },
+            *instructions.StructValue => {
+                std.debug.print("GC: Tracking struct object\n", .{});
+                for (self.objects.items) |gc_obj| {
+                    if (gc_obj.type == .STRUCT and gc_obj.data.struct_val == obj) {
+                        gc_obj.incRef();
+                        found_obj = gc_obj;
+                        return;
+                    }
+                }
+                const gc_obj = try self.allocator.create(GCObject);
+                gc_obj.* = .{
+                    .gc = self,
+                    .ref_count = 1,
+                    .type = .STRUCT,
+                    .data = .{ .struct_val = obj },
+                };
+                try self.objects.append(gc_obj);
+                found_obj = gc_obj;
             },
             else => {
                 std.debug.print("GC: Unsupported type for incRef: {}\n", .{T});
                 @compileError("Unsupported type for GC");
             },
         }
-    }
 
-    pub fn collect(self: *GC) void {
-        const initial_count = self.objects.items.len;
-        std.debug.print("\nGC: Starting collection... initial count: {}\n", .{initial_count});
-        
-        var i: u32 = 0;
-        while (i < self.objects.items.len) {
-            const obj = self.objects.items[i];
-            if (obj.ref_count == 0) {
-                std.debug.print("GC: Collecting object of type {}\n", .{obj.type});
-                _ = self.objects.swapRemove(i);
-                self.allocator.destroy(obj);
-            } else {
-                i += 1;
-            }
-        }
-        const collected = initial_count - self.objects.items.len;
-        std.debug.print("GC: Collected {} objects\n", .{collected});
-        
-        // Adjust threshold after collection
-        const new_threshold = @as(usize, @intFromFloat(
-            @as(f32, @floatFromInt(self.collection_threshold)) * self.config.growth_factor
-        ));
-        self.collection_threshold = new_threshold;
-        
-        std.debug.print("GC: Collection complete. New threshold: {}\n", 
-            .{self.collection_threshold});
-    }
-
-    pub fn maybeCollect(self: *GC) void {
-        if (self.objects.items.len > self.collection_threshold) {
-            std.debug.print("\nGC: Object count ({}) exceeded threshold ({}), triggering collection\n", 
-                .{self.objects.items.len, self.collection_threshold});
-            self.collect();
+        if (found_obj) |obj_ref| {
+            std.debug.print("GC: Object at {*} ref count increased to {}\n", 
+                .{obj, obj_ref.ref_count});
         }
     }
 };
-
-pub fn init(allocator: std.mem.Allocator, config: GCConfig) GC {
-    return GC.init(allocator, config);
-}
