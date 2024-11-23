@@ -1,7 +1,6 @@
 const std = @import("std");
 const instructions = @import("instructions.zig");
 const Reporting = @import("reporting.zig").Reporting;
-const GC = @import("gc.zig").GC;
 
 const STACK_SIZE: u16 = 1024;
 const MAX_FRAMES: u16 = 1024;
@@ -26,8 +25,8 @@ const Frame = struct {
         };
     }
 
-    pub fn initString(interner: *StringInterner, value: []const u8, gc: *GC) !Frame {
-        const interned = try interner.intern(value, gc);
+    pub fn initString(interner: *StringInterner, x: []const u8) !Frame {
+        const interned = try interner.intern(x);
         return Frame{
             .value = instructions.Value{ .type = .STRING, .nothing = false, .data = .{ .string = interned } },
             .allocator = null,  // No allocator needed since string is interned
@@ -43,20 +42,19 @@ const Frame = struct {
     }
 
     pub fn initStruct(allocator: std.mem.Allocator, type_name: []const u8, num_fields: u8) !Frame {
-        const struct_value = instructions.Value{
-            .type = .STRUCT,
-            .nothing = false,
-            .data = .{
-                .struct_val = .{
-                    .type_name = try allocator.dupe(u8, type_name),
-                    .fields = std.StringHashMap(instructions.Value).init(allocator),
-                    .num_fields = num_fields,
-                },
-            },
+        const struct_ptr = try allocator.create(instructions.StructValue);
+        struct_ptr.* = .{
+            .type_name = try allocator.dupe(u8, type_name),
+            .fields = std.StringHashMap(instructions.Value).init(allocator),
+            .num_fields = num_fields,
         };
 
         return Frame{
-            .value = struct_value,
+            .value = instructions.Value{
+                .type = .STRUCT,
+                .nothing = false,
+                .data = .{ .struct_val = struct_ptr },
+            },
             .allocator = allocator,
             .owns_value = true,
         };
@@ -116,6 +114,20 @@ const Frame = struct {
         return self.value.data.string;
     }
 
+    pub fn asStruct(self: Frame) !*instructions.StructValue {
+        if (!self.typeIs(.STRUCT)) {
+            return error.TypeError;
+        }
+        return self.value.data.struct_val;
+    }
+
+    pub fn asArray(self: Frame) !*instructions.ArrayValue {
+        if (!self.typeIs(.ARRAY)) {
+            return error.TypeError;
+        }
+        return self.value.data.array_val;
+    }
+
     pub fn deinit(self: Frame) void {
         if (!self.owns_value) return;
         
@@ -124,15 +136,13 @@ const Frame = struct {
                 .STRING => alloc.free(self.value.data.string),
                 .STRUCT => {
                     alloc.free(self.value.data.struct_val.type_name);
-                    // Create a mutable copy of the fields before deiniting
                     var fields = self.value.data.struct_val.fields;
                     fields.deinit();
+                    alloc.destroy(self.value.data.struct_val);  // Free the struct itself
                 },
                 .ARRAY => {
-                    // Create a mutable copy of the items before deiniting
                     var items = self.value.data.array_val.items;
                     items.deinit();
-                    // Then free the ArrayValue struct itself
                     alloc.destroy(self.value.data.array_val);
                 },
                 else => {},
@@ -173,18 +183,27 @@ const Frame = struct {
             .owns_value = false,
         };
     }
+
+    pub fn isEnum(self: Frame) bool {
+        return self.value.type == .ENUM;
+    }
+
+    pub fn asEnum(self: Frame) !u8 {
+        if (self.value.type != .ENUM) {
+            return error.TypeError;
+        }
+        return self.value.data.enum_val.variant;
+    }
 };
 
 const Stack = struct {
     data: [STACK_SIZE]Frame,
-    sp:  u16 = 0,
-    gc: *GC,
+    sp:  u32 = 0,
 
-    pub fn init(gc: *GC) Stack {
+    pub fn init() Stack {
         var stack = Stack{
             .data = undefined,
             .sp = 0,
-            .gc = gc,
         };
         // Initialize all frames to NOTHING
         for (&stack.data) |*frame| {
@@ -215,9 +234,6 @@ const Stack = struct {
             .FLOAT => std.debug.print("Stack push: FLOAT({d}) sp={}\n", .{value.value.data.float, self.sp}),
             else => std.debug.print("Stack push: type={}, sp={}\n", .{value.value.type, self.sp}),
         }
-        
-        // Maybe collect after stack operations
-        self.gc.maybeCollect();
     }
 
     pub fn pop(self: *Stack) !Frame {
@@ -276,18 +292,12 @@ const StringInterner = struct {
         self.strings.deinit();
     }
     
-    pub fn intern(self: *StringInterner, string: []const u8, garbage_collector: *GC) ![]const u8 {
+    pub fn intern(self: *StringInterner, string: []const u8) ![]const u8 {
         if (self.strings.get(string)) |existing| {
-            try garbage_collector.incRef(existing);
             return existing;
         }
         const copy = try self.allocator.dupe(u8, string);
         try self.strings.put(copy, copy);
-        try garbage_collector.incRef(copy);
-        
-        // Maybe collect after creating new strings
-        garbage_collector.maybeCollect();
-        
         return copy;
     }
 };
@@ -358,19 +368,17 @@ const ArrayInterner = struct {
         return hasher.final();
     }
     
-    pub fn intern(self: *ArrayInterner, array: *instructions.ArrayValue, garbage_collector: *GC) !*instructions.ArrayValue {
+    pub fn intern(self: *ArrayInterner, array: *instructions.ArrayValue) !*instructions.ArrayValue {
         const hash = hashArray(array);
         
         // Check if we already have this array
         if (self.arrays.get(hash)) |existing| {
-            try garbage_collector.incRef(existing);  // Use the GC's incRef method
             array.items.deinit();
             self.allocator.destroy(array);
             return existing;
         }
         
-        // Store the new array and register it with GC
-        try garbage_collector.incRef(array);  // Register new array with GC
+        // Store the new array
         try self.arrays.put(hash, array);
         return array;
     }
@@ -378,33 +386,49 @@ const ArrayInterner = struct {
 
 const CallFrame = struct {
     ip:  u32,              // Instruction pointer for this frame
-    bp:  u16,              // Base pointer (start of this frame's stack space)
-    sp:  u16,              // Stack pointer for this frame
+    bp:  u32,              // Base pointer (start of this frame's stack space)
+    sp:  u32,              // Stack pointer for this frame
     function: *const instructions.Function, // Reference to the function being executed
     return_addr:  u32,     // Where to return to in the caller's code
 };
 
 const BlockScope = struct {
-    start_ip: u32,      // Instruction pointer where block begins
-    end_ip: u32,        // Instruction pointer where block ends
-    base_sp: u16,       // Stack pointer at start of block (for cleaning up local variables)
-    parent: ?*BlockScope, // Link to enclosing block scope (for nested blocks)
+    start_ip: u32,
+    end_ip: u32,
+    base_sp: u32,
+    var_start: u32,
+    var_count: u32,
+    parent: ?*BlockScope,
     
-    pub fn init(start: u32, base_sp: u16, parent: ?*BlockScope) BlockScope {
+    pub fn init(start: u32, base_sp: u32, var_start: u32, parent: ?*BlockScope) BlockScope {
+        std.debug.print("Creating new block scope: var_start={}\n", .{var_start});
         return BlockScope{
             .start_ip = start,
-            .end_ip = undefined,  // Will be set when block ends
+            .end_ip = undefined,
             .base_sp = base_sp,
+            .var_start = var_start,
+            .var_count = 0,
             .parent = parent,
         };
     }
     
     pub fn cleanup(self: BlockScope, vm: *VM) void {
-        while (vm.sp > self.base_sp) {
-            if (vm.pop()) |frame| {
-                frame.deinit();
+        std.debug.print("Cleaning up block scope: var_start={}, var_count={}\n", .{
+            self.var_start, self.var_count
+        });
+        
+        // Clean up variables in this scope
+        var i: u32 = 0;
+        while (i < self.var_count) : (i += 1) {
+            const var_idx = self.var_start + i;
+            if (var_idx < vm.current_scope_vars.items.len) {
+                vm.current_scope_vars.items[var_idx].deinit();
+                // Mark the variable as inaccessible
+                vm.current_scope_vars.items[var_idx] = Frame.initNothing(.INT);
             }
         }
+        // Reset stack pointer
+        vm.sp = self.base_sp;
     }
 };
 
@@ -416,8 +440,8 @@ pub const VM = struct {
     variables: std.ArrayList(Frame),
     functions: std.ArrayList(*instructions.Function),
     frames: std.ArrayList(CallFrame),
-    frame_count: u16,
-    sp: u16,
+    frame_count: u32,
+    sp: u32,
     ip:  u32,
     reporter: *Reporting,
     call_stack: std.ArrayList(CallFrame),
@@ -428,13 +452,13 @@ pub const VM = struct {
     global_function: ?*instructions.Function,
     block_stack: std.ArrayList(BlockScope),
     current_scope_vars: std.ArrayList(Frame),
-    garbage_collector: *GC,
+    match_value: ?Frame = null,
 
-    pub fn init(allocator: std.mem.Allocator, code: []const u8, constants: []Frame, reporter: *Reporting, garbage_collector: *GC) VM {
+    pub fn init(allocator: std.mem.Allocator, code: []const u8, constants: []Frame, reporter: *Reporting) VM {
         var vm = VM{
             .allocator = allocator,
             .code = code,
-            .stack = Stack.init(garbage_collector),  // Pass GC here
+            .stack = Stack.init(),  // Now this will work
             .constants = constants,
             .variables = std.ArrayList(Frame).init(allocator),
             .functions = std.ArrayList(*instructions.Function).init(allocator),
@@ -451,7 +475,7 @@ pub const VM = struct {
             .global_function = null,
             .block_stack = std.ArrayList(BlockScope).init(allocator),
             .current_scope_vars = std.ArrayList(Frame).init(allocator),
-            .garbage_collector = garbage_collector,
+            .match_value = null,
         };
 
         // Initialize stack with NOTHING values if needed
@@ -586,14 +610,70 @@ pub const VM = struct {
         @panic("No active frame");
     }
 
+    fn isVariableInScope(self: *VM, var_index: u32) bool {
+        std.debug.print("Checking scope for var[{}]\n", .{var_index});
+        
+        // Start from current block and work up through parent blocks
+        var current_block = if (self.block_stack.items.len > 0) 
+            &self.block_stack.items[self.block_stack.items.len - 1] 
+        else 
+            null;
+            
+        while (current_block) |block| {
+            std.debug.print("  Checking block: var_start={}, var_count={}\n", 
+                .{block.var_start, block.var_count});
+                
+            // Check if variable is defined in this block
+            if (var_index >= block.var_start and 
+                var_index < block.var_start + block.var_count) {
+                return true;
+            }
+            current_block = block.parent;
+        }
+        
+        // Check global scope
+        const in_global = var_index < self.current_scope_vars.items.len;
+        std.debug.print("  In global scope: {}\n", .{in_global});
+        return in_global;
+    }
+
+    // remove to put in std lib as soon as possible
+    fn printValue(value: instructions.Value) void {
+        switch (value.type) {
+            .INT => std.debug.print("{}", .{value.data.int}),
+            .FLOAT => std.debug.print("{d}", .{value.data.float}),
+            .BOOL => std.debug.print("{}", .{value.data.boolean}),
+            .STRING => std.debug.print("\"{s}\"", .{value.data.string}),
+            .ARRAY => {
+                std.debug.print("[", .{});
+                for (value.data.array_val.items.items, 0..) |item, i| {
+                    printValue(item);
+                    if (i < value.data.array_val.items.items.len - 1) {
+                        std.debug.print(", ", .{});
+                    }
+                }
+                std.debug.print("]", .{});
+            },
+            .STRUCT => {
+                std.debug.print("{{ ", .{});
+                var it = value.data.struct_val.fields.iterator();
+                var first = true;
+                while (it.next()) |entry| {
+                    if (!first) {
+                        std.debug.print(", ", .{});
+                    }
+                    first = false;
+                    std.debug.print("{s}: ", .{entry.key_ptr.*});
+                    printValue(entry.value_ptr.*);
+                }
+                std.debug.print(" }}", .{});
+            },
+            else => std.debug.print("???", .{}),
+        }
+    }
 
     pub fn eval(self: *VM) !?*Frame {
         while (true) {
-            // Check for collection every N instructions
-            if (self.ip % 1000 == 0) {  // Adjust frequency as needed
-                self.garbage_collector.maybeCollect();
-            }
-
             if (self.current_frame) |frame| {
                 if (frame.ip >= frame.function.code.len) {
                     // Create a new frame with NOTHING value for empty returns
@@ -617,7 +697,7 @@ pub const VM = struct {
                             // Create a deep copy if needed
                             if (top_value.value.type == .STRING) {
                                 const str = try top_value.asString();
-                                result.* = try Frame.initString(&self.string_interner, str, self.garbage_collector);
+                                result.* = try Frame.initString(&self.string_interner, str);
                             } else if (top_value.value.type == .STRUCT) {
                                 // For structs, we need to do a deep copy
                                 const type_name = top_value.value.data.struct_val.type_name;
@@ -659,14 +739,24 @@ pub const VM = struct {
                     },
                     .OP_VAR => {
                         const var_index = self.read_byte();
+                        std.debug.print("Accessing var[{}]\n", .{var_index});
+                        
+                        if (!self.isVariableInScope(var_index)) {
+                            self.reporter.reportFatalError("Variable access out of scope", .{});
+                            return null;
+                        }
                         
                         if (var_index >= self.current_scope_vars.items.len) {
                             self.reporter.reportFatalError("Variable index out of bounds", .{});
                             return null;
                         }
                         
-                        // Create a reference to the variable's value
                         const var_value = self.current_scope_vars.items[var_index];
+                        if (var_value.value.nothing) {
+                            self.reporter.reportFatalError("Accessing cleaned up variable", .{});
+                            return null;
+                        }
+                        
                         try self.stack.push(Frame.reference(var_value.value));
                     },
                     // add
@@ -835,6 +925,17 @@ pub const VM = struct {
                         const var_index = self.read_byte();
                         const value = self.pop() orelse return null;
                         
+                        // If we're in a block, update its var count
+                        if (self.block_stack.items.len > 0) {
+                            var current_block = &self.block_stack.items[self.block_stack.items.len - 1];
+                            if (var_index >= current_block.var_start) {
+                                const local_index = var_index - current_block.var_start;
+                                if (local_index >= current_block.var_count) {
+                                    current_block.var_count = local_index + 1;
+                                }
+                            }
+                        }
+                        
                         // Grow the current scope's variable array if needed
                         while (var_index >= self.current_scope_vars.items.len) {
                             try self.current_scope_vars.append(Frame.initNothing(.INT));
@@ -850,7 +951,14 @@ pub const VM = struct {
                     },
                     instructions.OpCode.OP_JUMP => {
                         const jump_offset = self.read_byte();
-                        self.ip += jump_offset;
+                        // Preserve the top stack value (result of if-block)
+                        const value = try self.stack.pop();
+                        
+                        self.current_frame.?.ip += jump_offset;
+                        self.ip = self.current_frame.?.ip;
+                        
+                        // Push the value back
+                        try self.stack.push(value);
                     },
                     instructions.OpCode.OP_JUMP_IF => {
                         const jump_address = self.read_byte();
@@ -865,40 +973,20 @@ pub const VM = struct {
                         }
                     },
                     instructions.OpCode.OP_JUMP_IF_FALSE => {
-                        const jump_address = self.read_byte();
-                        const condition = self.pop().?;
-                        if (condition.value.type != .BOOL) {
-                            self.reporter.reportFatalError("Expected boolean for JUMP_IF_FALSE", .{});
-                            return null;
-                        }
+                        const jump_offset = self.read_byte();
+                        const condition = self.pop() orelse return null;
                         const bool_value = condition.asBoolean() catch return null;
-                        std.debug.print("JUMP_IF_FALSE: condition={}, current_ip={}, jump_offset={}\n", 
-                            .{bool_value, self.ip, jump_address});
+                        std.debug.print("JUMP_IF_FALSE: Condition={}, offset={}\n", .{bool_value, jump_offset});
+                        
                         if (!bool_value) {
-                            // Skip past the entire block
-                            if (self.current_frame) |inner_frame| {
-                                // Guard against jumping past end of code
-                                if (inner_frame.ip + jump_address >= inner_frame.function.code.len) {
-                                    self.reporter.reportFatalError("Jump would exceed code bounds", .{});
-                                    return null;
-                                }
-
-                                // Guard against accessing variables that don't exist
-                                if (self.current_scope_vars.items.len == 0) {
-                                    self.reporter.reportFatalError("No variables in current scope", .{});
-                                    return null;
-                                }
-
-                                inner_frame.ip += jump_address;
-                                self.ip = inner_frame.ip;
-
-                                // Only push reference if we need to
-                                if (jump_address > 0) {
-                                    try self.stack.push(Frame.reference(self.current_scope_vars.items[0].value));
-                                }
-                            } else {
-                                self.reporter.reportFatalError("No active frame for jump", .{});
-                                return null;
+                            // When jumping to else block, skip the if-block code
+                            self.current_frame.?.ip += jump_offset;
+                            self.ip = self.current_frame.?.ip;
+                            
+                            // Load var[0] for the else block
+                            if (self.current_scope_vars.items.len > 0) {
+                                const var_value = self.current_scope_vars.items[0];
+                                try self.stack.push(Frame.reference(var_value.value));
                             }
                         }
                     },
@@ -1060,7 +1148,7 @@ pub const VM = struct {
                         try self.stack.push(array_frame);
                         try self.stack.push(Frame.initInt(len)); // Push the length of the array back onto the stack
                     },
-                    .OP_ARRAY_GET => {
+                    instructions.OpCode.OP_ARRAY_GET => {
                         std.debug.print("\n=== OP_ARRAY_GET ===\n", .{});
                         self.printStack();
                         
@@ -1090,7 +1178,7 @@ pub const VM = struct {
                         std.debug.print("\nAfter OP_ARRAY_GET:\n", .{});
                         self.printStack();
                     },
-                    .OP_ARRAY_SET => {
+                    instructions.OpCode.OP_ARRAY_SET => {
                         std.debug.print("\n=== OP_ARRAY_SET ===\n", .{});
                         self.printStack();
                         
@@ -1144,15 +1232,17 @@ pub const VM = struct {
                         _ = try self.stack.pop();
                     },
                     instructions.OpCode.OP_BEGIN_BLOCK => {
-                        const parent = if (self.block_stack.items.len > 0) 
-                            &self.block_stack.items[self.block_stack.items.len - 1] 
-                        else 
-                            null;
+                        const current_vars_count = self.current_scope_vars.items.len;
+                        std.debug.print("BEGIN BLOCK: current vars={}\n", .{current_vars_count});
                         
                         try self.block_stack.append(BlockScope.init(
                             self.ip,
                             self.sp,
-                            parent
+                            @intCast(current_vars_count),
+                            if (self.block_stack.items.len > 0) 
+                                &self.block_stack.items[self.block_stack.items.len - 1] 
+                            else 
+                                null
                         ));
                     },
                     instructions.OpCode.OP_END_BLOCK => {
@@ -1162,8 +1252,47 @@ pub const VM = struct {
                         }
                         
                         var block = self.block_stack.pop();
-                        block.end_ip = self.ip;
-                        block.cleanup(self);  // Clean up any local variables
+                        std.debug.print("END BLOCK: cleaning up {} variables starting at {}\n", 
+                            .{block.var_count, block.var_start});
+                        block.cleanup(self);
+                    },
+                    instructions.OpCode.OP_AND => {
+                        const b = self.pop() orelse return null;
+                        const a = self.pop() orelse return null;
+                        const result = try self.logical_and(a, b);
+                        self.stack.push(result) catch return null;
+                    },
+                    instructions.OpCode.OP_OR => {
+                        const b = self.pop() orelse return null;
+                        const a = self.pop() orelse return null;
+                        const result = try self.logical_or(a, b);
+                        self.stack.push(result) catch return null;
+                    },
+                    instructions.OpCode.OP_NOT => {
+                        const a = self.pop() orelse return null;
+                        const result = try self.logical_not(a);
+                        self.stack.push(result) catch return null;
+                    },
+                    instructions.OpCode.OP_MATCH => {   
+                        try self.executeMatch();
+                    },
+                    instructions.OpCode.OP_MATCH_ARM => {
+                        try self.executeMatchArm();
+                    },
+                    instructions.OpCode.OP_MATCH_END => {
+                        try self.executeMatchEnd();
+                    },
+                    instructions.OpCode.OP_TRY => {
+                        try self.executeTry();
+                    },
+                    instructions.OpCode.OP_CATCH => {
+                        try self.executeCatch();
+                    },
+                    instructions.OpCode.OP_THROW => {
+                        try self.executeThrow();
+                    },
+                    instructions.OpCode.OP_END_TRY => {
+                        try self.executeEndTry();
                     },
                 }
             } else {
@@ -1331,6 +1460,35 @@ pub const VM = struct {
         return error.TypeError;
     }
 
+    fn logical_and(self: *VM, a: Frame, b: Frame) !Frame {
+        if (a.value.type == .BOOL and b.value.type == .BOOL) {  
+            const a_val = try a.asBoolean();
+            const b_val = try b.asBoolean();
+            return Frame.initBoolean(a_val and b_val);
+        }
+        self.reporter.reportFatalError("Cannot perform AND on non-boolean values", .{});
+        return error.TypeError;
+    }
+
+    fn logical_or(self: *VM, a: Frame, b: Frame) !Frame {
+        if (a.value.type == .BOOL and b.value.type == .BOOL) {
+            const a_val = try a.asBoolean();
+            const b_val = try b.asBoolean();
+            return Frame.initBoolean(a_val or b_val);
+        }
+        self.reporter.reportFatalError("Cannot perform OR on non-boolean values", .{});
+        return error.TypeError;
+    }
+
+    fn logical_not(self: *VM, a: Frame) !Frame {
+        if (a.value.type == .BOOL) {
+            const a_val = try a.asBoolean();
+            return Frame.initBoolean(!a_val);
+        }
+        self.reporter.reportFatalError("Cannot perform NOT on a non-boolean value", .{});
+        return error.TypeError;
+    }
+
     fn equal(a: Frame, b: Frame) !Frame {
         // If both are the same type, compare directly
         if (a.value.type == b.value.type) {
@@ -1431,6 +1589,7 @@ pub const VM = struct {
         try self.frames.append(CallFrame{
             .ip = self.ip,
             .bp = self.sp - function.arity,
+            .sp = self.sp,
             .function = function,
             .return_addr = self.ip,
         });
@@ -1473,7 +1632,7 @@ pub const VM = struct {
             @memcpy(new_string[a_str.len..], b_str);
             
             // Create new frame with interned string
-            return Frame.initString(&self.string_interner, new_string, self.garbage_collector);
+            return Frame.initString(&self.string_interner, new_string);
         }
         return error.TypeError;
     }
@@ -1492,8 +1651,9 @@ pub const VM = struct {
             try result.value.data.array_val.items.appendSlice(b_arr.items.items);
             
             // Intern the new array
-            result.value.data.array_val = try self.array_interner.intern(result.value.data.array_val, self.garbage_collector);
+            result.value.data.array_val = try self.array_interner.intern(result.value.data.array_val);
             result.owns_value = false;  // Array is now owned by the interner
+            
             // Clean up original arrays
             a.deinit();
             b.deinit();
@@ -1525,7 +1685,7 @@ pub const VM = struct {
             );
             
             // Intern the new array
-            result.value.data.array_val = try self.array_interner.intern(result.value.data.array_val, self.garbage_collector);
+            result.value.data.array_val = try self.array_interner.intern(result.value.data.array_val);
             result.owns_value = false;  // Array is now owned by the interner
             
             // Don't deinit the original array since it's still on the stack
@@ -1562,7 +1722,7 @@ pub const VM = struct {
             }
             
             const slice = a_str[start_idx..][0..length];
-            return Frame.initString(&self.string_interner, slice, self.garbage_collector);
+            return Frame.initString(&self.string_interner, slice);
         }
         return error.TypeError;
     }
@@ -1605,6 +1765,59 @@ pub const VM = struct {
         try self.pushFrame(function);
     }
 
+    fn executeMatch(self: *VM) !void {
+        // Save match value from top of stack
+        const match_value = self.pop() orelse return error.EmptyStack;
+        if (!match_value.isEnum()) {
+            return error.TypeMismatch;
+        }
+        self.match_value = match_value;
+    }
+
+    fn executeMatchArm(self: *VM) !void {
+        const variant = self.read_byte();     // Get variant to compare
+        const jump_offset = self.read_byte(); // Get jump offset
+        
+        const match_value = self.match_value.?;
+        std.debug.print("Matching variant {} against {}\n", 
+            .{variant, match_value.value.data.enum_val.variant});
+        
+        if (match_value.value.data.enum_val.variant != variant) {
+            std.debug.print("No match, jumping {} bytes\n", .{jump_offset});
+            // When jumping to else block, skip the if-block code
+            self.current_frame.?.ip += jump_offset;
+            self.ip = self.current_frame.?.ip;
+            
+            // Load var[0] for the else block
+            if (self.current_scope_vars.items.len > 0) {
+                const var_value = self.current_scope_vars.items[0];
+                try self.stack.push(Frame.reference(var_value.value));
+            }
+        }
+    }
+
+    fn executeMatchEnd(self: *VM) !void {
+        std.debug.print("Match end - Stack size: {}\n", .{self.stack.size()});
+        self.match_value = null;  // Clear match value
+    }
+
+    fn executeTry(self: *VM) !void {
+        
+    }  
+
+    fn executeCatch(self: *VM) !void {
+        // TODO: Implement catch block
+    }
+
+    fn executeThrow(self: *VM) !void {
+        self.reporter.reportFatalError("Thrown", .{});
+        return error.Error;
+    }
+
+    fn executeEndTry(self: *VM) !void {
+        // TODO: Implement end try
+    }
+
 };
 
 
@@ -1621,49 +1834,75 @@ pub fn main() !void {
     var interner = StringInterner.init(allocator);
     defer interner.deinit();
 
-    var garbage_collector = GC.init(allocator, .{ .growth_factor = 2.0 });
-    defer garbage_collector.deinit();
-
-    const code = [_]u8{
-        // Set initial value to 42
-        @intFromEnum(instructions.OpCode.OP_CONST), 0,         // Push 42
-        @intFromEnum(instructions.OpCode.OP_SET_VAR), 0,      // Store in var 0
-        
-        // Push condition
-        @intFromEnum(instructions.OpCode.OP_CONST), 1,         // Push condition
-        @intFromEnum(instructions.OpCode.OP_JUMP_IF_FALSE), 6, // Skip 6 bytes if false
-        
-        // If block
-        @intFromEnum(instructions.OpCode.OP_CONST), 2,         // Push 99
-        @intFromEnum(instructions.OpCode.OP_SET_VAR), 0,      // Store 99 in var 0
-        
-        // This gets executed in both cases
-        @intFromEnum(instructions.OpCode.OP_VAR), 0,          // Load var 0
-        @intFromEnum(instructions.OpCode.OP_HALT),
-    };
-
-    // Create constants with error handling
-    const hello = try Frame.initString(&interner, "Hello, World!", &garbage_collector);
-    const goodbye = try Frame.initString(&interner, "Goodbye, World!", &garbage_collector);
+const code = [_]u8{
+    // First set up our enum variable
+    @intFromEnum(instructions.OpCode.OP_CONST), 0,         // Push enum value ONE
+    @intFromEnum(instructions.OpCode.OP_SET_VAR), 0,       // Store in var[0]
     
-    var constants_array = [_]Frame{
-        hello,                // constant[0]: initial value
-        Frame.initBoolean(false), // constant[1]: condition
-        goodbye,              // constant[2]: if block value
-    };
+    // Now do the match
+    @intFromEnum(instructions.OpCode.OP_VAR), 0,           // Load x onto stack
+    @intFromEnum(instructions.OpCode.OP_MATCH),            // Start match
+    
+    // Pattern ONE
+    @intFromEnum(instructions.OpCode.OP_MATCH_ARM), 0, 5,  // Compare with variant 0, jump 5 bytes if no match
+    @intFromEnum(instructions.OpCode.OP_CONST), 1,         // Push result 1
+    @intFromEnum(instructions.OpCode.OP_JUMP), 10,         // Jump to end
+    
+    // Pattern TWO
+    @intFromEnum(instructions.OpCode.OP_MATCH_ARM), 1, 5,  // Compare with variant 1, jump 5 bytes if no match
+    @intFromEnum(instructions.OpCode.OP_CONST), 2,         // Push result 2
+    @intFromEnum(instructions.OpCode.OP_JUMP), 5,          // Jump to end
+    
+    // Else branch
+    @intFromEnum(instructions.OpCode.OP_CONST), 3,         // Push result 0
+    
+    @intFromEnum(instructions.OpCode.OP_MATCH_END),        // End match
+    @intFromEnum(instructions.OpCode.OP_HALT),
+};
+
+var constants = [_]Frame{
+    Frame{  // constant[0] = Enum.ONE
+        .value = .{ 
+            .type = .ENUM,
+            .data = .{ .enum_val = .{ .type_name = "Number", .variant = 0 } },
+            .nothing = false 
+        },
+        .allocator = null,
+        .owns_value = true,
+    },
+    Frame{  // constant[1] = 1
+        .value = .{ 
+            .type = .INT, 
+            .data = .{ .int = 1 }, 
+            .nothing = false 
+        },
+        .allocator = null,
+        .owns_value = true,
+    },
+    Frame{  // constant[2] = 2
+        .value = .{ 
+            .type = .INT, 
+            .data = .{ .int = 2 }, 
+            .nothing = false 
+        },
+        .allocator = null,
+        .owns_value = true,
+    },
+};
 
     std.debug.print("\n=== Starting Conditional Block Test ===\n", .{});
 
-    var vm = VM.init(allocator, &code, &constants_array, &reporter, &garbage_collector);
+    var vm = VM.init(allocator, &code, &constants, &reporter);
     defer vm.deinit();
 
     // Run the VM and handle results
+
     if (vm.eval()) |maybe_result| {
         if (maybe_result) |result| {
-            std.debug.print("Final result type: {}\n", .{result.value.type});
-            if (result.value.type == .INT) {
-                std.debug.print("Final value: {}\n", .{result.value.data.int});
-            }
+            std.debug.print("Final result: ", .{});
+            VM.printValue(result.value);  // Call it as a static function
+            std.debug.print("\n", .{});
+            
             result.deinit();
             allocator.destroy(result);
         }

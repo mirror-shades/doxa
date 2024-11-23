@@ -72,10 +72,24 @@ pub const OpCode = enum(u8) {
     OP_GET_FIELD = 0x26,   // Get a field from a struct (optional for now)
 
     // block operations
-    OP_BEGIN_BLOCK = 0x27, // Start a new block scope
+    OP_BEGIN_BLOCK = 0x27, // Start a new block scope   
     OP_END_BLOCK = 0x28,   // End current block scope
-    
 
+    // logical operations
+    OP_AND = 0x29,
+    OP_OR = 0x2A,
+    OP_NOT = 0x2B,
+
+    // match operations
+    OP_MATCH = 0x2C,
+    OP_MATCH_ARM = 0x2D,
+    OP_MATCH_END = 0x2E,
+
+    // try operations
+    OP_TRY = 0x2F,         // Try an operation that might fail
+    OP_CATCH = 0x30,       // Handle the error case
+    OP_THROW = 0x31,       // Throw an error
+    OP_END_TRY = 0x32,     // End try-catch block
 
     pub fn encode(op: OpCode) u8 {
         return @intFromEnum(op);
@@ -93,7 +107,7 @@ pub const OpCode = enum(u8) {
 pub const Function = struct {
     code: []const u8,
     constants: []const Value,
-    arity: u8,
+    arity: u32,
     name: []const u8,
 };
 
@@ -111,11 +125,16 @@ pub const ValueType = enum {
 
 pub const ArrayValue = struct {
     items: std.ArrayList(Value),
-    capacity: u8,
+    capacity: u32,
     
     pub fn deinit(self: *ArrayValue) void {
         self.items.deinit();
     }
+};
+
+pub const EnumValue = struct {
+    type_name: []const u8,
+    variant: u8,
 };
 
 pub const Value = struct {
@@ -126,9 +145,34 @@ pub const Value = struct {
         float: f32,
         boolean: bool,
         string: []const u8,
-        struct_val: StructValue,
+        struct_val: *StructValue,
         array_val: *ArrayValue,
+        enum_val: EnumValue,
     },
+
+    pub fn isNumber(self: Value) bool {
+        return self.type == .INT or self.type == .FLOAT;
+    }
+
+    pub fn isString(self: Value) bool {
+        return self.type == .STRING;
+    }
+
+    pub fn isStruct(self: Value) bool {
+        return self.type == .STRUCT;
+    }
+
+    pub fn isArray(self: Value) bool {
+        return self.type == .ARRAY;
+    }
+
+    pub fn isBoolean(self: Value) bool {
+        return self.type == .BOOL;
+    }
+
+    pub fn isEnum(self: Value) bool {
+        return self.type == .ENUM;
+    }
 };
 
 pub const StructValue = struct {
@@ -160,67 +204,4 @@ pub const StructValue = struct {
         allocator.free(self.type_name);
         allocator.destroy(self);
     }
-};
-
-pub const Instruction = union(OpCode) {
-    OP_HALT: void,
-    OP_POP: void,
-    OP_CONST: Value,
-    OP_VAR: Value,
-    OP_IADD: void,
-    OP_ISUB: void,
-    OP_IMUL: void,
-    OP_IDIV: void,
-    OP_FADD: void,
-    OP_FSUB: void,
-    OP_FMUL: void,
-    OP_FDIV: void,
-    OP_I2F: void,
-    OP_F2I: void,
-    OP_STR_CONCAT: void,
-    OP_STR_EQ: void,
-    OP_STR_LEN: void,
-    OP_SUBSTR: void,
-    OP_STRUCT_NEW: void,
-    OP_SET_FIELD: void,
-    OP_ARRAY_NEW: void,
-    OP_ARRAY_PUSH: void,
-    OP_ARRAY_LEN: void,
-    OP_ARRAY_GET: void,
-    OP_ARRAY_SET: void,
-    OP_ARRAY_CONCAT: void,
-    OP_ARRAY_SLICE: void,
-
-
-    pub fn int(x: i32) Instruction {
-        return Instruction{ 
-            .OP_CONST = .{
-                .type = .INT,
-                .nothing = false,
-                .data = .{ .value = x },
-            }
-        };
-    }
-
-    pub fn float(x: f32) Instruction {
-        return Instruction{ 
-            .OP_CONST = .{
-                .type = .FLOAT,
-                .nothing = false,
-                .data = .{ .value = x },
-            }
-        };
-    }
-
-    pub fn boolean(x: bool) Instruction {
-        return Instruction{ 
-            .OP_CONST = .{
-                .type = .BOOL,
-                .nothing = false,
-                .data = .{ .value = x },
-            }
-        };
-    }
-
-
 };

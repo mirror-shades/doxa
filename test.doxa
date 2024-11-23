@@ -1,0 +1,11 @@
+#strict
+
+function add(a: int, b: int) {
+    return a + b;
+}
+
+-> function main() {
+    const x: int = 1;
+    const y: int = 2;
+    add(x, y);
+}

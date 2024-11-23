@@ -1,6 +1,6 @@
 const std = @import("std");
 const Lexer = @import("lexer.zig").Lexer;
-//const Parser = @import("parser.zig").Parser;
+const Parser = @import("parser.zig").Parser;
 
 ///==========================================================================
 /// Constants
@@ -100,9 +100,9 @@ fn run(allocator: std.mem.Allocator, source: []const u8) !void {
         else => |e| return e,
     };
 
-    // Parser
-    // var parser = Parser.init(allocator, tokens.items);
-    // defer parser.deinit();
+    var parser = Parser.init(allocator, tokens.items);
+    defer parser.deinit();
+    try parser.parse();
     // const ast = parser.parse() catch |err| {
     //     reportError(parser.tokens[parser.current].line, "", "Parsing error.");
     //     return err;
@@ -161,7 +161,7 @@ pub fn main() !void {
         if (leaked == .leak) std.debug.print("Warning: Memory leak detected!\n", .{});
     }
     const allocator = gpa.allocator();
- const args = try std.process.argsAlloc(allocator);
+    const args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);
     // Skip the executable name
     var script_path: ?[]const u8 = null;
