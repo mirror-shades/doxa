@@ -1,7 +1,6 @@
 for whatever masochistic reason, I decided to write a compiled language.
 
-I'm writing it in Zig because I think it's a good choice for the task and it's a good way to learn the language in depth.
-Documentation for the language exists as some markdown files but it's not complete.
+Documentation for the language exists as some markdown files but it's not complete. https://mirror-shades.github.io/Doxa-Docs/
 
 things to consider for VM scaling:
 
