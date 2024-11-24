@@ -21,15 +21,13 @@ pub const OpCode = enum(u8) {
     OP_ISUB = 0x07,
     // multiply two values on the stack.
     OP_IMUL = 0x08,
-    // divide two values on the stack.
-    OP_IDIV = 0x09,
     // float add
     OP_FADD = 0x0A,
     // float subtract
     OP_FSUB = 0x0B,
     // float multiply
     OP_FMUL = 0x0C,
-    // float division
+    // float division, can take ints and convert to floats
     OP_FDIV = 0x0D,
 
     // Type conversion operations
@@ -86,6 +84,15 @@ pub const OpCode = enum(u8) {
 
     // is nothing
     OP_IS_NOTHING = 0x2E,
+
+    // is type
+    OP_TYPEOF = 0x2F,
+
+    // try catch
+    OP_TRY = 0x30,         // Try an operation that might fail
+    OP_CATCH = 0x31,       // Handle the error case
+    OP_THROW = 0x32,       // Throw an error
+    OP_END_TRY = 0x33,     // End try-catch block
 
     pub fn encode(op: OpCode) u8 {
         return @intFromEnum(op);
@@ -173,10 +180,6 @@ pub const Value = struct {
 
     pub fn isNothing(self: Value) bool {
         return self.nothing;
-    }
-
-    pub fn isNothingOfType(self: Value, expected_type: ValueType) bool {
-        return self.nothing and self.type == expected_type;
     }
 };
 

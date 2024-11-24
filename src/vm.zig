@@ -6,7 +6,7 @@ const Reporting = @import("reporting.zig").Reporting;
 const STACK_SIZE: u16 = 1024;
 const MAX_FRAMES: u16 = 1024;
 
-const Frame = struct {
+pub const Frame = struct {
     value: instructions.Value,
     allocator: ?std.mem.Allocator,
     owns_value: bool = true,
@@ -432,6 +432,12 @@ const BlockScope = struct {
     }
 };
 
+const TryFrame = struct {
+    catch_ip: u32,
+    stack_height: u32,
+    parent: ?*TryFrame,
+};
+
 pub const VM = struct {
     allocator: std.mem.Allocator, // memory allocator
     code: []const u8, // bytecode
@@ -453,6 +459,8 @@ pub const VM = struct {
     block_stack: std.ArrayList(BlockScope), // block stack
     current_scope_vars: std.ArrayList(Frame), // current scope variables
     match_value: ?Frame = null, // match value
+    try_stack: std.ArrayList(TryFrame), // try stack
+    current_try_frame: ?*TryFrame = null, // current try frame
 
     pub fn init(allocator: std.mem.Allocator, code: []const u8, constants: []Frame, reporter: *Reporting) VM {
         var vm = VM{
@@ -476,6 +484,8 @@ pub const VM = struct {
             .block_stack = std.ArrayList(BlockScope).init(allocator),
             .current_scope_vars = std.ArrayList(Frame).init(allocator),
             .match_value = null,
+            .try_stack = std.ArrayList(TryFrame).init(allocator),
+            .current_try_frame = null,
         };
 
         // Initialize stack with NOTHING values if needed
@@ -549,6 +559,9 @@ pub const VM = struct {
         if (self.global_function) |func| {
             self.allocator.destroy(func);
         }
+
+        // Clean up try stack
+        self.try_stack.deinit();
     }
 
     fn pop(self: *VM) ?Frame {
@@ -759,8 +772,7 @@ pub const VM = struct {
 
                         try self.stack.push(Frame.reference(var_value.value));
                     },
-                    // add
-                    instructions.OpCode.OP_IADD, instructions.OpCode.OP_ISUB, instructions.OpCode.OP_IMUL, instructions.OpCode.OP_IDIV => {
+                    instructions.OpCode.OP_IADD, instructions.OpCode.OP_ISUB, instructions.OpCode.OP_IMUL => {
                         const b = self.pop().?;
                         const a = self.pop().?;
 
@@ -770,12 +782,6 @@ pub const VM = struct {
                                 .OP_IADD => i_add(a.asInt() catch return null, b.asInt() catch return null),
                                 .OP_ISUB => i_sub(a.asInt() catch return null, b.asInt() catch return null),
                                 .OP_IMUL => i_mul(a.asInt() catch return null, b.asInt() catch return null),
-                                .OP_IDIV => blk: {
-                                    // Always convert to floats for division
-                                    const a_float = @as(f32, @floatFromInt(a.asInt() catch return null));
-                                    const b_float = @as(f32, @floatFromInt(b.asInt() catch return null));
-                                    break :blk f_div(a_float, b_float) catch return null;
-                                },
                                 else => unreachable,
                             } catch return null;
                             self.stack.push(result) catch return null;
@@ -791,7 +797,6 @@ pub const VM = struct {
                                         .OP_IADD => f_add(a_float, b.asFloat() catch return null),
                                         .OP_ISUB => f_sub(a_float, b.asFloat() catch return null),
                                         .OP_IMUL => f_mul(a_float, b.asFloat() catch return null),
-                                        .OP_IDIV => f_div(a_float, b.asFloat() catch return null),
                                         else => unreachable,
                                     } catch return null;
                                     self.stack.push(result) catch return null;
@@ -808,7 +813,6 @@ pub const VM = struct {
                                         .OP_IADD => f_add(a.asFloat() catch return null, b_float),
                                         .OP_ISUB => f_sub(a.asFloat() catch return null, b_float),
                                         .OP_IMUL => f_mul(a.asFloat() catch return null, b_float),
-                                        .OP_IDIV => f_div(a.asFloat() catch return null, b_float),
                                         else => unreachable,
                                     } catch return null;
                                     self.stack.push(result) catch return null;
@@ -818,7 +822,6 @@ pub const VM = struct {
                                         .OP_IADD => f_add(a.asFloat() catch return null, b.asFloat() catch return null),
                                         .OP_ISUB => f_sub(a.asFloat() catch return null, b.asFloat() catch return null),
                                         .OP_IMUL => f_mul(a.asFloat() catch return null, b.asFloat() catch return null),
-                                        .OP_IDIV => f_div(a.asFloat() catch return null, b.asFloat() catch return null),
                                         else => unreachable,
                                     } catch return null;
                                     self.stack.push(result) catch return null;
@@ -834,7 +837,7 @@ pub const VM = struct {
                             },
                         }
                     },
-                    instructions.OpCode.OP_FADD, instructions.OpCode.OP_FSUB, instructions.OpCode.OP_FMUL, instructions.OpCode.OP_FDIV => {
+                    instructions.OpCode.OP_FADD, instructions.OpCode.OP_FSUB, instructions.OpCode.OP_FMUL => {
                         const b = self.pop().?;
                         const a = self.pop().?;
 
@@ -861,10 +864,44 @@ pub const VM = struct {
                             .OP_FADD => f_add(a_val, b_val),
                             .OP_FSUB => f_sub(a_val, b_val),
                             .OP_FMUL => f_mul(a_val, b_val),
-                            .OP_FDIV => f_div(a_val, b_val),
                             else => unreachable,
                         } catch return null;
                         self.stack.push(result) catch return null;
+                    },
+                    instructions.OpCode.OP_FDIV => {
+                        const b = self.pop().?;
+                        const a = self.pop().?;
+
+                        // Convert operands to float if needed
+                        const a_val: f32 = switch (a.value.type) {
+                            .FLOAT => a.asFloat() catch return null,
+                            .INT => @as(f32, @floatFromInt(a.asInt() catch return null)),
+                            else => {
+                                self.reporter.reportFatalError("Invalid type for float operation", .{});
+                                return null;
+                            },
+                        };
+
+                        const b_val: f32 = switch (b.value.type) {
+                            .FLOAT => b.asFloat() catch return null,
+                            .INT => @as(f32, @floatFromInt(b.asInt() catch return null)),
+                            else => {
+                                self.reporter.reportFatalError("Invalid type for float operation", .{});
+                                return null;
+                            },
+                        };
+
+                        // Try the division
+                        const result = f_div(a_val, b_val) catch {
+                            if (self.current_try_frame != null) {
+                                try self.executeThrow();
+                                continue;
+                            }
+                            self.reporter.reportFatalError("Division by zero", .{});
+                            return null;
+                        };
+                        const new_frame = Frame.initFloat(result);
+                        try self.stack.push(new_frame);
                     },
                     // greater
                     instructions.OpCode.OP_GREATER => {
@@ -1285,6 +1322,22 @@ pub const VM = struct {
                         
                         std.debug.print("IS_NOTHING result: {}\n", .{is_nothing});
                     },
+                    instructions.OpCode.OP_TYPEOF => {
+                        try self.executeTypeOf();
+                    },
+                    instructions.OpCode.OP_TRY => {
+                        try self.executeTry();
+                    },
+                    instructions.OpCode.OP_CATCH => {
+                        try self.executeCatch();
+                    },
+                    instructions.OpCode.OP_THROW => {
+                        try self.executeThrow();
+                    },
+                    instructions.OpCode.OP_END_TRY => {
+                        try self.executeEndTry();
+                    },
+
                 }
             } else {
                 return error.NoActiveFrame;
@@ -1368,11 +1421,12 @@ pub const VM = struct {
         return Frame.initFloat(a * b);
     }
 
-    fn f_div(a: f32, b: f32) !Frame {
-        if (b == 0) {
+    fn f_div(a: f32, b: f32) !f32 {
+        std.debug.print("f_div: a={}, b={}\n", .{a, b});
+        if (b == 0e0 or a == 0e0) {
             return error.DivisionByZero;
         }
-        return Frame.initFloat(a / b);
+        return a / b;
     }
 
     fn greater(a: Frame, b: Frame) !Frame {
@@ -1795,7 +1849,139 @@ pub const VM = struct {
         const value = try self.stack.pop();
         try self.stack.push(Frame.initBoolean(value.value.isNothing()));
     }
+
+    fn executeTypeOf(self: *VM) !void {
+        const value = try self.stack.pop();
+        switch (value.value.type) {
+            .BOOL => try self.stack.push(try Frame.initString(&self.string_interner, "boolean")),
+            .INT => try self.stack.push(try Frame.initString(&self.string_interner, "int")),
+            .FLOAT => try self.stack.push(try Frame.initString(&self.string_interner, "float")),
+            .STRING => try self.stack.push(try Frame.initString(&self.string_interner, "string")),
+            .ARRAY => try self.stack.push(try Frame.initString(&self.string_interner, "array")),
+            .STRUCT => try self.stack.push(try Frame.initString(&self.string_interner, "struct")),
+            else => return error.TypeError,
+        }
+    }
+
+    fn executeTry(self: *VM) !void {
+        std.debug.print("=== Executing TRY ===\n", .{});
+        const try_frame = try self.try_stack.addOne();
+        
+        // Find the catch block by scanning ahead for OP_CATCH
+        var catch_ip = self.ip + 1;
+        while (catch_ip < self.code.len) : (catch_ip += 1) {
+            if (self.code[catch_ip] == @intFromEnum(instructions.OpCode.OP_CATCH)) {
+                break;
+            }
+        }
+        
+        try_frame.* = TryFrame{
+            .catch_ip = catch_ip,  // Store location of catch block
+            .stack_height = self.stack.sp,
+            .parent = if (self.current_try_frame) |frame| frame else null,
+        };
+        self.current_try_frame = try_frame;
+        std.debug.print("Try frame created with catch_ip={}, stack_height={}\n", 
+            .{try_frame.catch_ip, try_frame.stack_height});
+    }
+
+    fn executeCatch(self: *VM) !void {
+        std.debug.print("=== Executing CATCH ===\n", .{});
+        if (self.current_try_frame == null) {
+            return error.NoCatchWithoutTry;
+        }
+
+        // Print stack state at catch
+        std.debug.print("Stack state at catch:\n", .{});
+        self.printStack();
+
+        // Skip the catch instruction
+        self.ip += 1;
+    }
+
+    fn executeThrow(self: *VM) !void {
+        std.debug.print("=== Executing THROW ===\n", .{});
+        if (self.current_try_frame) |try_frame| {
+            std.debug.print("Found try frame, jumping to catch at {}\n", .{try_frame.catch_ip});
+            
+            // Restore stack to state before try block, but keep one value for the error
+            while (self.stack.sp > try_frame.stack_height + 1) {
+                const frame = try self.stack.pop();
+                frame.deinit();
+            }
+
+            // Push error value if stack is empty
+            if (self.stack.sp == try_frame.stack_height) {
+                try self.stack.push(Frame.initInt(-1));  // Default error value
+            }
+
+            // Jump directly to catch block
+            self.ip = try_frame.catch_ip;
+            std.debug.print("Jumped to catch block at ip={}, stack height={}\n", 
+                .{self.ip, self.stack.sp});
+        } else {
+            std.debug.print("No try frame found, throwing uncaught error\n", .{});
+            self.reporter.reportFatalError("Uncaught error", .{});
+            return error.UncaughtError;
+        }
+    }
+
+    fn executeEndTry(self: *VM) !void {
+        std.debug.print("Executing END_TRY\n", .{});
+        if (self.try_stack.items.len == 0) {
+            return error.NoTryBlockToEnd;
+        }
+
+        // Pop current try frame
+        _ = self.try_stack.pop();
+        self.current_try_frame = if (self.try_stack.items.len > 0)
+            &self.try_stack.items[self.try_stack.items.len - 1]
+        else
+            null;
+    }
 };
+
+pub fn runVM(code: []u8, constants: []Frame) !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer {
+        const leaked = gpa.deinit();
+        if (leaked == .leak) @panic("Memory leak detected!");
+    }
+    const allocator = gpa.allocator();
+
+    var reporter = Reporting.initStderr();
+
+    var interner = StringInterner.init(allocator);
+    defer interner.deinit();
+
+    // Create array value
+    const array_val = try allocator.create(instructions.ArrayValue);
+    defer allocator.destroy(array_val);
+
+    array_val.* = .{
+        .items = std.ArrayList(instructions.Value).init(allocator),
+        .capacity = 0,
+        .element_type = .INT,
+    };
+    defer array_val.items.deinit();
+
+    var vm = VM.init(allocator, &code, constants, &reporter);
+    defer vm.deinit();
+
+    // Run the VM and handle results
+    if (vm.eval()) |maybe_result| {
+        if (maybe_result) |result| {
+            std.debug.print("Final result: ", .{});
+            VM.printValue(result.value);
+            std.debug.print("\n", .{});
+
+            result.deinit();
+            allocator.destroy(result);
+        }
+    } else |err| {
+        std.debug.print("Error: {}\n", .{err});
+    }
+}
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -1818,54 +2004,27 @@ pub fn main() !void {
     array_val.* = .{
         .items = std.ArrayList(instructions.Value).init(allocator),
         .capacity = 0,
-        .element_type = .INT,  // Specify the type of elements this array holds
+        .element_type = .INT,
     };
     // Ensure items are freed
     defer array_val.items.deinit();
 
-const code = [_]u8{
-    @intFromEnum(instructions.OpCode.OP_CONST), 0,    // Push array onto stack
-    @intFromEnum(instructions.OpCode.OP_SET_VAR), 0,  // Store in var[0]
-    @intFromEnum(instructions.OpCode.OP_VAR), 0,      // Load array
-    @intFromEnum(instructions.OpCode.OP_CONST), 1,    // Push index 999
-    @intFromEnum(instructions.OpCode.OP_ARRAY_GET),   // Returns nothing<int> on error
-    @intFromEnum(instructions.OpCode.OP_IS_NOTHING),  // Check if result is nothing
-    @intFromEnum(instructions.OpCode.OP_JUMP_IF_FALSE), 3,  // If not nothing, continue
-    @intFromEnum(instructions.OpCode.OP_CONST), 2,    // Push error value (-1)
-    @intFromEnum(instructions.OpCode.OP_HALT),        // Exit with error value
-    // Normal path
-    @intFromEnum(instructions.OpCode.OP_HALT),        // Normal exit
-};
+    const code = [_]u8{
+        @intFromEnum(instructions.OpCode.OP_TRY),
+        @intFromEnum(instructions.OpCode.OP_CONST), 0,  // Numerator
+        @intFromEnum(instructions.OpCode.OP_CONST), 1,   // Denominator (zero)
+        @intFromEnum(instructions.OpCode.OP_FDIV),       // This will cause division by zero
+        @intFromEnum(instructions.OpCode.OP_CATCH),
+        @intFromEnum(instructions.OpCode.OP_CONST), 2,  // Error handler returns 42
+        @intFromEnum(instructions.OpCode.OP_END_TRY),
+        @intFromEnum(instructions.OpCode.OP_HALT),
+    };
 
-var constants = [_]Frame{
-    Frame{ // constant[0] = empty array
-        .value = .{
-            .type = .ARRAY,
-            .data = .{ .array_val = array_val },
-            .nothing = false,
-        },
-        .allocator = null,  // Don't set allocator since we're handling cleanup here
-        .owns_value = false, // Don't own the value since we're handling cleanup here
-    },
-    Frame{ // constant[1] = index 999
-        .value = .{
-            .type = .INT,
-            .data = .{ .int = 999 },
-            .nothing = false,
-        },
-        .allocator = null,
-        .owns_value = true,
-    },
-    Frame{ // constant[2] = error result (-1)
-        .value = .{
-            .type = .INT,
-            .data = .{ .int = -1 },
-            .nothing = false,
-        },
-        .allocator = null,
-        .owns_value = true,
-    },
-};
+    var constants = [_]Frame{
+        Frame.initInt(10),
+        Frame.initInt(0),
+        Frame.initInt(42),
+    };
 
     std.debug.print("\n=== Starting Conditional Block Test ===\n", .{});
 
