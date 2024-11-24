@@ -1,6 +1,6 @@
-# Doxa 
+# Doxa
 
-Doxa is a highly flexible compiled language focused on simplicity, readability, and gradualized type safety. It enables seamless transition from prototype to production code through strict and normal directives. 
+Doxa is a highly flexible compiled language focused on simplicity, readability, and gradualized type safety. It enables seamless transition from prototype to production code through strict and normal directives.
 
 Doxa is built using Zig. It's designed to be a highly readable language that brings gradual type safety which is controlled by directives. This allows Doxa to act as a flexible and dynamically typed scripting language while providing the ability to enforce type safety when needed.
 
@@ -17,7 +17,6 @@ fn add(a, b) {
 add(x, y);
 ```
 
-
 ```
 #strict
 
@@ -32,3 +31,7 @@ fn add(a: int, b: int) returns(int) {
     add(a, b);
 }
 ```
+
+The normal mode is a superset of the strict mode. This means that any valid strict mode code is also valid normal mode code.
+Transition from prototype to production code is aided by the use of the `#warn` directive. Warn mode will compile the code in
+normal mode but provides warnings where strict syntax isn't followed.

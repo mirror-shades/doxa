@@ -343,3 +343,55 @@ var constants = [_]Frame{
     },
 };
 ```
+
+try catch block
+
+```
+const code = [_]u8{
+    // Set up a variable that will cause an error
+    @intFromEnum(instructions.OpCode.OP_CONST), 0,    // 0: Push zero sized array onto stack
+    @intFromEnum(instructions.OpCode.OP_SET_VAR), 0,  // 2: Store in var[0]
+
+    @intFromEnum(instructions.OpCode.OP_TRY),         // 4: Start try block
+    @intFromEnum(instructions.OpCode.OP_VAR), 0,      // 5: Load array
+    @intFromEnum(instructions.OpCode.OP_CONST), 1,    // 7: Push index 999
+    @intFromEnum(instructions.OpCode.OP_ARRAY_GET),   // 9: This will throw
+    @intFromEnum(instructions.OpCode.OP_JUMP), 3,     // 10: Skip catch block (jump to END_TRY)
+
+    @intFromEnum(instructions.OpCode.OP_CATCH),       // 12: Start catch block
+    @intFromEnum(instructions.OpCode.OP_CONST), 2,    // 13: Push -1
+
+    @intFromEnum(instructions.OpCode.OP_END_TRY),     // 15: End try-catch
+    @intFromEnum(instructions.OpCode.OP_HALT),        // 16: Stop execution
+};
+
+var constants = [_]Frame{
+    Frame{ // constant[0] = empty array
+        .value = .{
+            .type = .ARRAY,
+            .data = .{ .array_val = array_val },
+            .nothing = false,
+        },
+        .allocator = null,  // Don't set allocator since we're handling cleanup here
+        .owns_value = false, // Don't own the value since we're handling cleanup here
+    },
+    Frame{ // constant[1] = index 999
+        .value = .{
+            .type = .INT,
+            .data = .{ .int = 999 },
+            .nothing = false,
+        },
+        .allocator = null,
+        .owns_value = true,
+    },
+    Frame{ // constant[2] = error result (-1)
+        .value = .{
+            .type = .INT,
+            .data = .{ .int = -1 },
+            .nothing = false,
+        },
+        .allocator = null,
+        .owns_value = true,
+    },
+};
+```
