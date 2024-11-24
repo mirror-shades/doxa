@@ -33,63 +33,59 @@ pub const OpCode = enum(u8) {
     OP_FDIV = 0x0D,
 
     // Type conversion operations
-    OP_I2F = 0x0E,   // convert int to float
-    OP_F2I = 0x0F,   // convert float to int (truncate)
+    OP_CONVERT_NUMBER = 0x0E,
 
     // conditional operations
-    OP_GREATER = 0x10,
-    OP_LESS = 0x11,
-    OP_EQUAL = 0x12,
-    OP_NOTEQUAL = 0x13,
+    OP_GREATER = 0x0F,
+    OP_LESS = 0x10, 
+    OP_EQUAL = 0x11,
+    OP_NOTEQUAL = 0x12,
 
     // Jump operations
-    OP_JUMP = 0x14,         // Unconditional jump
-    OP_JUMP_IF = 0x15,      // Jump if top of stack is true
-    OP_JUMP_IF_FALSE = 0x16,// Jump if top of stack is false
+    OP_JUMP = 0x13,         // Unconditional jump
+    OP_JUMP_IF = 0x14,      // Jump if top of stack is true
+    OP_JUMP_IF_FALSE = 0x15,// Jump if top of stack is false
 
     // function operations
-    OP_CALL = 0x17,
-    OP_RETURN = 0x18,
+    OP_CALL = 0x16,
+    OP_RETURN = 0x17,
 
     // string operations
-    OP_STR_CONCAT = 0x19,      // Concatenate two strings
-    OP_STR_EQ = 0x1A,      // String equality comparison
-    OP_STR_LEN = 0x1B,     // Get string length
-    OP_SUBSTR = 0x1C,      // Get substring
+    OP_STR_CONCAT = 0x18,      // Concatenate two strings
+    OP_STR_EQ = 0x19,      // String equality comparison
+    OP_STR_LEN = 0x1A,     // Get string length
+    OP_SUBSTR = 0x1B,      // Get substring
 
     // array operations
-    OP_ARRAY_NEW = 0x1D,
-    OP_ARRAY_PUSH = 0x1E,
-    OP_ARRAY_LEN = 0x1F,
-    OP_ARRAY_GET = 0x20,
-    OP_ARRAY_SET = 0x21,
-    OP_ARRAY_CONCAT = 0x22,
-    OP_ARRAY_SLICE = 0x23,
+    OP_ARRAY_NEW = 0x1C,
+    OP_ARRAY_PUSH = 0x1D,
+    OP_ARRAY_LEN = 0x1E,
+    OP_ARRAY_GET = 0x1F,
+    OP_ARRAY_SET = 0x20,
+    OP_ARRAY_CONCAT = 0x21,
+    OP_ARRAY_SLICE = 0x22,
 
     // struct operations
-    OP_STRUCT_NEW = 0x24,  // Create a new struct
-    OP_SET_FIELD = 0x25,   // Set a field in a struct
-    OP_GET_FIELD = 0x26,   // Get a field from a struct (optional for now)
+    OP_STRUCT_NEW = 0x23,  // Create a new struct
+    OP_SET_FIELD = 0x24,   // Set a field in a struct
+    OP_GET_FIELD = 0x25,   // Get a field from a struct (optional for now)
 
     // block operations
-    OP_BEGIN_BLOCK = 0x27, // Start a new block scope   
-    OP_END_BLOCK = 0x28,   // End current block scope
+    OP_BEGIN_BLOCK = 0x26, // Start a new block scope   
+    OP_END_BLOCK = 0x27,   // End current block scope
 
     // logical operations
-    OP_AND = 0x29,
-    OP_OR = 0x2A,
-    OP_NOT = 0x2B,
+    OP_AND = 0x28,
+    OP_OR = 0x29,
+    OP_NOT = 0x2A,
 
     // match operations
-    OP_MATCH = 0x2C,
-    OP_MATCH_ARM = 0x2D,
-    OP_MATCH_END = 0x2E,
+    OP_MATCH = 0x2B,
+    OP_MATCH_ARM = 0x2C,
+    OP_MATCH_END = 0x2D,
 
-    // try operations
-    OP_TRY = 0x2F,         // Try an operation that might fail
-    OP_CATCH = 0x30,       // Handle the error case
-    OP_THROW = 0x31,       // Throw an error
-    OP_END_TRY = 0x32,     // End try-catch block
+    // is nothing
+    OP_IS_NOTHING = 0x2E,
 
     pub fn encode(op: OpCode) u8 {
         return @intFromEnum(op);
@@ -126,6 +122,7 @@ pub const ValueType = enum {
 pub const ArrayValue = struct {
     items: std.ArrayList(Value),
     capacity: u32,
+    element_type: ValueType,
     
     pub fn deinit(self: *ArrayValue) void {
         self.items.deinit();
@@ -172,6 +169,14 @@ pub const Value = struct {
 
     pub fn isEnum(self: Value) bool {
         return self.type == .ENUM;
+    }
+
+    pub fn isNothing(self: Value) bool {
+        return self.nothing;
+    }
+
+    pub fn isNothingOfType(self: Value, expected_type: ValueType) bool {
+        return self.nothing and self.type == expected_type;
     }
 };
 

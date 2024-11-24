@@ -1,5 +1,6 @@
 const std = @import("std");
 const instructions = @import("instructions.zig");
+const ValueType = instructions.ValueType;
 const Reporting = @import("reporting.zig").Reporting;
 
 const STACK_SIZE: u16 = 1024;
@@ -158,21 +159,22 @@ const Frame = struct {
         };
     }
 
-    pub fn initArray(allocator: std.mem.Allocator, size: u8) !Frame {
-        const array = try allocator.create(instructions.ArrayValue);
-        array.* = instructions.ArrayValue{
+    pub fn initArray(allocator: std.mem.Allocator, size: u32, element_type: instructions.ValueType) !Frame {
+        const array_val = try allocator.create(instructions.ArrayValue);
+        array_val.* = .{
             .items = std.ArrayList(instructions.Value).init(allocator),
             .capacity = size,
+            .element_type = element_type,
         };
 
         return Frame{
             .value = instructions.Value{
                 .type = .ARRAY,
                 .nothing = false,
-                .data = .{ .array_val = array },
+                .data = .{ .array_val = array_val },
             },
             .allocator = allocator,
-            .owns_value = true, // We own this array
+            .owns_value = true,
         };
     }
 
@@ -384,12 +386,6 @@ const ArrayInterner = struct {
     }
 };
 
-const TryFrame = struct {
-    catch_ip: u32,
-    stack_height: u32,
-    parent: ?*TryFrame,
-};
-
 const CallFrame = struct {
     ip: u32, // Instruction pointer for this frame
     bp: u32, // Base pointer (start of this frame's stack space)
@@ -457,8 +453,6 @@ pub const VM = struct {
     block_stack: std.ArrayList(BlockScope), // block stack
     current_scope_vars: std.ArrayList(Frame), // current scope variables
     match_value: ?Frame = null, // match value
-    try_stack: std.ArrayList(TryFrame), // try stack
-    current_try_frame: ?*TryFrame = null, // current try frame
 
     pub fn init(allocator: std.mem.Allocator, code: []const u8, constants: []Frame, reporter: *Reporting) VM {
         var vm = VM{
@@ -482,8 +476,6 @@ pub const VM = struct {
             .block_stack = std.ArrayList(BlockScope).init(allocator),
             .current_scope_vars = std.ArrayList(Frame).init(allocator),
             .match_value = null,
-            .try_stack = std.ArrayList(TryFrame).init(allocator),
-            .current_try_frame = null,
         };
 
         // Initialize stack with NOTHING values if needed
@@ -552,7 +544,6 @@ pub const VM = struct {
         self.string_interner.deinit();
         self.array_interner.deinit();
         self.block_stack.deinit();
-        self.try_stack.deinit();
         self.allocator.free(self.global_constants);
 
         if (self.global_function) |func| {
@@ -720,7 +711,7 @@ pub const VM = struct {
                             } else if (top_value.value.type == .ARRAY) {
                                 // For arrays, we need to do a deep copy
                                 const array = top_value.value.data.array_val;
-                                result.* = try Frame.initArray(self.allocator, @intCast(array.items.items.len));
+                                result.* = try Frame.initArray(self.allocator, @intCast(array.items.items.len), array.element_type);
                                 try result.value.data.array_val.items.appendSlice(array.items.items);
                             } else {
                                 result.* = Frame{
@@ -889,25 +880,24 @@ pub const VM = struct {
                         const result = less(a, b) catch return null;
                         self.stack.push(result) catch return null;
                     },
-                    // i2f
-                    instructions.OpCode.OP_I2F => {
+                    // i2f, f2i
+                    instructions.OpCode.OP_CONVERT_NUMBER => {
                         const value = self.pop() orelse return null;
-                        std.debug.print("I2F: Popped value type: {}\n", .{value.value.type});
-                        if (!value.typeIs(.INT)) {
-                            self.reporter.reportFatalError("Expected integer for I2F conversion", .{});
+                        std.debug.print("CONVERT_NUMBER: Popped value type: {}\n", .{value.value.type});
+                        if (value.typeIs(.INT)) {
+                            const int_val = value.asInt() catch return null;
+                            const float_val = @as(f32, @floatFromInt(int_val));
+                            self.stack.push(Frame.initFloat(float_val)) catch return null;
+                        }
+                        else if (value.typeIs(.FLOAT)) {
+                            const float_val = value.asFloat() catch return null;
+                            const int_val = @as(i32, @intFromFloat(std.math.trunc(float_val)));
+                            self.stack.push(Frame.initInt(int_val)) catch return null;
+                        }
+                        else {
+                            self.reporter.reportFatalError("Invalid type for number conversion", .{});
                             return null;
                         }
-                        const int_val = value.asInt() catch return null;
-                        const float_val = @as(f32, @floatFromInt(int_val));
-                        self.stack.push(Frame.initFloat(float_val)) catch return null;
-                        std.debug.print("I2F: Converted {} to {d}\n", .{ int_val, float_val });
-                    },
-                    // f2i
-                    instructions.OpCode.OP_F2I => {
-                        const value = self.pop() orelse return null;
-                        const float_val = value.asFloat() catch return null;
-                        const int_val = @as(i32, @intFromFloat(std.math.trunc(float_val)));
-                        self.stack.push(Frame.initInt(int_val)) catch return null;
                     },
                     // equal
                     instructions.OpCode.OP_EQUAL => {
@@ -1116,8 +1106,17 @@ pub const VM = struct {
                     },
                     instructions.OpCode.OP_ARRAY_NEW => {
                         const size = self.read_byte();
-                        std.debug.print("Creating new array with capacity {}\n", .{size});
-                        const array_frame = try Frame.initArray(self.allocator, size); // Use interning for new arrays
+                        const type_byte = self.read_byte();  // Read the type parameter
+                        const element_type = @as(instructions.ValueType, @enumFromInt(type_byte));
+                        
+                        std.debug.print("Creating new array with capacity {} and type {}\n", 
+                            .{size, element_type});
+                        
+                        const array_frame = try Frame.initArray(
+                            self.allocator, 
+                            size,
+                            element_type  // Pass the element type to initArray
+                        );
                         try self.stack.push(array_frame);
                     },
                     instructions.OpCode.OP_ARRAY_PUSH => {
@@ -1156,30 +1155,26 @@ pub const VM = struct {
                         const array_frame = try self.stack.pop();
 
                         if (array_frame.value.type != .ARRAY) {
-                            std.debug.print("TypeError: Expected array but got {}\n", .{array_frame.value.type});
-                            try self.executeThrow();  // Throw the error instead of returning it
-                            continue;
+                            try self.stack.push(Frame.initNothing(.INT));  // Default to INT if type error
+                            continue;  // Continue to next instruction instead of return
                         }
                         if (index.value.type != .INT) {
-                            std.debug.print("TypeError: Expected integer index but got {}\n", .{index.value.type});
-                            try self.executeThrow();
-                            continue;
+                            try self.stack.push(Frame.initNothing(.INT));  // Default to INT if type error
+                            continue;  // Continue to next instruction instead of return
                         }
 
                         const array = array_frame.value.data.array_val;
                         const idx = @as(usize, @intCast(index.value.data.int));
 
                         if (idx >= array.items.items.len) {
-                            try self.executeThrow();  // Throw on index out of bounds
-                            continue;
+                            // Get the type of the array elements
+                            const element_type = array.element_type;
+                            try self.stack.push(Frame.initNothing(element_type));
+                            continue;  // Continue to next instruction instead of return
                         }
 
                         const value = array.items.items[idx];
-                        try self.stack.push(array_frame); // Push array back first
-                        try self.stack.push(Frame.initValue(value)); // Then push the value
-
-                        std.debug.print("\nAfter OP_ARRAY_GET:\n", .{});
-                        self.printStack();
+                        try self.stack.push(Frame.initValue(value));
                     },
                     instructions.OpCode.OP_ARRAY_SET => {
                         std.debug.print("\n=== OP_ARRAY_SET ===\n", .{});
@@ -1199,7 +1194,7 @@ pub const VM = struct {
                         }
 
                         const array = array_frame.value.data.array_val;
-                        const idx = @as(usize, @intCast(index.value.data.int));
+                        const idx = @as(u32, @intCast(index.value.data.int));
 
                         if (idx >= array.items.items.len) {
                             return error.IndexOutOfBounds;
@@ -1279,17 +1274,16 @@ pub const VM = struct {
                     instructions.OpCode.OP_MATCH_END => {
                         try self.executeMatchEnd();
                     },
-                    instructions.OpCode.OP_TRY => {
-                        try self.executeTry();
-                    },
-                    instructions.OpCode.OP_CATCH => {
-                        try self.executeCatch();
-                    },
-                    instructions.OpCode.OP_THROW => {
-                        try self.executeThrow();
-                    },
-                    instructions.OpCode.OP_END_TRY => {
-                        try self.executeEndTry();
+                    instructions.OpCode.OP_IS_NOTHING => {
+                        const value = try self.stack.pop();
+                        std.debug.print("Checking if value is nothing: type={}, nothing={}\n", 
+                            .{value.value.type, value.value.nothing});
+                        
+                        // Create a proper boolean Frame
+                        const is_nothing = value.value.isNothing();
+                        try self.stack.push(Frame.initBoolean(is_nothing));
+                        
+                        std.debug.print("IS_NOTHING result: {}\n", .{is_nothing});
                     },
                 }
             } else {
@@ -1638,12 +1632,12 @@ pub const VM = struct {
     }
 
     fn concatArrays(self: *VM, a: *Frame, b: *Frame) !Frame {
-        if (a.value.type == .ARRAY and b.value.type == .ARRAY) {
+        if (a.value.type == .ARRAY and b.value.type == .ARRAY and a.value.data.array_val.element_type == b.value.data.array_val.element_type) {
             const a_arr = a.value.data.array_val;
             const b_arr = b.value.data.array_val;
 
             // Create new array with combined capacity
-            var result = try Frame.initArray(self.allocator, @intCast(a_arr.items.items.len + b_arr.items.items.len));
+            var result = try Frame.initArray(self.allocator, @intCast(a_arr.items.items.len + b_arr.items.items.len), a_arr.element_type);
             errdefer result.deinit();
 
             // Copy items from both arrays
@@ -1675,7 +1669,7 @@ pub const VM = struct {
             }
 
             // Create new array with the correct size
-            var result = try Frame.initArray(self.allocator, @intCast(end_idx - start_idx));
+            var result = try Frame.initArray(self.allocator, @intCast(end_idx - start_idx), array.element_type);
             errdefer result.deinit();
 
             // Copy the slice of elements from the source array
@@ -1797,81 +1791,9 @@ pub const VM = struct {
         self.match_value = null; // Clear match value
     }
 
-    fn executeTry(self: *VM) !void {
-        std.debug.print("=== Executing TRY ===\n", .{});
-        const try_frame = try self.try_stack.addOne();
-        
-        // Find the catch block by scanning ahead for OP_CATCH
-        var catch_ip = self.ip + 1;
-        while (catch_ip < self.code.len) : (catch_ip += 1) {
-            if (self.code[catch_ip] == @intFromEnum(instructions.OpCode.OP_CATCH)) {
-                break;
-            }
-        }
-        
-        try_frame.* = TryFrame{
-            .catch_ip = catch_ip,  // Store location of catch block
-            .stack_height = self.stack.sp,
-            .parent = if (self.current_try_frame) |frame| frame else null,
-        };
-        self.current_try_frame = try_frame;
-        std.debug.print("Try frame created with catch_ip={}, stack_height={}\n", 
-            .{try_frame.catch_ip, try_frame.stack_height});
-    }
-
-    fn executeCatch(self: *VM) !void {
-        std.debug.print("=== Executing CATCH ===\n", .{});
-        if (self.current_try_frame == null) {
-            return error.NoCatchWithoutTry;
-        }
-
-        // Print stack state at catch
-        std.debug.print("Stack state at catch:\n", .{});
-        self.printStack();
-
-        // Skip the catch instruction
-        self.ip += 1;
-    }
-
-    fn executeThrow(self: *VM) !void {
-        std.debug.print("=== Executing THROW ===\n", .{});
-        if (self.current_try_frame) |try_frame| {
-            std.debug.print("Found try frame, jumping to catch at {}\n", .{try_frame.catch_ip});
-            
-            // Restore stack to state before try block, but keep one value for the error
-            while (self.stack.sp > try_frame.stack_height + 1) {
-                const frame = try self.stack.pop();
-                frame.deinit();
-            }
-
-            // Push error value if stack is empty
-            if (self.stack.sp == try_frame.stack_height) {
-                try self.stack.push(Frame.initInt(-1));  // Default error value
-            }
-
-            // Jump directly to catch block
-            self.ip = try_frame.catch_ip;
-            std.debug.print("Jumped to catch block at ip={}, stack height={}\n", 
-                .{self.ip, self.stack.sp});
-        } else {
-            std.debug.print("No try frame found, throwing uncaught error\n", .{});
-            self.reporter.reportFatalError("Uncaught error", .{});
-            return error.UncaughtError;
-        }
-    }
-
-    fn executeEndTry(self: *VM) !void {
-        std.debug.print("Executing END_TRY\n", .{});
-        if (self.try_stack.items.len == 0) {
-            return error.NoTryBlockToEnd;
-        }
-
-        // Pop current try frame
-        _ = self.try_stack.pop();
-        self.current_try_frame = if (self.try_stack.items.len > 0)
-            &self.try_stack.items[self.try_stack.items.len - 1]
-        else
-            null;
+    fn executeIsNothing(self: *VM) !void {
+        const value = try self.stack.pop();
+        try self.stack.push(Frame.initBoolean(value.value.isNothing()));
     }
 };
 
@@ -1896,57 +1818,54 @@ pub fn main() !void {
     array_val.* = .{
         .items = std.ArrayList(instructions.Value).init(allocator),
         .capacity = 0,
+        .element_type = .INT,  // Specify the type of elements this array holds
     };
     // Ensure items are freed
     defer array_val.items.deinit();
 
-    const code = [_]u8{
-        // Set up a variable that will cause an error
-        @intFromEnum(instructions.OpCode.OP_CONST), 0,    // 0: Push zero sized array onto stack
-        @intFromEnum(instructions.OpCode.OP_SET_VAR), 0,  // 2: Store in var[0]
+const code = [_]u8{
+    @intFromEnum(instructions.OpCode.OP_CONST), 0,    // Push array onto stack
+    @intFromEnum(instructions.OpCode.OP_SET_VAR), 0,  // Store in var[0]
+    @intFromEnum(instructions.OpCode.OP_VAR), 0,      // Load array
+    @intFromEnum(instructions.OpCode.OP_CONST), 1,    // Push index 999
+    @intFromEnum(instructions.OpCode.OP_ARRAY_GET),   // Returns nothing<int> on error
+    @intFromEnum(instructions.OpCode.OP_IS_NOTHING),  // Check if result is nothing
+    @intFromEnum(instructions.OpCode.OP_JUMP_IF_FALSE), 3,  // If not nothing, continue
+    @intFromEnum(instructions.OpCode.OP_CONST), 2,    // Push error value (-1)
+    @intFromEnum(instructions.OpCode.OP_HALT),        // Exit with error value
+    // Normal path
+    @intFromEnum(instructions.OpCode.OP_HALT),        // Normal exit
+};
 
-        @intFromEnum(instructions.OpCode.OP_TRY),         // 4: Start try block
-        @intFromEnum(instructions.OpCode.OP_VAR), 0,      // 5: Load array
-        @intFromEnum(instructions.OpCode.OP_CONST), 1,    // 7: Push index 999
-        @intFromEnum(instructions.OpCode.OP_ARRAY_GET),   // 9: This will throw
-        @intFromEnum(instructions.OpCode.OP_JUMP), 3,     // 10: Skip catch block (jump to END_TRY)
-        
-        @intFromEnum(instructions.OpCode.OP_CATCH),       // 12: Start catch block
-        @intFromEnum(instructions.OpCode.OP_CONST), 2,    // 13: Push -1
-        
-        @intFromEnum(instructions.OpCode.OP_END_TRY),     // 15: End try-catch
-        @intFromEnum(instructions.OpCode.OP_HALT),        // 16: Stop execution
-    };
-
-    var constants = [_]Frame{
-        Frame{ // constant[0] = empty array
-            .value = .{
-                .type = .ARRAY,
-                .data = .{ .array_val = array_val },
-                .nothing = false,
-            },
-            .allocator = null,  // Don't set allocator since we're handling cleanup here
-            .owns_value = false, // Don't own the value since we're handling cleanup here
+var constants = [_]Frame{
+    Frame{ // constant[0] = empty array
+        .value = .{
+            .type = .ARRAY,
+            .data = .{ .array_val = array_val },
+            .nothing = false,
         },
-        Frame{ // constant[1] = index 999
-            .value = .{
-                .type = .INT,
-                .data = .{ .int = 999 },
-                .nothing = false,
-            },
-            .allocator = null,
-            .owns_value = true,
+        .allocator = null,  // Don't set allocator since we're handling cleanup here
+        .owns_value = false, // Don't own the value since we're handling cleanup here
+    },
+    Frame{ // constant[1] = index 999
+        .value = .{
+            .type = .INT,
+            .data = .{ .int = 999 },
+            .nothing = false,
         },
-        Frame{ // constant[2] = error result (-1)
-            .value = .{
-                .type = .INT,
-                .data = .{ .int = -1 },
-                .nothing = false,
-            },
-            .allocator = null,
-            .owns_value = true,
+        .allocator = null,
+        .owns_value = true,
+    },
+    Frame{ // constant[2] = error result (-1)
+        .value = .{
+            .type = .INT,
+            .data = .{ .int = -1 },
+            .nothing = false,
         },
-    };
+        .allocator = null,
+        .owns_value = true,
+    },
+};
 
     std.debug.print("\n=== Starting Conditional Block Test ===\n", .{});
 
