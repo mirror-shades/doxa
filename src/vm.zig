@@ -384,6 +384,12 @@ const ArrayInterner = struct {
     }
 };
 
+const TryFrame = struct {
+    catch_ip: u32,
+    stack_height: u32,
+    parent: ?*TryFrame,
+};
+
 const CallFrame = struct {
     ip: u32, // Instruction pointer for this frame
     bp: u32, // Base pointer (start of this frame's stack space)
@@ -431,26 +437,28 @@ const BlockScope = struct {
 };
 
 pub const VM = struct {
-    allocator: std.mem.Allocator,
-    code: []const u8,
-    stack: Stack, // Replace [STACK_SIZE]Frame with Stack
-    constants: []Frame,
-    variables: std.ArrayList(Frame),
-    functions: std.ArrayList(*instructions.Function),
-    frames: std.ArrayList(CallFrame),
-    frame_count: u32,
-    sp: u32,
-    ip: u32,
-    reporter: *Reporting,
-    call_stack: std.ArrayList(CallFrame),
+    allocator: std.mem.Allocator, // memory allocator
+    code: []const u8, // bytecode
+    stack: Stack, // stack
+    constants: []Frame, // constants
+    variables: std.ArrayList(Frame), // variables
+    functions: std.ArrayList(*instructions.Function), // functions
+    frames: std.ArrayList(CallFrame), // frames
+    frame_count: u32, // frame count
+    sp: u32, // stack pointer
+    ip: u32, // instruction pointer
+    reporter: *Reporting, // error reporter
+    call_stack: std.ArrayList(CallFrame), // call stack
     current_frame: ?*CallFrame, // Points to the active frame
     global_constants: []instructions.Value, // Add this field to track global constants
-    string_interner: StringInterner,
-    array_interner: ArrayInterner,
-    global_function: ?*instructions.Function,
-    block_stack: std.ArrayList(BlockScope),
-    current_scope_vars: std.ArrayList(Frame),
-    match_value: ?Frame = null,
+    string_interner: StringInterner, // string interner
+    array_interner: ArrayInterner, // array interner
+    global_function: ?*instructions.Function, // global function
+    block_stack: std.ArrayList(BlockScope), // block stack
+    current_scope_vars: std.ArrayList(Frame), // current scope variables
+    match_value: ?Frame = null, // match value
+    try_stack: std.ArrayList(TryFrame), // try stack
+    current_try_frame: ?*TryFrame = null, // current try frame
 
     pub fn init(allocator: std.mem.Allocator, code: []const u8, constants: []Frame, reporter: *Reporting) VM {
         var vm = VM{
@@ -474,6 +482,8 @@ pub const VM = struct {
             .block_stack = std.ArrayList(BlockScope).init(allocator),
             .current_scope_vars = std.ArrayList(Frame).init(allocator),
             .match_value = null,
+            .try_stack = std.ArrayList(TryFrame).init(allocator),
+            .current_try_frame = null,
         };
 
         // Initialize stack with NOTHING values if needed
@@ -542,6 +552,7 @@ pub const VM = struct {
         self.string_interner.deinit();
         self.array_interner.deinit();
         self.block_stack.deinit();
+        self.try_stack.deinit();
         self.allocator.free(self.global_constants);
 
         if (self.global_function) |func| {
@@ -1146,18 +1157,21 @@ pub const VM = struct {
 
                         if (array_frame.value.type != .ARRAY) {
                             std.debug.print("TypeError: Expected array but got {}\n", .{array_frame.value.type});
-                            return error.TypeError;
+                            try self.executeThrow();  // Throw the error instead of returning it
+                            continue;
                         }
                         if (index.value.type != .INT) {
                             std.debug.print("TypeError: Expected integer index but got {}\n", .{index.value.type});
-                            return error.TypeError;
+                            try self.executeThrow();
+                            continue;
                         }
 
                         const array = array_frame.value.data.array_val;
                         const idx = @as(usize, @intCast(index.value.data.int));
 
                         if (idx >= array.items.items.len) {
-                            return error.IndexOutOfBounds;
+                            try self.executeThrow();  // Throw on index out of bounds
+                            continue;
                         }
 
                         const value = array.items.items[idx];
@@ -1574,7 +1588,7 @@ pub const VM = struct {
 
         try self.frames.append(CallFrame{
             .ip = self.ip,
-            .bp = self.sp - function.arity,
+            .bp = self.sp - function.arity, // Set base pointer to point to the first argument
             .sp = self.sp,
             .function = function,
             .return_addr = self.ip,
@@ -1784,23 +1798,80 @@ pub const VM = struct {
     }
 
     fn executeTry(self: *VM) !void {
-        // TODO: Implement try block
-        _ = self;
+        std.debug.print("=== Executing TRY ===\n", .{});
+        const try_frame = try self.try_stack.addOne();
+        
+        // Find the catch block by scanning ahead for OP_CATCH
+        var catch_ip = self.ip + 1;
+        while (catch_ip < self.code.len) : (catch_ip += 1) {
+            if (self.code[catch_ip] == @intFromEnum(instructions.OpCode.OP_CATCH)) {
+                break;
+            }
+        }
+        
+        try_frame.* = TryFrame{
+            .catch_ip = catch_ip,  // Store location of catch block
+            .stack_height = self.stack.sp,
+            .parent = if (self.current_try_frame) |frame| frame else null,
+        };
+        self.current_try_frame = try_frame;
+        std.debug.print("Try frame created with catch_ip={}, stack_height={}\n", 
+            .{try_frame.catch_ip, try_frame.stack_height});
     }
 
     fn executeCatch(self: *VM) !void {
-        // TODO: Implement catch block
-        _ = self;
+        std.debug.print("=== Executing CATCH ===\n", .{});
+        if (self.current_try_frame == null) {
+            return error.NoCatchWithoutTry;
+        }
+
+        // Print stack state at catch
+        std.debug.print("Stack state at catch:\n", .{});
+        self.printStack();
+
+        // Skip the catch instruction
+        self.ip += 1;
     }
 
     fn executeThrow(self: *VM) !void {
-        self.reporter.reportFatalError("Thrown", .{});
-        return error.Error;
+        std.debug.print("=== Executing THROW ===\n", .{});
+        if (self.current_try_frame) |try_frame| {
+            std.debug.print("Found try frame, jumping to catch at {}\n", .{try_frame.catch_ip});
+            
+            // Restore stack to state before try block, but keep one value for the error
+            while (self.stack.sp > try_frame.stack_height + 1) {
+                const frame = try self.stack.pop();
+                frame.deinit();
+            }
+
+            // Push error value if stack is empty
+            if (self.stack.sp == try_frame.stack_height) {
+                try self.stack.push(Frame.initInt(-1));  // Default error value
+            }
+
+            // Jump directly to catch block
+            self.ip = try_frame.catch_ip;
+            std.debug.print("Jumped to catch block at ip={}, stack height={}\n", 
+                .{self.ip, self.stack.sp});
+        } else {
+            std.debug.print("No try frame found, throwing uncaught error\n", .{});
+            self.reporter.reportFatalError("Uncaught error", .{});
+            return error.UncaughtError;
+        }
     }
 
     fn executeEndTry(self: *VM) !void {
-        // TODO: Implement end try
-        _ = self;
+        std.debug.print("Executing END_TRY\n", .{});
+        if (self.try_stack.items.len == 0) {
+            return error.NoTryBlockToEnd;
+        }
+
+        // Pop current try frame
+        _ = self.try_stack.pop();
+        self.current_try_frame = if (self.try_stack.items.len > 0)
+            &self.try_stack.items[self.try_stack.items.len - 1]
+        else
+            null;
     }
 };
 
@@ -1817,44 +1888,61 @@ pub fn main() !void {
     var interner = StringInterner.init(allocator);
     defer interner.deinit();
 
+    // Create array value
+    const array_val = try allocator.create(instructions.ArrayValue);
+    // Ensure array_val is freed even if VM initialization or execution fails
+    defer allocator.destroy(array_val);
+    
+    array_val.* = .{
+        .items = std.ArrayList(instructions.Value).init(allocator),
+        .capacity = 0,
+    };
+    // Ensure items are freed
+    defer array_val.items.deinit();
+
     const code = [_]u8{
-        // First set up our enum variable
-        @intFromEnum(instructions.OpCode.OP_CONST), 0, // Push enum value ONE
-        @intFromEnum(instructions.OpCode.OP_SET_VAR), 0, // Store in var[0]
+        // Set up a variable that will cause an error
+        @intFromEnum(instructions.OpCode.OP_CONST), 0,    // 0: Push zero sized array onto stack
+        @intFromEnum(instructions.OpCode.OP_SET_VAR), 0,  // 2: Store in var[0]
 
-        // Now do the match
-        @intFromEnum(instructions.OpCode.OP_VAR), 0, // Load x onto stack
-        @intFromEnum(instructions.OpCode.OP_MATCH), // Start match
-
-        // Pattern ONE
-        @intFromEnum(instructions.OpCode.OP_MATCH_ARM), 0, 5, // Compare with variant 0, jump 5 bytes if no match
-        @intFromEnum(instructions.OpCode.OP_CONST), 1, // Push result 1
-        @intFromEnum(instructions.OpCode.OP_JUMP), 10, // Jump to end
-
-        // Pattern TWO
-        @intFromEnum(instructions.OpCode.OP_MATCH_ARM), 1, 5, // Compare with variant 1, jump 5 bytes if no match
-        @intFromEnum(instructions.OpCode.OP_CONST), 2, // Push result 2
-        @intFromEnum(instructions.OpCode.OP_JUMP), 5, // Jump to end
-
-        // Else branch
-        @intFromEnum(instructions.OpCode.OP_CONST), 3, // Push result 0
-        @intFromEnum(instructions.OpCode.OP_MATCH_END), // End match
-        @intFromEnum(instructions.OpCode.OP_HALT),
+        @intFromEnum(instructions.OpCode.OP_TRY),         // 4: Start try block
+        @intFromEnum(instructions.OpCode.OP_VAR), 0,      // 5: Load array
+        @intFromEnum(instructions.OpCode.OP_CONST), 1,    // 7: Push index 999
+        @intFromEnum(instructions.OpCode.OP_ARRAY_GET),   // 9: This will throw
+        @intFromEnum(instructions.OpCode.OP_JUMP), 3,     // 10: Skip catch block (jump to END_TRY)
+        
+        @intFromEnum(instructions.OpCode.OP_CATCH),       // 12: Start catch block
+        @intFromEnum(instructions.OpCode.OP_CONST), 2,    // 13: Push -1
+        
+        @intFromEnum(instructions.OpCode.OP_END_TRY),     // 15: End try-catch
+        @intFromEnum(instructions.OpCode.OP_HALT),        // 16: Stop execution
     };
 
     var constants = [_]Frame{
-        Frame{ // constant[0] = Enum.ONE
-            .value = .{ .type = .ENUM, .data = .{ .enum_val = .{ .type_name = "Number", .variant = 0 } }, .nothing = false },
+        Frame{ // constant[0] = empty array
+            .value = .{
+                .type = .ARRAY,
+                .data = .{ .array_val = array_val },
+                .nothing = false,
+            },
+            .allocator = null,  // Don't set allocator since we're handling cleanup here
+            .owns_value = false, // Don't own the value since we're handling cleanup here
+        },
+        Frame{ // constant[1] = index 999
+            .value = .{
+                .type = .INT,
+                .data = .{ .int = 999 },
+                .nothing = false,
+            },
             .allocator = null,
             .owns_value = true,
         },
-        Frame{ // constant[1] = 1
-            .value = .{ .type = .INT, .data = .{ .int = 1 }, .nothing = false },
-            .allocator = null,
-            .owns_value = true,
-        },
-        Frame{ // constant[2] = 2
-            .value = .{ .type = .INT, .data = .{ .int = 2 }, .nothing = false },
+        Frame{ // constant[2] = error result (-1)
+            .value = .{
+                .type = .INT,
+                .data = .{ .int = -1 },
+                .nothing = false,
+            },
             .allocator = null,
             .owns_value = true,
         },
@@ -1866,11 +1954,10 @@ pub fn main() !void {
     defer vm.deinit();
 
     // Run the VM and handle results
-
     if (vm.eval()) |maybe_result| {
         if (maybe_result) |result| {
             std.debug.print("Final result: ", .{});
-            VM.printValue(result.value); // Call it as a static function
+            VM.printValue(result.value);
             std.debug.print("\n", .{});
 
             result.deinit();

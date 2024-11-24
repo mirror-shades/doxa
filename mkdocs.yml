@@ -5,25 +5,32 @@ theme:
     - navigation.tabs
     - navigation.sections
     - toc.integrate
-    - navigation.top
     - search.highlight
     - search.suggest
     - content.tabs.link
     - content.code.annotation
     - content.code.copy
   palette:
-    - scheme: default
-      primary: teal
-      accent: purple
-      toggle:
-        icon: material/toggle-switch-off-outline
-        name: Switch to dark mode
     - scheme: slate
       primary: teal
-      accent: purple
+      accent: lime
       toggle:
         icon: material/toggle-switch-outline
         name: Switch to light mode
+    - scheme: default
+      primary: teal
+      accent: lime
+      toggle:
+        icon: material/toggle-switch-off-outline
+        name: Switch to dark mode
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/mirror-shades/doxa
+  license:
+    text: Copyright 2024 Mirror Shades
+    url: https://www.gnu.org/licenses/gpl-2.0.en.html
 
 markdown_extensions:
   - pymdownx.highlight

@@ -1,4 +1,6 @@
-By default, Doxa runs in normal mode. Strict mode is enabled via `#strict` at the file start. To preserve type safety, strict files can only import other strict files. There is an intermediate mode called `warn` which compiles files in normal mode but gives warnings when strict conventions are not followed.
+By default, Doxa runs in normal mode. Strict mode is enabled via `#strict` at the file start.
+To preserve type safety, strict files can only import other strict files. There is an intermediate
+mode called `warn` which compiles files in normal mode but gives warnings when strict conventions are not followed.
 
 ## General syntax
 
@@ -28,13 +30,14 @@ var result = divide(10, 0) catch |err| {
 ```
 
 Doxa has some choice code keywords:
+
 - `function` and `fn` are functionally identical
 - `and` and `&&` are functionally identical
 - `or` and `||` are functionally identical
 
 warnings are given for projects that mix symbolic and keyword conditionals.
 
-``` 
+```
 struct Animal {
     name: string
 }
@@ -43,7 +46,7 @@ struct Dog {
     // Composition instead of inheritance
     animal: Animal,
     breed: string,
-    
+
     fn bark(self) {
         print("${self.animal.name} says woof!");
     }
@@ -55,7 +58,8 @@ var dog = Dog {
 };
 ```
 
-modules are supported. strict files can only import other strict files. normal files can import both strict and normal files.
+modules are supported. strict files can only import other strict files.
+normal files can import both strict and normal files.
 
 ```
 // math.doxa
@@ -73,7 +77,8 @@ import { add } from "./math.doxa";
 var sum = add(1, 2);
 ```
 
-match is supported rather than switch.
+match is supported rather than switch. match cases must be exhaustive but
+else is supported as a fallback.
 
 ```
 enum Number {
@@ -87,11 +92,7 @@ match x {
     .TWO => print("two"),
     .UNKNOWN => print("unknown")
 }
-```
 
-else is supported
-
-```
 // this is functionally identical to the previous example
 match x {
     .ONE => print("one"),
@@ -110,8 +111,8 @@ match x {
 }
 ```
 
-
-arrays can only be declared with a homogeneous type. Heterogeneous arrays are not supported. Structs are the preferred way to group different types.
+arrays can only be declared with a homogeneous type. Heterogeneous arrays
+are not supported. Structs are the preferred way to group different types.
 
 ```
 // Only homogeneous arrays allowed
@@ -125,40 +126,40 @@ var noType = [1, 2, 3];            // Error: array type must be explicit
 
 ## Doxa normal syntax
 
+in normal mode, all variables are dynamically typed by default.
+this can be explicitly marked with the auto type. this allows for
+cross type assignments.
+
+```
+var x = 1;                //int
+x = true;                 //bool
+
+var x: auto = 3.14;      //float
+x = "pi";                //string
+```
+
 constants are declared with the const keyword
 
 ```
 const x = 1;              //int
 const x = "two";          //string
-const x = 3.14;           //float
-const x = true;           //bool
 const x = [1, 2, 3];      //array
 ```
 
-constants cannot be declared without a value
+constants cannot be declared without a value but
+type can be inferred like variables.
 
 ```
 const x;                  //error, needs a value
+const x = 1;              //int
+const y: auto = 3.14;    //float
 ```
 
-all variables are auto by default
-
-```
-var x = 1;                //auto
-var x = "two";            //auto
-var x = 3.14;             //auto
-var x = true;             //auto
-var x = [1, 2, 3];        //auto
-```
-
-type declarations are allowed
+type declarations are allowed. when a type is declared safety is enforced.
 
 ```
 var x: int = 1;           //int
-var x: string = "two";    //string
-var x: float = 3.14;      //float
-var x: bool = true;       //bool
-var x: []int = [1, 2, 3]; //array
+x = "two";                //error, expected type int
 ```
 
 variables can be declared without a value
@@ -187,38 +188,23 @@ x = "five";               //auto
 
 arrays can be declared either with a homogeneous type or a mixed type
 
-
 ## Doxa strict syntax
+
+constants must be declared with a type and a value
 
 ```
 const x;                  //error, needs a type and a value
 const x: int;             //error, needs a value
 ```
 
-constants can be declared with an auto type
-
-```
-const x: auto;            //auto
-```
-
-variables can be declared without a value as long as they are given an explicit type
+variables can be declared without a value as long as they are given an explicit type.
+if a variable is declared without a type, it and error is thrown. There is an auto type
+which can be used however type safety is still enforced.
 
 ```
 var x: int;               //int
 var x = "two";            //error, needs explicit type
-var x = 3.14;             //error, needs explicit type
-var x = true;             //error, needs explicit type
-var x = [1, 2, 3];        //error, needs explicit type
-```
-
-type declarations are required, same as normal syntax
-
-```
-var x: int = 1;           //int
-var x: string = "two";    //string
-var x: float = 3.14;      //float
-var x: bool = true;       //bool
-var x: []int = [1, 2, 3]; //array
+var x: auto = 3.14;       //float
 ```
 
 variables can be declared without a value as long as they are given an explicit type
@@ -231,16 +217,6 @@ var x: bool;              //bool
 var x: []int;             //array
 ```
 
-auto variables can be declared without a type but it is cast to the type of the value
-
-```
-var x: auto = 5;          //int
-var x: auto = "five";     //string
-var x: auto = 3.14;       //float
-var x: auto = true;       //bool
-var x: auto = [1, 2, 3];  //array
-```
-
 variables cannot be declared without a type
 
 ```
@@ -248,12 +224,14 @@ var x;                    //error, needs explicit type
 var x: auto;              //error, needs explicit type
 ```
 
-no cross-type assignments are allowed for strict variables
+Auto will default the variable to the type of the initial value. no cross-type
+assignments are allowed for strict variables
 
 ```
 var x: auto = 5;          //int
 x = "five";               //error, given value does not match type int
 ```
+
 ## Conditionals
 
 In Doxa, all conditionals are expressions, so they return a value.
