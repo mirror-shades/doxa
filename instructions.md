@@ -86,8 +86,8 @@ set and reassign variables
 
     var constants_array = [_]Frame{
         Frame.initInt(5),       // constant[0]
-        Frame.initInt(10),       // constant[1]
-        Frame.initInt(99),       // constant[2]
+        Frame.initInt(10),      // constant[1]
+        Frame.initInt(99),      // constant[2]
     };
 ```
 

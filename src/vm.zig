@@ -439,42 +439,55 @@ const TryFrame = struct {
 };
 
 pub const VM = struct {
-    allocator: std.mem.Allocator, // memory allocator
-    code: []const u8, // bytecode
-    stack: Stack, // stack
-    constants: []Frame, // constants
-    variables: std.ArrayList(Frame), // variables
-    functions: std.ArrayList(*instructions.Function), // functions
-    frames: std.ArrayList(CallFrame), // frames
-    frame_count: u32, // frame count
-    sp: u32, // stack pointer
-    ip: u32, // instruction pointer
-    reporter: *Reporting, // error reporter
-    call_stack: std.ArrayList(CallFrame), // call stack
-    current_frame: ?*CallFrame, // Points to the active frame
-    global_constants: []instructions.Value, // Add this field to track global constants
-    string_interner: StringInterner, // string interner
-    array_interner: ArrayInterner, // array interner
-    global_function: ?*instructions.Function, // global function
-    block_stack: std.ArrayList(BlockScope), // block stack
-    current_scope_vars: std.ArrayList(Frame), // current scope variables
-    match_value: ?Frame = null, // match value
-    try_stack: std.ArrayList(TryFrame), // try stack
-    current_try_frame: ?*TryFrame = null, // current try frame
+    allocator: std.mem.Allocator,
+    code: []const u8,
+    constants: []Frame,
+    reporter: *Reporting,
+    ip: u32,
+    sp: u32,
+    
+    // Add these new fields
+    functions: []const *instructions.Function,
+    variables: []const instructions.Variable,
+    values: []instructions.Value,
 
-    pub fn init(allocator: std.mem.Allocator, code: []const u8, constants: []Frame, reporter: *Reporting) VM {
+    stack: Stack,
+    frames: std.ArrayList(CallFrame),
+    frame_count: u32,
+    call_stack: std.ArrayList(CallFrame),
+    current_frame: ?*CallFrame,
+    global_constants: []instructions.Value,
+    string_interner: StringInterner,
+    array_interner: ArrayInterner,
+    global_function: ?*instructions.Function,
+    block_stack: std.ArrayList(BlockScope),
+    current_scope_vars: std.ArrayList(Frame),
+    match_value: ?Frame = null,
+    try_stack: std.ArrayList(TryFrame),
+    current_try_frame: ?*TryFrame = null,
+
+    pub fn init(
+        allocator: std.mem.Allocator, 
+        code: []const u8, 
+        constants: []Frame, 
+        functions: []const *instructions.Function,
+        variables: []const instructions.Variable,
+        values: []instructions.Value,
+        reporter: *Reporting
+    ) VM {
         var vm = VM{
             .allocator = allocator,
             .code = code,
-            .stack = Stack.init(), // Now this will work
             .constants = constants,
-            .variables = std.ArrayList(Frame).init(allocator),
-            .functions = std.ArrayList(*instructions.Function).init(allocator),
-            .frames = std.ArrayList(CallFrame).init(allocator),
-            .frame_count = 0,
+            .reporter = reporter,
             .ip = 0,
             .sp = 0,
-            .reporter = reporter,
+            .functions = functions,
+            .variables = variables,
+            .values = values,
+            .stack = Stack.init(),
+            .frames = std.ArrayList(CallFrame).init(allocator),
+            .frame_count = 0,
             .call_stack = std.ArrayList(CallFrame).init(allocator),
             .current_frame = null,
             .global_constants = allocator.alloc(instructions.Value, constants.len) catch unreachable,
@@ -535,12 +548,6 @@ pub const VM = struct {
         }
         self.current_scope_vars.deinit();
 
-        // Clean up variables
-        for (self.variables.items) |*var_frame| {
-            var_frame.deinit();
-        }
-        self.variables.deinit();
-
         // Clean up stack
         var i: u32 = 0;
         while (i < self.stack.sp) : (i += 1) {
@@ -548,7 +555,6 @@ pub const VM = struct {
         }
 
         // Clean up other resources
-        self.functions.deinit();
         self.frames.deinit();
         self.call_stack.deinit();
         self.string_interner.deinit();
@@ -772,6 +778,55 @@ pub const VM = struct {
 
                         try self.stack.push(Frame.reference(var_value.value));
                     },
+                    // set variable
+                    instructions.OpCode.OP_SET_VAR => {
+                        const var_index = self.read_byte();
+                        const value = self.pop() orelse return null;
+
+                        // If we're in a block, update its var count
+                        if (self.block_stack.items.len > 0) {
+                            var current_block = &self.block_stack.items[self.block_stack.items.len - 1];
+                            if (var_index >= current_block.var_start) {
+                                const local_index = var_index - current_block.var_start;
+                                if (local_index >= current_block.var_count) {
+                                    current_block.var_count = local_index + 1;
+                                }
+                            }
+                        }
+                        // Grow the current scope's variable array if needed
+                        while (var_index >= self.current_scope_vars.items.len) {
+                            try self.current_scope_vars.append(Frame.initNothing(.INT));
+                        }
+
+                        // Clean up any existing value
+                        if (var_index < self.current_scope_vars.items.len) {
+                            self.current_scope_vars.items[var_index].deinit();
+                        }
+
+                        // Store the new value
+                        self.current_scope_vars.items[var_index] = value;
+                    },
+                    instructions.OpCode.OP_SET_CONST => {
+                        const var_index = self.read_byte();
+                        const value = try self.stack.pop();
+                        const variable = self.variables[var_index];
+
+                        std.debug.print("Setting const var[{}] to {}\n", .{var_index, value.value});
+
+                        // Verify it's marked as constant
+                        if (!variable.is_constant) {
+                            self.reporter.reportFatalError("Internal error: OP_SET_CONST used on non-constant variable", .{});
+                            return null;
+                        }
+
+                        // Check if already initialized
+                        if (!self.values[variable.index].nothing) {
+                            self.reporter.reportFatalError("Cannot reassign to constant variable", .{});
+                            return null;
+                        }
+
+                        self.values[variable.index] = value.value;
+                    },
                     instructions.OpCode.OP_IADD, instructions.OpCode.OP_ISUB, instructions.OpCode.OP_IMUL => {
                         const b = self.pop().?;
                         const a = self.pop().?;
@@ -949,35 +1004,6 @@ pub const VM = struct {
                         const a = self.pop().?;
                         const result = notEqual(a, b) catch return null;
                         self.stack.push(result) catch return null;
-                    },
-                    // set variable
-                    instructions.OpCode.OP_SET_VAR => {
-                        const var_index = self.read_byte();
-                        const value = self.pop() orelse return null;
-
-                        // If we're in a block, update its var count
-                        if (self.block_stack.items.len > 0) {
-                            var current_block = &self.block_stack.items[self.block_stack.items.len - 1];
-                            if (var_index >= current_block.var_start) {
-                                const local_index = var_index - current_block.var_start;
-                                if (local_index >= current_block.var_count) {
-                                    current_block.var_count = local_index + 1;
-                                }
-                            }
-                        }
-
-                        // Grow the current scope's variable array if needed
-                        while (var_index >= self.current_scope_vars.items.len) {
-                            try self.current_scope_vars.append(Frame.initNothing(.INT));
-                        }
-
-                        // Clean up any existing value
-                        if (var_index < self.current_scope_vars.items.len) {
-                            self.current_scope_vars.items[var_index].deinit();
-                        }
-
-                        // Store the new value
-                        self.current_scope_vars.items[var_index] = value;
                     },
                     instructions.OpCode.OP_JUMP => {
                         const jump_offset = self.read_byte();
@@ -1201,7 +1227,7 @@ pub const VM = struct {
                         }
 
                         const array = array_frame.value.data.array_val;
-                        const idx = @as(usize, @intCast(index.value.data.int));
+                        const idx = @as(u32, @intCast(index.value.data.int));
 
                         if (idx >= array.items.items.len) {
                             // Get the type of the array elements
@@ -1337,7 +1363,6 @@ pub const VM = struct {
                     instructions.OpCode.OP_END_TRY => {
                         try self.executeEndTry();
                     },
-
                 }
             } else {
                 return error.NoActiveFrame;
@@ -1620,12 +1645,29 @@ pub const VM = struct {
         return null;
     }
 
+    fn executeSetVar(self: *VM, var_index: u32, new_value: instructions.Value) !void {
+        const variable = self.variables[var_index];  // Changed from 'var' to 'variable'
+        
+        if (variable.is_constant) {
+            return error.CannotAssignToConstant;
+        }
+
+        // Type checking only needed if not dynamic
+        if (!variable.is_dynamic and 
+            self.values[variable.index].type != new_value.type) {
+            return error.TypeMismatch;
+        }
+
+        self.values[variable.index] = new_value;
+    }
+
+
     fn getFunction(self: *VM, index: u8) ?*instructions.Function {
-        if (index >= self.functions.items.len) {
+        if (index >= self.functions.len) {  // Changed from items.len to len
             self.reporter.reportFatalError("Function index out of bounds", .{});
             return null;
         }
-        return self.functions.items[index];
+        return self.functions[index];
     }
 
     fn callFunction(self: *VM, function: *instructions.Function) !void {
@@ -2008,27 +2050,51 @@ pub fn main() !void {
     };
     // Ensure items are freed
     defer array_val.items.deinit();
+    
+    // Variables metadata can be const
+    const variables = [_]instructions.Variable{
+        .{  // Variable at index 0
+            .index = 0,
+            .is_constant = true,  // Mark as constant
+            .is_dynamic = false,  // Constants can't be dynamic
+        },
+    };
+    // Pre-allocate space for variable values
+    var values = [_]instructions.Value{
+        .{ .type = .INT, .nothing = true, .data = undefined },  // Space for var[0]
+    };
 
     const code = [_]u8{
-        @intFromEnum(instructions.OpCode.OP_TRY),
-        @intFromEnum(instructions.OpCode.OP_CONST), 0,  // Numerator
-        @intFromEnum(instructions.OpCode.OP_CONST), 1,   // Denominator (zero)
-        @intFromEnum(instructions.OpCode.OP_FDIV),       // This will cause division by zero
-        @intFromEnum(instructions.OpCode.OP_CATCH),
-        @intFromEnum(instructions.OpCode.OP_CONST), 2,  // Error handler returns 42
-        @intFromEnum(instructions.OpCode.OP_END_TRY),
+        // Set constant value to 5
+        @intFromEnum(instructions.OpCode.OP_CONST), 0,
+        @intFromEnum(instructions.OpCode.OP_SET_CONST), 0,
+        
+        // Try to change constant to 10 (should error)
+        @intFromEnum(instructions.OpCode.OP_CONST), 1,
+        @intFromEnum(instructions.OpCode.OP_SET_CONST), 0,
+        
+        // Read the constant value
+        @intFromEnum(instructions.OpCode.OP_VAR), 0,
         @intFromEnum(instructions.OpCode.OP_HALT),
     };
 
-    var constants = [_]Frame{
-        Frame.initInt(10),
-        Frame.initInt(0),
-        Frame.initInt(42),
+    // Values need to be mutable since they'll be changed
+    var constants_array = [_]Frame{
+        Frame.initInt(5),       // constant[0]
+        Frame.initInt(10),      // constant[1]
+        Frame.initInt(99),      // constant[2]
     };
 
-    std.debug.print("\n=== Starting Conditional Block Test ===\n", .{});
-
-    var vm = VM.init(allocator, &code, &constants, &reporter);
+    // Create the VM with proper slice syntax
+    var vm = VM.init(
+        allocator, 
+        &code, 
+        &constants_array,
+        &[_]*instructions.Function{},  // Empty functions array
+        &variables,
+        &values,  // Pass the array directly
+        &reporter
+    );
     defer vm.deinit();
 
     // Run the VM and handle results

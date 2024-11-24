@@ -12,15 +12,17 @@ pub const OpCode = enum(u8) {
     OP_CONST = 0x03,
     // push a variable value into the stack.
     OP_VAR = 0x04,
-    // set a variable to a constant value.
+    // set a variable
     OP_SET_VAR = 0x05,
+    // set a constant
+    OP_SET_CONST = 0x06,
     
     // add two values on the stack.
-    OP_IADD = 0x06,
+    OP_IADD = 0x07,
     // subtract two values on the stack.
-    OP_ISUB = 0x07,
+    OP_ISUB = 0x08,
     // multiply two values on the stack.
-    OP_IMUL = 0x08,
+    OP_IMUL = 0x09,
     // float add
     OP_FADD = 0x0A,
     // float subtract
@@ -136,6 +138,37 @@ pub const ArrayValue = struct {
     }
 };
 
+pub const StructValue = struct {
+    fields: std.StringHashMap(Value),  // This expects a StringHashMap, not an array
+    type_name: []const u8,
+    num_fields: u8,
+    
+    pub fn init(allocator: std.mem.Allocator, type_name: []const u8) !*StructValue {
+        const sv = try allocator.create(StructValue);
+        sv.* = .{
+            .fields = std.StringHashMap(Value).init(allocator),  // Initialize as HashMap
+            .type_name = try allocator.dupe(u8, type_name),
+            .num_fields = 0,
+        };
+        return sv;
+    }
+     
+    pub fn deinit(self: *StructValue, allocator: std.mem.Allocator) void {
+        var iter = self.fields.iterator();
+        while (iter.next()) |entry| {
+            // Recursively clean up field values
+            switch (entry.value_ptr.type) {
+                .STRING => allocator.free(entry.value_ptr.data.string),
+                .STRUCT => entry.value_ptr.data.struct_val.deinit(allocator),
+                else => {},
+            }
+        }
+        self.fields.deinit();
+        allocator.free(self.type_name);
+        allocator.destroy(self);
+    }
+};
+
 pub const EnumValue = struct {
     type_name: []const u8,
     variant: u8,
@@ -183,33 +216,8 @@ pub const Value = struct {
     }
 };
 
-pub const StructValue = struct {
-    fields: std.StringHashMap(Value),  // This expects a StringHashMap, not an array
-    type_name: []const u8,
-    num_fields: u8,
-    
-    pub fn init(allocator: std.mem.Allocator, type_name: []const u8) !*StructValue {
-        const sv = try allocator.create(StructValue);
-        sv.* = .{
-            .fields = std.StringHashMap(Value).init(allocator),  // Initialize as HashMap
-            .type_name = try allocator.dupe(u8, type_name),
-            .num_fields = 0,
-        };
-        return sv;
-    }
-     
-    pub fn deinit(self: *StructValue, allocator: std.mem.Allocator) void {
-        var iter = self.fields.iterator();
-        while (iter.next()) |entry| {
-            // Recursively clean up field values
-            switch (entry.value_ptr.type) {
-                .STRING => allocator.free(entry.value_ptr.data.string),
-                .STRUCT => entry.value_ptr.data.struct_val.deinit(allocator),
-                else => {},
-            }
-        }
-        self.fields.deinit();
-        allocator.free(self.type_name);
-        allocator.destroy(self);
-    }
+pub const Variable = struct {
+    index: u32,
+    is_constant: bool,
+    is_dynamic: bool, // NEVER assigned true in strict mode!!!
 };
