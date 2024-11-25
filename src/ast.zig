@@ -12,6 +12,12 @@ pub const Unary = struct {
     right: ?*Expr,
 };
 
+pub const If = struct {
+    condition: ?*Expr,
+    then_branch: ?*Expr,
+    else_branch: ?*Expr,
+};
+
 pub const Expr = union(enum) {
     Literal: token.TokenLiteral,
     Binary: Binary,
@@ -19,6 +25,7 @@ pub const Expr = union(enum) {
     Variable: token.Token,
     Assignment: Assignment,
     Grouping: ?*Expr,
+    If: If,
 
     pub fn deinit(self: *Expr, allocator: std.mem.Allocator) void {
         switch (self.*) {
@@ -48,6 +55,20 @@ pub const Expr = union(enum) {
             .Grouping => |maybe_expr| if (maybe_expr) |expr| {
                 expr.deinit(allocator);
                 allocator.destroy(expr);
+            },
+            .If => |*if_expr| {
+                if (if_expr.condition) |condition| {
+                    condition.deinit(allocator);
+                    allocator.destroy(condition);
+                }
+                if (if_expr.then_branch) |then_branch| {
+                    then_branch.deinit(allocator);
+                    allocator.destroy(then_branch);
+                }
+                if (if_expr.else_branch) |else_branch| {
+                    else_branch.deinit(allocator);
+                    allocator.destroy(else_branch);
+                }
             },
         }
     }

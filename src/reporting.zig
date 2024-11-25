@@ -76,6 +76,8 @@ pub const ErrorList = error{
     InvalidExpression,
     InvalidOperator,
     ExpectedRightBrace,
+    ExpectedThen,
+    ExpectedElse,
 };
 
 /// Reporting provides structured error handling and reporting capabilities
