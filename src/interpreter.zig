@@ -59,6 +59,23 @@ pub const Interpreter = struct {
         }
     }
 
+    pub fn compare(a: anytype, b: anytype) i8 {
+        var a_float: f32 = undefined;
+        var b_float: f32 = undefined;
+        if (@TypeOf(a) == i32 or @TypeOf(b) == i32) {
+            a_float = @as(f32, @floatFromInt(a));
+            b_float = @as(f32, @floatFromInt(b));
+        } else if (@TypeOf(a) == f32 or @TypeOf(b) == f32) {
+            a_float = a;
+            b_float = b;
+        } else {
+            return error.InvalidType;
+        }
+        if (a_float < b_float) return -1;
+        if (a_float > b_float) return 1;
+        return 0;
+    }
+
     fn executeStatement(self: *Interpreter, stmt: *const ast.Stmt) !void {
         switch (stmt.*) {
             .VarDecl => |decl| {
@@ -122,6 +139,36 @@ pub const Interpreter = struct {
                             return token.TokenLiteral{ .int = @divTrunc(left.int, right.int) };
                         }
                         return error.TypeError;
+                    },
+                    .GREATER => {
+                        if (left == .int and right == .int) {
+                            return token.TokenLiteral{ .boolean = Interpreter.compare(left.int, right.int) > 0 };
+                        }
+                        return error.TypeError;
+                    },
+                    .GREATER_EQUAL => {
+                        if (left == .int and right == .int) {
+                            return token.TokenLiteral{ .boolean = Interpreter.compare(left.int, right.int) >= 0 };
+                        }
+                        return error.TypeError;
+                    },
+                    .LESS => {
+                        if (left == .int and right == .int) {
+                            return token.TokenLiteral{ .boolean = Interpreter.compare(left.int, right.int) < 0 };
+                        }
+                        return error.TypeError;
+                    },
+                    .LESS_EQUAL => {
+                        if (left == .int and right == .int) {
+                            return token.TokenLiteral{ .boolean = Interpreter.compare(left.int, right.int) <= 0 };
+                        }
+                        return error.TypeError;
+                    },
+                    .EQUALITY => {
+                        return token.TokenLiteral{ .boolean = Interpreter.compare(left.int, right.int) == 0 };
+                    },
+                    .BANG_EQUAL => {
+                        return token.TokenLiteral{ .boolean = Interpreter.compare(left.int, right.int) != 0 };
                     },
                     else => return error.InvalidOperator,
                 }
