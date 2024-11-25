@@ -1,5 +1,65 @@
 const std = @import("std");
 
+pub const ErrorList = error{
+    // Stack errors
+    StackOverflow,
+    StackUnderflow,
+    
+    // Value/Type errors
+    TypeError,
+    DivisionByZero,
+    IntegerOverflow,
+    FloatOverflow,
+    
+    // Variable errors
+    VariableNotFound,
+    VariableOutOfScope,
+    VariableIndexOutOfBounds,
+    AccessingCleanedVariable,
+    CannotAssignToConstant,
+    
+    // Function/Frame errors
+    InvalidFunction,
+    NoActiveFrame,
+    FrameStackOverflow,
+    InsufficientArguments,
+    CannotPopGlobalFrame,
+    
+    // Array/String errors
+    IndexOutOfBounds,
+    InvalidConstant,
+    
+    // Try-Catch errors
+    NoTryBlock,
+    NoCatchWithoutTry,
+    NoTryBlockToEnd,
+    UncaughtError,
+
+    // lexer
+    UnterminatedString,
+    UnterminatedArray,
+    UnterminatedParenthesis,
+    UnterminatedMultilineComment,
+    ExpectedCommaOrClosingBracket,
+    ExpectedCommaOrClosingParenthesis,
+    InvalidNumber,
+    InvalidEscapeSequence,
+    UnexpectedCharacter,
+    Overflow,
+    InvalidCharacter,
+    Utf8InvalidStartByte,
+    Utf8ExpectedContinuation,
+    Utf8OverlongEncoding,
+    Utf8InvalidCodepoint,
+    Utf8CodepointTooLarge,
+    InvalidUnicodeEscape,
+    CodepointTooLarge,
+    Utf8CannotEncodeSurrogateHalf,
+    LeadingZeros,
+    MultipleExponents,
+    InvalidExponent,
+};
+
 /// Reporting provides structured error handling and reporting capabilities
 /// for the DoxVM compiler and runtime.
 pub const Reporting = struct {
@@ -23,6 +83,11 @@ pub const Reporting = struct {
         return .{
             .writer = writer,
         };
+    }
+
+    pub fn deinit(self: *Reporting) void {
+        _ = self;
+        //self.writer.flush() catch {};
     }
 
     /// Initialize a Reporter that writes to stderr
