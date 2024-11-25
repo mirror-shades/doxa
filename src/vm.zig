@@ -2,6 +2,7 @@ const std = @import("std");
 const instructions = @import("instructions.zig");
 const ValueType = instructions.ValueType;
 const Reporting = @import("reporting.zig").Reporting;
+const ErrorList = @import("reporting.zig").ErrorList;
 
 const STACK_SIZE: u16 = 1024;
 const MAX_FRAMES: u16 = 1024;
@@ -712,7 +713,7 @@ pub const VM = struct {
             .OP_CONST => {
                 const constant_index = self.read_byte();
                 const constant_value = self.get_constant(constant_index) orelse 
-                    return error.InvalidConstant;
+                    return ErrorList.InvalidConstant;
                 try self.stack.push(constant_value);
             },
             .OP_VAR => {
@@ -739,7 +740,7 @@ pub const VM = struct {
             },
             .OP_SET_VAR => {
                 const var_index = self.read_byte();
-                const value = self.pop() orelse return null;
+                const value = self.pop() orelse return ErrorList.StackUnderflow;
 
                 // If we're in a block, update its var count
                 if (self.block_stack.items.len > 0) {
@@ -774,13 +775,13 @@ pub const VM = struct {
                 // Verify it's marked as constant
                 if (!variable.is_constant) {
                     self.reporter.reportFatalError("Internal error: OP_SET_CONST used on non-constant variable", .{});
-                    return null;
+                    return ErrorList.TypeError;
                 }
 
                 // Check if already initialized
                 if (!self.values[variable.index].nothing) {
                     self.reporter.reportFatalError("Cannot reassign to constant variable", .{});
-                    return null;
+                    return ErrorList.TypeError;
                 }
 
                 self.values[variable.index] = value.value;
@@ -792,12 +793,12 @@ pub const VM = struct {
                 // Fast path: both integers
                 if (a.value.type == .INT and b.value.type == .INT) {
                     const result = switch (opcode) {
-                        .OP_IADD => i_add(a.asInt() catch return null, b.asInt() catch return null),
-                        .OP_ISUB => i_sub(a.asInt() catch return null, b.asInt() catch return null),
-                        .OP_IMUL => i_mul(a.asInt() catch return null, b.asInt() catch return null),
+                        .OP_IADD => i_add(a.asInt() catch return ErrorList.TypeError, b.asInt() catch return ErrorList.TypeError),
+                        .OP_ISUB => i_sub(a.asInt() catch return ErrorList.TypeError, b.asInt() catch return ErrorList.TypeError),
+                        .OP_IMUL => i_mul(a.asInt() catch return ErrorList.TypeError, b.asInt() catch return ErrorList.TypeError),
                         else => unreachable,
-                    } catch return null;
-                    self.stack.push(result) catch return null;
+                    } catch return ErrorList.TypeError;
+                    self.stack.push(result) catch return ErrorList.StackUnderflow;
                     return;
                 }
 
@@ -805,48 +806,48 @@ pub const VM = struct {
                 switch (a.value.type) {
                     .INT => switch (b.value.type) {
                         .FLOAT => {
-                            const a_float = @as(f32, @floatFromInt(a.asInt() catch return null));
+                            const a_float = @as(f32, @floatFromInt(a.asInt() catch return ErrorList.TypeError));
                             const result = switch (opcode) {
-                                .OP_IADD => f_add(a_float, b.asFloat() catch return null),
-                                .OP_ISUB => f_sub(a_float, b.asFloat() catch return null),
-                                .OP_IMUL => f_mul(a_float, b.asFloat() catch return null),
+                                .OP_IADD => f_add(a_float, b.asFloat() catch return ErrorList.TypeError),
+                                .OP_ISUB => f_sub(a_float, b.asFloat() catch return ErrorList.TypeError),
+                                .OP_IMUL => f_mul(a_float, b.asFloat() catch return ErrorList.TypeError),
                                 else => unreachable,
-                            } catch return null;
-                            self.stack.push(result) catch return null;
+                            } catch return ErrorList.TypeError;
+                            self.stack.push(result) catch return ErrorList.StackUnderflow;
                         },
                         else => {
                             self.reporter.reportFatalError("Invalid type for arithmetic operation", .{});
-                            return null;
+                            return ErrorList.TypeError;
                         },
                     },
                     .FLOAT => switch (b.value.type) {
                         .INT => {
-                            const b_float = @as(f32, @floatFromInt(b.asInt() catch return null));
+                            const b_float = @as(f32, @floatFromInt(b.asInt() catch return ErrorList.TypeError));
                             const result = switch (opcode) {
-                                .OP_IADD => f_add(a.asFloat() catch return null, b_float),
-                                .OP_ISUB => f_sub(a.asFloat() catch return null, b_float),
-                                .OP_IMUL => f_mul(a.asFloat() catch return null, b_float),
+                                .OP_IADD => f_add(a.asFloat() catch return ErrorList.TypeError, b_float),
+                                .OP_ISUB => f_sub(a.asFloat() catch return ErrorList.TypeError, b_float),
+                                .OP_IMUL => f_mul(a.asFloat() catch return ErrorList.TypeError, b_float),
                                 else => unreachable,
-                            } catch return null;
-                            self.stack.push(result) catch return null;
+                            } catch return ErrorList.TypeError;
+                            self.stack.push(result) catch return ErrorList.StackUnderflow;
                         },
                         .FLOAT => {
                             const result = switch (opcode) {
-                                .OP_IADD => f_add(a.asFloat() catch return null, b.asFloat() catch return null),
-                                .OP_ISUB => f_sub(a.asFloat() catch return null, b.asFloat() catch return null),
-                                .OP_IMUL => f_mul(a.asFloat() catch return null, b.asFloat() catch return null),
+                                .OP_IADD => f_add(a.asFloat() catch return ErrorList.TypeError, b.asFloat() catch return ErrorList.TypeError),
+                                .OP_ISUB => f_sub(a.asFloat() catch return ErrorList.TypeError, b.asFloat() catch return ErrorList.TypeError),
+                                .OP_IMUL => f_mul(a.asFloat() catch return ErrorList.TypeError, b.asFloat() catch return ErrorList.TypeError),
                                 else => unreachable,
-                            } catch return null;
-                            self.stack.push(result) catch return null;
+                            } catch return ErrorList.TypeError;
+                            self.stack.push(result) catch return ErrorList.StackUnderflow;
                         },
                         else => {
                             self.reporter.reportFatalError("Invalid type for arithmetic operation", .{});
-                            return null;
+                            return ErrorList.TypeError;
                         },
                     },
                     else => {
                         self.reporter.reportFatalError("Invalid type for arithmetic operation", .{});
-                        return null;
+                        return ErrorList.TypeError;
                     },
                 }
             },
@@ -856,20 +857,20 @@ pub const VM = struct {
 
                 // Convert operands to float if needed
                 const a_val: f32 = switch (a.value.type) {
-                    .FLOAT => a.asFloat() catch return null,
-                    .INT => @as(f32, @floatFromInt(a.asInt() catch return null)),
+                    .FLOAT => a.asFloat() catch return ErrorList.TypeError,
+                    .INT => @as(f32, @floatFromInt(a.asInt() catch return ErrorList.TypeError)),
                     else => {
                         self.reporter.reportFatalError("Invalid type for float operation", .{});
-                        return null;
+                        return ErrorList.TypeError;
                     },
                 };
 
                 const b_val: f32 = switch (b.value.type) {
-                    .FLOAT => b.asFloat() catch return null,
-                    .INT => @as(f32, @floatFromInt(b.asInt() catch return null)),
+                    .FLOAT => b.asFloat() catch return ErrorList.TypeError,
+                    .INT => @as(f32, @floatFromInt(b.asInt() catch return ErrorList.TypeError)),
                     else => {
                         self.reporter.reportFatalError("Invalid type for float operation", .{});
-                        return null;
+                        return ErrorList.TypeError;
                     },
                 };
 
@@ -878,8 +879,8 @@ pub const VM = struct {
                     .OP_FSUB => f_sub(a_val, b_val),
                     .OP_FMUL => f_mul(a_val, b_val),
                     else => unreachable,
-                } catch return null;
-                self.stack.push(result) catch return null;
+                } catch return ErrorList.TypeError;
+                self.stack.push(result) catch return ErrorList.StackUnderflow;
             },
             instructions.OpCode.OP_FDIV => {
                 const b = self.pop() orelse return error.StackUnderflow;
@@ -922,48 +923,48 @@ pub const VM = struct {
             instructions.OpCode.OP_GREATER => {
                 const b = self.pop().?;
                 const a = self.pop().?;
-                const result = greater(a, b) catch return null;
-                self.stack.push(result) catch return null;
+                const result = greater(a, b) catch return ErrorList.TypeError;
+                self.stack.push(result) catch return ErrorList.StackUnderflow;
             },
             // less
             instructions.OpCode.OP_LESS => {
                 const b = self.pop().?;
-                const a = self.pop().?;
-                const result = less(a, b) catch return null;
-                self.stack.push(result) catch return null;
+                const a = self.pop().?; 
+                const result = less(a, b) catch return ErrorList.TypeError;
+                self.stack.push(result) catch return ErrorList.StackUnderflow;
             },
             // i2f, f2i
             instructions.OpCode.OP_CONVERT_NUMBER => {
-                const value = self.pop() orelse return null;
+                const value = self.pop() orelse return ErrorList.StackUnderflow;
                 std.debug.print("CONVERT_NUMBER: Popped value type: {}\n", .{value.value.type});
                 if (value.typeIs(.INT)) {
-                    const int_val = value.asInt() catch return null;
+                    const int_val = value.asInt() catch return ErrorList.TypeError;
                     const float_val = @as(f32, @floatFromInt(int_val));
-                    self.stack.push(Frame.initFloat(float_val)) catch return null;
+                    self.stack.push(Frame.initFloat(float_val)) catch return ErrorList.StackUnderflow;
                 }
                 else if (value.typeIs(.FLOAT)) {
-                    const float_val = value.asFloat() catch return null;
+                    const float_val = value.asFloat() catch return ErrorList.TypeError;
                     const int_val = @as(i32, @intFromFloat(std.math.trunc(float_val)));
-                    self.stack.push(Frame.initInt(int_val)) catch return null;
+                    self.stack.push(Frame.initInt(int_val)) catch return ErrorList.StackUnderflow;
                 }
                 else {
                     self.reporter.reportFatalError("Invalid type for number conversion", .{});
-                    return null;
+                    return ErrorList.TypeError;
                 }
             },
             // equal
             instructions.OpCode.OP_EQUAL => {
                 const b = self.pop().?;
                 const a = self.pop().?;
-                const result = equal(a, b) catch return null;
-                self.stack.push(result) catch return null;
+                const result = equal(a, b) catch return ErrorList.TypeError;
+                self.stack.push(result) catch return ErrorList.StackUnderflow;
             },
             // notequal
             instructions.OpCode.OP_NOTEQUAL => {
                 const b = self.pop().?;
                 const a = self.pop().?;
-                const result = notEqual(a, b) catch return null;
-                self.stack.push(result) catch return null;
+                const result = notEqual(a, b) catch return ErrorList.TypeError;
+                self.stack.push(result) catch return ErrorList.StackUnderflow;
             },
             instructions.OpCode.OP_JUMP => {
                 const jump_offset = self.read_byte();
@@ -981,17 +982,17 @@ pub const VM = struct {
                 const condition = self.pop().?;
                 if (condition.value.type != .BOOL) {
                     self.reporter.reportFatalError("Expected boolean for JUMP_IF", .{});
-                    return null;
+                    return ErrorList.TypeError;
                 }
-                const bool_value = condition.asBoolean() catch return null;
+                const bool_value = condition.asBoolean() catch return ErrorList.TypeError;
                 if (bool_value) {
                     self.ip += jump_address;
                 }
             },
             instructions.OpCode.OP_JUMP_IF_FALSE => {
                 const jump_offset = self.read_byte();
-                const condition = self.pop() orelse return null;
-                const bool_value = condition.asBoolean() catch return null;
+                const condition = self.pop() orelse return ErrorList.StackUnderflow;
+                const bool_value = condition.asBoolean() catch return ErrorList.TypeError;
                 std.debug.print("JUMP_IF_FALSE: Condition={}, offset={}\n", .{ bool_value, jump_offset });
 
                 if (!bool_value) {
@@ -1007,14 +1008,11 @@ pub const VM = struct {
                 }
             },
             instructions.OpCode.OP_RETURN => {
-                if (try self.executeReturn()) |final_return| {
-                    return final_return;
-                }
-                return;
+                try self.executeReturn();
             },
             instructions.OpCode.OP_CALL => {
                 const function_index = self.read_byte();
-                const function = self.getFunction(function_index) orelse return null;
+                const function = self.getFunction(function_index) orelse return ErrorList.TypeError;
 
                 std.debug.print("Calling function {} with {} arguments\n", .{ function_index, function.arity });
                 self.printStack(); // Debug print stack before call
@@ -1033,8 +1031,8 @@ pub const VM = struct {
             },
             instructions.OpCode.OP_STR_CONCAT => {
                 std.debug.print("Executing OP_STR_CONCAT\n", .{});
-                var b = self.pop() orelse return null;
-                var a = self.pop() orelse return null;
+                var b = self.pop() orelse return ErrorList.StackUnderflow;
+                var a = self.pop() orelse return ErrorList.StackUnderflow;
                 std.debug.print("String concatenating: ", .{});
                 std.debug.print(" with ", .{});
                 std.debug.print("\n", .{});
@@ -1045,73 +1043,73 @@ pub const VM = struct {
                 const result = try self.concatStrings(&a, &b);
                 std.debug.print("concatStrings result: ", .{});
                 std.debug.print("\n", .{});
-                self.stack.push(result) catch return null;
+                self.stack.push(result) catch return ErrorList.StackUnderflow;
             },
             instructions.OpCode.OP_STR_EQ => {
                 const b = self.pop().?;
                 const a = self.pop().?;
-                const result = str_eq(a, b) catch return null;
-                self.stack.push(result) catch return null;
+                const result = str_eq(a, b) catch return ErrorList.TypeError;
+                self.stack.push(result) catch return ErrorList.StackUnderflow;
             },
             instructions.OpCode.OP_STR_LEN => {
                 const a = self.pop().?;
-                const result = str_len(a) catch return null;
-                self.stack.push(result) catch return null;
+                const result = str_len(a) catch return ErrorList.TypeError;
+                self.stack.push(result) catch return ErrorList.StackUnderflow;
             },
             instructions.OpCode.OP_SUBSTR => {
                 const start = self.read_byte();
                 const len = self.read_byte();
-                var a = self.pop() orelse return null;
+                var a = self.pop() orelse return ErrorList.StackUnderflow;
                 defer a.deinit();
                 const result = try self.substr(&a, start, len);
-                self.stack.push(result) catch return null;
+                self.stack.push(result) catch return ErrorList.StackUnderflow;
             },
             instructions.OpCode.OP_STRUCT_NEW => {
                 const num_fields = self.read_byte();
                 const type_name_idx = self.read_byte();
                 std.debug.print("Creating struct with {} fields, type name at index {}\n", .{ num_fields, type_name_idx });
-                const type_name_frame = self.get_constant(type_name_idx) orelse return null;
+                const type_name_frame = self.get_constant(type_name_idx) orelse return ErrorList.TypeError;
                 const type_name = type_name_frame.asString() catch {
                     self.reporter.reportFatalError("Expected string constant for struct type name", .{});
-                    return null;
+                    return ErrorList.TypeError;
                 };
                 const result = try Frame.initStruct(self.allocator, type_name, num_fields);
-                self.stack.push(result) catch return null;
+                self.stack.push(result) catch return ErrorList.StackUnderflow;
             },
             instructions.OpCode.OP_SET_FIELD => {
                 std.debug.print("Setting field - Stack size: {}\n", .{self.stack.size()});
-                const value = self.pop() orelse return null;
-                const field_name_frame = self.pop() orelse return null;
-                var struct_frame = self.pop() orelse return null;
+                const value = self.pop() orelse return ErrorList.StackUnderflow;
+                const field_name_frame = self.pop() orelse return ErrorList.StackUnderflow;
+                var struct_frame = self.pop() orelse return ErrorList.StackUnderflow;
 
                 if (struct_frame.value.type != .STRUCT) {
                     self.reporter.reportFatalError("Expected struct for field assignment", .{});
-                    return null;
+                    return ErrorList.TypeError;
                 }
 
                 const field_name = field_name_frame.asString() catch {
                     self.reporter.reportFatalError("Expected string for field name", .{});
-                    return null;
+                    return ErrorList.TypeError;
                 };
 
                 // Set the field in the struct
                 try struct_frame.value.data.struct_val.fields.put(field_name, value.value);
 
                 // Push the struct back onto the stack
-                self.stack.push(struct_frame) catch return null;
+                self.stack.push(struct_frame) catch return ErrorList.StackUnderflow;
             },
             instructions.OpCode.OP_GET_FIELD => {
-                const field_name_frame = self.pop() orelse return null;
-                const struct_frame = self.pop() orelse return null;
+                const field_name_frame = self.pop() orelse return ErrorList.StackUnderflow;
+                const struct_frame = self.pop() orelse return ErrorList.StackUnderflow;
 
                 if (struct_frame.value.type != .STRUCT) {
                     self.reporter.reportFatalError("Expected struct for field access", .{});
-                    return null;
+                    return ErrorList.TypeError;
                 }
 
                 const field_name = field_name_frame.asString() catch {
                     self.reporter.reportFatalError("Expected string for field name", .{});
-                    return null;
+                    return ErrorList.TypeError;
                 };
 
                 // Get the field from the struct
@@ -1121,10 +1119,10 @@ pub const VM = struct {
                         .value = field_value,
                         .allocator = null, // Field values don't own their memory
                     };
-                    self.stack.push(result) catch return null;
+                    self.stack.push(result) catch return ErrorList.StackUnderflow;
                 } else {
                     self.reporter.reportFatalError("Field not found in struct", .{});
-                    return null;
+                    return ErrorList.TypeError;
                 }
             },
             instructions.OpCode.OP_ARRAY_NEW => {
@@ -1143,12 +1141,12 @@ pub const VM = struct {
                 try self.stack.push(array_frame);
             },
             instructions.OpCode.OP_ARRAY_PUSH => {
-                const value = self.pop() orelse return null;
-                var array_frame = self.pop() orelse return null;
+                const value = self.pop() orelse return ErrorList.StackUnderflow;
+                var array_frame = self.pop() orelse return ErrorList.StackUnderflow;
 
                 if (array_frame.value.type != .ARRAY) {
                     self.reporter.reportFatalError("Expected array for push operation", .{});
-                    return null;
+                    return ErrorList.TypeError;
                 }
 
                 std.debug.print("Pushing value of type {} onto array\n", .{value.value.type});
@@ -1156,11 +1154,11 @@ pub const VM = struct {
                 try self.stack.push(array_frame); // Push the array back onto the stack
             },
             instructions.OpCode.OP_ARRAY_LEN => {
-                const array_frame = self.pop() orelse return null;
+                const array_frame = self.pop() orelse return ErrorList.StackUnderflow;
 
                 if (array_frame.value.type != .ARRAY) {
                     self.reporter.reportFatalError("Expected array for length operation", .{});
-                    return null;
+                    return ErrorList.TypeError;
                 }
 
                 const len = @as(i32, @intCast(array_frame.value.data.array_val.items.items.len));
@@ -1231,19 +1229,19 @@ pub const VM = struct {
             },
             instructions.OpCode.OP_ARRAY_CONCAT => {
                 std.debug.print("\n=== Executing OP_ARRAY_CONCAT ===\n", .{});
-                var b = self.pop() orelse return null;
-                var a = self.pop() orelse return null;
+                var b = self.pop() orelse return ErrorList.StackUnderflow;
+                var a = self.pop() orelse return ErrorList.StackUnderflow;
                 std.debug.print("Popped arrays from stack, concatenating...\n", .{});
                 const result = try self.concatArrays(&a, &b);
                 std.debug.print("Concatenation complete, pushing result\n", .{});
-                self.stack.push(result) catch return null;
+                self.stack.push(result) catch return ErrorList.StackUnderflow;
             },
             instructions.OpCode.OP_ARRAY_SLICE => {
                 const start = self.read_byte();
                 const end = self.read_byte();
-                var array_frame = self.pop() orelse return null;
+                var array_frame = self.pop() orelse return ErrorList.StackUnderflow;
                 const result = try self.sliceArray(&array_frame, start, end);
-                self.stack.push(result) catch return null;
+                self.stack.push(result) catch return ErrorList.StackUnderflow;
             },
             instructions.OpCode.OP_DUP => {
                 const value = try self.stack.peek();
@@ -1264,7 +1262,7 @@ pub const VM = struct {
             instructions.OpCode.OP_END_BLOCK => {
                 if (self.block_stack.items.len == 0) {
                     self.reporter.reportFatalError("No block to end", .{});
-                    return null;
+                    return ErrorList.TypeError;
                 }
 
                 var block = self.block_stack.pop();
@@ -1272,21 +1270,21 @@ pub const VM = struct {
                 block.cleanup(self);
             },
             instructions.OpCode.OP_AND => {
-                const b = self.pop() orelse return null;
-                const a = self.pop() orelse return null;
+                const b = self.pop() orelse return ErrorList.StackUnderflow;
+                const a = self.pop() orelse return ErrorList.StackUnderflow;
                 const result = try self.logical_and(a, b);
-                self.stack.push(result) catch return null;
+                self.stack.push(result) catch return ErrorList.StackUnderflow;
             },
             instructions.OpCode.OP_OR => {
-                const b = self.pop() orelse return null;
-                const a = self.pop() orelse return null;
+                const b = self.pop() orelse return ErrorList.StackUnderflow;
+                const a = self.pop() orelse return ErrorList.StackUnderflow;
                 const result = try self.logical_or(a, b);
-                self.stack.push(result) catch return null;
+                self.stack.push(result) catch return ErrorList.StackUnderflow;
             },
             instructions.OpCode.OP_NOT => {
-                const a = self.pop() orelse return null;
+                const a = self.pop() orelse return ErrorList.StackUnderflow;
                 const result = try self.logical_not(a);
-                self.stack.push(result) catch return null;
+                self.stack.push(result) catch return ErrorList.StackUnderflow;
             },
             instructions.OpCode.OP_MATCH => {
                 try self.executeMatch();
@@ -1576,15 +1574,14 @@ pub const VM = struct {
         self.stack.push(Frame.initNothing(.INT));
     }
 
-    fn executeReturn(self: *VM) !?*Frame {
+    fn executeReturn(self: *VM) !void {
         const return_value = self.pop() orelse return error.EmptyStack;
 
-        // If we're in the global frame, return the value
+        // If we're in the global frame, set the final result and halt
         if (self.call_stack.items.len <= 1) {
-            // Allocate the return value on the heap
-            const result = try self.allocator.create(Frame);
-            result.* = return_value;
-            return result;
+            try self.stack.push(return_value);
+            self.running = false;
+            return;
         }
 
         // Pop current frame
@@ -1597,8 +1594,6 @@ pub const VM = struct {
 
         // Restore caller's instruction pointer
         self.ip = self.current_frame.?.return_addr;
-
-        return null;
     }
 
     fn executeSetVar(self: *VM, var_index: u32, new_value: instructions.Value) !void {
