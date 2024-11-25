@@ -99,19 +99,14 @@ pub const Parser = struct {
         if (self.debug_enabled) std.debug.print("Found identifier: '{s}'\n", .{id_tok.lexeme});
         self.advance();
 
-        // =
+        // = (optional)
         const eq_tok = self.peek();
-        if (eq_tok.type != .ASSIGN) {
-            if (self.debug_enabled) {
-                std.debug.print("Expected assignment operator, got {s}\n", .{@tagName(eq_tok.type)});
-            }
-            return error.ExpectedAssignmentOperator;
+        var initializer: ?*ast.Expr = null;
+        if (eq_tok.type == .ASSIGN) {
+            self.advance();
+            // Parse initializer expression
+            initializer = try self.parseExpression();
         }
-        if (self.debug_enabled) std.debug.print("Found assignment operator\n", .{});
-        self.advance();
-
-        // Parse initializer expression
-        const initializer = try self.parseExpression();
 
         // ;
         const semi_tok = self.peek();

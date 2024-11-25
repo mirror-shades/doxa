@@ -133,7 +133,11 @@ pub const Interpreter = struct {
     pub fn executeStatement(self: *Interpreter, stmt: *const ast.Stmt) ErrorList!void {
         switch (stmt.*) {
             .VarDecl => |decl| {
-                const value = try self.evaluate(decl.initializer);
+                const value = if (decl.initializer) |i|
+                    try self.evaluate(i)
+                else
+                    token.TokenLiteral{ .nothing = {} };
+
                 const key = try self.string_interner.intern(decl.name.lexeme);
                 try self.environment.define(key, value);
 
