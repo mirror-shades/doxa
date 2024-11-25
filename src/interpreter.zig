@@ -49,10 +49,6 @@ pub const Interpreter = struct {
     }
 
     pub fn deinit(self: *Interpreter) void {
-        var it = self.variables.iterator();
-        while (it.next()) |entry| {
-            self.allocator.free(entry.key_ptr.*);
-        }
         self.variables.deinit();
         self.string_interner.deinit();
     }
