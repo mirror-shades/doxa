@@ -286,6 +286,25 @@ pub const Interpreter = struct {
                 else
                     try self.evaluate(if_expr.else_branch);
             },
+            .Block => |statements| {
+                var last_value = token.TokenLiteral{ .nothing = {} };
+                var block_env = Environment.init(self.allocator, self.environment);
+                defer block_env.deinit();
+
+                try self.executeBlock(statements, &block_env);
+
+                // Get the value of the last expression in the block
+                if (statements.len > 0) {
+                    const last_stmt = statements[statements.len - 1];
+                    if (last_stmt == .Expression) {
+                        if (last_stmt.Expression) |ex| {
+                            last_value = try self.evaluate(ex);
+                        }
+                    }
+                }
+
+                return last_value;
+            },
         }
     }
 };

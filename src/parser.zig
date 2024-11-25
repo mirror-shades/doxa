@@ -139,18 +139,45 @@ pub const Parser = struct {
             return err;
         };
 
-        // Expect semicolon
-        if (self.peek().type != .SEMICOLON) {
-            if (self.debug_enabled) {
-                std.debug.print("Expected SEMICOLON, got {s}\n", .{@tagName(self.peek().type)});
+        // Helper function to check if an if expression has all block branches
+        const hasAllBlockBranches = struct {
+            fn check(e: *ast.Expr) bool {
+                return switch (e.*) {
+                    .If => |if_expr| switch (if_expr.then_branch.?.*) {
+                        .Block => switch (if_expr.else_branch.?.*) {
+                            .Block => true,
+                            .If => check(if_expr.else_branch.?),
+                            else => false,
+                        },
+                        else => false,
+                    },
+                    else => false,
+                };
             }
-            if (expr) |e| {
-                e.deinit(self.allocator);
-                self.allocator.destroy(e);
+        }.check;
+
+        // Expect semicolon unless the expression is a block or if-chain with all blocks
+        if (expr) |e| {
+            const needs_semicolon = switch (e.*) {
+                .Block => false, // Blocks don't need semicolons
+                .If => !hasAllBlockBranches(e), // Check entire if-chain
+                else => true,
+            };
+
+            if (needs_semicolon and self.peek().type != .SEMICOLON) {
+                if (self.debug_enabled) {
+                    std.debug.print("Expected SEMICOLON, got {s}\n", .{@tagName(self.peek().type)});
+                }
+                if (expr) |ex| {
+                    e.deinit(self.allocator);
+                    self.allocator.destroy(ex);
+                }
+                return error.ExpectedSemicolon;
             }
-            return error.ExpectedSemicolon;
+            if (needs_semicolon) {
+                self.advance();
+            }
         }
-        self.advance();
 
         if (self.debug_enabled) {
             std.debug.print("Successfully parsed expression statement\n", .{});
@@ -162,6 +189,12 @@ pub const Parser = struct {
     fn parseExpression(self: *Parser) ErrorList!?*ast.Expr {
         if (self.peek().type == .IF) {
             return try self.parseIfExpr();
+        } else if (self.peek().type == .LEFT_BRACE) {
+            // Convert block statement to expression
+            const block_stmt = try self.parseBlock();
+            const block_expr = try self.allocator.create(ast.Expr);
+            block_expr.* = ast.Expr{ .Block = block_stmt.Block };
+            return block_expr;
         }
         return try self.parseAssignment();
     }
@@ -183,24 +216,57 @@ pub const Parser = struct {
 
         if (has_parens) {
             if (self.peek().type != .RIGHT_PAREN) {
+                condition.deinit(self.allocator);
+                self.allocator.destroy(condition);
                 return error.ExpectedRightParen;
             }
             self.advance();
         }
 
         if (self.peek().type != .THEN) {
+            condition.deinit(self.allocator);
+            self.allocator.destroy(condition);
             return error.ExpectedThen;
         }
         self.advance();
 
-        const then_expr = (try self.parseExpression()) orelse return error.ExpectedExpression;
+        const then_expr = (try self.parseExpression()) orelse {
+            condition.deinit(self.allocator);
+            self.allocator.destroy(condition);
+            return error.ExpectedExpression;
+        };
 
         if (self.peek().type != .ELSE) {
+            condition.deinit(self.allocator);
+            self.allocator.destroy(condition);
+            then_expr.deinit(self.allocator);
+            self.allocator.destroy(then_expr);
             return error.ExpectedElse;
         }
         self.advance();
 
-        const else_expr = (try self.parseExpression()) orelse return error.ExpectedExpression;
+        // Here's where we handle else-if chains
+        var else_expr: *ast.Expr = undefined;
+        if (self.peek().type == .IF) {
+            // If we see an 'if' after 'else', recursively parse it as another if expression
+            else_expr = (try self.parseIfExpr()) orelse {
+                condition.deinit(self.allocator);
+                self.allocator.destroy(condition);
+                then_expr.deinit(self.allocator);
+                self.allocator.destroy(then_expr);
+                return error.ExpectedExpression;
+            };
+        } else {
+            // Regular else branch
+            const else_branch = (try self.parseExpression()) orelse {
+                condition.deinit(self.allocator);
+                self.allocator.destroy(condition);
+                then_expr.deinit(self.allocator);
+                self.allocator.destroy(then_expr);
+                return error.ExpectedExpression;
+            };
+            else_expr = else_branch;
+        }
 
         const if_expr = try self.allocator.create(ast.Expr);
         if_expr.* = ast.Expr{ .If = .{
@@ -248,7 +314,10 @@ pub const Parser = struct {
 
     fn parseComparison(self: *Parser) ErrorList!?*ast.Expr {
         var expr = (try self.parseTerm()) orelse return null;
-        errdefer expr.deinit(self.allocator);
+        errdefer {
+            expr.deinit(self.allocator);
+            self.allocator.destroy(expr);
+        }
 
         while (true) {
             const current = self.peek();
@@ -284,9 +353,9 @@ pub const Parser = struct {
 
     fn parseTerm(self: *Parser) ErrorList!?*ast.Expr {
         var expr = try self.parseFactor();
-        errdefer if (expr) |e| {
-            e.deinit(self.allocator);
-            self.allocator.destroy(e);
+        errdefer if (expr) |ex| {
+            ex.deinit(self.allocator);
+            self.allocator.destroy(ex);
         };
 
         while (true) {
@@ -325,9 +394,9 @@ pub const Parser = struct {
 
     fn parseFactor(self: *Parser) ErrorList!?*ast.Expr {
         var expr = try self.parseUnary();
-        errdefer if (expr) |e| {
-            e.deinit(self.allocator);
-            self.allocator.destroy(e);
+        errdefer if (expr) |ex| {
+            ex.deinit(self.allocator);
+            self.allocator.destroy(ex);
         };
 
         while (true) {
@@ -368,8 +437,9 @@ pub const Parser = struct {
         if (self.peek().type == .MINUS or self.peek().type == .BANG) {
             const operator = self.peek();
             self.advance();
-            const right = try self.parseUnary();
-            if (right == null) return error.ExpectedExpression;
+            const right = (try self.parseUnary()) orelse {
+                return error.ExpectedExpression;
+            };
 
             const unary = try self.allocator.create(ast.Expr);
             unary.* = ast.Expr{ .Unary = .{
@@ -450,10 +520,18 @@ pub const Parser = struct {
         }
 
         // Consume {
+        if (self.peek().type != .LEFT_BRACE) {
+            return error.ExpectedLeftBrace;
+        }
         self.advance();
 
         var statements = std.ArrayList(ast.Stmt).init(self.allocator);
-        errdefer statements.deinit();
+        errdefer {
+            for (statements.items) |*stmt| {
+                stmt.deinit(self.allocator);
+            }
+            statements.deinit();
+        }
 
         while (self.peek().type != .RIGHT_BRACE and self.peek().type != .EOF) {
             const stmt = if (self.peek().type == .VAR)
@@ -467,6 +545,9 @@ pub const Parser = struct {
         }
 
         if (self.peek().type != .RIGHT_BRACE) {
+            for (statements.items) |*stmt| {
+                stmt.deinit(self.allocator);
+            }
             statements.deinit();
             return error.ExpectedRightBrace;
         }

@@ -1,3 +1,6 @@
 var a;
-var a = 5;
+if true 
+then {a = 5;} 
+else if false then {a = 20;} 
+else {a = 30;}
 a;

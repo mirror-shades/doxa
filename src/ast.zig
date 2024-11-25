@@ -26,6 +26,7 @@ pub const Expr = union(enum) {
     Assignment: Assignment,
     Grouping: ?*Expr,
     If: If,
+    Block: []Stmt,
 
     pub fn deinit(self: *Expr, allocator: std.mem.Allocator) void {
         switch (self.*) {
@@ -56,19 +57,25 @@ pub const Expr = union(enum) {
                 expr.deinit(allocator);
                 allocator.destroy(expr);
             },
-            .If => |*if_expr| {
-                if (if_expr.condition) |condition| {
+            .If => |*i| {
+                if (i.condition) |condition| {
                     condition.deinit(allocator);
                     allocator.destroy(condition);
                 }
-                if (if_expr.then_branch) |then_branch| {
+                if (i.then_branch) |then_branch| {
                     then_branch.deinit(allocator);
                     allocator.destroy(then_branch);
                 }
-                if (if_expr.else_branch) |else_branch| {
+                if (i.else_branch) |else_branch| {
                     else_branch.deinit(allocator);
                     allocator.destroy(else_branch);
                 }
+            },
+            .Block => |statements| {
+                for (statements) |*stmt| {
+                    stmt.deinit(allocator);
+                }
+                allocator.free(statements);
             },
         }
     }
