@@ -53,7 +53,7 @@ pub const Parser = struct {
 
     pub fn parse(self: *Parser) ErrorList!void {
         if (self.debug_enabled) {
-            std.debug.print("Starting parse with {} tokens\n", .{self.tokens.len});
+            std.debug.print("ASTERISKting parse with {} tokens\n", .{self.tokens.len});
         }
 
         while (true) {
@@ -107,24 +107,8 @@ pub const Parser = struct {
         if (self.debug_enabled) std.debug.print("Found assignment operator\n", .{});
         self.advance();
 
-        // literal
-        const lit_tok = self.peek();
-        if (lit_tok.type != .INT and lit_tok.type != .FLOAT and lit_tok.type != .STRING) {
-            if (self.debug_enabled) {
-                std.debug.print("Expected literal, got {s}\n", .{@tagName(lit_tok.type)});
-            }
-            return error.ExpectedLiteral;
-        }
-        if (self.debug_enabled) {
-            std.debug.print("Found literal: {s} = ", .{@tagName(lit_tok.type)});
-            switch (lit_tok.literal) {
-                .int => |i| std.debug.print("{}\n", .{i}),
-                .float => |f| std.debug.print("{d}\n", .{f}),
-                .string => |s| std.debug.print("\"{s}\"\n", .{s}),
-                else => std.debug.print("(unknown literal type)\n", .{}),
-            }
-        }
-        self.advance();
+        // Parse expression instead of just a literal
+        try self.parseExpression();
 
         // ;
         const semi_tok = self.peek();
@@ -139,6 +123,106 @@ pub const Parser = struct {
 
         if (self.debug_enabled) {
             std.debug.print("\nSuccessfully parsed var declaration\n", .{});
+        }
+    }
+
+    fn parseExpression(self: *Parser) ErrorList!void {
+        try self.parseEquality();
+    }
+
+    fn parseEquality(self: *Parser) ErrorList!void {
+        try self.parseComparison();
+
+        while (self.peek().type == .EQUALITY or self.peek().type == .BANG_EQUAL) {
+            const operator = self.peek();
+            self.advance();
+            try self.parseComparison();
+            
+            if (self.debug_enabled) {
+                std.debug.print("Found equality expression with operator: {s}\n", .{@tagName(operator.type)});
+            }
+        }
+    }
+
+    fn parseComparison(self: *Parser) ErrorList!void {
+        try self.parseTerm();
+
+        while (self.peek().type == .GREATER or 
+               self.peek().type == .GREATER_EQUAL or 
+               self.peek().type == .LESS or 
+               self.peek().type == .LESS_EQUAL) {
+            const operator = self.peek();
+            self.advance();
+            try self.parseTerm();
+            
+            if (self.debug_enabled) {
+                std.debug.print("Found comparison expression with operator: {s}\n", .{@tagName(operator.type)});
+            }
+        }
+    }
+
+    fn parseTerm(self: *Parser) ErrorList!void {
+        try self.parseFactor();
+
+        while (self.peek().type == .PLUS or self.peek().type == .MINUS) {
+            const operator = self.peek();
+            self.advance();
+            try self.parseFactor();
+            
+            if (self.debug_enabled) {
+                std.debug.print("Found term expression with operator: {s}\n", .{@tagName(operator.type)});
+            }
+        }
+    }
+
+    fn parseFactor(self: *Parser) ErrorList!void {
+        try self.parseUnary();
+
+        while (self.peek().type == .ASTERISK or self.peek().type == .SLASH) {
+            const operator = self.peek();
+            self.advance();
+            try self.parseUnary();
+            
+            if (self.debug_enabled) {
+                std.debug.print("Found factor expression with operator: {s}\n", .{@tagName(operator.type)});
+            }
+        }
+    }
+
+    fn parseUnary(self: *Parser) ErrorList!void {
+        if (self.peek().type == .MINUS or self.peek().type == .BANG) {
+            const operator = self.peek();
+            self.advance();
+            try self.parseUnary();
+            
+            if (self.debug_enabled) {
+                std.debug.print("Found unary expression with operator: {s}\n", .{@tagName(operator.type)});
+            }
+            return;
+        }
+
+        try self.parsePrimary();
+    }
+
+    fn parsePrimary(self: *Parser) ErrorList!void {
+        const tok = self.peek();
+        switch (tok.type) {
+            .INT, .FLOAT, .STRING, .BOOL => {
+                if (self.debug_enabled) {
+                    std.debug.print("Found literal: {s}\n", .{@tagName(tok.type)});
+                }
+                self.advance();
+            },
+            .LEFT_PAREN => {
+                self.advance();
+                try self.parseExpression();
+                
+                if (self.peek().type != .RIGHT_PAREN) {
+                    return error.ExpectedRightParen;
+                }
+                self.advance();
+            },
+            else => return error.ExpectedExpression,
         }
     }
 };

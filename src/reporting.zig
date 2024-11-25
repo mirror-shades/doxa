@@ -69,6 +69,7 @@ pub const ErrorList = error{
     ExpectedAssignmentOperator,
     ExpectedLiteral,
     UnexpectedToken,
+    ExpectedRightParen,
 };
 
 /// Reporting provides structured error handling and reporting capabilities
