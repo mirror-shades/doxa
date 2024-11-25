@@ -165,7 +165,60 @@ pub const Parser = struct {
     }
 
     fn parseExpression(self: *Parser) ErrorList!?*ast.Expr {
+        if (self.peek().type == .IF) {
+            return try self.parseIfExpr();
+        }
         return try self.parseAssignment();
+    }
+
+    fn parseIfExpr(self: *Parser) ErrorList!?*ast.Expr {
+        if (self.debug_enabled) {
+            std.debug.print("\nParsing if expression...\n", .{});
+        }
+
+        self.advance(); // consume 'if'
+
+        // Optional parentheses around condition
+        const has_parens = self.peek().type == .LEFT_PAREN;
+        if (has_parens) {
+            self.advance();
+        }
+
+        const condition = (try self.parseExpression()) orelse return error.ExpectedExpression;
+
+        if (has_parens) {
+            if (self.peek().type != .RIGHT_PAREN) {
+                return error.ExpectedRightParen;
+            }
+            self.advance();
+        }
+
+        if (self.peek().type != .THEN) {
+            return error.ExpectedThen;
+        }
+        self.advance();
+
+        const then_expr = (try self.parseExpression()) orelse return error.ExpectedExpression;
+
+        if (self.peek().type != .ELSE) {
+            return error.ExpectedElse;
+        }
+        self.advance();
+
+        const else_expr = (try self.parseExpression()) orelse return error.ExpectedExpression;
+
+        const if_expr = try self.allocator.create(ast.Expr);
+        if_expr.* = ast.Expr{ .If = .{
+            .condition = condition,
+            .then_branch = then_expr,
+            .else_branch = else_expr,
+        } };
+
+        if (self.debug_enabled) {
+            std.debug.print("Successfully parsed if expression\n", .{});
+        }
+
+        return if_expr;
     }
 
     fn parseAssignment(self: *Parser) ErrorList!?*ast.Expr {

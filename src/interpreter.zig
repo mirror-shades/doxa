@@ -130,7 +130,7 @@ pub const Interpreter = struct {
         return 0;
     }
 
-    pub fn executeStatement(self: *Interpreter, stmt: *const ast.Stmt) !void {
+    pub fn executeStatement(self: *Interpreter, stmt: *const ast.Stmt) ErrorList!void {
         switch (stmt.*) {
             .VarDecl => |decl| {
                 const value = try self.evaluate(decl.initializer);
@@ -270,6 +270,17 @@ pub const Interpreter = struct {
             },
             .Grouping => |group| {
                 return try self.evaluate(group);
+            },
+            .If => |if_expr| {
+                const condition = try self.evaluate(if_expr.condition);
+                if (condition != .boolean) {
+                    return error.TypeError;
+                }
+
+                return if (condition.boolean)
+                    try self.evaluate(if_expr.then_branch)
+                else
+                    try self.evaluate(if_expr.else_branch);
             },
         }
     }
