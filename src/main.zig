@@ -86,7 +86,8 @@ fn run(allocator: std.mem.Allocator, source: []const u8) !void {
     if (!hadError) {
         var parser_instance = try Parser.init(allocator, token_list.items, debugParser);
         defer parser_instance.deinit();
-        try parser_instance.parse();
+        const statements = try parser_instance.parse();
+        _ = statements; // TODO: Use the statements (will be needed for interpreter)
     }
 }
 
