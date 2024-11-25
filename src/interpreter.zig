@@ -65,7 +65,7 @@ pub const Interpreter = struct {
                 const value = try self.evaluate(decl.initializer);
                 const key = try self.string_interner.intern(decl.name.lexeme);
                 try self.variables.put(key, value);
-                
+
                 if (self.debug_enabled) {
                     std.debug.print("Declared variable {s} = {any}\n", .{
                         decl.name.lexeme, value,
@@ -146,14 +146,10 @@ pub const Interpreter = struct {
             },
             .Variable => |var_token| {
                 if (self.debug_enabled) {
-                    std.debug.print("Looking up variable: '{s}' (len: {})\n", .{var_token.lexeme, var_token.lexeme.len});
+                    std.debug.print("Looking up variable: '{s}' (len: {})\n", .{ var_token.lexeme, var_token.lexeme.len });
                     var it = self.variables.iterator();
                     while (it.next()) |entry| {
-                        std.debug.print("Stored key: '{s}' (len: {}), value: {any}\n", .{
-                            entry.key_ptr.*, 
-                            entry.key_ptr.*.len,
-                            entry.value_ptr.*
-                        });
+                        std.debug.print("Stored key: '{s}' (len: {}), value: {any}\n", .{ entry.key_ptr.*, entry.key_ptr.*.len, entry.value_ptr.* });
                     }
                 }
                 if (self.variables.contains(var_token.lexeme)) {
@@ -167,6 +163,9 @@ pub const Interpreter = struct {
                 const key = try self.string_interner.intern(assign.name.lexeme);
                 try self.variables.put(key, value);
                 return value;
+            },
+            .Grouping => |group| {
+                return try self.evaluate(group);
             },
         }
     }

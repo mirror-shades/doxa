@@ -4,31 +4,31 @@ pub const ErrorList = error{
     // Stack errors
     StackOverflow,
     StackUnderflow,
-    
+
     // Value/Type errors
     TypeError,
     DivisionByZero,
     IntegerOverflow,
     FloatOverflow,
-    
+
     // Variable errors
     VariableNotFound,
     VariableOutOfScope,
     VariableIndexOutOfBounds,
     AccessingCleanedVariable,
     CannotAssignToConstant,
-    
+
     // Function/Frame errors
     InvalidFunction,
     NoActiveFrame,
     FrameStackOverflow,
     InsufficientArguments,
     CannotPopGlobalFrame,
-    
+
     // Array/String errors
     IndexOutOfBounds,
     InvalidConstant,
-    
+
     // Try-Catch errors
     NoTryBlock,
     NoCatchWithoutTry,
@@ -59,7 +59,6 @@ pub const ErrorList = error{
     MultipleExponents,
     InvalidExponent,
 
-
     // parser
     OutOfMemory,
     ExpectedSemicolon,
@@ -70,6 +69,7 @@ pub const ErrorList = error{
     ExpectedLiteral,
     UnexpectedToken,
     ExpectedRightParen,
+    ExpectedRightBracket,
     InvalidAssignmentTarget,
     UndefinedVariable,
     InvalidOperand,
@@ -82,13 +82,13 @@ pub const ErrorList = error{
 pub const Reporting = struct {
     /// Total count of errors encountered
     error_count: u32 = 0,
-    
-    /// Total count of warnings encountered 
+
+    /// Total count of warnings encountered
     warning_count: u32 = 0,
-    
+
     /// Whether any errors occurred
     had_error: bool = false,
-    
+
     /// Whether any warnings occurred
     had_warning: bool = false,
 
@@ -115,7 +115,7 @@ pub const Reporting = struct {
     /// Location information for error reporting
     pub const Location = struct {
         line: u32,
-        column: u32, 
+        column: u32,
         file: []const u8,
 
         pub fn format(
@@ -173,7 +173,7 @@ pub const Reporting = struct {
         return self.error_count;
     }
 
-    /// Get total warning count 
+    /// Get total warning count
     pub fn getWarningCount(self: Reporting) u32 {
         return self.warning_count;
     }
