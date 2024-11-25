@@ -1,38 +1,11 @@
 const std = @import("std");
+const Reporting = @import("reporting.zig");
 
 const token = @import("token.zig");
 pub const TokenType = token.TokenType;
 pub const Token = token.Token;
 pub const TokenLiteral = token.TokenLiteral;
 
-///==========================================================================
-/// Types & Errors
-///==========================================================================
-
-pub const LexerError = error{
-    UnterminatedString,
-    UnterminatedArray,
-    UnterminatedParenthesis,
-    UnterminatedMultilineComment,
-    ExpectedCommaOrClosingBracket,
-    ExpectedCommaOrClosingParenthesis,
-    InvalidNumber,
-    InvalidEscapeSequence,
-    UnexpectedCharacter,
-    Overflow,
-    InvalidCharacter,
-    Utf8InvalidStartByte,
-    Utf8ExpectedContinuation,
-    Utf8OverlongEncoding,
-    Utf8InvalidCodepoint,
-    Utf8CodepointTooLarge,
-    InvalidUnicodeEscape,
-    CodepointTooLarge,
-    Utf8CannotEncodeSurrogateHalf,
-    LeadingZeros,
-    MultipleExponents,
-    InvalidExponent,
-};
 
 pub const Lexer = struct {
     //======================================================================
@@ -125,7 +98,7 @@ pub const Lexer = struct {
     }
 
     // lexes the next token
-    fn getNextToken(self: *Lexer) (LexerError || std.mem.Allocator.Error)!void {
+    fn getNextToken(self: *Lexer) (Reporting.ErrorList || std.mem.Allocator.Error)!void {
         // Skip whitespace
         while (!self.isAtEnd() and (self.peekAt(0) == ' ' or self.peekAt(0) == '\r' or self.peekAt(0) == '\t' or self.peekAt(0) == '\n')) {
             if (self.peekAt(0) == '\n') self.line += 1;

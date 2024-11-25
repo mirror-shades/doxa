@@ -1,6 +1,7 @@
 const std = @import("std");
 const Lexer = @import("lexer.zig").Lexer;
 const Parser = @import("parser.zig").Parser;
+const Reporting = @import("reporting.zig");
 
 const Token = @import("lexer.zig").Token;
 const instructions = @import("instructions.zig");
@@ -26,14 +27,6 @@ var debugLexer: bool = false;
 ///==========================================================================
 /// Types & Errors
 ///==========================================================================
-
-pub const LexerError = error{
-    UnterminatedString,
-    UnterminatedArray,
-    ExpectedCommaOrClosingBracket,
-    InvalidNumber,
-    UnexpectedCharacter,
-};
 
 const SourceFile = struct {
     allocator: std.mem.Allocator,
@@ -81,31 +74,34 @@ fn run(allocator: std.mem.Allocator, source: []const u8) !void {
     try lexer.initKeywords();
     defer lexer.deinit();
 
+    var reporter = Reporting.Reporting.initStderr();
+    defer reporter.deinit();
+
     const tokens = lexer.lexTokens() catch |err| switch (err) {
-        LexerError.UnterminatedString => {
+        Reporting.ErrorList.UnterminatedString => {
             reportMinimalError(lexer.line, "Unterminated string.");
             return err;
         },
-        LexerError.UnterminatedArray => {
+        Reporting.ErrorList.UnterminatedArray => {
             reportMinimalError(lexer.line, "Unterminated array.");
             return err;
         },
-        LexerError.ExpectedCommaOrClosingBracket => {
+        Reporting.ErrorList.ExpectedCommaOrClosingBracket => {
             reportMinimalError(lexer.line, "Expected ',' or ']' in array.");
             return err;
         },
-        LexerError.InvalidNumber => {
+        Reporting.ErrorList.InvalidNumber => {
             reportMinimalError(lexer.line, "Invalid number.");
             return err;
         },
-        LexerError.UnexpectedCharacter => {
+        Reporting.ErrorList.UnexpectedCharacter => {
             reportMinimalError(lexer.line, "Unexpected character.");
             return err;
         },
         else => |e| return e,
     };
 
-    try runVM(allocator, tokens.items);
+    //try runVM(allocator, tokens.items);
 
     // var parser = Parser.init(allocator, tokens.items);
     // defer parser.deinit();
@@ -214,6 +210,9 @@ fn vmTest(allocator: std.mem.Allocator) !void {
         .owns_value = true,
         },
     };
+
+    var reporter = Reporting.init();
+    defer reporter.deinit();
 
     const vm = VM.init(allocator, &code, &constants, reporter);
     try vm.run();

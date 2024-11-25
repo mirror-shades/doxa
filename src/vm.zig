@@ -466,6 +466,17 @@ pub const VM = struct {
     try_stack: std.ArrayList(TryFrame),
     current_try_frame: ?*TryFrame = null,
 
+    // Add new fields for execution loop
+    running: bool = true,
+    exec_mode: ExecMode = .Normal,
+
+    // Add enum for execution modes
+    const ExecMode = enum {
+        Normal,
+        StepByStep,
+        Paused,
+    };
+
     pub fn init(
         allocator: std.mem.Allocator, 
         code: []const u8, 
@@ -499,6 +510,8 @@ pub const VM = struct {
             .match_value = null,
             .try_stack = std.ArrayList(TryFrame).init(allocator),
             .current_try_frame = null,
+            .running = true,
+            .exec_mode = .Normal,
         };
 
         // Initialize stack with NOTHING values if needed
@@ -690,683 +703,626 @@ pub const VM = struct {
             else => std.debug.print("???", .{}),
         }
     }
+    
+    fn executeInstruction(self: *VM, opcode: instructions.OpCode) !void {
+        switch (opcode) {
+            .OP_HALT => {
+                self.running = false;
+            },
+            .OP_CONST => {
+                const constant_index = self.read_byte();
+                const constant_value = self.get_constant(constant_index) orelse 
+                    return error.InvalidConstant;
+                try self.stack.push(constant_value);
+            },
+            .OP_VAR => {
+                const var_index = self.read_byte();
+                std.debug.print("Accessing var[{}]\n", .{var_index});
 
-    pub fn eval(self: *VM) !?*Frame {
-        while (true) {
-            if (self.current_frame) |frame| {
-                if (frame.ip >= frame.function.code.len) {
-                    // Create a new frame with NOTHING value for empty returns
-                    const result = try self.allocator.create(Frame);
-                    result.* = Frame.initNothing(.INT);
-                    return result;
+                if (!self.isVariableInScope(var_index)) {
+                    self.reporter.reportFatalError("Variable access out of scope", .{});
+                    return error.VariableOutOfScope;
                 }
 
-                const opcode: instructions.OpCode = @enumFromInt(frame.function.code[frame.ip]);
-                frame.ip += 1;
-                self.ip = frame.ip;
+                if (var_index >= self.current_scope_vars.items.len) {
+                    self.reporter.reportFatalError("Variable index out of bounds", .{});
+                    return error.VariableIndexOutOfBounds;
+                }
 
-                switch (opcode) {
-                    .OP_HALT => {
-                        if (self.stack.size() > 0) {
-                            const top_value = try self.stack.peek();
+                const var_value = self.current_scope_vars.items[var_index];
+                if (var_value.value.nothing) {
+                    self.reporter.reportFatalError("Accessing cleaned up variable", .{});
+                    return error.AccessingCleanedVariable;
+                }
 
-                            // Create a new Frame on the heap for the return value
-                            const result = try self.allocator.create(Frame);
+                try self.stack.push(Frame.reference(var_value.value));
+            },
+            .OP_SET_VAR => {
+                const var_index = self.read_byte();
+                const value = self.pop() orelse return null;
 
-                            // Create a deep copy if needed
-                            if (top_value.value.type == .STRING) {
-                                const str = try top_value.asString();
-                                result.* = try Frame.initString(&self.string_interner, str);
-                            } else if (top_value.value.type == .STRUCT) {
-                                // For structs, we need to do a deep copy
-                                const type_name = top_value.value.data.struct_val.type_name;
-                                result.* = try Frame.initStruct(self.allocator, type_name, top_value.value.data.struct_val.num_fields);
-
-                                // Copy all fields
-                                var it = top_value.value.data.struct_val.fields.iterator();
-                                while (it.next()) |entry| {
-                                    try result.value.data.struct_val.fields.put(entry.key_ptr.*, entry.value_ptr.*);
-                                }
-                            } else if (top_value.value.type == .ARRAY) {
-                                // For arrays, we need to do a deep copy
-                                const array = top_value.value.data.array_val;
-                                result.* = try Frame.initArray(self.allocator, @intCast(array.items.items.len), array.element_type);
-                                try result.value.data.array_val.items.appendSlice(array.items.items);
-                            } else {
-                                result.* = Frame{
-                                    .value = top_value.value,
-                                    .allocator = null,
-                                    .owns_value = true,
-                                };
-                            }
-
-                            // Clean up the stack
-                            self.stack.deinit();
-                            std.debug.print("Returning value of type: {}\n", .{result.value.type});
-
-                            return result;
+                // If we're in a block, update its var count
+                if (self.block_stack.items.len > 0) {
+                    var current_block = &self.block_stack.items[self.block_stack.items.len - 1];
+                    if (var_index >= current_block.var_start) {
+                        const local_index = var_index - current_block.var_start;
+                        if (local_index >= current_block.var_count) {
+                            current_block.var_count = local_index + 1;
                         }
-                        // Only return 0 if stack is empty
-                        const result = try self.allocator.create(Frame);
-                        result.* = Frame.initInt(0);
-                        return result;
-                    },
-                    .OP_CONST => {
-                        const constant_index = self.read_byte();
-                        const constant_value = self.get_constant(constant_index) orelse return null;
-                        self.stack.push(constant_value) catch return null;
-                    },
-                    .OP_VAR => {
-                        const var_index = self.read_byte();
-                        std.debug.print("Accessing var[{}]\n", .{var_index});
+                    }
+                }
+                // Grow the current scope's variable array if needed
+                while (var_index >= self.current_scope_vars.items.len) {
+                    try self.current_scope_vars.append(Frame.initNothing(.INT));
+                }
 
-                        if (!self.isVariableInScope(var_index)) {
-                            self.reporter.reportFatalError("Variable access out of scope", .{});
-                            return null;
-                        }
+                // Clean up any existing value
+                if (var_index < self.current_scope_vars.items.len) {
+                    self.current_scope_vars.items[var_index].deinit();
+                }
 
-                        if (var_index >= self.current_scope_vars.items.len) {
-                            self.reporter.reportFatalError("Variable index out of bounds", .{});
-                            return null;
-                        }
+                // Store the new value
+                self.current_scope_vars.items[var_index] = value;
+            },
+            instructions.OpCode.OP_SET_CONST => {
+                const var_index = self.read_byte();
+                const value = try self.stack.pop();
+                const variable = self.variables[var_index];
 
-                        const var_value = self.current_scope_vars.items[var_index];
-                        if (var_value.value.nothing) {
-                            self.reporter.reportFatalError("Accessing cleaned up variable", .{});
-                            return null;
-                        }
+                std.debug.print("Setting const var[{}] to {}\n", .{var_index, value.value});
 
-                        try self.stack.push(Frame.reference(var_value.value));
-                    },
-                    // set variable
-                    instructions.OpCode.OP_SET_VAR => {
-                        const var_index = self.read_byte();
-                        const value = self.pop() orelse return null;
+                // Verify it's marked as constant
+                if (!variable.is_constant) {
+                    self.reporter.reportFatalError("Internal error: OP_SET_CONST used on non-constant variable", .{});
+                    return null;
+                }
 
-                        // If we're in a block, update its var count
-                        if (self.block_stack.items.len > 0) {
-                            var current_block = &self.block_stack.items[self.block_stack.items.len - 1];
-                            if (var_index >= current_block.var_start) {
-                                const local_index = var_index - current_block.var_start;
-                                if (local_index >= current_block.var_count) {
-                                    current_block.var_count = local_index + 1;
-                                }
-                            }
-                        }
-                        // Grow the current scope's variable array if needed
-                        while (var_index >= self.current_scope_vars.items.len) {
-                            try self.current_scope_vars.append(Frame.initNothing(.INT));
-                        }
+                // Check if already initialized
+                if (!self.values[variable.index].nothing) {
+                    self.reporter.reportFatalError("Cannot reassign to constant variable", .{});
+                    return null;
+                }
 
-                        // Clean up any existing value
-                        if (var_index < self.current_scope_vars.items.len) {
-                            self.current_scope_vars.items[var_index].deinit();
-                        }
+                self.values[variable.index] = value.value;
+            },
+            instructions.OpCode.OP_IADD, instructions.OpCode.OP_ISUB, instructions.OpCode.OP_IMUL => {
+                const b = self.pop().?;
+                const a = self.pop().?;
 
-                        // Store the new value
-                        self.current_scope_vars.items[var_index] = value;
-                    },
-                    instructions.OpCode.OP_SET_CONST => {
-                        const var_index = self.read_byte();
-                        const value = try self.stack.pop();
-                        const variable = self.variables[var_index];
+                // Fast path: both integers
+                if (a.value.type == .INT and b.value.type == .INT) {
+                    const result = switch (opcode) {
+                        .OP_IADD => i_add(a.asInt() catch return null, b.asInt() catch return null),
+                        .OP_ISUB => i_sub(a.asInt() catch return null, b.asInt() catch return null),
+                        .OP_IMUL => i_mul(a.asInt() catch return null, b.asInt() catch return null),
+                        else => unreachable,
+                    } catch return null;
+                    self.stack.push(result) catch return null;
+                    return;
+                }
 
-                        std.debug.print("Setting const var[{}] to {}\n", .{var_index, value.value});
-
-                        // Verify it's marked as constant
-                        if (!variable.is_constant) {
-                            self.reporter.reportFatalError("Internal error: OP_SET_CONST used on non-constant variable", .{});
-                            return null;
-                        }
-
-                        // Check if already initialized
-                        if (!self.values[variable.index].nothing) {
-                            self.reporter.reportFatalError("Cannot reassign to constant variable", .{});
-                            return null;
-                        }
-
-                        self.values[variable.index] = value.value;
-                    },
-                    instructions.OpCode.OP_IADD, instructions.OpCode.OP_ISUB, instructions.OpCode.OP_IMUL => {
-                        const b = self.pop().?;
-                        const a = self.pop().?;
-
-                        // Fast path: both integers
-                        if (a.value.type == .INT and b.value.type == .INT) {
+                // Mixed types: convert to floats
+                switch (a.value.type) {
+                    .INT => switch (b.value.type) {
+                        .FLOAT => {
+                            const a_float = @as(f32, @floatFromInt(a.asInt() catch return null));
                             const result = switch (opcode) {
-                                .OP_IADD => i_add(a.asInt() catch return null, b.asInt() catch return null),
-                                .OP_ISUB => i_sub(a.asInt() catch return null, b.asInt() catch return null),
-                                .OP_IMUL => i_mul(a.asInt() catch return null, b.asInt() catch return null),
+                                .OP_IADD => f_add(a_float, b.asFloat() catch return null),
+                                .OP_ISUB => f_sub(a_float, b.asFloat() catch return null),
+                                .OP_IMUL => f_mul(a_float, b.asFloat() catch return null),
                                 else => unreachable,
                             } catch return null;
                             self.stack.push(result) catch return null;
-                            continue;
-                        }
-
-                        // Mixed types: convert to floats
-                        switch (a.value.type) {
-                            .INT => switch (b.value.type) {
-                                .FLOAT => {
-                                    const a_float = @as(f32, @floatFromInt(a.asInt() catch return null));
-                                    const result = switch (opcode) {
-                                        .OP_IADD => f_add(a_float, b.asFloat() catch return null),
-                                        .OP_ISUB => f_sub(a_float, b.asFloat() catch return null),
-                                        .OP_IMUL => f_mul(a_float, b.asFloat() catch return null),
-                                        else => unreachable,
-                                    } catch return null;
-                                    self.stack.push(result) catch return null;
-                                },
-                                else => {
-                                    self.reporter.reportFatalError("Invalid type for arithmetic operation", .{});
-                                    return null;
-                                },
-                            },
-                            .FLOAT => switch (b.value.type) {
-                                .INT => {
-                                    const b_float = @as(f32, @floatFromInt(b.asInt() catch return null));
-                                    const result = switch (opcode) {
-                                        .OP_IADD => f_add(a.asFloat() catch return null, b_float),
-                                        .OP_ISUB => f_sub(a.asFloat() catch return null, b_float),
-                                        .OP_IMUL => f_mul(a.asFloat() catch return null, b_float),
-                                        else => unreachable,
-                                    } catch return null;
-                                    self.stack.push(result) catch return null;
-                                },
-                                .FLOAT => {
-                                    const result = switch (opcode) {
-                                        .OP_IADD => f_add(a.asFloat() catch return null, b.asFloat() catch return null),
-                                        .OP_ISUB => f_sub(a.asFloat() catch return null, b.asFloat() catch return null),
-                                        .OP_IMUL => f_mul(a.asFloat() catch return null, b.asFloat() catch return null),
-                                        else => unreachable,
-                                    } catch return null;
-                                    self.stack.push(result) catch return null;
-                                },
-                                else => {
-                                    self.reporter.reportFatalError("Invalid type for arithmetic operation", .{});
-                                    return null;
-                                },
-                            },
-                            else => {
-                                self.reporter.reportFatalError("Invalid type for arithmetic operation", .{});
-                                return null;
-                            },
-                        }
-                    },
-                    instructions.OpCode.OP_FADD, instructions.OpCode.OP_FSUB, instructions.OpCode.OP_FMUL => {
-                        const b = self.pop().?;
-                        const a = self.pop().?;
-
-                        // Convert operands to float if needed
-                        const a_val: f32 = switch (a.value.type) {
-                            .FLOAT => a.asFloat() catch return null,
-                            .INT => @as(f32, @floatFromInt(a.asInt() catch return null)),
-                            else => {
-                                self.reporter.reportFatalError("Invalid type for float operation", .{});
-                                return null;
-                            },
-                        };
-
-                        const b_val: f32 = switch (b.value.type) {
-                            .FLOAT => b.asFloat() catch return null,
-                            .INT => @as(f32, @floatFromInt(b.asInt() catch return null)),
-                            else => {
-                                self.reporter.reportFatalError("Invalid type for float operation", .{});
-                                return null;
-                            },
-                        };
-
-                        const result = switch (opcode) {
-                            .OP_FADD => f_add(a_val, b_val),
-                            .OP_FSUB => f_sub(a_val, b_val),
-                            .OP_FMUL => f_mul(a_val, b_val),
-                            else => unreachable,
-                        } catch return null;
-                        self.stack.push(result) catch return null;
-                    },
-                    instructions.OpCode.OP_FDIV => {
-                        const b = self.pop().?;
-                        const a = self.pop().?;
-
-                        // Convert operands to float if needed
-                        const a_val: f32 = switch (a.value.type) {
-                            .FLOAT => a.asFloat() catch return null,
-                            .INT => @as(f32, @floatFromInt(a.asInt() catch return null)),
-                            else => {
-                                self.reporter.reportFatalError("Invalid type for float operation", .{});
-                                return null;
-                            },
-                        };
-
-                        const b_val: f32 = switch (b.value.type) {
-                            .FLOAT => b.asFloat() catch return null,
-                            .INT => @as(f32, @floatFromInt(b.asInt() catch return null)),
-                            else => {
-                                self.reporter.reportFatalError("Invalid type for float operation", .{});
-                                return null;
-                            },
-                        };
-
-                        // Try the division
-                        const result = f_div(a_val, b_val) catch {
-                            if (self.current_try_frame != null) {
-                                try self.executeThrow();
-                                continue;
-                            }
-                            self.reporter.reportFatalError("Division by zero", .{});
+                        },
+                        else => {
+                            self.reporter.reportFatalError("Invalid type for arithmetic operation", .{});
                             return null;
-                        };
-                        const new_frame = Frame.initFloat(result);
-                        try self.stack.push(new_frame);
+                        },
                     },
-                    // greater
-                    instructions.OpCode.OP_GREATER => {
-                        const b = self.pop().?;
-                        const a = self.pop().?;
-                        const result = greater(a, b) catch return null;
-                        self.stack.push(result) catch return null;
-                    },
-                    // less
-                    instructions.OpCode.OP_LESS => {
-                        const b = self.pop().?;
-                        const a = self.pop().?;
-                        const result = less(a, b) catch return null;
-                        self.stack.push(result) catch return null;
-                    },
-                    // i2f, f2i
-                    instructions.OpCode.OP_CONVERT_NUMBER => {
-                        const value = self.pop() orelse return null;
-                        std.debug.print("CONVERT_NUMBER: Popped value type: {}\n", .{value.value.type});
-                        if (value.typeIs(.INT)) {
-                            const int_val = value.asInt() catch return null;
-                            const float_val = @as(f32, @floatFromInt(int_val));
-                            self.stack.push(Frame.initFloat(float_val)) catch return null;
-                        }
-                        else if (value.typeIs(.FLOAT)) {
-                            const float_val = value.asFloat() catch return null;
-                            const int_val = @as(i32, @intFromFloat(std.math.trunc(float_val)));
-                            self.stack.push(Frame.initInt(int_val)) catch return null;
-                        }
-                        else {
-                            self.reporter.reportFatalError("Invalid type for number conversion", .{});
-                            return null;
-                        }
-                    },
-                    // equal
-                    instructions.OpCode.OP_EQUAL => {
-                        const b = self.pop().?;
-                        const a = self.pop().?;
-                        const result = equal(a, b) catch return null;
-                        self.stack.push(result) catch return null;
-                    },
-                    // notequal
-                    instructions.OpCode.OP_NOTEQUAL => {
-                        const b = self.pop().?;
-                        const a = self.pop().?;
-                        const result = notEqual(a, b) catch return null;
-                        self.stack.push(result) catch return null;
-                    },
-                    instructions.OpCode.OP_JUMP => {
-                        const jump_offset = self.read_byte();
-                        // Preserve the top stack value (result of if-block)
-                        const value = try self.stack.pop();
-
-                        self.current_frame.?.ip += jump_offset;
-                        self.ip = self.current_frame.?.ip;
-
-                        // Push the value back
-                        try self.stack.push(value);
-                    },
-                    instructions.OpCode.OP_JUMP_IF => {
-                        const jump_address = self.read_byte();
-                        const condition = self.pop().?;
-                        if (condition.value.type != .BOOL) {
-                            self.reporter.reportFatalError("Expected boolean for JUMP_IF", .{});
-                            return null;
-                        }
-                        const bool_value = condition.asBoolean() catch return null;
-                        if (bool_value) {
-                            self.ip += jump_address;
-                        }
-                    },
-                    instructions.OpCode.OP_JUMP_IF_FALSE => {
-                        const jump_offset = self.read_byte();
-                        const condition = self.pop() orelse return null;
-                        const bool_value = condition.asBoolean() catch return null;
-                        std.debug.print("JUMP_IF_FALSE: Condition={}, offset={}\n", .{ bool_value, jump_offset });
-
-                        if (!bool_value) {
-                            // When jumping to else block, skip the if-block code
-                            self.current_frame.?.ip += jump_offset;
-                            self.ip = self.current_frame.?.ip;
-
-                            // Load var[0] for the else block
-                            if (self.current_scope_vars.items.len > 0) {
-                                const var_value = self.current_scope_vars.items[0];
-                                try self.stack.push(Frame.reference(var_value.value));
-                            }
-                        }
-                    },
-                    instructions.OpCode.OP_RETURN => {
-                        if (try self.executeReturn()) |final_return| {
-                            return final_return;
-                        }
-                        continue;
-                    },
-                    instructions.OpCode.OP_CALL => {
-                        const function_index = self.read_byte();
-                        const function = self.getFunction(function_index) orelse return null;
-
-                        std.debug.print("Calling function {} with {} arguments\n", .{ function_index, function.arity });
-                        self.printStack(); // Debug print stack before call
-
-                        // Create new frame
-                        try self.call_stack.append(CallFrame{
-                            .ip = 0,
-                            .bp = self.sp - function.arity, // Set base pointer to point to the first argument
-                            .sp = self.sp,
-                            .function = function,
-                            .return_addr = self.ip,
-                        });
-
-                        self.current_frame = &self.call_stack.items[self.call_stack.items.len - 1];
-                        continue;
-                    },
-                    instructions.OpCode.OP_STR_CONCAT => {
-                        std.debug.print("Executing OP_STR_CONCAT\n", .{});
-                        var b = self.pop() orelse return null;
-                        var a = self.pop() orelse return null;
-                        std.debug.print("String concatenating: ", .{});
-                        std.debug.print(" with ", .{});
-                        std.debug.print("\n", .{});
-                        defer {
-                            b.deinit();
-                            a.deinit();
-                        }
-                        const result = try self.concatStrings(&a, &b);
-                        std.debug.print("concatStrings result: ", .{});
-                        std.debug.print("\n", .{});
-                        self.stack.push(result) catch return null;
-                    },
-                    instructions.OpCode.OP_STR_EQ => {
-                        const b = self.pop().?;
-                        const a = self.pop().?;
-                        const result = str_eq(a, b) catch return null;
-                        self.stack.push(result) catch return null;
-                    },
-                    instructions.OpCode.OP_STR_LEN => {
-                        const a = self.pop().?;
-                        const result = str_len(a) catch return null;
-                        self.stack.push(result) catch return null;
-                    },
-                    instructions.OpCode.OP_SUBSTR => {
-                        const start = self.read_byte();
-                        const len = self.read_byte();
-                        var a = self.pop() orelse return null;
-                        defer a.deinit();
-                        const result = try self.substr(&a, start, len);
-                        self.stack.push(result) catch return null;
-                    },
-                    instructions.OpCode.OP_STRUCT_NEW => {
-                        const num_fields = self.read_byte();
-                        const type_name_idx = self.read_byte();
-                        std.debug.print("Creating struct with {} fields, type name at index {}\n", .{ num_fields, type_name_idx });
-                        const type_name_frame = self.get_constant(type_name_idx) orelse return null;
-                        const type_name = type_name_frame.asString() catch {
-                            self.reporter.reportFatalError("Expected string constant for struct type name", .{});
-                            return null;
-                        };
-                        const result = try Frame.initStruct(self.allocator, type_name, num_fields);
-                        self.stack.push(result) catch return null;
-                    },
-                    instructions.OpCode.OP_SET_FIELD => {
-                        std.debug.print("Setting field - Stack size: {}\n", .{self.stack.size()});
-                        const value = self.pop() orelse return null;
-                        const field_name_frame = self.pop() orelse return null;
-                        var struct_frame = self.pop() orelse return null;
-
-                        if (struct_frame.value.type != .STRUCT) {
-                            self.reporter.reportFatalError("Expected struct for field assignment", .{});
-                            return null;
-                        }
-
-                        const field_name = field_name_frame.asString() catch {
-                            self.reporter.reportFatalError("Expected string for field name", .{});
-                            return null;
-                        };
-
-                        // Set the field in the struct
-                        try struct_frame.value.data.struct_val.fields.put(field_name, value.value);
-
-                        // Push the struct back onto the stack
-                        self.stack.push(struct_frame) catch return null;
-                    },
-                    instructions.OpCode.OP_GET_FIELD => {
-                        const field_name_frame = self.pop() orelse return null;
-                        const struct_frame = self.pop() orelse return null;
-
-                        if (struct_frame.value.type != .STRUCT) {
-                            self.reporter.reportFatalError("Expected struct for field access", .{});
-                            return null;
-                        }
-
-                        const field_name = field_name_frame.asString() catch {
-                            self.reporter.reportFatalError("Expected string for field name", .{});
-                            return null;
-                        };
-
-                        // Get the field from the struct
-                        if (struct_frame.value.data.struct_val.fields.get(field_name)) |field_value| {
-                            // Create a new frame for the field value
-                            const result = Frame{
-                                .value = field_value,
-                                .allocator = null, // Field values don't own their memory
-                            };
+                    .FLOAT => switch (b.value.type) {
+                        .INT => {
+                            const b_float = @as(f32, @floatFromInt(b.asInt() catch return null));
+                            const result = switch (opcode) {
+                                .OP_IADD => f_add(a.asFloat() catch return null, b_float),
+                                .OP_ISUB => f_sub(a.asFloat() catch return null, b_float),
+                                .OP_IMUL => f_mul(a.asFloat() catch return null, b_float),
+                                else => unreachable,
+                            } catch return null;
                             self.stack.push(result) catch return null;
-                        } else {
-                            self.reporter.reportFatalError("Field not found in struct", .{});
+                        },
+                        .FLOAT => {
+                            const result = switch (opcode) {
+                                .OP_IADD => f_add(a.asFloat() catch return null, b.asFloat() catch return null),
+                                .OP_ISUB => f_sub(a.asFloat() catch return null, b.asFloat() catch return null),
+                                .OP_IMUL => f_mul(a.asFloat() catch return null, b.asFloat() catch return null),
+                                else => unreachable,
+                            } catch return null;
+                            self.stack.push(result) catch return null;
+                        },
+                        else => {
+                            self.reporter.reportFatalError("Invalid type for arithmetic operation", .{});
                             return null;
-                        }
+                        },
                     },
-                    instructions.OpCode.OP_ARRAY_NEW => {
-                        const size = self.read_byte();
-                        const type_byte = self.read_byte();  // Read the type parameter
-                        const element_type = @as(instructions.ValueType, @enumFromInt(type_byte));
-                        
-                        std.debug.print("Creating new array with capacity {} and type {}\n", 
-                            .{size, element_type});
-                        
-                        const array_frame = try Frame.initArray(
-                            self.allocator, 
-                            size,
-                            element_type  // Pass the element type to initArray
-                        );
-                        try self.stack.push(array_frame);
-                    },
-                    instructions.OpCode.OP_ARRAY_PUSH => {
-                        const value = self.pop() orelse return null;
-                        var array_frame = self.pop() orelse return null;
-
-                        if (array_frame.value.type != .ARRAY) {
-                            self.reporter.reportFatalError("Expected array for push operation", .{});
-                            return null;
-                        }
-
-                        std.debug.print("Pushing value of type {} onto array\n", .{value.value.type});
-                        try array_frame.value.data.array_val.items.append(value.value);
-                        try self.stack.push(array_frame); // Push the array back onto the stack
-                    },
-                    instructions.OpCode.OP_ARRAY_LEN => {
-                        const array_frame = self.pop() orelse return null;
-
-                        if (array_frame.value.type != .ARRAY) {
-                            self.reporter.reportFatalError("Expected array for length operation", .{});
-                            return null;
-                        }
-
-                        const len = @as(i32, @intCast(array_frame.value.data.array_val.items.items.len));
-                        std.debug.print("Array length is {}\n", .{len});
-
-                        // Push back just the array (we don't need the length for the next operation)
-                        try self.stack.push(array_frame);
-                        try self.stack.push(Frame.initInt(len)); // Push the length of the array back onto the stack
-                    },
-                    instructions.OpCode.OP_ARRAY_GET => {
-                        std.debug.print("\n=== OP_ARRAY_GET ===\n", .{});
-                        self.printStack();
-
-                        const index = try self.stack.pop();
-                        const array_frame = try self.stack.pop();
-
-                        if (array_frame.value.type != .ARRAY) {
-                            try self.stack.push(Frame.initNothing(.INT));  // Default to INT if type error
-                            continue;  // Continue to next instruction instead of return
-                        }
-                        if (index.value.type != .INT) {
-                            try self.stack.push(Frame.initNothing(.INT));  // Default to INT if type error
-                            continue;  // Continue to next instruction instead of return
-                        }
-
-                        const array = array_frame.value.data.array_val;
-                        const idx = @as(u32, @intCast(index.value.data.int));
-
-                        if (idx >= array.items.items.len) {
-                            // Get the type of the array elements
-                            const element_type = array.element_type;
-                            try self.stack.push(Frame.initNothing(element_type));
-                            continue;  // Continue to next instruction instead of return
-                        }
-
-                        const value = array.items.items[idx];
-                        try self.stack.push(Frame.initValue(value));
-                    },
-                    instructions.OpCode.OP_ARRAY_SET => {
-                        std.debug.print("\n=== OP_ARRAY_SET ===\n", .{});
-                        self.printStack();
-
-                        const new_value = try self.stack.pop();
-                        const index = try self.stack.pop();
-                        const array_frame = try self.stack.pop();
-
-                        if (array_frame.value.type != .ARRAY) {
-                            std.debug.print("TypeError: Expected array but got {}\n", .{array_frame.value.type});
-                            return error.TypeError;
-                        }
-                        if (index.value.type != .INT) {
-                            std.debug.print("TypeError: Expected integer index but got {}\n", .{index.value.type});
-                            return error.TypeError;
-                        }
-
-                        const array = array_frame.value.data.array_val;
-                        const idx = @as(u32, @intCast(index.value.data.int));
-
-                        if (idx >= array.items.items.len) {
-                            return error.IndexOutOfBounds;
-                        }
-
-                        array.items.items[idx] = new_value.value;
-                        try self.stack.push(array_frame); // Put the array back on the stack
-
-                        std.debug.print("\nAfter OP_ARRAY_SET:\n", .{});
-                        self.printStack();
-                    },
-                    instructions.OpCode.OP_ARRAY_CONCAT => {
-                        std.debug.print("\n=== Executing OP_ARRAY_CONCAT ===\n", .{});
-                        var b = self.pop() orelse return null;
-                        var a = self.pop() orelse return null;
-                        std.debug.print("Popped arrays from stack, concatenating...\n", .{});
-                        const result = try self.concatArrays(&a, &b);
-                        std.debug.print("Concatenation complete, pushing result\n", .{});
-                        self.stack.push(result) catch return null;
-                    },
-                    instructions.OpCode.OP_ARRAY_SLICE => {
-                        const start = self.read_byte();
-                        const end = self.read_byte();
-                        var array_frame = self.pop() orelse return null;
-                        const result = try self.sliceArray(&array_frame, start, end);
-                        self.stack.push(result) catch return null;
-                    },
-                    instructions.OpCode.OP_DUP => {
-                        const value = try self.stack.peek();
-                        try self.stack.push(Frame.reference(value.value));
-                    },
-                    instructions.OpCode.OP_POP => {
-                        _ = try self.stack.pop();
-                    },
-                    instructions.OpCode.OP_BEGIN_BLOCK => {
-                        const current_vars_count = self.current_scope_vars.items.len;
-                        std.debug.print("BEGIN BLOCK: current vars={}\n", .{current_vars_count});
-
-                        try self.block_stack.append(BlockScope.init(self.ip, self.sp, @intCast(current_vars_count), if (self.block_stack.items.len > 0)
-                            &self.block_stack.items[self.block_stack.items.len - 1]
-                        else
-                            null));
-                    },
-                    instructions.OpCode.OP_END_BLOCK => {
-                        if (self.block_stack.items.len == 0) {
-                            self.reporter.reportFatalError("No block to end", .{});
-                            return null;
-                        }
-
-                        var block = self.block_stack.pop();
-                        std.debug.print("END BLOCK: cleaning up {} variables starting at {}\n", .{ block.var_count, block.var_start });
-                        block.cleanup(self);
-                    },
-                    instructions.OpCode.OP_AND => {
-                        const b = self.pop() orelse return null;
-                        const a = self.pop() orelse return null;
-                        const result = try self.logical_and(a, b);
-                        self.stack.push(result) catch return null;
-                    },
-                    instructions.OpCode.OP_OR => {
-                        const b = self.pop() orelse return null;
-                        const a = self.pop() orelse return null;
-                        const result = try self.logical_or(a, b);
-                        self.stack.push(result) catch return null;
-                    },
-                    instructions.OpCode.OP_NOT => {
-                        const a = self.pop() orelse return null;
-                        const result = try self.logical_not(a);
-                        self.stack.push(result) catch return null;
-                    },
-                    instructions.OpCode.OP_MATCH => {
-                        try self.executeMatch();
-                    },
-                    instructions.OpCode.OP_MATCH_ARM => {
-                        try self.executeMatchArm();
-                    },
-                    instructions.OpCode.OP_MATCH_END => {
-                        try self.executeMatchEnd();
-                    },
-                    instructions.OpCode.OP_IS_NOTHING => {
-                        const value = try self.stack.pop();
-                        std.debug.print("Checking if value is nothing: type={}, nothing={}\n", 
-                            .{value.value.type, value.value.nothing});
-                        
-                        // Create a proper boolean Frame
-                        const is_nothing = value.value.isNothing();
-                        try self.stack.push(Frame.initBoolean(is_nothing));
-                        
-                        std.debug.print("IS_NOTHING result: {}\n", .{is_nothing});
-                    },
-                    instructions.OpCode.OP_TYPEOF => {
-                        try self.executeTypeOf();
-                    },
-                    instructions.OpCode.OP_TRY => {
-                        try self.executeTry();
-                    },
-                    instructions.OpCode.OP_CATCH => {
-                        try self.executeCatch();
-                    },
-                    instructions.OpCode.OP_THROW => {
-                        try self.executeThrow();
-                    },
-                    instructions.OpCode.OP_END_TRY => {
-                        try self.executeEndTry();
+                    else => {
+                        self.reporter.reportFatalError("Invalid type for arithmetic operation", .{});
+                        return null;
                     },
                 }
-            } else {
-                return error.NoActiveFrame;
-            }
+            },
+            instructions.OpCode.OP_FADD, instructions.OpCode.OP_FSUB, instructions.OpCode.OP_FMUL => {
+                const b = self.pop().?;
+                const a = self.pop().?;
+
+                // Convert operands to float if needed
+                const a_val: f32 = switch (a.value.type) {
+                    .FLOAT => a.asFloat() catch return null,
+                    .INT => @as(f32, @floatFromInt(a.asInt() catch return null)),
+                    else => {
+                        self.reporter.reportFatalError("Invalid type for float operation", .{});
+                        return null;
+                    },
+                };
+
+                const b_val: f32 = switch (b.value.type) {
+                    .FLOAT => b.asFloat() catch return null,
+                    .INT => @as(f32, @floatFromInt(b.asInt() catch return null)),
+                    else => {
+                        self.reporter.reportFatalError("Invalid type for float operation", .{});
+                        return null;
+                    },
+                };
+
+                const result = switch (opcode) {
+                    .OP_FADD => f_add(a_val, b_val),
+                    .OP_FSUB => f_sub(a_val, b_val),
+                    .OP_FMUL => f_mul(a_val, b_val),
+                    else => unreachable,
+                } catch return null;
+                self.stack.push(result) catch return null;
+            },
+            instructions.OpCode.OP_FDIV => {
+                const b = self.pop() orelse return error.StackUnderflow;
+                const a = self.pop() orelse return error.StackUnderflow;
+
+                // Convert operands to float if needed
+                const a_val: f32 = switch (a.value.type) {
+                    .FLOAT => a.asFloat() catch return error.TypeError,
+                    .INT => @as(f32, @floatFromInt(a.asInt() catch return error.TypeError)),
+                    else => {
+                        self.reporter.reportFatalError("Invalid type for float operation", .{});
+                        return error.TypeError;
+                    },
+                };
+
+                const b_val: f32 = switch (b.value.type) {
+                    .FLOAT => b.asFloat() catch return error.TypeError,
+                    .INT => @as(f32, @floatFromInt(b.asInt() catch return error.TypeError)),
+                    else => {
+                        self.reporter.reportFatalError("Invalid type for float operation", .{});
+                        return error.TypeError;
+                    },
+                };
+
+                // Try the division
+                const result = f_div(a_val, b_val) catch {
+                    if (self.current_try_frame != null) {
+                        try self.executeThrow();
+                        return;  // Continue execution in catch block
+                    }
+                    // No try block found, report fatal error
+                    self.reporter.reportFatalError("Division by zero", .{});
+                    return error.DivisionByZero;
+                };
+                
+                const new_frame = Frame.initFloat(result);
+                try self.stack.push(new_frame);
+            },
+            // greater
+            instructions.OpCode.OP_GREATER => {
+                const b = self.pop().?;
+                const a = self.pop().?;
+                const result = greater(a, b) catch return null;
+                self.stack.push(result) catch return null;
+            },
+            // less
+            instructions.OpCode.OP_LESS => {
+                const b = self.pop().?;
+                const a = self.pop().?;
+                const result = less(a, b) catch return null;
+                self.stack.push(result) catch return null;
+            },
+            // i2f, f2i
+            instructions.OpCode.OP_CONVERT_NUMBER => {
+                const value = self.pop() orelse return null;
+                std.debug.print("CONVERT_NUMBER: Popped value type: {}\n", .{value.value.type});
+                if (value.typeIs(.INT)) {
+                    const int_val = value.asInt() catch return null;
+                    const float_val = @as(f32, @floatFromInt(int_val));
+                    self.stack.push(Frame.initFloat(float_val)) catch return null;
+                }
+                else if (value.typeIs(.FLOAT)) {
+                    const float_val = value.asFloat() catch return null;
+                    const int_val = @as(i32, @intFromFloat(std.math.trunc(float_val)));
+                    self.stack.push(Frame.initInt(int_val)) catch return null;
+                }
+                else {
+                    self.reporter.reportFatalError("Invalid type for number conversion", .{});
+                    return null;
+                }
+            },
+            // equal
+            instructions.OpCode.OP_EQUAL => {
+                const b = self.pop().?;
+                const a = self.pop().?;
+                const result = equal(a, b) catch return null;
+                self.stack.push(result) catch return null;
+            },
+            // notequal
+            instructions.OpCode.OP_NOTEQUAL => {
+                const b = self.pop().?;
+                const a = self.pop().?;
+                const result = notEqual(a, b) catch return null;
+                self.stack.push(result) catch return null;
+            },
+            instructions.OpCode.OP_JUMP => {
+                const jump_offset = self.read_byte();
+                // Preserve the top stack value (result of if-block)
+                const value = try self.stack.pop();
+
+                self.current_frame.?.ip += jump_offset;
+                self.ip = self.current_frame.?.ip;
+
+                // Push the value back
+                try self.stack.push(value);
+            },
+            instructions.OpCode.OP_JUMP_IF => {
+                const jump_address = self.read_byte();
+                const condition = self.pop().?;
+                if (condition.value.type != .BOOL) {
+                    self.reporter.reportFatalError("Expected boolean for JUMP_IF", .{});
+                    return null;
+                }
+                const bool_value = condition.asBoolean() catch return null;
+                if (bool_value) {
+                    self.ip += jump_address;
+                }
+            },
+            instructions.OpCode.OP_JUMP_IF_FALSE => {
+                const jump_offset = self.read_byte();
+                const condition = self.pop() orelse return null;
+                const bool_value = condition.asBoolean() catch return null;
+                std.debug.print("JUMP_IF_FALSE: Condition={}, offset={}\n", .{ bool_value, jump_offset });
+
+                if (!bool_value) {
+                    // When jumping to else block, skip the if-block code
+                    self.current_frame.?.ip += jump_offset;
+                    self.ip = self.current_frame.?.ip;
+
+                    // Load var[0] for the else block
+                    if (self.current_scope_vars.items.len > 0) {
+                        const var_value = self.current_scope_vars.items[0];
+                        try self.stack.push(Frame.reference(var_value.value));
+                    }
+                }
+            },
+            instructions.OpCode.OP_RETURN => {
+                if (try self.executeReturn()) |final_return| {
+                    return final_return;
+                }
+                return;
+            },
+            instructions.OpCode.OP_CALL => {
+                const function_index = self.read_byte();
+                const function = self.getFunction(function_index) orelse return null;
+
+                std.debug.print("Calling function {} with {} arguments\n", .{ function_index, function.arity });
+                self.printStack(); // Debug print stack before call
+
+                // Create new frame
+                try self.call_stack.append(CallFrame{
+                    .ip = 0,
+                    .bp = self.sp - function.arity, // Set base pointer to point to the first argument
+                    .sp = self.sp,
+                    .function = function,
+                    .return_addr = self.ip,
+                });
+
+                self.current_frame = &self.call_stack.items[self.call_stack.items.len - 1];
+                return;
+            },
+            instructions.OpCode.OP_STR_CONCAT => {
+                std.debug.print("Executing OP_STR_CONCAT\n", .{});
+                var b = self.pop() orelse return null;
+                var a = self.pop() orelse return null;
+                std.debug.print("String concatenating: ", .{});
+                std.debug.print(" with ", .{});
+                std.debug.print("\n", .{});
+                defer {
+                    b.deinit();
+                    a.deinit();
+                }
+                const result = try self.concatStrings(&a, &b);
+                std.debug.print("concatStrings result: ", .{});
+                std.debug.print("\n", .{});
+                self.stack.push(result) catch return null;
+            },
+            instructions.OpCode.OP_STR_EQ => {
+                const b = self.pop().?;
+                const a = self.pop().?;
+                const result = str_eq(a, b) catch return null;
+                self.stack.push(result) catch return null;
+            },
+            instructions.OpCode.OP_STR_LEN => {
+                const a = self.pop().?;
+                const result = str_len(a) catch return null;
+                self.stack.push(result) catch return null;
+            },
+            instructions.OpCode.OP_SUBSTR => {
+                const start = self.read_byte();
+                const len = self.read_byte();
+                var a = self.pop() orelse return null;
+                defer a.deinit();
+                const result = try self.substr(&a, start, len);
+                self.stack.push(result) catch return null;
+            },
+            instructions.OpCode.OP_STRUCT_NEW => {
+                const num_fields = self.read_byte();
+                const type_name_idx = self.read_byte();
+                std.debug.print("Creating struct with {} fields, type name at index {}\n", .{ num_fields, type_name_idx });
+                const type_name_frame = self.get_constant(type_name_idx) orelse return null;
+                const type_name = type_name_frame.asString() catch {
+                    self.reporter.reportFatalError("Expected string constant for struct type name", .{});
+                    return null;
+                };
+                const result = try Frame.initStruct(self.allocator, type_name, num_fields);
+                self.stack.push(result) catch return null;
+            },
+            instructions.OpCode.OP_SET_FIELD => {
+                std.debug.print("Setting field - Stack size: {}\n", .{self.stack.size()});
+                const value = self.pop() orelse return null;
+                const field_name_frame = self.pop() orelse return null;
+                var struct_frame = self.pop() orelse return null;
+
+                if (struct_frame.value.type != .STRUCT) {
+                    self.reporter.reportFatalError("Expected struct for field assignment", .{});
+                    return null;
+                }
+
+                const field_name = field_name_frame.asString() catch {
+                    self.reporter.reportFatalError("Expected string for field name", .{});
+                    return null;
+                };
+
+                // Set the field in the struct
+                try struct_frame.value.data.struct_val.fields.put(field_name, value.value);
+
+                // Push the struct back onto the stack
+                self.stack.push(struct_frame) catch return null;
+            },
+            instructions.OpCode.OP_GET_FIELD => {
+                const field_name_frame = self.pop() orelse return null;
+                const struct_frame = self.pop() orelse return null;
+
+                if (struct_frame.value.type != .STRUCT) {
+                    self.reporter.reportFatalError("Expected struct for field access", .{});
+                    return null;
+                }
+
+                const field_name = field_name_frame.asString() catch {
+                    self.reporter.reportFatalError("Expected string for field name", .{});
+                    return null;
+                };
+
+                // Get the field from the struct
+                if (struct_frame.value.data.struct_val.fields.get(field_name)) |field_value| {
+                    // Create a new frame for the field value
+                    const result = Frame{
+                        .value = field_value,
+                        .allocator = null, // Field values don't own their memory
+                    };
+                    self.stack.push(result) catch return null;
+                } else {
+                    self.reporter.reportFatalError("Field not found in struct", .{});
+                    return null;
+                }
+            },
+            instructions.OpCode.OP_ARRAY_NEW => {
+                const size = self.read_byte();
+                const type_byte = self.read_byte();  // Read the type parameter
+                const element_type = @as(instructions.ValueType, @enumFromInt(type_byte));
+                
+                std.debug.print("Creating new array with capacity {} and type {}\n", 
+                    .{size, element_type});
+                
+                const array_frame = try Frame.initArray(
+                    self.allocator, 
+                    size,
+                    element_type  // Pass the element type to initArray
+                );
+                try self.stack.push(array_frame);
+            },
+            instructions.OpCode.OP_ARRAY_PUSH => {
+                const value = self.pop() orelse return null;
+                var array_frame = self.pop() orelse return null;
+
+                if (array_frame.value.type != .ARRAY) {
+                    self.reporter.reportFatalError("Expected array for push operation", .{});
+                    return null;
+                }
+
+                std.debug.print("Pushing value of type {} onto array\n", .{value.value.type});
+                try array_frame.value.data.array_val.items.append(value.value);
+                try self.stack.push(array_frame); // Push the array back onto the stack
+            },
+            instructions.OpCode.OP_ARRAY_LEN => {
+                const array_frame = self.pop() orelse return null;
+
+                if (array_frame.value.type != .ARRAY) {
+                    self.reporter.reportFatalError("Expected array for length operation", .{});
+                    return null;
+                }
+
+                const len = @as(i32, @intCast(array_frame.value.data.array_val.items.items.len));
+                std.debug.print("Array length is {}\n", .{len});
+
+                // Push back just the array (we don't need the length for the next operation)
+                try self.stack.push(array_frame);
+                try self.stack.push(Frame.initInt(len)); // Push the length of the array back onto the stack
+            },
+            instructions.OpCode.OP_ARRAY_GET => {
+                std.debug.print("\n=== OP_ARRAY_GET ===\n", .{});
+                self.printStack();
+
+                const index = try self.stack.pop();
+                const array_frame = try self.stack.pop();
+
+                if (array_frame.value.type != .ARRAY) {
+                    try self.stack.push(Frame.initNothing(.INT));  // Default to INT if type error
+                    return;  
+                }
+                if (index.value.type != .INT) {
+                    try self.stack.push(Frame.initNothing(.INT));  // Default to INT if type error
+                    return; 
+                }
+
+                const array = array_frame.value.data.array_val;
+                const idx = @as(u32, @intCast(index.value.data.int));
+
+                if (idx >= array.items.items.len) {
+                    // Get the type of the array elements
+                    const element_type = array.element_type;
+                    try self.stack.push(Frame.initNothing(element_type));
+                    return;
+                }
+
+                const value = array.items.items[idx];
+                try self.stack.push(Frame.initValue(value));
+            },
+            instructions.OpCode.OP_ARRAY_SET => {
+                std.debug.print("\n=== OP_ARRAY_SET ===\n", .{});
+                self.printStack();
+
+                const new_value = try self.stack.pop();
+                const index = try self.stack.pop();
+                const array_frame = try self.stack.pop();
+
+                if (array_frame.value.type != .ARRAY) {
+                    std.debug.print("TypeError: Expected array but got {}\n", .{array_frame.value.type});
+                    return error.TypeError;
+                }
+                if (index.value.type != .INT) {
+                    std.debug.print("TypeError: Expected integer index but got {}\n", .{index.value.type});
+                    return error.TypeError;
+                }
+
+                const array = array_frame.value.data.array_val;
+                const idx = @as(u32, @intCast(index.value.data.int));
+
+                if (idx >= array.items.items.len) {
+                    return error.IndexOutOfBounds;
+                }
+
+                array.items.items[idx] = new_value.value;
+                try self.stack.push(array_frame); // Put the array back on the stack
+
+                std.debug.print("\nAfter OP_ARRAY_SET:\n", .{});
+                self.printStack();
+            },
+            instructions.OpCode.OP_ARRAY_CONCAT => {
+                std.debug.print("\n=== Executing OP_ARRAY_CONCAT ===\n", .{});
+                var b = self.pop() orelse return null;
+                var a = self.pop() orelse return null;
+                std.debug.print("Popped arrays from stack, concatenating...\n", .{});
+                const result = try self.concatArrays(&a, &b);
+                std.debug.print("Concatenation complete, pushing result\n", .{});
+                self.stack.push(result) catch return null;
+            },
+            instructions.OpCode.OP_ARRAY_SLICE => {
+                const start = self.read_byte();
+                const end = self.read_byte();
+                var array_frame = self.pop() orelse return null;
+                const result = try self.sliceArray(&array_frame, start, end);
+                self.stack.push(result) catch return null;
+            },
+            instructions.OpCode.OP_DUP => {
+                const value = try self.stack.peek();
+                try self.stack.push(Frame.reference(value.value));
+            },
+            instructions.OpCode.OP_POP => {
+                _ = try self.stack.pop();
+            },
+            instructions.OpCode.OP_BEGIN_BLOCK => {
+                const current_vars_count = self.current_scope_vars.items.len;
+                std.debug.print("BEGIN BLOCK: current vars={}\n", .{current_vars_count});
+
+                try self.block_stack.append(BlockScope.init(self.ip, self.sp, @intCast(current_vars_count), if (self.block_stack.items.len > 0)
+                    &self.block_stack.items[self.block_stack.items.len - 1]
+                else
+                    null));
+            },
+            instructions.OpCode.OP_END_BLOCK => {
+                if (self.block_stack.items.len == 0) {
+                    self.reporter.reportFatalError("No block to end", .{});
+                    return null;
+                }
+
+                var block = self.block_stack.pop();
+                std.debug.print("END BLOCK: cleaning up {} variables starting at {}\n", .{ block.var_count, block.var_start });
+                block.cleanup(self);
+            },
+            instructions.OpCode.OP_AND => {
+                const b = self.pop() orelse return null;
+                const a = self.pop() orelse return null;
+                const result = try self.logical_and(a, b);
+                self.stack.push(result) catch return null;
+            },
+            instructions.OpCode.OP_OR => {
+                const b = self.pop() orelse return null;
+                const a = self.pop() orelse return null;
+                const result = try self.logical_or(a, b);
+                self.stack.push(result) catch return null;
+            },
+            instructions.OpCode.OP_NOT => {
+                const a = self.pop() orelse return null;
+                const result = try self.logical_not(a);
+                self.stack.push(result) catch return null;
+            },
+            instructions.OpCode.OP_MATCH => {
+                try self.executeMatch();
+            },
+            instructions.OpCode.OP_MATCH_ARM => {
+                try self.executeMatchArm();
+            },
+            instructions.OpCode.OP_MATCH_END => {
+                try self.executeMatchEnd();
+            },
+            instructions.OpCode.OP_IS_NOTHING => {
+                const value = try self.stack.pop();
+                std.debug.print("Checking if value is nothing: type={}, nothing={}\n", 
+                    .{value.value.type, value.value.nothing});
+                
+                // Create a proper boolean Frame
+                const is_nothing = value.value.isNothing();
+                try self.stack.push(Frame.initBoolean(is_nothing));
+                
+                std.debug.print("IS_NOTHING result: {}\n", .{is_nothing});
+            },
+            instructions.OpCode.OP_TYPEOF => {
+                try self.executeTypeOf();
+            },
+            instructions.OpCode.OP_TRY => {
+                try self.executeTry();
+            },
+            instructions.OpCode.OP_CATCH => {
+                try self.executeCatch();
+            },
+            instructions.OpCode.OP_THROW => {
+                try self.executeThrow();
+            },
+            instructions.OpCode.OP_END_TRY => {
+                try self.executeEndTry();
+            },
         }
     }
 
@@ -1981,6 +1937,115 @@ pub const VM = struct {
         else
             null;
     }
+
+    pub fn runLoop(self: *VM) !void {
+        self.running = true;
+        
+        while (self.running) {
+            switch (self.exec_mode) {
+                .Normal => {
+                    if (try self.executeNextInstruction()) |result| {
+                        // Handle final result
+                        defer {
+                            result.deinit();
+                            self.allocator.destroy(result);
+                        }
+                        std.debug.print("Result: ", .{});
+                        VM.printValue(result.value);
+                        std.debug.print("\n", .{});
+                        self.running = false;
+                    }
+                },
+                .StepByStep => {
+                    // Wait for user input before executing next instruction
+                    try self.waitForStep();
+                    if (try self.executeNextInstruction()) |result| {
+                        // Handle final result
+                        defer {
+                            result.deinit();
+                            self.allocator.destroy(result);
+                        }
+                        std.debug.print("Result: ", .{});
+                        VM.printValue(result.value);
+                        std.debug.print("\n", .{});
+                        self.running = false;
+                    }
+                },
+                .Paused => {
+                    // Sleep briefly to prevent busy waiting
+                    std.time.sleep(std.time.ns_per_ms * 100);
+                },
+            }
+        }
+    }
+
+    fn executeNextInstruction(self: *VM) !?*Frame {
+        if (self.current_frame) |frame| {
+            if (frame.ip >= frame.function.code.len) {
+                // Create a new frame with NOTHING value for empty returns
+                const result = try self.allocator.create(Frame);
+                result.* = Frame.initNothing(.INT);
+                return result;
+            }
+
+            const opcode: instructions.OpCode = @enumFromInt(frame.function.code[frame.ip]);
+            frame.ip += 1;
+            self.ip = frame.ip;
+
+            // Debug output for step-by-step mode
+            if (self.exec_mode == .StepByStep) {
+                std.debug.print("Executing opcode: {}\n", .{opcode});
+                self.printStack();
+            }
+
+            // Execute the instruction
+            try self.executeInstruction(opcode);
+
+            // Check if this was a HALT instruction
+            if (opcode == .OP_HALT) {
+                if (self.stack.size() > 0) {
+                    const top_value = try self.stack.peek();
+                    const result = try self.allocator.create(Frame);
+                    result.* = top_value;
+                    return result;
+                }
+                // Return 0 if stack is empty
+                const result = try self.allocator.create(Frame);
+                result.* = Frame.initInt(0);
+                return result;
+            }
+
+            return null;
+        }
+        return error.NoActiveFrame;
+    }
+
+
+    fn waitForStep(self: *VM) !void {
+        const stdin = std.io.getStdIn().reader();
+        var buf: [1]u8 = undefined;
+        
+        std.debug.print("Press Enter to execute next instruction...", .{});
+        _ = self;
+        _ = try stdin.read(&buf);
+    }
+
+    // Add methods to control execution
+    pub fn pause(self: *VM) void {
+        self.exec_mode = .Paused;
+    }
+
+    pub fn resumeExecution(self: *VM) void {
+        self.exec_mode = .Normal;
+    }
+
+    pub fn enableStepByStep(self: *VM) void {
+        self.exec_mode = .StepByStep;
+    }
+
+    pub fn stop(self: *VM) void {
+        self.running = false;
+    }
 };
 
 pub fn runVM(code: []u8, constants: []Frame) !void {
@@ -2097,17 +2162,9 @@ pub fn main() !void {
     );
     defer vm.deinit();
 
-    // Run the VM and handle results
-    if (vm.eval()) |maybe_result| {
-        if (maybe_result) |result| {
-            std.debug.print("Final result: ", .{});
-            VM.printValue(result.value);
-            std.debug.print("\n", .{});
+    // Enable step-by-step mode if desired
+    // vm.enableStepByStep();
 
-            result.deinit();
-            allocator.destroy(result);
-        }
-    } else |err| {
-        std.debug.print("Error: {}\n", .{err});
-    }
+    // Run the VM with the new execution loop
+    try vm.runLoop();
 }
