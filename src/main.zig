@@ -115,7 +115,10 @@ fn run(allocator: std.mem.Allocator, interpreter: *Interpreter, source: []const 
         if (compile) {
             //TODO: Compile to bytecode
         } else {
-            try interpreter.interpret(statements);
+            // Execute statements directly in the global environment
+            for (statements) |stmt| {
+                try interpreter.executeStatement(&stmt);
+            }
         }
     }
 }
