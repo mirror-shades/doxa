@@ -61,6 +61,8 @@ pub const Parser = struct {
 
             const stmt = if (current.type == .VAR)
                 try self.parseVarDecl()
+            else if (current.type == .LEFT_BRACE)
+                try self.parseBlock()
             else
                 try self.parseExpressionStmt();
 
@@ -163,7 +165,37 @@ pub const Parser = struct {
     }
 
     fn parseExpression(self: *Parser) ErrorList!?*ast.Expr {
-        return try self.parseComparison();
+        return try self.parseAssignment();
+    }
+
+    fn parseAssignment(self: *Parser) ErrorList!?*ast.Expr {
+        const expr = try self.parseComparison();
+
+        if (self.peek().type == .ASSIGN) {
+            self.advance();
+
+            const value = try self.parseAssignment();
+
+            // Check if the left side is a valid assignment target
+            if (expr) |e| {
+                if (e.* == .Variable) {
+                    const name = e.Variable;
+                    // Clean up the variable expression since we're creating a new node
+                    self.allocator.destroy(e);
+
+                    const assignment = try self.allocator.create(ast.Expr);
+                    assignment.* = ast.Expr{ .Assignment = .{
+                        .name = name,
+                        .value = value,
+                    } };
+                    return assignment;
+                }
+                // If we get here, the left side isn't a valid assignment target
+                return error.InvalidAssignmentTarget;
+            }
+        }
+
+        return expr;
     }
 
     fn parseComparison(self: *Parser) ErrorList!?*ast.Expr {
@@ -362,5 +394,36 @@ pub const Parser = struct {
             return self.tokens[self.tokens.len - 1];
         }
         return self.tokens[self.current + 1];
+    }
+
+    fn parseBlock(self: *Parser) ErrorList!ast.Stmt {
+        if (self.debug_enabled) {
+            std.debug.print("\nParsing block...\n", .{});
+        }
+
+        // Consume {
+        self.advance();
+
+        var statements = std.ArrayList(ast.Stmt).init(self.allocator);
+        errdefer statements.deinit();
+
+        while (self.peek().type != .RIGHT_BRACE and self.peek().type != .EOF) {
+            const stmt = if (self.peek().type == .VAR)
+                try self.parseVarDecl()
+            else if (self.peek().type == .LEFT_BRACE)
+                try self.parseBlock()
+            else
+                try self.parseExpressionStmt();
+
+            try statements.append(stmt);
+        }
+
+        if (self.peek().type != .RIGHT_BRACE) {
+            statements.deinit();
+            return error.ExpectedRightBrace;
+        }
+        self.advance(); // Consume }
+
+        return ast.Stmt{ .Block = try statements.toOwnedSlice() };
     }
 };

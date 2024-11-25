@@ -12,7 +12,6 @@ const Interpreter = @import("interpreter.zig").Interpreter;
 ///==========================================================================
 /// Constants
 ///==========================================================================
-
 const EXIT_CODE_USAGE = 64;
 const EXIT_CODE_ERROR = 65;
 const MAX_REPL_LINE_LENGTH = 1024;
@@ -22,7 +21,6 @@ const DOXA_EXTENSION = ".doxa";
 ///==========================================================================
 /// Variables
 ///==========================================================================
-
 var hadError: bool = false;
 var debugLexer: bool = false;
 var debugParser: bool = false;
@@ -30,7 +28,6 @@ var compile: bool = false;
 ///==========================================================================
 /// Types & Errors
 ///==========================================================================
-
 const SourceFile = struct {
     allocator: std.mem.Allocator,
     contents: []u8,
@@ -38,11 +35,11 @@ const SourceFile = struct {
     pub fn init(allocator: std.mem.Allocator, path: []const u8) !SourceFile {
         var file = try std.fs.cwd().openFile(path, .{});
         defer file.close();
-        
+
         const file_size = try file.getEndPos();
         const buffer = try allocator.alloc(u8, file_size);
         const bytes_read = try file.readAll(buffer);
-        
+
         return SourceFile{
             .allocator = allocator,
             .contents = buffer[0..bytes_read],
@@ -57,27 +54,25 @@ const SourceFile = struct {
 ///==========================================================================
 /// Error Reporting
 ///==========================================================================
-
 pub fn reportMinimalError(line: u32, message: []const u8) void {
     reportError(line, "", message);
 }
 
 pub fn reportError(line: u32, where: []const u8, message: []const u8) void {
-    std.debug.print("[line {}] {s} Error: {s}\n", .{line, where, message});
+    std.debug.print("[line {}] {s} Error: {s}\n", .{ line, where, message });
     hadError = true;
 }
 
 ///==========================================================================
 /// Run
 ///==========================================================================
-
 fn run(allocator: std.mem.Allocator, interpreter: *Interpreter, source: []const u8) !void {
     var lexer = Lexer.init(allocator, source);
     defer lexer.deinit();
-    
+
     try lexer.initKeywords();
     const token_list = try lexer.lexTokens();
-    
+
     if (debugLexer) {
         for (token_list.items) |tok| {
             const type_str = @tagName(tok.type);
@@ -88,7 +83,7 @@ fn run(allocator: std.mem.Allocator, interpreter: *Interpreter, source: []const 
     if (!hadError) {
         var parser_instance = try Parser.init(allocator, token_list.items, debugParser);
         defer parser_instance.deinit();
-        
+
         const statements = try parser_instance.parse();
         defer {
             // Clean up AST nodes
@@ -105,6 +100,12 @@ fn run(allocator: std.mem.Allocator, interpreter: *Interpreter, source: []const 
                             init.deinit(allocator);
                             allocator.destroy(init);
                         }
+                    },
+                    .Block => |block_statements| {
+                        for (block_statements) |*block_stmt| {
+                            block_stmt.deinit(allocator);
+                        }
+                        allocator.free(block_statements);
                     },
                 }
             }
@@ -156,7 +157,6 @@ fn runFile(allocator: std.mem.Allocator, path: []const u8) !void {
 ///==========================================================================
 /// Main
 ///==========================================================================
-
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer {
