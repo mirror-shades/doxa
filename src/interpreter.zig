@@ -33,27 +33,81 @@ const StringInterner = struct {
     }
 };
 
+pub const Environment = struct {
+    enclosing: ?*Environment,
+    values: std.StringHashMap(token.TokenLiteral),
+    allocator: std.mem.Allocator,
+
+    pub fn init(allocator: std.mem.Allocator, enclosing: ?*Environment) Environment {
+        return Environment{
+            .enclosing = enclosing,
+            .values = std.StringHashMap(token.TokenLiteral).init(allocator),
+            .allocator = allocator,
+        };
+    }
+
+    pub fn deinit(self: *Environment) void {
+        self.values.deinit();
+    }
+
+    pub fn define(self: *Environment, name: []const u8, value: token.TokenLiteral) !void {
+        try self.values.put(name, value);
+    }
+
+    pub fn get(self: *Environment, name: []const u8) ?token.TokenLiteral {
+        if (self.values.get(name)) |value| {
+            return value;
+        }
+        if (self.enclosing) |enclosing| {
+            return enclosing.get(name);
+        }
+        return null;
+    }
+
+    pub fn assign(self: *Environment, name: []const u8, value: token.TokenLiteral) !void {
+        if (self.values.contains(name)) {
+            try self.values.put(name, value);
+            return;
+        }
+        if (self.enclosing) |enclosing| {
+            try enclosing.assign(name, value);
+            return;
+        }
+        return error.UndefinedVariable;
+    }
+};
+
 pub const Interpreter = struct {
     allocator: std.mem.Allocator,
-    variables: std.StringHashMap(token.TokenLiteral),
+    environment: *Environment,
+    globals: *Environment,
     debug_enabled: bool,
     string_interner: StringInterner,
 
     pub fn init(allocator: std.mem.Allocator, debug_enabled: bool) !Interpreter {
+        const globals = try allocator.create(Environment);
+        globals.* = Environment.init(allocator, null);
+
         return Interpreter{
             .allocator = allocator,
-            .variables = std.StringHashMap(token.TokenLiteral).init(allocator),
+            .environment = globals,
+            .globals = globals,
             .debug_enabled = debug_enabled,
             .string_interner = StringInterner.init(allocator),
         };
     }
 
     pub fn deinit(self: *Interpreter) void {
-        self.variables.deinit();
+        self.environment.deinit();
+        self.allocator.destroy(self.globals);
         self.string_interner.deinit();
     }
 
-    pub fn interpret(self: *Interpreter, statements: []ast.Stmt) !void {
+    pub fn executeBlock(self: *Interpreter, statements: []ast.Stmt, environment: *Environment) ErrorList!void {
+        const previous = self.environment;
+        self.environment = environment;
+        defer self.environment = previous;
+
         for (statements) |stmt| {
             try self.executeStatement(&stmt);
         }
@@ -76,23 +130,22 @@ pub const Interpreter = struct {
         return 0;
     }
 
-    fn executeStatement(self: *Interpreter, stmt: *const ast.Stmt) !void {
+    pub fn executeStatement(self: *Interpreter, stmt: *const ast.Stmt) !void {
         switch (stmt.*) {
             .VarDecl => |decl| {
                 const value = try self.evaluate(decl.initializer);
                 const key = try self.string_interner.intern(decl.name.lexeme);
-                try self.variables.put(key, value);
+                try self.environment.define(key, value);
 
                 if (self.debug_enabled) {
                     std.debug.print("Declared variable {s} = {any}\n", .{
                         decl.name.lexeme, value,
                     });
-                    std.debug.print("Variables hashmap contains: {any}\n", .{self.variables.count()});
                 }
             },
             .Expression => |expr| {
                 if (self.debug_enabled) {
-                    std.debug.print("Before evaluating expression, variables count: {any}\n", .{self.variables.count()});
+                    std.debug.print("Before evaluating expression\n", .{});
                 }
                 const value = try self.evaluate(expr);
                 if (self.debug_enabled) {
@@ -100,9 +153,9 @@ pub const Interpreter = struct {
                 }
             },
             .Block => |statements| {
-                for (statements) |statement| {
-                    try self.executeStatement(&statement);
-                }
+                var block_env = Environment.init(self.allocator, self.environment);
+                defer block_env.deinit();
+                try self.executeBlock(statements, &block_env);
             },
         }
     }
@@ -199,13 +252,12 @@ pub const Interpreter = struct {
             .Variable => |var_token| {
                 if (self.debug_enabled) {
                     std.debug.print("Looking up variable: '{s}' (len: {})\n", .{ var_token.lexeme, var_token.lexeme.len });
-                    var it = self.variables.iterator();
+                    var it = self.environment.values.iterator();
                     while (it.next()) |entry| {
                         std.debug.print("Stored key: '{s}' (len: {}), value: {any}\n", .{ entry.key_ptr.*, entry.key_ptr.*.len, entry.value_ptr.* });
                     }
                 }
-                if (self.variables.contains(var_token.lexeme)) {
-                    const value = self.variables.get(var_token.lexeme).?;
+                if (self.environment.get(var_token.lexeme)) |value| {
                     return value;
                 }
                 return error.VariableNotFound;
@@ -213,7 +265,7 @@ pub const Interpreter = struct {
             .Assignment => |assign| {
                 const value = try self.evaluate(assign.value);
                 const key = try self.string_interner.intern(assign.name.lexeme);
-                try self.variables.put(key, value);
+                try self.environment.define(key, value);
                 return value;
             },
             .Grouping => |group| {
