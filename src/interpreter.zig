@@ -4,16 +4,47 @@ const token = @import("token.zig");
 const ReportingModule = @import("reporting.zig");
 const ErrorList = ReportingModule.ErrorList;
 
+const StringInterner = struct {
+    strings: std.StringHashMap([]const u8),
+    allocator: std.mem.Allocator,
+
+    pub fn init(allocator: std.mem.Allocator) StringInterner {
+        return StringInterner{
+            .strings = std.StringHashMap([]const u8).init(allocator),
+            .allocator = allocator,
+        };
+    }
+
+    pub fn deinit(self: *StringInterner) void {
+        var it = self.strings.iterator();
+        while (it.next()) |entry| {
+            self.allocator.free(entry.key_ptr.*);
+        }
+        self.strings.deinit();
+    }
+
+    pub fn intern(self: *StringInterner, string: []const u8) ![]const u8 {
+        if (self.strings.get(string)) |existing| {
+            return existing;
+        }
+        const copy = try self.allocator.dupe(u8, string);
+        try self.strings.put(copy, copy);
+        return copy;
+    }
+};
+
 pub const Interpreter = struct {
     allocator: std.mem.Allocator,
     variables: std.StringHashMap(token.TokenLiteral),
     debug_enabled: bool,
+    string_interner: StringInterner,
 
     pub fn init(allocator: std.mem.Allocator, debug_enabled: bool) !Interpreter {
         return Interpreter{
             .allocator = allocator,
             .variables = std.StringHashMap(token.TokenLiteral).init(allocator),
             .debug_enabled = debug_enabled,
+            .string_interner = StringInterner.init(allocator),
         };
     }
 
@@ -23,6 +54,7 @@ pub const Interpreter = struct {
             self.allocator.free(entry.key_ptr.*);
         }
         self.variables.deinit();
+        self.string_interner.deinit();
     }
 
     pub fn interpret(self: *Interpreter, statements: []ast.Stmt) !void {
@@ -35,7 +67,7 @@ pub const Interpreter = struct {
         switch (stmt.*) {
             .VarDecl => |decl| {
                 const value = try self.evaluate(decl.initializer);
-                const key = try self.allocator.dupe(u8, decl.name.lexeme);
+                const key = try self.string_interner.intern(decl.name.lexeme);
                 try self.variables.put(key, value);
                 
                 if (self.debug_enabled) {
@@ -136,7 +168,7 @@ pub const Interpreter = struct {
             },
             .Assignment => |assign| {
                 const value = try self.evaluate(assign.value);
-                const key = try self.allocator.dupe(u8, assign.name.lexeme);
+                const key = try self.string_interner.intern(assign.name.lexeme);
                 try self.variables.put(key, value);
                 return value;
             },
