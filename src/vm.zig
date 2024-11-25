@@ -765,7 +765,7 @@ pub const VM = struct {
                 // Store the new value
                 self.current_scope_vars.items[var_index] = value;
             },
-            instructions.OpCode.OP_SET_CONST => {
+            .OP_SET_CONST => {
                 const var_index = self.read_byte();
                 const value = try self.stack.pop();
                 const variable = self.variables[var_index];
@@ -786,18 +786,18 @@ pub const VM = struct {
 
                 self.values[variable.index] = value.value;
             },
-            instructions.OpCode.OP_IADD, instructions.OpCode.OP_ISUB, instructions.OpCode.OP_IMUL => {
+            .OP_IADD, .OP_ISUB, .OP_IMUL => {
                 const b = self.pop().?;
                 const a = self.pop().?;
-
+                const te = ErrorList.TypeError;
                 // Fast path: both integers
                 if (a.value.type == .INT and b.value.type == .INT) {
                     const result = switch (opcode) {
-                        .OP_IADD => i_add(a.asInt() catch return ErrorList.TypeError, b.asInt() catch return ErrorList.TypeError),
-                        .OP_ISUB => i_sub(a.asInt() catch return ErrorList.TypeError, b.asInt() catch return ErrorList.TypeError),
-                        .OP_IMUL => i_mul(a.asInt() catch return ErrorList.TypeError, b.asInt() catch return ErrorList.TypeError),
+                        .OP_IADD => i_add(a.asInt() catch return te, b.asInt() catch return te),
+                        .OP_ISUB => i_sub(a.asInt() catch return te, b.asInt() catch return te),
+                        .OP_IMUL => i_mul(a.asInt() catch return te, b.asInt() catch return te),
                         else => unreachable,
-                    } catch return ErrorList.TypeError;
+                    } catch return te;
                     self.stack.push(result) catch return ErrorList.StackUnderflow;
                     return;
                 }
@@ -806,52 +806,52 @@ pub const VM = struct {
                 switch (a.value.type) {
                     .INT => switch (b.value.type) {
                         .FLOAT => {
-                            const a_float = @as(f32, @floatFromInt(a.asInt() catch return ErrorList.TypeError));
+                            const a_float = @as(f32, @floatFromInt(a.asInt() catch return te));
                             const result = switch (opcode) {
-                                .OP_IADD => f_add(a_float, b.asFloat() catch return ErrorList.TypeError),
-                                .OP_ISUB => f_sub(a_float, b.asFloat() catch return ErrorList.TypeError),
-                                .OP_IMUL => f_mul(a_float, b.asFloat() catch return ErrorList.TypeError),
+                                .OP_IADD => f_add(a_float, b.asFloat() catch return te),
+                                .OP_ISUB => f_sub(a_float, b.asFloat() catch return te),
+                                .OP_IMUL => f_mul(a_float, b.asFloat() catch return te),
                                 else => unreachable,
-                            } catch return ErrorList.TypeError;
+                            } catch return te;
                             self.stack.push(result) catch return ErrorList.StackUnderflow;
                         },
                         else => {
                             self.reporter.reportFatalError("Invalid type for arithmetic operation", .{});
-                            return ErrorList.TypeError;
+                            return te;
                         },
                     },
                     .FLOAT => switch (b.value.type) {
                         .INT => {
-                            const b_float = @as(f32, @floatFromInt(b.asInt() catch return ErrorList.TypeError));
+                            const b_float = @as(f32, @floatFromInt(b.asInt() catch return te));
                             const result = switch (opcode) {
-                                .OP_IADD => f_add(a.asFloat() catch return ErrorList.TypeError, b_float),
-                                .OP_ISUB => f_sub(a.asFloat() catch return ErrorList.TypeError, b_float),
-                                .OP_IMUL => f_mul(a.asFloat() catch return ErrorList.TypeError, b_float),
+                                .OP_IADD => f_add(a.asFloat() catch return te, b_float),
+                                .OP_ISUB => f_sub(a.asFloat() catch return te, b_float),
+                                .OP_IMUL => f_mul(a.asFloat() catch return te, b_float),
                                 else => unreachable,
-                            } catch return ErrorList.TypeError;
+                            } catch return te;
                             self.stack.push(result) catch return ErrorList.StackUnderflow;
                         },
                         .FLOAT => {
                             const result = switch (opcode) {
-                                .OP_IADD => f_add(a.asFloat() catch return ErrorList.TypeError, b.asFloat() catch return ErrorList.TypeError),
-                                .OP_ISUB => f_sub(a.asFloat() catch return ErrorList.TypeError, b.asFloat() catch return ErrorList.TypeError),
-                                .OP_IMUL => f_mul(a.asFloat() catch return ErrorList.TypeError, b.asFloat() catch return ErrorList.TypeError),
+                                .OP_IADD => f_add(a.asFloat() catch return te, b.asFloat() catch return te),
+                                .OP_ISUB => f_sub(a.asFloat() catch return te, b.asFloat() catch return te),
+                                .OP_IMUL => f_mul(a.asFloat() catch return te, b.asFloat() catch return te),
                                 else => unreachable,
-                            } catch return ErrorList.TypeError;
+                            } catch return te;
                             self.stack.push(result) catch return ErrorList.StackUnderflow;
                         },
                         else => {
                             self.reporter.reportFatalError("Invalid type for arithmetic operation", .{});
-                            return ErrorList.TypeError;
+                            return te;
                         },
                     },
                     else => {
                         self.reporter.reportFatalError("Invalid type for arithmetic operation", .{});
-                        return ErrorList.TypeError;
+                        return te;
                     },
                 }
             },
-            instructions.OpCode.OP_FADD, instructions.OpCode.OP_FSUB, instructions.OpCode.OP_FMUL => {
+            .OP_FADD, .OP_FSUB, .OP_FMUL => {
                 const b = self.pop().?;
                 const a = self.pop().?;
 
@@ -882,7 +882,7 @@ pub const VM = struct {
                 } catch return ErrorList.TypeError;
                 self.stack.push(result) catch return ErrorList.StackUnderflow;
             },
-            instructions.OpCode.OP_FDIV => {
+            .OP_FDIV => {
                 const b = self.pop() orelse return error.StackUnderflow;
                 const a = self.pop() orelse return error.StackUnderflow;
 
@@ -920,21 +920,21 @@ pub const VM = struct {
                 try self.stack.push(new_frame);
             },
             // greater
-            instructions.OpCode.OP_GREATER => {
+            .OP_GREATER => {
                 const b = self.pop().?;
                 const a = self.pop().?;
                 const result = greater(a, b) catch return ErrorList.TypeError;
                 self.stack.push(result) catch return ErrorList.StackUnderflow;
             },
             // less
-            instructions.OpCode.OP_LESS => {
+            .OP_LESS => {
                 const b = self.pop().?;
                 const a = self.pop().?; 
                 const result = less(a, b) catch return ErrorList.TypeError;
                 self.stack.push(result) catch return ErrorList.StackUnderflow;
             },
             // i2f, f2i
-            instructions.OpCode.OP_CONVERT_NUMBER => {
+            .OP_CONVERT_NUMBER => {
                 const value = self.pop() orelse return ErrorList.StackUnderflow;
                 std.debug.print("CONVERT_NUMBER: Popped value type: {}\n", .{value.value.type});
                 if (value.typeIs(.INT)) {
@@ -953,20 +953,20 @@ pub const VM = struct {
                 }
             },
             // equal
-            instructions.OpCode.OP_EQUAL => {
+            .OP_EQUAL => {
                 const b = self.pop().?;
                 const a = self.pop().?;
                 const result = equal(a, b) catch return ErrorList.TypeError;
                 self.stack.push(result) catch return ErrorList.StackUnderflow;
             },
             // notequal
-            instructions.OpCode.OP_NOTEQUAL => {
+            .OP_NOTEQUAL => {
                 const b = self.pop().?;
                 const a = self.pop().?;
                 const result = notEqual(a, b) catch return ErrorList.TypeError;
                 self.stack.push(result) catch return ErrorList.StackUnderflow;
             },
-            instructions.OpCode.OP_JUMP => {
+            .OP_JUMP => {
                 const jump_offset = self.read_byte();
                 // Preserve the top stack value (result of if-block)
                 const value = try self.stack.pop();
@@ -977,7 +977,7 @@ pub const VM = struct {
                 // Push the value back
                 try self.stack.push(value);
             },
-            instructions.OpCode.OP_JUMP_IF => {
+            .OP_JUMP_IF => {
                 const jump_address = self.read_byte();
                 const condition = self.pop().?;
                 if (condition.value.type != .BOOL) {
@@ -989,7 +989,7 @@ pub const VM = struct {
                     self.ip += jump_address;
                 }
             },
-            instructions.OpCode.OP_JUMP_IF_FALSE => {
+            .OP_JUMP_IF_FALSE => {
                 const jump_offset = self.read_byte();
                 const condition = self.pop() orelse return ErrorList.StackUnderflow;
                 const bool_value = condition.asBoolean() catch return ErrorList.TypeError;
@@ -1007,10 +1007,10 @@ pub const VM = struct {
                     }
                 }
             },
-            instructions.OpCode.OP_RETURN => {
+            .OP_RETURN => {
                 try self.executeReturn();
             },
-            instructions.OpCode.OP_CALL => {
+            .OP_CALL => {
                 const function_index = self.read_byte();
                 const function = self.getFunction(function_index) orelse return ErrorList.TypeError;
 
@@ -1029,7 +1029,7 @@ pub const VM = struct {
                 self.current_frame = &self.call_stack.items[self.call_stack.items.len - 1];
                 return;
             },
-            instructions.OpCode.OP_STR_CONCAT => {
+            .OP_STR_CONCAT => {
                 std.debug.print("Executing OP_STR_CONCAT\n", .{});
                 var b = self.pop() orelse return ErrorList.StackUnderflow;
                 var a = self.pop() orelse return ErrorList.StackUnderflow;
@@ -1045,18 +1045,18 @@ pub const VM = struct {
                 std.debug.print("\n", .{});
                 self.stack.push(result) catch return ErrorList.StackUnderflow;
             },
-            instructions.OpCode.OP_STR_EQ => {
+            .OP_STR_EQ => {
                 const b = self.pop().?;
                 const a = self.pop().?;
                 const result = str_eq(a, b) catch return ErrorList.TypeError;
                 self.stack.push(result) catch return ErrorList.StackUnderflow;
             },
-            instructions.OpCode.OP_STR_LEN => {
+            .OP_STR_LEN => {
                 const a = self.pop().?;
                 const result = str_len(a) catch return ErrorList.TypeError;
                 self.stack.push(result) catch return ErrorList.StackUnderflow;
             },
-            instructions.OpCode.OP_SUBSTR => {
+            .OP_SUBSTR => {
                 const start = self.read_byte();
                 const len = self.read_byte();
                 var a = self.pop() orelse return ErrorList.StackUnderflow;
@@ -1064,7 +1064,7 @@ pub const VM = struct {
                 const result = try self.substr(&a, start, len);
                 self.stack.push(result) catch return ErrorList.StackUnderflow;
             },
-            instructions.OpCode.OP_STRUCT_NEW => {
+            .OP_STRUCT_NEW => {
                 const num_fields = self.read_byte();
                 const type_name_idx = self.read_byte();
                 std.debug.print("Creating struct with {} fields, type name at index {}\n", .{ num_fields, type_name_idx });
@@ -1076,7 +1076,7 @@ pub const VM = struct {
                 const result = try Frame.initStruct(self.allocator, type_name, num_fields);
                 self.stack.push(result) catch return ErrorList.StackUnderflow;
             },
-            instructions.OpCode.OP_SET_FIELD => {
+            .OP_SET_FIELD => {
                 std.debug.print("Setting field - Stack size: {}\n", .{self.stack.size()});
                 const value = self.pop() orelse return ErrorList.StackUnderflow;
                 const field_name_frame = self.pop() orelse return ErrorList.StackUnderflow;
@@ -1098,7 +1098,7 @@ pub const VM = struct {
                 // Push the struct back onto the stack
                 self.stack.push(struct_frame) catch return ErrorList.StackUnderflow;
             },
-            instructions.OpCode.OP_GET_FIELD => {
+            .OP_GET_FIELD => {
                 const field_name_frame = self.pop() orelse return ErrorList.StackUnderflow;
                 const struct_frame = self.pop() orelse return ErrorList.StackUnderflow;
 
@@ -1125,7 +1125,7 @@ pub const VM = struct {
                     return ErrorList.TypeError;
                 }
             },
-            instructions.OpCode.OP_ARRAY_NEW => {
+            .OP_ARRAY_NEW => {
                 const size = self.read_byte();
                 const type_byte = self.read_byte();  // Read the type parameter
                 const element_type = @as(instructions.ValueType, @enumFromInt(type_byte));
@@ -1140,7 +1140,7 @@ pub const VM = struct {
                 );
                 try self.stack.push(array_frame);
             },
-            instructions.OpCode.OP_ARRAY_PUSH => {
+            .OP_ARRAY_PUSH => {
                 const value = self.pop() orelse return ErrorList.StackUnderflow;
                 var array_frame = self.pop() orelse return ErrorList.StackUnderflow;
 
@@ -1153,7 +1153,7 @@ pub const VM = struct {
                 try array_frame.value.data.array_val.items.append(value.value);
                 try self.stack.push(array_frame); // Push the array back onto the stack
             },
-            instructions.OpCode.OP_ARRAY_LEN => {
+            .OP_ARRAY_LEN => {
                 const array_frame = self.pop() orelse return ErrorList.StackUnderflow;
 
                 if (array_frame.value.type != .ARRAY) {
@@ -1168,7 +1168,7 @@ pub const VM = struct {
                 try self.stack.push(array_frame);
                 try self.stack.push(Frame.initInt(len)); // Push the length of the array back onto the stack
             },
-            instructions.OpCode.OP_ARRAY_GET => {
+            .OP_ARRAY_GET => {
                 std.debug.print("\n=== OP_ARRAY_GET ===\n", .{});
                 self.printStack();
 
@@ -1197,7 +1197,7 @@ pub const VM = struct {
                 const value = array.items.items[idx];
                 try self.stack.push(Frame.initValue(value));
             },
-            instructions.OpCode.OP_ARRAY_SET => {
+            .OP_ARRAY_SET => {
                 std.debug.print("\n=== OP_ARRAY_SET ===\n", .{});
                 self.printStack();
 
@@ -1227,7 +1227,7 @@ pub const VM = struct {
                 std.debug.print("\nAfter OP_ARRAY_SET:\n", .{});
                 self.printStack();
             },
-            instructions.OpCode.OP_ARRAY_CONCAT => {
+            .OP_ARRAY_CONCAT => {
                 std.debug.print("\n=== Executing OP_ARRAY_CONCAT ===\n", .{});
                 var b = self.pop() orelse return ErrorList.StackUnderflow;
                 var a = self.pop() orelse return ErrorList.StackUnderflow;
@@ -1236,21 +1236,21 @@ pub const VM = struct {
                 std.debug.print("Concatenation complete, pushing result\n", .{});
                 self.stack.push(result) catch return ErrorList.StackUnderflow;
             },
-            instructions.OpCode.OP_ARRAY_SLICE => {
+            .OP_ARRAY_SLICE => {
                 const start = self.read_byte();
                 const end = self.read_byte();
                 var array_frame = self.pop() orelse return ErrorList.StackUnderflow;
                 const result = try self.sliceArray(&array_frame, start, end);
                 self.stack.push(result) catch return ErrorList.StackUnderflow;
             },
-            instructions.OpCode.OP_DUP => {
+            .OP_DUP => {
                 const value = try self.stack.peek();
                 try self.stack.push(Frame.reference(value.value));
             },
-            instructions.OpCode.OP_POP => {
+            .OP_POP => {
                 _ = try self.stack.pop();
             },
-            instructions.OpCode.OP_BEGIN_BLOCK => {
+            .OP_BEGIN_BLOCK => {
                 const current_vars_count = self.current_scope_vars.items.len;
                 std.debug.print("BEGIN BLOCK: current vars={}\n", .{current_vars_count});
 
@@ -1259,7 +1259,7 @@ pub const VM = struct {
                 else
                     null));
             },
-            instructions.OpCode.OP_END_BLOCK => {
+            .OP_END_BLOCK => {
                 if (self.block_stack.items.len == 0) {
                     self.reporter.reportFatalError("No block to end", .{});
                     return ErrorList.TypeError;
@@ -1269,33 +1269,33 @@ pub const VM = struct {
                 std.debug.print("END BLOCK: cleaning up {} variables starting at {}\n", .{ block.var_count, block.var_start });
                 block.cleanup(self);
             },
-            instructions.OpCode.OP_AND => {
+            .OP_AND => {
                 const b = self.pop() orelse return ErrorList.StackUnderflow;
                 const a = self.pop() orelse return ErrorList.StackUnderflow;
                 const result = try self.logical_and(a, b);
                 self.stack.push(result) catch return ErrorList.StackUnderflow;
             },
-            instructions.OpCode.OP_OR => {
+            .OP_OR => {
                 const b = self.pop() orelse return ErrorList.StackUnderflow;
                 const a = self.pop() orelse return ErrorList.StackUnderflow;
                 const result = try self.logical_or(a, b);
                 self.stack.push(result) catch return ErrorList.StackUnderflow;
             },
-            instructions.OpCode.OP_NOT => {
+            .OP_NOT => {
                 const a = self.pop() orelse return ErrorList.StackUnderflow;
                 const result = try self.logical_not(a);
                 self.stack.push(result) catch return ErrorList.StackUnderflow;
             },
-            instructions.OpCode.OP_MATCH => {
+            .OP_MATCH => {
                 try self.executeMatch();
             },
-            instructions.OpCode.OP_MATCH_ARM => {
+            .OP_MATCH_ARM => {
                 try self.executeMatchArm();
             },
-            instructions.OpCode.OP_MATCH_END => {
+            .OP_MATCH_END => {
                 try self.executeMatchEnd();
             },
-            instructions.OpCode.OP_IS_NOTHING => {
+            .OP_IS_NOTHING => {
                 const value = try self.stack.pop();
                 std.debug.print("Checking if value is nothing: type={}, nothing={}\n", 
                     .{value.value.type, value.value.nothing});
@@ -1306,19 +1306,19 @@ pub const VM = struct {
                 
                 std.debug.print("IS_NOTHING result: {}\n", .{is_nothing});
             },
-            instructions.OpCode.OP_TYPEOF => {
+            .OP_TYPEOF => {
                 try self.executeTypeOf();
             },
-            instructions.OpCode.OP_TRY => {
+            .OP_TRY => {
                 try self.executeTry();
             },
-            instructions.OpCode.OP_CATCH => {
+            .OP_CATCH => {
                 try self.executeCatch();
             },
-            instructions.OpCode.OP_THROW => {
+            .OP_THROW => {
                 try self.executeThrow();
             },
-            instructions.OpCode.OP_END_TRY => {
+            .OP_END_TRY => {
                 try self.executeEndTry();
             },
         }
