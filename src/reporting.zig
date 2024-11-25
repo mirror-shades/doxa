@@ -58,6 +58,17 @@ pub const ErrorList = error{
     LeadingZeros,
     MultipleExponents,
     InvalidExponent,
+
+
+    // parser
+    OutOfMemory,
+    ExpectedSemicolon,
+    ExpectedClosingParen,
+    ExpectedExpression,
+    ExpectedIdentifier,
+    ExpectedAssignmentOperator,
+    ExpectedLiteral,
+    UnexpectedToken,
 };
 
 /// Reporting provides structured error handling and reporting capabilities
@@ -97,8 +108,8 @@ pub const Reporting = struct {
 
     /// Location information for error reporting
     pub const Location = struct {
-        line: usize,
-        column: usize, 
+        line: u32,
+        column: u32, 
         file: []const u8,
 
         pub fn format(

@@ -33,8 +33,6 @@ pub const TokenType = enum {
     MINUS,          // -
     MINUS_MINUS,    // --
     MINUS_EQUAL,    // -=
-    EQUAL,          // =
-    EQUAL_EQUAL,    // ==
     BANG,           // !
     BANG_EQUAL,     // !=
     GREATER,        // >
@@ -83,7 +81,6 @@ pub const TokenType = enum {
     ELSE,           // else
 
     // literals
-    ASSIGN,        // =
     IDENTIFIER,    // identifier
     SPREAD,        // ...
     INT,           // integer
@@ -94,6 +91,8 @@ pub const TokenType = enum {
     ENUM,          // enum
     AUTO,          // auto
     NOTHING,       // nothing
+    EQUALITY,      // == or equals
+    ASSIGN,        // = or is
 
     EOF,            // end of file
 };
@@ -112,11 +111,10 @@ pub const Token = struct {
     type: TokenType,
     lexeme: []const u8,
     literal: TokenLiteral,
-    line: usize,
-    column: usize,
+    line: u32,
+    column: u32,
 
-    //==init==
-    pub fn init(token_type: TokenType, lexeme: []const u8, literal: TokenLiteral, line: usize, column: usize) Token {
+    pub fn init(token_type: TokenType, lexeme: []const u8, literal: TokenLiteral, line: u32, column: u32) Token {
         return Token{
             .type = token_type,
             .lexeme = lexeme,
@@ -126,22 +124,5 @@ pub const Token = struct {
         };
     }
 
-    pub fn deinit(self: Token, allocator: std.mem.Allocator) void {
-        switch (self.literal) {
-            .string => |str| {
-                if (!std.mem.eql(u8, str, self.lexeme)) {
-                    allocator.free(str);
-                }
-            },
-            else => {},
-        }
-    }
-
-    //==string representation==
-    pub fn toString(self: Token) ![]const u8 {
-        return std.fmt.allocPrint(
-            "{} {} {}",
-            .{ self.type, self.lexeme, self.literal }
-        );
-    }
+    // Remove deinit - lexer will handle cleanup
 };

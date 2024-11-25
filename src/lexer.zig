@@ -19,6 +19,8 @@ pub const Lexer = struct {
     current: u32,
     line: u32,
     allocator: std.mem.Allocator,
+    allocated_strings: std.ArrayList([]const u8),
+    allocated_arrays: std.ArrayList([]const TokenLiteral),
 
     //======================================================================
     // Initialization
@@ -34,14 +36,25 @@ pub const Lexer = struct {
             .allocator = allocator,
             .tokens = std.ArrayList(Token).init(allocator),
             .keywords = std.StringHashMap(TokenType).init(allocator),
+            .allocated_strings = std.ArrayList([]const u8).init(allocator),
+            .allocated_arrays = std.ArrayList([]const TokenLiteral).init(allocator),
         };
     }
     
     pub fn deinit(self: *Lexer) void {
-        // Free the memory for each token's string literal
-        for (self.tokens.items) |item| {
-            item.deinit(self.allocator);
+        // Free all allocated strings
+        for (self.allocated_strings.items) |str| {
+            self.allocator.free(str);
         }
+        self.allocated_strings.deinit();
+
+        // Free all allocated arrays
+        for (self.allocated_arrays.items) |arr| {
+            self.allocator.free(arr);
+        }
+        self.allocated_arrays.deinit();
+
+        // Free the token list
         self.tokens.deinit();
         self.keywords.deinit();
     }
@@ -83,6 +96,7 @@ pub const Lexer = struct {
         try self.keywords.put("as", .AS);
         try self.keywords.put("from", .FROM);
         try self.keywords.put("auto", .AUTO);
+        try self.keywords.put("equals", .EQUALITY);
     }
 
     //======================================================================
@@ -233,9 +247,9 @@ pub const Lexer = struct {
             },
             '=' => {
                 if (self.match('=')) {
-                    try self.addMinimalToken(.EQUAL_EQUAL);
+                    try self.addMinimalToken(.EQUALITY);
                 } else {
-                    try self.addMinimalToken(.EQUAL);
+                    try self.addMinimalToken(.ASSIGN);
                 }
             },
             '<' => {
@@ -325,7 +339,24 @@ pub const Lexer = struct {
     }
 
     fn addLongToken(self: *Lexer, token_type: TokenType, literal: TokenLiteral, lexeme: []const u8) !void {
-        try self.tokens.append(Token.init(token_type, lexeme, literal, self.line, self.current));
+        // For string literals, we need to track the allocated memory
+        var tracked_literal = literal;
+        if (literal == .string) {
+            const owned_str = try self.addString(literal.string);
+            tracked_literal = .{ .string = owned_str };
+        }
+
+        // For lexemes that aren't part of source, we need to track them
+        var tracked_lexeme = lexeme;
+        const lexeme_start = @intFromPtr(lexeme.ptr);
+        const source_start = @intFromPtr(self.source.ptr);
+        const source_end = source_start + self.source.len;
+        
+        if (lexeme_start < source_start or lexeme_start >= source_end) {
+            tracked_lexeme = try self.addString(lexeme);
+        }
+
+        try self.tokens.append(Token.init(token_type, tracked_lexeme, tracked_literal, self.line, self.current));
     }
 
     //======================================================================
@@ -437,6 +468,8 @@ pub const Lexer = struct {
         if (self.keywords.get(text)) |keyword_type| {
             switch (keyword_type) {
                 .BOOL => try self.addToken(.BOOL, .{ .boolean = std.mem.eql(u8, text, "true") }),
+                .IS => try self.addMinimalToken(.ASSIGN),
+                .EQUALITY => try self.addMinimalToken(.EQUALITY),
                 else => try self.addMinimalToken(keyword_type),
             }
         } else {
@@ -979,5 +1012,17 @@ pub const Lexer = struct {
             '0'...'9' => return error.LeadingZeros,
             else => return .Decimal,
         }
+    }
+
+    pub fn addString(self: *Lexer, str: []const u8) ![]const u8 {
+        const owned = try self.allocator.dupe(u8, str);
+        try self.allocated_strings.append(owned);
+        return owned;
+    }
+
+    pub fn addArray(self: *Lexer, arr: []const TokenLiteral) ![]const TokenLiteral {
+        const owned = try self.allocator.dupe(TokenLiteral, arr);
+        try self.allocated_arrays.append(owned);
+        return owned;
     }
 };
