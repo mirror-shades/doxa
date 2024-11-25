@@ -75,6 +75,7 @@ pub const ErrorList = error{
     InvalidOperand,
     InvalidExpression,
     InvalidOperator,
+    ExpectedLeftBrace,
     ExpectedRightBrace,
     ExpectedThen,
     ExpectedElse,
