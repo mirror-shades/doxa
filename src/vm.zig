@@ -671,37 +671,37 @@ pub const VM = struct {
     }
 
     // remove to put in std lib as soon as possible
-    fn printValue(value: instructions.Value) void {
+    fn printValue(value: instructions.Value, writer: anytype) !void {
         switch (value.type) {
-            .INT => std.debug.print("{}", .{value.data.int}),
-            .FLOAT => std.debug.print("{d}", .{value.data.float}),
-            .BOOL => std.debug.print("{}", .{value.data.boolean}),
-            .STRING => std.debug.print("\"{s}\"", .{value.data.string}),
+            .INT => try writer.print("{}", .{value.data.int}),
+            .FLOAT => try writer.print("{d}", .{value.data.float}),
+            .BOOL => try writer.print("{}", .{value.data.boolean}),
+            .STRING => try writer.print("\"{s}\"", .{value.data.string}),
             .ARRAY => {
-                std.debug.print("[", .{});
+                try writer.writeAll("[");
                 for (value.data.array_val.items.items, 0..) |item, i| {
-                    printValue(item);
+                    try printValue(item, writer);
                     if (i < value.data.array_val.items.items.len - 1) {
-                        std.debug.print(", ", .{});
+                        try writer.writeAll(", ");
                     }
                 }
-                std.debug.print("]", .{});
+                try writer.writeAll("]");
             },
             .STRUCT => {
-                std.debug.print("{{ ", .{});
+                try writer.writeAll("{ ");
                 var it = value.data.struct_val.fields.iterator();
                 var first = true;
                 while (it.next()) |entry| {
                     if (!first) {
-                        std.debug.print(", ", .{});
+                        try writer.writeAll(", ");
                     }
                     first = false;
-                    std.debug.print("{s}: ", .{entry.key_ptr.*});
-                    printValue(entry.value_ptr.*);
+                    try writer.print("{s}: ", .{entry.key_ptr.*});
+                    try printValue(entry.value_ptr.*, writer);
                 }
-                std.debug.print(" }}", .{});
+                try writer.writeAll(" }");
             },
-            else => std.debug.print("???", .{}),
+            else => try writer.writeAll("???"),
         }
     }
     
@@ -770,17 +770,25 @@ pub const VM = struct {
                 const value = try self.stack.pop();
                 const variable = self.variables[var_index];
 
-                std.debug.print("Setting const var[{}] to {}\n", .{var_index, value.value});
-
                 // Verify it's marked as constant
                 if (!variable.is_constant) {
                     self.reporter.reportFatalError("Internal error: OP_SET_CONST used on non-constant variable", .{});
                     return ErrorList.TypeError;
                 }
 
-                // Check if already initialized
+                // Check if already initialized and provide more detailed error message
                 if (!self.values[variable.index].nothing) {
-                    self.reporter.reportFatalError("Cannot reassign to constant variable", .{});
+                    var error_msg = std.ArrayList(u8).init(self.allocator);
+                    defer error_msg.deinit();
+                    const writer = error_msg.writer();
+
+                    try writer.writeAll("Cannot reassign constant variable (current value: ");
+                    try printValue(self.values[variable.index], writer);
+                    try writer.writeAll(", attempted new value: ");
+                    try printValue(value.value, writer);
+                    try writer.writeAll(")");
+
+                    self.reporter.reportFatalError("{s}", .{error_msg.items});
                     return ErrorList.TypeError;
                 }
 
@@ -1933,7 +1941,7 @@ pub const VM = struct {
             null;
     }
 
-    pub fn runLoop(self: *VM) !void {
+    pub fn runLoop(self: *VM, writer: anytype) !void {
         self.running = true;
         
         while (self.running) {
@@ -1946,7 +1954,7 @@ pub const VM = struct {
                             self.allocator.destroy(result);
                         }
                         std.debug.print("Result: ", .{});
-                        VM.printValue(result.value);
+                        try VM.printValue(result.value, writer);
                         std.debug.print("\n", .{});
                         self.running = false;
                     }
@@ -1961,7 +1969,7 @@ pub const VM = struct {
                             self.allocator.destroy(result);
                         }
                         std.debug.print("Result: ", .{});
-                        VM.printValue(result.value);
+                        try VM.printValue(result.value, writer);
                         std.debug.print("\n", .{});
                         self.running = false;
                     }
@@ -2161,5 +2169,5 @@ pub fn main() !void {
     // vm.enableStepByStep();
 
     // Run the VM with the new execution loop
-    try vm.runLoop();
+    try vm.runLoop(std.io.getStdOut().writer());
 }
