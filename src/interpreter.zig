@@ -99,6 +99,11 @@ pub const Interpreter = struct {
                     std.debug.print("{any}\n", .{value});
                 }
             },
+            .Block => |statements| {
+                for (statements) |statement| {
+                    try self.executeStatement(&statement);
+                }
+            },
         }
     }
 

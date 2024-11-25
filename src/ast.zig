@@ -64,8 +64,12 @@ pub const VarDecl = struct {
 };
 
 pub const Stmt = union(enum) {
+    VarDecl: struct {
+        name: token.Token,
+        initializer: ?*Expr,
+    },
     Expression: ?*Expr,
-    VarDecl: VarDecl,
+    Block: []Stmt,
 
     pub fn deinit(self: *Stmt, allocator: std.mem.Allocator) void {
         switch (self.*) {
@@ -80,6 +84,12 @@ pub const Stmt = union(enum) {
                     init.deinit(allocator);
                     allocator.destroy(init);
                 }
+            },
+            .Block => |statements| {
+                for (statements) |*stmt| {
+                    stmt.deinit(allocator);
+                }
+                allocator.free(statements);
             },
         }
     }
