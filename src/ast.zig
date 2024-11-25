@@ -18,6 +18,7 @@ pub const Expr = union(enum) {
     Unary: Unary,
     Variable: token.Token,
     Assignment: Assignment,
+    Grouping: ?*Expr,
 
     pub fn deinit(self: *Expr, allocator: std.mem.Allocator) void {
         switch (self.*) {
@@ -44,6 +45,10 @@ pub const Expr = union(enum) {
                     allocator.destroy(value);
                 }
             },
+            .Grouping => |maybe_expr| if (maybe_expr) |expr| {
+                expr.deinit(allocator);
+                allocator.destroy(expr);
+            },
         }
     }
 };
@@ -61,7 +66,7 @@ pub const VarDecl = struct {
 pub const Stmt = union(enum) {
     Expression: ?*Expr,
     VarDecl: VarDecl,
-    
+
     pub fn deinit(self: *Stmt, allocator: std.mem.Allocator) void {
         switch (self.*) {
             .Expression => |maybe_expr| {
