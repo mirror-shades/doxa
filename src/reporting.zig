@@ -70,6 +70,11 @@ pub const ErrorList = error{
     ExpectedLiteral,
     UnexpectedToken,
     ExpectedRightParen,
+    InvalidAssignmentTarget,
+    UndefinedVariable,
+    InvalidOperand,
+    InvalidExpression,
+    InvalidOperator,
 };
 
 /// Reporting provides structured error handling and reporting capabilities

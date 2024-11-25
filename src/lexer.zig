@@ -271,14 +271,6 @@ pub const Lexer = struct {
                     try self.addMinimalToken(.PLUS_PLUS);
                 } else if (self.match('=')) {
                     try self.addMinimalToken(.PLUS_EQUAL);
-                } else if (isDigit(self.peekAt(0)) or self.peekAt(0) == '.' or 
-                          (self.peekAt(0) == '0' and 
-                           (self.peekAt(1) == 'x' or 
-                            self.peekAt(1) == 'b' or 
-                            self.peekAt(1) == 'o'))) {
-                    self.current -= 1;
-                    self.start = self.current;
-                    try self.number();
                 } else {
                     try self.addMinimalToken(.PLUS);
                 }
