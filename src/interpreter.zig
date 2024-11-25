@@ -18,6 +18,10 @@ pub const Interpreter = struct {
     }
 
     pub fn deinit(self: *Interpreter) void {
+        var it = self.variables.iterator();
+        while (it.next()) |entry| {
+            self.allocator.free(entry.key_ptr.*);
+        }
         self.variables.deinit();
     }
 
@@ -31,17 +35,24 @@ pub const Interpreter = struct {
         switch (stmt.*) {
             .VarDecl => |decl| {
                 const value = try self.evaluate(decl.initializer);
-                try self.variables.put(decl.name.lexeme, value);
+                const key = try self.allocator.dupe(u8, decl.name.lexeme);
+                try self.variables.put(key, value);
                 
                 if (self.debug_enabled) {
                     std.debug.print("Declared variable {s} = {any}\n", .{
                         decl.name.lexeme, value,
                     });
+                    std.debug.print("Variables hashmap contains: {any}\n", .{self.variables.count()});
                 }
             },
             .Expression => |expr| {
+                if (self.debug_enabled) {
+                    std.debug.print("Before evaluating expression, variables count: {any}\n", .{self.variables.count()});
+                }
                 const value = try self.evaluate(expr);
-                std.debug.print("{any}\n", .{value});
+                if (self.debug_enabled) {
+                    std.debug.print("{any}\n", .{value});
+                }
             },
         }
     }
@@ -106,14 +117,27 @@ pub const Interpreter = struct {
                 }
             },
             .Variable => |var_token| {
-                if (self.variables.get(var_token.lexeme)) |value| {
+                if (self.debug_enabled) {
+                    std.debug.print("Looking up variable: '{s}' (len: {})\n", .{var_token.lexeme, var_token.lexeme.len});
+                    var it = self.variables.iterator();
+                    while (it.next()) |entry| {
+                        std.debug.print("Stored key: '{s}' (len: {}), value: {any}\n", .{
+                            entry.key_ptr.*, 
+                            entry.key_ptr.*.len,
+                            entry.value_ptr.*
+                        });
+                    }
+                }
+                if (self.variables.contains(var_token.lexeme)) {
+                    const value = self.variables.get(var_token.lexeme).?;
                     return value;
                 }
                 return error.VariableNotFound;
             },
             .Assignment => |assign| {
                 const value = try self.evaluate(assign.value);
-                try self.variables.put(assign.name.lexeme, value);
+                const key = try self.allocator.dupe(u8, assign.name.lexeme);
+                try self.variables.put(key, value);
                 return value;
             },
         }
