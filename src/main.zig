@@ -7,6 +7,7 @@ const Token = @import("lexer.zig").Token;
 const instructions = @import("instructions.zig");
 const VM = @import("vm.zig").VM;
 const Frame = @import("vm.zig").Frame;
+const Interpreter = @import("interpreter.zig").Interpreter;
 
 ///==========================================================================
 /// Constants
@@ -22,9 +23,9 @@ const DOXA_EXTENSION = ".doxa";
 ///==========================================================================
 
 var hadError: bool = false;
-pub var debugLexer: bool = false;
-pub var debugParser: bool = false;
-
+var debugLexer: bool = false;
+var debugParser: bool = false;
+var compile: bool = false;
 ///==========================================================================
 /// Types & Errors
 ///==========================================================================
@@ -86,8 +87,37 @@ fn run(allocator: std.mem.Allocator, source: []const u8) !void {
     if (!hadError) {
         var parser_instance = try Parser.init(allocator, token_list.items, debugParser);
         defer parser_instance.deinit();
+        
         const statements = try parser_instance.parse();
-        _ = statements; // TODO: Use the statements (will be needed for interpreter)
+        defer {
+            // Clean up AST nodes
+            for (statements) |stmt| {
+                switch (stmt) {
+                    .Expression => |maybe_expr| {
+                        if (maybe_expr) |expr| {
+                            expr.deinit(allocator);
+                            allocator.destroy(expr);
+                        }
+                    },
+                    .VarDecl => |decl| {
+                        if (decl.initializer) |init| {
+                            init.deinit(allocator);
+                            allocator.destroy(init);
+                        }
+                    },
+                }
+            }
+            allocator.free(statements);
+        }
+
+        if (compile) {
+            //TODO: Compile to bytecode
+        } else {
+            // Create and use interpreter
+            var interpreter = try Interpreter.init(allocator, debugParser);
+            defer interpreter.deinit();    
+            try interpreter.interpret(statements);
+        }
     }
 }
 
@@ -135,6 +165,8 @@ pub fn main() !void {
             debugLexer = true;
         } else if (std.mem.eql(u8, args[i], "--debug-parser")) {
             debugParser = true;
+        } else if (std.mem.eql(u8, args[i], "--compile")) {
+            compile = true;
         } else {
             // Assume it's a script path
             if (script_path != null) {

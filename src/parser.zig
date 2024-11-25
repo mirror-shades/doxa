@@ -59,7 +59,11 @@ pub const Parser = struct {
             const current = self.peek();
             if (current.type == .EOF) break;
 
-            const stmt = try self.parseVarDecl();
+            const stmt = if (current.type == .VAR) 
+                try self.parseVarDecl()
+            else
+                try self.parseExpressionStmt();
+            
             try statements.append(stmt);
         }
 
@@ -129,116 +133,200 @@ pub const Parser = struct {
         }};
     }
 
-    fn parseExpression(self: *Parser) ErrorList!*ast.Expr {
+    fn parseExpressionStmt(self: *Parser) ErrorList!ast.Stmt {
+        if (self.debug_enabled) {
+            std.debug.print("\nParsing expression statement...\n", .{});
+        }
+
+        const expr: ?*ast.Expr = self.parseExpression() catch |err| {
+            return err;
+        };
+        
+        // Expect semicolon
+        if (self.peek().type != .SEMICOLON) {
+            if (self.debug_enabled) {
+                std.debug.print("Expected SEMICOLON, got {s}\n", .{@tagName(self.peek().type)});
+            }
+            if (expr) |e| {
+                e.deinit(self.allocator);
+                self.allocator.destroy(e);
+            }
+            return error.ExpectedSemicolon;
+        }
+        self.advance();
+
+        if (self.debug_enabled) {
+            std.debug.print("Successfully parsed expression statement\n", .{});
+        }
+
+        return ast.Stmt{ .Expression = expr };
+    }
+
+    fn parseExpression(self: *Parser) ErrorList!?*ast.Expr {
         return try self.parseEquality();
     }
 
-    fn parseEquality(self: *Parser) ErrorList!*ast.Expr {
-        if (self.debug_enabled) std.debug.print("Parsing equality expression...\n", .{});
-        
+    fn parseEquality(self: *Parser) ErrorList!?*ast.Expr {
         var expr = try self.parseComparison();
+        if (expr == null) return null;
+        errdefer if (expr) |e| {
+            e.deinit(self.allocator);
+            self.allocator.destroy(e);
+        };
 
         while (self.peek().type == .EQUALITY or self.peek().type == .BANG_EQUAL) {
             const operator = self.peek();
             self.advance();
             const right = try self.parseComparison();
-
-            const binary = try self.allocator.create(ast.Expr);
-            binary.* = ast.Expr{ .Binary = .{
-                .left = expr,
-                .operator = operator,
-                .right = right,
-            }};
-            expr = binary;
+            if (right == null) return error.ExpectedExpression;
             
-            if (self.debug_enabled) {
-                std.debug.print("Found equality expression with operator: {s}\n", .{@tagName(operator.type)});
+            if (expr) |left| {
+                const binary = try self.allocator.create(ast.Expr);
+                binary.* = ast.Expr{ .Binary = .{
+                    .left = left,
+                    .operator = operator,
+                    .right = right,
+                }};
+                expr = binary;
+                
+                if (self.debug_enabled) {
+                    std.debug.print("Found equality expression with operator: {s}\n", .{@tagName(operator.type)});
+                }
             }
         }
 
         return expr;
     }
 
-    fn parseComparison(self: *Parser) ErrorList!*ast.Expr {
+    fn parseComparison(self: *Parser) ErrorList!?*ast.Expr {
         var expr = try self.parseTerm();
+        if (expr == null) return null;
+        errdefer if (expr) |e| {
+            e.deinit(self.allocator);
+            self.allocator.destroy(e);
+        };
 
-        while (self.peek().type == .GREATER or 
-               self.peek().type == .GREATER_EQUAL or 
-               self.peek().type == .LESS or 
-               self.peek().type == .LESS_EQUAL) {
-            const operator = self.peek();
+        while (true) {
+            const current = self.peek();
+            if (current.type != .GREATER and 
+                current.type != .GREATER_EQUAL and 
+                current.type != .LESS and 
+                current.type != .LESS_EQUAL) break;
+
+            // Look ahead to ensure there's a valid expression after the operator
+            const next = self.peek_next();
+            if (next.type == .SEMICOLON or next.type == .EOF) break;
+
             self.advance();
             const right = try self.parseTerm();
+            if (right == null) return error.ExpectedExpression;
             
-            const binary = try self.allocator.create(ast.Expr);
-            binary.* = ast.Expr{ .Binary = .{
-                .left = expr,
-                .operator = operator,
-                .right = right,
-            }};
-            expr = binary;
-            
-            if (self.debug_enabled) {
-                std.debug.print("Found comparison expression with operator: {s}\n", .{@tagName(operator.type)});
+            if (expr) |left| {
+                const binary = try self.allocator.create(ast.Expr);
+                binary.* = ast.Expr{ .Binary = .{
+                    .left = left,
+                    .operator = current,
+                    .right = right,
+                }};
+                expr = binary;
+                
+                if (self.debug_enabled) {
+                    std.debug.print("Found comparison expression with operator: {s}\n", .{@tagName(current.type)});
+                }
             }
         }
 
         return expr;
     }
 
-    fn parseTerm(self: *Parser) ErrorList!*ast.Expr {
+    fn parseTerm(self: *Parser) ErrorList!?*ast.Expr {
         var expr = try self.parseFactor();
+        errdefer if (expr) |e| {
+            e.deinit(self.allocator);
+            self.allocator.destroy(e);
+        };
 
-        while (self.peek().type == .PLUS or self.peek().type == .MINUS) {
-            const operator = self.peek();
+        while (true) {
+            const current = self.peek();
+            if (current.type != .PLUS and current.type != .MINUS) break;
+
+            // Save the operator and advance
+            const operator = current;
             self.advance();
+
+            // Try to parse the right side
             const right = try self.parseFactor();
-            
-            const binary = try self.allocator.create(ast.Expr);
-            binary.* = ast.Expr{ .Binary = .{
-                .left = expr,
-                .operator = operator,
-                .right = right,
-            }};
-            expr = binary;
-            
-            if (self.debug_enabled) {
-                std.debug.print("Found term expression with operator: {s}\n", .{@tagName(operator.type)});
+            if (right == null) {
+                // If we can't parse the right side after seeing an operator,
+                // that's an error
+                return error.ExpectedExpression;
+            }
+
+            if (expr) |left| {
+                const binary = try self.allocator.create(ast.Expr);
+                binary.* = ast.Expr{ .Binary = .{
+                    .left = left,
+                    .operator = operator,
+                    .right = right,
+                }};
+                expr = binary;
+                
+                if (self.debug_enabled) {
+                    std.debug.print("Found term expression with operator: {s}\n", .{@tagName(operator.type)});
+                }
             }
         }
 
         return expr;
     }
 
-    fn parseFactor(self: *Parser) ErrorList!*ast.Expr {
+    fn parseFactor(self: *Parser) ErrorList!?*ast.Expr {
         var expr = try self.parseUnary();
+        errdefer if (expr) |e| {
+            e.deinit(self.allocator);
+            self.allocator.destroy(e);
+        };
 
-        while (self.peek().type == .ASTERISK or self.peek().type == .SLASH) {
-            const operator = self.peek();
+        while (true) {
+            const current = self.peek();
+            if (current.type != .ASTERISK and current.type != .SLASH) break;
+
+            // Save the operator and advance
+            const operator = current;
             self.advance();
+
+            // Try to parse the right side
             const right = try self.parseUnary();
-            
-            const binary = try self.allocator.create(ast.Expr);
-            binary.* = ast.Expr{ .Binary = .{
-                .left = expr,
-                .operator = operator,
-                .right = right,
-            }};
-            expr = binary;
-            
-            if (self.debug_enabled) {
-                std.debug.print("Found factor expression with operator: {s}\n", .{@tagName(operator.type)});
+            if (right == null) {
+                // If we can't parse the right side after seeing an operator,
+                // that's an error
+                return error.ExpectedExpression;
+            }
+
+            if (expr) |left| {
+                const binary = try self.allocator.create(ast.Expr);
+                binary.* = ast.Expr{ .Binary = .{
+                    .left = left,
+                    .operator = operator,
+                    .right = right,
+                }};
+                expr = binary;
+                
+                if (self.debug_enabled) {
+                    std.debug.print("Found factor expression with operator: {s}\n", .{@tagName(operator.type)});
+                }
             }
         }
 
         return expr;
     }
 
-    fn parseUnary(self: *Parser) ErrorList!*ast.Expr {
+    fn parseUnary(self: *Parser) ErrorList!?*ast.Expr {
         if (self.peek().type == .MINUS or self.peek().type == .BANG) {
             const operator = self.peek();
             self.advance();
             const right = try self.parseUnary();
+            if (right == null) return error.ExpectedExpression;
             
             const unary = try self.allocator.create(ast.Expr);
             unary.* = ast.Expr{ .Unary = .{
@@ -255,7 +343,7 @@ pub const Parser = struct {
         return try self.parsePrimary();
     }
 
-    fn parsePrimary(self: *Parser) ErrorList!*ast.Expr {
+    fn parsePrimary(self: *Parser) ErrorList!?*ast.Expr {
         if (self.debug_enabled) std.debug.print("Parsing primary expression...\n", .{});
         
         const tok = self.peek();
@@ -268,6 +356,7 @@ pub const Parser = struct {
                     std.debug.print("Found literal: {any}\n", .{tok.literal});
                 }
                 self.advance();
+                return expr;
             },
             .IDENTIFIER => {
                 expr.* = ast.Expr{ .Variable = tok };
@@ -275,22 +364,38 @@ pub const Parser = struct {
                     std.debug.print("Found variable reference: {s}\n", .{tok.lexeme});
                 }
                 self.advance();
+                return expr;
             },
             .LEFT_PAREN => {
                 self.advance();
                 const subexpr = try self.parseExpression();
+                if (subexpr == null) {
+                    self.allocator.destroy(expr);
+                    return error.ExpectedExpression;
+                }
                 if (self.peek().type != .RIGHT_PAREN) {
                     // Clean up allocated memory before returning error
-                    subexpr.deinit(self.allocator);
-                    self.allocator.destroy(subexpr);
+                    if (subexpr) |se| {
+                        se.deinit(self.allocator);
+                        self.allocator.destroy(se);
+                    }
+                    self.allocator.destroy(expr);
                     return error.ExpectedRightParen;
                 }
                 self.advance();
                 return subexpr;
             },
-            else => return error.ExpectedExpression,
+            else => {
+                self.allocator.destroy(expr);
+                return null;
+            },
         }
+    }
 
-        return expr;
+    fn peek_next(self: *Parser) token.Token {
+        if (self.current + 1 >= self.tokens.len) {
+            return self.tokens[self.tokens.len - 1];
+        }
+        return self.tokens[self.current + 1];
     }
 };

@@ -1,56 +1,80 @@
 const std = @import("std");
 const token = @import("token.zig");
 
+pub const Binary = struct {
+    left: ?*Expr,
+    operator: token.Token,
+    right: ?*Expr,
+};
+
+pub const Unary = struct {
+    operator: token.Token,
+    right: ?*Expr,
+};
+
 pub const Expr = union(enum) {
-    Binary: struct {
-        left: *Expr,
-        operator: token.Token,
-        right: *Expr,
-    },
-    Unary: struct {
-        operator: token.Token,
-        right: *Expr,
-    },
     Literal: token.TokenLiteral,
+    Binary: Binary,
+    Unary: Unary,
     Variable: token.Token,
+    Assignment: Assignment,
 
     pub fn deinit(self: *Expr, allocator: std.mem.Allocator) void {
         switch (self.*) {
-            .Binary => |*b| {
-                b.left.deinit(allocator);
-                b.right.deinit(allocator);
-                allocator.destroy(b.left);
-                allocator.destroy(b.right);
+            .Literal, .Variable => {}, // Nothing to free
+            .Binary => |*bin| {
+                if (bin.left) |left| {
+                    left.deinit(allocator);
+                    allocator.destroy(left);
+                }
+                if (bin.right) |right| {
+                    right.deinit(allocator);
+                    allocator.destroy(right);
+                }
             },
-            .Unary => |*u| {
-                u.right.deinit(allocator);
-                allocator.destroy(u.right);
+            .Unary => |*un| {
+                if (un.right) |right| {
+                    right.deinit(allocator);
+                    allocator.destroy(right);
+                }
             },
-            .Literal, .Variable => {},
+            .Assignment => |*assign| {
+                if (assign.value) |value| {
+                    value.deinit(allocator);
+                    allocator.destroy(value);
+                }
+            },
         }
     }
 };
 
-pub const Stmt = union(enum) {
-    VarDecl: struct {
-        name: token.Token,
-        initializer: ?*Expr,
-    },
-    ExprStmt: struct {
-        expr: *Expr,
-    },
+pub const Assignment = struct {
+    name: token.Token,
+    value: ?*Expr,
+};
 
+pub const VarDecl = struct {
+    name: token.Token,
+    initializer: ?*Expr,
+};
+
+pub const Stmt = union(enum) {
+    Expression: ?*Expr,
+    VarDecl: VarDecl,
+    
     pub fn deinit(self: *Stmt, allocator: std.mem.Allocator) void {
         switch (self.*) {
-            .VarDecl => |*v| {
-                if (v.initializer) |expr| {
+            .Expression => |maybe_expr| {
+                if (maybe_expr) |expr| {
                     expr.deinit(allocator);
                     allocator.destroy(expr);
                 }
             },
-            .ExprStmt => |*e| {
-                e.expr.deinit(allocator);
-                allocator.destroy(e.expr);
+            .VarDecl => |*decl| {
+                if (decl.initializer) |init| {
+                    init.deinit(allocator);
+                    allocator.destroy(init);
+                }
             },
         }
     }
