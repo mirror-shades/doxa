@@ -16,6 +16,7 @@ const Interpreter = @import("interpreter.zig").Interpreter;
 const EXIT_CODE_USAGE = 64;
 const EXIT_CODE_ERROR = 65;
 const MAX_REPL_LINE_LENGTH = 1024;
+const MAX_FILE_SIZE = 1024 * 1024; // 1MB should be plenty for our interpreter
 const DOXA_EXTENSION = ".doxa";
 
 ///==========================================================================
@@ -70,7 +71,7 @@ pub fn reportError(line: u32, where: []const u8, message: []const u8) void {
 /// Run
 ///==========================================================================
 
-fn run(allocator: std.mem.Allocator, source: []const u8) !void {
+fn run(allocator: std.mem.Allocator, interpreter: *Interpreter, source: []const u8) !void {
     var lexer = Lexer.init(allocator, source);
     defer lexer.deinit();
     
@@ -113,22 +114,23 @@ fn run(allocator: std.mem.Allocator, source: []const u8) !void {
         if (compile) {
             //TODO: Compile to bytecode
         } else {
-            // Create and use interpreter
-            var interpreter = try Interpreter.init(allocator, debugParser);
-            defer interpreter.deinit();    
             try interpreter.interpret(statements);
         }
     }
 }
 
 fn runRepl(allocator: std.mem.Allocator) !void {
+    // Create interpreter once at REPL start
+    var interpreter = try Interpreter.init(allocator, debugParser);
+    defer interpreter.deinit();
+
     const stdin = std.io.getStdIn().reader();
     while (true) {
         std.debug.print("> ", .{});
         const line = try stdin.readUntilDelimiterAlloc(allocator, '\n', MAX_REPL_LINE_LENGTH);
         defer allocator.free(line);
         if (line.len == 0) continue;
-        try run(allocator, line);
+        try run(allocator, &interpreter, line);
         if (hadError) {
             std.debug.print("Error: {s}\n", .{line});
         }
@@ -136,11 +138,18 @@ fn runRepl(allocator: std.mem.Allocator) !void {
 }
 
 fn runFile(allocator: std.mem.Allocator, path: []const u8) !void {
-    var source = try SourceFile.init(allocator, path);
-    defer source.deinit();
-    try run(allocator, source.contents);
+    var interpreter = try Interpreter.init(allocator, debugParser);
+    defer interpreter.deinit();
+
+    var file = try std.fs.cwd().openFile(path, .{});
+    defer file.close();
+
+    const source = try file.readToEndAlloc(allocator, MAX_FILE_SIZE);
+    defer allocator.free(source);
+
+    try run(allocator, &interpreter, source);
     if (hadError) {
-        std.process.exit(EXIT_CODE_ERROR);
+        std.process.exit(65);
     }
 }
 
