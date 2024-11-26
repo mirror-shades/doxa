@@ -240,20 +240,25 @@ this allows a unified syntax for conditionals and assignments.
 All of the following are functionally equivalent:
 
 ```
-var x = if y == 1 then 1 else 2;
+var a;
+if false then a is 5
+else if true then a is 20
+else a is 30;
 
-var x = if (y == 1) then 1 else 2;
+var b;
+if (false) then {b = 5;}
+else if (true) then {b = 20;}
+else {b = 30;}
 
-var x = if (y == 1) then { 1 } else { 2 };
+var c is
+if false then 5
+else if true then 20
+else 30;
 
-var x;
-if y == 1 then x = 1 else x = 2;
-
-var x;
-if (y == 1) then x = 1 else x = 2;
-
-var x;
-if (y == 1) then { x = 1 } else { x = 2 };
+var d =
+if (false) then {5;}
+else if (true) then {20;}
+else {30;};
 ```
 
 if an if expression doesn't return a value, it defaults to `nothing`.

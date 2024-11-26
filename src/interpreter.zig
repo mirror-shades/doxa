@@ -37,12 +37,14 @@ pub const Environment = struct {
     enclosing: ?*Environment,
     values: std.StringHashMap(token.TokenLiteral),
     allocator: std.mem.Allocator,
+    debug_enabled: bool,
 
-    pub fn init(allocator: std.mem.Allocator, enclosing: ?*Environment) Environment {
+    pub fn init(allocator: std.mem.Allocator, enclosing: ?*Environment, debug_enabled: bool) Environment {
         return Environment{
             .enclosing = enclosing,
             .values = std.StringHashMap(token.TokenLiteral).init(allocator),
             .allocator = allocator,
+            .debug_enabled = debug_enabled,
         };
     }
 
@@ -65,14 +67,23 @@ pub const Environment = struct {
     }
 
     pub fn assign(self: *Environment, name: []const u8, value: token.TokenLiteral) !void {
+        if (self.debug_enabled) {
+            std.debug.print("Attempting to assign '{s}' = {any}\n", .{ name, value });
+        }
+
+        // First check if the variable exists in current scope
         if (self.values.contains(name)) {
             try self.values.put(name, value);
             return;
         }
+
+        // If not in current scope but we have an enclosing scope, try there
         if (self.enclosing) |enclosing| {
             try enclosing.assign(name, value);
             return;
         }
+
+        // If we get here, the variable doesn't exist in any scope
         return error.UndefinedVariable;
     }
 };
@@ -86,7 +97,7 @@ pub const Interpreter = struct {
 
     pub fn init(allocator: std.mem.Allocator, debug_enabled: bool) !Interpreter {
         const globals = try allocator.create(Environment);
-        globals.* = Environment.init(allocator, null);
+        globals.* = Environment.init(allocator, null, debug_enabled);
 
         return Interpreter{
             .allocator = allocator,
@@ -157,14 +168,14 @@ pub const Interpreter = struct {
                 }
             },
             .Block => |statements| {
-                var block_env = Environment.init(self.allocator, self.environment);
+                var block_env = Environment.init(self.allocator, self.environment, self.debug_enabled);
                 defer block_env.deinit();
                 try self.executeBlock(statements, &block_env);
             },
         }
     }
 
-    fn evaluate(self: *Interpreter, expr: ?*ast.Expr) ErrorList!token.TokenLiteral {
+    pub fn evaluate(self: *Interpreter, expr: ?*ast.Expr) ErrorList!token.TokenLiteral {
         if (expr == null) return error.InvalidExpression;
         const e = expr.?;
 
@@ -269,7 +280,7 @@ pub const Interpreter = struct {
             .Assignment => |assign| {
                 const value = try self.evaluate(assign.value);
                 const key = try self.string_interner.intern(assign.name.lexeme);
-                try self.environment.define(key, value);
+                try self.environment.assign(key, value);
                 return value;
             },
             .Grouping => |group| {
@@ -288,7 +299,7 @@ pub const Interpreter = struct {
             },
             .Block => |statements| {
                 var last_value = token.TokenLiteral{ .nothing = {} };
-                var block_env = Environment.init(self.allocator, self.environment);
+                var block_env = Environment.init(self.allocator, self.environment, self.debug_enabled);
                 defer block_env.deinit();
 
                 try self.executeBlock(statements, &block_env);
