@@ -1,6 +1,23 @@
 var a;
-if true 
-then {a = 5;} 
-else if false then {a = 20;} 
-else {a = 30;}
+if false then a is 5
+else if true then a is 20
+else a is 30;
 a;
+
+var b;
+if (false) then {b = 5;} 
+else if (true) then {b = 20;} 
+else {b = 30;}
+b;
+
+var c is 
+if false then 5 
+else if true then 20 
+else 30;
+c;
+
+var d =
+if (false) then {5;} 
+else if (true) then {20;} 
+else {30;};
+d;

@@ -45,6 +45,12 @@ pub const Parser = struct {
     }
 
     fn advance(self: *Parser) void {
+        if (self.debug_enabled) {
+            std.debug.print("Advancing from position {} to {}\n", .{
+                self.current,
+                self.current + 1,
+            });
+        }
         // Only advance if we're not at the end
         if (self.current < self.tokens.len - 1) {
             self.current += 1;
@@ -133,11 +139,24 @@ pub const Parser = struct {
     fn parseExpressionStmt(self: *Parser) ErrorList!ast.Stmt {
         if (self.debug_enabled) {
             std.debug.print("\nParsing expression statement...\n", .{});
+            std.debug.print("Current token: {s} at position {}\n", .{
+                @tagName(self.peek().type),
+                self.current,
+            });
         }
 
         const expr: ?*ast.Expr = self.parseExpression() catch |err| {
             return err;
         };
+
+        // If we didn't get an expression and we're at a semicolon, just skip it
+        if (expr == null and self.peek().type == .SEMICOLON) {
+            if (self.debug_enabled) {
+                std.debug.print("Skipping standalone semicolon\n", .{});
+            }
+            self.advance();
+            return ast.Stmt{ .Expression = null };
+        }
 
         // Helper function to check if an if expression has all block branches
         const hasAllBlockBranches = struct {
@@ -159,28 +178,38 @@ pub const Parser = struct {
         // Expect semicolon unless the expression is a block or if-chain with all blocks
         if (expr) |e| {
             const needs_semicolon = switch (e.*) {
-                .Block => false, // Blocks don't need semicolons
-                .If => !hasAllBlockBranches(e), // Check entire if-chain
+                .Block => false,
+                .If => !hasAllBlockBranches(e),
                 else => true,
             };
+
+            if (self.debug_enabled) {
+                std.debug.print("Expression needs semicolon: {}\n", .{needs_semicolon});
+                std.debug.print("Next token: {s}\n", .{@tagName(self.peek().type)});
+            }
 
             if (needs_semicolon and self.peek().type != .SEMICOLON) {
                 if (self.debug_enabled) {
                     std.debug.print("Expected SEMICOLON, got {s}\n", .{@tagName(self.peek().type)});
                 }
-                if (expr) |ex| {
-                    e.deinit(self.allocator);
-                    self.allocator.destroy(ex);
-                }
+                e.deinit(self.allocator);
+                self.allocator.destroy(e);
                 return error.ExpectedSemicolon;
             }
             if (needs_semicolon) {
+                if (self.debug_enabled) {
+                    std.debug.print("Advancing past semicolon\n", .{});
+                }
                 self.advance();
             }
         }
 
         if (self.debug_enabled) {
             std.debug.print("Successfully parsed expression statement\n", .{});
+            std.debug.print("Next token: {s} at position {}\n", .{
+                @tagName(self.peek().type),
+                self.current,
+            });
         }
 
         return ast.Stmt{ .Expression = expr };
@@ -460,6 +489,15 @@ pub const Parser = struct {
         if (self.debug_enabled) std.debug.print("Parsing primary expression...\n", .{});
 
         const tok = self.peek();
+
+        // Early return for tokens that can't start an expression
+        if (tok.type == .SEMICOLON or tok.type == .EOF) {
+            if (self.debug_enabled) {
+                std.debug.print("Found {s}, returning null\n", .{@tagName(tok.type)});
+            }
+            return null;
+        }
+
         const expr = try self.allocator.create(ast.Expr);
 
         var result: ?*ast.Expr = null;
