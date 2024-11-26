@@ -49,6 +49,13 @@ pub const Environment = struct {
     }
 
     pub fn deinit(self: *Environment) void {
+        var it = self.values.iterator();
+        while (it.next()) |entry| {
+            // Free any array values
+            if (entry.value_ptr.* == .array) {
+                self.allocator.free(entry.value_ptr.*.array);
+            }
+        }
         self.values.deinit();
     }
 
@@ -73,6 +80,12 @@ pub const Environment = struct {
 
         // First check if the variable exists in current scope
         if (self.values.contains(name)) {
+            // Free any existing array value before overwriting
+            if (self.values.get(name)) |old_value| {
+                if (old_value == .array) {
+                    self.allocator.free(old_value.array);
+                }
+            }
             try self.values.put(name, value);
             return;
         }
@@ -162,7 +175,7 @@ pub const Interpreter = struct {
                 if (self.debug_enabled) {
                     std.debug.print("Before evaluating expression\n", .{});
                 }
-                const value = try self.evaluate(expr);
+                const value = try self.evaluate(expr orelse return error.InvalidExpression);
                 if (self.debug_enabled) {
                     std.debug.print("{any}\n", .{value});
                 }
@@ -175,17 +188,14 @@ pub const Interpreter = struct {
         }
     }
 
-    pub fn evaluate(self: *Interpreter, expr: ?*ast.Expr) ErrorList!token.TokenLiteral {
-        if (expr == null) return error.InvalidExpression;
-        const e = expr.?;
-
-        switch (e.*) {
+    pub fn evaluate(self: *Interpreter, expr: *const ast.Expr) !token.TokenLiteral {
+        switch (expr.*) {
             .Literal => |lit| {
                 return lit;
             },
             .Binary => |bin| {
-                const left = try self.evaluate(bin.left);
-                const right = try self.evaluate(bin.right);
+                const left = try self.evaluate(bin.left orelse return error.InvalidExpression);
+                const right = try self.evaluate(bin.right orelse return error.InvalidExpression);
 
                 switch (bin.operator.type) {
                     .PLUS => {
@@ -247,7 +257,7 @@ pub const Interpreter = struct {
                 }
             },
             .Unary => |un| {
-                const operand = try self.evaluate(un.right);
+                const operand = try self.evaluate(un.right orelse return error.InvalidExpression);
                 switch (un.operator.type) {
                     .MINUS => {
                         if (operand == .int) {
@@ -278,24 +288,24 @@ pub const Interpreter = struct {
                 return error.VariableNotFound;
             },
             .Assignment => |assign| {
-                const value = try self.evaluate(assign.value);
+                const value = try self.evaluate(assign.value orelse return error.InvalidExpression);
                 const key = try self.string_interner.intern(assign.name.lexeme);
                 try self.environment.assign(key, value);
                 return value;
             },
             .Grouping => |group| {
-                return try self.evaluate(group);
+                return try self.evaluate(group orelse return error.InvalidExpression);
             },
             .If => |if_expr| {
-                const condition = try self.evaluate(if_expr.condition);
+                const condition = try self.evaluate(if_expr.condition orelse return error.InvalidExpression);
                 if (condition != .boolean) {
                     return error.TypeError;
                 }
 
                 return if (condition.boolean)
-                    try self.evaluate(if_expr.then_branch)
+                    try self.evaluate(if_expr.then_branch orelse return error.InvalidExpression)
                 else
-                    try self.evaluate(if_expr.else_branch);
+                    try self.evaluate(if_expr.else_branch orelse return error.InvalidExpression);
             },
             .Block => |statements| {
                 var last_value = token.TokenLiteral{ .nothing = {} };
@@ -315,6 +325,67 @@ pub const Interpreter = struct {
                 }
 
                 return last_value;
+            },
+            .Array => |elements| {
+                var array_values = std.ArrayList(token.TokenLiteral).init(self.allocator);
+                errdefer array_values.deinit();
+
+                for (elements) |element| {
+                    const value = try self.evaluate(element);
+                    try array_values.append(value);
+                }
+
+                const owned_slice = try array_values.toOwnedSlice();
+                errdefer self.allocator.free(owned_slice);
+
+                return token.TokenLiteral{ .array = owned_slice };
+            },
+            .Struct => |fields| {
+                var struct_fields = std.ArrayList(token.StructField).init(self.allocator);
+                errdefer struct_fields.deinit();
+
+                for (fields) |field| {
+                    const value = try self.evaluate(field.value);
+                    try struct_fields.append(token.StructField{
+                        .name = field.name.lexeme,
+                        .value = value,
+                    });
+                }
+
+                return token.TokenLiteral{ .struct_value = try struct_fields.toOwnedSlice() };
+            },
+            .Index => |idx| {
+                const array = try self.evaluate(idx.array);
+                const index = try self.evaluate(idx.index);
+                if (index.int < 0) {
+                    return error.IndexOutOfBounds;
+                }
+                const usize_index = @as(usize, @intCast(index.int));
+                if (usize_index >= array.array.len) {
+                    return error.IndexOutOfBounds;
+                }
+                return array.array[usize_index];
+            },
+            .IndexAssign => |idx_assign| {
+                const array_val = try self.evaluate(idx_assign.array);
+                const index = try self.evaluate(idx_assign.index);
+                const new_value = try self.evaluate(idx_assign.value);
+
+                if (array_val != .array) {
+                    return error.TypeError;
+                }
+                if (index != .int) {
+                    return error.TypeError;
+                }
+
+                const usize_index = @as(usize, @intCast(index.int));
+                if (usize_index >= array_val.array.len) {
+                    return error.IndexOutOfBounds;
+                }
+
+                // Modify the array in place
+                array_val.array[usize_index] = new_value;
+                return new_value;
             },
         }
     }

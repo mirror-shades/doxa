@@ -70,6 +70,7 @@ pub const ErrorList = error{
     UnexpectedToken,
     ExpectedRightParen,
     ExpectedRightBracket,
+    ExpectedLeftBracket,
     InvalidAssignmentTarget,
     UndefinedVariable,
     InvalidOperand,
@@ -79,16 +80,21 @@ pub const ErrorList = error{
     ExpectedRightBrace,
     ExpectedThen,
     ExpectedElse,
+    ExpectedColon,
+    ExpectedCommaOrBracket,
+    ExpectedEnumVariant,
+    ExpectedCommaOrBrace,
+    InvalidAssignment,
 };
 
 /// Reporting provides structured error handling and reporting capabilities
 /// for the DoxVM compiler and runtime.
 pub const Reporting = struct {
     /// Total count of errors encountered
-    error_count: u32 = 0,
+    error_count: i32 = 0,
 
     /// Total count of warnings encountered
-    warning_count: u32 = 0,
+    warning_count: i32 = 0,
 
     /// Whether any errors occurred
     had_error: bool = false,
@@ -118,8 +124,8 @@ pub const Reporting = struct {
 
     /// Location information for error reporting
     pub const Location = struct {
-        line: u32,
-        column: u32,
+        line: i32,
+        column: i32,
         file: []const u8,
 
         pub fn format(
@@ -173,12 +179,12 @@ pub const Reporting = struct {
     }
 
     /// Get total error count
-    pub fn getErrorCount(self: Reporting) u32 {
+    pub fn getErrorCount(self: Reporting) i32 {
         return self.error_count;
     }
 
     /// Get total warning count
-    pub fn getWarningCount(self: Reporting) u32 {
+    pub fn getWarningCount(self: Reporting) i32 {
         return self.warning_count;
     }
 
