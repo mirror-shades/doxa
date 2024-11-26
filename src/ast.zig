@@ -27,35 +27,73 @@ pub const Expr = union(enum) {
     Grouping: ?*Expr,
     If: If,
     Block: []Stmt,
+    Array: []const *Expr,
+    Struct: []*StructLiteralField,
+    Index: Index,
+    IndexAssign: struct {
+        array: *Expr,
+        index: *Expr,
+        value: *Expr,
+    },
 
     pub fn deinit(self: *Expr, allocator: std.mem.Allocator) void {
         switch (self.*) {
-            .Literal, .Variable => {}, // Nothing to free
-            .Binary => |*bin| {
-                if (bin.left) |left| {
+            .Binary => |*b| {
+                if (b.left) |left| {
                     left.deinit(allocator);
                     allocator.destroy(left);
                 }
-                if (bin.right) |right| {
+                if (b.right) |right| {
                     right.deinit(allocator);
                     allocator.destroy(right);
                 }
             },
-            .Unary => |*un| {
-                if (un.right) |right| {
+            .Unary => |*u| {
+                if (u.right) |right| {
                     right.deinit(allocator);
                     allocator.destroy(right);
                 }
             },
-            .Assignment => |*assign| {
-                if (assign.value) |value| {
+            .Grouping => |g| {
+                if (g) |expr| {
+                    expr.deinit(allocator);
+                    allocator.destroy(expr);
+                }
+            },
+            .Index => |*i| {
+                i.array.deinit(allocator);
+                allocator.destroy(i.array);
+                i.index.deinit(allocator);
+                allocator.destroy(i.index);
+            },
+            .IndexAssign => |*i| {
+                i.array.deinit(allocator);
+                allocator.destroy(i.array);
+                i.index.deinit(allocator);
+                allocator.destroy(i.index);
+                i.value.deinit(allocator);
+                allocator.destroy(i.value);
+            },
+            .Assignment => |*a| {
+                if (a.value) |value| {
                     value.deinit(allocator);
                     allocator.destroy(value);
                 }
             },
-            .Grouping => |maybe_expr| if (maybe_expr) |expr| {
-                expr.deinit(allocator);
-                allocator.destroy(expr);
+            .Array => |elements| {
+                for (elements) |element| {
+                    element.deinit(allocator);
+                    allocator.destroy(element);
+                }
+                allocator.free(elements);
+            },
+            .Struct => |fields| {
+                for (fields) |field| {
+                    field.value.deinit(allocator);
+                    allocator.destroy(field.value);
+                    allocator.destroy(field);
+                }
+                allocator.free(fields);
             },
             .If => |*i| {
                 if (i.condition) |condition| {
@@ -77,6 +115,7 @@ pub const Expr = union(enum) {
                 }
                 allocator.free(statements);
             },
+            .Variable, .Literal => {}, // These don't own any memory
         }
     }
 };
@@ -88,12 +127,14 @@ pub const Assignment = struct {
 
 pub const VarDecl = struct {
     name: token.Token,
+    type_expr: ?*TypeExpr,
     initializer: ?*Expr,
 };
 
 pub const Stmt = union(enum) {
     VarDecl: struct {
         name: token.Token,
+        type_expr: ?*TypeExpr,
         initializer: ?*Expr,
     },
     Expression: ?*Expr,
@@ -107,8 +148,12 @@ pub const Stmt = union(enum) {
                     allocator.destroy(expr);
                 }
             },
-            .VarDecl => |*decl| {
-                if (decl.initializer) |init| {
+            .VarDecl => |*v| {
+                if (v.type_expr) |type_expr| {
+                    type_expr.deinit(allocator);
+                    allocator.destroy(type_expr);
+                }
+                if (v.initializer) |init| {
                     init.deinit(allocator);
                     allocator.destroy(init);
                 }
@@ -121,4 +166,64 @@ pub const Stmt = union(enum) {
             },
         }
     }
+};
+
+pub const TypeExpr = union(enum) {
+    Basic: BasicType,
+    Array: ArrayType,
+    Struct: []*StructField,
+    Enum: []const []const u8,
+
+    pub fn deinit(self: *TypeExpr, allocator: std.mem.Allocator) void {
+        switch (self.*) {
+            .Array => |*array| array.element_type.deinit(allocator),
+            .Struct => |fields| {
+                for (fields) |field| {
+                    field.deinit(allocator);
+                    allocator.destroy(field);
+                }
+                allocator.free(fields);
+            },
+            .Enum => |variants| {
+                allocator.free(variants);
+            },
+            else => {},
+        }
+    }
+};
+
+pub const BasicType = enum {
+    Integer,
+    Float,
+    String,
+    Boolean,
+};
+
+pub const ArrayType = struct {
+    element_type: *TypeExpr,
+};
+
+pub const StructField = struct {
+    name: token.Token,
+    type_expr: *TypeExpr,
+
+    pub fn deinit(self: *StructField, allocator: std.mem.Allocator) void {
+        self.type_expr.deinit(allocator);
+        allocator.destroy(self.type_expr);
+    }
+};
+
+pub const StructLiteralField = struct {
+    name: token.Token,
+    value: *Expr,
+
+    pub fn deinit(self: *StructLiteralField, allocator: std.mem.Allocator) void {
+        self.value.deinit(allocator);
+        allocator.destroy(self.value);
+    }
+};
+
+pub const Index = struct {
+    array: *Expr,
+    index: *Expr,
 };

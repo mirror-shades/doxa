@@ -6,18 +6,17 @@ pub const TokenType = token.TokenType;
 pub const Token = token.Token;
 pub const TokenLiteral = token.TokenLiteral;
 
-
 pub const Lexer = struct {
     //======================================================================
     // Fields
     //======================================================================
-    
+
     keywords: std.StringHashMap(TokenType),
     tokens: std.ArrayList(Token),
     source: []const u8,
-    start: u32,
-    current: u32,
-    line: u32,
+    start: usize, // array index is usize by default
+    current: usize, // array index is usize by default
+    line: i32,
     allocator: std.mem.Allocator,
     allocated_strings: std.ArrayList([]const u8),
     allocated_arrays: std.ArrayList([]const TokenLiteral),
@@ -27,7 +26,6 @@ pub const Lexer = struct {
     //======================================================================
 
     pub fn init(allocator: std.mem.Allocator, source: []const u8) Lexer {
-
         return Lexer{
             .source = source,
             .start = 0,
@@ -40,7 +38,7 @@ pub const Lexer = struct {
             .allocated_arrays = std.ArrayList([]const TokenLiteral).init(allocator),
         };
     }
-    
+
     pub fn deinit(self: *Lexer) void {
         // Free all allocated strings
         for (self.allocated_strings.items) |str| {
@@ -118,7 +116,7 @@ pub const Lexer = struct {
             if (self.peekAt(0) == '\n') self.line += 1;
             self.advance();
         }
-        
+
         if (self.isAtEnd()) return;
 
         self.start = self.current;
@@ -130,7 +128,7 @@ pub const Lexer = struct {
             //strings
             'r' => {
                 if (self.peekAt(0) == '"') {
-                    self.current = self.start;  // Reset current to include 'r'
+                    self.current = self.start; // Reset current to include 'r'
                     try self.rawString();
                 } else {
                     // This is just an identifier starting with 'r'
@@ -138,9 +136,9 @@ pub const Lexer = struct {
                 }
             },
 
-            '/' => {                
+            '/' => {
                 if (!self.isAtEnd() and self.source[self.current] == '/') {
-                    self.advance();  // consume the second slash
+                    self.advance(); // consume the second slash
                     while (!self.isAtEnd() and self.peekAt(0) != '\n') {
                         self.advance();
                     }
@@ -149,16 +147,16 @@ pub const Lexer = struct {
                         self.advance();
                     }
                 } else if (self.match('*')) {
-                    var nesting: u32 = 1;
-                    
+                    var nesting: i32 = 1;
+
                     while (nesting > 0 and !self.isAtEnd()) {
                         if (self.peekAt(0) == '/' and self.peekAt(1) == '*') {
-                            self.advance();  // consume /
-                            self.advance();  // consume *
+                            self.advance(); // consume /
+                            self.advance(); // consume *
                             nesting += 1;
                         } else if (self.peekAt(0) == '*' and self.peekAt(1) == '/') {
-                            self.advance();  // consume *
-                            self.advance();  // consume /
+                            self.advance(); // consume *
+                            self.advance(); // consume /
                             nesting -= 1;
                         } else {
                             if (self.peekAt(0) == '\n') {
@@ -282,11 +280,12 @@ pub const Lexer = struct {
                     try self.addMinimalToken(.MINUS_MINUS);
                 } else if (self.match('=')) {
                     try self.addMinimalToken(.MINUS_EQUAL);
-                } else if (isDigit(self.peekAt(0)) or self.peekAt(0) == '.' or 
-                          (self.peekAt(0) == '0' and (self.peekAt(1) == 'x' or self.peekAt(1) == 'b'))) {
+                } else if (isDigit(self.peekAt(0)) or self.peekAt(0) == '.' or
+                    (self.peekAt(0) == '0' and (self.peekAt(1) == 'x' or self.peekAt(1) == 'b')))
+                {
                     // This is a negative number - include the minus sign in the token
-                    self.current -= 1;  // Back up to include the minus sign
-                    self.start = self.current;  // Start from the minus sign
+                    self.current -= 1; // Back up to include the minus sign
+                    self.start = self.current; // Start from the minus sign
                     try self.number();
                 } else {
                     try self.addMinimalToken(.MINUS);
@@ -343,7 +342,7 @@ pub const Lexer = struct {
         const lexeme_start = @intFromPtr(lexeme.ptr);
         const source_start = @intFromPtr(self.source.ptr);
         const source_end = source_start + self.source.len;
-        
+
         if (lexeme_start < source_start or lexeme_start >= source_end) {
             tracked_lexeme = try self.addString(lexeme);
         }
@@ -360,23 +359,23 @@ pub const Lexer = struct {
         if (offset < 0) {
             const abs_offset = @abs(offset);
             if (abs_offset > self.current) return 0;
-            return self.source[self.current - @as(u32, abs_offset)];
+            return self.source[self.current - @as(usize, abs_offset)];
         }
-        
+
         // For zero or positive offsets
         if (offset >= 0) {
-            const pos = self.current + @as(u32, @intCast(offset));
+            const pos = self.current + @as(usize, @intCast(offset));
             if (pos >= self.source.len) return 0;
             return self.source[pos];
         }
-        
+
         return 0;
     }
 
     fn isAtEnd(self: *Lexer) bool {
         return self.current >= self.source.len;
-    } 
-    
+    }
+
     fn advance(self: *Lexer) void {
         self.current += 1;
     }
@@ -394,9 +393,9 @@ pub const Lexer = struct {
 
     fn isAlpha(c: u8) bool {
         return (c >= 'a' and c <= 'z') or
-               (c >= 'A' and c <= 'Z') or
-               c == '_' or
-               c > 127;  // Accept all Unicode characters above ASCII
+            (c >= 'A' and c <= 'Z') or
+            c == '_' or
+            c > 127; // Accept all Unicode characters above ASCII
     }
 
     fn isDigit(c: u8) bool {
@@ -404,7 +403,7 @@ pub const Lexer = struct {
     }
 
     fn isOperator(c: u8) bool {
-     return c == '+' or c == '-' or c == '*' or c == '/' or c == '%' or c == '^' or c == '&' or c == '|' or c == '!' or c == '=' or c == '<' or c == '>';
+        return c == '+' or c == '-' or c == '*' or c == '/' or c == '%' or c == '^' or c == '&' or c == '|' or c == '!' or c == '=' or c == '<' or c == '>';
     }
 
     fn isWhitespace(c: u8) bool {
@@ -433,7 +432,7 @@ pub const Lexer = struct {
             // First check if we have a valid UTF-8 sequence
             const sequence_length = try std.unicode.utf8ByteSequenceLength(remaining[0]);
             if (sequence_length > remaining.len) break;
-            
+
             // Try to decode the codepoint
             const view = std.unicode.Utf8View.init(remaining[0..sequence_length]) catch break;
             var iterator = view.iterator();
@@ -443,8 +442,9 @@ pub const Lexer = struct {
                     (codepoint >= 'A' and codepoint <= 'Z') or
                     (codepoint >= '0' and codepoint <= '9') or
                     codepoint == '_' or
-                    codepoint > 127) {  // Accept all Unicode characters above ASCII
-                    var i: u32 = 0;
+                    codepoint > 127)
+                { // Accept all Unicode characters above ASCII
+                    var i: i32 = 0;
                     while (i < sequence_length) : (i += 1) {
                         self.advance();
                     }
@@ -453,9 +453,9 @@ pub const Lexer = struct {
             }
             break;
         }
-        
+
         const text = self.source[self.start..self.current];
-        
+
         // Check if it's a keyword
         if (self.keywords.get(text)) |keyword_type| {
             switch (keyword_type) {
@@ -479,29 +479,29 @@ pub const Lexer = struct {
 
     fn array(self: *Lexer) !void {
         try self.addMinimalToken(.LEFT_BRACKET);
-        
+
         while (!self.isAtEnd() and self.peekAt(0) != ']') {
             // Skip whitespace
             while (!self.isAtEnd() and (self.peekAt(0) == ' ' or self.peekAt(0) == '\r' or self.peekAt(0) == '\t' or self.peekAt(0) == '\n')) {
                 if (self.peekAt(0) == '\n') self.line += 1;
                 self.advance();
             }
-            
+
             if (self.peekAt(0) == ']') break;
-            
+
             try self.getNextToken();
-            
+
             // Skip whitespace after element
             while (!self.isAtEnd() and (self.peekAt(0) == ' ' or self.peekAt(0) == '\r' or self.peekAt(0) == '\t' or self.peekAt(0) == '\n')) {
                 if (self.peekAt(0) == '\n') self.line += 1;
                 self.advance();
             }
-            
+
             // Check for comma or end of array
             if (self.peekAt(0) == ',') {
                 self.start = self.current; // Set start position
-                self.advance();  // Advance past the comma
-                try self.addMinimalToken(.COMMA);  // Add token after advancing
+                self.advance(); // Advance past the comma
+                try self.addMinimalToken(.COMMA); // Add token after advancing
             } else if (self.peekAt(0) != ']') {
                 return error.ExpectedCommaOrClosingBracket;
             }
@@ -527,12 +527,12 @@ pub const Lexer = struct {
         while (!self.isAtEnd() and self.peekAt(0) != '"') {
             const c = self.peekAt(0);
             self.advance();
-            
+
             if (c == '\\') {
                 if (self.isAtEnd()) {
                     return error.UnterminatedString;
                 }
-                
+
                 const escaped = self.peekAt(0);
                 self.advance();
                 switch (escaped) {
@@ -544,7 +544,7 @@ pub const Lexer = struct {
                         // Handle Unicode escape sequences
                         if (self.peekAt(0) != '{') return error.InvalidUnicodeEscape;
                         self.advance(); // consume '{'
-                        
+
                         // Read hex digits until '}'
                         var codepoint: u21 = 0;
                         var digit_count: u8 = 0;
@@ -559,13 +559,13 @@ pub const Lexer = struct {
                             digit_count += 1;
                             self.advance();
                         }
-                        
+
                         if (self.peekAt(0) != '}') return error.InvalidUnicodeEscape;
                         self.advance(); // consume '}'
-                        
+
                         // Validate and encode the codepoint
                         if (codepoint > 0x10FFFF) return error.CodepointTooLarge;
-                        
+
                         var buf: [4]u8 = undefined;
                         const len = try std.unicode.utf8Encode(codepoint, &buf);
                         try result.appendSlice(buf[0..len]);
@@ -583,14 +583,14 @@ pub const Lexer = struct {
         }
 
         self.advance(); // consume closing quote
-        
+
         const lexeme = self.source[self.start..self.current];
         const string_content = try result.toOwnedSlice();
-        
+
         try self.addLongToken(.STRING, .{ .string = string_content }, lexeme);
     }
 
-    fn rawString(self: *Lexer) !void {        
+    fn rawString(self: *Lexer) !void {
         self.advance(); // Consume the 'r'
         self.advance(); // Consume the opening quote
         var result = std.ArrayList(u8).init(self.allocator);
@@ -598,7 +598,7 @@ pub const Lexer = struct {
 
         // For raw strings, consume everything literally until an unescaped closing quote
         while (!self.isAtEnd()) {
-            const ch = self.peekAt(0);            
+            const ch = self.peekAt(0);
             if (ch == '"' and (self.current == 0 or self.source[self.current - 1] != '\\')) {
                 break;
             }
@@ -611,7 +611,7 @@ pub const Lexer = struct {
         }
 
         self.advance(); // consume closing quote
-        const lexeme = self.source[self.start..self.current];        
+        const lexeme = self.source[self.start..self.current];
         const string_content = try result.toOwnedSlice();
         try self.addLongToken(.STRING, .{ .string = string_content }, lexeme);
     }
@@ -636,25 +636,35 @@ pub const Lexer = struct {
             self.advance();
         }
         // Determine the first actual character, accounting for negative sign
-        const first_char = if (has_sign and self.start + 1 < self.source.len) 
-            self.source[self.start + 1]  // Skip the sign
-        else 
+        const first_char = if (has_sign and self.start + 1 < self.source.len)
+            self.source[self.start + 1] // Skip the sign
+        else
             self.source[self.start];
-        
+
         // Mark if we start with a valid digit
         if (isDigit(first_char)) {
             has_digits = true;
         }
 
         // Handle special bases (hex, binary, octal)
-        if (self.current < self.source.len - 1 and 
-            ((has_sign and self.source[self.current] == '0') or 
-             self.source[self.current - 1] == '0')) {
+        if (self.current < self.source.len - 1 and
+            ((has_sign and self.source[self.current] == '0') or
+            self.source[self.current - 1] == '0'))
+        {
             const next_char = if (has_sign) self.peekAt(1) else self.peekAt(0);
             switch (next_char) {
-                'x' => { try self.handleHex(is_negative); return; },
-                'b' => { try self.handleBinary(is_negative); return; },
-                'o' => { try self.handleOctal(is_negative); return; },
+                'x' => {
+                    try self.handleHex(is_negative);
+                    return;
+                },
+                'b' => {
+                    try self.handleBinary(is_negative);
+                    return;
+                },
+                'o' => {
+                    try self.handleOctal(is_negative);
+                    return;
+                },
                 else => {},
             }
         }
@@ -663,8 +673,9 @@ pub const Lexer = struct {
         while (isDigit(self.peekAt(0)) or self.peekAt(0) == '_') {
             if (isDigit(self.peekAt(0))) {
                 // Check for leading zeros
-                if (has_digits == false and self.peekAt(0) == '0' and 
-                    isDigit(self.peekAt(1))) {
+                if (has_digits == false and self.peekAt(0) == '0' and
+                    isDigit(self.peekAt(1)))
+                {
                     return error.LeadingZeros;
                 }
                 has_digits = true;
@@ -702,7 +713,7 @@ pub const Lexer = struct {
         if (self.peekAt(0) == 'e' or self.peekAt(0) == 'E') {
             if (has_exponent) return error.MultipleExponents;
             has_exponent = true;
-            has_decimal = true;  // Treat as float
+            has_decimal = true; // Treat as float
             self.advance();
 
             if (self.peekAt(0) == '+' or self.peekAt(0) == '-') {
@@ -728,7 +739,7 @@ pub const Lexer = struct {
             const num_str_buf = try self.allocator.alloc(u8, num_str.len);
             defer self.allocator.free(num_str_buf);
             const num_str_lower = std.ascii.lowerString(num_str_buf, num_str);
-            
+
             if (std.mem.eql(u8, num_str_lower, "inf") or std.mem.eql(u8, num_str_lower, "infinity")) {
                 const float_val = if (is_negative) -std.math.inf(f32) else std.math.inf(f32);
                 try self.addToken(.FLOAT, .{ .float = float_val });
@@ -743,12 +754,12 @@ pub const Lexer = struct {
             const float_val = std.fmt.parseFloat(f32, num_str) catch {
                 return error.InvalidNumber;
             };
-            
+
             // Check for underflow/overflow
             if (std.math.isInf(float_val) or std.math.isNan(float_val)) {
                 return error.InvalidNumber;
             }
-            
+
             try self.addToken(.FLOAT, .{ .float = float_val });
         } else {
             const int_val = std.fmt.parseInt(i32, num_str, 10) catch |err| switch (err) {
@@ -760,28 +771,28 @@ pub const Lexer = struct {
     }
 
     fn handleHex(self: *Lexer, is_negative: bool) !void {
-        var digits_start: u32 = self.current;
+        var digits_start: usize = self.current;
         // If we're at 'x', back up to include the '0'
         if (self.source[self.current] == 'x') {
             self.current -= 1;
         }
         self.advance(); // Move past '0'
         self.advance(); // Move past 'x'
-        
+
         // Must have at least one hex digit after 0x
         if (!isHexDigit(self.peekAt(0))) return error.InvalidNumber;
-        
+
         // Mark where the actual hex digits begin (after 0x)
-        digits_start = self.current;  // Update digits_start to after the 0x prefix
-        
+        digits_start = self.current; // Update digits_start to after the 0x prefix
+
         // Consume all hex digits and underscores
         while (isHexDigit(self.peekAt(0)) or self.peekAt(0) == '_') {
             self.advance();
         }
-        
+
         // Extract just the hex digits portion
         const hex_digits = self.source[digits_start..self.current];
-        
+
         // Clean up the hex string by removing underscores
         const clean_hex = try self.removeUnderscores(hex_digits);
         defer self.allocator.free(clean_hex);
@@ -797,10 +808,10 @@ pub const Lexer = struct {
             error.InvalidCharacter => return error.InvalidNumber,
             else => return err,
         };
-        
+
         // Apply negative sign if needed
         if (is_negative) int_val = -int_val;
-        
+
         // Create the final token and return
         try self.addToken(.INT, .{ .int = int_val });
     }
@@ -812,21 +823,21 @@ pub const Lexer = struct {
         }
         self.advance(); // consume '0'
         self.advance(); // consume 'b'
-        
+
         // Must have at least one binary digit after 0b
         if (!isBinaryDigit(self.peekAt(0))) return error.InvalidNumber;
-        
+
         // Mark where the actual binary digits begin (after 0b)
         const digits_start = self.current;
-        
+
         // Consume all binary digits and underscores
         while (isBinaryDigit(self.peekAt(0)) or self.peekAt(0) == '_') {
             self.advance();
         }
-        
+
         // Extract just the binary digits portion
         const bin_digits = self.source[digits_start..self.current];
-        
+
         // Clean up the binary string by removing underscores
         const clean_bin = try self.removeUnderscores(bin_digits);
         defer self.allocator.free(clean_bin);
@@ -842,7 +853,7 @@ pub const Lexer = struct {
             error.InvalidCharacter => return error.InvalidNumber,
             else => return err,
         };
-        
+
         if (is_negative) int_val = -int_val;
         try self.addToken(.INT, .{ .int = int_val });
     }
@@ -854,21 +865,21 @@ pub const Lexer = struct {
         }
         self.advance(); // consume '0'
         self.advance(); // consume 'o'
-        
+
         // Must have at least one octal digit after 0o
         if (!isOctalDigit(self.peekAt(0))) return error.InvalidNumber;
-        
+
         // Mark where the actual octal digits begin (after 0o)
         const digits_start = self.current;
-        
+
         // Consume all octal digits and underscores
         while (isOctalDigit(self.peekAt(0)) or self.peekAt(0) == '_') {
             self.advance();
         }
-        
+
         // Extract just the octal digits portion
         const oct_digits = self.source[digits_start..self.current];
-        
+
         // Clean up the octal string by removing underscores
         const clean_oct = try self.removeUnderscores(oct_digits);
         defer self.allocator.free(clean_oct);
@@ -878,7 +889,7 @@ pub const Lexer = struct {
             error.InvalidCharacter => return error.InvalidNumber,
             else => return err,
         };
-        
+
         if (is_negative) int_val = -int_val;
         try self.addToken(.INT, .{ .int = int_val });
     }
@@ -890,14 +901,14 @@ pub const Lexer = struct {
     fn removeUnderscores(self: *Lexer, input: []const u8) ![]const u8 {
         var result = std.ArrayList(u8).init(self.allocator);
         errdefer result.deinit();
-        
+
         // Handle negative sign if present
-        var i: u32 = 0;
+        var i: usize = 0; // array index is usize by default
         if (input.len > 0 and input[0] == '-') {
             try result.append('-');
             i = 1;
         }
-        
+
         // Handle prefixes (0x, 0b)
         if (input.len - i >= 2 and input[i] == '0') {
             try result.append('0');
@@ -929,14 +940,14 @@ pub const Lexer = struct {
                 }
             }
         }
-        
+
         return result.toOwnedSlice();
     }
 
     fn validateUnderscores(input: []const u8) !void {
         var last_was_underscore = false;
         var has_digit = false;
-        
+
         for (input, 0..) |c, i| {
             if (c == '_') {
                 if (last_was_underscore) return error.InvalidNumber; // Double underscore
@@ -947,46 +958,46 @@ pub const Lexer = struct {
                 if (std.ascii.isDigit(c)) has_digit = true;
             }
         }
-        
+
         if (!has_digit) return error.InvalidNumber;
     }
 
     fn handleExponent(self: *Lexer) !void {
         self.advance(); // consume 'e' or 'E'
-        
+
         // Handle optional sign
         var exp_is_negative = false;
         if (self.peekAt(0) == '+' or self.peekAt(0) == '-') {
             exp_is_negative = self.peekAt(0) == '-';
             self.advance();
         }
-        
+
         // Must have at least one digit
         if (!isDigit(self.peekAt(0))) return error.InvalidExponent;
-        
+
         var exp_value: i32 = 0;
         var has_digit = false;
-        
+
         while (isDigit(self.peekAt(0)) or self.peekAt(0) == '_') {
             if (isDigit(self.peekAt(0))) {
                 exp_value = exp_value * 10 + (self.peekAt(0) - '0');
                 has_digit = true;
-                
+
                 // Check for exponent overflow
                 if (exp_value > 308) return error.Overflow; // Max double exponent
             }
             self.advance();
         }
-        
+
         if (!has_digit) return error.InvalidExponent;
         if (exp_is_negative) exp_value = -exp_value;
-        
+
         return exp_value;
     }
 
     fn validateBasePrefix(self: *Lexer) !enum { Decimal, Hex, Binary, Octal } {
         if (self.peekAt(0) != '0') return .Decimal;
-        
+
         const next_char = self.peekAt(1);
         switch (next_char) {
             'x', 'X' => {

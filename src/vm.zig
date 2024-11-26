@@ -160,7 +160,7 @@ pub const Frame = struct {
         };
     }
 
-    pub fn initArray(allocator: std.mem.Allocator, size: u32, element_type: instructions.ValueType) !Frame {
+    pub fn initArray(allocator: std.mem.Allocator, size: i32, element_type: instructions.ValueType) !Frame {
         const array_val = try allocator.create(instructions.ArrayValue);
         array_val.* = .{
             .items = std.ArrayList(instructions.Value).init(allocator),
@@ -201,7 +201,7 @@ pub const Frame = struct {
 
 const Stack = struct {
     data: [STACK_SIZE]Frame,
-    sp: u32 = 0,
+    sp: i32 = 0,
 
     pub fn init() Stack {
         var stack = Stack{
@@ -216,7 +216,7 @@ const Stack = struct {
     }
 
     pub fn deinit(self: *Stack) void {
-        var i: u32 = 0;
+        var i: i32 = 0;
         while (i < self.sp) : (i += 1) {
             var frame = self.data[i];
             frame.deinit();
@@ -263,7 +263,7 @@ const Stack = struct {
         return self.data[self.sp - 1];
     }
 
-    pub fn size(self: Stack) u32 {
+    pub fn size(self: Stack) i32 {
         return self.sp;
     }
 
@@ -347,7 +347,7 @@ const ArrayInterner = struct {
                     hasher.update(std.mem.asBytes(&item.data.int));
                 },
                 .FLOAT => {
-                    const float_bits = @as(u32, @bitCast(item.data.float));
+                    const float_bits = @as(i32, @bitCast(item.data.float));
                     hasher.update(std.mem.asBytes(&float_bits));
                 },
                 .BOOL => {
@@ -388,22 +388,22 @@ const ArrayInterner = struct {
 };
 
 const CallFrame = struct {
-    ip: u32, // Instruction pointer for this frame
-    bp: u32, // Base pointer (start of this frame's stack space)
-    sp: u32, // Stack pointer for this frame
+    ip: i32, // Instruction pointer for this frame
+    bp: i32, // Base pointer (start of this frame's stack space)
+    sp: i32, // Stack pointer for this frame
     function: *const instructions.Function, // Reference to the function being executed
-    return_addr: u32, // Where to return to in the caller's code
+    return_addr: i32, // Where to return to in the caller's code
 };
 
 const BlockScope = struct {
-    start_ip: u32,
-    end_ip: u32,
-    base_sp: u32,
-    var_start: u32,
-    var_count: u32,
+    start_ip: i32,
+    end_ip: i32,
+    base_sp: i32,
+    var_start: i32,
+    var_count: i32,
     parent: ?*BlockScope,
 
-    pub fn init(start: u32, base_sp: u32, var_start: u32, parent: ?*BlockScope) BlockScope {
+    pub fn init(start: i32, base_sp: i32, var_start: i32, parent: ?*BlockScope) BlockScope {
         std.debug.print("Creating new block scope: var_start={}\n", .{var_start});
         return BlockScope{
             .start_ip = start,
@@ -419,7 +419,7 @@ const BlockScope = struct {
         std.debug.print("Cleaning up block scope: var_start={}, var_count={}\n", .{ self.var_start, self.var_count });
 
         // Clean up variables in this scope
-        var i: u32 = 0;
+        var i: i32 = 0;
         while (i < self.var_count) : (i += 1) {
             const var_idx = self.var_start + i;
             if (var_idx < vm.current_scope_vars.items.len) {
@@ -434,8 +434,8 @@ const BlockScope = struct {
 };
 
 const TryFrame = struct {
-    catch_ip: u32,
-    stack_height: u32,
+    catch_ip: i32,
+    stack_height: i32,
     parent: ?*TryFrame,
 };
 
@@ -444,9 +444,9 @@ pub const VM = struct {
     code: []const u8,
     constants: []Frame,
     reporter: *Reporting,
-    ip: u32,
-    sp: u32,
-    
+    ip: i32,
+    sp: i32,
+
     // Add these new fields
     functions: []const *instructions.Function,
     variables: []const instructions.Variable,
@@ -454,7 +454,7 @@ pub const VM = struct {
 
     stack: Stack,
     frames: std.ArrayList(CallFrame),
-    frame_count: u32,
+    frame_count: i32,
     call_stack: std.ArrayList(CallFrame),
     current_frame: ?*CallFrame,
     global_constants: []instructions.Value,
@@ -478,15 +478,7 @@ pub const VM = struct {
         Paused,
     };
 
-    pub fn init(
-        allocator: std.mem.Allocator, 
-        code: []const u8, 
-        constants: []Frame, 
-        functions: []const *instructions.Function,
-        variables: []const instructions.Variable,
-        values: []instructions.Value,
-        reporter: *Reporting
-    ) VM {
+    pub fn init(allocator: std.mem.Allocator, code: []const u8, constants: []Frame, functions: []const *instructions.Function, variables: []const instructions.Variable, values: []instructions.Value, reporter: *Reporting) VM {
         var vm = VM{
             .allocator = allocator,
             .code = code,
@@ -516,7 +508,7 @@ pub const VM = struct {
         };
 
         // Initialize stack with NOTHING values if needed
-        var i: u32 = 0;
+        var i: i32 = 0;
         while (i < STACK_SIZE) : (i += 1) {
             vm.stack.data[i] = Frame.initNothing(.INT);
         }
@@ -563,7 +555,7 @@ pub const VM = struct {
         self.current_scope_vars.deinit();
 
         // Clean up stack
-        var i: u32 = 0;
+        var i: i32 = 0;
         while (i < self.stack.sp) : (i += 1) {
             self.stack.data[i].deinit();
         }
@@ -593,7 +585,7 @@ pub const VM = struct {
 
     fn printStack(self: *VM) void {
         std.debug.print("Stack contents ({} items):\n", .{self.stack.sp});
-        var i: u32 = 0;
+        var i: i32 = 0;
         while (i < self.stack.sp) : (i += 1) {
             const value = self.stack.data[i].value;
             if (value.nothing) {
@@ -643,7 +635,7 @@ pub const VM = struct {
         @panic("No active frame");
     }
 
-    fn isVariableInScope(self: *VM, var_index: u32) bool {
+    fn isVariableInScope(self: *VM, var_index: i32) bool {
         std.debug.print("Checking scope for var[{}]\n", .{var_index});
 
         // Start from current block and work up through parent blocks
@@ -704,7 +696,7 @@ pub const VM = struct {
             else => try writer.writeAll("???"),
         }
     }
-    
+
     fn executeInstruction(self: *VM, opcode: instructions.OpCode) !void {
         switch (opcode) {
             .OP_HALT => {
@@ -712,7 +704,7 @@ pub const VM = struct {
             },
             .OP_CONST => {
                 const constant_index = self.read_byte();
-                const constant_value = self.get_constant(constant_index) orelse 
+                const constant_value = self.get_constant(constant_index) orelse
                     return ErrorList.InvalidConstant;
                 try self.stack.push(constant_value);
             },
@@ -917,13 +909,13 @@ pub const VM = struct {
                 const result = f_div(a_val, b_val) catch {
                     if (self.current_try_frame != null) {
                         try self.executeThrow();
-                        return;  // Continue execution in catch block
+                        return; // Continue execution in catch block
                     }
                     // No try block found, report fatal error
                     self.reporter.reportFatalError("Division by zero", .{});
                     return error.DivisionByZero;
                 };
-                
+
                 const new_frame = Frame.initFloat(result);
                 try self.stack.push(new_frame);
             },
@@ -937,7 +929,7 @@ pub const VM = struct {
             // less
             .OP_LESS => {
                 const b = self.pop().?;
-                const a = self.pop().?; 
+                const a = self.pop().?;
                 const result = less(a, b) catch return ErrorList.TypeError;
                 self.stack.push(result) catch return ErrorList.StackUnderflow;
             },
@@ -949,13 +941,11 @@ pub const VM = struct {
                     const int_val = value.asInt() catch return ErrorList.TypeError;
                     const float_val = @as(f32, @floatFromInt(int_val));
                     self.stack.push(Frame.initFloat(float_val)) catch return ErrorList.StackUnderflow;
-                }
-                else if (value.typeIs(.FLOAT)) {
+                } else if (value.typeIs(.FLOAT)) {
                     const float_val = value.asFloat() catch return ErrorList.TypeError;
                     const int_val = @as(i32, @intFromFloat(std.math.trunc(float_val)));
                     self.stack.push(Frame.initInt(int_val)) catch return ErrorList.StackUnderflow;
-                }
-                else {
+                } else {
                     self.reporter.reportFatalError("Invalid type for number conversion", .{});
                     return ErrorList.TypeError;
                 }
@@ -1135,16 +1125,12 @@ pub const VM = struct {
             },
             .OP_ARRAY_NEW => {
                 const size = self.read_byte();
-                const type_byte = self.read_byte();  // Read the type parameter
+                const type_byte = self.read_byte(); // Read the type parameter
                 const element_type = @as(instructions.ValueType, @enumFromInt(type_byte));
-                
-                std.debug.print("Creating new array with capacity {} and type {}\n", 
-                    .{size, element_type});
-                
-                const array_frame = try Frame.initArray(
-                    self.allocator, 
-                    size,
-                    element_type  // Pass the element type to initArray
+
+                std.debug.print("Creating new array with capacity {} and type {}\n", .{ size, element_type });
+
+                const array_frame = try Frame.initArray(self.allocator, size, element_type // Pass the element type to initArray
                 );
                 try self.stack.push(array_frame);
             },
@@ -1184,16 +1170,16 @@ pub const VM = struct {
                 const array_frame = try self.stack.pop();
 
                 if (array_frame.value.type != .ARRAY) {
-                    try self.stack.push(Frame.initNothing(.INT));  // Default to INT if type error
-                    return;  
+                    try self.stack.push(Frame.initNothing(.INT)); // Default to INT if type error
+                    return;
                 }
                 if (index.value.type != .INT) {
-                    try self.stack.push(Frame.initNothing(.INT));  // Default to INT if type error
-                    return; 
+                    try self.stack.push(Frame.initNothing(.INT)); // Default to INT if type error
+                    return;
                 }
 
                 const array = array_frame.value.data.array_val;
-                const idx = @as(u32, @intCast(index.value.data.int));
+                const idx = @as(i32, @intCast(index.value.data.int));
 
                 if (idx >= array.items.items.len) {
                     // Get the type of the array elements
@@ -1223,7 +1209,7 @@ pub const VM = struct {
                 }
 
                 const array = array_frame.value.data.array_val;
-                const idx = @as(u32, @intCast(index.value.data.int));
+                const idx = @as(i32, @intCast(index.value.data.int));
 
                 if (idx >= array.items.items.len) {
                     return error.IndexOutOfBounds;
@@ -1305,13 +1291,12 @@ pub const VM = struct {
             },
             .OP_IS_NOTHING => {
                 const value = try self.stack.pop();
-                std.debug.print("Checking if value is nothing: type={}, nothing={}\n", 
-                    .{value.value.type, value.value.nothing});
-                
+                std.debug.print("Checking if value is nothing: type={}, nothing={}\n", .{ value.value.type, value.value.nothing });
+
                 // Create a proper boolean Frame
                 const is_nothing = value.value.isNothing();
                 try self.stack.push(Frame.initBoolean(is_nothing));
-                
+
                 std.debug.print("IS_NOTHING result: {}\n", .{is_nothing});
             },
             .OP_TYPEOF => {
@@ -1409,7 +1394,7 @@ pub const VM = struct {
     }
 
     fn f_div(a: f32, b: f32) !f32 {
-        std.debug.print("f_div: a={}, b={}\n", .{a, b});
+        std.debug.print("f_div: a={}, b={}\n", .{ a, b });
         if (b == 0e0 or a == 0e0) {
             return error.DivisionByZero;
         }
@@ -1604,25 +1589,25 @@ pub const VM = struct {
         self.ip = self.current_frame.?.return_addr;
     }
 
-    fn executeSetVar(self: *VM, var_index: u32, new_value: instructions.Value) !void {
-        const variable = self.variables[var_index];  // Changed from 'var' to 'variable'
-        
+    fn executeSetVar(self: *VM, var_index: i32, new_value: instructions.Value) !void {
+        const variable = self.variables[var_index]; // Changed from 'var' to 'variable'
+
         if (variable.is_constant) {
             return error.CannotAssignToConstant;
         }
 
         // Type checking only needed if not dynamic
-        if (!variable.is_dynamic and 
-            self.values[variable.index].type != new_value.type) {
+        if (!variable.is_dynamic and
+            self.values[variable.index].type != new_value.type)
+        {
             return error.TypeMismatch;
         }
 
         self.values[variable.index] = new_value;
     }
 
-
     fn getFunction(self: *VM, index: u8) ?*instructions.Function {
-        if (index >= self.functions.len) {  // Changed from items.len to len
+        if (index >= self.functions.len) { // Changed from items.len to len
             self.reporter.reportFatalError("Function index out of bounds", .{});
             return null;
         }
@@ -1715,8 +1700,8 @@ pub const VM = struct {
     fn sliceArray(self: *VM, a: *Frame, start: u8, end: u8) !Frame {
         if (a.value.type == .ARRAY) {
             const array = a.value.data.array_val;
-            const start_idx = @as(u32, start);
-            const end_idx = @as(u32, end);
+            const start_idx = @as(i32, start);
+            const end_idx = @as(i32, end);
 
             // Bounds checking
             if (start_idx > end_idx or end_idx > array.items.items.len) {
@@ -1760,8 +1745,8 @@ pub const VM = struct {
     fn substr(self: *VM, a: *Frame, start: u8, len: u8) !Frame {
         if (a.value.type == .STRING) {
             const a_str = try a.asString();
-            const start_idx = @as(u32, start);
-            const length = @as(u32, len);
+            const start_idx = @as(i32, start);
+            const length = @as(i32, len);
 
             if (start_idx >= a_str.len or start_idx + length > a_str.len) {
                 return error.IndexOutOfBounds;
@@ -1867,7 +1852,7 @@ pub const VM = struct {
     fn executeTry(self: *VM) !void {
         std.debug.print("=== Executing TRY ===\n", .{});
         const try_frame = try self.try_stack.addOne();
-        
+
         // Find the catch block by scanning ahead for OP_CATCH
         var catch_ip = self.ip + 1;
         while (catch_ip < self.code.len) : (catch_ip += 1) {
@@ -1875,15 +1860,14 @@ pub const VM = struct {
                 break;
             }
         }
-        
+
         try_frame.* = TryFrame{
-            .catch_ip = catch_ip,  // Store location of catch block
+            .catch_ip = catch_ip, // Store location of catch block
             .stack_height = self.stack.sp,
             .parent = if (self.current_try_frame) |frame| frame else null,
         };
         self.current_try_frame = try_frame;
-        std.debug.print("Try frame created with catch_ip={}, stack_height={}\n", 
-            .{try_frame.catch_ip, try_frame.stack_height});
+        std.debug.print("Try frame created with catch_ip={}, stack_height={}\n", .{ try_frame.catch_ip, try_frame.stack_height });
     }
 
     fn executeCatch(self: *VM) !void {
@@ -1904,7 +1888,7 @@ pub const VM = struct {
         std.debug.print("=== Executing THROW ===\n", .{});
         if (self.current_try_frame) |try_frame| {
             std.debug.print("Found try frame, jumping to catch at {}\n", .{try_frame.catch_ip});
-            
+
             // Restore stack to state before try block, but keep one value for the error
             while (self.stack.sp > try_frame.stack_height + 1) {
                 const frame = try self.stack.pop();
@@ -1913,13 +1897,12 @@ pub const VM = struct {
 
             // Push error value if stack is empty
             if (self.stack.sp == try_frame.stack_height) {
-                try self.stack.push(Frame.initInt(-1));  // Default error value
+                try self.stack.push(Frame.initInt(-1)); // Default error value
             }
 
             // Jump directly to catch block
             self.ip = try_frame.catch_ip;
-            std.debug.print("Jumped to catch block at ip={}, stack height={}\n", 
-                .{self.ip, self.stack.sp});
+            std.debug.print("Jumped to catch block at ip={}, stack height={}\n", .{ self.ip, self.stack.sp });
         } else {
             std.debug.print("No try frame found, throwing uncaught error\n", .{});
             self.reporter.reportFatalError("Uncaught error", .{});
@@ -1943,7 +1926,7 @@ pub const VM = struct {
 
     pub fn runLoop(self: *VM, writer: anytype) !void {
         self.running = true;
-        
+
         while (self.running) {
             switch (self.exec_mode) {
                 .Normal => {
@@ -2023,11 +2006,10 @@ pub const VM = struct {
         return error.NoActiveFrame;
     }
 
-
     fn waitForStep(self: *VM) !void {
         const stdin = std.io.getStdIn().reader();
         var buf: [1]u8 = undefined;
-        
+
         std.debug.print("Press Enter to execute next instruction...", .{});
         _ = self;
         _ = try stdin.read(&buf);
@@ -2110,7 +2092,7 @@ pub fn main() !void {
     const array_val = try allocator.create(instructions.ArrayValue);
     // Ensure array_val is freed even if VM initialization or execution fails
     defer allocator.destroy(array_val);
-    
+
     array_val.* = .{
         .items = std.ArrayList(instructions.Value).init(allocator),
         .capacity = 0,
@@ -2118,51 +2100,45 @@ pub fn main() !void {
     };
     // Ensure items are freed
     defer array_val.items.deinit();
-    
+
     // Variables metadata can be const
     const variables = [_]instructions.Variable{
-        .{  // Variable at index 0
+        .{ // Variable at index 0
             .index = 0,
-            .is_constant = true,  // Mark as constant
-            .is_dynamic = false,  // Constants can't be dynamic
+            .is_constant = true, // Mark as constant
+            .is_dynamic = false, // Constants can't be dynamic
         },
     };
     // Pre-allocate space for variable values
     var values = [_]instructions.Value{
-        .{ .type = .INT, .nothing = true, .data = undefined },  // Space for var[0]
+        .{ .type = .INT, .nothing = true, .data = undefined }, // Space for var[0]
     };
 
     const code = [_]u8{
         // Set constant value to 5
-        @intFromEnum(instructions.OpCode.OP_CONST), 0,
+        @intFromEnum(instructions.OpCode.OP_CONST),     0,
         @intFromEnum(instructions.OpCode.OP_SET_CONST), 0,
-        
+
         // Try to change constant to 10 (should error)
-        @intFromEnum(instructions.OpCode.OP_CONST), 1,
+        @intFromEnum(instructions.OpCode.OP_CONST),     1,
         @intFromEnum(instructions.OpCode.OP_SET_CONST), 0,
-        
+
         // Read the constant value
-        @intFromEnum(instructions.OpCode.OP_VAR), 0,
+        @intFromEnum(instructions.OpCode.OP_VAR),       0,
         @intFromEnum(instructions.OpCode.OP_HALT),
     };
 
     // Values need to be mutable since they'll be changed
     var constants_array = [_]Frame{
-        Frame.initInt(5),       // constant[0]
-        Frame.initInt(10),      // constant[1]
-        Frame.initInt(99),      // constant[2]
+        Frame.initInt(5), // constant[0]
+        Frame.initInt(10), // constant[1]
+        Frame.initInt(99), // constant[2]
     };
 
     // Create the VM with proper slice syntax
-    var vm = VM.init(
-        allocator, 
-        &code, 
-        &constants_array,
-        &[_]*instructions.Function{},  // Empty functions array
-        &variables,
-        &values,  // Pass the array directly
-        &reporter
-    );
+    var vm = VM.init(allocator, &code, &constants_array, &[_]*instructions.Function{}, // Empty functions array
+        &variables, &values, // Pass the array directly
+        &reporter);
     defer vm.deinit();
 
     // Enable step-by-step mode if desired

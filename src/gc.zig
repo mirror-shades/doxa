@@ -2,22 +2,22 @@ const std = @import("std");
 const instructions = @import("instructions.zig");
 
 pub const GCConfig = struct {
-    initial_threshold: usize = 3,
-    growth_factor: f32 = 1.5,  // Grow threshold after each collection
+    initial_threshold: i32 = 3,
+    growth_factor: f32 = 1.5, // Grow threshold after each collection
 };
 
 pub const GC = struct {
     allocator: std.mem.Allocator,
     objects: std.ArrayList(*GCObject),
-    collection_threshold: usize,
+    collection_threshold: i32,
     config: GCConfig,
-    roots: std.ArrayList(*anyopaque),  // Track root objects that shouldn't be collected
-    paused: bool = false,              // Allow pausing collection for critical sections
+    roots: std.ArrayList(*anyopaque), // Track root objects that shouldn't be collected
+    paused: bool = false, // Allow pausing collection for critical sections
     marked: std.AutoHashMap(*GCObject, void),
 
     pub const GCObject = struct {
         gc: *GC,
-        ref_count: u32,
+        ref_count: i32,
         type: instructions.ValueType,
         data: union {
             int: i32,
@@ -26,17 +26,15 @@ pub const GC = struct {
             array: *instructions.ArrayValue,
             struct_val: *instructions.StructValue,
         },
-        
+
         pub fn incRef(self: *GCObject) void {
             self.ref_count += 1;
-            std.debug.print("GC: Incremented ref count for object of type {}, new count: {}\n", 
-                .{self.type, self.ref_count});
+            std.debug.print("GC: Incremented ref count for object of type {}, new count: {}\n", .{ self.type, self.ref_count });
         }
-        
+
         pub fn decRef(self: *GCObject) void {
             self.ref_count -= 1;
-            std.debug.print("GC: Decremented ref count for object of type {}, new count: {}\n", 
-                .{self.type, self.ref_count});
+            std.debug.print("GC: Decremented ref count for object of type {}, new count: {}\n", .{ self.type, self.ref_count });
             if (self.ref_count == 0) {
                 std.debug.print("GC: Object of type {} ready for collection\n", .{self.type});
                 self.gc.collect();
@@ -48,7 +46,7 @@ pub const GC = struct {
         return GC{
             .allocator = allocator,
             .objects = std.ArrayList(*GCObject).init(allocator),
-            .roots = std.ArrayList(*anyopaque).init(allocator),  // Initialize roots
+            .roots = std.ArrayList(*anyopaque).init(allocator), // Initialize roots
             .collection_threshold = config.initial_threshold,
             .config = config,
             .paused = false,
@@ -64,8 +62,8 @@ pub const GC = struct {
 
     pub fn incRef(self: *GC, obj: anytype) !void {
         const T = @TypeOf(obj);
-        var found_obj: ?*GCObject = null;  // Track the object we're working with
-        
+        var found_obj: ?*GCObject = null; // Track the object we're working with
+
         switch (T) {
             *instructions.ArrayValue => {
                 std.debug.print("GC: Tracking array object\n", .{});
@@ -85,8 +83,7 @@ pub const GC = struct {
                 };
                 try self.objects.append(gc_obj);
                 found_obj = gc_obj;
-                std.debug.print("GC: Created new array object, total objects: {}\n", 
-                    .{self.objects.items.len});
+                std.debug.print("GC: Created new array object, total objects: {}\n", .{self.objects.items.len});
             },
             []const u8, []u8 => {
                 std.debug.print("GC: Tracking string: {s}\n", .{obj});
@@ -107,8 +104,7 @@ pub const GC = struct {
                 };
                 try self.objects.append(gc_obj);
                 found_obj = gc_obj;
-                std.debug.print("GC: Created new string object, total objects: {}\n", 
-                    .{self.objects.items.len});
+                std.debug.print("GC: Created new string object, total objects: {}\n", .{self.objects.items.len});
             },
             *instructions.StructValue => {
                 std.debug.print("GC: Tracking struct object\n", .{});
@@ -136,8 +132,7 @@ pub const GC = struct {
         }
 
         if (found_obj) |obj_ref| {
-            std.debug.print("GC: Object at {*} ref count increased to {}\n", 
-                .{obj, obj_ref.ref_count});
+            std.debug.print("GC: Object at {*} ref count increased to {}\n", .{ obj, obj_ref.ref_count });
         }
     }
 };

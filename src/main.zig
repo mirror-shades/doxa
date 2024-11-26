@@ -54,11 +54,11 @@ const SourceFile = struct {
 ///==========================================================================
 /// Error Reporting
 ///==========================================================================
-pub fn reportMinimalError(line: u32, message: []const u8) void {
+pub fn reportMinimalError(line: i32, message: []const u8) void {
     reportError(line, "", message);
 }
 
-pub fn reportError(line: u32, where: []const u8, message: []const u8) void {
+pub fn reportError(line: i32, where: []const u8, message: []const u8) void {
     std.debug.print("[line {}] {s} Error: {s}\n", .{ line, where, message });
     hadError = true;
 }
@@ -171,7 +171,7 @@ pub fn main() !void {
     defer std.process.argsFree(allocator, args);
     // Skip the executable name
     var script_path: ?[]const u8 = null;
-    var i: u32 = 1;
+    var i: usize = 1;
     while (i < args.len) : (i += 1) {
         if (std.mem.eql(u8, args[i], "--debug-lexer")) {
             debugLexer = true;

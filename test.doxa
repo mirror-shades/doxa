@@ -1,23 +1,4 @@
-var a;
-if false then a is 5
-else if true then a is 20
-else a is 30;
-a;
+var a = [1, 2, 3];
+a[1] = 5;
+a[1];
 
-var b;
-if (false) then {b = 5;} 
-else if (true) then {b = 20;} 
-else {b = 30;}
-b;
-
-var c is 
-if false then 5 
-else if true then 20 
-else 30;
-c;
-
-var d =
-if (false) then {5;} 
-else if (true) then {20;} 
-else {30;};
-d;
