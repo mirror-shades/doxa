@@ -185,6 +185,26 @@ pub const Interpreter = struct {
                 defer block_env.deinit();
                 try self.executeBlock(statements, &block_env);
             },
+            .Function => |func| {
+                // Create function value
+                const function = token.TokenLiteral{ .function = .{
+                    .params = func.params,
+                    .body = func.body,
+                    .closure = self.environment,
+                } };
+
+                // Store in current environment
+                try self.environment.define(func.name.lexeme, function);
+            },
+            .Return => |ret| {
+                if (ret.value) |value_expr| {
+                    const return_value = try self.evaluate(value_expr);
+                    // Store the return value in the environment
+                    try self.environment.define("return", return_value);
+                    return error.ReturnValue;
+                }
+                return error.ReturnNothing;
+            },
         }
     }
 
@@ -386,6 +406,49 @@ pub const Interpreter = struct {
                 // Modify the array in place
                 array_val.array[usize_index] = new_value;
                 return new_value;
+            },
+            .Call => |call| {
+                const callee = try self.evaluate(call.callee);
+                if (callee != .function) {
+                    return error.NotCallable;
+                }
+
+                // Evaluate all arguments
+                var args = try self.allocator.alloc(token.TokenLiteral, call.arguments.len);
+                defer self.allocator.free(args);
+
+                for (call.arguments, 0..) |arg, i| {
+                    args[i] = try self.evaluate(arg);
+                }
+
+                // Create a new environment for the function
+                var func_env = Environment.init(self.allocator, callee.function.closure, self.debug_enabled);
+                defer func_env.deinit();
+
+                // Bind parameters to arguments
+                for (callee.function.params, args) |param, arg| {
+                    try func_env.define(param.name.lexeme, arg);
+                }
+
+                // Execute function body
+                const previous = self.environment;
+                self.environment = &func_env;
+                defer self.environment = previous;
+
+                // Execute the function body and catch any return values
+                self.executeBlock(callee.function.body, &func_env) catch |err| switch (err) {
+                    error.ReturnValue => {
+                        // Return value will be in the environment
+                        if (func_env.get("return")) |ret| {
+                            return ret;
+                        }
+                        return token.TokenLiteral{ .nothing = {} };
+                    },
+                    error.ReturnNothing => return token.TokenLiteral{ .nothing = {} },
+                    else => |e| return e,
+                };
+
+                return token.TokenLiteral{ .nothing = {} };
             },
         }
     }

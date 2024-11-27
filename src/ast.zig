@@ -35,6 +35,10 @@ pub const Expr = union(enum) {
         index: *Expr,
         value: *Expr,
     },
+    Call: struct {
+        callee: *Expr,
+        arguments: []const *Expr,
+    },
 
     pub fn deinit(self: *Expr, allocator: std.mem.Allocator) void {
         switch (self.*) {
@@ -47,6 +51,15 @@ pub const Expr = union(enum) {
                     right.deinit(allocator);
                     allocator.destroy(right);
                 }
+            },
+            .Call => |*c| {
+                c.callee.deinit(allocator);
+                allocator.destroy(c.callee);
+                for (c.arguments) |arg| {
+                    arg.deinit(allocator);
+                    allocator.destroy(arg);
+                }
+                allocator.free(c.arguments);
             },
             .Unary => |*u| {
                 if (u.right) |right| {
@@ -139,6 +152,15 @@ pub const Stmt = union(enum) {
     },
     Expression: ?*Expr,
     Block: []Stmt,
+    Function: struct {
+        name: token.Token,
+        params: []FunctionParam,
+        return_type: ?*TypeExpr,
+        body: []Stmt,
+    },
+    Return: struct {
+        value: ?*Expr,
+    },
 
     pub fn deinit(self: *Stmt, allocator: std.mem.Allocator) void {
         switch (self.*) {
@@ -147,6 +169,20 @@ pub const Stmt = union(enum) {
                     expr.deinit(allocator);
                     allocator.destroy(expr);
                 }
+            },
+            .Function => |*f| {
+                for (f.params) |*param| {
+                    param.deinit(allocator);
+                }
+                allocator.free(f.params);
+                if (f.return_type) |return_type| {
+                    return_type.deinit(allocator);
+                    allocator.destroy(return_type);
+                }
+                for (f.body) |*stmt| {
+                    stmt.deinit(allocator);
+                }
+                allocator.free(f.body);
             },
             .VarDecl => |*v| {
                 if (v.type_expr) |type_expr| {
@@ -163,6 +199,12 @@ pub const Stmt = union(enum) {
                     stmt.deinit(allocator);
                 }
                 allocator.free(statements);
+            },
+            .Return => |*r| {
+                if (r.value) |value| {
+                    value.deinit(allocator);
+                    allocator.destroy(value);
+                }
             },
         }
     }
@@ -226,4 +268,14 @@ pub const StructLiteralField = struct {
 pub const Index = struct {
     array: *Expr,
     index: *Expr,
+};
+
+pub const FunctionParam = struct {
+    name: token.Token,
+    type_expr: *TypeExpr,
+
+    pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+        self.type_expr.deinit(allocator);
+        allocator.destroy(self.type_expr);
+    }
 };
