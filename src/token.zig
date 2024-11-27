@@ -1,4 +1,7 @@
 const std = @import("std");
+const ast = @import("ast.zig");
+const Environment = @import("interpreter.zig").Environment;
+const FunctionParam = ast.FunctionParam;
 
 pub const TokenType = enum {
     // single-character tokens
@@ -110,6 +113,11 @@ pub const TokenLiteral = union(enum) {
     array: []TokenLiteral,
     struct_value: []StructField,
     nothing: void,
+    function: struct {
+        params: []FunctionParam,
+        body: []ast.Stmt,
+        closure: *Environment, // Capture the environment where the function was defined
+    },
 };
 
 pub const Token = struct {

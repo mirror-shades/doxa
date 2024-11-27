@@ -107,6 +107,18 @@ fn run(allocator: std.mem.Allocator, interpreter: *Interpreter, source: []const 
                         }
                         allocator.free(block_statements);
                     },
+                    .Function => |*f| {
+                        for (f.params) |*param| {
+                            param.deinit(allocator);
+                        }
+                        allocator.free(f.params);
+                    },
+                    .Return => |*r| {
+                        if (r.value) |value| {
+                            value.deinit(allocator);
+                            allocator.destroy(value);
+                        }
+                    },
                 }
             }
             allocator.free(statements);
