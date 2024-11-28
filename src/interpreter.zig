@@ -3,6 +3,7 @@ const ast = @import("ast.zig");
 const token = @import("token.zig");
 const ReportingModule = @import("reporting.zig");
 const ErrorList = ReportingModule.ErrorList;
+const MemoryManager = @import("memory.zig").MemoryManager;
 
 const StringInterner = struct {
     strings: std.StringHashMap([]const u8),
@@ -60,6 +61,10 @@ pub const Environment = struct {
     }
 
     pub fn define(self: *Environment, name: []const u8, value: token.TokenLiteral) !void {
+        // Check if variable already exists in current scope
+        if (self.values.contains(name)) {
+            return error.VariableAlreadyDefined;
+        }
         try self.values.put(name, value);
     }
 
@@ -102,28 +107,27 @@ pub const Environment = struct {
 };
 
 pub const Interpreter = struct {
-    allocator: std.mem.Allocator,
+    memory: *MemoryManager,
     environment: *Environment,
     globals: *Environment,
     debug_enabled: bool,
     string_interner: StringInterner,
 
-    pub fn init(allocator: std.mem.Allocator, debug_enabled: bool) !Interpreter {
-        const globals = try allocator.create(Environment);
-        globals.* = Environment.init(allocator, null, debug_enabled);
+    pub fn init(memory: *MemoryManager) !Interpreter {
+        const globals = try memory.getAllocator().create(Environment);
+        globals.* = Environment.init(memory.getAllocator(), null, memory.debug_enabled);
 
         return Interpreter{
-            .allocator = allocator,
+            .memory = memory,
             .environment = globals,
             .globals = globals,
-            .debug_enabled = debug_enabled,
-            .string_interner = StringInterner.init(allocator),
+            .debug_enabled = memory.debug_enabled,
+            .string_interner = StringInterner.init(memory.getAllocator()),
         };
     }
 
     pub fn deinit(self: *Interpreter) void {
         self.environment.deinit();
-        self.allocator.destroy(self.globals);
         self.string_interner.deinit();
     }
 
@@ -133,7 +137,7 @@ pub const Interpreter = struct {
         defer self.environment = previous;
 
         for (statements) |stmt| {
-            try self.executeStatement(&stmt);
+            _ = try self.executeStatement(&stmt);
         }
     }
 
@@ -154,8 +158,19 @@ pub const Interpreter = struct {
         return 0;
     }
 
-    pub fn executeStatement(self: *Interpreter, stmt: *const ast.Stmt) ErrorList!void {
-        switch (stmt.*) {
+    pub fn executeStatement(self: *Interpreter, stmt: *const ast.Stmt) ErrorList!?token.TokenLiteral {
+        return switch (stmt.*) {
+            .Expression => |expr| {
+                if (expr) |e| {
+                    return self.evaluate(e) catch |err| {
+                        if (self.debug_enabled) {
+                            std.debug.print("Error evaluating expression: {s}\n", .{@errorName(err)});
+                        }
+                        return err;
+                    };
+                }
+                return null;
+            },
             .VarDecl => |decl| {
                 const value = if (decl.initializer) |i|
                     try self.evaluate(i)
@@ -170,42 +185,32 @@ pub const Interpreter = struct {
                         decl.name.lexeme, value,
                     });
                 }
-            },
-            .Expression => |expr| {
-                if (self.debug_enabled) {
-                    std.debug.print("Before evaluating expression\n", .{});
-                }
-                const value = try self.evaluate(expr orelse return error.InvalidExpression);
-                if (self.debug_enabled) {
-                    std.debug.print("{any}\n", .{value});
-                }
+                return null;
             },
             .Block => |statements| {
-                var block_env = Environment.init(self.allocator, self.environment, self.debug_enabled);
+                var block_env = Environment.init(self.memory.getAllocator(), self.environment, self.debug_enabled);
                 defer block_env.deinit();
                 try self.executeBlock(statements, &block_env);
+                return null;
             },
             .Function => |func| {
-                // Create function value
                 const function = token.TokenLiteral{ .function = .{
                     .params = func.params,
                     .body = func.body,
                     .closure = self.environment,
                 } };
-
-                // Store in current environment
                 try self.environment.define(func.name.lexeme, function);
+                return null;
             },
             .Return => |ret| {
                 if (ret.value) |value_expr| {
                     const return_value = try self.evaluate(value_expr);
-                    // Store the return value in the environment
                     try self.environment.define("return", return_value);
                     return error.ReturnValue;
                 }
                 return error.ReturnNothing;
             },
-        }
+        };
     }
 
     pub fn evaluate(self: *Interpreter, expr: *const ast.Expr) !token.TokenLiteral {
@@ -297,13 +302,16 @@ pub const Interpreter = struct {
             .Variable => |var_token| {
                 if (self.debug_enabled) {
                     std.debug.print("Looking up variable: '{s}' (len: {})\n", .{ var_token.lexeme, var_token.lexeme.len });
-                    var it = self.environment.values.iterator();
-                    while (it.next()) |entry| {
-                        std.debug.print("Stored key: '{s}' (len: {}), value: {any}\n", .{ entry.key_ptr.*, entry.key_ptr.*.len, entry.value_ptr.* });
-                    }
                 }
+
+                // Check if variable exists
                 if (self.environment.get(var_token.lexeme)) |value| {
                     return value;
+                }
+
+                // If we get here, variable wasn't found
+                if (self.debug_enabled) {
+                    std.debug.print("Variable not found: '{s}'\n", .{var_token.lexeme});
                 }
                 return error.VariableNotFound;
             },
@@ -329,7 +337,7 @@ pub const Interpreter = struct {
             },
             .Block => |statements| {
                 var last_value = token.TokenLiteral{ .nothing = {} };
-                var block_env = Environment.init(self.allocator, self.environment, self.debug_enabled);
+                var block_env = Environment.init(self.memory.getAllocator(), self.environment, self.debug_enabled);
                 defer block_env.deinit();
 
                 try self.executeBlock(statements, &block_env);
@@ -347,7 +355,7 @@ pub const Interpreter = struct {
                 return last_value;
             },
             .Array => |elements| {
-                var array_values = std.ArrayList(token.TokenLiteral).init(self.allocator);
+                var array_values = std.ArrayList(token.TokenLiteral).init(self.memory.getAllocator());
                 errdefer array_values.deinit();
 
                 for (elements) |element| {
@@ -356,12 +364,12 @@ pub const Interpreter = struct {
                 }
 
                 const owned_slice = try array_values.toOwnedSlice();
-                errdefer self.allocator.free(owned_slice);
+                errdefer self.memory.getAllocator().free(owned_slice);
 
                 return token.TokenLiteral{ .array = owned_slice };
             },
             .Struct => |fields| {
-                var struct_fields = std.ArrayList(token.StructField).init(self.allocator);
+                var struct_fields = std.ArrayList(token.StructField).init(self.memory.getAllocator());
                 errdefer struct_fields.deinit();
 
                 for (fields) |field| {
@@ -414,15 +422,15 @@ pub const Interpreter = struct {
                 }
 
                 // Evaluate all arguments
-                var args = try self.allocator.alloc(token.TokenLiteral, call.arguments.len);
-                defer self.allocator.free(args);
+                var args = try self.memory.getAllocator().alloc(token.TokenLiteral, call.arguments.len);
+                defer self.memory.getAllocator().free(args);
 
                 for (call.arguments, 0..) |arg, i| {
                     args[i] = try self.evaluate(arg);
                 }
 
                 // Create a new environment for the function
-                var func_env = Environment.init(self.allocator, callee.function.closure, self.debug_enabled);
+                var func_env = Environment.init(self.memory.getAllocator(), callee.function.closure, self.debug_enabled);
                 defer func_env.deinit();
 
                 // Bind parameters to arguments

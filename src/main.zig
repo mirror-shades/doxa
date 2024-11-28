@@ -2,8 +2,10 @@ const std = @import("std");
 const Lexer = @import("lexer.zig").Lexer;
 const Parser = @import("parser.zig").Parser;
 const Reporting = @import("reporting.zig");
+const MemoryManager = @import("memory.zig").MemoryManager;
 
 const Token = @import("lexer.zig").Token;
+const TokenLiteral = @import("lexer.zig").TokenLiteral;
 const instructions = @import("instructions.zig");
 const VM = @import("vm.zig").VM;
 const Frame = @import("vm.zig").Frame;
@@ -65,14 +67,14 @@ pub fn reportError(line: i32, where: []const u8, message: []const u8) void {
 ///==========================================================================
 /// Run
 ///==========================================================================
-pub fn run(allocator: std.mem.Allocator, interpreter: *Interpreter, source: []const u8) !void {
-    var lexer = Lexer.init(allocator, source);
+pub fn run(memory: *MemoryManager, interpreter: *Interpreter, source: []const u8) !?TokenLiteral {
+    var lexer = Lexer.init(memory.getAllocator(), source);
     defer lexer.deinit();
 
     try lexer.initKeywords();
     const token_list = try lexer.lexTokens();
 
-    if (debugLexer) {
+    if (memory.debug_enabled) {
         for (token_list.items) |tok| {
             const type_str = @tagName(tok.type);
             std.debug.print("Token type: {s}\n", .{type_str});
@@ -80,71 +82,37 @@ pub fn run(allocator: std.mem.Allocator, interpreter: *Interpreter, source: []co
     }
 
     if (!hadError) {
-        var parser_instance = try Parser.init(allocator, token_list.items, debugParser);
+        var parser_instance = try Parser.init(memory, token_list.items, memory.debug_enabled);
         defer parser_instance.deinit();
 
         const statements = try parser_instance.parse();
-        defer {
-            // Clean up AST nodes
-            for (statements) |stmt| {
-                switch (stmt) {
-                    .Expression => |maybe_expr| {
-                        if (maybe_expr) |expr| {
-                            expr.deinit(allocator);
-                            allocator.destroy(expr);
-                        }
-                    },
-                    .VarDecl => |decl| {
-                        if (decl.initializer) |init| {
-                            init.deinit(allocator);
-                            allocator.destroy(init);
-                        }
-                    },
-                    .Block => |block_statements| {
-                        for (block_statements) |*block_stmt| {
-                            block_stmt.deinit(allocator);
-                        }
-                        allocator.free(block_statements);
-                    },
-                    .Function => |*f| {
-                        for (f.params) |*param| {
-                            param.deinit(allocator);
-                        }
-                        allocator.free(f.params);
-                    },
-                    .Return => |*r| {
-                        if (r.value) |value| {
-                            value.deinit(allocator);
-                            allocator.destroy(value);
-                        }
-                    },
-                }
-            }
-            allocator.free(statements);
-        }
 
         if (compile) {
             //TODO: Compile to bytecode
+            return null;
         } else {
-            // Execute statements directly in the global environment
+            // Return the result of the last statement
+            var last_result: ?TokenLiteral = null;
             for (statements) |stmt| {
-                try interpreter.executeStatement(&stmt);
+                last_result = try interpreter.executeStatement(&stmt);
             }
+            return last_result;
         }
     }
+    return null;
 }
 
-fn runFile(allocator: std.mem.Allocator, path: []const u8) !void {
-    var interpreter = try Interpreter.init(allocator, debugParser);
+fn runFile(memory: *MemoryManager, path: []const u8) !void {
+    var interpreter = try Interpreter.init(memory);
     defer interpreter.deinit();
 
     var file = try std.fs.cwd().openFile(path, .{});
     defer file.close();
 
-    const source = try file.readToEndAlloc(allocator, MAX_FILE_SIZE);
-    defer allocator.free(source);
+    const source = try file.readToEndAlloc(memory.getAllocator(), MAX_FILE_SIZE);
+    defer memory.getAllocator().free(source);
 
-    try run(allocator, &interpreter, source);
+    _ = try run(memory, &interpreter, source);
     if (hadError) {
         std.process.exit(65);
     }
@@ -159,9 +127,10 @@ pub fn main() !void {
         const leaked = gpa.deinit();
         if (leaked == .leak) std.debug.print("Warning: Memory leak detected!\n", .{});
     }
-    const allocator = gpa.allocator();
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
+    var memory = MemoryManager.init(gpa.allocator(), false);
+    defer memory.deinit();
+    const args = try std.process.argsAlloc(memory.getAllocator());
+    defer std.process.argsFree(memory.getAllocator(), args);
     // Skip the executable name
     var script_path: ?[]const u8 = null;
     var i: usize = 1;
@@ -186,8 +155,8 @@ pub fn main() !void {
             std.debug.print("Error: {s} is not a doxa file\n", .{path});
             std.process.exit(EXIT_CODE_USAGE);
         }
-        try runFile(allocator, path);
+        try runFile(&memory, path);
     } else {
-        try repl.runRepl(allocator);
+        try repl.runRepl(&memory);
     }
 }

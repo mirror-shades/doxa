@@ -2,23 +2,9 @@ const std = @import("std");
 const ast = @import("ast.zig");
 const token = @import("token.zig");
 const Lexer = @import("lexer.zig").Lexer;
-const ReportingModule = @import("reporting.zig");
-const Reporting = ReportingModule.Reporting;
-const ErrorList = ReportingModule.ErrorList;
-
-fn hasAllBlockBranches(e: *ast.Expr) bool {
-    return switch (e.*) {
-        .If => |if_expr| switch (if_expr.then_branch.?.*) {
-            .Block => switch (if_expr.else_branch.?.*) {
-                .Block => true,
-                .If => hasAllBlockBranches(if_expr.else_branch.?),
-                else => false,
-            },
-            else => false,
-        },
-        else => false,
-    };
-}
+const MemoryManager = @import("memory.zig").MemoryManager;
+const Reporting = @import("reporting.zig").Reporting;
+const ErrorList = @import("reporting.zig").ErrorList;
 
 pub const Parser = struct {
     allocator: std.mem.Allocator,
@@ -26,10 +12,10 @@ pub const Parser = struct {
     current: usize, // array index is usize by default
     debug_enabled: bool,
 
-    pub fn init(allocator: std.mem.Allocator, tokens: []const token.Token, debug_enabled: bool) !Parser {
+    pub fn init(memory: *MemoryManager, tokens: []const token.Token, debug_enabled: bool) !Parser {
         if (tokens.len == 0) return error.EmptyTokenList;
         return Parser{
-            .allocator = allocator,
+            .allocator = memory.getAllocator(),
             .tokens = tokens,
             .current = 0,
             .debug_enabled = debug_enabled,
@@ -69,6 +55,20 @@ pub const Parser = struct {
         if (self.current < self.tokens.len - 1) {
             self.current += 1;
         }
+    }
+
+    fn hasAllBlockBranches(e: *ast.Expr) bool {
+        return switch (e.*) {
+            .If => |if_expr| switch (if_expr.then_branch.?.*) {
+                .Block => switch (if_expr.else_branch.?.*) {
+                    .Block => true,
+                    .If => hasAllBlockBranches(if_expr.else_branch.?),
+                    else => false,
+                },
+                else => false,
+            },
+            else => false,
+        };
     }
 
     pub fn parse(self: *Parser) ErrorList![]ast.Stmt {
@@ -177,10 +177,6 @@ pub const Parser = struct {
         }
 
         const expr = try self.parseExpression();
-        errdefer if (expr) |e| {
-            e.deinit(self.allocator);
-            self.allocator.destroy(e);
-        };
 
         // If we didn't get an expression and we're at a semicolon, just skip it
         if (expr == null and self.peek().type == .SEMICOLON) {
@@ -204,19 +200,14 @@ pub const Parser = struct {
                 std.debug.print("Next token: {s}\n", .{@tagName(self.peek().type)});
             }
 
-            if (needs_semicolon and self.peek().type != .SEMICOLON) {
-                if (self.debug_enabled) {
-                    std.debug.print("Expected SEMICOLON, got {s}\n", .{@tagName(self.peek().type)});
-                }
-                e.deinit(self.allocator);
-                self.allocator.destroy(e);
-                return error.ExpectedSemicolon;
-            }
             if (needs_semicolon) {
-                if (self.debug_enabled) {
-                    std.debug.print("Advancing past semicolon\n", .{});
+                if (self.peek().type != .SEMICOLON) {
+                    if (self.debug_enabled) {
+                        std.debug.print("Expected SEMICOLON, got {s}\n", .{@tagName(self.peek().type)});
+                    }
+                    return error.ExpectedSemicolon;
                 }
-                self.advance();
+                self.advance(); // consume the semicolon
             }
         }
 
@@ -327,7 +318,7 @@ pub const Parser = struct {
         return if_expr;
     }
 
-    pub fn parseAssignment(self: *Parser) ErrorList!?*ast.Expr {
+    fn parseAssignment(self: *Parser) ErrorList!?*ast.Expr {
         const expr = (try self.parseComparison()) orelse return null;
         errdefer {
             expr.deinit(self.allocator);
