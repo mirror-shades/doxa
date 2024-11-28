@@ -101,6 +101,7 @@ pub const ErrorList = error{
     InvalidFunctionDeclaration,
     InvalidReturnStatement,
     NotCallable,
+    VariableAlreadyDefined,
 };
 
 /// Reporting provides structured error handling and reporting capabilities
