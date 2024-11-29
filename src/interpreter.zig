@@ -581,6 +581,11 @@ pub const Interpreter = struct {
                     else => return error.InvalidOperator,
                 } };
             },
+            .Function => |f| token.TokenLiteral{ .function = .{
+                .params = f.params,
+                .body = f.body,
+                .closure = self.environment,
+            } },
         };
 
         if (self.debug_enabled) {

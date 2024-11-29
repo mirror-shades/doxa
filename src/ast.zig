@@ -43,6 +43,12 @@ pub const Expr = union(enum) {
         arguments: []const *Expr,
     },
     Logical: Logical,
+    Function: struct {
+        name: token.Token,
+        params: []FunctionParam,
+        return_type: ?*TypeExpr,
+        body: []Stmt,
+    },
 
     pub fn deinit(self: *Expr, allocator: std.mem.Allocator) void {
         switch (self.*) {
@@ -149,6 +155,20 @@ pub const Expr = union(enum) {
                 allocator.destroy(l.left);
                 l.right.deinit(allocator);
                 allocator.destroy(l.right);
+            },
+            .Function => |*f| {
+                for (f.params) |*param| {
+                    param.deinit(allocator);
+                }
+                allocator.free(f.params);
+                if (f.return_type) |return_type| {
+                    return_type.deinit(allocator);
+                    allocator.destroy(return_type);
+                }
+                for (f.body) |*stmt| {
+                    stmt.deinit(allocator);
+                }
+                allocator.free(f.body);
             },
         }
     }
