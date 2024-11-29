@@ -26,7 +26,10 @@ pub const Expr = union(enum) {
     Assignment: Assignment,
     Grouping: ?*Expr,
     If: If,
-    Block: []Stmt,
+    Block: struct {
+        statements: []Stmt,
+        value: ?*Expr,
+    },
     Array: []const *Expr,
     Struct: []*StructLiteralField,
     Index: Index,
@@ -123,11 +126,15 @@ pub const Expr = union(enum) {
                     allocator.destroy(else_branch);
                 }
             },
-            .Block => |statements| {
-                for (statements) |*stmt| {
+            .Block => |*b| {
+                for (b.statements) |*stmt| {
                     stmt.deinit(allocator);
                 }
-                allocator.free(statements);
+                allocator.free(b.statements);
+                if (b.value) |value| {
+                    value.deinit(allocator);
+                    allocator.destroy(value);
+                }
             },
             .Variable => {}, // This doesn't own any memory
             .Literal => |lit| {

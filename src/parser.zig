@@ -96,6 +96,9 @@ pub const Parser = struct {
         // Control flow
         r.set(.IF, .{ .prefix = parseIfExpr });
 
+        // Blocks
+        r.set(.LEFT_BRACE, .{ .prefix = block });
+
         break :blk r;
     };
 
@@ -199,18 +202,27 @@ pub const Parser = struct {
             const current = self.peek();
             if (current.type == .EOF) break;
 
-            const stmt = if (current.type == .VAR)
-                try self.parseVarDecl()
-            else if (current.type == .FN_KEYWORD or current.type == .FUNCTION_KEYWORD)
-                try self.parseFunctionDecl()
-            else if (current.type == .LEFT_BRACE)
-                try self.parseBlock()
-            else if (current.type == .RETURN)
-                try self.parseReturnStmt()
-            else
-                try self.parseExpressionStmt();
+            const stmt = blk: {
+                if (self.peek().type == .VAR)
+                    break :blk try self.parseVarDecl()
+                else if (self.peek().type == .LEFT_BRACE) {
+                    const block_stmt = if (try self.block(null, .NONE)) |expr|
+                        ast.Stmt{ .Expression = expr }
+                    else
+                        ast.Stmt{ .Expression = null };
+                    break :blk block_stmt;
+                } else break :blk try self.parseExpressionStmt();
+            };
 
-            try statements.append(stmt);
+            // Only append non-null expression statements
+            switch (stmt) {
+                .Expression => |expr| {
+                    if (expr != null) {
+                        try statements.append(stmt);
+                    }
+                },
+                else => try statements.append(stmt),
+            }
         }
 
         return statements.toOwnedSlice();
@@ -339,16 +351,16 @@ pub const Parser = struct {
             return try self.parseReturnStmt();
         }
 
-        const expr = try self.parseExpression();
-
-        // If we didn't get an expression and we're at a semicolon, just skip it
-        if (expr == null and self.peek().type == .SEMICOLON) {
+        // If we're at a semicolon with no preceding expression, just skip it
+        if (self.peek().type == .SEMICOLON) {
             if (self.debug_enabled) {
                 std.debug.print("Skipping standalone semicolon\n", .{});
             }
             self.advance();
             return ast.Stmt{ .Expression = null };
         }
+
+        const expr = try self.parseExpression();
 
         // Expect semicolon unless the expression is a block or if-chain with all blocks
         if (expr) |e| {
@@ -586,28 +598,14 @@ pub const Parser = struct {
         }
         self.advance();
 
-        // Here's where we handle else-if chains
-        var else_expr: *ast.Expr = undefined;
-        if (self.peek().type == .IF) {
-            // If we see an 'if' after 'else', recursively parse it as another if expression
-            else_expr = (try self.parseIfExpr(null, .PRIMARY)) orelse {
-                condition.deinit(self.allocator);
-                self.allocator.destroy(condition);
-                then_expr.deinit(self.allocator);
-                self.allocator.destroy(then_expr);
-                return error.ExpectedExpression;
-            };
-        } else {
-            // Regular else branch
-            const else_branch = (try self.parseExpression()) orelse {
-                condition.deinit(self.allocator);
-                self.allocator.destroy(condition);
-                then_expr.deinit(self.allocator);
-                self.allocator.destroy(then_expr);
-                return error.ExpectedExpression;
-            };
-            else_expr = else_branch;
-        }
+        // Handle else branch
+        const else_expr = (try self.parseExpression()) orelse {
+            condition.deinit(self.allocator);
+            self.allocator.destroy(condition);
+            then_expr.deinit(self.allocator);
+            self.allocator.destroy(then_expr);
+            return error.ExpectedExpression;
+        };
 
         const if_expr = try self.allocator.create(ast.Expr);
         if_expr.* = ast.Expr{ .If = .{
@@ -678,22 +676,8 @@ pub const Parser = struct {
     }
 
     fn block(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-        const block_stmt = try self.parseBlock();
-        const block_expr = try self.allocator.create(ast.Expr);
-
-        // Extract the statements from the Block variant
-        const statements = switch (block_stmt) {
-            .Block => |stmts| stmts,
-            else => unreachable, // parseBlock always returns a Block variant
-        };
-
-        block_expr.* = .{ .Block = statements };
-        return block_expr;
-    }
-
-    fn parseBlock(self: *Parser) ErrorList!ast.Stmt {
         if (self.debug_enabled) {
-            std.debug.print("\nParsing block...\n", .{});
+            std.debug.print("\nParsing block expression...\n", .{});
         }
 
         // Consume {
@@ -710,43 +694,25 @@ pub const Parser = struct {
             statements.deinit();
         }
 
+        var last_expr: ?*ast.Expr = null;
+
         while (self.peek().type != .RIGHT_BRACE and self.peek().type != .EOF) {
-            const stmt = blk: {
-                if (self.peek().type == .RETURN) {
-                    break :blk try self.parseReturnStmt();
+            // Check if this is the last statement/expression
+            const next_is_brace = self.peekAhead(1).type == .RIGHT_BRACE;
+
+            if (next_is_brace) {
+                // For the last expression, make semicolon optional
+                if (self.peek().type == .SEMICOLON) {
+                    self.advance(); // Skip trailing semicolon
+                    break;
                 }
-
-                // Look ahead to see if this is the last statement
-                const is_last = blk2: {
-                    var pos = self.current;
-                    var found_semicolon = false;
-                    while (pos < self.tokens.len) : (pos += 1) {
-                        const tok = self.tokens[pos];
-                        if (tok.type == .RIGHT_BRACE) {
-                            break :blk2 !found_semicolon;
-                        } else if (tok.type == .SEMICOLON) {
-                            found_semicolon = true;
-                        }
-                    }
-                    break :blk2 false;
-                };
-
-                if (is_last) {
-                    const expr = try self.parseExpression();
-                    if (expr) |e| {
-                        break :blk ast.Stmt{ .Return = .{ .value = e } };
-                    }
-                }
-
-                if (self.peek().type == .VAR) {
-                    break :blk try self.parseVarDecl();
-                } else if (self.peek().type == .LEFT_BRACE) {
-                    break :blk try self.parseBlock();
-                }
-                break :blk try self.parseExpressionStmt();
-            };
-
-            try statements.append(stmt);
+                last_expr = try self.parseExpression();
+                break;
+            } else {
+                // Parse regular statement
+                const stmt = try self.parseExpressionStmt();
+                try statements.append(stmt);
+            }
         }
 
         if (self.peek().type != .RIGHT_BRACE) {
@@ -754,7 +720,13 @@ pub const Parser = struct {
         }
         self.advance();
 
-        return ast.Stmt{ .Block = try statements.toOwnedSlice() };
+        const block_expr = try self.allocator.create(ast.Expr);
+        block_expr.* = .{ .Block = .{
+            .statements = try statements.toOwnedSlice(),
+            .value = last_expr,
+        } };
+
+        return block_expr;
     }
 
     fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {

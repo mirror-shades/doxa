@@ -143,21 +143,25 @@ pub const Interpreter = struct {
         self.environment = environment;
         defer self.environment = previous;
 
-        var last_result: ?token.TokenLiteral = null;
-        for (statements) |stmt| {
-            // Special handling for the last statement in a function body
-            if (statements.len > 0 and &stmt == &statements[statements.len - 1]) {
-                if (stmt == .Expression) {
-                    // For the last expression in a function, treat it as an implicit return
-                    if (try self.executeStatement(&stmt)) |result| {
-                        try self.environment.define("return", result);
-                        return error.ReturnValue;
-                    }
-                }
-            }
-            last_result = try self.executeStatement(&stmt);
+        // Handle empty blocks
+        if (statements.len == 0) {
+            return null;
         }
-        return last_result;
+
+        // Execute all statements except the last one
+        if (statements.len > 1) {
+            for (statements[0 .. statements.len - 1]) |stmt| {
+                _ = try self.executeStatement(&stmt, self.debug_enabled);
+            }
+        }
+
+        // Handle the last statement
+        const last = statements[statements.len - 1];
+        if (last == .Expression) {
+            return try self.executeStatement(&last, self.debug_enabled);
+        }
+        _ = try self.executeStatement(&last, self.debug_enabled);
+        return null;
     }
 
     pub fn compare(a: anytype, b: anytype) i8 {
@@ -177,27 +181,26 @@ pub const Interpreter = struct {
         return 0;
     }
 
-    pub fn executeStatement(self: *Interpreter, stmt: *const ast.Stmt) ErrorList!?token.TokenLiteral {
+    pub fn executeStatement(self: *Interpreter, stmt: *const ast.Stmt, debug: bool) ErrorList!?token.TokenLiteral {
+        if (debug) {
+            self.debug_enabled = true;
+        }
+        if (self.debug_enabled) {
+            std.debug.print("Executing statement: {any}\n", .{stmt.*});
+        }
+
         return switch (stmt.*) {
             .Expression => |expr| {
+                if (self.debug_enabled) {
+                    std.debug.print("Executing expression statement\n", .{});
+                }
+
                 if (expr) |e| {
-                    // Handle assignment expressions at the statement level
-                    switch (e.*) {
-                        .Assignment => {
-                            const value = try self.evaluate(e.Assignment.value orelse return error.InvalidExpression);
-                            const key = try self.string_interner.intern(e.Assignment.name.lexeme);
-                            try self.environment.assign(key, value);
-                            return value;
-                        },
-                        else => {
-                            const result = try self.evaluate(e);
-                            // Print the result if we're in debug mode
-                            if (self.debug_enabled) {
-                                std.debug.print("Result: {any}\n", .{result});
-                            }
-                            return result;
-                        },
+                    const result = try self.evaluate(e);
+                    if (self.debug_enabled) {
+                        std.debug.print("Expression result: {any}\n", .{result});
                     }
+                    return result;
                 }
                 return null;
             },
@@ -220,7 +223,11 @@ pub const Interpreter = struct {
             .Block => |statements| {
                 var block_env = Environment.init(self.memory.getAllocator(), self.environment, self.debug_enabled);
                 defer block_env.deinit();
-                return try self.executeBlock(statements, &block_env);
+                const result = try self.executeBlock(statements, &block_env);
+                if (self.debug_enabled and result != null) {
+                    std.debug.print("{any}\n", .{result.?});
+                }
+                return result;
             },
             .Function => |func| {
                 if (self.debug_enabled) {
@@ -267,7 +274,7 @@ pub const Interpreter = struct {
     }
 
     pub fn evaluate(self: *Interpreter, expr: *const ast.Expr) !token.TokenLiteral {
-        switch (expr.*) {
+        const result = switch (expr.*) {
             .Literal => |lit| {
                 return lit;
             },
@@ -383,29 +390,63 @@ pub const Interpreter = struct {
                     return error.TypeError;
                 }
 
-                return if (condition.boolean)
-                    try self.evaluate(if_expr.then_branch orelse return error.InvalidExpression)
+                const branch = if (condition.boolean)
+                    if_expr.then_branch orelse return error.InvalidExpression
                 else
-                    try self.evaluate(if_expr.else_branch orelse return error.InvalidExpression);
-            },
-            .Block => |statements| {
-                var last_value = token.TokenLiteral{ .nothing = {} };
-                var block_env = Environment.init(self.memory.getAllocator(), self.environment, self.debug_enabled);
-                defer block_env.deinit();
+                    if_expr.else_branch orelse return error.InvalidExpression;
 
-                _ = try self.executeBlock(statements, &block_env);
+                // Special handling for block expressions
+                switch (branch.*) {
+                    .Block => |block| {
+                        var block_env = Environment.init(self.memory.getAllocator(), self.environment, self.debug_enabled);
+                        defer block_env.deinit();
 
-                // Get the value of the last expression in the block
-                if (statements.len > 0) {
-                    const last_stmt = statements[statements.len - 1];
-                    if (last_stmt == .Expression) {
-                        if (last_stmt.Expression) |ex| {
-                            last_value = try self.evaluate(ex);
+                        // If we have a value expression without statements, evaluate it directly
+                        if (block.statements.len == 0 and block.value != null) {
+                            return try self.evaluate(block.value.?);
                         }
+
+                        // Otherwise execute statements and handle value
+                        _ = try self.executeBlock(block.statements, &block_env);
+                        return if (block.value) |value|
+                            try self.evaluate(value)
+                        else
+                            .{ .nothing = {} };
+                    },
+                    else => return try self.evaluate(branch),
+                }
+            },
+            .Block => |block| {
+                if (self.debug_enabled) {
+                    std.debug.print("Evaluating block with {} statements\n", .{block.statements.len});
+                    if (block.value) |value| {
+                        std.debug.print("Block has value expression: {any}\n", .{value});
                     }
                 }
 
-                return last_value;
+                var block_env = Environment.init(self.memory.getAllocator(), self.environment, self.debug_enabled);
+                defer block_env.deinit();
+
+                // If we have a value expression without statements, evaluate it directly
+                if (block.statements.len == 0 and block.value != null) {
+                    const result = try self.evaluate(block.value.?);
+                    if (self.debug_enabled) {
+                        std.debug.print("Block evaluated to: {any}\n", .{result});
+                    }
+                    return result;
+                }
+
+                // Otherwise execute statements and handle value
+                _ = try self.executeBlock(block.statements, &block_env);
+                const result = if (block.value) |value|
+                    try self.evaluate(value)
+                else
+                    token.TokenLiteral{ .nothing = {} };
+
+                if (self.debug_enabled) {
+                    std.debug.print("Block evaluated to: {any}\n", .{result});
+                }
+                return result;
             },
             .Array => |elements| {
                 var array_values = std.ArrayList(token.TokenLiteral).init(self.memory.getAllocator());
@@ -540,6 +581,16 @@ pub const Interpreter = struct {
                     else => return error.InvalidOperator,
                 } };
             },
+        };
+
+        if (self.debug_enabled) {
+            std.debug.print("Evaluated result: {any}\n", .{result});
         }
+        return result;
+    }
+
+    fn makeNothing(self: *Interpreter) token.TokenLiteral {
+        _ = self;
+        return .{ .nothing = {} };
     }
 };
