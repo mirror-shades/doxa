@@ -440,12 +440,17 @@ pub const Parser = struct {
 
         // Don't try to parse tokens that aren't literals
         const expr = switch (current.type) {
-            .INT, .FLOAT, .STRING, .BOOL => blk: {
-                if (self.debug_enabled) {
-                    std.debug.print("Creating literal for {s}\n", .{@tagName(current.type)});
-                }
+            .INT, .FLOAT, .BOOL => blk: {
                 const new_expr = try self.allocator.create(ast.Expr);
                 new_expr.* = .{ .Literal = current.literal };
+                self.advance();
+                break :blk new_expr;
+            },
+            .STRING => blk: {
+                // Make a copy of the string data
+                const string_copy = try self.allocator.dupe(u8, current.literal.string);
+                const new_expr = try self.allocator.create(ast.Expr);
+                new_expr.* = .{ .Literal = .{ .string = string_copy } };
                 self.advance();
                 break :blk new_expr;
             },
