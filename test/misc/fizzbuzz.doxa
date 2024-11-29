@@ -1,0 +1,16 @@
+function fizzbuzz(x: int) {
+    x?;
+
+    if (x % 15 equals 0) then {
+        ("fizzbuzz")?;
+    } else if (x % 3 equals 0) then {
+        ("fizz")?;
+    } else if (x % 5 equals 0) then {
+        ("buzz")?;
+    }
+
+    if (x < 100) then tick(x + 1);
+}
+
+fizzbuzz(0);
+

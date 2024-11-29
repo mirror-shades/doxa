@@ -58,6 +58,10 @@ pub const Parser = struct {
         r.set(.MINUS, .{ .prefix = unary, .infix = binary, .precedence = .TERM });
         r.set(.ASTERISK, .{ .infix = binary, .precedence = .FACTOR });
         r.set(.SLASH, .{ .infix = binary, .precedence = .FACTOR });
+        r.set(.MODULO, .{ .infix = binary, .precedence = .FACTOR });
+
+        // Add compound assignment operators
+        r.set(.PLUS_EQUAL, .{ .infix = compound_assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
 
         // Comparison operators
         r.set(.EQUALITY, .{ .infix = binary, .precedence = .EQUALITY });
@@ -84,7 +88,7 @@ pub const Parser = struct {
         r.set(.NOTHING, .{ .prefix = literal });
 
         // Grouping
-        r.set(.LEFT_PAREN, .{ .prefix = grouping });
+        r.set(.LEFT_PAREN, .{ .prefix = grouping, .infix = call, .precedence = .CALL });
         r.set(.LEFT_BRACKET, .{ .prefix = array, .infix = index, .precedence = .CALL });
 
         // Variables and assignment
@@ -358,29 +362,43 @@ pub const Parser = struct {
 
         const expr = try self.parseExpression();
 
-        // Expect semicolon unless the expression is a block or print expression
-        if (expr) |e| {
-            const needs_semicolon = switch (e.*) {
-                .Block => false,
-                .Print => false, // Print expressions don't need a semicolon
-                .If => !hasAllBlockBranches(e),
-                else => true,
-            };
+        if (self.debug_enabled) {
+            std.debug.print("Parsed expression, current position: {}, token: {s}\n", .{
+                self.current,
+                @tagName(self.peek().type),
+            });
+        }
 
-            if (self.debug_enabled) {
-                std.debug.print("Expression needs semicolon: {}\n", .{needs_semicolon});
-                std.debug.print("Next token: {s}\n", .{@tagName(self.peek().type)});
-            }
+        // Check if we need a semicolon
+        const needs_semicolon = if (expr) |e| switch (e.*) {
+            .Block, .If => false,
+            .Print => true, // Always require semicolon for print expressions
+            else => true,
+        } else true;
 
-            if (needs_semicolon) {
-                if (self.peek().type != .SEMICOLON) {
-                    if (self.debug_enabled) {
-                        std.debug.print("Expected SEMICOLON, got {s}\n", .{@tagName(self.peek().type)});
-                    }
-                    return error.ExpectedSemicolon;
+        if (self.debug_enabled) {
+            std.debug.print("Expression needs semicolon: {}\n", .{needs_semicolon});
+            std.debug.print("Current token: {s} at position {}\n", .{
+                @tagName(self.peek().type),
+                self.current,
+            });
+        }
+
+        if (needs_semicolon) {
+            if (self.peek().type != .SEMICOLON) {
+                if (self.debug_enabled) {
+                    std.debug.print("Expected semicolon but found: {s} at position {}\n", .{
+                        @tagName(self.peek().type),
+                        self.current,
+                    });
                 }
-                self.advance(); // consume the semicolon
+                if (expr) |e| {
+                    e.deinit(self.allocator);
+                    self.allocator.destroy(e);
+                }
+                return error.ExpectedSemicolon;
             }
+            self.advance(); // Consume the semicolon
         }
 
         return ast.Stmt{ .Expression = expr };
@@ -414,7 +432,7 @@ pub const Parser = struct {
         if (left == null) return null;
 
         // Keep parsing infix expressions as long as we have higher precedence
-        while (@intFromEnum(precedence) < @intFromEnum(Parser.getRule(self.peek().type).precedence)) {
+        while (@intFromEnum(precedence) <= @intFromEnum(Parser.getRule(self.peek().type).precedence)) {
             const infix_rule = Parser.getRule(self.peek().type).infix;
             if (infix_rule == null) break;
 
@@ -427,8 +445,7 @@ pub const Parser = struct {
                 self.advance();
             }
 
-            left = try infix_rule.?(self, left, Parser.getRule(self.peek().type).precedence);
-            if (left == null) return null;
+            left = try infix_rule.?(self, left, precedence);
         }
 
         return left;
@@ -517,43 +534,60 @@ pub const Parser = struct {
             std.debug.print("\nParsing function call...\n", .{});
         }
 
-        if (callee == null) return error.ExpectedCallable;
+        // We're already at the opening parenthesis, advance past it
+        self.advance(); // consume (
 
-        var args = std.ArrayList(*ast.Expr).init(self.allocator);
+        var arguments = std.ArrayList(*ast.Expr).init(self.allocator);
         errdefer {
-            for (args.items) |arg| {
+            for (arguments.items) |arg| {
                 arg.deinit(self.allocator);
                 self.allocator.destroy(arg);
             }
-            args.deinit();
+            arguments.deinit();
         }
 
-        // Parse arguments
-        while (self.peek().type != .RIGHT_PAREN) {
-            const arg = try self.parsePrecedence(.NONE) orelse return error.ExpectedExpression;
-            try args.append(arg);
+        // Handle empty argument list
+        if (self.peek().type == .RIGHT_PAREN) {
+            self.advance(); // consume )
+            const call_expr = try self.allocator.create(ast.Expr);
+            call_expr.* = .{ .Call = .{
+                .callee = callee.?,
+                .arguments = try arguments.toOwnedSlice(),
+            } };
+            return call_expr;
+        }
 
-            if (self.debug_enabled) {
-                std.debug.print("Parsed argument {}\n", .{args.items.len});
-            }
+        // Parse first argument
+        const arg = (try self.parseExpression()) orelse return error.ExpectedExpression;
+        try arguments.append(arg);
 
-            if (self.peek().type == .RIGHT_PAREN) break;
-
-            if (self.peek().type != .COMMA) return error.ExpectedCommaOrParen;
+        // Parse any additional arguments
+        while (self.peek().type == .COMMA) {
             self.advance(); // consume comma
+            const next_arg = (try self.parseExpression()) orelse return error.ExpectedExpression;
+            try arguments.append(next_arg);
         }
-        self.advance(); // consume right paren
 
         if (self.debug_enabled) {
-            std.debug.print("Finished parsing function call with {} arguments\n", .{args.items.len});
+            std.debug.print("Looking for closing paren, current token: {s}\n", .{@tagName(self.peek().type)});
         }
 
-        // Create the call expression
+        // Expect closing parenthesis
+        if (self.peek().type != .RIGHT_PAREN) {
+            if (self.debug_enabled) {
+                std.debug.print("Expected ), got {s}\n", .{@tagName(self.peek().type)});
+            }
+            return error.ExpectedRightParen;
+        }
+        self.advance(); // consume )
+
+        // Create call expression
         const call_expr = try self.allocator.create(ast.Expr);
         call_expr.* = .{ .Call = .{
             .callee = callee.?,
-            .arguments = try args.toOwnedSlice(),
+            .arguments = try arguments.toOwnedSlice(),
         } };
+
         return call_expr;
     }
 
@@ -594,26 +628,40 @@ pub const Parser = struct {
             return error.ExpectedExpression;
         };
 
-        if (self.peek().type != .ELSE) {
-            condition.deinit(self.allocator);
-            self.allocator.destroy(condition);
-            then_expr.deinit(self.allocator);
-            self.allocator.destroy(then_expr);
-            return error.ExpectedElse;
-        }
-        self.advance();
+        // Create implicit nothing for else branch when not in strict mode
+        var else_expr: ?*ast.Expr = if (self.mode != .Strict) blk: {
+            const nothing_expr = try self.allocator.create(ast.Expr);
+            nothing_expr.* = .{ .Literal = .{ .nothing = {} } };
+            break :blk nothing_expr;
+        } else null;
 
-        // Handle else branch
-        const else_expr = (try self.parseExpression()) orelse {
-            condition.deinit(self.allocator);
-            self.allocator.destroy(condition);
-            then_expr.deinit(self.allocator);
-            self.allocator.destroy(then_expr);
-            return error.ExpectedExpression;
-        };
+        // Check for else branch
+        if (self.peek().type == .ELSE) {
+            self.advance(); // consume 'else'
+
+            // Handle 'else if'
+            if (self.peek().type == .IF) {
+                else_expr = try self.parseIfExpr(null, .NONE);
+            } else {
+                // Handle regular else block
+                else_expr = try self.parsePrecedence(.NONE);
+            }
+
+            if (else_expr == null) {
+                condition.deinit(self.allocator);
+                self.allocator.destroy(condition);
+                then_expr.deinit(self.allocator);
+                self.allocator.destroy(then_expr);
+                if (else_expr) |e| {
+                    e.deinit(self.allocator);
+                    self.allocator.destroy(e);
+                }
+                return error.ExpectedExpression;
+            }
+        }
 
         const if_expr = try self.allocator.create(ast.Expr);
-        if_expr.* = ast.Expr{ .If = .{
+        if_expr.* = .{ .If = .{
             .condition = condition,
             .then_branch = then_expr,
             .else_branch = else_expr,
@@ -887,25 +935,15 @@ pub const Parser = struct {
             std.debug.print("\nParsing function declaration...\n", .{});
         }
 
-        // Consume 'fn' or 'function'
-        const current_token = self.peek();
-        if (current_token.type != .FN_KEYWORD and current_token.type != .FUNCTION_KEYWORD) {
-            return error.UnexpectedToken;
-        }
-        self.advance();
-
-        // Parse function name
-        const name_token = self.peek();
-        if (name_token.type != .IDENTIFIER) {
-            return error.ExpectedIdentifier;
-        }
-        self.advance();
+        self.advance(); // consume 'fn'
+        const name = self.peek();
+        self.advance(); // consume function name
 
         // Parse parameters
         if (self.peek().type != .LEFT_PAREN) {
             return error.ExpectedLeftParen;
         }
-        self.advance();
+        self.advance(); // consume (
 
         var params = std.ArrayList(ast.FunctionParam).init(self.allocator);
         errdefer {
@@ -915,69 +953,28 @@ pub const Parser = struct {
             params.deinit();
         }
 
-        if (self.debug_enabled) {
-            std.debug.print("Parsing function parameters...\n", .{});
+        // Parse parameter list
+        if (self.peek().type != .RIGHT_PAREN) {
+            try self.parseParameters(&params);
         }
 
-        while (self.peek().type != .RIGHT_PAREN) {
-            // Parameter name
-            const param_name = self.peek();
-            if (param_name.type != .IDENTIFIER) {
-                return error.ExpectedIdentifier;
-            }
-            self.advance();
-
-            // Create a default type if none is specified
-            const param_type = if (self.peek().type == .COLON) blk: {
-                self.advance();
-                break :blk (try self.parseTypeExpr()) orelse return error.ExpectedType;
-            } else if (self.mode == .Strict) {
-                return error.StrictModeRequiresType;
-            } else blk: {
-                // Create a default dynamic type for parameters without type annotations
-                const type_expr = try self.allocator.create(ast.TypeExpr);
-                type_expr.* = .{ .Basic = .Auto };
-                break :blk type_expr;
-            };
-
-            try params.append(.{
-                .name = param_name,
-                .type_expr = param_type,
-            });
-
-            if (self.peek().type == .COMMA) {
-                self.advance();
-                // Allow trailing comma
-                if (self.peek().type == .RIGHT_PAREN) {
-                    break;
-                }
-            } else if (self.peek().type != .RIGHT_PAREN) {
-                return error.ExpectedCommaOrParen;
-            }
+        if (self.peek().type != .RIGHT_PAREN) {
+            return error.ExpectedRightParen;
         }
         self.advance(); // consume )
 
-        if (self.debug_enabled) {
-            std.debug.print("Parsed {} parameters\n", .{params.items.len});
-        }
-
-        // Parse return type (required in strict mode, optional otherwise)
+        // Parse optional return type
         var return_type: ?*ast.TypeExpr = null;
         if (self.peek().type == .COLON) {
             self.advance();
-            return_type = try self.parseTypeExpr();
-            if (return_type == null) {
-                return error.ExpectedType;
-            }
-        } else if (self.mode == .Strict and self.peek().type != .LEFT_BRACE) {
-            return error.StrictModeRequiresType;
+            return_type = try self.parseTypeExpr() orelse return error.ExpectedType;
         }
 
-        // Parse body
+        // Parse function body
         if (self.peek().type != .LEFT_BRACE) {
             return error.ExpectedLeftBrace;
         }
-        self.advance();
+        self.advance(); // consume {
 
         var statements = std.ArrayList(ast.Stmt).init(self.allocator);
         errdefer {
@@ -987,62 +984,19 @@ pub const Parser = struct {
             statements.deinit();
         }
 
-        // Parse statements until we hit the closing brace
+        // Parse statements until we hit a right brace
         while (self.peek().type != .RIGHT_BRACE and self.peek().type != .EOF) {
-            // Look ahead to see if this is the last expression before the closing brace
-            var is_last = false;
-            var pos = self.current;
-            var brace_count: usize = 0;
-
-            while (pos < self.tokens.len) : (pos += 1) {
-                const tok = self.tokens[pos];
-                if (tok.type == .LEFT_BRACE) {
-                    brace_count += 1;
-                } else if (tok.type == .RIGHT_BRACE) {
-                    if (brace_count == 0) {
-                        is_last = true;
-                        break;
-                    }
-                    brace_count -= 1;
-                } else if (tok.type == .SEMICOLON and brace_count == 0) {
-                    is_last = false;
-                    break;
-                }
-            }
-
-            if (self.peek().type == .RETURN) {
-                self.advance(); // consume 'return'
-                const return_expr = try self.parseExpression();
-
-                // Return statements need semicolons
-                if (self.peek().type != .SEMICOLON) {
-                    return error.ExpectedSemicolon;
-                }
-                self.advance(); // consume semicolon
-
-                try statements.append(ast.Stmt{ .Return = .{ .value = return_expr } });
-                continue;
-            }
-
-            if (is_last) {
-                // Parse as expression and wrap in return
-                if (try self.parseExpression()) |expr| {
-                    try statements.append(ast.Stmt{ .Return = .{ .value = expr } });
-                }
-                break;
-            }
-
-            const stmt = try self.parseExpressionStmt();
+            const stmt = try self.parseStatement();
             try statements.append(stmt);
         }
 
         if (self.peek().type != .RIGHT_BRACE) {
             return error.ExpectedRightBrace;
         }
-        self.advance();
+        self.advance(); // consume }
 
         return ast.Stmt{ .Function = .{
-            .name = name_token,
+            .name = name,
             .params = try params.toOwnedSlice(),
             .return_type = return_type,
             .body = try statements.toOwnedSlice(),
@@ -1192,22 +1146,137 @@ pub const Parser = struct {
 
         if (left == null) return error.ExpectedExpression;
 
-        // Consume the ? token
+        // Don't advance the token position, just create the print expression
         if (self.debug_enabled) {
-            std.debug.print("Consuming ? token\n", .{});
+            std.debug.print("Creating print expression at position {}\n", .{
+                self.current,
+            });
         }
-        self.advance();
 
         // Create the print expression
         const print_expr = try self.allocator.create(ast.Expr);
         print_expr.* = .{ .Print = left.? };
 
         if (self.debug_enabled) {
-            std.debug.print("Created print expression, next token: {s}\n", .{
+            std.debug.print("Created print expression, current token: {s}\n", .{
                 @tagName(self.peek().type),
             });
         }
 
         return print_expr;
+    }
+
+    // Add new parsing function for compound assignments
+    fn compound_assignment(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+        if (left == null) return error.InvalidAssignmentTarget;
+
+        // Verify left side is a valid assignment target
+        const is_valid_target = switch (left.?.*) {
+            .Variable => true,
+            .Index => true,
+            else => false,
+        };
+
+        if (!is_valid_target) {
+            return error.InvalidAssignmentTarget;
+        }
+
+        const operator = self.tokens[self.current - 1];
+        const value = try self.parsePrecedence(.ASSIGNMENT) orelse return error.ExpectedExpression;
+
+        // Create binary expression for the operation
+        const binary_expr = try self.allocator.create(ast.Expr);
+        binary_expr.* = .{
+            .Binary = .{
+                .left = left,
+                .operator = .{ // Convert += to + for the operation
+                    .type = switch (operator.type) {
+                        .PLUS_EQUAL => .PLUS,
+                        else => return error.UnsupportedCompoundOperator,
+                    },
+                    .lexeme = operator.lexeme,
+                    .line = operator.line,
+                    .column = operator.column,
+                    .literal = operator.literal,
+                },
+                .right = value,
+            },
+        };
+
+        // Create assignment expression
+        const assign_expr = try self.allocator.create(ast.Expr);
+        assign_expr.* = switch (left.?.*) {
+            .Variable => |v| .{ .Assignment = .{
+                .name = v,
+                .value = binary_expr,
+            } },
+            .Index => |idx| .{ .IndexAssign = .{
+                .array = idx.array,
+                .index = idx.index,
+                .value = binary_expr,
+            } },
+            else => unreachable,
+        };
+
+        return assign_expr;
+    }
+
+    fn parseParameters(self: *Parser, params: *std.ArrayList(ast.FunctionParam)) ErrorList!void {
+        if (self.debug_enabled) {
+            std.debug.print("Parsing function parameters...\n", .{});
+        }
+
+        while (true) {
+            if (self.peek().type != .IDENTIFIER) {
+                return error.ExpectedIdentifier;
+            }
+
+            const param_name = self.peek();
+            self.advance();
+
+            var param_type: ?*ast.TypeExpr = null;
+            if (self.peek().type == .COLON) {
+                self.advance();
+                param_type = try self.parseTypeExpr() orelse return error.ExpectedType;
+            }
+
+            try params.append(.{
+                .name = param_name,
+                .type_expr = param_type,
+            });
+
+            if (self.peek().type == .COMMA) {
+                self.advance();
+                continue;
+            }
+
+            break;
+        }
+
+        if (self.debug_enabled) {
+            std.debug.print("Parsed {} parameters\n", .{params.items.len});
+        }
+    }
+
+    fn parseStatement(self: *Parser) ErrorList!ast.Stmt {
+        if (self.debug_enabled) {
+            std.debug.print("\nParsing statement...\n", .{});
+        }
+
+        switch (self.peek().type) {
+            .VAR => {
+                self.advance();
+                return self.parseVarDecl();
+            },
+            .FN_KEYWORD => {
+                return self.parseFunctionDecl();
+            },
+            .RETURN => {
+                return self.parseReturnStmt();
+            },
+            else => {
+                return self.parseExpressionStmt();
+            },
+        }
     }
 };

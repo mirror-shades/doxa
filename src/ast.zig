@@ -351,3 +351,15 @@ pub const Logical = struct {
     operator: token.Token,
     right: *Expr,
 };
+
+pub const Parameter = struct {
+    name: token.Token,
+    type_expr: ?*TypeExpr,
+
+    pub fn deinit(self: *Parameter, allocator: std.mem.Allocator) void {
+        if (self.type_expr) |type_expr| {
+            type_expr.deinit(allocator);
+            allocator.destroy(type_expr);
+        }
+    }
+};

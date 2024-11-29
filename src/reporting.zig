@@ -108,6 +108,7 @@ pub const ErrorList = error{
     ExpectedType,
     ExpectedFunctionKeyword,
     ExpectedFunctionName,
+    UnsupportedCompoundOperator,
 
     // Miscellaneous
     NotImplemented,
