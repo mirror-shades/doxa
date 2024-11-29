@@ -703,6 +703,13 @@ pub const Parser = struct {
         var last_expr: ?*ast.Expr = null;
 
         while (self.peek().type != .RIGHT_BRACE and self.peek().type != .EOF) {
+            // Special handling for return statements
+            if (self.peek().type == .RETURN) {
+                const return_stmt = try self.parseReturnStmt();
+                try statements.append(return_stmt);
+                break; // Exit after return statement
+            }
+
             // Check if this is the last statement/expression
             const next_is_brace = self.peekAhead(1).type == .RIGHT_BRACE;
 
