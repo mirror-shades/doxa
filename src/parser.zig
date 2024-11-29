@@ -50,6 +50,54 @@ pub const Parser = struct {
     mode: Mode,
     is_repl: bool,
 
+    const rules = blk: {
+        var r = std.EnumArray(token.TokenType, ParseRule).initFill(ParseRule{});
+
+        // Binary operators
+        r.set(.PLUS, .{ .infix = binary, .precedence = .TERM });
+        r.set(.MINUS, .{ .prefix = unary, .infix = binary, .precedence = .TERM });
+        r.set(.ASTERISK, .{ .infix = binary, .precedence = .FACTOR });
+        r.set(.SLASH, .{ .infix = binary, .precedence = .FACTOR });
+
+        // Comparison operators
+        r.set(.EQUALITY, .{ .infix = binary, .precedence = .EQUALITY });
+        r.set(.BANG_EQUAL, .{ .infix = binary, .precedence = .EQUALITY });
+        r.set(.LESS, .{ .infix = binary, .precedence = .COMPARISON });
+        r.set(.LESS_EQUAL, .{ .infix = binary, .precedence = .COMPARISON });
+        r.set(.GREATER, .{ .infix = binary, .precedence = .COMPARISON });
+        r.set(.GREATER_EQUAL, .{ .infix = binary, .precedence = .COMPARISON });
+
+        // Logical operators
+        r.set(.AND_KEYWORD, .{ .infix = logical, .precedence = .AND });
+        r.set(.OR_KEYWORD, .{ .infix = logical, .precedence = .OR });
+        r.set(.AND_SYMBOL, .{ .infix = logical, .precedence = .AND });
+        r.set(.OR_SYMBOL, .{ .infix = logical, .precedence = .OR });
+
+        // Unary operators
+        r.set(.BANG, .{ .prefix = unary });
+
+        // Literals
+        r.set(.INT, .{ .prefix = literal });
+        r.set(.FLOAT, .{ .prefix = literal });
+        r.set(.STRING, .{ .prefix = literal });
+        r.set(.BOOL, .{ .prefix = literal });
+        r.set(.NOTHING, .{ .prefix = literal });
+
+        // Grouping
+        r.set(.LEFT_PAREN, .{ .prefix = grouping, .infix = infix_call, .precedence = .CALL });
+        r.set(.LEFT_BRACKET, .{ .prefix = array, .infix = index, .precedence = .CALL });
+
+        // Variables and assignment
+        r.set(.IDENTIFIER, .{ .prefix = variable });
+        r.set(.ASSIGN, .{ .infix = assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
+
+        break :blk r;
+    };
+
+    fn getRule(token_type: token.TokenType) ParseRule {
+        return rules.get(token_type);
+    }
+
     pub fn init(memory: *MemoryManager, tokens: []const token.Token, debug_enabled: bool, is_repl: bool, is_strict_repl: bool) !Parser {
         if (tokens.len == 0) return error.EmptyTokenList;
 
@@ -324,50 +372,6 @@ pub const Parser = struct {
         return ast.Stmt{ .Expression = expr };
     }
 
-    fn getRule(token_type: token.TokenType) ParseRule {
-        return switch (token_type) {
-            .LEFT_PAREN => .{ .prefix = Parser.grouping, .infix = Parser.infix_call, .precedence = .CALL },
-            .LEFT_BRACKET => .{ .prefix = Parser.array, .infix = Parser.index, .precedence = .CALL },
-            .MINUS => .{ .prefix = Parser.unary, .infix = Parser.binary, .precedence = .TERM },
-            .PLUS => .{ .infix = Parser.binary, .precedence = .TERM },
-            .SLASH => .{ .infix = Parser.binary, .precedence = .FACTOR },
-            .ASTERISK => .{ .infix = Parser.binary, .precedence = .FACTOR },
-            .BANG => .{ .prefix = Parser.unary },
-            .ASSIGN => .{
-                .infix = Parser.assignment, // Make sure this is properly set
-                .precedence = .ASSIGNMENT, // This should be the lowest precedence
-                .associativity = .RIGHT,
-            },
-            .BANG_EQUAL => .{ .infix = Parser.binary, .precedence = .EQUALITY },
-            .EQUALITY => .{ .infix = Parser.binary, .precedence = .EQUALITY },
-            .GREATER => .{ .infix = Parser.binary, .precedence = .COMPARISON },
-            .GREATER_EQUAL => .{ .infix = Parser.binary, .precedence = .COMPARISON },
-            .LESS => .{ .infix = Parser.binary, .precedence = .COMPARISON },
-            .LESS_EQUAL => .{ .infix = Parser.binary, .precedence = .COMPARISON },
-            .IDENTIFIER => .{
-                .prefix = Parser.variable,
-                .precedence = .NONE, // Important: identifiers should have lowest precedence
-            },
-            .STRING => .{ .prefix = Parser.literal },
-            .INT => .{ .prefix = Parser.literal },
-            .FLOAT => .{ .prefix = Parser.literal },
-            .BOOL => .{ .prefix = Parser.literal },
-            .IF => .{ .prefix = Parser.parseIfExpr },
-            .LEFT_BRACE => .{ .prefix = Parser.block },
-            .AND_KEYWORD, .AND_SYMBOL => .{
-                .infix = Parser.logical,
-                .precedence = .AND,
-                .associativity = .LEFT,
-            },
-            .OR_KEYWORD, .OR_SYMBOL => .{
-                .infix = Parser.logical,
-                .precedence = .OR,
-                .associativity = .LEFT,
-            },
-            else => .{},
-        };
-    }
-
     fn parseExpression(self: *Parser) ErrorList!?*ast.Expr {
         // Start parsing at lowest precedence
         return try self.parsePrecedence(.ASSIGNMENT);
@@ -382,50 +386,35 @@ pub const Parser = struct {
             });
         }
 
-        // Get the prefix rule for current token
-        const current = self.peek();
-        const rule = getRule(current.type);
-        const prefix_rule = rule.prefix orelse {
+        // Get the prefix rule for the current token
+        const prefix_rule = Parser.getRule(self.peek().type).prefix;
+        if (prefix_rule == null) {
             if (self.debug_enabled) {
-                std.debug.print("No prefix parse rule for {s}\n", .{@tagName(current.type)});
+                std.debug.print("No prefix rule for token: {s}\n", .{@tagName(self.peek().type)});
             }
             return null;
-        };
+        }
 
         // Parse prefix expression
-        if (self.debug_enabled) {
-            std.debug.print("Applying prefix rule for {s}\n", .{@tagName(current.type)});
-        }
+        var left = try prefix_rule.?(self, null, precedence);
+        if (left == null) return null;
 
-        var left = try prefix_rule(self, null, precedence);
-        if (left == null) {
-            if (self.debug_enabled) {
-                std.debug.print("Prefix rule returned null\n", .{});
-            }
-            return null;
-        }
-
-        // Keep parsing infix expressions while the next operator has higher or equal precedence
-        while (@intFromEnum(precedence) <= @intFromEnum(getRule(self.peek().type).precedence)) {
-            const operator = self.peek();
-            const next_rule = getRule(operator.type);
-            const infix_rule = next_rule.infix orelse break;
+        // Keep parsing infix expressions as long as we have higher precedence
+        while (@intFromEnum(precedence) < @intFromEnum(Parser.getRule(self.peek().type).precedence)) {
+            const infix_rule = Parser.getRule(self.peek().type).infix;
+            if (infix_rule == null) break;
 
             if (self.debug_enabled) {
-                std.debug.print("Found infix operator: {s}\n", .{@tagName(operator.type)});
+                std.debug.print("Found infix operator: {s}\n", .{@tagName(self.peek().type)});
             }
 
-            self.advance(); // Consume the operator
+            // Don't advance here for function calls - let the call handler do it
+            if (self.peek().type != .LEFT_PAREN) {
+                self.advance();
+            }
 
-            // Adjust precedence based on associativity
-            const next_precedence = switch (next_rule.associativity) {
-                .LEFT => @as(Precedence, @enumFromInt(@intFromEnum(next_rule.precedence))),
-                .RIGHT => @as(Precedence, @enumFromInt(@intFromEnum(next_rule.precedence) - 1)),
-                .NONE => .PRIMARY, // Highest precedence to prevent chaining
-            };
-
-            left = try infix_rule(self, left, next_precedence);
-            if (left == null) break;
+            left = try infix_rule.?(self, left, Parser.getRule(self.peek().type).precedence);
+            if (left == null) return null;
         }
 
         return left;
@@ -443,7 +432,7 @@ pub const Parser = struct {
             .INT, .FLOAT, .BOOL => blk: {
                 const new_expr = try self.allocator.create(ast.Expr);
                 new_expr.* = .{ .Literal = current.literal };
-                self.advance();
+                self.advance(); // Advance past the literal token
                 break :blk new_expr;
             },
             .STRING => blk: {
@@ -451,7 +440,7 @@ pub const Parser = struct {
                 const string_copy = try self.allocator.dupe(u8, current.literal.string);
                 const new_expr = try self.allocator.create(ast.Expr);
                 new_expr.* = .{ .Literal = .{ .string = string_copy } };
-                self.advance();
+                self.advance(); // Advance past the literal token
                 break :blk new_expr;
             },
             else => {
@@ -469,15 +458,14 @@ pub const Parser = struct {
         return expr;
     }
 
-    fn binary(self: *Parser, left: ?*ast.Expr, precedence: Precedence) ErrorList!?*ast.Expr {
+    fn binary(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+        if (left == null) return error.ExpectedLeftOperand;
         const operator = self.tokens[self.current - 1];
-
-        // Use the passed-in precedence instead of calculating it here
-        const right = try self.parsePrecedence(precedence) orelse return error.ExpectedExpression;
+        const right = try self.parsePrecedence(@enumFromInt(@intFromEnum(Parser.getRule(operator.type).precedence) + 1)) orelse return error.ExpectedRightOperand;
 
         const binary_expr = try self.allocator.create(ast.Expr);
         binary_expr.* = .{ .Binary = .{
-            .left = left.?,
+            .left = left,
             .operator = operator,
             .right = right,
         } };
@@ -485,19 +473,30 @@ pub const Parser = struct {
     }
 
     fn grouping(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+        const expr = try self.parseExpression() orelse return error.ExpectedExpression;
+
+        if (self.peek().type != .RIGHT_PAREN) {
+            return error.ExpectedRightParen;
+        }
         self.advance();
-        const expr = try self.parsePrecedence(.NONE) orelse return error.ExpectedExpression;
-        if (self.peek().type != .RIGHT_PAREN) return error.ExpectedRightParen;
-        self.advance();
-        return expr;
+
+        const grouping_expr = try self.allocator.create(ast.Expr);
+        grouping_expr.* = .{ .Grouping = expr };
+        return grouping_expr;
     }
 
-    fn infix_call(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+    fn infix_call(self: *Parser, left: ?*ast.Expr, precedence: Precedence) ErrorList!?*ast.Expr {
         self.advance();
-        return self.call(left.?);
+        return self.call(left, precedence);
     }
 
-    fn call(self: *Parser, callee: *ast.Expr) ErrorList!?*ast.Expr {
+    fn call(self: *Parser, callee: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+        if (self.debug_enabled) {
+            std.debug.print("\nParsing function call...\n", .{});
+        }
+
+        if (callee == null) return error.ExpectedCallable;
+
         var args = std.ArrayList(*ast.Expr).init(self.allocator);
         errdefer {
             for (args.items) |arg| {
@@ -507,20 +506,30 @@ pub const Parser = struct {
             args.deinit();
         }
 
+        // Parse arguments
         while (self.peek().type != .RIGHT_PAREN) {
             const arg = try self.parsePrecedence(.NONE) orelse return error.ExpectedExpression;
             try args.append(arg);
 
-            if (self.peek().type != .COMMA) break;
+            if (self.debug_enabled) {
+                std.debug.print("Parsed argument {}\n", .{args.items.len});
+            }
+
+            if (self.peek().type == .RIGHT_PAREN) break;
+
+            if (self.peek().type != .COMMA) return error.ExpectedCommaOrParen;
             self.advance(); // consume comma
         }
-
-        if (self.peek().type != .RIGHT_PAREN) return error.ExpectedRightParen;
         self.advance(); // consume right paren
 
+        if (self.debug_enabled) {
+            std.debug.print("Finished parsing function call with {} arguments\n", .{args.items.len});
+        }
+
+        // Create the call expression
         const call_expr = try self.allocator.create(ast.Expr);
         call_expr.* = .{ .Call = .{
-            .callee = callee,
+            .callee = callee.?,
             .arguments = try args.toOwnedSlice(),
         } };
         return call_expr;
@@ -609,59 +618,43 @@ pub const Parser = struct {
         return if_expr;
     }
 
-    fn assignment(self: *Parser, left: ?*ast.Expr, precedence: Precedence) ErrorList!?*ast.Expr {
-        if (self.debug_enabled) {
-            std.debug.print("Parsing assignment expression\n", .{});
+    fn assignment(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+        if (left == null) return error.InvalidAssignmentTarget;
+
+        // Verify left side is a valid assignment target
+        const is_valid_target = switch (left.?.*) {
+            .Variable => true,
+            .Index => true,
+            else => false,
+        };
+
+        if (!is_valid_target) {
+            return error.InvalidAssignmentTarget;
         }
 
-        const value = try self.parsePrecedence(precedence) orelse return error.ExpectedExpression;
-        errdefer {
-            value.deinit(self.allocator);
-            self.allocator.destroy(value);
-        }
+        // Parse the value being assigned
+        const value = try self.parsePrecedence(.ASSIGNMENT) orelse return error.ExpectedExpression;
 
-        // Handle different assignment targets
-        if (left) |target| {
-            switch (target.*) {
-                .Index => |index_expr| {
-                    const assign_expr = try self.allocator.create(ast.Expr);
-                    assign_expr.* = .{ .IndexAssign = .{
-                        .array = index_expr.array,
-                        .index = index_expr.index,
-                        .value = value,
-                    } };
-                    return assign_expr;
-                },
-                .Variable => |name| {
-                    if (self.debug_enabled) {
-                        std.debug.print("Creating assignment expression\n", .{});
-                    }
-                    const assign_expr = try self.allocator.create(ast.Expr);
-                    assign_expr.* = .{ .Assignment = .{
-                        .name = name,
-                        .value = value,
-                    } };
-                    return assign_expr;
-                },
-                else => {
-                    value.deinit(self.allocator);
-                    self.allocator.destroy(value);
-                    return error.InvalidAssignmentTarget;
-                },
-            }
-        }
-        return error.InvalidAssignment;
+        const assign_expr = try self.allocator.create(ast.Expr);
+        assign_expr.* = switch (left.?.*) {
+            .Variable => |v| .{ .Assignment = .{
+                .name = v,
+                .value = value,
+            } },
+            .Index => |idx| .{ .IndexAssign = .{
+                .array = idx.array,
+                .index = idx.index,
+                .value = value,
+            } },
+            else => unreachable,
+        };
+
+        return assign_expr;
     }
 
     fn unary(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-        const operator = self.peek();
-        self.advance();
-
-        const right = try self.parsePrecedence(.UNARY) orelse return error.ExpectedExpression;
-        errdefer {
-            right.deinit(self.allocator);
-            self.allocator.destroy(right);
-        }
+        const operator = self.tokens[self.current - 1];
+        const right = try self.parsePrecedence(.UNARY) orelse return error.ExpectedOperand;
 
         const unary_expr = try self.allocator.create(ast.Expr);
         unary_expr.* = .{ .Unary = .{
@@ -672,12 +665,11 @@ pub const Parser = struct {
     }
 
     fn variable(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-        const var_token = self.peek();
-        self.advance();
-
-        const expr = try self.allocator.create(ast.Expr);
-        expr.* = .{ .Variable = var_token };
-        return expr;
+        const name = self.peek();
+        self.advance(); // Advance past the identifier
+        const var_expr = try self.allocator.create(ast.Expr);
+        var_expr.* = .{ .Variable = name };
+        return var_expr;
     }
 
     fn block(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
@@ -714,18 +706,41 @@ pub const Parser = struct {
         }
 
         while (self.peek().type != .RIGHT_BRACE and self.peek().type != .EOF) {
-            var stmt = stmt: {
-                if (self.peek().type == .VAR) {
-                    break :stmt try self.parseVarDecl();
-                } else if (self.peek().type == .LEFT_BRACE) {
-                    break :stmt try self.parseBlock();
-                } else if (self.peek().type == .RETURN) {
-                    break :stmt try self.parseReturnStmt();
-                } else {
-                    break :stmt try self.parseExpressionStmt();
+            const stmt = blk: {
+                if (self.peek().type == .RETURN) {
+                    break :blk try self.parseReturnStmt();
                 }
+
+                // Look ahead to see if this is the last statement
+                const is_last = blk2: {
+                    var pos = self.current;
+                    var found_semicolon = false;
+                    while (pos < self.tokens.len) : (pos += 1) {
+                        const tok = self.tokens[pos];
+                        if (tok.type == .RIGHT_BRACE) {
+                            break :blk2 !found_semicolon;
+                        } else if (tok.type == .SEMICOLON) {
+                            found_semicolon = true;
+                        }
+                    }
+                    break :blk2 false;
+                };
+
+                if (is_last) {
+                    const expr = try self.parseExpression();
+                    if (expr) |e| {
+                        break :blk ast.Stmt{ .Return = .{ .value = e } };
+                    }
+                }
+
+                if (self.peek().type == .VAR) {
+                    break :blk try self.parseVarDecl();
+                } else if (self.peek().type == .LEFT_BRACE) {
+                    break :blk try self.parseBlock();
+                }
+                break :blk try self.parseExpressionStmt();
             };
-            errdefer stmt.deinit(self.allocator);
+
             try statements.append(stmt);
         }
 
@@ -911,6 +926,10 @@ pub const Parser = struct {
             params.deinit();
         }
 
+        if (self.debug_enabled) {
+            std.debug.print("Parsing function parameters...\n", .{});
+        }
+
         while (self.peek().type != .RIGHT_PAREN) {
             // Parameter name
             const param_name = self.peek();
@@ -919,14 +938,17 @@ pub const Parser = struct {
             }
             self.advance();
 
-            // Parameter type
-            if (self.peek().type != .COLON) {
-                return error.ExpectedColon;
-            }
-            self.advance();
-
-            const param_type = (try self.parseTypeExpr()) orelse {
-                return error.ExpectedType;
+            // Create a default type if none is specified
+            const param_type = if (self.peek().type == .COLON) blk: {
+                self.advance();
+                break :blk (try self.parseTypeExpr()) orelse return error.ExpectedType;
+            } else if (self.mode == .Strict) {
+                return error.StrictModeRequiresType;
+            } else blk: {
+                // Create a default dynamic type for parameters without type annotations
+                const type_expr = try self.allocator.create(ast.TypeExpr);
+                type_expr.* = .{ .Basic = .Auto };
+                break :blk type_expr;
             };
 
             try params.append(.{
@@ -946,30 +968,86 @@ pub const Parser = struct {
         }
         self.advance(); // consume )
 
-        // Parse return type (optional)
+        if (self.debug_enabled) {
+            std.debug.print("Parsed {} parameters\n", .{params.items.len});
+        }
+
+        // Parse return type (required in strict mode, optional otherwise)
         var return_type: ?*ast.TypeExpr = null;
-        if (self.peek().type != .LEFT_BRACE) {
-            if (self.peek().type == .COLON) {
-                self.advance(); // Consume the colon
-                return_type = try self.parseTypeExpr();
-                if (return_type == null) {
-                    return error.ExpectedType;
-                }
+        if (self.peek().type == .COLON) {
+            self.advance();
+            return_type = try self.parseTypeExpr();
+            if (return_type == null) {
+                return error.ExpectedType;
             }
+        } else if (self.mode == .Strict and self.peek().type != .LEFT_BRACE) {
+            return error.StrictModeRequiresType;
         }
 
         // Parse body
-        const body_stmt = try self.parseBlock();
-        const body = switch (body_stmt) {
-            .Block => |b| b,
-            else => unreachable,
-        };
+        if (self.peek().type != .LEFT_BRACE) {
+            return error.ExpectedLeftBrace;
+        }
+        self.advance();
+
+        var statements = std.ArrayList(ast.Stmt).init(self.allocator);
+        errdefer {
+            for (statements.items) |*stmt| {
+                stmt.deinit(self.allocator);
+            }
+            statements.deinit();
+        }
+
+        // Parse statements until we hit the closing brace
+        while (self.peek().type != .RIGHT_BRACE and self.peek().type != .EOF) {
+            // Look ahead to see if this is the last expression before the closing brace
+            var is_last = false;
+            var needs_semicolon = true;
+            var pos = self.current;
+            var brace_count: usize = 0;
+
+            while (pos < self.tokens.len) : (pos += 1) {
+                const tok = self.tokens[pos];
+                if (tok.type == .LEFT_BRACE) {
+                    brace_count += 1;
+                } else if (tok.type == .RIGHT_BRACE) {
+                    if (brace_count == 0) {
+                        is_last = true;
+                        break;
+                    }
+                    brace_count -= 1;
+                } else if (tok.type == .SEMICOLON and brace_count == 0) {
+                    needs_semicolon = true;
+                    is_last = false;
+                    break;
+                }
+            }
+
+            if (is_last) {
+                // Parse as expression and wrap in return
+                if (try self.parseExpression()) |expr| {
+                    try statements.append(ast.Stmt{ .Return = .{ .value = expr } });
+                }
+                if (needs_semicolon and self.peek().type == .SEMICOLON) {
+                    self.advance(); // consume semicolon if present
+                }
+                break;
+            }
+
+            const stmt = try self.parseExpressionStmt();
+            try statements.append(stmt);
+        }
+
+        if (self.peek().type != .RIGHT_BRACE) {
+            return error.ExpectedRightBrace;
+        }
+        self.advance();
 
         return ast.Stmt{ .Function = .{
             .name = name_token,
             .params = try params.toOwnedSlice(),
             .return_type = return_type,
-            .body = body,
+            .body = try statements.toOwnedSlice(),
         } };
     }
 
@@ -1075,5 +1153,13 @@ pub const Parser = struct {
             .right = right,
         } };
         return logical_expr;
+    }
+
+    fn peekAhead(self: *Parser, offset: usize) token.Token {
+        const pos = self.current + offset;
+        if (pos >= self.tokens.len) {
+            return self.tokens[self.tokens.len - 1];
+        }
+        return self.tokens[pos];
     }
 };

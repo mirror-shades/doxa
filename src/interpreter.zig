@@ -52,9 +52,16 @@ pub const Environment = struct {
     pub fn deinit(self: *Environment) void {
         var it = self.values.iterator();
         while (it.next()) |entry| {
-            // Free any array values
-            if (entry.value_ptr.* == .array) {
-                self.allocator.free(entry.value_ptr.*.array);
+            switch (entry.value_ptr.*) {
+                .array => |arr| self.allocator.free(arr),
+                .function => |f| {
+                    // Clean up each parameter's type expression
+                    for (f.params) |*param| {
+                        param.deinit(self.allocator);
+                    }
+                    self.allocator.free(f.params);
+                },
+                else => {},
             }
         }
         self.values.deinit();
@@ -131,14 +138,26 @@ pub const Interpreter = struct {
         self.string_interner.deinit();
     }
 
-    pub fn executeBlock(self: *Interpreter, statements: []ast.Stmt, environment: *Environment) ErrorList!void {
+    pub fn executeBlock(self: *Interpreter, statements: []ast.Stmt, environment: *Environment) ErrorList!?token.TokenLiteral {
         const previous = self.environment;
         self.environment = environment;
         defer self.environment = previous;
 
+        var last_result: ?token.TokenLiteral = null;
         for (statements) |stmt| {
-            _ = try self.executeStatement(&stmt);
+            // Special handling for the last statement in a function body
+            if (statements.len > 0 and &stmt == &statements[statements.len - 1]) {
+                if (stmt == .Expression) {
+                    // For the last expression in a function, treat it as an implicit return
+                    if (try self.executeStatement(&stmt)) |result| {
+                        try self.environment.define("return", result);
+                        return error.ReturnValue;
+                    }
+                }
+            }
+            last_result = try self.executeStatement(&stmt);
         }
+        return last_result;
     }
 
     pub fn compare(a: anytype, b: anytype) i8 {
@@ -170,11 +189,13 @@ pub const Interpreter = struct {
                             try self.environment.assign(key, value);
                             return value;
                         },
-                        else => return self.evaluate(e) catch |err| {
+                        else => {
+                            const result = try self.evaluate(e);
+                            // Print the result if we're in debug mode
                             if (self.debug_enabled) {
-                                std.debug.print("Error evaluating expression: {s}\n", .{@errorName(err)});
+                                std.debug.print("Result: {any}\n", .{result});
                             }
-                            return err;
+                            return result;
                         },
                     }
                 }
@@ -199,12 +220,35 @@ pub const Interpreter = struct {
             .Block => |statements| {
                 var block_env = Environment.init(self.memory.getAllocator(), self.environment, self.debug_enabled);
                 defer block_env.deinit();
-                try self.executeBlock(statements, &block_env);
-                return null;
+                return try self.executeBlock(statements, &block_env);
             },
             .Function => |func| {
+                if (self.debug_enabled) {
+                    std.debug.print("Defining function '{s}' with {} parameters\n", .{ func.name.lexeme, func.params.len });
+                }
+
+                // Make a copy of the parameters
+                var params = try self.memory.getAllocator().alloc(ast.FunctionParam, func.params.len);
+                errdefer {
+                    for (params) |*param| {
+                        param.deinit(self.memory.getAllocator());
+                    }
+                    self.memory.getAllocator().free(params);
+                }
+
+                // Deep copy each parameter
+                for (func.params, 0..) |param, i| {
+                    params[i] = .{
+                        .name = param.name,
+                        .type_expr = param.type_expr,
+                    };
+                    if (self.debug_enabled) {
+                        std.debug.print("  Parameter {}: '{s}'\n", .{ i, param.name.lexeme });
+                    }
+                }
+
                 const function = token.TokenLiteral{ .function = .{
-                    .params = func.params,
+                    .params = params,
                     .body = func.body,
                     .closure = self.environment,
                 } };
@@ -349,7 +393,7 @@ pub const Interpreter = struct {
                 var block_env = Environment.init(self.memory.getAllocator(), self.environment, self.debug_enabled);
                 defer block_env.deinit();
 
-                try self.executeBlock(statements, &block_env);
+                _ = try self.executeBlock(statements, &block_env);
 
                 // Get the value of the last expression in the block
                 if (statements.len > 0) {
@@ -425,9 +469,28 @@ pub const Interpreter = struct {
                 return new_value;
             },
             .Call => |call| {
+                if (self.debug_enabled) {
+                    std.debug.print("\nEvaluating function call...\n", .{});
+                }
+
                 const callee = try self.evaluate(call.callee);
                 if (callee != .function) {
+                    if (self.debug_enabled) {
+                        std.debug.print("Error: Not a function\n", .{});
+                    }
                     return error.NotCallable;
+                }
+
+                if (self.debug_enabled) {
+                    std.debug.print("Function call - expected params: {}, provided args: {}\n", .{ callee.function.params.len, call.arguments.len });
+                }
+
+                // Validate parameter count
+                if (call.arguments.len != callee.function.params.len) {
+                    if (self.debug_enabled) {
+                        std.debug.print("Error: Parameter count mismatch\n", .{});
+                    }
+                    return error.InvalidArgumentCount;
                 }
 
                 // Evaluate all arguments
@@ -452,19 +515,20 @@ pub const Interpreter = struct {
                 self.environment = &func_env;
                 defer self.environment = previous;
 
-                // Execute the function body and catch any return values
-                self.executeBlock(callee.function.body, &func_env) catch |err| switch (err) {
-                    error.ReturnValue => {
-                        // Return value will be in the environment
-                        if (func_env.get("return")) |ret| {
-                            return ret;
+                // Execute the function body and handle return values
+                _ = self.executeBlock(callee.function.body, &func_env) catch |err| {
+                    if (err == error.ReturnValue) {
+                        if (func_env.get("return")) |return_value| {
+                            if (self.debug_enabled) {
+                                std.debug.print("Function returned: {any}\n", .{return_value});
+                            }
+                            return return_value;
                         }
-                        return token.TokenLiteral{ .nothing = {} };
-                    },
-                    error.ReturnNothing => return token.TokenLiteral{ .nothing = {} },
-                    else => |e| return e,
+                    }
+                    return err;
                 };
 
+                // If no explicit return, return nothing
                 return token.TokenLiteral{ .nothing = {} };
             },
             .Logical => |logical| {

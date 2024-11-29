@@ -1,3 +1,4 @@
-#strict
-var x: bloop = 5;
-x;
+
+fn foo(x) {x+1}
+
+foo(1);

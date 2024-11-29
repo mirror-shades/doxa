@@ -40,6 +40,11 @@ pub const ErrorList = error{
     InvalidReturnStatement,
     ReturnValue,
     ReturnNothing,
+    InvalidArgumentCount,
+    ExpectedLeftOperand,
+    ExpectedRightOperand,
+    ExpectedOperand,
+    ExpectedCallable,
 
     // Collections & Indexing
     IndexOutOfBounds,
