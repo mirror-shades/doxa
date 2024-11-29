@@ -383,6 +383,15 @@ pub const Interpreter = struct {
                         }
                         return error.TypeError;
                     },
+                    .PLUS => {
+                        if (operand == .int) {
+                            return token.TokenLiteral{ .int = operand.int };
+                        }
+                        if (operand == .float) {
+                            return token.TokenLiteral{ .float = operand.float };
+                        }
+                        return error.InvalidOperator;
+                    },
                     else => return error.InvalidOperator,
                 }
             },
@@ -629,28 +638,29 @@ pub const Interpreter = struct {
             .Print => |e| {
                 if (e) |print_expr| {
                     const value = try self.evaluate(print_expr);
+                    const stdout = std.io.getStdOut().writer();
                     switch (value) {
-                        .int => |n| std.debug.print("{d}\n", .{n}),
-                        .float => |f| std.debug.print("{d}\n", .{f}),
-                        .string => |s| std.debug.print("{s}\n", .{s}),
-                        .boolean => |b| std.debug.print("{}\n", .{b}),
-                        .nothing => std.debug.print("nothing\n", .{}),
+                        .int => |n| try stdout.print("{d}\n", .{n}),
+                        .float => |f| try stdout.print("{d}\n", .{f}),
+                        .string => |s| try stdout.print("{s}\n", .{s}),
+                        .boolean => |b| try stdout.print("{}\n", .{b}),
+                        .nothing => try stdout.print("nothing\n", .{}),
                         .array => |arr| {
-                            std.debug.print("[", .{});
+                            try stdout.print("[", .{});
                             for (arr, 0..) |item, i| {
-                                if (i > 0) std.debug.print(", ", .{});
+                                if (i > 0) try stdout.print(", ", .{});
                                 switch (item) {
-                                    .int => |n| std.debug.print("{d}", .{n}),
-                                    .float => |f| std.debug.print("{d}", .{f}),
-                                    .string => |s| std.debug.print("\"{s}\"", .{s}),
-                                    .boolean => |b| std.debug.print("{}", .{b}),
-                                    .nothing => std.debug.print("nothing", .{}),
-                                    else => std.debug.print("...", .{}),
+                                    .int => |n| try stdout.print("{d}", .{n}),
+                                    .float => |f| try stdout.print("{d}", .{f}),
+                                    .string => |s| try stdout.print("\"{s}\"", .{s}),
+                                    .boolean => |b| try stdout.print("{}", .{b}),
+                                    .nothing => try stdout.print("nothing", .{}),
+                                    else => try stdout.print("...", .{}),
                                 }
                             }
-                            std.debug.print("]\n", .{});
+                            try stdout.print("]\n", .{});
                         },
-                        else => std.debug.print("{any}\n", .{value}),
+                        else => try stdout.print("{any}\n", .{value}),
                     }
                     return value;
                 }

@@ -54,7 +54,7 @@ pub const Parser = struct {
         var r = std.EnumArray(token.TokenType, ParseRule).initFill(ParseRule{});
 
         // Binary operators
-        r.set(.PLUS, .{ .infix = binary, .precedence = .TERM });
+        r.set(.PLUS, .{ .prefix = unary, .infix = binary, .precedence = .TERM });
         r.set(.MINUS, .{ .prefix = unary, .infix = binary, .precedence = .TERM });
         r.set(.ASTERISK, .{ .infix = binary, .precedence = .FACTOR });
         r.set(.SLASH, .{ .infix = binary, .precedence = .FACTOR });
@@ -709,8 +709,16 @@ pub const Parser = struct {
     }
 
     fn unary(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-        const operator = self.tokens[self.current - 1];
-        const right = try self.parsePrecedence(.UNARY) orelse return error.ExpectedOperand;
+        if (self.debug_enabled) {
+            std.debug.print("Parsing unary expression, current token: {s}\n", .{
+                @tagName(self.peek().type),
+            });
+        }
+
+        const operator = self.peek(); // Get the current token as operator
+        self.advance(); // Move past the operator
+
+        const right = try self.parsePrecedence(.UNARY) orelse return error.ExpectedExpression;
 
         const unary_expr = try self.allocator.create(ast.Expr);
         unary_expr.* = .{ .Unary = .{

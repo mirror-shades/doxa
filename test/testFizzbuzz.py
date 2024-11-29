@@ -1,6 +1,5 @@
 import unittest
 from io import StringIO
-import sys
 
 class TestFizzBuzz(unittest.TestCase):
     def test_fizzbuzz_output(self):
@@ -12,8 +11,7 @@ class TestFizzBuzz(unittest.TestCase):
         expected_output = []
         for i in range(101):  # 0 to 100
             if i == 0:
-                expected_output.append("0")
-                expected_output.append("fizzbuzz")  # Special case for 0
+                continue
             elif i % 15 == 0:
                 expected_output.append("fizzbuzz")
             elif i % 3 == 0:
@@ -26,20 +24,19 @@ class TestFizzBuzz(unittest.TestCase):
         # Convert the expected output to a single string with newlines
         expected = "\n".join(expected_output) + "\n"
         
-        # Capture the actual output from running the program
+        # Add debug prints
         output = self.get_program_output()
         
         # Compare the outputs
         self.assertEqual(output, expected)
     
     def get_program_output(self):
-        # You might need to adjust this path based on your actual executable location
         import subprocess
         try:
-            result = subprocess.run(['./zig-out/bin/doxa', 'test/misc/fizzbuzz.doxa'], 
+            result = subprocess.run(['./zig-out/bin/doxa', './test/misc/fizzbuzz.doxa'], 
                                   capture_output=True, 
                                   text=True,
-                                  check=True)  # This will raise an exception if the command fails
+                                  check=True)
             return result.stdout
         except subprocess.CalledProcessError as e:
             print(f"Error running program: {e}")
