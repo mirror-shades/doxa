@@ -268,6 +268,7 @@ pub const BasicType = enum {
     Float,
     String,
     Boolean,
+    Auto,
 };
 
 pub const ArrayType = struct {
@@ -301,11 +302,13 @@ pub const Index = struct {
 
 pub const FunctionParam = struct {
     name: token.Token,
-    type_expr: *TypeExpr,
+    type_expr: ?*TypeExpr,
 
-    pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
-        self.type_expr.deinit(allocator);
-        allocator.destroy(self.type_expr);
+    pub fn deinit(self: *FunctionParam, allocator: std.mem.Allocator) void {
+        if (self.type_expr) |type_expr| {
+            type_expr.deinit(allocator);
+            allocator.destroy(type_expr);
+        }
     }
 };
 
