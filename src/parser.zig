@@ -99,6 +99,10 @@ pub const Parser = struct {
         // Blocks
         r.set(.LEFT_BRACE, .{ .prefix = block });
 
+        // Add function declaration support
+        r.set(.FN_KEYWORD, .{ .prefix = functionExpr });
+        r.set(.FUNCTION_KEYWORD, .{ .prefix = functionExpr });
+
         break :blk r;
     };
 
@@ -211,6 +215,8 @@ pub const Parser = struct {
                     else
                         ast.Stmt{ .Expression = null };
                     break :blk block_stmt;
+                } else if (self.peek().type == .FN_KEYWORD or self.peek().type == .FUNCTION_KEYWORD) {
+                    break :blk try self.parseFunctionDecl();
                 } else break :blk try self.parseExpressionStmt();
             };
 
@@ -979,7 +985,6 @@ pub const Parser = struct {
         while (self.peek().type != .RIGHT_BRACE and self.peek().type != .EOF) {
             // Look ahead to see if this is the last expression before the closing brace
             var is_last = false;
-            var needs_semicolon = true;
             var pos = self.current;
             var brace_count: usize = 0;
 
@@ -994,19 +999,29 @@ pub const Parser = struct {
                     }
                     brace_count -= 1;
                 } else if (tok.type == .SEMICOLON and brace_count == 0) {
-                    needs_semicolon = true;
                     is_last = false;
                     break;
                 }
+            }
+
+            if (self.peek().type == .RETURN) {
+                self.advance(); // consume 'return'
+                const return_expr = try self.parseExpression();
+
+                // Return statements need semicolons
+                if (self.peek().type != .SEMICOLON) {
+                    return error.ExpectedSemicolon;
+                }
+                self.advance(); // consume semicolon
+
+                try statements.append(ast.Stmt{ .Return = .{ .value = return_expr } });
+                continue;
             }
 
             if (is_last) {
                 // Parse as expression and wrap in return
                 if (try self.parseExpression()) |expr| {
                     try statements.append(ast.Stmt{ .Return = .{ .value = expr } });
-                }
-                if (needs_semicolon and self.peek().type == .SEMICOLON) {
-                    self.advance(); // consume semicolon if present
                 }
                 break;
             }
@@ -1138,5 +1153,24 @@ pub const Parser = struct {
             return self.tokens[self.tokens.len - 1];
         }
         return self.tokens[pos];
+    }
+
+    fn functionExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+        // Convert the function declaration into an expression
+        const fn_stmt = try self.parseFunctionDecl();
+
+        // Create and return a function expression
+        const fn_expr = try self.allocator.create(ast.Expr);
+        fn_expr.* = switch (fn_stmt) {
+            .Function => |f| .{ .Function = .{
+                .name = f.name,
+                .params = f.params,
+                .return_type = f.return_type,
+                .body = f.body,
+            } },
+            else => unreachable,
+        };
+
+        return fn_expr;
     }
 };
