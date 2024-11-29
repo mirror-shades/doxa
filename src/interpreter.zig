@@ -278,11 +278,34 @@ pub const Interpreter = struct {
             .Literal => |lit| {
                 return lit;
             },
-            .Binary => |bin| {
-                const left = try self.evaluate(bin.left orelse return error.InvalidExpression);
-                const right = try self.evaluate(bin.right orelse return error.InvalidExpression);
+            .Binary => |binary| {
+                const left = try self.evaluate(binary.left orelse return error.InvalidExpression);
+                const right = try self.evaluate(binary.right orelse return error.InvalidExpression);
 
-                switch (bin.operator.type) {
+                return switch (binary.operator.type) {
+                    .EQUALITY => switch (left) {
+                        .int => token.TokenLiteral{ .boolean = Interpreter.compare(left.int, right.int) == 0 },
+                        .float => token.TokenLiteral{ .boolean = left.float == right.float },
+                        .boolean => token.TokenLiteral{ .boolean = left.boolean == right.boolean },
+                        .string => token.TokenLiteral{ .boolean = std.mem.eql(u8, left.string, right.string) },
+                        .nothing => token.TokenLiteral{ .boolean = right == .nothing },
+                        .array => if (right == .array) blk: {
+                            if (left.array.len != right.array.len) break :blk token.TokenLiteral{ .boolean = false };
+                            for (left.array, right.array) |l, r| {
+                                if (!std.meta.eql(l, r)) break :blk token.TokenLiteral{ .boolean = false };
+                            }
+                            break :blk token.TokenLiteral{ .boolean = true };
+                        } else token.TokenLiteral{ .boolean = false },
+                        .struct_value => if (right == .struct_value) blk: {
+                            if (left.struct_value.len != right.struct_value.len) break :blk token.TokenLiteral{ .boolean = false };
+                            for (left.struct_value, right.struct_value) |l, r| {
+                                if (!std.mem.eql(u8, l.name, r.name) or !std.meta.eql(l.value, r.value))
+                                    break :blk token.TokenLiteral{ .boolean = false };
+                            }
+                            break :blk token.TokenLiteral{ .boolean = true };
+                        } else token.TokenLiteral{ .boolean = false },
+                        .function => token.TokenLiteral{ .boolean = false }, // Functions are never equal
+                    },
                     .PLUS => {
                         if (left == .int and right == .int) {
                             return token.TokenLiteral{ .int = left.int + right.int };
@@ -332,14 +355,18 @@ pub const Interpreter = struct {
                         }
                         return error.TypeError;
                     },
-                    .EQUALITY => {
-                        return token.TokenLiteral{ .boolean = Interpreter.compare(left.int, right.int) == 0 };
-                    },
                     .BANG_EQUAL => {
                         return token.TokenLiteral{ .boolean = Interpreter.compare(left.int, right.int) != 0 };
                     },
+                    .MODULO => {
+                        if (left == .int and right == .int) {
+                            if (right.int == 0) return error.DivisionByZero;
+                            return token.TokenLiteral{ .int = @mod(left.int, right.int) };
+                        }
+                        return error.TypeError;
+                    },
                     else => return error.InvalidOperator,
-                }
+                };
             },
             .Unary => |un| {
                 const operand = try self.evaluate(un.right orelse return error.InvalidExpression);
