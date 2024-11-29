@@ -22,6 +22,7 @@ pub const Expr = union(enum) {
     Literal: token.TokenLiteral,
     Binary: Binary,
     Unary: Unary,
+    Print: ?*Expr,
     Variable: token.Token,
     Assignment: Assignment,
     Grouping: ?*Expr,
@@ -169,6 +170,12 @@ pub const Expr = union(enum) {
                     stmt.deinit(allocator);
                 }
                 allocator.free(f.body);
+            },
+            .Print => |p| {
+                if (p) |expr| {
+                    expr.deinit(allocator);
+                    allocator.destroy(expr);
+                }
             },
         }
     }
