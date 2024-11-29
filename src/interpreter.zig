@@ -273,7 +273,7 @@ pub const Interpreter = struct {
         };
     }
 
-    pub fn evaluate(self: *Interpreter, expr: *const ast.Expr) !token.TokenLiteral {
+    pub fn evaluate(self: *Interpreter, expr: *const ast.Expr) ErrorList!token.TokenLiteral {
         const result = switch (expr.*) {
             .Literal => |lit| {
                 return lit;
@@ -599,6 +599,36 @@ pub const Interpreter = struct {
                 .body = f.body,
                 .closure = self.environment,
             } },
+            .Print => |e| {
+                if (e) |print_expr| {
+                    const value = try self.evaluate(print_expr);
+                    switch (value) {
+                        .int => |n| std.debug.print("{d}\n", .{n}),
+                        .float => |f| std.debug.print("{d}\n", .{f}),
+                        .string => |s| std.debug.print("{s}\n", .{s}),
+                        .boolean => |b| std.debug.print("{}\n", .{b}),
+                        .nothing => std.debug.print("nothing\n", .{}),
+                        .array => |arr| {
+                            std.debug.print("[", .{});
+                            for (arr, 0..) |item, i| {
+                                if (i > 0) std.debug.print(", ", .{});
+                                switch (item) {
+                                    .int => |n| std.debug.print("{d}", .{n}),
+                                    .float => |f| std.debug.print("{d}", .{f}),
+                                    .string => |s| std.debug.print("\"{s}\"", .{s}),
+                                    .boolean => |b| std.debug.print("{}", .{b}),
+                                    .nothing => std.debug.print("nothing", .{}),
+                                    else => std.debug.print("...", .{}),
+                                }
+                            }
+                            std.debug.print("]\n", .{});
+                        },
+                        else => std.debug.print("{any}\n", .{value}),
+                    }
+                    return value;
+                }
+                return token.TokenLiteral{ .nothing = {} };
+            },
         };
 
         if (self.debug_enabled) {

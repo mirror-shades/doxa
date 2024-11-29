@@ -84,7 +84,7 @@ pub const Parser = struct {
         r.set(.NOTHING, .{ .prefix = literal });
 
         // Grouping
-        r.set(.LEFT_PAREN, .{ .prefix = grouping, .infix = infix_call, .precedence = .CALL });
+        r.set(.LEFT_PAREN, .{ .prefix = grouping });
         r.set(.LEFT_BRACKET, .{ .prefix = array, .infix = index, .precedence = .CALL });
 
         // Variables and assignment
@@ -102,6 +102,9 @@ pub const Parser = struct {
         // Add function declaration support
         r.set(.FN_KEYWORD, .{ .prefix = functionExpr });
         r.set(.FUNCTION_KEYWORD, .{ .prefix = functionExpr });
+
+        // Add rule for the ? operator with lower precedence
+        r.set(.QUESTION, .{ .infix = print, .precedence = .UNARY });
 
         break :blk r;
     };
@@ -353,25 +356,13 @@ pub const Parser = struct {
             });
         }
 
-        if (self.peek().type == .RETURN) {
-            return try self.parseReturnStmt();
-        }
-
-        // If we're at a semicolon with no preceding expression, just skip it
-        if (self.peek().type == .SEMICOLON) {
-            if (self.debug_enabled) {
-                std.debug.print("Skipping standalone semicolon\n", .{});
-            }
-            self.advance();
-            return ast.Stmt{ .Expression = null };
-        }
-
         const expr = try self.parseExpression();
 
-        // Expect semicolon unless the expression is a block or if-chain with all blocks
+        // Expect semicolon unless the expression is a block or print expression
         if (expr) |e| {
             const needs_semicolon = switch (e.*) {
                 .Block => false,
+                .Print => false, // Print expressions don't need a semicolon
                 .If => !hasAllBlockBranches(e),
                 else => true,
             };
@@ -495,13 +486,21 @@ pub const Parser = struct {
         return binary_expr;
     }
 
-    fn grouping(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+    fn grouping(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+        self.advance(); // consume (
+
+        // If we have a left expression, this is a function call
+        if (left != null) {
+            return self.call(left, .NONE);
+        }
+
+        // Otherwise it's just a grouped expression
         const expr = try self.parseExpression() orelse return error.ExpectedExpression;
 
         if (self.peek().type != .RIGHT_PAREN) {
             return error.ExpectedRightParen;
         }
-        self.advance();
+        self.advance(); // consume )
 
         const grouping_expr = try self.allocator.create(ast.Expr);
         grouping_expr.* = .{ .Grouping = expr };
@@ -1179,5 +1178,36 @@ pub const Parser = struct {
         };
 
         return fn_expr;
+    }
+
+    // Add the print parsing function
+    fn print(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+        if (self.debug_enabled) {
+            std.debug.print("\nParsing print expression...\n", .{});
+            std.debug.print("Current token: {s} at position {}\n", .{
+                @tagName(self.peek().type),
+                self.current,
+            });
+        }
+
+        if (left == null) return error.ExpectedExpression;
+
+        // Consume the ? token
+        if (self.debug_enabled) {
+            std.debug.print("Consuming ? token\n", .{});
+        }
+        self.advance();
+
+        // Create the print expression
+        const print_expr = try self.allocator.create(ast.Expr);
+        print_expr.* = .{ .Print = left.? };
+
+        if (self.debug_enabled) {
+            std.debug.print("Created print expression, next token: {s}\n", .{
+                @tagName(self.peek().type),
+            });
+        }
+
+        return print_expr;
     }
 };
