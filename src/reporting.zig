@@ -118,6 +118,25 @@ pub const ErrorList = error{
     UnknownType,
     StrictModeRequiresType,
     StrictModeNoDynamicTypes,
+
+    // Print Statements
+    UnsupportedPrintStatement,
+    InvalidPrintStatement,
+    FileTooBig,
+    InputOutput,
+    BrokenPipe,
+    DiskQuota,
+    AccessDenied,
+    Unexpected,
+    SystemResources,
+    NoSpaceLeft,
+    DeviceBusy,
+    WouldBlock,
+    OperationAborted,
+    ConnectionResetByPeer,
+    InvalidArgument,
+    NotOpenForWriting,
+    LockViolation,
 };
 
 /// Reporting provides structured error handling and reporting capabilities

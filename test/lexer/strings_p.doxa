@@ -1,52 +1,52 @@
-"hello world"
+"hello world";
 "multiline
-string"
-"escaped \"quotes\""
-"tabs\ttabs\ttabs"
-"back\\slash"
+string";
+"escaped \"quotes\"";
+"tabs\ttabs\ttabs";
+"back\\slash";
 
-""
+"";
 "
-"
+";
 
 "
 multiline
 string
-"
+";
 "   padded   
    multiline   
-   string   "
+   string   ";
 
-r"hello world"
+r"hello world";
 r"multiline
-string"
-r"quotes \"still literal\""
-r"backslashes \ and \n are literal"
-r"tabs\ttabs\ttabs"
+string";
+r"quotes \"still literal\"";
+r"backslashes \ and \n are literal";
+r"tabs\ttabs\ttabs";
 
 r"
 multiline
 raw
 string
-"
+";
 
-r""
+r"";
 r"
-"
+";
 
-r"Unicode raw: こんにちは世界"
-r"Raw emojis: 🎈 🎉 🎊"
-"Unicode: こんにちは世界"
-"Mixed ASCII and Unicode: Hello 世界"
-"Emojis: 👋 🌍 ⭐"
-"Unicode escapes: \u{3053}\u{3093}"
-"Multiple escapes: \u{1F600}\u{1F601}\u{1F602}"
-"Mixed escapes and raw: \u{1F600} 😀 \u{1F601}"
-"Max unicode value: \u{10FFFF}"
-"All escapes: \n\t\\\""
-"Mixed escapes: line1\nline2\tindented\\backslash\"quote"
-"Multiple lines\nwith\nescapes"
-"String with null byte: \u{0000}"
-"String with control chars: \u{0001}\u{001F}"
-"Very long string: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-"Mixed everything: Hello\n\t世界\u{1F600}\\\"🌍"
+r"Unicode raw: こんにちは世界";
+r"Raw emojis: 🎈 🎉 🎊";
+"Unicode: こんにちは世界";
+"Mixed ASCII and Unicode: Hello 世界";
+"Emojis: 👋 🌍 ⭐";
+"Unicode escapes: \u{3053}\u{3093}";
+"Multiple escapes: \u{1F600}\u{1F601}\u{1F602}";
+"Mixed escapes and raw: \u{1F600} 😀 \u{1F601}";
+"Max unicode value: \u{10FFFF}";
+"All escapes: \n\t\\\"";
+"Mixed escapes: line1\nline2\tindented\\backslash\"quote";
+"Multiple lines\nwith\nescapes";
+"String with null byte: \u{0000}";
+"String with control chars: \u{0001}\u{001F}";
+"Very long string: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+"Mixed everything: Hello\n\t世界\u{1F600}\\\"🌍";
