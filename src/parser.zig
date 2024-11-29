@@ -371,9 +371,10 @@ pub const Parser = struct {
 
         // Check if we need a semicolon
         const needs_semicolon = if (expr) |e| switch (e.*) {
-            .Block, .If => false,
-            .Print => true, // Always require semicolon for print expressions
-            else => true,
+            .Block => false, // Blocks don't need semicolons
+            .If => false, // If expressions don't need semicolons
+            .Print => true, // Print expressions need semicolons
+            else => true, // All other expressions need semicolons
         } else true;
 
         if (self.debug_enabled) {
@@ -628,23 +629,42 @@ pub const Parser = struct {
             return error.ExpectedExpression;
         };
 
-        // Create implicit nothing for else branch when not in strict mode
-        var else_expr: ?*ast.Expr = if (self.mode != .Strict) blk: {
-            const nothing_expr = try self.allocator.create(ast.Expr);
-            nothing_expr.* = .{ .Literal = .{ .nothing = {} } };
-            break :blk nothing_expr;
-        } else null;
+        // Check for semicolon after then branch if it's a print expression
+        if (then_expr.* == .Print) {
+            if (self.peek().type != .SEMICOLON) {
+                condition.deinit(self.allocator);
+                self.allocator.destroy(condition);
+                then_expr.deinit(self.allocator);
+                self.allocator.destroy(then_expr);
+                return error.ExpectedSemicolon;
+            }
+            self.advance(); // consume semicolon
+        }
 
-        // Check for else branch
+        // Handle else branch
+        var else_expr: ?*ast.Expr = null;
         if (self.peek().type == .ELSE) {
             self.advance(); // consume 'else'
 
-            // Handle 'else if'
+            // Check if this is an else-if
             if (self.peek().type == .IF) {
                 else_expr = try self.parseIfExpr(null, .NONE);
             } else {
-                // Handle regular else block
                 else_expr = try self.parsePrecedence(.NONE);
+
+                // Check for semicolon after else branch if it's a print expression
+                if (else_expr != null and else_expr.?.* == .Print) {
+                    if (self.peek().type != .SEMICOLON) {
+                        condition.deinit(self.allocator);
+                        self.allocator.destroy(condition);
+                        then_expr.deinit(self.allocator);
+                        self.allocator.destroy(then_expr);
+                        else_expr.?.deinit(self.allocator);
+                        self.allocator.destroy(else_expr.?);
+                        return error.ExpectedSemicolon;
+                    }
+                    self.advance(); // consume semicolon
+                }
             }
 
             if (else_expr == null) {
@@ -652,12 +672,12 @@ pub const Parser = struct {
                 self.allocator.destroy(condition);
                 then_expr.deinit(self.allocator);
                 self.allocator.destroy(then_expr);
-                if (else_expr) |e| {
-                    e.deinit(self.allocator);
-                    self.allocator.destroy(e);
-                }
                 return error.ExpectedExpression;
             }
+        } else {
+            // Create implicit nothing for else branch
+            else_expr = try self.allocator.create(ast.Expr);
+            else_expr.?.* = .{ .Literal = .{ .nothing = {} } };
         }
 
         const if_expr = try self.allocator.create(ast.Expr);
