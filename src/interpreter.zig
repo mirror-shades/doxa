@@ -467,6 +467,15 @@ pub const Interpreter = struct {
 
                 return token.TokenLiteral{ .nothing = {} };
             },
+            .Logical => |logical| {
+                const left = try self.evaluate(logical.left);
+                const right = try self.evaluate(logical.right);
+                return token.TokenLiteral{ .boolean = switch (logical.operator.type) {
+                    .AND_KEYWORD, .AND_SYMBOL => left.boolean and right.boolean,
+                    .OR_KEYWORD, .OR_SYMBOL => left.boolean or right.boolean,
+                    else => return error.InvalidOperator,
+                } };
+            },
         }
     }
 };
