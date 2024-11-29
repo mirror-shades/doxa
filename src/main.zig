@@ -26,6 +26,7 @@ pub var hadError: bool = false;
 var debugLexer: bool = false;
 pub var debugParser: bool = false;
 var compile: bool = false;
+var is_strict_repl: bool = false;
 ///==========================================================================
 /// Types & Errors
 ///==========================================================================
@@ -67,7 +68,7 @@ pub fn reportError(line: i32, where: []const u8, message: []const u8) void {
 ///==========================================================================
 /// Run
 ///==========================================================================
-pub fn run(memory: *MemoryManager, interpreter: *Interpreter, source: []const u8) !?TokenLiteral {
+pub fn run(memory: *MemoryManager, interpreter: *Interpreter, source: []const u8, is_repl: bool) !?TokenLiteral {
     var lexer = Lexer.init(memory.getAllocator(), source);
     defer lexer.deinit();
 
@@ -82,7 +83,7 @@ pub fn run(memory: *MemoryManager, interpreter: *Interpreter, source: []const u8
     }
 
     if (!hadError) {
-        var parser_instance = try Parser.init(memory, token_list.items, memory.debug_enabled);
+        var parser_instance = try Parser.init(memory, token_list.items, debugParser, is_repl, is_strict_repl);
         defer parser_instance.deinit();
 
         const statements = try parser_instance.parse();
@@ -112,7 +113,7 @@ fn runFile(memory: *MemoryManager, path: []const u8) !void {
     const source = try file.readToEndAlloc(memory.getAllocator(), MAX_FILE_SIZE);
     defer memory.getAllocator().free(source);
 
-    _ = try run(memory, &interpreter, source);
+    _ = try run(memory, &interpreter, source, false);
     if (hadError) {
         std.process.exit(65);
     }
@@ -135,7 +136,9 @@ pub fn main() !void {
     var script_path: ?[]const u8 = null;
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
-        if (std.mem.eql(u8, args[i], "--debug-lexer")) {
+        if (std.mem.eql(u8, args[i], "--strict-repl")) {
+            is_strict_repl = true;
+        } else if (std.mem.eql(u8, args[i], "--debug-lexer")) {
             debugLexer = true;
         } else if (std.mem.eql(u8, args[i], "--debug-parser")) {
             debugParser = true;

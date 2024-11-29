@@ -162,12 +162,21 @@ pub const Interpreter = struct {
         return switch (stmt.*) {
             .Expression => |expr| {
                 if (expr) |e| {
-                    return self.evaluate(e) catch |err| {
-                        if (self.debug_enabled) {
-                            std.debug.print("Error evaluating expression: {s}\n", .{@errorName(err)});
-                        }
-                        return err;
-                    };
+                    // Handle assignment expressions at the statement level
+                    switch (e.*) {
+                        .Assignment => {
+                            const value = try self.evaluate(e.Assignment.value orelse return error.InvalidExpression);
+                            const key = try self.string_interner.intern(e.Assignment.name.lexeme);
+                            try self.environment.assign(key, value);
+                            return value;
+                        },
+                        else => return self.evaluate(e) catch |err| {
+                            if (self.debug_enabled) {
+                                std.debug.print("Error evaluating expression: {s}\n", .{@errorName(err)});
+                            }
+                            return err;
+                        },
+                    }
                 }
                 return null;
             },

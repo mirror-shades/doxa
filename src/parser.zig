@@ -6,19 +6,73 @@ const MemoryManager = @import("memory.zig").MemoryManager;
 const Reporting = @import("reporting.zig").Reporting;
 const ErrorList = @import("reporting.zig").ErrorList;
 
+// for pratt parsing
+const Precedence = enum(u8) {
+    NONE = 0,
+    ASSIGNMENT = 1, // =
+    OR = 2, // or
+    AND = 3, // and
+    EQUALITY = 4, // == !=
+    COMPARISON = 5, // < > <= >=
+    TERM = 6, // + -
+    FACTOR = 7, // * /
+    UNARY = 8, // ! -
+    CALL = 9, // . () []
+    PRIMARY = 10,
+};
+
+const ParseFn = *const fn (*Parser, ?*ast.Expr, Precedence) ErrorList!?*ast.Expr;
+
+const Associativity = enum {
+    LEFT,
+    RIGHT,
+    NONE,
+};
+
+const ParseRule = struct {
+    prefix: ?ParseFn = null,
+    infix: ?ParseFn = null,
+    precedence: Precedence = .NONE,
+    associativity: Associativity = .LEFT,
+};
+
+pub const Mode = enum {
+    Normal,
+    Strict,
+    Warn,
+};
+
 pub const Parser = struct {
     allocator: std.mem.Allocator,
     tokens: []const token.Token,
     current: usize, // array index is usize by default
     debug_enabled: bool,
+    mode: Mode,
+    is_repl: bool,
 
-    pub fn init(memory: *MemoryManager, tokens: []const token.Token, debug_enabled: bool) !Parser {
+    pub fn init(memory: *MemoryManager, tokens: []const token.Token, debug_enabled: bool, is_repl: bool, is_strict_repl: bool) !Parser {
         if (tokens.len == 0) return error.EmptyTokenList;
+
+        const mode = if (is_repl)
+            if (is_strict_repl) Mode.Strict else Mode.Normal // Use provided REPL mode or default
+        else blk: {
+            // File mode detection logic
+            if (tokens.len >= 2 and tokens[0].type == .HASH and tokens[1].type == .IDENTIFIER) {
+                if (std.mem.eql(u8, tokens[1].lexeme, "strict")) {
+                    break :blk Mode.Strict;
+                } else if (std.mem.eql(u8, tokens[1].lexeme, "warn")) {
+                    break :blk Mode.Warn;
+                } else break :blk Mode.Normal;
+            } else break :blk Mode.Normal;
+        };
+
         return Parser{
             .allocator = memory.getAllocator(),
             .tokens = tokens,
-            .current = 0,
+            .current = if (!is_repl and mode != .Normal) 2 else 0,
             .debug_enabled = debug_enabled,
+            .mode = mode,
+            .is_repl = is_repl,
         };
     }
 
@@ -72,6 +126,14 @@ pub const Parser = struct {
     }
 
     pub fn parse(self: *Parser) ErrorList![]ast.Stmt {
+        if (self.debug_enabled) {
+            std.debug.print("\nToken stream:\n", .{});
+            for (self.tokens, 0..) |t, i| {
+                std.debug.print("{}: {s} ({s})\n", .{ i, @tagName(t.type), t.lexeme });
+            }
+            std.debug.print("\n", .{});
+        }
+
         var statements = std.ArrayList(ast.Stmt).init(self.allocator);
         errdefer {
             for (statements.items) |*stmt| {
@@ -106,15 +168,13 @@ pub const Parser = struct {
             std.debug.print("\nAttempting to parse var declaration...\n", .{});
         }
 
-        // var
+        // Check for const/var keyword
         const tok = self.peek();
-        if (tok.type != .VAR) {
-            if (self.debug_enabled) {
-                std.debug.print("Expected VAR, got {s}\n", .{@tagName(tok.type)});
-            }
-            return error.UnexpectedToken;
-        }
-        if (self.debug_enabled) std.debug.print("Found VAR token\n", .{});
+        const is_mutable = switch (tok.type) {
+            .VAR => true,
+            .CONST => false,
+            else => return error.UnexpectedToken,
+        };
         self.advance();
 
         // identifier
@@ -130,36 +190,86 @@ pub const Parser = struct {
 
         // : type (optional)
         var type_expr: ?*ast.TypeExpr = null;
-        if (self.peek().type == .COLON) {
-            self.advance();
-            type_expr = try self.parseTypeExpr();
-        }
+        const is_dynamic = blk: {
+            if (self.peek().type == .COLON) {
+                self.advance();
+                type_expr = try self.parseTypeExpr();
+                break :blk false; // If type is explicitly declared, it's not dynamic
+            } else {
+                break :blk !is_mutable and self.mode != .Strict; // Only allow dynamic if not const and not in strict mode
+            }
+        };
 
-        // = (optional)
+        // = or 'is'
         var initializer: ?*ast.Expr = null;
         if (self.peek().type == .ASSIGN) {
             self.advance();
-            initializer = try self.parseExpression();
+
+            // Parse the expression
+            const expr = try self.parseExpression();
+            if (expr == null) {
+                if (self.debug_enabled) {
+                    std.debug.print("Failed to parse initializer expression\n", .{});
+                }
+                return error.ExpectedExpression;
+            }
+            initializer = expr;
+
+            if (self.debug_enabled) {
+                std.debug.print("Successfully parsed initializer\n", .{});
+            }
+        }
+
+        // Add debug print before semicolon check
+        if (self.debug_enabled) {
+            std.debug.print("Checking for semicolon, current token: {s}\n", .{@tagName(self.peek().type)});
         }
 
         // ;
         if (self.peek().type != .SEMICOLON) {
             if (self.debug_enabled) {
-                std.debug.print("Expected SEMICOLON, got {s}\n", .{@tagName(self.peek().type)});
+                std.debug.print("Expected SEMICOLON, got {s} at position {}\n", .{
+                    @tagName(self.peek().type),
+                    self.current,
+                });
             }
             return error.ExpectedSemicolon;
         }
-        if (self.debug_enabled) std.debug.print("Found semicolon\n", .{});
-        self.advance();
+        self.advance(); // consume semicolon
 
         if (self.debug_enabled) {
             std.debug.print("\nSuccessfully parsed var declaration\n", .{});
+        }
+
+        // Type checking based on mode
+        switch (self.mode) {
+            .Strict => {
+                if (type_expr == null) {
+                    return error.StrictModeRequiresType;
+                }
+                if (is_dynamic) {
+                    return error.StrictModeNoDynamicTypes;
+                }
+            },
+            .Warn => {
+                if (type_expr == null) {
+                    // Log warning but continue
+                    if (self.debug_enabled) {
+                        std.debug.print("Warning: Variable declaration without type in warn mode\n", .{});
+                    }
+                }
+            },
+            .Normal => {
+                // Allow both typed and untyped declarations
+            },
         }
 
         return ast.Stmt{ .VarDecl = .{
             .name = id_tok,
             .type_expr = type_expr,
             .initializer = initializer,
+            .is_mutable = is_mutable,
+            .is_dynamic = is_dynamic,
         } };
     }
 
@@ -211,31 +321,197 @@ pub const Parser = struct {
             }
         }
 
+        return ast.Stmt{ .Expression = expr };
+    }
+
+    fn getRule(token_type: token.TokenType) ParseRule {
+        return switch (token_type) {
+            .LEFT_PAREN => .{ .prefix = Parser.grouping, .infix = Parser.infix_call, .precedence = .CALL },
+            .LEFT_BRACKET => .{ .prefix = Parser.array, .infix = Parser.index, .precedence = .CALL },
+            .MINUS => .{ .prefix = Parser.unary, .infix = Parser.binary, .precedence = .TERM },
+            .PLUS => .{ .infix = Parser.binary, .precedence = .TERM },
+            .SLASH => .{ .infix = Parser.binary, .precedence = .FACTOR },
+            .ASTERISK => .{ .infix = Parser.binary, .precedence = .FACTOR },
+            .BANG => .{ .prefix = Parser.unary },
+            .ASSIGN => .{
+                .infix = Parser.assignment, // Make sure this is properly set
+                .precedence = .ASSIGNMENT, // This should be the lowest precedence
+                .associativity = .RIGHT,
+            },
+            .BANG_EQUAL => .{ .infix = Parser.binary, .precedence = .EQUALITY },
+            .EQUALITY => .{ .infix = Parser.binary, .precedence = .EQUALITY },
+            .GREATER => .{ .infix = Parser.binary, .precedence = .COMPARISON },
+            .GREATER_EQUAL => .{ .infix = Parser.binary, .precedence = .COMPARISON },
+            .LESS => .{ .infix = Parser.binary, .precedence = .COMPARISON },
+            .LESS_EQUAL => .{ .infix = Parser.binary, .precedence = .COMPARISON },
+            .IDENTIFIER => .{
+                .prefix = Parser.variable,
+                .precedence = .NONE, // Important: identifiers should have lowest precedence
+            },
+            .STRING => .{ .prefix = Parser.literal },
+            .INT => .{ .prefix = Parser.literal },
+            .FLOAT => .{ .prefix = Parser.literal },
+            .BOOL => .{ .prefix = Parser.literal },
+            .IF => .{ .prefix = Parser.parseIfExpr },
+            .LEFT_BRACE => .{ .prefix = Parser.block },
+            else => .{},
+        };
+    }
+
+    fn parseExpression(self: *Parser) ErrorList!?*ast.Expr {
+        // Start parsing at lowest precedence
+        return try self.parsePrecedence(.ASSIGNMENT);
+    }
+
+    fn parsePrecedence(self: *Parser, precedence: Precedence) ErrorList!?*ast.Expr {
         if (self.debug_enabled) {
-            std.debug.print("Successfully parsed expression statement\n", .{});
-            std.debug.print("Next token: {s} at position {}\n", .{
+            std.debug.print("\nParsing with precedence: {}\n", .{@intFromEnum(precedence)});
+            std.debug.print("Current token: {s} at position {}\n", .{
                 @tagName(self.peek().type),
                 self.current,
             });
         }
 
-        return ast.Stmt{ .Expression = expr };
-    }
+        // Get the prefix rule for current token
+        const current = self.peek();
+        const rule = getRule(current.type);
+        const prefix_rule = rule.prefix orelse {
+            if (self.debug_enabled) {
+                std.debug.print("No prefix parse rule for {s}\n", .{@tagName(current.type)});
+            }
+            return null;
+        };
 
-    fn parseExpression(self: *Parser) ErrorList!?*ast.Expr {
-        if (self.peek().type == .IF) {
-            return try self.parseIfExpr();
-        } else if (self.peek().type == .LEFT_BRACE) {
-            // Convert block statement to expression
-            const block_stmt = try self.parseBlock();
-            const block_expr = try self.allocator.create(ast.Expr);
-            block_expr.* = ast.Expr{ .Block = block_stmt.Block };
-            return block_expr;
+        // Parse prefix expression
+        if (self.debug_enabled) {
+            std.debug.print("Applying prefix rule for {s}\n", .{@tagName(current.type)});
         }
-        return try self.parseAssignment();
+
+        var left = try prefix_rule(self, null, precedence);
+        if (left == null) {
+            if (self.debug_enabled) {
+                std.debug.print("Prefix rule returned null\n", .{});
+            }
+            return null;
+        }
+
+        // Keep parsing infix expressions while the next operator has higher or equal precedence
+        while (@intFromEnum(precedence) <= @intFromEnum(getRule(self.peek().type).precedence)) {
+            const operator = self.peek();
+            const next_rule = getRule(operator.type);
+            const infix_rule = next_rule.infix orelse break;
+
+            if (self.debug_enabled) {
+                std.debug.print("Found infix operator: {s}\n", .{@tagName(operator.type)});
+            }
+
+            self.advance(); // Consume the operator
+
+            // Adjust precedence based on associativity
+            const next_precedence = switch (next_rule.associativity) {
+                .LEFT => @as(Precedence, @enumFromInt(@intFromEnum(next_rule.precedence))),
+                .RIGHT => @as(Precedence, @enumFromInt(@intFromEnum(next_rule.precedence) - 1)),
+                .NONE => .PRIMARY, // Highest precedence to prevent chaining
+            };
+
+            left = try infix_rule(self, left, next_precedence);
+            if (left == null) break;
+        }
+
+        return left;
     }
 
-    fn parseIfExpr(self: *Parser) ErrorList!?*ast.Expr {
+    fn literal(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+        const current = self.peek();
+
+        if (self.debug_enabled) {
+            std.debug.print("Attempting to parse literal, token: {s}\n", .{@tagName(current.type)});
+        }
+
+        // Don't try to parse tokens that aren't literals
+        const expr = switch (current.type) {
+            .INT, .FLOAT, .STRING, .BOOL => blk: {
+                if (self.debug_enabled) {
+                    std.debug.print("Creating literal for {s}\n", .{@tagName(current.type)});
+                }
+                const new_expr = try self.allocator.create(ast.Expr);
+                new_expr.* = .{ .Literal = current.literal };
+                self.advance();
+                break :blk new_expr;
+            },
+            else => {
+                if (self.debug_enabled) {
+                    std.debug.print("Not a literal token: {s}\n", .{@tagName(current.type)});
+                }
+                return null;
+            },
+        };
+
+        if (self.debug_enabled) {
+            std.debug.print("Successfully parsed literal, next token: {s}\n", .{@tagName(self.peek().type)});
+        }
+
+        return expr;
+    }
+
+    fn binary(self: *Parser, left: ?*ast.Expr, precedence: Precedence) ErrorList!?*ast.Expr {
+        const operator = self.tokens[self.current - 1];
+
+        // Use the passed-in precedence instead of calculating it here
+        const right = try self.parsePrecedence(precedence) orelse return error.ExpectedExpression;
+
+        const binary_expr = try self.allocator.create(ast.Expr);
+        binary_expr.* = .{ .Binary = .{
+            .left = left.?,
+            .operator = operator,
+            .right = right,
+        } };
+        return binary_expr;
+    }
+
+    fn grouping(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+        self.advance();
+        const expr = try self.parsePrecedence(.NONE) orelse return error.ExpectedExpression;
+        if (self.peek().type != .RIGHT_PAREN) return error.ExpectedRightParen;
+        self.advance();
+        return expr;
+    }
+
+    fn infix_call(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+        self.advance();
+        return self.call(left.?);
+    }
+
+    fn call(self: *Parser, callee: *ast.Expr) ErrorList!?*ast.Expr {
+        var args = std.ArrayList(*ast.Expr).init(self.allocator);
+        errdefer {
+            for (args.items) |arg| {
+                arg.deinit(self.allocator);
+                self.allocator.destroy(arg);
+            }
+            args.deinit();
+        }
+
+        while (self.peek().type != .RIGHT_PAREN) {
+            const arg = try self.parsePrecedence(.NONE) orelse return error.ExpectedExpression;
+            try args.append(arg);
+
+            if (self.peek().type != .COMMA) break;
+            self.advance(); // consume comma
+        }
+
+        if (self.peek().type != .RIGHT_PAREN) return error.ExpectedRightParen;
+        self.advance(); // consume right paren
+
+        const call_expr = try self.allocator.create(ast.Expr);
+        call_expr.* = .{ .Call = .{
+            .callee = callee,
+            .arguments = try args.toOwnedSlice(),
+        } };
+        return call_expr;
+    }
+
+    fn parseIfExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
         if (self.debug_enabled) {
             std.debug.print("\nParsing if expression...\n", .{});
         }
@@ -285,7 +561,7 @@ pub const Parser = struct {
         var else_expr: *ast.Expr = undefined;
         if (self.peek().type == .IF) {
             // If we see an 'if' after 'else', recursively parse it as another if expression
-            else_expr = (try self.parseIfExpr()) orelse {
+            else_expr = (try self.parseIfExpr(null, .PRIMARY)) orelse {
                 condition.deinit(self.allocator);
                 self.allocator.destroy(condition);
                 then_expr.deinit(self.allocator);
@@ -318,401 +594,89 @@ pub const Parser = struct {
         return if_expr;
     }
 
-    fn parseAssignment(self: *Parser) ErrorList!?*ast.Expr {
-        const expr = (try self.parseComparison()) orelse return null;
-        errdefer {
-            expr.deinit(self.allocator);
-            self.allocator.destroy(expr);
+    fn assignment(self: *Parser, left: ?*ast.Expr, precedence: Precedence) ErrorList!?*ast.Expr {
+        if (self.debug_enabled) {
+            std.debug.print("Parsing assignment expression\n", .{});
         }
 
-        if (self.check(.ASSIGN)) {
-            self.advance(); // consume the equals sign
-            const value = (try self.parseAssignment()) orelse {
-                return error.InvalidAssignment;
-            };
-            errdefer {
-                value.deinit(self.allocator);
-                self.allocator.destroy(value);
-            }
-
-            // Handle array index assignment
-            if (expr.* == .Index) {
-                const index_expr = expr;
-                const assign_expr = try self.allocator.create(ast.Expr);
-                assign_expr.* = .{ .IndexAssign = .{
-                    .array = index_expr.Index.array,
-                    .index = index_expr.Index.index,
-                    .value = value,
-                } };
-                return assign_expr;
-            }
-
-            // Handle regular variable assignment
-            if (expr.* == .Variable) {
-                const name = expr.Variable;
-                const assign_expr = try self.allocator.create(ast.Expr);
-                assign_expr.* = .{ .Assignment = .{
-                    .name = name,
-                    .value = value,
-                } };
-                return assign_expr;
-            }
-
+        const value = try self.parsePrecedence(precedence) orelse return error.ExpectedExpression;
+        errdefer {
             value.deinit(self.allocator);
             self.allocator.destroy(value);
-            return error.InvalidAssignmentTarget;
         }
-        return expr;
+
+        // Handle different assignment targets
+        if (left) |target| {
+            switch (target.*) {
+                .Index => |index_expr| {
+                    const assign_expr = try self.allocator.create(ast.Expr);
+                    assign_expr.* = .{ .IndexAssign = .{
+                        .array = index_expr.array,
+                        .index = index_expr.index,
+                        .value = value,
+                    } };
+                    return assign_expr;
+                },
+                .Variable => |name| {
+                    if (self.debug_enabled) {
+                        std.debug.print("Creating assignment expression\n", .{});
+                    }
+                    const assign_expr = try self.allocator.create(ast.Expr);
+                    assign_expr.* = .{ .Assignment = .{
+                        .name = name,
+                        .value = value,
+                    } };
+                    return assign_expr;
+                },
+                else => {
+                    value.deinit(self.allocator);
+                    self.allocator.destroy(value);
+                    return error.InvalidAssignmentTarget;
+                },
+            }
+        }
+        return error.InvalidAssignment;
     }
 
-    fn parseComparison(self: *Parser) ErrorList!?*ast.Expr {
-        var expr = (try self.parseTerm()) orelse return null;
+    fn unary(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+        const operator = self.peek();
+        self.advance();
+
+        const right = try self.parsePrecedence(.UNARY) orelse return error.ExpectedExpression;
         errdefer {
-            expr.deinit(self.allocator);
-            self.allocator.destroy(expr);
+            right.deinit(self.allocator);
+            self.allocator.destroy(right);
         }
 
-        while (true) {
-            const current = self.peek();
-            if (current.type != .GREATER and
-                current.type != .GREATER_EQUAL and
-                current.type != .LESS and
-                current.type != .LESS_EQUAL and
-                current.type != .EQUALITY and
-                current.type != .BANG_EQUAL) break;
-
-            const next = self.peek_next();
-            if (next.type == .SEMICOLON or next.type == .EOF) break;
-
-            self.advance();
-            const right = (try self.parseTerm()) orelse {
-                return error.ExpectedExpression;
-            };
-            errdefer {
-                right.deinit(self.allocator);
-                self.allocator.destroy(right);
-            }
-
-            const binary = try self.allocator.create(ast.Expr);
-            binary.* = ast.Expr{ .Binary = .{
-                .left = expr,
-                .operator = current,
-                .right = right,
-            } };
-            expr = binary;
-        }
-
-        return expr;
+        const unary_expr = try self.allocator.create(ast.Expr);
+        unary_expr.* = .{ .Unary = .{
+            .operator = operator,
+            .right = right,
+        } };
+        return unary_expr;
     }
 
-    fn parseTerm(self: *Parser) ErrorList!?*ast.Expr {
-        var expr = try self.parseFactor();
-        errdefer if (expr) |e| {
-            e.deinit(self.allocator);
-            self.allocator.destroy(e);
-        };
-
-        while (true) {
-            const current = self.peek();
-            if (current.type != .PLUS and current.type != .MINUS) break;
-
-            const operator = current;
-            self.advance();
-
-            const right = try self.parseFactor() orelse {
-                return error.ExpectedExpression;
-            };
-            errdefer {
-                right.deinit(self.allocator);
-                self.allocator.destroy(right);
-            }
-
-            if (expr) |left| {
-                const binary = try self.allocator.create(ast.Expr);
-                errdefer self.allocator.destroy(binary);
-                binary.* = ast.Expr{ .Binary = .{
-                    .left = left,
-                    .operator = operator,
-                    .right = right,
-                } };
-                expr = binary;
-            }
-        }
-
-        return expr;
-    }
-
-    fn parseFactor(self: *Parser) ErrorList!?*ast.Expr {
-        var expr = try self.parseUnary();
-        errdefer if (expr) |e| {
-            e.deinit(self.allocator);
-            self.allocator.destroy(e);
-        };
-
-        while (true) {
-            const current = self.peek();
-            if (current.type != .ASTERISK and current.type != .SLASH) break;
-
-            const operator = current;
-            self.advance();
-
-            const right = try self.parseUnary() orelse {
-                return error.ExpectedExpression;
-            };
-            errdefer {
-                right.deinit(self.allocator);
-                self.allocator.destroy(right);
-            }
-
-            if (expr) |left| {
-                const binary = try self.allocator.create(ast.Expr);
-                errdefer self.allocator.destroy(binary);
-                binary.* = ast.Expr{ .Binary = .{
-                    .left = left,
-                    .operator = operator,
-                    .right = right,
-                } };
-                expr = binary;
-            }
-        }
-
-        return expr;
-    }
-
-    fn parseUnary(self: *Parser) ErrorList!?*ast.Expr {
-        if (self.peek().type == .MINUS or self.peek().type == .BANG) {
-            const operator = self.peek();
-            self.advance();
-            const right = (try self.parseUnary()) orelse {
-                return error.ExpectedExpression;
-            };
-
-            const unary = try self.allocator.create(ast.Expr);
-            unary.* = ast.Expr{ .Unary = .{
-                .operator = operator,
-                .right = right,
-            } };
-
-            if (self.debug_enabled) {
-                std.debug.print("Found unary expression with operator: {s}\n", .{@tagName(operator.type)});
-            }
-            return unary;
-        }
-
-        return try self.parsePrimary();
-    }
-
-    fn parsePrimary(self: *Parser) ErrorList!?*ast.Expr {
-        if (self.debug_enabled) std.debug.print("Parsing primary expression...\n", .{});
+    fn variable(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+        const var_token = self.peek();
+        self.advance();
 
         const expr = try self.allocator.create(ast.Expr);
-        errdefer self.allocator.destroy(expr);
-
-        const tok = self.peek();
-        switch (tok.type) {
-            .INT, .FLOAT, .STRING, .BOOL => {
-                expr.* = ast.Expr{ .Literal = tok.literal };
-                if (self.debug_enabled) {
-                    std.debug.print("Found literal: {any}\n", .{tok.literal});
-                }
-                self.advance();
-                return expr;
-            },
-            .IDENTIFIER => {
-                expr.* = ast.Expr{ .Variable = tok };
-                if (self.debug_enabled) {
-                    std.debug.print("Found variable reference: {s}\n", .{tok.lexeme});
-                }
-                self.advance();
-
-                // Handle function calls
-                if (self.peek().type == .LEFT_PAREN) {
-                    self.advance(); // consume (
-                    var args = std.ArrayList(*ast.Expr).init(self.allocator);
-                    errdefer {
-                        for (args.items) |arg| {
-                            arg.deinit(self.allocator);
-                            self.allocator.destroy(arg);
-                        }
-                        args.deinit();
-                    }
-
-                    while (self.peek().type != .RIGHT_PAREN) {
-                        const arg = (try self.parseExpression()) orelse {
-                            expr.deinit(self.allocator);
-                            self.allocator.destroy(expr);
-                            return error.ExpectedExpression;
-                        };
-                        try args.append(arg);
-
-                        if (self.peek().type == .COMMA) {
-                            self.advance();
-                        } else if (self.peek().type != .RIGHT_PAREN) {
-                            expr.deinit(self.allocator);
-                            self.allocator.destroy(expr);
-                            return error.ExpectedCommaOrParen;
-                        }
-                    }
-                    self.advance(); // consume )
-
-                    const call_expr = try self.allocator.create(ast.Expr);
-                    errdefer self.allocator.destroy(call_expr);
-                    call_expr.* = .{ .Call = .{
-                        .callee = expr,
-                        .arguments = try args.toOwnedSlice(),
-                    } };
-                    return call_expr;
-                }
-
-                // Handle array indexing
-                if (self.peek().type == .LEFT_BRACKET) {
-                    self.advance(); // consume [
-                    const index = (try self.parseExpression()) orelse return error.ExpectedExpression;
-                    errdefer {
-                        index.deinit(self.allocator);
-                        self.allocator.destroy(index);
-                    }
-
-                    if (self.peek().type != .RIGHT_BRACKET) {
-                        index.deinit(self.allocator);
-                        self.allocator.destroy(index);
-                        return error.ExpectedRightBracket;
-                    }
-                    self.advance(); // consume ]
-
-                    // If this is an assignment target
-                    if (self.peek().type == .ASSIGN) {
-                        self.advance(); // consume =
-                        const value = (try self.parseExpression()) orelse {
-                            index.deinit(self.allocator);
-                            self.allocator.destroy(index);
-                            return error.ExpectedExpression;
-                        };
-                        errdefer {
-                            value.deinit(self.allocator);
-                            self.allocator.destroy(value);
-                        }
-
-                        const index_expr = try self.allocator.create(ast.Expr);
-                        index_expr.* = .{ .IndexAssign = .{
-                            .array = expr,
-                            .index = index,
-                            .value = value,
-                        } };
-                        return index_expr;
-                    }
-
-                    const index_expr = try self.allocator.create(ast.Expr);
-                    errdefer self.allocator.destroy(index_expr);
-                    index_expr.* = .{ .Index = .{
-                        .array = expr,
-                        .index = index,
-                    } };
-                    return index_expr;
-                }
-
-                return expr;
-            },
-            .LEFT_PAREN => {
-                self.advance();
-                const subexpr = (try self.parseExpression()) orelse {
-                    self.allocator.destroy(expr);
-                    return error.ExpectedExpression;
-                };
-                if (self.peek().type != .RIGHT_PAREN) {
-                    // Clean up allocated memory before returning error
-                    subexpr.deinit(self.allocator);
-                    self.allocator.destroy(subexpr);
-                    self.allocator.destroy(expr);
-                    return error.ExpectedRightParen;
-                }
-                self.advance();
-                expr.* = ast.Expr{ .Grouping = subexpr };
-                return expr;
-            },
-            .LEFT_BRACKET => {
-                // Array literal
-                self.advance();
-                var elements = std.ArrayList(*ast.Expr).init(self.allocator);
-                errdefer {
-                    for (elements.items) |elem| {
-                        elem.deinit(self.allocator);
-                    }
-                    elements.deinit();
-                }
-
-                while (self.peek().type != .RIGHT_BRACKET) {
-                    const element = (try self.parseExpression()) orelse return error.ExpectedExpression;
-                    try elements.append(element);
-
-                    if (self.peek().type == .COMMA) {
-                        self.advance();
-                    } else if (self.peek().type != .RIGHT_BRACKET) {
-                        return error.ExpectedCommaOrBracket;
-                    }
-                }
-                self.advance(); // consume ]
-
-                expr.* = ast.Expr{ .Array = try elements.toOwnedSlice() };
-                return expr;
-            },
-            .LEFT_BRACE => {
-                self.advance();
-                var fields = std.ArrayList(*ast.StructLiteralField).init(self.allocator);
-                errdefer {
-                    for (fields.items) |field| {
-                        field.deinit(self.allocator);
-                        self.allocator.destroy(field);
-                    }
-                    fields.deinit();
-                }
-
-                while (self.peek().type != .RIGHT_BRACE) {
-                    if (self.peek().type != .IDENTIFIER) {
-                        return error.ExpectedIdentifier;
-                    }
-                    const field_name = self.peek();
-                    self.advance();
-
-                    if (self.peek().type != .COLON) {
-                        return error.ExpectedColon;
-                    }
-                    self.advance();
-
-                    const field_value = (try self.parseExpression()) orelse {
-                        return error.ExpectedExpression;
-                    };
-
-                    const new_field = try self.allocator.create(ast.StructLiteralField);
-                    new_field.* = .{
-                        .name = field_name,
-                        .value = field_value,
-                    };
-                    try fields.append(new_field);
-
-                    if (self.peek().type == .COMMA) {
-                        self.advance();
-                    } else if (self.peek().type != .RIGHT_BRACE) {
-                        return error.ExpectedCommaOrBrace;
-                    }
-                }
-                self.advance(); // consume }
-
-                expr.* = ast.Expr{ .Struct = try fields.toOwnedSlice() };
-                return expr;
-            },
-            else => {
-                self.allocator.destroy(expr);
-                return null;
-            },
-        }
+        expr.* = .{ .Variable = var_token };
+        return expr;
     }
 
-    fn peek_next(self: *Parser) token.Token {
-        if (self.current + 1 >= self.tokens.len) {
-            return self.tokens[self.tokens.len - 1];
-        }
-        return self.tokens[self.current + 1];
+    fn block(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+        const block_stmt = try self.parseBlock();
+        const block_expr = try self.allocator.create(ast.Expr);
+
+        // Extract the statements from the Block variant
+        const statements = switch (block_stmt) {
+            .Block => |stmts| stmts,
+            else => unreachable, // parseBlock always returns a Block variant
+        };
+
+        block_expr.* = .{ .Block = statements };
+        return block_expr;
     }
 
     fn parseBlock(self: *Parser) ErrorList!ast.Stmt {
@@ -780,9 +744,9 @@ pub const Parser = struct {
                 } else if (std.mem.eql(u8, type_name, "bool")) {
                     type_expr.* = .{ .Basic = .Boolean };
                 } else {
-                    // Handle custom types here in the future
+                    // Instead of returning null, return an error
                     self.allocator.destroy(type_expr);
-                    return null;
+                    return error.UnknownType;
                 }
                 self.advance();
             },
@@ -1027,5 +991,57 @@ pub const Parser = struct {
         self.advance();
 
         return ast.Stmt{ .Return = .{ .value = value } };
+    }
+
+    fn array(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+        var elements = std.ArrayList(*ast.Expr).init(self.allocator);
+        errdefer {
+            for (elements.items) |elem| {
+                elem.deinit(self.allocator);
+                self.allocator.destroy(elem);
+            }
+            elements.deinit();
+        }
+
+        // Parse array elements until right bracket
+        while (self.peek().type != .RIGHT_BRACKET) {
+            const element = try self.parsePrecedence(.NONE) orelse return error.ExpectedExpression;
+            try elements.append(element);
+
+            if (self.peek().type == .COMMA) {
+                self.advance();
+            } else if (self.peek().type != .RIGHT_BRACKET) {
+                return error.ExpectedCommaOrBracket;
+            }
+        }
+        self.advance(); // consume ]
+
+        const array_expr = try self.allocator.create(ast.Expr);
+        array_expr.* = .{ .Array = try elements.toOwnedSlice() };
+        return array_expr;
+    }
+
+    fn index(self: *Parser, array_expr: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+        const index_expr = try self.parsePrecedence(.NONE) orelse return error.ExpectedExpression;
+
+        if (self.peek().type != .RIGHT_BRACKET) {
+            index_expr.deinit(self.allocator);
+            self.allocator.destroy(index_expr);
+            return error.ExpectedRightBracket;
+        }
+        self.advance(); // consume ]
+
+        const expr = try self.allocator.create(ast.Expr);
+        expr.* = .{ .Index = .{
+            .array = array_expr.?,
+            .index = index_expr,
+        } };
+        return expr;
+    }
+
+    fn allocExpr(self: *Parser, expr: ast.Expr) ErrorList!*ast.Expr {
+        const new_expr = try self.allocator.create(ast.Expr);
+        new_expr.* = expr;
+        return new_expr;
     }
 };

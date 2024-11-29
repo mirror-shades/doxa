@@ -23,8 +23,8 @@ pub fn runRepl(memory: *MemoryManager) !void {
                 std.debug.print("Input line: '{s}'\n", .{trimmed});
             }
 
-            const final_line = if (!std.mem.endsWith(u8, trimmed, ";") and
-                !std.mem.endsWith(u8, trimmed, "}"))
+            // Add semicolon if missing
+            const final_line = if (!std.mem.endsWith(u8, trimmed, ";"))
                 try std.fmt.allocPrint(memory.getAllocator(), "{s};", .{trimmed})
             else
                 try memory.getAllocator().dupe(u8, trimmed);
@@ -36,7 +36,7 @@ pub fn runRepl(memory: *MemoryManager) !void {
             }
 
             // Execute and get result
-            const result = main.run(memory, &interpreter, final_line) catch |err| switch (err) {
+            const result = main.run(memory, &interpreter, final_line, true) catch |err| switch (err) {
                 error.VariableNotFound => {
                     std.debug.print("Error: Variable not found\n", .{});
                     continue;
