@@ -354,6 +354,16 @@ pub const Parser = struct {
             .BOOL => .{ .prefix = Parser.literal },
             .IF => .{ .prefix = Parser.parseIfExpr },
             .LEFT_BRACE => .{ .prefix = Parser.block },
+            .AND_KEYWORD, .AND_SYMBOL => .{
+                .infix = Parser.logical,
+                .precedence = .AND,
+                .associativity = .LEFT,
+            },
+            .OR_KEYWORD, .OR_SYMBOL => .{
+                .infix = Parser.logical,
+                .precedence = .OR,
+                .associativity = .LEFT,
+            },
             else => .{},
         };
     }
@@ -1043,5 +1053,22 @@ pub const Parser = struct {
         const new_expr = try self.allocator.create(ast.Expr);
         new_expr.* = expr;
         return new_expr;
+    }
+
+    fn logical(self: *Parser, left: ?*ast.Expr, precedence: Precedence) ErrorList!?*ast.Expr {
+        if (self.debug_enabled) {
+            std.debug.print("Parsing logical expression\n", .{});
+        }
+
+        const operator = self.tokens[self.current - 1]; // Get the operator token (AND/OR)
+        const right = try self.parsePrecedence(precedence) orelse return error.ExpectedExpression;
+
+        const logical_expr = try self.allocator.create(ast.Expr);
+        logical_expr.* = .{ .Logical = .{
+            .left = left.?,
+            .operator = operator,
+            .right = right,
+        } };
+        return logical_expr;
     }
 };

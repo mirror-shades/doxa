@@ -39,6 +39,7 @@ pub const Expr = union(enum) {
         callee: *Expr,
         arguments: []const *Expr,
     },
+    Logical: Logical,
 
     pub fn deinit(self: *Expr, allocator: std.mem.Allocator) void {
         switch (self.*) {
@@ -129,6 +130,12 @@ pub const Expr = union(enum) {
                 allocator.free(statements);
             },
             .Variable, .Literal => {}, // These don't own any memory
+            .Logical => |*l| {
+                l.left.deinit(allocator);
+                allocator.destroy(l.left);
+                l.right.deinit(allocator);
+                allocator.destroy(l.right);
+            },
         }
     }
 };
@@ -293,4 +300,10 @@ pub const FunctionParam = struct {
         self.type_expr.deinit(allocator);
         allocator.destroy(self.type_expr);
     }
+};
+
+pub const Logical = struct {
+    left: *Expr,
+    operator: token.Token,
+    right: *Expr,
 };
