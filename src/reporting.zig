@@ -1,66 +1,81 @@
 const std = @import("std");
 
 pub const ErrorList = error{
-    // Stack errors
+    // Memory & Stack Management
     StackOverflow,
     StackUnderflow,
+    FrameStackOverflow,
+    OutOfMemory,
 
-    // Value/Type errors
+    // Type System & Value Handling
     TypeError,
     DivisionByZero,
     IntegerOverflow,
     FloatOverflow,
+    InvalidType,
+    InvalidOperand,
+    InvalidOperator,
+    InvalidConstant,
+    InvalidExpression,
 
-    // Variable errors
+    // Variable Management
     VariableNotFound,
     VariableOutOfScope,
     VariableIndexOutOfBounds,
     AccessingCleanedVariable,
     CannotAssignToConstant,
+    UndefinedVariable,
+    VariableAlreadyDefined,
+    InvalidAssignment,
+    InvalidAssignmentTarget,
 
-    // Function/Frame errors
+    // Function & Frame Management
     InvalidFunction,
     NoActiveFrame,
-    FrameStackOverflow,
     InsufficientArguments,
     CannotPopGlobalFrame,
+    NotCallable,
+    InvalidFunctionCall,
+    InvalidFunctionDeclaration,
+    InvalidReturnStatement,
+    ReturnValue,
+    ReturnNothing,
 
-    // Array/String errors
+    // Collections & Indexing
     IndexOutOfBounds,
-    InvalidConstant,
+    UnterminatedArray,
+    UnterminatedString,
+    UnterminatedParenthesis,
 
-    // Try-Catch errors
+    // Error Handling
     NoTryBlock,
     NoCatchWithoutTry,
     NoTryBlockToEnd,
     UncaughtError,
 
-    // lexer
-    UnterminatedString,
-    UnterminatedArray,
-    UnterminatedParenthesis,
+    // Lexical Analysis
     UnterminatedMultilineComment,
     ExpectedCommaOrClosingBracket,
     ExpectedCommaOrClosingParenthesis,
     InvalidNumber,
     InvalidEscapeSequence,
     UnexpectedCharacter,
-    Overflow,
     InvalidCharacter,
+    LeadingZeros,
+    MultipleExponents,
+    InvalidExponent,
+
+    // Unicode & UTF-8 Handling
     Utf8InvalidStartByte,
     Utf8ExpectedContinuation,
     Utf8OverlongEncoding,
     Utf8InvalidCodepoint,
     Utf8CodepointTooLarge,
+    Utf8CannotEncodeSurrogateHalf,
     InvalidUnicodeEscape,
     CodepointTooLarge,
-    Utf8CannotEncodeSurrogateHalf,
-    LeadingZeros,
-    MultipleExponents,
-    InvalidExponent,
 
-    // parser
-    OutOfMemory,
+    // Syntax & Parsing
     ExpectedSemicolon,
     ExpectedClosingParen,
     ExpectedExpression,
@@ -72,11 +87,6 @@ pub const ErrorList = error{
     ExpectedLeftParen,
     ExpectedRightBracket,
     ExpectedLeftBracket,
-    InvalidAssignmentTarget,
-    UndefinedVariable,
-    InvalidOperand,
-    InvalidExpression,
-    InvalidOperator,
     ExpectedLeftBrace,
     ExpectedRightBrace,
     ExpectedThen,
@@ -86,7 +96,6 @@ pub const ErrorList = error{
     ExpectedEnumVariant,
     ExpectedCommaOrBrace,
     ExpectedCommaOrParen,
-    InvalidAssignment,
     ExpectedFunctionParam,
     ExpectedFunctionReturnType,
     ExpectedFunctionBody,
@@ -94,14 +103,15 @@ pub const ErrorList = error{
     ExpectedType,
     ExpectedFunctionKeyword,
     ExpectedFunctionName,
-    ReturnValue,
-    ReturnNothing,
+
+    // Miscellaneous
     NotImplemented,
-    InvalidFunctionCall,
-    InvalidFunctionDeclaration,
-    InvalidReturnStatement,
-    NotCallable,
-    VariableAlreadyDefined,
+    Overflow,
+
+    // Strict Mode
+    UnknownType,
+    StrictModeRequiresType,
+    StrictModeNoDynamicTypes,
 };
 
 /// Reporting provides structured error handling and reporting capabilities

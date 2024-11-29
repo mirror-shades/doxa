@@ -142,6 +142,19 @@ pub const VarDecl = struct {
     name: token.Token,
     type_expr: ?*TypeExpr,
     initializer: ?*Expr,
+    is_mutable: bool,
+    is_dynamic: bool,
+
+    pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+        if (self.type_expr) |t| {
+            t.deinit(allocator);
+            allocator.destroy(t);
+        }
+        if (self.initializer) |i| {
+            i.deinit(allocator);
+            allocator.destroy(i);
+        }
+    }
 };
 
 pub const Stmt = union(enum) {
@@ -149,6 +162,8 @@ pub const Stmt = union(enum) {
         name: token.Token,
         type_expr: ?*TypeExpr,
         initializer: ?*Expr,
+        is_mutable: bool,
+        is_dynamic: bool,
     },
     Expression: ?*Expr,
     Block: []Stmt,
