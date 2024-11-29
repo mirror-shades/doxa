@@ -25,6 +25,7 @@ const DOXA_EXTENSION = ".doxa";
 pub var hadError: bool = false;
 var debugLexer: bool = false;
 pub var debugParser: bool = false;
+pub var debugInterpreter: bool = false;
 var compile: bool = false;
 var is_strict_repl: bool = false;
 ///==========================================================================
@@ -95,7 +96,7 @@ pub fn run(memory: *MemoryManager, interpreter: *Interpreter, source: []const u8
             // Return the result of the last statement
             var last_result: ?TokenLiteral = null;
             for (statements) |stmt| {
-                last_result = try interpreter.executeStatement(&stmt);
+                last_result = try interpreter.executeStatement(&stmt, debugInterpreter);
             }
             return last_result;
         }
@@ -142,6 +143,8 @@ pub fn main() !void {
             debugLexer = true;
         } else if (std.mem.eql(u8, args[i], "--debug-parser")) {
             debugParser = true;
+        } else if (std.mem.eql(u8, args[i], "--debug-interpreter")) {
+            debugInterpreter = true;
         } else if (std.mem.eql(u8, args[i], "--compile")) {
             compile = true;
         } else {
