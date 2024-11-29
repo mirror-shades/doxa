@@ -129,7 +129,14 @@ pub const Expr = union(enum) {
                 }
                 allocator.free(statements);
             },
-            .Variable, .Literal => {}, // These don't own any memory
+            .Variable => {}, // This doesn't own any memory
+            .Literal => |lit| {
+                // Add cleanup for string literals
+                switch (lit) {
+                    .string => |str| allocator.free(str),
+                    else => {}, // Other literals don't own memory
+                }
+            },
             .Logical => |*l| {
                 l.left.deinit(allocator);
                 allocator.destroy(l.left);
