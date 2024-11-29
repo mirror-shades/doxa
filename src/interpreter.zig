@@ -406,9 +406,22 @@ pub const Interpreter = struct {
                             return try self.evaluate(block.value.?);
                         }
 
-                        // Otherwise execute statements and handle value
-                        _ = try self.executeBlock(block.statements, &block_env);
-                        return if (block.value) |value|
+                        // Execute the block and handle return values
+                        const block_result = self.executeBlock(block.statements, &block_env) catch |err| {
+                            if (err == error.ReturnValue) {
+                                if (block_env.get("return")) |return_value| {
+                                    if (self.debug_enabled) {
+                                        std.debug.print("Block returned: {any}\n", .{return_value});
+                                    }
+                                    return return_value;
+                                }
+                            }
+                            return err;
+                        };
+
+                        return if (block_result) |result|
+                            result
+                        else if (block.value) |value|
                             try self.evaluate(value)
                         else
                             .{ .nothing = {} };
