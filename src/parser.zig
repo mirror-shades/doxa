@@ -88,8 +88,13 @@ pub const Parser = struct {
         r.set(.LEFT_BRACKET, .{ .prefix = array, .infix = index, .precedence = .CALL });
 
         // Variables and assignment
+        r.set(.VAR, .{ .prefix = variable });
+        r.set(.CONST, .{ .prefix = variable });
         r.set(.IDENTIFIER, .{ .prefix = variable });
         r.set(.ASSIGN, .{ .infix = assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
+
+        // Control flow
+        r.set(.IF, .{ .prefix = parseIfExpr });
 
         break :blk r;
     };
