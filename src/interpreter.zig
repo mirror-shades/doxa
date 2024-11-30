@@ -321,7 +321,7 @@ pub const Interpreter = struct {
     }
 
     pub fn evaluate(self: *Interpreter, expr: *const ast.Expr) ErrorList!token.TokenLiteral {
-        const result = switch (expr.*) {
+        return switch (expr.*) {
             .Literal => |lit| {
                 return lit;
             },
@@ -470,7 +470,7 @@ pub const Interpreter = struct {
                         std.debug.print("Type error: Cannot assign {s} to int variable\n", .{@tagName(value)});
                         return error.TypeError;
                     },
-                    .Float => if (value != .float and value != .int) {
+                    .Float => if (value != .float) {
                         std.debug.print("Type error: Cannot assign {s} to float variable\n", .{@tagName(value)});
                         return error.TypeError;
                     },
@@ -623,67 +623,8 @@ pub const Interpreter = struct {
                 return new_value;
             },
             .Call => |call| {
-                if (self.debug_enabled) {
-                    std.debug.print("\nEvaluating function call...\n", .{});
-                }
-
                 const callee = try self.evaluate(call.callee);
-                if (callee != .function) {
-                    if (self.debug_enabled) {
-                        std.debug.print("Error: Not a function\n", .{});
-                    }
-                    return error.NotCallable;
-                }
-
-                if (self.debug_enabled) {
-                    std.debug.print("Function call - expected params: {}, provided args: {}\n", .{ callee.function.params.len, call.arguments.len });
-                }
-
-                // Validate parameter count
-                if (call.arguments.len != callee.function.params.len) {
-                    if (self.debug_enabled) {
-                        std.debug.print("Error: Parameter count mismatch\n", .{});
-                    }
-                    return error.InvalidArgumentCount;
-                }
-
-                // Evaluate all arguments
-                var args = try self.memory.getAllocator().alloc(token.TokenLiteral, call.arguments.len);
-                defer self.memory.getAllocator().free(args);
-
-                for (call.arguments, 0..) |arg, i| {
-                    args[i] = try self.evaluate(arg);
-                }
-
-                // Create a new environment for the function
-                var func_env = Environment.init(self.memory.getAllocator(), callee.function.closure, self.debug_enabled);
-                defer func_env.deinit();
-
-                // Bind parameters to arguments
-                for (callee.function.params, args) |param, arg| {
-                    try func_env.define(param.name.lexeme, arg, param.type_info);
-                }
-
-                // Execute function body
-                const previous = self.environment;
-                self.environment = &func_env;
-                defer self.environment = previous;
-
-                // Execute the function body and handle return values
-                _ = self.executeBlock(callee.function.body, &func_env) catch |err| {
-                    if (err == error.ReturnValue) {
-                        if (func_env.get("return")) |return_value| {
-                            if (self.debug_enabled) {
-                                std.debug.print("Function returned: {any}\n", .{return_value});
-                            }
-                            return return_value;
-                        }
-                    }
-                    return err;
-                };
-
-                // If no explicit return, return nothing
-                return token.TokenLiteral{ .nothing = {} };
+                return self.callFunction(callee, call.arguments);
             },
             .Logical => |logical| {
                 const left = try self.evaluate(logical.left);
@@ -805,11 +746,6 @@ pub const Interpreter = struct {
                 return token.TokenLiteral{ .nothing = {} };
             },
         };
-
-        if (self.debug_enabled) {
-            std.debug.print("Evaluated result: {any}\n", .{result});
-        }
-        return result;
     }
 
     fn makeNothing(self: *Interpreter) token.TokenLiteral {
@@ -833,7 +769,7 @@ pub const Interpreter = struct {
                 }
             },
             .Float => {
-                if (value != .float and value != .int) {
+                if (value != .float) {
                     std.debug.print("Type error: Cannot assign {s} to float variable\n", .{@tagName(value)});
                     return error.TypeError;
                 }
@@ -857,5 +793,56 @@ pub const Interpreter = struct {
 
         try self.environment.assign(assignment.name.lexeme, value);
         return value;
+    }
+
+    fn callFunction(self: *Interpreter, callee: token.TokenLiteral, arguments: []const *ast.Expr) ErrorList!token.TokenLiteral {
+        switch (callee) {
+            .function => |f| {
+                var environment = Environment.init(self.memory.getAllocator(), f.closure, self.debug_enabled);
+                defer environment.deinit();
+
+                // Type check arguments against parameter types
+                if (arguments.len != f.params.len) {
+                    return error.InvalidArgumentCount;
+                }
+
+                for (arguments, f.params) |arg, param| {
+                    const arg_value = try self.evaluate(arg);
+
+                    // Type check argument against parameter type
+                    switch (param.type_info.base) {
+                        .Int => if (arg_value != .int) {
+                            std.debug.print("Type error: Expected int argument, got {s}\n", .{@tagName(arg_value)});
+                            return error.TypeError;
+                        },
+                        .Float => if (arg_value != .float) {
+                            std.debug.print("Type error: Expected float argument, got {s}\n", .{@tagName(arg_value)});
+                            return error.TypeError;
+                        },
+                        .Boolean => if (arg_value != .boolean) {
+                            std.debug.print("Type error: Expected boolean argument, got {s}\n", .{@tagName(arg_value)});
+                            return error.TypeError;
+                        },
+                        .String => if (arg_value != .string) {
+                            std.debug.print("Type error: Expected string argument, got {s}\n", .{@tagName(arg_value)});
+                            return error.TypeError;
+                        },
+                        .Dynamic => {},
+                        else => {},
+                    }
+
+                    try environment.define(param.name.lexeme, arg_value, param.type_info);
+                }
+
+                const old_env = self.environment;
+                self.environment = &environment;
+                defer self.environment = old_env;
+
+                _ = try self.executeBlock(f.body, &environment);
+            },
+            else => return error.NotCallable,
+        }
+
+        return token.TokenLiteral{ .nothing = {} };
     }
 };
