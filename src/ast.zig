@@ -235,6 +235,7 @@ pub const TypeInfo = struct {
     array_type: ?*TypeInfo = null, // For arrays, stores the element type
     struct_fields: ?[]StructFieldType = null, // For structs, stores field types
     function_type: ?*FunctionType = null, // Changed to pointer
+    element_type: ?Type = null,
 
     pub fn inferFrom(self: *TypeInfo, value: token.TokenLiteral) void {
         if (self.base != .Auto) return;
