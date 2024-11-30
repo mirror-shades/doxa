@@ -912,38 +912,31 @@ pub const Parser = struct {
                 const param_name = self.peek();
                 self.advance();
 
-                // Parse parameter type
-                var type_info: ast.TypeInfo = .{ .base = .Dynamic };
+                // Parse type annotation if present
+                var param_type = ast.TypeInfo{ .base = .Dynamic };
                 if (self.peek().type == .COLON) {
                     self.advance();
-                    if (self.peek().type == .AUTO) {
-                        self.advance();
-                        type_info.base = .Auto;
-                    } else {
-                        const type_name = self.peek();
-                        self.advance();
-                        type_info.base = switch (type_name.type) {
-                            .INT => .Int,
-                            .FLOAT => .Float,
-                            .STRING => .String,
-                            .BOOL => .Boolean,
-                            else => return error.InvalidType,
-                        };
-                    }
+                    param_type.base = switch (self.peek().type) {
+                        .INT_TYPE => .Int,
+                        .FLOAT_TYPE => .Float,
+                        .STRING_TYPE => .String,
+                        .BOOLEAN_TYPE => .Boolean,
+                        else => return error.InvalidType,
+                    };
+                    self.advance();
                 }
 
                 try params.append(.{
                     .name = param_name,
-                    .type_info = type_info,
+                    .type_info = param_type,
                 });
 
-                if (self.peek().type != .COMMA) break;
+                if (self.peek().type == .RIGHT_PAREN) break;
+                if (self.peek().type != .COMMA) {
+                    return error.ExpectedComma;
+                }
                 self.advance();
             }
-        }
-
-        if (self.peek().type != .RIGHT_PAREN) {
-            return error.ExpectedRightParen;
         }
         self.advance();
 
@@ -1042,23 +1035,18 @@ pub const Parser = struct {
         self.advance(); // First, consume the LEFT_BRACKET token!
 
         var elements = std.ArrayList(*ast.Expr).init(self.allocator);
-        errdefer {
-            for (elements.items) |elem| {
-                elem.deinit(self.allocator);
-                self.allocator.destroy(elem);
-            }
-            elements.deinit();
-        }
+        errdefer elements.deinit();
 
-        // Parse array elements until right bracket
-        while (self.peek().type != .RIGHT_BRACKET and self.peek().type != .EOF) {
-            const element = try self.parsePrecedence(.NONE) orelse return error.ExpectedExpression;
-            try elements.append(element);
+        // Parse first element to establish the type
+        if (self.peek().type != .RIGHT_BRACKET) {
+            const first_element = try self.parsePrecedence(.NONE) orelse return error.ExpectedExpression;
+            try elements.append(first_element);
 
-            if (self.peek().type == .COMMA) {
-                self.advance();
-            } else if (self.peek().type != .RIGHT_BRACKET) {
-                return error.ExpectedCommaOrBracket;
+            // Parse remaining elements
+            while (self.peek().type == .COMMA) {
+                self.advance(); // consume comma
+                const element = try self.parsePrecedence(.NONE) orelse return error.ExpectedExpression;
+                try elements.append(element);
             }
         }
 
@@ -1066,6 +1054,38 @@ pub const Parser = struct {
             return error.ExpectedRightBracket;
         }
         self.advance(); // consume ]
+
+        // Type check all elements after parsing
+        if (elements.items.len > 1) {
+            const first = elements.items[0];
+            const is_int = first.* == .Literal and first.Literal == .int;
+            const is_float = first.* == .Literal and first.Literal == .float;
+            const is_string = first.* == .Literal and first.Literal == .string;
+            const is_boolean = first.* == .Literal and first.Literal == .boolean;
+
+            for (elements.items[1..]) |element| {
+                const matches = if (is_int)
+                    element.* == .Literal and element.Literal == .int
+                else if (is_float)
+                    element.* == .Literal and element.Literal == .float
+                else if (is_string)
+                    element.* == .Literal and element.Literal == .string
+                else if (is_boolean)
+                    element.* == .Literal and element.Literal == .boolean
+                else
+                    true;
+
+                if (!matches) {
+                    // Clean up all elements
+                    for (elements.items) |elem| {
+                        elem.deinit(self.allocator);
+                        self.allocator.destroy(elem);
+                    }
+                    elements.deinit();
+                    return error.ArrayTypeMismatch;
+                }
+            }
+        }
 
         const array_expr = try self.allocator.create(ast.Expr);
         array_expr.* = .{ .Array = try elements.toOwnedSlice() };

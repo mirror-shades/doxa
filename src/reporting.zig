@@ -51,6 +51,9 @@ pub const ErrorList = error{
     UnterminatedArray,
     UnterminatedString,
     UnterminatedParenthesis,
+    ExpectedComma,
+    UnsupportedArrayType,
+    ArrayTypeMismatch,
 
     // Error Handling
     NoTryBlock,
