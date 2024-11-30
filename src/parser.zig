@@ -112,7 +112,7 @@ pub const Parser = struct {
 
         // Add loop support
         r.set(.WHILE, .{ .prefix = whileExpr });
-        r.set(.FOR, .{ .prefix = forExpr });
+        r.set(.FOR, .{ .prefix = forEachExpr });
 
         break :blk r;
     };
@@ -358,20 +358,9 @@ pub const Parser = struct {
     fn parseExpressionStmt(self: *Parser) ErrorList!ast.Stmt {
         if (self.debug_enabled) {
             std.debug.print("\nParsing expression statement...\n", .{});
-            std.debug.print("Current token: {s} at position {}\n", .{
-                @tagName(self.peek().type),
-                self.current,
-            });
         }
 
         const expr = try self.parseExpression();
-
-        if (self.debug_enabled) {
-            std.debug.print("Parsed expression, current position: {}, token: {s}\n", .{
-                self.current,
-                @tagName(self.peek().type),
-            });
-        }
 
         // Check if we need a semicolon
         const needs_semicolon = if (expr) |e| switch (e.*) {
@@ -379,17 +368,10 @@ pub const Parser = struct {
             .If => false, // If expressions don't need semicolons
             .While => false, // While loops don't need semicolons
             .For => false, // For loops don't need semicolons
+            .ForEach => false, // ForEach loops don't need semicolons
             .Print => true, // Print expressions need semicolons
             else => true, // All other expressions need semicolons
         } else true;
-
-        if (self.debug_enabled) {
-            std.debug.print("Expression needs semicolon: {}\n", .{needs_semicolon});
-            std.debug.print("Current token: {s} at position {}\n", .{
-                @tagName(self.peek().type),
-                self.current,
-            });
-        }
 
         if (needs_semicolon) {
             if (self.peek().type != .SEMICOLON) {
@@ -1114,6 +1096,8 @@ pub const Parser = struct {
     }
 
     fn array(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+        self.advance(); // First, consume the LEFT_BRACKET token!
+
         var elements = std.ArrayList(*ast.Expr).init(self.allocator);
         errdefer {
             for (elements.items) |elem| {
@@ -1124,7 +1108,7 @@ pub const Parser = struct {
         }
 
         // Parse array elements until right bracket
-        while (self.peek().type != .RIGHT_BRACKET) {
+        while (self.peek().type != .RIGHT_BRACKET and self.peek().type != .EOF) {
             const element = try self.parsePrecedence(.NONE) orelse return error.ExpectedExpression;
             try elements.append(element);
 
@@ -1134,6 +1118,10 @@ pub const Parser = struct {
                 return error.ExpectedCommaOrBracket;
             }
         }
+
+        if (self.peek().type != .RIGHT_BRACKET) {
+            return error.ExpectedRightBracket;
+        }
         self.advance(); // consume ]
 
         const array_expr = try self.allocator.create(ast.Expr);
@@ -1142,8 +1130,15 @@ pub const Parser = struct {
     }
 
     fn index(self: *Parser, array_expr: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+        if (self.debug_enabled) {
+            std.debug.print("Parsing array index\n", .{});
+        }
+
+        // We're already at the LEFT_BRACKET when this function is called
+        // No need to check for it or advance - we were called because we found it
         const index_expr = try self.parsePrecedence(.NONE) orelse return error.ExpectedExpression;
 
+        // Check for and consume the RIGHT_BRACKET
         if (self.peek().type != .RIGHT_BRACKET) {
             index_expr.deinit(self.allocator);
             self.allocator.destroy(index_expr);
@@ -1457,5 +1452,53 @@ pub const Parser = struct {
         } };
 
         return for_expr;
+    }
+
+    fn forEachExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+        if (self.debug_enabled) {
+            std.debug.print("\nParsing foreach expression...\n", .{});
+        }
+
+        self.advance(); // consume 'for'
+
+        // Expect opening parenthesis
+        if (self.peek().type != .LEFT_PAREN) {
+            return error.ExpectedLeftParen;
+        }
+        self.advance();
+
+        // Parse the item name
+        if (self.peek().type != .IDENTIFIER) {
+            return error.ExpectedIdentifier;
+        }
+        const item_name = self.peek();
+        self.advance();
+
+        // Expect 'in' keyword
+        if (self.peek().type != .IN) {
+            return error.ExpectedInKeyword;
+        }
+        self.advance();
+
+        // Parse the array expression
+        const array_expr = try self.parseExpression() orelse return error.ExpectedExpression;
+
+        // Expect closing parenthesis
+        if (self.peek().type != .RIGHT_PAREN) {
+            return error.ExpectedRightParen;
+        }
+        self.advance();
+
+        // Parse the loop body
+        const body = try self.parseExpression() orelse return error.ExpectedExpression;
+
+        const foreach_expr = try self.allocator.create(ast.Expr);
+        foreach_expr.* = .{ .ForEach = .{
+            .item_name = item_name,
+            .array = array_expr,
+            .body = body,
+        } };
+
+        return foreach_expr;
     }
 };
