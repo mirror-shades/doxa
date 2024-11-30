@@ -52,6 +52,7 @@ pub const Expr = union(enum) {
     },
     While: WhileExpr,
     For: ForExpr,
+    ForEach: ForEachExpr,
 
     pub fn deinit(self: *Expr, allocator: std.mem.Allocator) void {
         switch (self.*) {
@@ -198,6 +199,12 @@ pub const Expr = union(enum) {
                     increment.deinit(allocator);
                     allocator.destroy(increment);
                 }
+                f.body.deinit(allocator);
+                allocator.destroy(f.body);
+            },
+            .ForEach => |*f| {
+                f.array.deinit(allocator);
+                allocator.destroy(f.array);
                 f.body.deinit(allocator);
                 allocator.destroy(f.body);
             },
@@ -398,4 +405,10 @@ pub const ForExpr = struct {
     condition: ?*Expr,
     increment: ?*Expr,
     body: *Expr,
+};
+
+pub const ForEachExpr = struct {
+    item_name: token.Token, // The name of the iteration variable
+    array: *Expr, // The array being iterated over
+    body: *Expr, // The loop body
 };

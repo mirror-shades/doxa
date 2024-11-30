@@ -705,6 +705,34 @@ pub const Interpreter = struct {
                 }
                 return token.TokenLiteral{ .nothing = {} };
             },
+            .ForEach => |foreach| {
+                const array_value = try self.evaluate(foreach.array);
+                if (array_value != .array) {
+                    return error.TypeError;
+                }
+
+                // Create a new environment for the loop scope
+                var loop_env = Environment.init(self.memory.getAllocator(), self.environment, self.debug_enabled);
+                defer loop_env.deinit();
+
+                // Iterate over the array
+                for (array_value.array) |item| {
+                    // Create a new environment for each iteration
+                    var iter_env = Environment.init(self.memory.getAllocator(), &loop_env, self.debug_enabled);
+                    defer iter_env.deinit();
+
+                    // Bind the current item to the loop variable
+                    try iter_env.define(foreach.item_name.lexeme, item);
+
+                    // Execute the loop body with the iteration environment
+                    const previous = self.environment;
+                    self.environment = &iter_env;
+                    _ = try self.evaluate(foreach.body);
+                    self.environment = previous;
+                }
+
+                return token.TokenLiteral{ .nothing = {} };
+            },
         };
 
         if (self.debug_enabled) {
