@@ -268,6 +268,19 @@ pub const Parser = struct {
                 else => return error.InvalidType,
             };
             self.advance();
+
+            // Check for array type notation (e.g., int[])
+            if (self.peek().type == .LEFT_BRACKET) {
+                self.advance();
+                if (self.peek().type != .RIGHT_BRACKET) {
+                    return error.ExpectedRightBracket;
+                }
+                self.advance();
+
+                // Store the base type as the element type and set the main type to Array
+                const element_type = type_info.base;
+                type_info = .{ .base = .Array, .element_type = element_type };
+            }
         } else if (self.mode == .Strict) {
             return error.ExpectedTypeAnnotation;
         }
@@ -749,129 +762,49 @@ pub const Parser = struct {
         const type_expr = try self.allocator.create(ast.TypeExpr);
         errdefer self.allocator.destroy(type_expr);
 
-        switch (self.peek().type) {
-            .IDENTIFIER => {
+        // Parse base type
+        const base_type = switch (self.peek().type) {
+            .IDENTIFIER => blk: {
                 const type_name = self.peek().lexeme;
                 // Match built-in type names
-                if (std.mem.eql(u8, type_name, "int")) {
-                    type_expr.* = .{ .Basic = .Integer };
-                } else if (std.mem.eql(u8, type_name, "float")) {
-                    type_expr.* = .{ .Basic = .Float };
-                } else if (std.mem.eql(u8, type_name, "string")) {
-                    type_expr.* = .{ .Basic = .String };
-                } else if (std.mem.eql(u8, type_name, "bool")) {
-                    type_expr.* = .{ .Basic = .Boolean };
-                } else {
-                    // Instead of returning null, return an error
+                const base = if (std.mem.eql(u8, type_name, "int"))
+                    .Integer
+                else if (std.mem.eql(u8, type_name, "float"))
+                    .Float
+                else if (std.mem.eql(u8, type_name, "string"))
+                    .String
+                else if (std.mem.eql(u8, type_name, "bool"))
+                    .Boolean
+                else {
                     self.allocator.destroy(type_expr);
                     return error.UnknownType;
-                }
-                self.advance();
-            },
-            .ARRAY => {
-                self.advance();
-                if (self.peek().type != .LEFT_BRACKET) {
-                    return error.ExpectedLeftBracket;
-                }
-                self.advance();
-
-                // Parse element type
-                const elem_type = (try self.parseTypeExpr()) orelse {
-                    return error.ExpectedExpression; // Using existing error
                 };
-
-                if (self.peek().type != .RIGHT_BRACKET) {
-                    return error.ExpectedRightBracket;
-                }
                 self.advance();
-
-                type_expr.* = .{ .Array = .{
-                    .element_type = elem_type,
-                } };
-            },
-            .STRUCT => {
-                self.advance();
-                if (self.peek().type != .LEFT_BRACE) {
-                    return error.ExpectedLeftBrace;
-                }
-                self.advance();
-
-                var fields = std.ArrayList(*ast.StructField).init(self.allocator);
-                errdefer {
-                    for (fields.items) |field| {
-                        field.deinit(self.allocator);
-                        self.allocator.destroy(field);
-                    }
-                    fields.deinit();
-                }
-
-                while (self.peek().type != .RIGHT_BRACE) {
-                    if (self.peek().type != .IDENTIFIER) {
-                        return error.ExpectedIdentifier;
-                    }
-                    const field_name = self.peek();
-                    self.advance();
-
-                    if (self.peek().type != .COLON) {
-                        return error.ExpectedColon;
-                    }
-                    self.advance();
-
-                    const field_type = (try self.parseTypeExpr()) orelse {
-                        return error.ExpectedExpression;
-                    };
-
-                    const new_field = try self.allocator.create(ast.StructField);
-                    new_field.* = .{
-                        .name = field_name,
-                        .type_expr = field_type,
-                    };
-                    try fields.append(new_field);
-
-                    if (self.peek().type == .COMMA) {
-                        self.advance();
-                    } else if (self.peek().type != .RIGHT_BRACE) {
-                        return error.ExpectedCommaOrBrace;
-                    }
-                }
-                self.advance(); // consume }
-
-                type_expr.* = .{ .Struct = try fields.toOwnedSlice() };
-            },
-            .ENUM => {
-                self.advance();
-                if (self.peek().type != .LEFT_BRACE) {
-                    return error.ExpectedLeftBrace;
-                }
-                self.advance();
-
-                var variants = std.ArrayList([]const u8).init(self.allocator);
-                errdefer variants.deinit();
-
-                while (self.peek().type != .RIGHT_BRACE) {
-                    if (self.peek().type != .IDENTIFIER) {
-                        return error.ExpectedIdentifier;
-                    }
-                    try variants.append(self.peek().lexeme);
-                    self.advance();
-
-                    if (self.peek().type == .COMMA) {
-                        self.advance();
-                    } else if (self.peek().type != .RIGHT_BRACE) {
-                        return error.ExpectedCommaOrBrace;
-                    }
-                }
-                self.advance(); // consume }
-
-                type_expr.* = .{ .Enum = try variants.toOwnedSlice() };
+                break :blk base;
             },
             else => {
-                if (self.debug_enabled) {
-                    std.debug.print("Unexpected token type for type expression: {s}\n", .{@tagName(self.peek().type)});
-                }
                 self.allocator.destroy(type_expr);
                 return null;
             },
+        };
+
+        // Check for array type notation (e.g., int[])
+        if (self.peek().type == .LEFT_BRACKET) {
+            self.advance();
+            if (self.peek().type != .RIGHT_BRACKET) {
+                self.allocator.destroy(type_expr);
+                return error.ExpectedRightBracket;
+            }
+            self.advance();
+
+            // Create array type expression
+            type_expr.* = .{ .Array = .{
+                .element_type = try self.allocator.create(ast.TypeExpr),
+            } };
+            type_expr.Array.element_type.* = .{ .Basic = base_type };
+        } else {
+            // Create basic type expression
+            type_expr.* = .{ .Basic = base_type };
         }
 
         return type_expr;

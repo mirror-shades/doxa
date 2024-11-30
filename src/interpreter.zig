@@ -211,6 +211,14 @@ pub const Interpreter = struct {
                 return null;
             },
             .VarDecl => |decl| {
+                // Handle array type declarations
+                if (decl.type_info.base == .Array) {
+                    // Store the array type for use during array initialization
+                    const element_type = decl.type_info.element_type orelse .Dynamic;
+                    try self.environment.types.put("current_array_type", .{ .base = element_type });
+                    defer _ = self.environment.types.remove("current_array_type");
+                }
+
                 const value = if (decl.initializer) |i| blk: {
                     const init_value = try self.evaluate(i);
 
@@ -227,6 +235,27 @@ pub const Interpreter = struct {
                         .Boolean => if (init_value != .boolean) {
                             std.debug.print("Type error: Cannot initialize bool variable with {s}\n", .{@tagName(init_value)});
                             return error.TypeError;
+                        },
+                        .Array => {
+                            if (init_value != .array) {
+                                std.debug.print("Type error: Cannot initialize array variable with {s}\n", .{@tagName(init_value)});
+                                return error.TypeError;
+                            }
+                            // Check array element types if element_type is specified
+                            if (decl.type_info.element_type) |expected_type| {
+                                for (init_value.array) |element| {
+                                    const matches = switch (expected_type) {
+                                        .Int => element == .int,
+                                        .Float => element == .float,
+                                        .String => element == .string,
+                                        .Boolean => element == .boolean,
+                                        else => true,
+                                    };
+                                    if (!matches) {
+                                        return error.TypeError;
+                                    }
+                                }
+                            }
                         },
                         .Dynamic => {},
                         else => {},
@@ -565,8 +594,34 @@ pub const Interpreter = struct {
                 var array_values = std.ArrayList(token.TokenLiteral).init(self.memory.getAllocator());
                 errdefer array_values.deinit();
 
+                // Get the array's type info if it exists
+                const array_type = if (self.environment.types.get("current_array_type")) |type_info|
+                    type_info
+                else
+                    ast.TypeInfo{ .base = .Dynamic };
+
+                // Check each element against the array type
                 for (elements) |element| {
                     const value = try self.evaluate(element);
+
+                    // Type check if we have a specific array type
+                    if (array_type.base != .Dynamic) {
+                        const matches = switch (array_type.element_type orelse .Dynamic) {
+                            .Int => value == .int,
+                            .Float => value == .float,
+                            .String => value == .string,
+                            .Boolean => value == .boolean,
+                            .Array => value == .array,
+                            .Dynamic => true,
+                            else => false,
+                        };
+
+                        if (!matches) {
+                            array_values.deinit();
+                            return error.TypeError;
+                        }
+                    }
+
                     try array_values.append(value);
                 }
 
