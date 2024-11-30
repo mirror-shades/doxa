@@ -50,6 +50,8 @@ pub const Expr = union(enum) {
         return_type: ?*TypeExpr,
         body: []Stmt,
     },
+    While: WhileExpr,
+    For: ForExpr,
 
     pub fn deinit(self: *Expr, allocator: std.mem.Allocator) void {
         switch (self.*) {
@@ -176,6 +178,28 @@ pub const Expr = union(enum) {
                     expr.deinit(allocator);
                     allocator.destroy(expr);
                 }
+            },
+            .While => |*w| {
+                w.condition.deinit(allocator);
+                allocator.destroy(w.condition);
+                w.body.deinit(allocator);
+                allocator.destroy(w.body);
+            },
+            .For => |*f| {
+                if (f.initializer) |init| {
+                    init.deinit(allocator);
+                    allocator.destroy(init);
+                }
+                if (f.condition) |condition| {
+                    condition.deinit(allocator);
+                    allocator.destroy(condition);
+                }
+                if (f.increment) |increment| {
+                    increment.deinit(allocator);
+                    allocator.destroy(increment);
+                }
+                f.body.deinit(allocator);
+                allocator.destroy(f.body);
             },
         }
     }
@@ -362,4 +386,16 @@ pub const Parameter = struct {
             allocator.destroy(type_expr);
         }
     }
+};
+
+pub const WhileExpr = struct {
+    condition: *Expr,
+    body: *Expr,
+};
+
+pub const ForExpr = struct {
+    initializer: ?*Stmt,
+    condition: ?*Expr,
+    increment: ?*Expr,
+    body: *Expr,
 };

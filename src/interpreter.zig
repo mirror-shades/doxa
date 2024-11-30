@@ -666,6 +666,45 @@ pub const Interpreter = struct {
                 }
                 return token.TokenLiteral{ .nothing = {} };
             },
+            .While => |while_expr| {
+                while (true) {
+                    const condition_result = try self.evaluate(while_expr.condition);
+                    if (condition_result != .boolean) {
+                        return error.TypeError;
+                    }
+                    if (!condition_result.boolean) break;
+
+                    _ = try self.evaluate(while_expr.body);
+                }
+                return token.TokenLiteral{ .nothing = {} };
+            },
+            .For => |for_expr| {
+                // Execute initializer if present
+                if (for_expr.initializer) |init_expr| {
+                    _ = try self.executeStatement(init_expr, self.debug_enabled);
+                }
+
+                // Main loop
+                while (true) {
+                    // Check condition if present
+                    if (for_expr.condition) |cond| {
+                        const condition_result = try self.evaluate(cond);
+                        if (condition_result != .boolean) {
+                            return error.TypeError;
+                        }
+                        if (!condition_result.boolean) break;
+                    }
+
+                    // Execute body
+                    _ = try self.evaluate(for_expr.body);
+
+                    // Execute increment if present
+                    if (for_expr.increment) |incr| {
+                        _ = try self.evaluate(incr);
+                    }
+                }
+                return token.TokenLiteral{ .nothing = {} };
+            },
         };
 
         if (self.debug_enabled) {
