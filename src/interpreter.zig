@@ -713,11 +713,10 @@ pub const Interpreter = struct {
                     .function => self.stdout_buffer.writer().writeAll("<function>\n"),
                 };
 
-                // Flush periodically or at end of program
-                if (self.stdout_buffer.items.len > 4096) {
-                    try std.io.getStdOut().writer().writeAll(self.stdout_buffer.items);
-                    self.stdout_buffer.clearRetainingCapacity();
-                }
+                // Flush immediately after each print
+                try std.io.getStdOut().writer().writeAll(self.stdout_buffer.items);
+                self.stdout_buffer.clearRetainingCapacity();
+
                 return value;
             },
             .While => |while_expr| {
