@@ -269,17 +269,28 @@ pub const Parser = struct {
             };
             self.advance();
 
-            // Check for array type notation (e.g., int[])
-            if (self.peek().type == .LEFT_BRACKET) {
+            // Handle multiple array dimensions
+            var array_dimensions: u8 = 0;
+            while (self.peek().type == .LEFT_BRACKET) {
                 self.advance();
                 if (self.peek().type != .RIGHT_BRACKET) {
                     return error.ExpectedRightBracket;
                 }
                 self.advance();
+                array_dimensions += 1;
+            }
 
-                // Store the base type as the element type and set the main type to Array
-                const element_type = type_info.base;
-                type_info = .{ .base = .Array, .element_type = element_type };
+            // If we found array brackets, create nested array types
+            if (array_dimensions > 0) {
+                var current_type = type_info.base;
+                var i: u8 = 0;
+                while (i < array_dimensions) : (i += 1) {
+                    type_info = .{
+                        .base = .Array,
+                        .element_type = current_type,
+                    };
+                    current_type = .Array;
+                }
             }
         } else if (self.mode == .Strict) {
             return error.ExpectedTypeAnnotation;
