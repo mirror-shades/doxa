@@ -55,6 +55,7 @@ pub const ErrorList = error{
     // Error Handling
     NoTryBlock,
     ExpectedInKeyword,
+    ExpectedTypeAnnotation,
     NoCatchWithoutTry,
     NoTryBlockToEnd,
     UncaughtError,

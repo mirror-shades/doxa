@@ -35,17 +35,19 @@ const StringInterner = struct {
 };
 
 pub const Environment = struct {
-    enclosing: ?*Environment,
     values: std.StringHashMap(token.TokenLiteral),
-    allocator: std.mem.Allocator,
+    types: std.StringHashMap(ast.TypeInfo),
+    enclosing: ?*Environment,
     debug_enabled: bool,
+    allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator, enclosing: ?*Environment, debug_enabled: bool) Environment {
-        return Environment{
-            .enclosing = enclosing,
+        return .{
             .values = std.StringHashMap(token.TokenLiteral).init(allocator),
-            .allocator = allocator,
+            .types = std.StringHashMap(ast.TypeInfo).init(allocator),
+            .enclosing = enclosing,
             .debug_enabled = debug_enabled,
+            .allocator = allocator,
         };
     }
 
@@ -55,24 +57,18 @@ pub const Environment = struct {
             switch (entry.value_ptr.*) {
                 .array => |arr| self.allocator.free(arr),
                 .function => |f| {
-                    // Clean up each parameter's type expression
-                    for (f.params) |*param| {
-                        param.deinit(self.allocator);
-                    }
                     self.allocator.free(f.params);
                 },
                 else => {},
             }
         }
         self.values.deinit();
+        self.types.deinit();
     }
 
-    pub fn define(self: *Environment, name: []const u8, value: token.TokenLiteral) !void {
-        // Check if variable already exists in current scope
-        if (self.values.contains(name)) {
-            return error.VariableAlreadyDefined;
-        }
+    pub fn define(self: *Environment, name: []const u8, value: token.TokenLiteral, type_info: ast.TypeInfo) !void {
         try self.values.put(name, value);
+        try self.types.put(name, type_info);
     }
 
     pub fn get(self: *Environment, name: []const u8) ?token.TokenLiteral {
@@ -109,6 +105,16 @@ pub const Environment = struct {
         }
 
         // If we get here, the variable doesn't exist in any scope
+        return error.UndefinedVariable;
+    }
+
+    pub fn getTypeInfo(self: *Environment, name: []const u8) !ast.TypeInfo {
+        if (self.types.get(name)) |type_info| {
+            return type_info;
+        }
+        if (self.enclosing) |enclosing| {
+            return enclosing.getTypeInfo(name);
+        }
         return error.UndefinedVariable;
     }
 };
@@ -205,29 +211,31 @@ pub const Interpreter = struct {
                 return null;
             },
             .VarDecl => |decl| {
-                const value = if (decl.initializer) |i|
-                    try self.evaluate(i)
-                else
-                    token.TokenLiteral{ .nothing = {} };
+                const value = if (decl.initializer) |i| blk: {
+                    const init_value = try self.evaluate(i);
 
-                const key = try self.string_interner.intern(decl.name.lexeme);
-                try self.environment.define(key, value);
+                    // Type checking for initialization
+                    switch (decl.type_info.base) {
+                        .Int => if (init_value != .int) {
+                            std.debug.print("Type error: Cannot initialize int variable with {s}\n", .{@tagName(init_value)});
+                            return error.TypeError;
+                        },
+                        .Float => if (init_value != .float and init_value != .int) {
+                            std.debug.print("Type error: Cannot initialize float variable with {s}\n", .{@tagName(init_value)});
+                            return error.TypeError;
+                        },
+                        .Boolean => if (init_value != .boolean) {
+                            std.debug.print("Type error: Cannot initialize bool variable with {s}\n", .{@tagName(init_value)});
+                            return error.TypeError;
+                        },
+                        .Dynamic => {},
+                        else => {},
+                    }
+                    break :blk init_value;
+                } else token.TokenLiteral{ .nothing = {} };
 
-                if (self.debug_enabled) {
-                    std.debug.print("Declared variable {s} = {any}\n", .{
-                        decl.name.lexeme, value,
-                    });
-                }
+                try self.environment.define(decl.name.lexeme, value, decl.type_info);
                 return null;
-            },
-            .Block => |statements| {
-                var block_env = Environment.init(self.memory.getAllocator(), self.environment, self.debug_enabled);
-                defer block_env.deinit();
-                const result = try self.executeBlock(statements, &block_env);
-                if (self.debug_enabled and result != null) {
-                    std.debug.print("{any}\n", .{result.?});
-                }
-                return result;
             },
             .Function => |func| {
                 if (self.debug_enabled) {
@@ -237,9 +245,6 @@ pub const Interpreter = struct {
                 // Make a copy of the parameters
                 var params = try self.memory.getAllocator().alloc(ast.FunctionParam, func.params.len);
                 errdefer {
-                    for (params) |*param| {
-                        param.deinit(self.memory.getAllocator());
-                    }
                     self.memory.getAllocator().free(params);
                 }
 
@@ -247,7 +252,7 @@ pub const Interpreter = struct {
                 for (func.params, 0..) |param, i| {
                     params[i] = .{
                         .name = param.name,
-                        .type_expr = param.type_expr,
+                        .type_info = param.type_info,
                     };
                     if (self.debug_enabled) {
                         std.debug.print("  Parameter {}: '{s}'\n", .{ i, param.name.lexeme });
@@ -259,13 +264,55 @@ pub const Interpreter = struct {
                     .body = func.body,
                     .closure = self.environment,
                 } };
-                try self.environment.define(func.name.lexeme, function);
+
+                // Use return_type_info for function type info
+                try self.environment.define(func.name.lexeme, function, func.return_type_info);
                 return null;
+            },
+            .Block => |statements| {
+                var block_env = Environment.init(self.memory.getAllocator(), self.environment, self.debug_enabled);
+                defer block_env.deinit();
+                const result = try self.executeBlock(statements, &block_env);
+                if (self.debug_enabled and result != null) {
+                    std.debug.print("{any}\n", .{result.?});
+                }
+                return result;
             },
             .Return => |ret| {
                 if (ret.value) |value_expr| {
                     const return_value = try self.evaluate(value_expr);
-                    try self.environment.define("return", return_value);
+
+                    // Get the function's return type from the current environment
+                    const func_return_type = try self.environment.getTypeInfo("return_type");
+
+                    // Type check the return value
+                    switch (func_return_type.base) {
+                        .Int => {
+                            if (return_value != .int) {
+                                return error.TypeError;
+                            }
+                        },
+                        .Float => {
+                            if (return_value != .float and return_value != .int) {
+                                return error.TypeError;
+                            }
+                        },
+                        .String => {
+                            if (return_value != .string) {
+                                return error.TypeError;
+                            }
+                        },
+                        .Boolean => {
+                            if (return_value != .boolean) {
+                                return error.TypeError;
+                            }
+                        },
+                        .Dynamic => {}, // Allow any return type
+                        .Auto => {}, // Type is inferred from the return value
+                        else => {},
+                    }
+
+                    try self.environment.define("return", return_value, func_return_type);
                     return error.ReturnValue;
                 }
                 return error.ReturnNothing;
@@ -413,8 +460,25 @@ pub const Interpreter = struct {
             },
             .Assignment => |assign| {
                 const value = try self.evaluate(assign.value orelse return error.InvalidExpression);
-                const key = try self.string_interner.intern(assign.name.lexeme);
-                try self.environment.assign(key, value);
+
+                // Get variable's type info
+                const var_type = try self.environment.getTypeInfo(assign.name.lexeme);
+
+                // Type checking
+                switch (var_type.base) {
+                    .Int => if (value != .int) {
+                        std.debug.print("Type error: Cannot assign {s} to int variable\n", .{@tagName(value)});
+                        return error.TypeError;
+                    },
+                    .Float => if (value != .float and value != .int) {
+                        std.debug.print("Type error: Cannot assign {s} to float variable\n", .{@tagName(value)});
+                        return error.TypeError;
+                    },
+                    .Dynamic => {},
+                    else => {},
+                }
+
+                try self.environment.assign(assign.name.lexeme, value);
                 return value;
             },
             .Grouping => |group| {
@@ -597,7 +661,7 @@ pub const Interpreter = struct {
 
                 // Bind parameters to arguments
                 for (callee.function.params, args) |param, arg| {
-                    try func_env.define(param.name.lexeme, arg);
+                    try func_env.define(param.name.lexeme, arg, param.type_info);
                 }
 
                 // Execute function body
@@ -711,24 +775,31 @@ pub const Interpreter = struct {
                     return error.TypeError;
                 }
 
-                // Create a new environment for the loop scope
-                var loop_env = Environment.init(self.memory.getAllocator(), self.environment, self.debug_enabled);
-                defer loop_env.deinit();
+                // Create a new environment for the loop
+                var iter_env = Environment.init(self.memory.getAllocator(), self.environment, self.debug_enabled);
+                defer iter_env.deinit();
 
-                // Iterate over the array
+                // Infer type from array elements or use dynamic if empty
+                var item_type = ast.TypeInfo{ .base = .Dynamic };
+                if (array_value.array.len > 0) {
+                    item_type = switch (array_value.array[0]) {
+                        .int => ast.TypeInfo{ .base = .Int },
+                        .float => ast.TypeInfo{ .base = .Float },
+                        .string => ast.TypeInfo{ .base = .String },
+                        .boolean => ast.TypeInfo{ .base = .Boolean },
+                        .array => ast.TypeInfo{ .base = .Array },
+                        .struct_value => ast.TypeInfo{ .base = .Struct },
+                        .nothing => ast.TypeInfo{ .base = .Nothing },
+                        else => ast.TypeInfo{ .base = .Dynamic },
+                    };
+                }
+
+                // Execute the loop body for each item
                 for (array_value.array) |item| {
-                    // Create a new environment for each iteration
-                    var iter_env = Environment.init(self.memory.getAllocator(), &loop_env, self.debug_enabled);
-                    defer iter_env.deinit();
+                    try iter_env.define(foreach.item_name.lexeme, item, item_type);
 
-                    // Bind the current item to the loop variable
-                    try iter_env.define(foreach.item_name.lexeme, item);
-
-                    // Execute the loop body with the iteration environment
-                    const previous = self.environment;
-                    self.environment = &iter_env;
-                    _ = try self.evaluate(foreach.body);
-                    self.environment = previous;
+                    // Execute the loop body
+                    _ = try self.executeBlock(foreach.body, &iter_env);
                 }
 
                 return token.TokenLiteral{ .nothing = {} };
@@ -744,5 +815,47 @@ pub const Interpreter = struct {
     fn makeNothing(self: *Interpreter) token.TokenLiteral {
         _ = self;
         return .{ .nothing = {} };
+    }
+
+    fn executeAssignment(self: *Interpreter, expr: *const ast.Expr) ErrorList!token.TokenLiteral {
+        const assignment = expr.Assignment;
+        const value = try self.evaluate(assignment.value);
+
+        // Get variable's type info
+        const var_type = try self.environment.getTypeInfo(assignment.name.lexeme);
+
+        // Type checking
+        switch (var_type.base) {
+            .Int => {
+                if (value != .int) {
+                    std.debug.print("Type error: Cannot assign {s} to int variable\n", .{@tagName(value)});
+                    return error.TypeError;
+                }
+            },
+            .Float => {
+                if (value != .float and value != .int) {
+                    std.debug.print("Type error: Cannot assign {s} to float variable\n", .{@tagName(value)});
+                    return error.TypeError;
+                }
+            },
+            .String => {
+                if (value != .string) {
+                    std.debug.print("Type error: Cannot assign {s} to string variable\n", .{@tagName(value)});
+                    return error.TypeError;
+                }
+            },
+            .Boolean => {
+                if (value != .boolean) {
+                    std.debug.print("Type error: Cannot assign {s} to boolean variable\n", .{@tagName(value)});
+                    return error.TypeError;
+                }
+            },
+            .Dynamic => {}, // Allow any assignment for dynamic types
+            .Auto => {}, // Type is already fixed from initialization
+            else => {},
+        }
+
+        try self.environment.assign(assignment.name.lexeme, value);
+        return value;
     }
 };

@@ -112,7 +112,7 @@ pub const Parser = struct {
 
         // Add loop support
         r.set(.WHILE, .{ .prefix = whileExpr });
-        r.set(.FOR, .{ .prefix = forEachExpr });
+        r.set(.FOR, .{ .prefix = forExpr });
 
         break :blk r;
     };
@@ -246,112 +246,47 @@ pub const Parser = struct {
     }
 
     fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
-        if (self.debug_enabled) {
-            std.debug.print("\nAttempting to parse var declaration...\n", .{});
-        }
+        self.advance(); // consume 'var'
 
-        // Check for const/var keyword
-        const tok = self.peek();
-        const is_mutable = switch (tok.type) {
-            .VAR => true,
-            .CONST => false,
-            else => return error.UnexpectedToken,
-        };
-        self.advance();
-
-        // identifier
-        const id_tok = self.peek();
-        if (id_tok.type != .IDENTIFIER) {
-            if (self.debug_enabled) {
-                std.debug.print("Expected IDENTIFIER, got {s}\n", .{@tagName(id_tok.type)});
-            }
+        if (self.peek().type != .IDENTIFIER) {
             return error.ExpectedIdentifier;
         }
-        if (self.debug_enabled) std.debug.print("Found identifier: '{s}'\n", .{id_tok.lexeme});
+        const name = self.peek();
         self.advance();
 
-        // : type (optional)
-        var type_expr: ?*ast.TypeExpr = null;
-        const is_dynamic = blk: {
-            if (self.peek().type == .COLON) {
-                self.advance();
-                type_expr = try self.parseTypeExpr();
-                break :blk false; // If type is explicitly declared, it's not dynamic
-            } else {
-                break :blk !is_mutable and self.mode != .Strict; // Only allow dynamic if not const and not in strict mode
-            }
-        };
+        // Parse type annotation if present
+        var type_info: ast.TypeInfo = .{ .base = .Dynamic };
+        if (self.peek().type == .COLON) {
+            self.advance();
+            const type_token = self.peek();
+            type_info.base = switch (type_token.type) {
+                .INT_TYPE => .Int,
+                .FLOAT_TYPE => .Float,
+                .STRING_TYPE => .String,
+                .BOOLEAN_TYPE => .Boolean,
+                .AUTO => .Auto,
+                else => return error.InvalidType,
+            };
+            self.advance();
+        } else if (self.mode == .Strict) {
+            return error.ExpectedTypeAnnotation;
+        }
 
-        // = or 'is'
         var initializer: ?*ast.Expr = null;
         if (self.peek().type == .ASSIGN) {
             self.advance();
-
-            // Parse the expression
-            const expr = try self.parseExpression();
-            if (expr == null) {
-                if (self.debug_enabled) {
-                    std.debug.print("Failed to parse initializer expression\n", .{});
-                }
-                return error.ExpectedExpression;
-            }
-            initializer = expr;
-
-            if (self.debug_enabled) {
-                std.debug.print("Successfully parsed initializer\n", .{});
-            }
+            initializer = try self.parseExpression();
         }
 
-        // Add debug print before semicolon check
-        if (self.debug_enabled) {
-            std.debug.print("Checking for semicolon, current token: {s}\n", .{@tagName(self.peek().type)});
-        }
-
-        // ;
         if (self.peek().type != .SEMICOLON) {
-            if (self.debug_enabled) {
-                std.debug.print("Expected SEMICOLON, got {s} at position {}\n", .{
-                    @tagName(self.peek().type),
-                    self.current,
-                });
-            }
             return error.ExpectedSemicolon;
         }
-        self.advance(); // consume semicolon
-
-        if (self.debug_enabled) {
-            std.debug.print("\nSuccessfully parsed var declaration\n", .{});
-        }
-
-        // Type checking based on mode
-        switch (self.mode) {
-            .Strict => {
-                if (type_expr == null) {
-                    return error.StrictModeRequiresType;
-                }
-                if (is_dynamic) {
-                    return error.StrictModeNoDynamicTypes;
-                }
-            },
-            .Warn => {
-                if (type_expr == null) {
-                    // Log warning but continue
-                    if (self.debug_enabled) {
-                        std.debug.print("Warning: Variable declaration without type in warn mode\n", .{});
-                    }
-                }
-            },
-            .Normal => {
-                // Allow both typed and untyped declarations
-            },
-        }
+        self.advance();
 
         return ast.Stmt{ .VarDecl = .{
-            .name = id_tok,
-            .type_expr = type_expr,
+            .name = name,
             .initializer = initializer,
-            .is_mutable = is_mutable,
-            .is_dynamic = is_dynamic,
+            .type_info = type_info,
         } };
     }
 
@@ -947,19 +882,19 @@ pub const Parser = struct {
     }
 
     fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
-        if (self.debug_enabled) {
-            std.debug.print("\nParsing function declaration...\n", .{});
+        self.advance(); // consume 'fn' or 'function'
+
+        if (self.peek().type != .IDENTIFIER) {
+            return error.ExpectedIdentifier;
         }
-
-        self.advance(); // consume 'fn'
         const name = self.peek();
-        self.advance(); // consume function name
+        self.advance();
 
-        // Parse parameters
+        // Parse parameter list
         if (self.peek().type != .LEFT_PAREN) {
             return error.ExpectedLeftParen;
         }
-        self.advance(); // consume (
+        self.advance();
 
         var params = std.ArrayList(ast.FunctionParam).init(self.allocator);
         errdefer {
@@ -969,9 +904,7 @@ pub const Parser = struct {
             params.deinit();
         }
 
-        // Parse parameter list
         if (self.peek().type != .RIGHT_PAREN) {
-            // Parse comma-separated parameters
             while (true) {
                 if (self.peek().type != .IDENTIFIER) {
                     return error.ExpectedIdentifier;
@@ -979,25 +912,77 @@ pub const Parser = struct {
                 const param_name = self.peek();
                 self.advance();
 
+                // Parse parameter type
+                var type_info: ast.TypeInfo = .{ .base = .Dynamic };
+                if (self.peek().type == .COLON) {
+                    self.advance();
+                    if (self.peek().type == .AUTO) {
+                        self.advance();
+                        type_info.base = .Auto;
+                    } else {
+                        const type_name = self.peek();
+                        self.advance();
+                        type_info.base = switch (type_name.type) {
+                            .INT => .Int,
+                            .FLOAT => .Float,
+                            .STRING => .String,
+                            .BOOL => .Boolean,
+                            else => return error.InvalidType,
+                        };
+                    }
+                }
+
                 try params.append(.{
                     .name = param_name,
-                    .type_expr = null, // We'll add type support later
+                    .type_info = type_info,
                 });
 
-                if (self.peek().type == .COMMA) {
-                    self.advance();
-                    continue;
-                }
-                break;
+                if (self.peek().type != .COMMA) break;
+                self.advance();
             }
         }
 
         if (self.peek().type != .RIGHT_PAREN) {
             return error.ExpectedRightParen;
         }
-        self.advance(); // consume )
+        self.advance();
+
+        // Parse return type
+        var return_type_info: ast.TypeInfo = .{ .base = .Dynamic };
+        if (self.peek().type == .COLON) {
+            self.advance();
+            if (self.peek().type == .AUTO) {
+                self.advance();
+                return_type_info.base = .Auto;
+            } else {
+                const type_name = self.peek();
+                self.advance();
+                return_type_info.base = switch (type_name.type) {
+                    .INT => .Int,
+                    .FLOAT => .Float,
+                    .STRING => .String,
+                    .BOOL => .Boolean,
+                    else => return error.InvalidType,
+                };
+            }
+        }
 
         // Parse function body
+        if (self.peek().type != .LEFT_BRACE) {
+            return error.ExpectedLeftBrace;
+        }
+
+        const body = try self.parseBlockStmt();
+
+        return ast.Stmt{ .Function = .{
+            .name = name,
+            .params = try params.toOwnedSlice(),
+            .return_type_info = return_type_info,
+            .body = body,
+        } };
+    }
+
+    fn parseBlockStmt(self: *Parser) ErrorList![]ast.Stmt {
         if (self.peek().type != .LEFT_BRACE) {
             return error.ExpectedLeftBrace;
         }
@@ -1011,36 +996,7 @@ pub const Parser = struct {
             statements.deinit();
         }
 
-        // Parse statements until we hit a right brace
         while (self.peek().type != .RIGHT_BRACE and self.peek().type != .EOF) {
-            // Handle variable declarations inside function
-            if (self.peek().type == .IDENTIFIER and self.peekAhead(1).type == .IDENTIFIER) {
-                // This is a type declaration followed by an identifier
-                self.advance(); // Skip the type token
-                const name_token = self.peek();
-                self.advance();
-
-                var initializer: ?*ast.Expr = null;
-                if (self.peek().type == .ASSIGN) {
-                    self.advance();
-                    initializer = try self.parseExpression();
-                }
-
-                if (self.peek().type != .SEMICOLON) {
-                    return error.ExpectedSemicolon;
-                }
-                self.advance();
-
-                try statements.append(.{ .VarDecl = .{
-                    .name = name_token,
-                    .type_expr = null,
-                    .initializer = initializer,
-                    .is_mutable = true,
-                    .is_dynamic = false,
-                } });
-                continue;
-            }
-
             const stmt = try self.parseStatement();
             try statements.append(stmt);
         }
@@ -1050,14 +1006,7 @@ pub const Parser = struct {
         }
         self.advance(); // consume }
 
-        return ast.Stmt{
-            .Function = .{
-                .name = name,
-                .params = try params.toOwnedSlice(),
-                .return_type = null, // We'll add return type support later
-                .body = try statements.toOwnedSlice(),
-            },
-        };
+        return statements.toOwnedSlice();
     }
 
     fn parseReturnStmt(self: *Parser) ErrorList!ast.Stmt {
@@ -1071,28 +1020,22 @@ pub const Parser = struct {
         }
         self.advance();
 
-        // Parse the return value (optional)
         var value: ?*ast.Expr = null;
-        errdefer if (value) |v| {
-            v.deinit(self.allocator);
-            self.allocator.destroy(v);
-        };
+        const type_info = ast.TypeInfo{ .base = .Nothing }; // Default to Nothing type
 
         if (self.peek().type != .SEMICOLON) {
             value = try self.parseExpression();
         }
 
-        // Expect semicolon
         if (self.peek().type != .SEMICOLON) {
-            if (value) |v| {
-                v.deinit(self.allocator);
-                self.allocator.destroy(v);
-            }
             return error.ExpectedSemicolon;
         }
         self.advance();
 
-        return ast.Stmt{ .Return = .{ .value = value } };
+        return ast.Stmt{ .Return = .{
+            .value = value,
+            .type_info = type_info,
+        } };
     }
 
     fn array(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
@@ -1195,7 +1138,7 @@ pub const Parser = struct {
             .Function => |f| .{ .Function = .{
                 .name = f.name,
                 .params = f.params,
-                .return_type = f.return_type,
+                .return_type_info = f.return_type_info,
                 .body = f.body,
             } },
             else => unreachable,
@@ -1416,8 +1359,6 @@ pub const Parser = struct {
                 stmt_ptr.* = expr_stmt;
                 initializer = stmt_ptr;
             }
-        } else {
-            self.advance(); // consume semicolon
         }
 
         // Parse condition
@@ -1454,51 +1395,69 @@ pub const Parser = struct {
         return for_expr;
     }
 
-    fn forEachExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-        if (self.debug_enabled) {
-            std.debug.print("\nParsing foreach expression...\n", .{});
-        }
+    fn parseForEach(self: *Parser) ErrorList!*ast.Expr {
+        self.advance(); // consume 'foreach'
 
-        self.advance(); // consume 'for'
-
-        // Expect opening parenthesis
         if (self.peek().type != .LEFT_PAREN) {
             return error.ExpectedLeftParen;
         }
         self.advance();
 
-        // Parse the item name
+        // Parse item name
         if (self.peek().type != .IDENTIFIER) {
             return error.ExpectedIdentifier;
         }
         const item_name = self.peek();
         self.advance();
 
-        // Expect 'in' keyword
+        // Parse 'in' keyword
         if (self.peek().type != .IN) {
             return error.ExpectedInKeyword;
         }
         self.advance();
 
-        // Parse the array expression
-        const array_expr = try self.parseExpression() orelse return error.ExpectedExpression;
+        // Parse array expression
+        const array_expr = try self.parseExpression();
 
-        // Expect closing parenthesis
         if (self.peek().type != .RIGHT_PAREN) {
             return error.ExpectedRightParen;
         }
         self.advance();
 
-        // Parse the loop body
-        const body = try self.parseExpression() orelse return error.ExpectedExpression;
+        // Parse body as a block
+        if (self.peek().type != .LEFT_BRACE) {
+            return error.ExpectedLeftBrace;
+        }
+        const body = try self.parseBlockStmt();
 
-        const foreach_expr = try self.allocator.create(ast.Expr);
-        foreach_expr.* = .{ .ForEach = .{
+        const foreach = try self.allocator.create(ast.Expr);
+        foreach.* = .{ .ForEach = .{
             .item_name = item_name,
             .array = array_expr,
             .body = body,
         } };
 
-        return foreach_expr;
+        return foreach;
+    }
+
+    fn parseReturn(self: *Parser) ErrorList!ast.Stmt {
+        self.advance(); // consume 'return'
+
+        var value: ?*ast.Expr = null;
+        const type_info = ast.TypeInfo{ .base = .Nothing };
+
+        if (self.peek().type != .SEMICOLON) {
+            value = try self.parseExpression();
+        }
+
+        if (self.peek().type != .SEMICOLON) {
+            return error.ExpectedSemicolon;
+        }
+        self.advance();
+
+        return ast.Stmt{ .Return = .{
+            .value = value,
+            .type_info = type_info,
+        } };
     }
 };
