@@ -116,8 +116,8 @@ are not supported. Structs are the preferred way to group different types.
 
 ```
 // Only homogeneous arrays allowed
-var nums: []int = [1, 2, 3];       // OK
-var strs: []string = ["a", "b"];   // OK
+var nums: int[] = [1, 2, 3];       // OK
+var strs: string[] = ["a", "b"];   // OK
 
 // These would be errors
 var mixed = [1, "two", true];      // Error: mixed types in array
@@ -230,6 +230,13 @@ assignments are allowed for strict variables
 ```
 var x: auto = 5;          //int
 x = "five";               //error, given value does not match type int
+```
+
+Arrays must be explicitly typed.
+
+```
+var x: int[] = [1, 2, 3];   //OK
+var x = [1, 2, 3];         //error, needs explicit type
 ```
 
 ## Conditionals
