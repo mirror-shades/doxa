@@ -687,11 +687,21 @@ pub const Interpreter = struct {
             .Logical => |logical| {
                 const left = try self.evaluate(logical.left);
                 const right = try self.evaluate(logical.right);
-                return token.TokenLiteral{ .boolean = switch (logical.operator.type) {
-                    .AND_KEYWORD, .AND_SYMBOL => left.boolean and right.boolean,
-                    .OR_KEYWORD, .OR_SYMBOL => left.boolean or right.boolean,
-                    else => return error.InvalidOperator,
-                } };
+                return token.TokenLiteral{
+                    .boolean = switch (logical.operator.type) {
+                        .AND_KEYWORD, .AND_SYMBOL => left.boolean and right.boolean,
+                        .OR_KEYWORD, .OR_SYMBOL => left.boolean or right.boolean,
+                        .XOR => {
+                            // Both operands must be boolean
+                            if (left != .boolean) return error.TypeError;
+                            if (right != .boolean) return error.TypeError;
+
+                            // XOR is true if operands are different
+                            return token.TokenLiteral{ .boolean = left.boolean != right.boolean };
+                        },
+                        else => return error.InvalidOperator,
+                    },
+                };
             },
             .Function => |f| token.TokenLiteral{ .function = .{
                 .params = f.params,
@@ -809,6 +819,37 @@ pub const Interpreter = struct {
                 }
 
                 return token.TokenLiteral{ .nothing = {} };
+            },
+            .FieldAccess => |field| {
+                const object = try self.evaluate(field.object);
+                if (object != .struct_value) {
+                    return error.NotAStruct;
+                }
+
+                // Look up field in struct
+                for (object.struct_value) |struct_field| {
+                    if (std.mem.eql(u8, struct_field.name, field.field.lexeme)) {
+                        return struct_field.value;
+                    }
+                }
+                return error.FieldNotFound;
+            },
+            .StructDecl => |decl| {
+                // Create struct type and store it in environment
+                const struct_type = ast.TypeInfo{
+                    .base = .Struct,
+                    .struct_fields = try self.memory.getAllocator().alloc(ast.StructFieldType, decl.fields.len),
+                };
+
+                for (decl.fields, 0..) |field, i| {
+                    struct_type.struct_fields.?[i] = .{
+                        .name = field.name.lexeme,
+                        .type_info = try ast.typeInfoFromExpr(self.memory.getAllocator(), field.type_expr),
+                    };
+                }
+
+                try self.environment.define(decl.name.lexeme, .{ .nothing = {} }, struct_type);
+                return .{ .nothing = {} };
             },
         };
     }

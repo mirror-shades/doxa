@@ -17,25 +17,33 @@ pub const Lexer = struct {
     start: usize, // array index is usize by default
     current: usize, // array index is usize by default
     line: i32,
+    column: usize, // array index is usize by default
     allocator: std.mem.Allocator,
     allocated_strings: std.ArrayList([]const u8),
     allocated_arrays: std.ArrayList([]const TokenLiteral),
+    line_start: usize, // Add this to track start of current line
+    file_path: []const u8,
+    token_line: i32, // Add this to track line at token start
 
     //======================================================================
     // Initialization
     //======================================================================
 
-    pub fn init(allocator: std.mem.Allocator, source: []const u8) Lexer {
-        return Lexer{
+    pub fn init(allocator: std.mem.Allocator, source: []const u8, file_path: []const u8) Lexer {
+        return .{
             .source = source,
             .start = 0,
             .current = 0,
             .line = 1,
+            .column = 1,
+            .line_start = 0, // Initialize line_start
             .allocator = allocator,
             .tokens = std.ArrayList(Token).init(allocator),
             .keywords = std.StringHashMap(TokenType).init(allocator),
             .allocated_strings = std.ArrayList([]const u8).init(allocator),
             .allocated_arrays = std.ArrayList([]const TokenLiteral).init(allocator),
+            .file_path = file_path,
+            .token_line = 1, // Initialize token_line
         };
     }
 
@@ -102,6 +110,7 @@ pub const Lexer = struct {
         try self.keywords.put("array", .ARRAY_TYPE);
         try self.keywords.put("struct", .STRUCT_TYPE);
         try self.keywords.put("enum", .ENUM_TYPE);
+        try self.keywords.put("xor", .XOR);
     }
 
     //======================================================================
@@ -112,7 +121,7 @@ pub const Lexer = struct {
         while (!self.isAtEnd()) {
             try self.getNextToken();
         }
-        try self.tokens.append(Token.init(.EOF, "", .nothing, self.line, self.current));
+        try self.tokens.append(Token.init(.EOF, "", .nothing, self.line, self.column));
         return self.tokens;
     }
 
@@ -127,6 +136,7 @@ pub const Lexer = struct {
         if (self.isAtEnd()) return;
 
         self.start = self.current;
+        self.token_line = self.line; // Save line number at start of token
         const c = self.source[self.current];
         self.advance();
 
@@ -308,6 +318,8 @@ pub const Lexer = struct {
             ' ', '\r', '\t' => {}, // Skip whitespace without creating tokens
             '\n' => {
                 self.line += 1;
+                self.line_start = self.current + 1; // Set start of next line
+                self.column = 1;
                 // Don't create a token for newlines
             },
             //identifier or keyword
@@ -354,7 +366,11 @@ pub const Lexer = struct {
             tracked_lexeme = try self.addString(lexeme);
         }
 
-        try self.tokens.append(Token.init(token_type, tracked_lexeme, tracked_literal, self.line, self.current));
+        // Calculate token position based on start position
+        const token_line = self.line;
+        const token_column = self.start - self.line_start + 1;
+
+        try self.tokens.append(Token.init(token_type, tracked_lexeme, tracked_literal, token_line, token_column));
     }
 
     //======================================================================
@@ -384,7 +400,16 @@ pub const Lexer = struct {
     }
 
     fn advance(self: *Lexer) void {
-        self.current += 1;
+        if (self.current < self.source.len) {
+            if (self.source[self.current] == '\n') {
+                self.line += 1;
+                self.line_start = self.current + 1;
+                self.column = 1;
+            } else {
+                self.column = self.current - self.line_start + 1;
+            }
+            self.current += 1;
+        }
     }
 
     fn match(self: *Lexer, expected: u8) bool {
@@ -1034,5 +1059,38 @@ pub const Lexer = struct {
         const owned = try self.allocator.dupe(TokenLiteral, arr);
         try self.allocated_arrays.append(owned);
         return owned;
+    }
+
+    fn countLines(self: *Lexer, start: usize, end: usize) struct { line: i32, column: usize } {
+        var line: i32 = 1;
+        var last_newline: usize = 0;
+
+        // Debug print
+        std.debug.print("Counting lines from {d} to {d}\n", .{ start, end });
+
+        var i: usize = 0;
+        while (i < end) : (i += 1) {
+            if (self.source[i] == '\n') {
+                line += 1;
+                last_newline = i + 1;
+                // Debug print
+                std.debug.print("Found newline at {d}, line now {d}\n", .{ i, line });
+            }
+            if (i == start) {
+                // Debug print
+                std.debug.print("Reached start at {d}, line {d}, column {d}\n", .{ i, line, i - last_newline + 1 });
+                break;
+            }
+        }
+
+        const result = .{
+            .line = line,
+            .column = start - last_newline + 1,
+        };
+
+        // Debug print
+        std.debug.print("Final position: line {d}, column {d}\n", .{ result.line, result.column });
+
+        return result;
     }
 };

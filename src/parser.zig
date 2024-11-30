@@ -12,13 +12,14 @@ const Precedence = enum(u8) {
     ASSIGNMENT = 1, // =
     OR = 2, // or
     AND = 3, // and
-    EQUALITY = 4, // == !=
-    COMPARISON = 5, // < > <= >=
-    TERM = 6, // + -
-    FACTOR = 7, // * /
-    UNARY = 8, // ! -
-    CALL = 9, // . () []
-    PRIMARY = 10,
+    XOR = 4, // xor
+    EQUALITY = 5, // == !=
+    COMPARISON = 6, // < > <= >=
+    TERM = 7, // + -
+    FACTOR = 8, // * /
+    UNARY = 9, // ! -
+    CALL = 10, // . () []
+    PRIMARY = 11,
 };
 
 const ParseFn = *const fn (*Parser, ?*ast.Expr, Precedence) ErrorList!?*ast.Expr;
@@ -77,7 +78,7 @@ pub const Parser = struct {
         r.set(.OR_KEYWORD, .{ .infix = logical, .precedence = .OR });
         r.set(.AND_SYMBOL, .{ .infix = logical, .precedence = .AND });
         r.set(.OR_SYMBOL, .{ .infix = logical, .precedence = .OR });
-
+        r.set(.XOR, .{ .infix = logical, .precedence = .XOR });
         // Unary operators
         r.set(.BANG, .{ .prefix = unary });
 
@@ -115,6 +116,10 @@ pub const Parser = struct {
         r.set(.WHILE, .{ .prefix = whileExpr });
         r.set(.FOR, .{ .prefix = forExpr });
 
+        // Add struct support
+        r.set(.STRUCT, .{ .prefix = parseStructDecl });
+        r.set(.DOT, .{ .infix = fieldAccess, .precedence = .CALL });
+
         break :blk r;
     };
 
@@ -122,7 +127,14 @@ pub const Parser = struct {
         return rules.get(token_type);
     }
 
-    pub fn init(allocator: std.mem.Allocator, tokens: []const token.Token, debug_enabled: bool, mode: Mode, is_repl: bool) Parser {
+    pub fn init(
+        allocator: std.mem.Allocator,
+        tokens: []const token.Token,
+        debug_enabled: bool,
+        mode: Mode,
+        is_repl: bool,
+        file_name: []const u8,
+    ) Parser {
         return .{
             .allocator = allocator,
             .tokens = tokens,
@@ -130,7 +142,7 @@ pub const Parser = struct {
             .debug_enabled = debug_enabled,
             .mode = mode,
             .is_repl = is_repl,
-            .current_file = "main.dx",
+            .current_file = file_name,
         };
     }
 
@@ -752,60 +764,30 @@ pub const Parser = struct {
     }
 
     fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
-        if (self.debug_enabled) {
-            std.debug.print("\nParsing type expression...\n", .{});
-            std.debug.print("Current token: {s}\n", .{@tagName(self.peek().type)});
+        const type_name = self.peek().lexeme;
+
+        const basic_type = if (std.mem.eql(u8, type_name, "int"))
+            ast.BasicType.Integer
+        else if (std.mem.eql(u8, type_name, "float"))
+            ast.BasicType.Float
+        else if (std.mem.eql(u8, type_name, "string"))
+            ast.BasicType.String
+        else if (std.mem.eql(u8, type_name, "bool"))
+            ast.BasicType.Boolean
+        else if (std.mem.eql(u8, type_name, "auto"))
+            ast.BasicType.Auto
+        else
+            null;
+
+        if (basic_type) |basic| {
+            self.advance();
+            const type_expr = try self.allocator.create(ast.TypeExpr);
+            type_expr.* = .{ .Basic = basic };
+            return type_expr;
         }
 
-        const type_expr = try self.allocator.create(ast.TypeExpr);
-        errdefer self.allocator.destroy(type_expr);
-
-        // Parse base type
-        const base_type = switch (self.peek().type) {
-            .IDENTIFIER => blk: {
-                const type_name = self.peek().lexeme;
-                // Match built-in type names
-                const base = if (std.mem.eql(u8, type_name, "int"))
-                    .Integer
-                else if (std.mem.eql(u8, type_name, "float"))
-                    .Float
-                else if (std.mem.eql(u8, type_name, "string"))
-                    .String
-                else if (std.mem.eql(u8, type_name, "bool"))
-                    .Boolean
-                else {
-                    self.allocator.destroy(type_expr);
-                    return error.UnknownType;
-                };
-                self.advance();
-                break :blk base;
-            },
-            else => {
-                self.allocator.destroy(type_expr);
-                return null;
-            },
-        };
-
-        // Check for array type notation (e.g., int[])
-        if (self.peek().type == .LEFT_BRACKET) {
-            self.advance();
-            if (self.peek().type != .RIGHT_BRACKET) {
-                self.allocator.destroy(type_expr);
-                return error.ExpectedRightBracket;
-            }
-            self.advance();
-
-            // Create array type expression
-            type_expr.* = .{ .Array = .{
-                .element_type = try self.allocator.create(ast.TypeExpr),
-            } };
-            type_expr.Array.element_type.* = .{ .Basic = base_type };
-        } else {
-            // Create basic type expression
-            type_expr.* = .{ .Basic = base_type };
-        }
-
-        return type_expr;
+        // Handle other type expressions...
+        return null;
     }
 
     fn check(self: *Parser, token_type: token.TokenType) bool {
@@ -1409,5 +1391,96 @@ pub const Parser = struct {
             .value = value,
             .type_info = type_info,
         } };
+    }
+
+    fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+        // Consume 'struct' keyword
+        self.advance();
+
+        // Parse struct name
+        if (self.peek().type != .IDENTIFIER) {
+            return error.ExpectedIdentifier;
+        }
+        const name = self.peek();
+        self.advance();
+
+        // Expect opening brace
+        if (self.peek().type != .LEFT_BRACE) {
+            return error.ExpectedLeftBrace;
+        }
+        self.advance();
+
+        // Parse fields
+        var fields = std.ArrayList(*ast.StructField).init(self.allocator);
+        errdefer {
+            for (fields.items) |field| {
+                field.deinit(self.allocator);
+                self.allocator.destroy(field);
+            }
+            fields.deinit();
+        }
+
+        while (self.peek().type != .RIGHT_BRACE) {
+            // Parse field name
+            if (self.peek().type != .IDENTIFIER) {
+                return error.ExpectedIdentifier;
+            }
+            const field_name = self.peek();
+            self.advance();
+
+            // Expect colon
+            if (self.peek().type != .COLON) {
+                return error.ExpectedColon;
+            }
+            self.advance();
+
+            // Parse field type
+            const type_expr = try self.parseTypeExpr() orelse return error.ExpectedType;
+
+            // Create field
+            const field = try self.allocator.create(ast.StructField);
+            field.* = .{
+                .name = field_name,
+                .type_expr = type_expr,
+            };
+            try fields.append(field);
+
+            // Expect comma or right brace
+            if (self.peek().type == .COMMA) {
+                self.advance();
+            } else if (self.peek().type != .RIGHT_BRACE) {
+                return error.ExpectedRightBrace;
+            }
+        }
+
+        // Create struct expression
+        const struct_expr = try self.allocator.create(ast.Expr);
+        struct_expr.* = .{ .StructDecl = .{
+            .name = name,
+            .fields = try fields.toOwnedSlice(),
+        } };
+
+        return struct_expr;
+    }
+
+    fn fieldAccess(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+        if (left == null) return error.ExpectedExpression;
+
+        // Consume the dot
+        self.advance();
+
+        // Parse field name
+        if (self.peek().type != .IDENTIFIER) {
+            return error.ExpectedIdentifier;
+        }
+        const field_name = self.peek();
+        self.advance();
+
+        const field_access = try self.allocator.create(ast.Expr);
+        field_access.* = .{ .FieldAccess = .{
+            .object = left.?,
+            .field = field_name,
+        } };
+        return field_access;
     }
 };

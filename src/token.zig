@@ -60,6 +60,7 @@ pub const TokenType = enum {
     WHILE, // while
     FOR, // for
     FOREACH, // foreach
+    XOR, // xor
     FROM, // from
     IN, // in
     IS, // is

@@ -54,6 +54,9 @@ pub const ErrorList = error{
     ExpectedComma,
     UnsupportedArrayType,
     ArrayTypeMismatch,
+    NotAStruct,
+    FieldNotFound,
+    InvalidFieldAccessTarget,
 
     // Error Handling
     NoTryBlock,

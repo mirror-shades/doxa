@@ -124,6 +124,13 @@ var mixed = [1, "two", true];      // Error: mixed types in array
 var noType = [1, 2, 3];            // Error: array type must be explicit
 ```
 
+Doxa has an inspect operator `?` which can be used to inspect the value of any expression.
+
+```
+var x = 1;
+x?; // prints [main.doxa:1:1] x = 1
+```
+
 ## Doxa normal syntax
 
 in normal mode, all variables are dynamically typed by default.
