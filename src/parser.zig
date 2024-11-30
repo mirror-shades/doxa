@@ -49,6 +49,7 @@ pub const Parser = struct {
     debug_enabled: bool,
     mode: Mode,
     is_repl: bool,
+    current_file: []const u8,
 
     const rules = blk: {
         var r = std.EnumArray(token.TokenType, ParseRule).initFill(ParseRule{});
@@ -121,29 +122,15 @@ pub const Parser = struct {
         return rules.get(token_type);
     }
 
-    pub fn init(memory: *MemoryManager, tokens: []const token.Token, debug_enabled: bool, is_repl: bool, is_strict_repl: bool) !Parser {
-        if (tokens.len == 0) return error.EmptyTokenList;
-
-        const mode = if (is_repl)
-            if (is_strict_repl) Mode.Strict else Mode.Normal // Use provided REPL mode or default
-        else blk: {
-            // File mode detection logic
-            if (tokens.len >= 2 and tokens[0].type == .HASH and tokens[1].type == .IDENTIFIER) {
-                if (std.mem.eql(u8, tokens[1].lexeme, "strict")) {
-                    break :blk Mode.Strict;
-                } else if (std.mem.eql(u8, tokens[1].lexeme, "warn")) {
-                    break :blk Mode.Warn;
-                } else break :blk Mode.Normal;
-            } else break :blk Mode.Normal;
-        };
-
-        return Parser{
-            .allocator = memory.getAllocator(),
+    pub fn init(allocator: std.mem.Allocator, tokens: []const token.Token, debug_enabled: bool, mode: Mode, is_repl: bool) Parser {
+        return .{
+            .allocator = allocator,
             .tokens = tokens,
-            .current = if (!is_repl and mode != .Normal) 2 else 0,
+            .current = 0,
             .debug_enabled = debug_enabled,
             .mode = mode,
             .is_repl = is_repl,
+            .current_file = "main.dx",
         };
     }
 
@@ -1113,32 +1100,19 @@ pub const Parser = struct {
 
     // Add the print parsing function
     fn print(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-        if (self.debug_enabled) {
-            std.debug.print("\nParsing print expression...\n", .{});
-            std.debug.print("Current token: {s} at position {}\n", .{
-                @tagName(self.peek().type),
-                self.current,
-            });
-        }
-
         if (left == null) return error.ExpectedExpression;
 
-        // Don't advance the token position, just create the print expression
-        if (self.debug_enabled) {
-            std.debug.print("Creating print expression at position {}\n", .{
-                self.current,
-            });
-        }
-
-        // Create the print expression
         const print_expr = try self.allocator.create(ast.Expr);
-        print_expr.* = .{ .Print = left.? };
-
-        if (self.debug_enabled) {
-            std.debug.print("Created print expression, current token: {s}\n", .{
-                @tagName(self.peek().type),
-            });
-        }
+        print_expr.* = .{
+            .Print = .{
+                .expr = left.?,
+                .location = .{
+                    .file = self.current_file,
+                    .line = self.peek().line,
+                    .column = self.peek().column,
+                },
+            },
+        };
 
         return print_expr;
     }

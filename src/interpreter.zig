@@ -698,24 +698,41 @@ pub const Interpreter = struct {
                 .body = f.body,
                 .closure = self.environment,
             } },
-            .Print => |e| {
-                if (e == null) return error.InvalidExpression;
-                const value = try self.evaluate(e.?);
-                // Format the output based on the token type
-                try switch (value) {
-                    .int => |n| self.stdout_buffer.writer().print("{d}\n", .{n}),
-                    .float => |f| self.stdout_buffer.writer().print("{d}\n", .{f}),
-                    .string => |s| self.stdout_buffer.writer().print("{s}\n", .{s}),
-                    .boolean => |b| self.stdout_buffer.writer().print("{}\n", .{b}),
-                    .nothing => self.stdout_buffer.writer().writeAll("nothing\n"),
-                    .array => |arr| self.stdout_buffer.writer().print("{any}\n", .{arr}),
-                    .struct_value => |sv| self.stdout_buffer.writer().print("{any}\n", .{sv}),
-                    .function => self.stdout_buffer.writer().writeAll("<function>\n"),
-                };
+            .Print => |print| {
+                const value = try self.evaluate(print.expr);
+                var buffer = std.ArrayList(u8).init(self.memory.getAllocator());
+                defer buffer.deinit();
 
-                // Flush immediately after each print
-                try std.io.getStdOut().writer().writeAll(self.stdout_buffer.items);
-                self.stdout_buffer.clearRetainingCapacity();
+                // Format the output into the buffer
+                try buffer.writer().print("[{s}:{d}:{d}] {s} = ", .{ print.location.file, print.location.line, print.location.column, switch (print.expr.*) {
+                    .Variable => |v| v.lexeme,
+                    .Binary => "expression",
+                    .Call => "function call",
+                    else => "value",
+                } });
+
+                // Format the value into the buffer
+                switch (value) {
+                    .int => |i| try buffer.writer().print("{d}", .{i}),
+                    .float => |f| try buffer.writer().print("{d}", .{f}),
+                    .boolean => |b| try buffer.writer().print("{}", .{b}),
+                    .string => |s| try buffer.writer().print("\"{s}\"", .{s}),
+                    .nothing => try buffer.writer().print("nothing", .{}),
+                    .array => |arr| {
+                        try buffer.writer().print("[", .{});
+                        for (arr, 0..) |item, i| {
+                            if (i > 0) try buffer.writer().print(", ", .{});
+                            try buffer.writer().print("{any}", .{item});
+                        }
+                        try buffer.writer().print("]", .{});
+                    },
+                    .function => try buffer.writer().print("<function>", .{}),
+                    .struct_value => |sv| try buffer.writer().print("{any}", .{sv}),
+                }
+                try buffer.writer().print("\n", .{});
+
+                // Write the entire buffer at once
+                try std.io.getStdOut().writeAll(buffer.items);
 
                 return value;
             },

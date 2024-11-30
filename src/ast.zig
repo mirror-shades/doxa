@@ -22,7 +22,7 @@ pub const Expr = union(enum) {
     Literal: token.TokenLiteral,
     Binary: Binary,
     Unary: Unary,
-    Print: ?*Expr,
+    Print: PrintExpr,
     Variable: token.Token,
     Assignment: Assignment,
     Grouping: ?*Expr,
@@ -171,10 +171,8 @@ pub const Expr = union(enum) {
                 allocator.free(f.body);
             },
             .Print => |p| {
-                if (p) |expr| {
-                    expr.deinit(allocator);
-                    allocator.destroy(expr);
-                }
+                p.expr.deinit(allocator);
+                allocator.destroy(p.expr);
             },
             .While => |*w| {
                 w.condition.deinit(allocator);
@@ -438,6 +436,17 @@ pub const ForEachExpr = struct {
     item_name: token.Token,
     array: *Expr,
     body: []Stmt,
+};
+
+pub const Location = struct {
+    file: []const u8,
+    line: i32,
+    column: usize,
+};
+
+pub const PrintExpr = struct {
+    expr: *Expr,
+    location: Location,
 };
 
 // Helper function to create TypeInfo from type expression

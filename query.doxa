@@ -1,0 +1,17 @@
+// normmal queries
+x?;
+(5 + y)?;
+foo()?;
+
+// something more complex
+fn outerfunc() {
+    var value = do_something()?;
+    var values = innerfunc(value);
+    return values;
+}
+
+fn innerfunc(x) {
+    return (x ** value)?;
+}
+
+outerfunc()?;

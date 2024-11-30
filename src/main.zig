@@ -84,7 +84,7 @@ pub fn run(memory: *MemoryManager, interpreter: *Interpreter, source: []const u8
     }
 
     if (!hadError) {
-        var parser_instance = try Parser.init(memory, token_list.items, debugParser, is_repl, is_strict_repl);
+        var parser_instance = Parser.init(memory.getAllocator(), token_list.items, debugParser, if (is_strict_repl) .Strict else .Normal, is_repl);
         defer parser_instance.deinit();
 
         const statements = try parser_instance.parse();
