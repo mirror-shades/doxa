@@ -4,8 +4,8 @@ const ValueType = instructions.ValueType;
 const Reporting = @import("reporting.zig").Reporting;
 const ErrorList = @import("reporting.zig").ErrorList;
 
-const STACK_SIZE: u16 = 1024;
-const MAX_FRAMES: u16 = 1024;
+const STACK_SIZE: u16 = 1024 * 1024;
+const MAX_FRAMES: u16 = 1024 * 1024;
 
 pub const Frame = struct {
     value: instructions.Value,
@@ -226,12 +226,13 @@ const Stack = struct {
 
     pub fn push(self: *Stack, value: Frame) !void {
         if (self.sp >= STACK_SIZE) {
+            std.debug.print("Stack overflow: Attempted to push at sp={}\n", .{self.sp});
             return error.StackOverflow;
         }
-        self.data[self.sp] = value;
+        self.data[@intCast(self.sp)] = value;
         self.sp += 1;
 
-        // More detailed debug output
+        // Debug output
         switch (value.value.type) {
             .INT => std.debug.print("Stack push: INT({}) sp={}\n", .{ value.value.data.int, self.sp }),
             .FLOAT => std.debug.print("Stack push: FLOAT({d}) sp={}\n", .{ value.value.data.float, self.sp }),
@@ -240,13 +241,14 @@ const Stack = struct {
     }
 
     pub fn pop(self: *Stack) !Frame {
-        if (self.sp == 0) {
+        if (self.sp <= 0) {
+            std.debug.print("Stack underflow: Attempted to pop at sp={}\n", .{self.sp});
             return error.StackUnderflow;
         }
         self.sp -= 1;
-        const value = self.data[self.sp];
+        const value = self.data[@intCast(self.sp)];
 
-        // More detailed debug output
+        // Debug output
         switch (value.value.type) {
             .INT => std.debug.print("Stack pop: INT({}) sp={}\n", .{ value.value.data.int, self.sp }),
             .FLOAT => std.debug.print("Stack pop: FLOAT({d}) sp={}\n", .{ value.value.data.float, self.sp }),
@@ -257,10 +259,11 @@ const Stack = struct {
     }
 
     pub fn peek(self: Stack) !Frame {
-        if (self.sp == 0) {
+        if (self.sp <= 0) {
+            std.debug.print("Stack underflow: Attempted to peek at sp={}\n", .{self.sp});
             return error.StackUnderflow;
         }
-        return self.data[self.sp - 1];
+        return self.data[@intCast(self.sp - 1)];
     }
 
     pub fn size(self: Stack) i32 {
@@ -698,14 +701,20 @@ pub const VM = struct {
     }
 
     fn executeInstruction(self: *VM, opcode: instructions.OpCode) !void {
+        // Add debug output at the start of instruction execution
+        std.debug.print("Executing instruction: {} (Stack size: {})\n", .{ opcode, self.stack.sp });
+
         switch (opcode) {
             .OP_HALT => {
+                std.debug.print("Halting VM execution\n", .{});
                 self.running = false;
             },
             .OP_CONST => {
                 const constant_index = self.read_byte();
-                const constant_value = self.get_constant(constant_index) orelse
-                    return ErrorList.InvalidConstant;
+                const constant_value = self.get_constant(constant_index) orelse {
+                    self.reporter.reportFatalError("Invalid constant index: {}", .{constant_index});
+                    return error.InvalidConstant;
+                };
                 try self.stack.push(constant_value);
             },
             .OP_VAR => {
@@ -1314,6 +1323,20 @@ pub const VM = struct {
             .OP_END_TRY => {
                 try self.executeEndTry();
             },
+        }
+
+        // Add debug output after instruction execution
+        if (self.stack.sp > 0) {
+            std.debug.print("Stack top after instruction: ", .{});
+            if (self.stack.peek()) |top| {
+                switch (top.value.type) {
+                    .INT => std.debug.print("INT({})\n", .{top.value.data.int}),
+                    .FLOAT => std.debug.print("FLOAT({d})\n", .{top.value.data.float}),
+                    else => std.debug.print("type={}\n", .{top.value.type}),
+                }
+            } else |_| {
+                std.debug.print("Error peeking stack\n", .{});
+            }
         }
     }
 
