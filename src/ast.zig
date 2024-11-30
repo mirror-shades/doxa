@@ -53,6 +53,8 @@ pub const Expr = union(enum) {
     While: WhileExpr,
     For: ForExpr,
     ForEach: ForEachExpr,
+    FieldAccess: FieldAccess,
+    StructDecl: StructDecl,
 
     pub fn deinit(self: *Expr, allocator: std.mem.Allocator) void {
         switch (self.*) {
@@ -204,6 +206,18 @@ pub const Expr = union(enum) {
                 }
                 allocator.free(f.body);
             },
+            .FieldAccess => |*f| {
+                f.object.deinit(allocator);
+                allocator.destroy(f.object);
+            },
+            .StructDecl => |*s| {
+                for (s.fields) |field| {
+                    field.type_expr.deinit(allocator);
+                    allocator.destroy(field.type_expr);
+                    allocator.destroy(field);
+                }
+                allocator.free(s.fields);
+            },
         }
     }
 };
@@ -230,10 +244,33 @@ pub const Type = enum {
 pub const TypeInfo = struct {
     base: Type,
     is_mutable: bool = true,
-    array_type: ?*TypeInfo = null, // For arrays, stores the element type
-    struct_fields: ?[]StructFieldType = null, // For structs, stores field types
-    function_type: ?*FunctionType = null, // Changed to pointer
+    array_type: ?*TypeInfo = null,
+    struct_fields: ?[]StructFieldType = null,
+    function_type: ?*FunctionType = null,
     element_type: ?Type = null,
+
+    pub fn deinit(self: *TypeInfo, allocator: std.mem.Allocator) void {
+        if (self.array_type) |array_type| {
+            array_type.deinit(allocator);
+            allocator.destroy(array_type);
+        }
+        if (self.struct_fields) |fields| {
+            for (fields) |field| {
+                field.type_info.deinit(allocator);
+                allocator.destroy(field.type_info);
+            }
+            allocator.free(fields);
+        }
+        if (self.function_type) |func_type| {
+            func_type.return_type.deinit(allocator);
+            allocator.destroy(func_type.return_type);
+            for (func_type.params) |*param| {
+                param.deinit(allocator);
+            }
+            allocator.free(func_type.params);
+            allocator.destroy(func_type);
+        }
+    }
 
     pub fn inferFrom(self: *TypeInfo, value: token.TokenLiteral) void {
         if (self.base != .Auto) return;
@@ -253,12 +290,12 @@ pub const TypeInfo = struct {
 
 pub const StructFieldType = struct {
     name: []const u8,
-    type_info: *TypeInfo, // Changed to pointer
+    type_info: *TypeInfo,
 };
 
 pub const FunctionType = struct {
     params: []TypeInfo,
-    return_type: *TypeInfo, // Changed to pointer
+    return_type: *TypeInfo,
 };
 
 pub const VarDecl = struct {
@@ -271,6 +308,7 @@ pub const VarDecl = struct {
             i.deinit(allocator);
             allocator.destroy(i);
         }
+        self.type_info.deinit(allocator);
     }
 };
 
@@ -338,10 +376,14 @@ pub const TypeExpr = union(enum) {
 
     pub fn deinit(self: *TypeExpr, allocator: std.mem.Allocator) void {
         switch (self.*) {
-            .Array => |*array| array.element_type.deinit(allocator),
+            .Array => |*array| {
+                array.element_type.deinit(allocator);
+                allocator.destroy(array.element_type);
+            },
             .Struct => |fields| {
                 for (fields) |field| {
-                    field.deinit(allocator);
+                    field.type_expr.deinit(allocator);
+                    allocator.destroy(field.type_expr);
                     allocator.destroy(field);
                 }
                 allocator.free(fields);
@@ -449,13 +491,27 @@ pub const PrintExpr = struct {
     location: Location,
 };
 
+pub const FieldAccess = struct {
+    object: *Expr,
+    field: token.Token,
+};
+
+pub const StructDecl = struct {
+    name: token.Token,
+    fields: []*StructField,
+};
+
 // Helper function to create TypeInfo from type expression
-pub fn typeInfoFromExpr(type_expr: ?*TypeExpr) TypeInfo {
+pub fn typeInfoFromExpr(allocator: std.mem.Allocator, type_expr: ?*TypeExpr) !*TypeInfo {
+    const type_info = try allocator.create(TypeInfo);
+    errdefer allocator.destroy(type_info);
+
     if (type_expr == null) {
-        return TypeInfo{ .base = .Dynamic };
+        type_info.* = TypeInfo{ .base = .Dynamic };
+        return type_info;
     }
 
-    return switch (type_expr.?.*) {
+    type_info.* = switch (type_expr.?.*) {
         .Basic => |basic| switch (basic) {
             .Integer => TypeInfo{ .base = .Int },
             .Float => TypeInfo{ .base = .Float },
@@ -463,10 +519,31 @@ pub fn typeInfoFromExpr(type_expr: ?*TypeExpr) TypeInfo {
             .Boolean => TypeInfo{ .base = .Boolean },
             .Auto => TypeInfo{ .base = .Auto },
         },
-        .Array => |array| TypeInfo{
-            .base = .Array,
-            .array_type = typeInfoFromExpr(array.element_type),
+        .Array => |array| blk: {
+            const element_type = try typeInfoFromExpr(allocator, array.element_type);
+            break :blk TypeInfo{
+                .base = .Array,
+                .array_type = element_type,
+            };
         },
-        else => TypeInfo{ .base = .Dynamic },
+        .Struct => |fields| blk: {
+            var struct_fields = try allocator.alloc(StructFieldType, fields.len);
+            errdefer allocator.free(struct_fields);
+
+            for (fields, 0..) |field, i| {
+                const field_type = try typeInfoFromExpr(allocator, field.type_expr);
+                struct_fields[i] = .{
+                    .name = field.name.lexeme,
+                    .type_info = field_type,
+                };
+            }
+            break :blk TypeInfo{
+                .base = .Struct,
+                .struct_fields = struct_fields,
+            };
+        },
+        .Enum => TypeInfo{ .base = .Dynamic }, // TODO: Add proper enum support
     };
+
+    return type_info;
 }

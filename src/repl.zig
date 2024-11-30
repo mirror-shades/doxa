@@ -36,7 +36,7 @@ pub fn runRepl(memory: *MemoryManager) !void {
             }
 
             // Execute and get result
-            const result = main.run(memory, &interpreter, final_line, true) catch |err| switch (err) {
+            const result = main.run(memory, &interpreter, final_line, true, "<repl>") catch |err| switch (err) {
                 error.VariableNotFound => {
                     std.debug.print("Error: Variable not found\n", .{});
                     continue;
