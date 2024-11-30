@@ -125,6 +125,7 @@ pub const Interpreter = struct {
     globals: *Environment,
     debug_enabled: bool,
     string_interner: StringInterner,
+    stdout_buffer: std.ArrayList(u8),
 
     pub fn init(memory: *MemoryManager) !Interpreter {
         const globals = try memory.getAllocator().create(Environment);
@@ -136,12 +137,14 @@ pub const Interpreter = struct {
             .globals = globals,
             .debug_enabled = memory.debug_enabled,
             .string_interner = StringInterner.init(memory.getAllocator()),
+            .stdout_buffer = std.ArrayList(u8).init(memory.getAllocator()),
         };
     }
 
     pub fn deinit(self: *Interpreter) void {
         self.environment.deinit();
         self.string_interner.deinit();
+        self.stdout_buffer.deinit();
     }
 
     pub fn executeBlock(self: *Interpreter, statements: []ast.Stmt, environment: *Environment) ErrorList!?token.TokenLiteral {
@@ -696,35 +699,26 @@ pub const Interpreter = struct {
                 .closure = self.environment,
             } },
             .Print => |e| {
-                if (e) |print_expr| {
-                    const value = try self.evaluate(print_expr);
-                    const stdout = std.io.getStdOut().writer();
-                    switch (value) {
-                        .int => |n| try stdout.print("{d}\n", .{n}),
-                        .float => |f| try stdout.print("{d}\n", .{f}),
-                        .string => |s| try stdout.print("{s}\n", .{s}),
-                        .boolean => |b| try stdout.print("{}\n", .{b}),
-                        .nothing => try stdout.print("nothing\n", .{}),
-                        .array => |arr| {
-                            try stdout.print("[", .{});
-                            for (arr, 0..) |item, i| {
-                                if (i > 0) try stdout.print(", ", .{});
-                                switch (item) {
-                                    .int => |n| try stdout.print("{d}", .{n}),
-                                    .float => |f| try stdout.print("{d}", .{f}),
-                                    .string => |s| try stdout.print("\"{s}\"", .{s}),
-                                    .boolean => |b| try stdout.print("{}", .{b}),
-                                    .nothing => try stdout.print("nothing", .{}),
-                                    else => try stdout.print("...", .{}),
-                                }
-                            }
-                            try stdout.print("]\n", .{});
-                        },
-                        else => try stdout.print("{any}\n", .{value}),
-                    }
-                    return value;
+                if (e == null) return error.InvalidExpression;
+                const value = try self.evaluate(e.?);
+                // Format the output based on the token type
+                try switch (value) {
+                    .int => |n| self.stdout_buffer.writer().print("{d}\n", .{n}),
+                    .float => |f| self.stdout_buffer.writer().print("{d}\n", .{f}),
+                    .string => |s| self.stdout_buffer.writer().print("{s}\n", .{s}),
+                    .boolean => |b| self.stdout_buffer.writer().print("{}\n", .{b}),
+                    .nothing => self.stdout_buffer.writer().writeAll("nothing\n"),
+                    .array => |arr| self.stdout_buffer.writer().print("{any}\n", .{arr}),
+                    .struct_value => |sv| self.stdout_buffer.writer().print("{any}\n", .{sv}),
+                    .function => self.stdout_buffer.writer().writeAll("<function>\n"),
+                };
+
+                // Flush periodically or at end of program
+                if (self.stdout_buffer.items.len > 4096) {
+                    try std.io.getStdOut().writer().writeAll(self.stdout_buffer.items);
+                    self.stdout_buffer.clearRetainingCapacity();
                 }
-                return token.TokenLiteral{ .nothing = {} };
+                return value;
             },
             .While => |while_expr| {
                 while (true) {

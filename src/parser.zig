@@ -1238,23 +1238,22 @@ pub const Parser = struct {
     fn parseStatement(self: *Parser) ErrorList!ast.Stmt {
         if (self.debug_enabled) {
             std.debug.print("\nParsing statement...\n", .{});
+            std.debug.print("Current token: {s}\n", .{@tagName(self.peek().type)});
         }
 
-        switch (self.peek().type) {
-            .VAR => {
-                self.advance();
-                return self.parseVarDecl();
+        return switch (self.peek().type) {
+            .VAR => self.parseVarDecl(),
+            .FN_KEYWORD, .FUNCTION_KEYWORD => self.parseFunctionDecl(),
+            .RETURN => self.parseReturnStmt(),
+            .LEFT_BRACE => blk: {
+                const block_expr = if (try self.block(null, .NONE)) |expr|
+                    ast.Stmt{ .Expression = expr }
+                else
+                    ast.Stmt{ .Expression = null };
+                break :blk block_expr;
             },
-            .FN_KEYWORD => {
-                return self.parseFunctionDecl();
-            },
-            .RETURN => {
-                return self.parseReturnStmt();
-            },
-            else => {
-                return self.parseExpressionStmt();
-            },
-        }
+            else => self.parseExpressionStmt(),
+        };
     }
 
     fn whileExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
@@ -1281,12 +1280,25 @@ pub const Parser = struct {
             self.advance();
         }
 
-        // Parse the loop body
-        const body = (try self.parseExpression()) orelse {
-            condition.deinit(self.allocator);
-            self.allocator.destroy(condition);
-            return error.ExpectedExpression;
-        };
+        // Parse the loop body as a block statement if we see a left brace
+        var body: *ast.Expr = undefined;
+        if (self.peek().type == .LEFT_BRACE) {
+            const block_stmts = try self.parseBlockStmt();
+            const block_expr = try self.allocator.create(ast.Expr);
+            block_expr.* = .{
+                .Block = .{
+                    .statements = block_stmts,
+                    .value = null, // No final expression value for the block
+                },
+            };
+            body = block_expr;
+        } else {
+            body = (try self.parseExpression()) orelse {
+                condition.deinit(self.allocator);
+                self.allocator.destroy(condition);
+                return error.ExpectedExpression;
+            };
+        }
 
         const while_expr = try self.allocator.create(ast.Expr);
         while_expr.* = .{ .While = .{
