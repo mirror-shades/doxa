@@ -47,7 +47,7 @@ pub const Expr = union(enum) {
     Function: struct {
         name: token.Token,
         params: []FunctionParam,
-        return_type: ?*TypeExpr,
+        return_type_info: TypeInfo,
         body: []Stmt,
     },
     While: WhileExpr,
@@ -165,10 +165,6 @@ pub const Expr = union(enum) {
                     param.deinit(allocator);
                 }
                 allocator.free(f.params);
-                if (f.return_type) |return_type| {
-                    return_type.deinit(allocator);
-                    allocator.destroy(return_type);
-                }
                 for (f.body) |*stmt| {
                     stmt.deinit(allocator);
                 }
@@ -205,8 +201,10 @@ pub const Expr = union(enum) {
             .ForEach => |*f| {
                 f.array.deinit(allocator);
                 allocator.destroy(f.array);
-                f.body.deinit(allocator);
-                allocator.destroy(f.body);
+                for (f.body) |*stmt| {
+                    stmt.deinit(allocator);
+                }
+                allocator.free(f.body);
             },
         }
     }
@@ -217,18 +215,59 @@ pub const Assignment = struct {
     value: ?*Expr,
 };
 
+pub const Type = enum {
+    Int,
+    Float,
+    String,
+    Boolean,
+    Nothing,
+    Dynamic, // For variables without explicit type
+    Auto, // For type inference
+    Array, // Will need a subtype field
+    Struct, // For struct types
+    Function, // For function types
+    Enum, // For enum types
+};
+
+pub const TypeInfo = struct {
+    base: Type,
+    is_mutable: bool = true,
+    array_type: ?*TypeInfo = null, // For arrays, stores the element type
+    struct_fields: ?[]StructFieldType = null, // For structs, stores field types
+    function_type: ?*FunctionType = null, // Changed to pointer
+
+    pub fn inferFrom(self: *TypeInfo, value: token.TokenLiteral) void {
+        if (self.base != .Auto) return;
+
+        self.base = switch (value) {
+            .int => .Int,
+            .float => .Float,
+            .string => .String,
+            .boolean => .Boolean,
+            .nothing => .Nothing,
+            .array => .Array,
+            .struct_value => .Struct,
+            .function => .Function,
+        };
+    }
+};
+
+pub const StructFieldType = struct {
+    name: []const u8,
+    type_info: *TypeInfo, // Changed to pointer
+};
+
+pub const FunctionType = struct {
+    params: []TypeInfo,
+    return_type: *TypeInfo, // Changed to pointer
+};
+
 pub const VarDecl = struct {
     name: token.Token,
-    type_expr: ?*TypeExpr,
     initializer: ?*Expr,
-    is_mutable: bool,
-    is_dynamic: bool,
+    type_info: TypeInfo,
 
     pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
-        if (self.type_expr) |t| {
-            t.deinit(allocator);
-            allocator.destroy(t);
-        }
         if (self.initializer) |i| {
             i.deinit(allocator);
             allocator.destroy(i);
@@ -239,21 +278,20 @@ pub const VarDecl = struct {
 pub const Stmt = union(enum) {
     VarDecl: struct {
         name: token.Token,
-        type_expr: ?*TypeExpr,
         initializer: ?*Expr,
-        is_mutable: bool,
-        is_dynamic: bool,
+        type_info: TypeInfo,
     },
     Expression: ?*Expr,
     Block: []Stmt,
     Function: struct {
         name: token.Token,
         params: []FunctionParam,
-        return_type: ?*TypeExpr,
+        return_type_info: TypeInfo,
         body: []Stmt,
     },
     Return: struct {
         value: ?*Expr,
+        type_info: TypeInfo,
     },
 
     pub fn deinit(self: *Stmt, allocator: std.mem.Allocator) void {
@@ -265,24 +303,13 @@ pub const Stmt = union(enum) {
                 }
             },
             .Function => |*f| {
-                for (f.params) |*param| {
-                    param.deinit(allocator);
-                }
                 allocator.free(f.params);
-                if (f.return_type) |return_type| {
-                    return_type.deinit(allocator);
-                    allocator.destroy(return_type);
-                }
                 for (f.body) |*stmt| {
                     stmt.deinit(allocator);
                 }
                 allocator.free(f.body);
             },
             .VarDecl => |*v| {
-                if (v.type_expr) |type_expr| {
-                    type_expr.deinit(allocator);
-                    allocator.destroy(type_expr);
-                }
                 if (v.initializer) |init| {
                     init.deinit(allocator);
                     allocator.destroy(init);
@@ -367,13 +394,12 @@ pub const Index = struct {
 
 pub const FunctionParam = struct {
     name: token.Token,
-    type_expr: ?*TypeExpr,
+    type_info: TypeInfo,
 
     pub fn deinit(self: *FunctionParam, allocator: std.mem.Allocator) void {
-        if (self.type_expr) |type_expr| {
-            type_expr.deinit(allocator);
-            allocator.destroy(type_expr);
-        }
+        // Nothing to deinit since all fields are value types
+        _ = self;
+        _ = allocator;
     }
 };
 
@@ -408,7 +434,29 @@ pub const ForExpr = struct {
 };
 
 pub const ForEachExpr = struct {
-    item_name: token.Token, // The name of the iteration variable
-    array: *Expr, // The array being iterated over
-    body: *Expr, // The loop body
+    item_name: token.Token,
+    array: *Expr,
+    body: []Stmt,
 };
+
+// Helper function to create TypeInfo from type expression
+pub fn typeInfoFromExpr(type_expr: ?*TypeExpr) TypeInfo {
+    if (type_expr == null) {
+        return TypeInfo{ .base = .Dynamic };
+    }
+
+    return switch (type_expr.?.*) {
+        .Basic => |basic| switch (basic) {
+            .Integer => TypeInfo{ .base = .Int },
+            .Float => TypeInfo{ .base = .Float },
+            .String => TypeInfo{ .base = .String },
+            .Boolean => TypeInfo{ .base = .Boolean },
+            .Auto => TypeInfo{ .base = .Auto },
+        },
+        .Array => |array| TypeInfo{
+            .base = .Array,
+            .array_type = typeInfoFromExpr(array.element_type),
+        },
+        else => TypeInfo{ .base = .Dynamic },
+    };
+}
