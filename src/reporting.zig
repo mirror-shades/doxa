@@ -17,6 +17,8 @@ pub const ErrorList = error{
     InvalidOperator,
     InvalidConstant,
     InvalidExpression,
+    UnknownDirective,
+    InvalidDirective,
 
     // Variable Management
     VariableNotFound,
