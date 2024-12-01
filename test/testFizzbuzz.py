@@ -30,6 +30,15 @@ class TestFizzBuzz(unittest.TestCase):
         # Compare the outputs
         self.assertEqual(output, expected)
     
+    @staticmethod
+    def strip_value(line):
+        # Get the last word after the last '=' if it exists
+        if '=' in line:
+            value = line.split('=')[-1].strip()
+            # Remove quotes if they exist
+            return value.strip('"')
+        return line.strip()
+    
     def get_program_output(self):
         import subprocess
         try:
@@ -37,7 +46,9 @@ class TestFizzBuzz(unittest.TestCase):
                                   capture_output=True, 
                                   text=True,
                                   check=True)
-            return result.stdout
+            # Process each line through strip_value and join with newlines
+            output_lines = [self.strip_value(line) for line in result.stdout.splitlines()]
+            return '\n'.join(output_lines) + '\n'
         except subprocess.CalledProcessError as e:
             print(f"Error running program: {e}")
             print(f"stderr: {e.stderr}")

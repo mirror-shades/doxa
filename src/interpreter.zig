@@ -67,8 +67,21 @@ pub const Environment = struct {
     }
 
     pub fn define(self: *Environment, name: []const u8, value: token.TokenLiteral, type_info: ast.TypeInfo) !void {
-        try self.values.put(name, value);
-        try self.types.put(name, type_info);
+        // Duplicate the name string to ensure we own it
+        const key = try self.allocator.dupe(u8, name);
+        errdefer self.allocator.free(key);
+
+        // If we're replacing an existing value, free the old key
+        if (self.values.getKey(name)) |old_key| {
+            self.allocator.free(old_key);
+        }
+
+        try self.values.put(key, value);
+        try self.types.put(key, type_info);
+
+        if (self.debug_enabled) {
+            std.debug.print("Defined variable '{s}' = {any}\n", .{ key, value });
+        }
     }
 
     pub fn get(self: *Environment, name: []const u8) ?token.TokenLiteral {

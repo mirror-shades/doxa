@@ -22,9 +22,9 @@ def run_benchmark(file_path):
     end_time = time.time()
     
     # Print output and errors
-    if result.stdout:
-        print("Output:")
-        print(result.stdout)
+    # if result.stdout:
+    #     print("Output:")
+    #     print(result.stdout)
     
     if result.stderr:
         print("Errors:")
