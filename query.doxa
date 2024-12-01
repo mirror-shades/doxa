@@ -1,1 +1,4 @@
-(5 + 25)?;
+struct Person {
+    name: string;
+    age: int;
+};

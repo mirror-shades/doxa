@@ -195,6 +195,24 @@ pub const Parser = struct {
         };
     }
 
+    fn parseDirective(self: *Parser) ErrorList!void {
+        const current = self.peek();
+        // Handle directives at the start of parsing
+        if (current.type == .HASH) {
+            self.advance(); // consume #
+            if (self.peek().type == .IDENTIFIER) {
+                const directive = self.peek().lexeme;
+                if (std.mem.eql(u8, directive, "strict")) {
+                    self.mode = .Strict;
+                    self.advance(); // consume directive name
+                    return;
+                }
+                return error.UnknownDirective;
+            }
+            return error.InvalidDirective;
+        }
+    }
+
     pub fn parse(self: *Parser) ErrorList![]ast.Stmt {
         if (self.debug_enabled) {
             std.debug.print("\nToken stream:\n", .{});
@@ -211,6 +229,8 @@ pub const Parser = struct {
             }
             statements.deinit();
         }
+
+        try self.parseDirective();
 
         while (true) {
             const current = self.peek();

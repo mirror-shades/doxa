@@ -6,7 +6,7 @@ function fizzbuzz(x: int) {
         else if current % 5 equals 0 then "buzz"?;
         else current?;
         
-        current = current + 1;
+        current += 1;
     }
 }
 
