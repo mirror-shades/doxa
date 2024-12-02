@@ -293,7 +293,7 @@ pub const Parser = struct {
                 .STRING_TYPE => .String,
                 .BOOLEAN_TYPE => .Boolean,
                 .AUTO => .Auto,
-                .IDENTIFIER => .Custom, // Add support for custom types
+                .IDENTIFIER => .Custom,
                 else => return error.InvalidType,
             };
             self.advance();
@@ -305,72 +305,22 @@ pub const Parser = struct {
         if (self.peek().type == .ASSIGN) {
             self.advance();
 
-            // Check if this is a struct initialization
+            if (self.debug_enabled) {
+                std.debug.print("\nParsing var initializer at position {}, token: {s}\n", .{
+                    self.current,
+                    @tagName(self.peek().type),
+                });
+            }
+
+            // Try to parse as struct initialization first
             if (self.peek().type == .IDENTIFIER) {
-                const struct_name = self.peek();
-                self.advance();
-
-                if (self.peek().type == .LEFT_BRACE) {
-                    self.advance(); // consume {
-
-                    var fields = std.ArrayList(*ast.StructInstanceField).init(self.allocator);
-                    errdefer {
-                        for (fields.items) |field| {
-                            field.deinit(self.allocator);
-                            self.allocator.destroy(field);
-                        }
-                        fields.deinit();
-                    }
-
-                    while (self.peek().type != .RIGHT_BRACE) {
-                        // Parse field name
-                        if (self.peek().type != .IDENTIFIER) {
-                            return error.ExpectedIdentifier;
-                        }
-                        const field_name = self.peek();
-                        self.advance();
-
-                        // Expect equals
-                        if (self.peek().type != .ASSIGN) {
-                            return error.ExpectedEquals;
-                        }
-                        self.advance();
-
-                        // Parse field value
-                        const value = try self.parseExpression() orelse return error.ExpectedExpression;
-
-                        // Create field
-                        const field = try self.allocator.create(ast.StructInstanceField);
-                        field.* = .{
-                            .name = field_name,
-                            .value = value,
-                        };
-                        try fields.append(field);
-
-                        // Handle comma
-                        if (self.peek().type == .COMMA) {
-                            self.advance();
-                        } else if (self.peek().type != .RIGHT_BRACE) {
-                            return error.ExpectedCommaOrBrace;
-                        }
-                    }
-
-                    self.advance(); // consume }
-
-                    const struct_init = try self.allocator.create(ast.Expr);
-                    struct_init.* = .{ .StructLiteral = .{
-                        .name = struct_name,
-                        .fields = try fields.toOwnedSlice(),
-                    } };
+                if (try self.parseStructInit()) |struct_init| {
                     initializer = struct_init;
                 } else {
-                    // Regular variable reference
-                    const var_expr = try self.allocator.create(ast.Expr);
-                    var_expr.* = .{ .Variable = struct_name };
-                    initializer = var_expr;
+                    initializer = try self.parseExpression() orelse return error.ExpectedExpression;
                 }
             } else {
-                initializer = try self.parseExpression();
+                initializer = try self.parseExpression() orelse return error.ExpectedExpression;
             }
         }
 
@@ -890,6 +840,7 @@ pub const Parser = struct {
 
     fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
         const type_name = self.peek().lexeme;
+        const type_token = self.peek();
 
         const basic_type = if (std.mem.eql(u8, type_name, "int"))
             ast.BasicType.Integer
@@ -904,15 +855,17 @@ pub const Parser = struct {
         else
             null;
 
+        self.advance(); // Always advance past the type token
+
+        const type_expr = try self.allocator.create(ast.TypeExpr);
         if (basic_type) |basic| {
-            self.advance();
-            const type_expr = try self.allocator.create(ast.TypeExpr);
             type_expr.* = .{ .Basic = basic };
-            return type_expr;
+        } else {
+            // Handle custom type (like struct names)
+            type_expr.* = .{ .Custom = type_token };
         }
 
-        // Handle other type expressions...
-        return null;
+        return type_expr;
     }
 
     fn check(self: *Parser, token_type: token.TokenType) bool {
@@ -1619,15 +1572,27 @@ pub const Parser = struct {
         return field_access;
     }
 
-    fn parseStructInit(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-        const struct_name = self.peek();
-        self.advance(); // consume struct name
-
-        // Expect opening brace
-        if (self.peek().type != .LEFT_BRACE) {
-            return error.ExpectedLeftBrace;
+    fn parseStructInit(self: *Parser) ErrorList!?*ast.Expr {
+        if (self.debug_enabled) {
+            std.debug.print("\nTrying to parse struct init at position {}, token: {s}\n", .{
+                self.current,
+                @tagName(self.peek().type),
+            });
         }
+
+        const struct_name = self.peek();
+        const start_pos = self.current;
         self.advance();
+
+        if (self.peek().type != .LEFT_BRACE) {
+            if (self.debug_enabled) {
+                std.debug.print("No left brace found, resetting to position {}\n", .{start_pos});
+            }
+            // Reset position if this isn't a struct initialization
+            self.current = start_pos;
+            return null;
+        }
+        self.advance(); // consume {
 
         var fields = std.ArrayList(*ast.StructInstanceField).init(self.allocator);
         errdefer {
@@ -1639,6 +1604,13 @@ pub const Parser = struct {
         }
 
         while (self.peek().type != .RIGHT_BRACE) {
+            if (self.debug_enabled) {
+                std.debug.print("Parsing field at position {}, token: {s}\n", .{
+                    self.current,
+                    @tagName(self.peek().type),
+                });
+            }
+
             // Parse field name
             if (self.peek().type != .IDENTIFIER) {
                 return error.ExpectedIdentifier;
@@ -1646,20 +1618,31 @@ pub const Parser = struct {
             const field_name = self.peek();
             self.advance();
 
-            // Expect colon
-            if (self.peek().type != .COLON) {
-                return error.ExpectedColon;
+            // Expect equals
+            if (self.peek().type != .ASSIGN) {
+                return error.ExpectedEquals;
             }
             self.advance();
 
-            // Parse field value
-            const value = try self.parseExpression() orelse return error.ExpectedExpression;
-
-            // Expect semicolon
-            if (self.peek().type != .SEMICOLON) {
-                return error.ExpectedSemicolon;
+            // Parse field value - try struct init first, then fall back to regular expression
+            var value: *ast.Expr = undefined;
+            if (self.peek().type == .IDENTIFIER) {
+                if (self.debug_enabled) {
+                    std.debug.print("Attempting nested struct init for identifier: {s}\n", .{
+                        self.peek().lexeme,
+                    });
+                }
+                if (try self.parseStructInit()) |struct_init| {
+                    value = struct_init;
+                } else {
+                    if (self.debug_enabled) {
+                        std.debug.print("Not a struct init, falling back to expression\n", .{});
+                    }
+                    value = try self.parseExpression() orelse return error.ExpectedExpression;
+                }
+            } else {
+                value = try self.parseExpression() orelse return error.ExpectedExpression;
             }
-            self.advance();
 
             // Create field
             const field = try self.allocator.create(ast.StructInstanceField);
@@ -1668,16 +1651,35 @@ pub const Parser = struct {
                 .value = value,
             };
             try fields.append(field);
+
+            // Handle comma
+            if (self.peek().type == .COMMA) {
+                self.advance();
+                // Allow trailing comma by checking for closing brace
+                if (self.peek().type == .RIGHT_BRACE) {
+                    break;
+                }
+            } else if (self.peek().type != .RIGHT_BRACE) {
+                if (self.debug_enabled) {
+                    std.debug.print("Expected comma or brace, got: {s}\n", .{
+                        @tagName(self.peek().type),
+                    });
+                }
+                return error.ExpectedCommaOrBrace;
+            }
         }
 
-        self.advance(); // consume right brace
+        self.advance(); // consume }
 
-        const struct_expr = try self.allocator.create(ast.Expr);
-        struct_expr.* = .{ .StructLiteral = .{
+        if (self.debug_enabled) {
+            std.debug.print("Successfully parsed struct init for {s}\n", .{struct_name.lexeme});
+        }
+
+        const struct_init = try self.allocator.create(ast.Expr);
+        struct_init.* = .{ .StructLiteral = .{
             .name = struct_name,
             .fields = try fields.toOwnedSlice(),
         } };
-
-        return struct_expr;
+        return struct_init;
     }
 };

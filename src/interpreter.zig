@@ -916,7 +916,28 @@ pub const Interpreter = struct {
             },
             .FieldAssignment => |field_assign| {
                 const object = try self.evaluate(field_assign.object);
-                return self.assignField(object, field_assign.field, field_assign.value);
+                const value = try self.evaluate(field_assign.value);
+
+                if (self.debug_enabled) {
+                    std.debug.print("Field assignment: {s} = {any}\n", .{
+                        field_assign.field.lexeme,
+                        value,
+                    });
+                }
+
+                switch (object) {
+                    .struct_value => |*struct_val| {
+                        // Find and update the field
+                        for (struct_val.fields) |*field| {
+                            if (std.mem.eql(u8, field.name, field_assign.field.lexeme)) {
+                                field.value = value;
+                                return value;
+                            }
+                        }
+                        return error.FieldNotFound;
+                    },
+                    else => return error.NotAStruct,
+                }
             },
         };
     }
