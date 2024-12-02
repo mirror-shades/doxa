@@ -23,9 +23,6 @@ const DOXA_EXTENSION = ".doxa";
 /// Variables
 ///==========================================================================
 pub var hadError: bool = false;
-var debugLexer: bool = false;
-pub var debugParser: bool = false;
-pub var debugInterpreter: bool = false;
 var compile: bool = false;
 var is_strict_repl: bool = false;
 ///==========================================================================
@@ -76,7 +73,7 @@ pub fn run(memory: *MemoryManager, interpreter: *Interpreter, source: []const u8
     try lexer.initKeywords();
     const token_list = try lexer.lexTokens();
 
-    if (debugLexer) {
+    if (memory.debug_enabled) {
         for (token_list.items) |tok| {
             const type_str = @tagName(tok.type);
             std.debug.print("Token type: {s}\n", .{type_str});
@@ -87,7 +84,7 @@ pub fn run(memory: *MemoryManager, interpreter: *Interpreter, source: []const u8
         var parser_instance = Parser.init(
             memory.getAllocator(),
             token_list.items,
-            debugParser,
+            memory.debug_enabled,
             if (is_strict_repl) .Strict else .Normal,
             is_repl,
             file_path,
@@ -103,7 +100,7 @@ pub fn run(memory: *MemoryManager, interpreter: *Interpreter, source: []const u8
             // Return the result of the last statement
             var last_result: ?TokenLiteral = null;
             for (statements) |stmt| {
-                last_result = try interpreter.executeStatement(&stmt, debugInterpreter);
+                last_result = try interpreter.executeStatement(&stmt, memory.debug_enabled);
             }
             return last_result;
         }
@@ -146,12 +143,8 @@ pub fn main() !void {
     while (i < args.len) : (i += 1) {
         if (std.mem.eql(u8, args[i], "--strict-repl")) {
             is_strict_repl = true;
-        } else if (std.mem.eql(u8, args[i], "--debug-lexer")) {
-            debugLexer = true;
-        } else if (std.mem.eql(u8, args[i], "--debug-parser")) {
-            debugParser = true;
-        } else if (std.mem.eql(u8, args[i], "--debug-interpreter")) {
-            debugInterpreter = true;
+        } else if (std.mem.eql(u8, args[i], "--debug")) {
+            memory.debug_enabled = true;
         } else if (std.mem.eql(u8, args[i], "--compile")) {
             compile = true;
         } else {
