@@ -110,6 +110,7 @@ pub const ErrorList = error{
     ExpectedElse,
     ExpectedColon,
     ExpectedCommaOrBracket,
+    ExpectedSemicolonOrBrace,
     ExpectedEnumVariant,
     ExpectedCommaOrBrace,
     ExpectedCommaOrParen,
