@@ -1474,10 +1474,6 @@ pub const Parser = struct {
 
     fn parseStructDeclStmt(self: *Parser) ErrorList!ast.Stmt {
         const expr = try self.parseStructDecl(null, .NONE) orelse return error.InvalidExpression;
-        if (self.peek().type != .SEMICOLON) {
-            return error.ExpectedSemicolon;
-        }
-        self.advance(); // consume semicolon
         return ast.Stmt{ .Expression = expr };
     }
 
@@ -1525,12 +1521,6 @@ pub const Parser = struct {
             // Parse field type
             const type_expr = try self.parseTypeExpr() orelse return error.ExpectedType;
 
-            // Expect semicolon
-            if (self.peek().type != .SEMICOLON) {
-                return error.ExpectedSemicolon;
-            }
-            self.advance();
-
             // Create field
             const field = try self.allocator.create(ast.StructField);
             field.* = .{
@@ -1538,6 +1528,13 @@ pub const Parser = struct {
                 .type_expr = type_expr,
             };
             try fields.append(field);
+
+            // Handle field separator (semicolon or comma)
+            if (self.peek().type == .SEMICOLON) {
+                self.advance();
+            } else if (self.peek().type != .RIGHT_BRACE) {
+                return error.ExpectedSemicolonOrBrace;
+            }
         }
 
         self.advance(); // consume right brace
