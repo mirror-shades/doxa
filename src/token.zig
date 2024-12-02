@@ -121,9 +121,12 @@ pub const TokenLiteral = union(enum) {
     float: f32,
     string: []const u8,
     boolean: bool,
-    array: []TokenLiteral,
-    struct_value: []StructField,
     nothing: void,
+    array: []TokenLiteral,
+    struct_value: struct {
+        type_name: []const u8,
+        fields: []StructField,
+    },
     function: struct {
         params: []FunctionParam,
         body: []ast.Stmt,

@@ -4,6 +4,7 @@ const token = @import("token.zig");
 const ReportingModule = @import("reporting.zig");
 const ErrorList = ReportingModule.ErrorList;
 const MemoryManager = @import("memory.zig").MemoryManager;
+const TypeInfo = ast.TypeInfo;
 
 const StringInterner = struct {
     strings: std.StringHashMap([]const u8),
@@ -121,7 +122,7 @@ pub const Environment = struct {
         return error.UndefinedVariable;
     }
 
-    pub fn getTypeInfo(self: *Environment, name: []const u8) !ast.TypeInfo {
+    pub fn getTypeInfo(self: *Environment, name: []const u8) ErrorList!TypeInfo {
         if (self.types.get(name)) |type_info| {
             return type_info;
         }
@@ -389,10 +390,10 @@ pub const Interpreter = struct {
                             break :blk token.TokenLiteral{ .boolean = true };
                         } else token.TokenLiteral{ .boolean = false },
                         .struct_value => if (right == .struct_value) blk: {
-                            if (left.struct_value.len != right.struct_value.len) break :blk token.TokenLiteral{ .boolean = false };
-                            for (left.struct_value, right.struct_value) |l, r| {
-                                if (!std.mem.eql(u8, l.name, r.name) or !std.meta.eql(l.value, r.value))
-                                    break :blk token.TokenLiteral{ .boolean = false };
+                            if (left.struct_value.fields.len != right.struct_value.fields.len) break :blk token.TokenLiteral{ .boolean = false };
+                            for (left.struct_value.fields, right.struct_value.fields) |l, r| {
+                                if (!std.mem.eql(u8, l.name, r.name)) break :blk token.TokenLiteral{ .boolean = false };
+                                if (!self.valuesEqual(l.value, r.value)) break :blk token.TokenLiteral{ .boolean = false };
                             }
                             break :blk token.TokenLiteral{ .boolean = true };
                         } else token.TokenLiteral{ .boolean = false },
@@ -657,8 +658,10 @@ pub const Interpreter = struct {
                         .value = value,
                     });
                 }
-
-                return token.TokenLiteral{ .struct_value = try struct_fields.toOwnedSlice() };
+                return token.TokenLiteral{ .struct_value = .{
+                    .type_name = expr.StructLiteral.name.lexeme,
+                    .fields = try struct_fields.toOwnedSlice(),
+                } };
             },
             .Index => |idx| {
                 const array = try self.evaluate(idx.array);
@@ -840,7 +843,7 @@ pub const Interpreter = struct {
                 }
 
                 // Look up field in struct
-                for (object.struct_value) |struct_field| {
+                for (object.struct_value.fields) |struct_field| {
                     if (std.mem.eql(u8, struct_field.name, field.field.lexeme)) {
                         return struct_field.value;
                     }
@@ -863,6 +866,57 @@ pub const Interpreter = struct {
 
                 try self.environment.define(decl.name.lexeme, .{ .nothing = {} }, struct_type);
                 return .{ .nothing = {} };
+            },
+            .StructLiteral => |literal| {
+                var struct_fields = std.ArrayList(token.StructField).init(self.memory.getAllocator());
+                errdefer struct_fields.deinit();
+
+                // Get the struct's type info from the environment
+                const struct_type = try self.environment.getTypeInfo(literal.name.lexeme);
+                if (struct_type.base != .Struct) {
+                    return error.NotAStruct;
+                }
+
+                // Evaluate each field
+                for (literal.fields) |field| {
+                    const value = try self.evaluate(field.value);
+
+                    // Type check the field value against the struct's field type
+                    if (struct_type.struct_fields) |type_fields| {
+                        for (type_fields) |type_field| {
+                            if (std.mem.eql(u8, type_field.name, field.name.lexeme)) {
+                                // Verify type matches
+                                const matches = switch (type_field.type_info.base) {
+                                    .Int => value == .int,
+                                    .Float => value == .float,
+                                    .String => value == .string,
+                                    .Boolean => value == .boolean,
+                                    .Array => value == .array,
+                                    .Struct => value == .struct_value,
+                                    else => true,
+                                };
+                                if (!matches) {
+                                    return error.TypeError;
+                                }
+                                break;
+                            }
+                        }
+                    }
+
+                    try struct_fields.append(.{
+                        .name = field.name.lexeme,
+                        .value = value,
+                    });
+                }
+
+                return token.TokenLiteral{ .struct_value = .{
+                    .type_name = literal.name.lexeme,
+                    .fields = try struct_fields.toOwnedSlice(),
+                } };
+            },
+            .FieldAssignment => |field_assign| {
+                const object = try self.evaluate(field_assign.object);
+                return self.assignField(object, field_assign.field, field_assign.value);
             },
         };
     }
@@ -963,5 +1017,39 @@ pub const Interpreter = struct {
         }
 
         return token.TokenLiteral{ .nothing = {} };
+    }
+
+    fn assignField(self: *Interpreter, object: token.TokenLiteral, field: token.Token, value: *ast.Expr) ErrorList!token.TokenLiteral {
+        if (object != .struct_value) {
+            return error.NotAStruct;
+        }
+
+        const struct_type = try self.environment.getTypeInfo(object.struct_value.type_name);
+        if (struct_type.base != .Struct) {
+            return error.TypeError;
+        }
+
+        for (object.struct_value.fields) |*struct_field| {
+            if (std.mem.eql(u8, struct_field.name, field.lexeme)) {
+                const new_value = try self.evaluate(value);
+                struct_field.value = new_value;
+                return new_value;
+            }
+        }
+        return error.FieldNotFound;
+    }
+
+    fn valuesEqual(self: *Interpreter, a: token.TokenLiteral, b: token.TokenLiteral) bool {
+        _ = self;
+        return switch (a) {
+            .int => |val| b == .int and val == b.int,
+            .float => |val| b == .float and val == b.float,
+            .string => |val| b == .string and std.mem.eql(u8, val, b.string),
+            .boolean => |val| b == .boolean and val == b.boolean,
+            .nothing => b == .nothing,
+            .array => |arr| b == .array and arr.len == b.array.len,
+            .struct_value => |s| b == .struct_value and std.mem.eql(u8, s.type_name, b.struct_value.type_name),
+            .function => b == .function,
+        };
     }
 };

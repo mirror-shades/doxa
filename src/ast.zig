@@ -55,6 +55,15 @@ pub const Expr = union(enum) {
     ForEach: ForEachExpr,
     FieldAccess: FieldAccess,
     StructDecl: StructDecl,
+    StructLiteral: struct {
+        name: token.Token,
+        fields: []const *StructInstanceField,
+    },
+    FieldAssignment: struct {
+        object: *Expr,
+        field: token.Token,
+        value: *Expr,
+    },
 
     pub fn deinit(self: *Expr, allocator: std.mem.Allocator) void {
         switch (self.*) {
@@ -212,11 +221,23 @@ pub const Expr = union(enum) {
             },
             .StructDecl => |*s| {
                 for (s.fields) |field| {
-                    field.type_expr.deinit(allocator);
-                    allocator.destroy(field.type_expr);
+                    field.deinit(allocator);
                     allocator.destroy(field);
                 }
                 allocator.free(s.fields);
+            },
+            .StructLiteral => |*s| {
+                for (s.fields) |field| {
+                    field.deinit(allocator);
+                    allocator.destroy(field);
+                }
+                allocator.free(s.fields);
+            },
+            .FieldAssignment => |*f| {
+                f.object.deinit(allocator);
+                allocator.destroy(f.object);
+                f.value.deinit(allocator);
+                allocator.destroy(f.value);
             },
         }
     }
@@ -239,6 +260,7 @@ pub const Type = enum {
     Struct, // For struct types
     Function, // For function types
     Enum, // For enum types
+    Custom, // For custom types
 };
 
 pub const TypeInfo = struct {
@@ -313,12 +335,12 @@ pub const VarDecl = struct {
 };
 
 pub const Stmt = union(enum) {
+    Expression: ?*Expr,
     VarDecl: struct {
         name: token.Token,
-        initializer: ?*Expr,
         type_info: TypeInfo,
+        initializer: ?*Expr,
     },
-    Expression: ?*Expr,
     Block: []Stmt,
     Function: struct {
         name: token.Token,
@@ -339,13 +361,6 @@ pub const Stmt = union(enum) {
                     allocator.destroy(expr);
                 }
             },
-            .Function => |*f| {
-                allocator.free(f.params);
-                for (f.body) |*stmt| {
-                    stmt.deinit(allocator);
-                }
-                allocator.free(f.body);
-            },
             .VarDecl => |*v| {
                 if (v.initializer) |init| {
                     init.deinit(allocator);
@@ -363,6 +378,13 @@ pub const Stmt = union(enum) {
                     value.deinit(allocator);
                     allocator.destroy(value);
                 }
+            },
+            .Function => |*f| {
+                allocator.free(f.params);
+                for (f.body) |*stmt| {
+                    stmt.deinit(allocator);
+                }
+                allocator.free(f.body);
             },
         }
     }
@@ -547,3 +569,14 @@ pub fn typeInfoFromExpr(allocator: std.mem.Allocator, type_expr: ?*TypeExpr) !*T
 
     return type_info;
 }
+
+// Add a new struct for struct instance fields
+pub const StructInstanceField = struct {
+    name: token.Token,
+    value: *Expr,
+
+    pub fn deinit(self: *StructInstanceField, allocator: std.mem.Allocator) void {
+        self.value.deinit(allocator);
+        allocator.destroy(self.value);
+    }
+};
