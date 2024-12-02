@@ -392,6 +392,7 @@ pub const Stmt = union(enum) {
 
 pub const TypeExpr = union(enum) {
     Basic: BasicType,
+    Custom: token.Token,
     Array: ArrayType,
     Struct: []*StructField,
     Enum: []const []const u8,
@@ -564,6 +565,7 @@ pub fn typeInfoFromExpr(allocator: std.mem.Allocator, type_expr: ?*TypeExpr) !*T
                 .struct_fields = struct_fields,
             };
         },
+        .Custom => TypeInfo{ .base = .Custom },
         .Enum => TypeInfo{ .base = .Dynamic }, // TODO: Add proper enum support
     };
 

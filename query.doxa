@@ -16,7 +16,7 @@ var mike = Employee {
     salary = 1000,
 };
 
-person.age = 26;
+mike.person.age = 26;
 mike.person.age?;
 
 mike.salary?;
