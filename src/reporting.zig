@@ -19,6 +19,7 @@ pub const ErrorList = error{
     InvalidExpression,
     UnknownDirective,
     InvalidDirective,
+    ExpectedEquals,
 
     // Variable Management
     VariableNotFound,
@@ -57,6 +58,7 @@ pub const ErrorList = error{
     UnsupportedArrayType,
     ArrayTypeMismatch,
     NotAStruct,
+    EmptyStruct,
     FieldNotFound,
     InvalidFieldAccessTarget,
 

@@ -120,6 +120,13 @@ pub const Parser = struct {
         r.set(.STRUCT, .{ .prefix = parseStructDecl });
         r.set(.DOT, .{ .infix = fieldAccess, .precedence = .CALL });
 
+        // Add struct declaration rule in the rules block
+        r.set(.STRUCT_TYPE, .{ .prefix = parseStructDecl });
+
+        // Add struct instantiation support
+        r.set(.IDENTIFIER, .{ .prefix = variable, .infix = fieldAccess });
+        r.set(.DOT, .{ .infix = fieldAccess, .precedence = .CALL });
+
         break :blk r;
     };
 
@@ -247,6 +254,8 @@ pub const Parser = struct {
                     break :blk block_stmt;
                 } else if (self.peek().type == .FN_KEYWORD or self.peek().type == .FUNCTION_KEYWORD) {
                     break :blk try self.parseFunctionDecl();
+                } else if (self.peek().type == .STRUCT_TYPE) {
+                    break :blk try self.parseStructDeclStmt();
                 } else break :blk try self.parseExpressionStmt();
             };
 
@@ -284,33 +293,10 @@ pub const Parser = struct {
                 .STRING_TYPE => .String,
                 .BOOLEAN_TYPE => .Boolean,
                 .AUTO => .Auto,
+                .IDENTIFIER => .Custom, // Add support for custom types
                 else => return error.InvalidType,
             };
             self.advance();
-
-            // Handle multiple array dimensions
-            var array_dimensions: u8 = 0;
-            while (self.peek().type == .LEFT_BRACKET) {
-                self.advance();
-                if (self.peek().type != .RIGHT_BRACKET) {
-                    return error.ExpectedRightBracket;
-                }
-                self.advance();
-                array_dimensions += 1;
-            }
-
-            // If we found array brackets, create nested array types
-            if (array_dimensions > 0) {
-                var current_type = type_info.base;
-                var i: u8 = 0;
-                while (i < array_dimensions) : (i += 1) {
-                    type_info = .{
-                        .base = .Array,
-                        .element_type = current_type,
-                    };
-                    current_type = .Array;
-                }
-            }
         } else if (self.mode == .Strict) {
             return error.ExpectedTypeAnnotation;
         }
@@ -318,7 +304,74 @@ pub const Parser = struct {
         var initializer: ?*ast.Expr = null;
         if (self.peek().type == .ASSIGN) {
             self.advance();
-            initializer = try self.parseExpression();
+
+            // Check if this is a struct initialization
+            if (self.peek().type == .IDENTIFIER) {
+                const struct_name = self.peek();
+                self.advance();
+
+                if (self.peek().type == .LEFT_BRACE) {
+                    self.advance(); // consume {
+
+                    var fields = std.ArrayList(*ast.StructInstanceField).init(self.allocator);
+                    errdefer {
+                        for (fields.items) |field| {
+                            field.deinit(self.allocator);
+                            self.allocator.destroy(field);
+                        }
+                        fields.deinit();
+                    }
+
+                    while (self.peek().type != .RIGHT_BRACE) {
+                        // Parse field name
+                        if (self.peek().type != .IDENTIFIER) {
+                            return error.ExpectedIdentifier;
+                        }
+                        const field_name = self.peek();
+                        self.advance();
+
+                        // Expect equals
+                        if (self.peek().type != .ASSIGN) {
+                            return error.ExpectedEquals;
+                        }
+                        self.advance();
+
+                        // Parse field value
+                        const value = try self.parseExpression() orelse return error.ExpectedExpression;
+
+                        // Create field
+                        const field = try self.allocator.create(ast.StructInstanceField);
+                        field.* = .{
+                            .name = field_name,
+                            .value = value,
+                        };
+                        try fields.append(field);
+
+                        // Handle comma
+                        if (self.peek().type == .COMMA) {
+                            self.advance();
+                        } else if (self.peek().type != .RIGHT_BRACE) {
+                            return error.ExpectedCommaOrBrace;
+                        }
+                    }
+
+                    self.advance(); // consume }
+
+                    const struct_init = try self.allocator.create(ast.Expr);
+                    struct_init.* = .{ .StructLiteral = .{
+                        .name = struct_name,
+                        .fields = try fields.toOwnedSlice(),
+                    } };
+                    initializer = struct_init;
+                } else {
+                    // Regular variable reference
+                    const var_expr = try self.allocator.create(ast.Expr);
+                    var_expr.* = .{ .Variable = struct_name };
+                    initializer = var_expr;
+                }
+            } else {
+                initializer = try self.parseExpression();
+            }
         }
 
         if (self.peek().type != .SEMICOLON) {
@@ -328,8 +381,8 @@ pub const Parser = struct {
 
         return ast.Stmt{ .VarDecl = .{
             .name = name,
-            .initializer = initializer,
             .type_info = type_info,
+            .initializer = initializer,
         } };
     }
 
@@ -661,37 +714,89 @@ pub const Parser = struct {
     }
 
     fn assignment(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-        if (left == null) return error.InvalidAssignmentTarget;
-
-        // Verify left side is a valid assignment target
-        const is_valid_target = switch (left.?.*) {
-            .Variable => true,
-            .Index => true,
-            else => false,
-        };
-
-        if (!is_valid_target) {
-            return error.InvalidAssignmentTarget;
+        if (self.debug_enabled) {
+            std.debug.print("\nParsing assignment...\n", .{});
+            std.debug.print("Current token: {s} at position {}\n", .{
+                @tagName(self.peek().type),
+                self.current,
+            });
         }
 
-        // Parse the value being assigned
-        const value = try self.parsePrecedence(.ASSIGNMENT) orelse return error.ExpectedExpression;
+        if (left == null) return error.ExpectedExpression;
 
-        const assign_expr = try self.allocator.create(ast.Expr);
-        assign_expr.* = switch (left.?.*) {
-            .Variable => |v| .{ .Assignment = .{
-                .name = v,
-                .value = value,
-            } },
-            .Index => |idx| .{ .IndexAssign = .{
-                .array = idx.array,
-                .index = idx.index,
-                .value = value,
-            } },
-            else => unreachable,
+        // Consume equals but remember the next token
+        const next_token = self.peek();
+        self.advance();
+
+        if (self.debug_enabled) {
+            std.debug.print("Value token to parse: {s}\n", .{
+                @tagName(next_token.type),
+            });
+        }
+
+        // Try to parse the value being assigned
+        const value = switch (next_token.type) {
+            .INT => blk: {
+                if (self.debug_enabled) {
+                    std.debug.print("Found INT literal: {}\n", .{next_token.literal.int});
+                }
+                const literal_expr = try self.allocator.create(ast.Expr);
+                literal_expr.* = .{ .Literal = next_token.literal };
+                break :blk literal_expr;
+            },
+            .STRING => blk: {
+                if (self.debug_enabled) {
+                    std.debug.print("Found STRING literal: {s}\n", .{next_token.literal.string});
+                }
+                const literal_expr = try self.allocator.create(ast.Expr);
+                literal_expr.* = .{ .Literal = next_token.literal };
+                break :blk literal_expr;
+            },
+            .FLOAT => blk: {
+                if (self.debug_enabled) {
+                    std.debug.print("Found FLOAT literal: {d}\n", .{next_token.literal.float});
+                }
+                const literal_expr = try self.allocator.create(ast.Expr);
+                literal_expr.* = .{ .Literal = next_token.literal };
+                break :blk literal_expr;
+            },
+            .BOOL => blk: {
+                if (self.debug_enabled) {
+                    std.debug.print("Found BOOL literal: {}\n", .{next_token.literal.boolean});
+                }
+                const literal_expr = try self.allocator.create(ast.Expr);
+                literal_expr.* = .{ .Literal = next_token.literal };
+                break :blk literal_expr;
+            },
+            else => {
+                if (self.debug_enabled) {
+                    std.debug.print("Not a literal token: {s}\n", .{@tagName(next_token.type)});
+                }
+                return error.ExpectedExpression;
+            },
         };
 
-        return assign_expr;
+        // Check if left side is a valid assignment target
+        switch (left.?.*) {
+            .Variable => |name| {
+                const assign = try self.allocator.create(ast.Expr);
+                assign.* = .{ .Assignment = .{
+                    .name = name,
+                    .value = value,
+                } };
+                return assign;
+            },
+            .FieldAccess => |field_access| {
+                const assign = try self.allocator.create(ast.Expr);
+                assign.* = .{ .FieldAssignment = .{
+                    .object = field_access.object,
+                    .field = field_access.field,
+                    .value = value,
+                } };
+                return assign;
+            },
+            else => return error.InvalidAssignmentTarget,
+        }
     }
 
     fn unary(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
@@ -1228,6 +1333,7 @@ pub const Parser = struct {
                     ast.Stmt{ .Expression = null };
                 break :blk block_expr;
             },
+            .STRUCT_TYPE => self.parseStructDeclStmt(),
             else => self.parseExpressionStmt(),
         };
     }
@@ -1413,6 +1519,15 @@ pub const Parser = struct {
         } };
     }
 
+    fn parseStructDeclStmt(self: *Parser) ErrorList!ast.Stmt {
+        const expr = try self.parseStructDecl(null, .NONE) orelse return error.InvalidExpression;
+        if (self.peek().type != .SEMICOLON) {
+            return error.ExpectedSemicolon;
+        }
+        self.advance(); // consume semicolon
+        return ast.Stmt{ .Expression = expr };
+    }
+
     fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
         // Consume 'struct' keyword
         self.advance();
@@ -1457,6 +1572,12 @@ pub const Parser = struct {
             // Parse field type
             const type_expr = try self.parseTypeExpr() orelse return error.ExpectedType;
 
+            // Expect semicolon
+            if (self.peek().type != .SEMICOLON) {
+                return error.ExpectedSemicolon;
+            }
+            self.advance();
+
             // Create field
             const field = try self.allocator.create(ast.StructField);
             field.* = .{
@@ -1464,16 +1585,10 @@ pub const Parser = struct {
                 .type_expr = type_expr,
             };
             try fields.append(field);
-
-            // Expect comma or right brace
-            if (self.peek().type == .COMMA) {
-                self.advance();
-            } else if (self.peek().type != .RIGHT_BRACE) {
-                return error.ExpectedRightBrace;
-            }
         }
 
-        // Create struct expression
+        self.advance(); // consume right brace
+
         const struct_expr = try self.allocator.create(ast.Expr);
         struct_expr.* = .{ .StructDecl = .{
             .name = name,
@@ -1483,24 +1598,86 @@ pub const Parser = struct {
         return struct_expr;
     }
 
-    fn fieldAccess(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-        if (left == null) return error.ExpectedExpression;
+    fn fieldAccess(self: *Parser, object: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+        if (object == null) return error.ExpectedExpression;
 
-        // Consume the dot
-        self.advance();
+        // The dot has already been consumed by the time we get here
+        // Don't advance again
 
-        // Parse field name
+        // Parse the field name
         if (self.peek().type != .IDENTIFIER) {
             return error.ExpectedIdentifier;
         }
-        const field_name = self.peek();
+        const field = self.peek();
         self.advance();
 
         const field_access = try self.allocator.create(ast.Expr);
         field_access.* = .{ .FieldAccess = .{
-            .object = left.?,
-            .field = field_name,
+            .object = object.?,
+            .field = field,
         } };
         return field_access;
+    }
+
+    fn parseStructInit(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+        const struct_name = self.peek();
+        self.advance(); // consume struct name
+
+        // Expect opening brace
+        if (self.peek().type != .LEFT_BRACE) {
+            return error.ExpectedLeftBrace;
+        }
+        self.advance();
+
+        var fields = std.ArrayList(*ast.StructInstanceField).init(self.allocator);
+        errdefer {
+            for (fields.items) |field| {
+                field.deinit(self.allocator);
+                self.allocator.destroy(field);
+            }
+            fields.deinit();
+        }
+
+        while (self.peek().type != .RIGHT_BRACE) {
+            // Parse field name
+            if (self.peek().type != .IDENTIFIER) {
+                return error.ExpectedIdentifier;
+            }
+            const field_name = self.peek();
+            self.advance();
+
+            // Expect colon
+            if (self.peek().type != .COLON) {
+                return error.ExpectedColon;
+            }
+            self.advance();
+
+            // Parse field value
+            const value = try self.parseExpression() orelse return error.ExpectedExpression;
+
+            // Expect semicolon
+            if (self.peek().type != .SEMICOLON) {
+                return error.ExpectedSemicolon;
+            }
+            self.advance();
+
+            // Create field
+            const field = try self.allocator.create(ast.StructInstanceField);
+            field.* = .{
+                .name = field_name,
+                .value = value,
+            };
+            try fields.append(field);
+        }
+
+        self.advance(); // consume right brace
+
+        const struct_expr = try self.allocator.create(ast.Expr);
+        struct_expr.* = .{ .StructLiteral = .{
+            .name = struct_name,
+            .fields = try fields.toOwnedSlice(),
+        } };
+
+        return struct_expr;
     }
 };
