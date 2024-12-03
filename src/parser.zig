@@ -141,6 +141,15 @@ pub const Parser = struct {
         // Add array literal support
         r.set(.LEFT_BRACKET, .{ .prefix = parseArrayLiteral });
 
+        // Add enum declaration support using the wrapper
+        r.set(.ENUM_TYPE, .{ .prefix = enumDeclPrefix });
+
+        // Add dot prefix rule for enum member access
+        r.set(.DOT, .{ .prefix = enumMember, .infix = fieldAccess, .precedence = .CALL });
+
+        // Add match expression support
+        r.set(.MATCH, .{ .prefix = parseMatchExpr });
+
         break :blk r;
     };
 
@@ -270,6 +279,8 @@ pub const Parser = struct {
                     break :blk try self.parseFunctionDecl();
                 } else if (self.peek().type == .STRUCT_TYPE) {
                     break :blk try self.parseStructDeclStmt();
+                } else if (self.peek().type == .ENUM_TYPE) {
+                    break :blk try self.parseEnumDecl();
                 } else break :blk try self.parseExpressionStmt();
             };
 
@@ -325,6 +336,18 @@ pub const Parser = struct {
 
         if (self.debug_enabled) {
             std.debug.print("After name, current token: {s}\n", .{@tagName(self.peek().type)});
+        }
+
+        // Handle type annotation
+        if (self.peek().type == .COLON) {
+            self.advance(); // consume ':'
+            if (self.peek().type == .IDENTIFIER) {
+                type_info.base = .Custom;
+                type_info.custom_type = self.peek().lexeme;
+                self.advance(); // consume type identifier
+            } else {
+                return error.ExpectedType;
+            }
         }
 
         var initializer: ?*ast.Expr = null;
@@ -1353,6 +1376,7 @@ pub const Parser = struct {
                 break :blk block_expr;
             },
             .STRUCT_TYPE => self.parseStructDeclStmt(),
+            .ENUM_TYPE => self.parseEnumDecl(),
             else => self.parseExpressionStmt(),
         };
     }
@@ -1958,5 +1982,143 @@ pub const Parser = struct {
             .element_type = null,
         } };
         return array_expr;
+    }
+
+    fn parseEnumDecl(self: *Parser) ErrorList!ast.Stmt {
+        self.advance(); // consume 'enum' keyword
+
+        // Parse enum name
+        if (self.peek().type != .IDENTIFIER) {
+            return error.ExpectedIdentifier;
+        }
+        const name = self.peek();
+        self.advance();
+
+        // Parse opening brace
+        if (self.peek().type != .LEFT_BRACE) {
+            return error.ExpectedLeftBrace;
+        }
+        self.advance();
+
+        // Parse variants
+        var variants = std.ArrayList(token.Token).init(self.allocator);
+        errdefer variants.deinit();
+
+        while (self.peek().type != .RIGHT_BRACE) {
+            if (self.peek().type != .IDENTIFIER) {
+                return error.ExpectedIdentifier;
+            }
+            try variants.append(self.peek());
+            self.advance();
+
+            if (self.peek().type == .COMMA) {
+                self.advance();
+            }
+        }
+        self.advance(); // consume right brace
+
+        return ast.Stmt{ .EnumDecl = .{
+            .name = name,
+            .variants = try variants.toOwnedSlice(),
+        } };
+    }
+
+    fn parseMatchExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+        if (self.debug_enabled) {
+            std.debug.print("\nParsing match expression...\n", .{});
+        }
+
+        self.advance(); // consume 'match' keyword
+
+        // Parse the value to match on
+        const value = try self.parseExpression() orelse return error.ExpectedExpression;
+
+        // Expect opening brace
+        if (self.peek().type != .LEFT_BRACE) {
+            return error.ExpectedLeftBrace;
+        }
+        self.advance();
+
+        // Parse match cases
+        var cases = std.ArrayList(ast.MatchCase).init(self.allocator);
+        errdefer cases.deinit();
+
+        while (self.peek().type != .RIGHT_BRACE) {
+            // Parse pattern (enum variant)
+            if (self.peek().type != .DOT) {
+                return error.ExpectedDot;
+            }
+            self.advance();
+
+            if (self.peek().type != .IDENTIFIER) {
+                return error.ExpectedIdentifier;
+            }
+            const pattern = self.peek();
+            self.advance();
+
+            // Parse arrow
+            if (self.peek().type != .ARROW) {
+                return error.ExpectedArrow;
+            }
+            self.advance();
+
+            // Parse body expression
+            const body = try self.parseExpression() orelse return error.ExpectedExpression;
+
+            try cases.append(.{
+                .pattern = pattern,
+                .body = body,
+            });
+
+            // Handle optional comma
+            if (self.peek().type == .COMMA) {
+                self.advance();
+            }
+        }
+        self.advance(); // consume right brace
+
+        const match_expr = try self.allocator.create(ast.Expr);
+        match_expr.* = .{ .Match = .{
+            .value = value,
+            .cases = try cases.toOwnedSlice(),
+        } };
+        return match_expr;
+    }
+
+    // Update the wrapper function to properly construct the enum declaration
+    fn enumDeclPrefix(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+        const enum_stmt = try self.parseEnumDecl();
+        const expr = try self.allocator.create(ast.Expr);
+
+        // Create a mutable copy of the variants array
+        const variants = try self.allocator.alloc(token.Token, enum_stmt.EnumDecl.variants.len);
+        @memcpy(variants, enum_stmt.EnumDecl.variants);
+
+        expr.* = .{ .EnumDecl = .{
+            .name = enum_stmt.EnumDecl.name,
+            .variants = variants,
+        } };
+        return expr;
+    }
+
+    fn enumMember(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+        if (self.debug_enabled) {
+            std.debug.print("\nParsing enum member access...\n", .{});
+        }
+
+        // We're already at the dot, so advance past it
+        self.advance();
+
+        // Expect identifier after dot
+        if (self.peek().type != .IDENTIFIER) {
+            return error.ExpectedIdentifier;
+        }
+
+        const member = self.peek();
+        self.advance();
+
+        const enum_member = try self.allocator.create(ast.Expr);
+        enum_member.* = .{ .EnumMember = member };
+        return enum_member;
     }
 };

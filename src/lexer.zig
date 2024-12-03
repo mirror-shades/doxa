@@ -265,6 +265,8 @@ pub const Lexer = struct {
             '=' => {
                 if (self.match('=')) {
                     try self.addMinimalToken(.EQUALITY);
+                } else if (self.match('>')) {
+                    try self.addMinimalToken(.ARROW);
                 } else {
                     try self.addMinimalToken(.ASSIGN);
                 }
@@ -294,7 +296,7 @@ pub const Lexer = struct {
             },
             '-' => {
                 if (self.match('>')) {
-                    try self.addMinimalToken(.ARROW);
+                    try self.addMinimalToken(.MAIN);
                 } else if (self.match('-')) {
                     try self.addMinimalToken(.MINUS_MINUS);
                 } else if (self.match('=')) {

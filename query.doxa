@@ -1,5 +1,16 @@
-var array = [1, 2, 3, 4, 5];
+// Declaration
+enum Color {
+    Red,
+    Green,
+    Blue,
+}
 
-var f = exists x in array where x > 0;
+// Usage
+var color: Color = .Blue;
 
-f?;
+var result = match color {
+    .Red => "It's red",
+    .Blue => "It's blue",
+};
+
+result?;

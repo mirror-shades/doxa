@@ -22,7 +22,7 @@ pub const TokenType = enum {
 
     //one or two character tokens
     AMPERSAND, // &
-    ARROW, // ->
+    ARROW, // =>
     SLASH, // /
     SLASH_EQUAL, // /=
     ASTERISK, // *
@@ -35,6 +35,7 @@ pub const TokenType = enum {
     MINUS, // -
     MINUS_MINUS, // --
     MINUS_EQUAL, // -=
+    MAIN, // ->
     BANG, // !
     BANG_EQUAL, // !=
     GREATER, // >
@@ -135,6 +136,7 @@ pub const TokenLiteral = union(enum) {
         body: []ast.Stmt,
         closure: *Environment, // Capture the environment where the function was defined
     },
+    enum_variant: []const u8,
 };
 
 pub const Token = struct {

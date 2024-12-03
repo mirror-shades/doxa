@@ -77,6 +77,12 @@ pub const Expr = union(enum) {
     ArrayType: struct {
         element_type: ?*TypeExpr = null,
     },
+    Match: MatchExpr,
+    EnumDecl: struct {
+        name: token.Token,
+        variants: []token.Token,
+    },
+    EnumMember: token.Token,
 
     pub fn deinit(self: *Expr, allocator: std.mem.Allocator) void {
         switch (self.*) {
@@ -268,6 +274,19 @@ pub const Expr = union(enum) {
                     allocator.destroy(element_type);
                 }
             },
+            .Match => |*m| {
+                m.value.deinit(allocator);
+                allocator.destroy(m.value);
+                for (m.cases) |*c| {
+                    c.body.deinit(allocator);
+                    allocator.destroy(c.body);
+                }
+                allocator.free(m.cases);
+            },
+            .EnumDecl => |*e| {
+                allocator.free(e.variants);
+            },
+            .EnumMember => {}, // No allocation to free
         }
     }
 };
@@ -296,11 +315,13 @@ pub const Type = enum {
 
 pub const TypeInfo = struct {
     base: Type,
+    custom_type: ?[]const u8 = null,
     is_mutable: bool = true,
     array_type: ?*TypeInfo = null,
     struct_fields: ?[]StructFieldType = null,
     function_type: ?*FunctionType = null,
     element_type: ?Type = null,
+    variants: ?[][]const u8 = null,
 
     pub fn deinit(self: *TypeInfo, allocator: std.mem.Allocator) void {
         if (self.array_type) |array_type| {
@@ -323,6 +344,9 @@ pub const TypeInfo = struct {
             allocator.free(func_type.params);
             allocator.destroy(func_type);
         }
+        if (self.variants) |variants| {
+            allocator.free(variants);
+        }
     }
 
     pub fn inferFrom(self: *TypeInfo, value: token.TokenLiteral) void {
@@ -337,6 +361,7 @@ pub const TypeInfo = struct {
             .array => .Array,
             .struct_value => .Struct,
             .function => .Function,
+            .enum_variant => .Enum,
         };
     }
 };
@@ -365,6 +390,11 @@ pub const VarDecl = struct {
     }
 };
 
+pub const EnumDecl = struct {
+    name: token.Token,
+    variants: []const token.Token,
+};
+
 pub const Stmt = union(enum) {
     Expression: ?*Expr,
     VarDecl: struct {
@@ -383,6 +413,7 @@ pub const Stmt = union(enum) {
         value: ?*Expr,
         type_info: TypeInfo,
     },
+    EnumDecl: EnumDecl,
 
     pub fn deinit(self: *Stmt, allocator: std.mem.Allocator) void {
         switch (self.*) {
@@ -416,6 +447,9 @@ pub const Stmt = union(enum) {
                     stmt.deinit(allocator);
                 }
                 allocator.free(f.body);
+            },
+            .EnumDecl => |decl| {
+                allocator.free(decl.variants);
             },
         }
     }
@@ -630,4 +664,14 @@ pub const StructInstanceField = struct {
         self.value.deinit(allocator);
         allocator.destroy(self.value);
     }
+};
+
+pub const MatchExpr = struct {
+    value: *Expr,
+    cases: []MatchCase,
+};
+
+pub const MatchCase = struct {
+    pattern: token.Token,
+    body: *Expr,
 };

@@ -55,12 +55,15 @@ pub const ErrorList = error{
     UnterminatedString,
     UnterminatedParenthesis,
     ExpectedComma,
+    ExpectedDot,
+    ExpectedArrow,
     UnsupportedArrayType,
     ArrayTypeMismatch,
     NotAStruct,
     EmptyStruct,
     FieldNotFound,
     InvalidFieldAccessTarget,
+    NoMatchCase,
 
     // Error Handling
     NoTryBlock,
