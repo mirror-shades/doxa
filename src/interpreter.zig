@@ -1048,6 +1048,10 @@ pub const Interpreter = struct {
 
                 // For each case in the match expression
                 for (match_expr.cases) |case| {
+                    // Handle else case
+                    if (case.pattern.type == .ELSE) {
+                        return try self.evaluate(case.body);
+                    }
                     // Check if this case matches the value
                     if (std.mem.eql(u8, case.pattern.lexeme, value.enum_variant)) {
                         return try self.evaluate(case.body);

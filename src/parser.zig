@@ -38,20 +38,16 @@ const ParseRule = struct {
     associativity: Associativity = .LEFT,
 };
 
-pub const Mode = enum {
-    Normal,
-    Strict,
-    Warn,
-};
-
 pub const Parser = struct {
-    allocator: std.mem.Allocator,
+    pub const Mode = enum { Strict, Normal }; // Declare enum once at struct level
+
     tokens: []const token.Token,
-    current: usize, // array index is usize by default
+    current: usize,
+    allocator: std.mem.Allocator,
     debug_enabled: bool,
-    mode: Mode,
-    is_repl: bool,
     current_file: []const u8,
+    mode: Mode, // Use the enum type
+    is_repl: bool,
 
     const rules = blk: {
         var r = std.EnumArray(token.TokenType, ParseRule).initFill(ParseRule{});
@@ -161,18 +157,18 @@ pub const Parser = struct {
         allocator: std.mem.Allocator,
         tokens: []const token.Token,
         debug_enabled: bool,
-        mode: Mode,
+        mode: Mode, // Use the enum type
         is_repl: bool,
-        file_name: []const u8,
+        current_file: []const u8,
     ) Parser {
         return .{
-            .allocator = allocator,
             .tokens = tokens,
             .current = 0,
+            .allocator = allocator,
             .debug_enabled = debug_enabled,
+            .current_file = current_file,
             .mode = mode,
             .is_repl = is_repl,
-            .current_file = file_name,
         };
     }
 
@@ -2043,7 +2039,42 @@ pub const Parser = struct {
         var cases = std.ArrayList(ast.MatchCase).init(self.allocator);
         errdefer cases.deinit();
 
+        var has_else_case = false;
+
         while (self.peek().type != .RIGHT_BRACE) {
+            if (self.peek().type == .ELSE) {
+                // Handle else case
+                self.advance(); // consume 'else'
+
+                // Parse arrow
+                if (self.peek().type != .ARROW) {
+                    return error.ExpectedArrow;
+                }
+                self.advance();
+
+                // Parse body expression
+                const body = try self.parseExpression() orelse return error.ExpectedExpression;
+
+                try cases.append(.{
+                    .pattern = token.Token{
+                        .type = .ELSE,
+                        .lexeme = "else",
+                        .literal = .{ .nothing = {} },
+                        .line = 0,
+                        .column = 0,
+                    },
+                    .body = body,
+                });
+
+                has_else_case = true;
+
+                // Handle optional comma
+                if (self.peek().type == .COMMA) {
+                    self.advance();
+                }
+                continue;
+            }
+
             // Parse pattern (enum variant)
             if (self.peek().type != .DOT) {
                 return error.ExpectedDot;
@@ -2076,6 +2107,29 @@ pub const Parser = struct {
             }
         }
         self.advance(); // consume right brace
+
+        // If there's no else case, we need to verify that all variants are covered
+        if (!has_else_case) {
+            // Get the enum type from the value expression
+            const enum_type = switch (value.*) {
+                .Variable => |v| v.lexeme,
+                .EnumMember => |m| m.lexeme,
+                else => return error.ExpectedEnumValue,
+            };
+
+            _ = enum_type;
+
+            // Find the enum declaration in the current scope
+            // This would require tracking declarations in scope, which might need additional infrastructure
+            // For now, we'll just enforce that the number of cases matches the number of variants
+            // A more complete solution would verify each specific variant is covered
+
+            // TODO: Add proper enum variant tracking
+            // For now, just ensure we have at least one case
+            if (cases.items.len == 0) {
+                return error.EmptyMatch;
+            }
+        }
 
         const match_expr = try self.allocator.create(ast.Expr);
         match_expr.* = .{ .Match = .{
@@ -2116,6 +2170,57 @@ pub const Parser = struct {
 
         const member = self.peek();
         self.advance();
+
+        // Debug output for token scanning
+        if (self.debug_enabled) {
+            std.debug.print("\nLooking for enum variant '{s}'...\n", .{member.lexeme});
+        }
+
+        // Look backwards through tokens to find the enum declaration
+        var found_valid_variant = false;
+        var i: usize = 0; // Start from the beginning
+        while (i < self.tokens.len) : (i += 1) {
+            if (self.debug_enabled) {
+                std.debug.print("Checking token at {}: {s} ({s})\n", .{ i, @tagName(self.tokens[i].type), self.tokens[i].lexeme });
+            }
+
+            if (self.tokens[i].type == .ENUM_TYPE) {
+                if (self.debug_enabled) {
+                    std.debug.print("Found enum declaration at {}\n", .{i});
+                }
+
+                // Skip enum keyword and name
+                i += 2;
+
+                // Verify we're at the opening brace
+                if (self.tokens[i].type != .LEFT_BRACE) continue;
+                i += 1;
+
+                // Scan through variants
+                while (i < self.tokens.len and self.tokens[i].type != .RIGHT_BRACE) : (i += 1) {
+                    if (self.tokens[i].type == .IDENTIFIER) {
+                        if (self.debug_enabled) {
+                            std.debug.print("Checking variant: {s}\n", .{self.tokens[i].lexeme});
+                        }
+                        if (std.mem.eql(u8, self.tokens[i].lexeme, member.lexeme)) {
+                            found_valid_variant = true;
+                            if (self.debug_enabled) {
+                                std.debug.print("Found matching variant!\n", .{});
+                            }
+                            break;
+                        }
+                    }
+                }
+                if (found_valid_variant) break;
+            }
+        }
+
+        if (!found_valid_variant) {
+            if (self.debug_enabled) {
+                std.debug.print("Invalid enum variant: {s}\n", .{member.lexeme});
+            }
+            return error.InvalidEnumVariant;
+        }
 
         const enum_member = try self.allocator.create(ast.Expr);
         enum_member.* = .{ .EnumMember = member };
