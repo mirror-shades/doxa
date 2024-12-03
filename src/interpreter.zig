@@ -363,6 +363,21 @@ pub const Interpreter = struct {
                 }
                 return error.ReturnNothing;
             },
+            .EnumDecl => |decl| {
+                // Create an enum type and store it in environment
+                const enum_type = TypeInfo{
+                    .base = .Enum,
+                    .variants = try self.memory.getAllocator().alloc([]const u8, decl.variants.len),
+                };
+
+                // Store each variant
+                for (decl.variants, 0..) |variant, i| {
+                    enum_type.variants.?[i] = variant.lexeme;
+                }
+
+                try self.environment.define(decl.name.lexeme, .{ .nothing = {} }, enum_type);
+                return null;
+            },
         };
     }
 
@@ -398,6 +413,7 @@ pub const Interpreter = struct {
                             break :blk token.TokenLiteral{ .boolean = true };
                         } else token.TokenLiteral{ .boolean = false },
                         .function => token.TokenLiteral{ .boolean = false }, // Functions are never equal
+                        .enum_variant => token.TokenLiteral{ .boolean = std.mem.eql(u8, left.enum_variant, right.enum_variant) },
                     },
                     .PLUS => {
                         if (left == .int and right == .int) {
@@ -763,6 +779,7 @@ pub const Interpreter = struct {
                     },
                     .function => try buffer.writer().print("<function>", .{}),
                     .struct_value => |sv| try buffer.writer().print("{any}", .{sv}),
+                    .enum_variant => |variant| try buffer.writer().print(".{s}", .{variant}),
                 }
                 try buffer.writer().print("\n", .{});
 
@@ -1026,6 +1043,37 @@ pub const Interpreter = struct {
             .ArrayType => {
                 return token.TokenLiteral{ .nothing = {} };
             },
+            .Match => |match_expr| {
+                const value = try self.evaluate(match_expr.value);
+
+                // For each case in the match expression
+                for (match_expr.cases) |case| {
+                    // Check if this case matches the value
+                    if (std.mem.eql(u8, case.pattern.lexeme, value.enum_variant)) {
+                        return try self.evaluate(case.body);
+                    }
+                }
+                return error.NoMatchCase;
+            },
+            .EnumDecl => |decl| {
+                // Create an enum type and store it in environment
+                const enum_type = TypeInfo{
+                    .base = .Enum,
+                    .variants = try self.memory.getAllocator().alloc([]const u8, decl.variants.len),
+                };
+
+                // Store each variant
+                for (decl.variants, 0..) |variant, i| {
+                    enum_type.variants.?[i] = variant.lexeme;
+                }
+
+                try self.environment.define(decl.name.lexeme, .{ .nothing = {} }, enum_type);
+                return .{ .nothing = {} };
+            },
+            .EnumMember => |member| {
+                // Return the enum variant as a string
+                return token.TokenLiteral{ .enum_variant = member.lexeme };
+            },
         };
     }
 
@@ -1158,6 +1206,7 @@ pub const Interpreter = struct {
             .array => |arr| b == .array and arr.len == b.array.len,
             .struct_value => |s| b == .struct_value and std.mem.eql(u8, s.type_name, b.struct_value.type_name),
             .function => b == .function,
+            .enum_variant => b == .enum_variant and std.mem.eql(u8, a.enum_variant, b.enum_variant),
         };
     }
 };
