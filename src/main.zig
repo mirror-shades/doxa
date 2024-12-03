@@ -85,7 +85,7 @@ pub fn run(memory: *MemoryManager, interpreter: *Interpreter, source: []const u8
             memory.getAllocator(),
             token_list.items,
             memory.debug_enabled,
-            if (is_strict_repl) .Strict else .Normal,
+            if (is_strict_repl) Parser.Mode.Strict else Parser.Mode.Normal,
             is_repl,
             file_path,
         );

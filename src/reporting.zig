@@ -20,6 +20,7 @@ pub const ErrorList = error{
     UnknownDirective,
     InvalidDirective,
     ExpectedEquals,
+    ExpectedEnumValue,
 
     // Variable Management
     VariableNotFound,
@@ -61,8 +62,10 @@ pub const ErrorList = error{
     ArrayTypeMismatch,
     NotAStruct,
     EmptyStruct,
+    EmptyMatch,
     FieldNotFound,
     InvalidFieldAccessTarget,
+    InvalidEnumVariant,
     NoMatchCase,
 
     // Error Handling
