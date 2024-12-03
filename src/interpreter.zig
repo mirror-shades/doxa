@@ -535,18 +535,42 @@ pub const Interpreter = struct {
                 // Get variable's type info
                 const var_type = try self.environment.getTypeInfo(assign.name.lexeme);
 
+                // Check mutability
+                if (!var_type.is_mutable) {
+                    return error.ConstAssignment;
+                }
+
                 // Type checking
-                switch (var_type.base) {
-                    .Int => if (value != .int) {
-                        std.debug.print("Type error: Cannot assign {s} to int variable\n", .{@tagName(value)});
-                        return error.TypeError;
-                    },
-                    .Float => if (value != .float) {
-                        std.debug.print("Type error: Cannot assign {s} to float variable\n", .{@tagName(value)});
-                        return error.TypeError;
-                    },
-                    .Dynamic => {},
-                    else => {},
+                if (!var_type.is_dynamic) {
+                    switch (var_type.base) {
+                        .Int => {
+                            if (value != .int) {
+                                std.debug.print("Type error: Cannot assign {s} to int variable\n", .{@tagName(value)});
+                                return error.TypeError;
+                            }
+                        },
+                        .Float => {
+                            if (value != .float) {
+                                std.debug.print("Type error: Cannot assign {s} to float variable\n", .{@tagName(value)});
+                                return error.TypeError;
+                            }
+                        },
+                        .String => {
+                            if (value != .string) {
+                                std.debug.print("Type error: Cannot assign {s} to string variable\n", .{@tagName(value)});
+                                return error.TypeError;
+                            }
+                        },
+                        .Boolean => {
+                            if (value != .boolean) {
+                                std.debug.print("Type error: Cannot assign {s} to boolean variable\n", .{@tagName(value)});
+                                return error.TypeError;
+                            }
+                        },
+                        .Dynamic => {}, // Allow any assignment for dynamic types
+                        .Auto => {}, // Type is already fixed from initialization
+                        else => {},
+                    }
                 }
 
                 try self.environment.assign(assign.name.lexeme, value);
@@ -1093,35 +1117,42 @@ pub const Interpreter = struct {
         // Get variable's type info
         const var_type = try self.environment.getTypeInfo(assignment.name.lexeme);
 
+        // Check mutability
+        if (!var_type.is_mutable) {
+            return error.ConstAssignment;
+        }
+
         // Type checking
-        switch (var_type.base) {
-            .Int => {
-                if (value != .int) {
-                    std.debug.print("Type error: Cannot assign {s} to int variable\n", .{@tagName(value)});
-                    return error.TypeError;
-                }
-            },
-            .Float => {
-                if (value != .float) {
-                    std.debug.print("Type error: Cannot assign {s} to float variable\n", .{@tagName(value)});
-                    return error.TypeError;
-                }
-            },
-            .String => {
-                if (value != .string) {
-                    std.debug.print("Type error: Cannot assign {s} to string variable\n", .{@tagName(value)});
-                    return error.TypeError;
-                }
-            },
-            .Boolean => {
-                if (value != .boolean) {
-                    std.debug.print("Type error: Cannot assign {s} to boolean variable\n", .{@tagName(value)});
-                    return error.TypeError;
-                }
-            },
-            .Dynamic => {}, // Allow any assignment for dynamic types
-            .Auto => {}, // Type is already fixed from initialization
-            else => {},
+        if (!var_type.is_dynamic) {
+            switch (var_type.base) {
+                .Int => {
+                    if (value != .int) {
+                        std.debug.print("Type error: Cannot assign {s} to int variable\n", .{@tagName(value)});
+                        return error.TypeError;
+                    }
+                },
+                .Float => {
+                    if (value != .float) {
+                        std.debug.print("Type error: Cannot assign {s} to float variable\n", .{@tagName(value)});
+                        return error.TypeError;
+                    }
+                },
+                .String => {
+                    if (value != .string) {
+                        std.debug.print("Type error: Cannot assign {s} to string variable\n", .{@tagName(value)});
+                        return error.TypeError;
+                    }
+                },
+                .Boolean => {
+                    if (value != .boolean) {
+                        std.debug.print("Type error: Cannot assign {s} to boolean variable\n", .{@tagName(value)});
+                        return error.TypeError;
+                    }
+                },
+                .Dynamic => {}, // Allow any assignment for dynamic types
+                .Auto => {}, // Type is already fixed from initialization
+                else => {},
+            }
         }
 
         try self.environment.assign(assignment.name.lexeme, value);

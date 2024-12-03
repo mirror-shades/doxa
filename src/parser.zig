@@ -272,7 +272,7 @@ pub const Parser = struct {
             if (current.type == .EOF) break;
 
             const stmt = blk: {
-                if (self.peek().type == .VAR)
+                if (self.peek().type == .VAR or self.peek().type == .CONST) // Add CONST here
                     break :blk try self.parseVarDecl()
                 else if (self.peek().type == .LEFT_BRACE) {
                     const block_stmt = if (try self.block(null, .NONE)) |expr|
@@ -304,14 +304,25 @@ pub const Parser = struct {
     }
 
     fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
-        self.advance(); // consume 'var'
+        const is_const = self.peek().type == .CONST;
+        self.advance(); // consume 'var' or 'const'
 
         if (self.debug_enabled) {
             std.debug.print("\nParsing var declaration\n", .{});
             std.debug.print("Current token: {s}\n", .{@tagName(self.peek().type)});
         }
 
-        var type_info: ast.TypeInfo = .{ .base = .Dynamic };
+        var type_info: ast.TypeInfo = .{
+            .base = .Dynamic,
+            .is_dynamic = !is_const, // const variables can't change type
+            .is_mutable = !is_const, // const variables can't change value
+        };
+
+        // If there's a type annotation, it's not dynamic
+        if (self.peek().type == .COLON) {
+            type_info.is_dynamic = false;
+        }
+
         const is_array = self.peek().type == .ARRAY_TYPE;
         if (is_array) {
             self.advance(); // consume 'array'

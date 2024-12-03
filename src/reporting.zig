@@ -49,6 +49,7 @@ pub const ErrorList = error{
     ExpectedRightOperand,
     ExpectedOperand,
     ExpectedCallable,
+    ConstAssignment,
 
     // Collections & Indexing
     IndexOutOfBounds,
