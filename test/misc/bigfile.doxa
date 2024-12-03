@@ -1,0 +1,83 @@
+// Declaration
+enum Color {
+    Red,
+    Green,
+    Blue,
+}
+
+// Usage
+var b: Color = .Blue;
+var g: Color = .Green;
+
+var result = match b {
+    .Red => "It's red",
+    .Blue => "It's blue",
+    else => "It's something else",
+};
+
+result?;
+
+result = match g {
+    .Red => "It's red",
+    .Blue => "It's blue",
+    else => "It's something else",
+};
+
+result?;
+
+
+function fizzbuzz(x: int) {
+    var current = x;
+    while current <= 15 {
+        if current % 15 equals 0 then "fizzbuzz"?;
+        else if current % 3 equals 0 then "fizz"?;
+        else if current % 5 equals 0 then "buzz"?;
+        else current?;
+        
+        current += 1;
+    }
+}
+
+fizzbuzz(1);
+
+
+fn fber(x: int) {
+    if x % 3 equals 0 and x % 5 equals 0 then "fizzbuzzer"?;
+    else if x % 3 equals 0 then "fizzer"?;
+    else if x % 5 equals 0 then "buzzer"?;
+    else x?;
+
+    if x < 15 then fber(x + 1);
+}
+
+fber(1);
+
+struct Person {
+    name: string;
+    age: int;
+}
+
+struct Employee {
+    person: Person;
+    salary: int;
+}
+
+var mike = Employee {
+    person = Person {
+        name = "Mike",
+        age = 25,
+    },
+    salary = 1000,
+};
+
+mike.person.age = 26;
+mike.person.age?;
+
+mike.salary?;
+
+
+var array = [1, 2, 3, 4, 5];
+
+array[3]?;
+array[3] = 6;
+array[3]?;
