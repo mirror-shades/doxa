@@ -1769,57 +1769,76 @@ pub const Parser = struct {
         }
         self.advance();
 
-        if (self.debug_enabled) {
-            std.debug.print("Before array expression, token: {s}\n", .{@tagName(self.peek().type)});
-        }
-
-        // Parse array type or expression
-        var array_expr: *ast.Expr = undefined;
+        // Parse array expression (can be identifier or array type)
         if (self.peek().type == .ARRAY_TYPE) {
-            self.advance(); // consume 'array'
-            const array_type = try self.allocator.create(ast.Expr);
-            array_type.* = .{ .ArrayType = .{ .element_type = null } };
-            array_expr = array_type;
-        } else {
-            array_expr = try self.parseExpression() orelse return error.ExpectedExpression;
-        }
+            // Create array type expression
+            self.advance(); // consume ARRAY_TYPE
+            const array_expr = try self.allocator.create(ast.Expr);
+            array_expr.* = .{ .Variable = .{
+                .lexeme = "array",
+                .type = .IDENTIFIER,
+                .literal = .{ .nothing = {} },
+                .line = 0,
+                .column = 0,
+            } };
 
-        if (self.debug_enabled) {
-            std.debug.print("After array expression, token: {s}\n", .{@tagName(self.peek().type)});
-        }
-
-        // Parse predicate in braces
-        if (self.peek().type != .LEFT_BRACE) {
-            array_expr.deinit(self.allocator);
-            self.allocator.destroy(array_expr);
             if (self.debug_enabled) {
-                std.debug.print("Expected LEFT_BRACE, found: {s}\n", .{@tagName(self.peek().type)});
+                std.debug.print("After array type, expecting WHERE, found: {s}\n", .{@tagName(self.peek().type)});
             }
-            return error.ExpectedLeftBrace;
+
+            // Parse 'where' keyword
+            if (self.peek().type != .WHERE_KEYWORD and self.peek().type != .WHERE_SYMBOL) {
+                array_expr.deinit(self.allocator);
+                self.allocator.destroy(array_expr);
+                return error.ExpectedWhereKeyword;
+            }
+            self.advance();
+
+            // Parse the condition
+            const condition = try self.parseExpression() orelse {
+                array_expr.deinit(self.allocator);
+                self.allocator.destroy(array_expr);
+                return error.ExpectedExpression;
+            };
+
+            const exists_expr = try self.allocator.create(ast.Expr);
+            exists_expr.* = .{ .Exists = .{
+                .variable = bound_variable,
+                .array = array_expr,
+                .condition = condition,
+            } };
+            return exists_expr;
+        } else {
+            // Parse regular expression for array
+            const array_expr = try self.parseExpression() orelse return error.ExpectedExpression;
+
+            if (self.debug_enabled) {
+                std.debug.print("After array expression, expecting WHERE, found: {s}\n", .{@tagName(self.peek().type)});
+            }
+
+            // Parse 'where' keyword
+            if (self.peek().type != .WHERE_KEYWORD and self.peek().type != .WHERE_SYMBOL) {
+                array_expr.deinit(self.allocator);
+                self.allocator.destroy(array_expr);
+                return error.ExpectedWhereKeyword;
+            }
+            self.advance();
+
+            // Parse the condition
+            const condition = try self.parseExpression() orelse {
+                array_expr.deinit(self.allocator);
+                self.allocator.destroy(array_expr);
+                return error.ExpectedExpression;
+            };
+
+            const exists_expr = try self.allocator.create(ast.Expr);
+            exists_expr.* = .{ .Exists = .{
+                .variable = bound_variable,
+                .array = array_expr,
+                .condition = condition,
+            } };
+            return exists_expr;
         }
-        self.advance();
-
-        const condition = try self.parseExpression() orelse {
-            array_expr.deinit(self.allocator);
-            self.allocator.destroy(array_expr);
-            return error.ExpectedExpression;
-        };
-
-        if (self.peek().type != .RIGHT_BRACE) {
-            array_expr.deinit(self.allocator);
-            self.allocator.destroy(array_expr);
-            condition.deinit(self.allocator);
-            self.allocator.destroy(condition);
-            return error.ExpectedRightBrace;
-        }
-        self.advance();
-
-        const exists_expr = try self.allocator.create(ast.Expr);
-        exists_expr.* = .{ .Exists = .{
-            .variable = bound_variable,
-            .condition = condition,
-        } };
-        return exists_expr;
     }
 
     fn universalQuantifier(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
@@ -1827,22 +1846,44 @@ pub const Parser = struct {
             std.debug.print("\nParsing universal quantifier...\n", .{});
         }
 
-        // Parse variable name
+        self.advance(); // consume 'forall'
+
+        // Parse the bound variable
         if (self.peek().type != .IDENTIFIER) {
             return error.ExpectedIdentifier;
         }
-        const var_name = self.peek();
+        const bound_variable = self.peek();
         self.advance();
 
-        // Parse condition
-        const condition = try self.parsePrecedence(.QUANTIFIER) orelse return error.ExpectedExpression;
+        // Parse 'in' keyword
+        if (self.peek().type != .IN) {
+            return error.ExpectedInKeyword;
+        }
+        self.advance();
+
+        // Parse array expression
+        const array_expr = try self.parseExpression() orelse return error.ExpectedExpression;
+
+        // Parse 'where' keyword
+        if (self.peek().type != .WHERE_KEYWORD and self.peek().type != .WHERE_SYMBOL) {
+            array_expr.deinit(self.allocator);
+            self.allocator.destroy(array_expr);
+            return error.ExpectedWhereKeyword;
+        }
+        self.advance();
+
+        // Parse the condition
+        const condition = try self.parseExpression() orelse {
+            array_expr.deinit(self.allocator);
+            self.allocator.destroy(array_expr);
+            return error.ExpectedExpression;
+        };
 
         const forall_expr = try self.allocator.create(ast.Expr);
         forall_expr.* = .{ .ForAll = .{
-            .variable = var_name,
+            .variable = bound_variable,
             .condition = condition,
         } };
-
         return forall_expr;
     }
 

@@ -949,8 +949,10 @@ pub const Interpreter = struct {
                 }
             },
             .Exists => |e| {
-                // Get the variable name
-                const var_name = e.variable.lexeme;
+                if (self.debug_enabled) {
+                    std.debug.print("Evaluating exists expression\n", .{});
+                    std.debug.print("Variable name: {s}\n", .{e.variable.lexeme});
+                }
 
                 // Store the current environment to restore it later
                 const prev_env = self.environment;
@@ -960,30 +962,31 @@ pub const Interpreter = struct {
                 var quantifier_env = Environment.init(self.memory.getAllocator(), self.environment, self.debug_enabled);
                 self.environment = &quantifier_env;
 
-                // Determine the type of comparison from the condition
-                const is_numeric_comparison = if (e.condition.* == .Binary) blk: {
-                    const op = e.condition.Binary.operator.type;
-                    break :blk op == .GREATER or op == .GREATER_EQUAL or
-                        op == .LESS or op == .LESS_EQUAL;
-                } else false;
+                // Evaluate the array expression to get the actual array
+                if (self.debug_enabled) {
+                    std.debug.print("Evaluating array expression: {any}\n", .{e.array});
+                }
+                const array_value = try self.evaluate(e.array);
+                if (self.debug_enabled) {
+                    std.debug.print("Array value: {any}\n", .{array_value});
+                }
+                if (array_value != .array) {
+                    if (self.debug_enabled) {
+                        std.debug.print("TypeError: Expected array, got {s}\n", .{@tagName(array_value)});
+                    }
+                    return error.TypeError;
+                }
 
-                const numeric_values = [_]token.TokenLiteral{
-                    .{ .int = 0 },
-                    .{ .int = 1 },
-                    .{ .int = -1 },
-                    .{ .float = 0.5 },
-                };
-
-                const boolean_values = [_]token.TokenLiteral{
-                    .{ .boolean = true },
-                    .{ .boolean = false },
-                };
-
-                const test_values = if (is_numeric_comparison) &numeric_values else &boolean_values;
-
-                for (test_values) |val| {
-                    try self.environment.define(var_name, val, .{ .base = .Dynamic });
+                // Iterate over the actual array elements
+                for (array_value.array) |val| {
+                    if (self.debug_enabled) {
+                        std.debug.print("Testing value: {any}\n", .{val});
+                    }
+                    try self.environment.define(e.variable.lexeme, val, .{ .base = .Dynamic });
                     const result = try self.evaluate(e.condition);
+                    if (self.debug_enabled) {
+                        std.debug.print("Condition result: {any}\n", .{result});
+                    }
                     if (result == .boolean and result.boolean) {
                         return token.TokenLiteral{ .boolean = true };
                     }
