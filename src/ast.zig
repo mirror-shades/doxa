@@ -64,6 +64,17 @@ pub const Expr = union(enum) {
         field: token.Token,
         value: *Expr,
     },
+    Exists: struct {
+        variable: token.Token,
+        condition: *Expr,
+    },
+    ForAll: struct {
+        variable: token.Token,
+        condition: *Expr,
+    },
+    ArrayType: struct {
+        element_type: ?*TypeExpr = null,
+    },
 
     pub fn deinit(self: *Expr, allocator: std.mem.Allocator) void {
         switch (self.*) {
@@ -239,6 +250,20 @@ pub const Expr = union(enum) {
                 f.value.deinit(allocator);
                 allocator.destroy(f.value);
             },
+            .Exists => |*e| {
+                e.condition.deinit(allocator);
+                allocator.destroy(e.condition);
+            },
+            .ForAll => |*f| {
+                f.condition.deinit(allocator);
+                allocator.destroy(f.condition);
+            },
+            .ArrayType => |*array| {
+                if (array.element_type) |element_type| {
+                    element_type.deinit(allocator);
+                    allocator.destroy(element_type);
+                }
+            },
         }
     }
 };
@@ -261,6 +286,8 @@ pub const Type = enum {
     Function, // For function types
     Enum, // For enum types
     Custom, // For custom types
+    Exists, // For existential quantifiers
+    Forall, // For universal quantifiers
 };
 
 pub const TypeInfo = struct {
@@ -396,6 +423,14 @@ pub const TypeExpr = union(enum) {
     Array: ArrayType,
     Struct: []*StructField,
     Enum: []const []const u8,
+    Exists: struct {
+        variable: token.Token,
+        condition: *TypeExpr,
+    },
+    Forall: struct {
+        variable: token.Token,
+        condition: *TypeExpr,
+    },
 
     pub fn deinit(self: *TypeExpr, allocator: std.mem.Allocator) void {
         switch (self.*) {
@@ -413,6 +448,14 @@ pub const TypeExpr = union(enum) {
             },
             .Enum => |variants| {
                 allocator.free(variants);
+            },
+            .Exists => |*e| {
+                e.condition.deinit(allocator);
+                allocator.destroy(e.condition);
+            },
+            .Forall => |*f| {
+                f.condition.deinit(allocator);
+                allocator.destroy(f.condition);
             },
             else => {},
         }
@@ -566,6 +609,8 @@ pub fn typeInfoFromExpr(allocator: std.mem.Allocator, type_expr: ?*TypeExpr) !*T
             };
         },
         .Custom => TypeInfo{ .base = .Custom },
+        .Exists => TypeInfo{ .base = .Exists },
+        .Forall => TypeInfo{ .base = .Forall },
         .Enum => TypeInfo{ .base = .Dynamic }, // TODO: Add proper enum support
     };
 

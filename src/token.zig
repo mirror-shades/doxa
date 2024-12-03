@@ -61,6 +61,8 @@ pub const TokenType = enum {
     FOR, // for
     FOREACH, // foreach
     XOR, // xor
+    EXISTS, // exists ∃
+    FORALL, // forall ∀
     FROM, // from
     IN, // in
     IS, // is

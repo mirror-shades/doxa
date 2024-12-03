@@ -428,6 +428,15 @@ pub const Interpreter = struct {
                         if (left == .int and right == .int) {
                             return token.TokenLiteral{ .boolean = Interpreter.compare(left.int, right.int) > 0 };
                         }
+                        if (left == .float and right == .int) {
+                            return token.TokenLiteral{ .boolean = left.float > @as(f32, @floatFromInt(right.int)) };
+                        }
+                        if (left == .int and right == .float) {
+                            return token.TokenLiteral{ .boolean = @as(f32, @floatFromInt(left.int)) > right.float };
+                        }
+                        if (left == .float and right == .float) {
+                            return token.TokenLiteral{ .boolean = left.float > right.float };
+                        }
                         return error.TypeError;
                     },
                     .GREATER_EQUAL => {
@@ -938,6 +947,84 @@ pub const Interpreter = struct {
                     },
                     else => return error.NotAStruct,
                 }
+            },
+            .Exists => |e| {
+                // Get the variable name
+                const var_name = e.variable.lexeme;
+
+                // Store the current environment to restore it later
+                const prev_env = self.environment;
+                defer self.environment = prev_env;
+
+                // Create a new environment for the quantifier scope
+                var quantifier_env = Environment.init(self.memory.getAllocator(), self.environment, self.debug_enabled);
+                self.environment = &quantifier_env;
+
+                // Determine the type of comparison from the condition
+                const is_numeric_comparison = if (e.condition.* == .Binary) blk: {
+                    const op = e.condition.Binary.operator.type;
+                    break :blk op == .GREATER or op == .GREATER_EQUAL or
+                        op == .LESS or op == .LESS_EQUAL;
+                } else false;
+
+                const numeric_values = [_]token.TokenLiteral{
+                    .{ .int = 0 },
+                    .{ .int = 1 },
+                    .{ .int = -1 },
+                    .{ .float = 0.5 },
+                };
+
+                const boolean_values = [_]token.TokenLiteral{
+                    .{ .boolean = true },
+                    .{ .boolean = false },
+                };
+
+                const test_values = if (is_numeric_comparison) &numeric_values else &boolean_values;
+
+                for (test_values) |val| {
+                    try self.environment.define(var_name, val, .{ .base = .Dynamic });
+                    const result = try self.evaluate(e.condition);
+                    if (result == .boolean and result.boolean) {
+                        return token.TokenLiteral{ .boolean = true };
+                    }
+                }
+
+                return token.TokenLiteral{ .boolean = false };
+            },
+            .ForAll => |f| {
+                // Get the variable name
+                const var_name = f.variable.lexeme;
+
+                // Store the current environment to restore it later
+                const prev_env = self.environment;
+                defer self.environment = prev_env;
+
+                // Create a new environment for the quantifier scope
+                var quantifier_env = Environment.init(self.memory.getAllocator(), self.environment, self.debug_enabled);
+                self.environment = &quantifier_env;
+
+                // Try different values to verify the condition holds for all
+                const test_values = [_]token.TokenLiteral{
+                    .{ .int = 0 },
+                    .{ .int = 1 },
+                    .{ .int = -1 },
+                    .{ .float = 0.5 },
+                    .{ .boolean = true },
+                    .{ .boolean = false },
+                };
+
+                for (test_values) |val| {
+                    try self.environment.define(var_name, val, .{ .base = .Dynamic });
+                    const result = try self.evaluate(f.condition);
+                    if (!(result == .boolean and result.boolean)) {
+                        return token.TokenLiteral{ .boolean = false };
+                    }
+                }
+
+                return token.TokenLiteral{ .boolean = true };
+            },
+            .ArrayType => {
+                return token.TokenLiteral{ .nothing = {} };
             },
         };
     }
