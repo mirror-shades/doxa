@@ -194,6 +194,14 @@ pub const Parser = struct {
         return self.tokens[self.current];
     }
 
+    fn peekAhead(self: *Parser, offset: usize) token.Token {
+        const pos = self.current + offset;
+        if (pos >= self.tokens.len) {
+            return self.tokens[self.tokens.len - 1];
+        }
+        return self.tokens[pos];
+    }
+
     fn advance(self: *Parser) void {
         if (self.debug_enabled) {
             std.debug.print("Advancing from position {} to {}\n", .{
@@ -312,7 +320,6 @@ pub const Parser = struct {
             }
         }
 
-        // For array declarations, we might not have an identifier yet
         const name = if (is_array and self.peek().type == .ASSIGN)
             token.Token{
                 .type = .IDENTIFIER,
@@ -356,7 +363,11 @@ pub const Parser = struct {
                 });
             }
 
-            initializer = try self.parseExpression() orelse return error.ExpectedExpression;
+            // Allow struct initialization as an initializer
+            initializer = if (self.peek().type == .IDENTIFIER and self.peekAhead(1).type == .LEFT_BRACE)
+                try self.parseStructInit()
+            else
+                try self.parseExpression() orelse return error.ExpectedExpression;
         }
 
         if (self.peek().type != .SEMICOLON) {
@@ -1214,14 +1225,6 @@ pub const Parser = struct {
             .right = right,
         } };
         return logical_expr;
-    }
-
-    fn peekAhead(self: *Parser, offset: usize) token.Token {
-        const pos = self.current + offset;
-        if (pos >= self.tokens.len) {
-            return self.tokens[self.tokens.len - 1];
-        }
-        return self.tokens[pos];
     }
 
     fn functionExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {

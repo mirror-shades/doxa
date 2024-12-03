@@ -6,7 +6,7 @@ enum Color {
 }
 
 // Usage
-var color: Color = .Orange;
+var color: Color = .Blue;
 
 var result = match color {
     .Red => "It's red",
