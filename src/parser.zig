@@ -447,6 +447,7 @@ pub const Parser = struct {
             .For => false, // For loops don't need semicolons
             .ForEach => false, // ForEach loops don't need semicolons
             .Print => true, // Print expressions need semicolons
+            .Match => false, // Match expressions don't need semicolons
             else => true, // All other expressions need semicolons
         } else true;
 
@@ -770,57 +771,35 @@ pub const Parser = struct {
 
         if (left == null) return error.ExpectedExpression;
 
-        // Consume equals but remember the next token
-        const next_token = self.peek();
-        self.advance();
+        // Special handling for match expressions
+        if (self.peek().type == .MATCH) {
+            const value = try self.parseMatchExpr(null, .NONE) orelse return error.ExpectedExpression;
 
-        if (self.debug_enabled) {
-            std.debug.print("Value token to parse: {s}\n", .{
-                @tagName(next_token.type),
-            });
+            // Check if left side is a valid assignment target
+            switch (left.?.*) {
+                .Variable => |name| {
+                    const assign = try self.allocator.create(ast.Expr);
+                    assign.* = .{ .Assignment = .{
+                        .name = name,
+                        .value = value,
+                    } };
+                    return assign;
+                },
+                .FieldAccess => |field_access| {
+                    const assign = try self.allocator.create(ast.Expr);
+                    assign.* = .{ .FieldAssignment = .{
+                        .object = field_access.object,
+                        .field = field_access.field,
+                        .value = value,
+                    } };
+                    return assign;
+                },
+                else => return error.InvalidAssignmentTarget,
+            }
         }
 
-        // Try to parse the value being assigned
-        const value = switch (next_token.type) {
-            .INT => blk: {
-                if (self.debug_enabled) {
-                    std.debug.print("Found INT literal: {}\n", .{next_token.literal.int});
-                }
-                const literal_expr = try self.allocator.create(ast.Expr);
-                literal_expr.* = .{ .Literal = next_token.literal };
-                break :blk literal_expr;
-            },
-            .STRING => blk: {
-                if (self.debug_enabled) {
-                    std.debug.print("Found STRING literal: {s}\n", .{next_token.literal.string});
-                }
-                const literal_expr = try self.allocator.create(ast.Expr);
-                literal_expr.* = .{ .Literal = next_token.literal };
-                break :blk literal_expr;
-            },
-            .FLOAT => blk: {
-                if (self.debug_enabled) {
-                    std.debug.print("Found FLOAT literal: {d}\n", .{next_token.literal.float});
-                }
-                const literal_expr = try self.allocator.create(ast.Expr);
-                literal_expr.* = .{ .Literal = next_token.literal };
-                break :blk literal_expr;
-            },
-            .BOOL => blk: {
-                if (self.debug_enabled) {
-                    std.debug.print("Found BOOL literal: {}\n", .{next_token.literal.boolean});
-                }
-                const literal_expr = try self.allocator.create(ast.Expr);
-                literal_expr.* = .{ .Literal = next_token.literal };
-                break :blk literal_expr;
-            },
-            else => {
-                if (self.debug_enabled) {
-                    std.debug.print("Not a literal token: {s}\n", .{@tagName(next_token.type)});
-                }
-                return error.ExpectedExpression;
-            },
-        };
+        // Handle other expressions
+        const value = try self.parseExpression() orelse return error.ExpectedExpression;
 
         // Check if left side is a valid assignment target
         switch (left.?.*) {

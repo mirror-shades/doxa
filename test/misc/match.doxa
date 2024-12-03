@@ -1,0 +1,27 @@
+// Declaration
+enum Color {
+    Red,
+    Green,
+    Blue,
+}
+
+// Usage
+var b: Color = .Blue;
+var g: Color = .Green;
+
+var result = match b {
+    .Red => "It's red",
+    .Blue => "It's blue",
+    else => "It's something else",
+};
+
+result?;
+
+result = match g {
+    .Red => "It's red",
+    .Blue => "It's blue",
+    else => "It's something else",
+};
+
+result?;
+
