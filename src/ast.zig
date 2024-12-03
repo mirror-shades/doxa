@@ -66,6 +66,7 @@ pub const Expr = union(enum) {
     },
     Exists: struct {
         variable: token.Token,
+        array: *Expr,
         condition: *Expr,
     },
     ForAll: struct {

@@ -113,6 +113,7 @@ pub const Lexer = struct {
         try self.keywords.put("xor", .XOR);
         try self.keywords.put("exists", .EXISTS);
         try self.keywords.put("forall", .FORALL);
+        try self.keywords.put("where", .WHERE_KEYWORD);
     }
 
     //======================================================================
@@ -237,7 +238,7 @@ pub const Lexer = struct {
                 if (self.match('|')) {
                     try self.addMinimalToken(.OR_SYMBOL);
                 } else {
-                    try self.addMinimalToken(.PIPE);
+                    try self.addMinimalToken(.WHERE_SYMBOL);
                 }
             },
             '^' => {

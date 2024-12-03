@@ -22,7 +22,6 @@ pub const TokenType = enum {
 
     //one or two character tokens
     AMPERSAND, // &
-    PIPE, // |
     ARROW, // ->
     SLASH, // /
     SLASH_EQUAL, // /=
@@ -79,6 +78,8 @@ pub const TokenType = enum {
     OR_SYMBOL, // ||
     FN_KEYWORD, // fn
     FUNCTION_KEYWORD, // function
+    WHERE_KEYWORD, // where
+    WHERE_SYMBOL, // |
 
     // logical operators
     IF, // if
