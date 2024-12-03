@@ -6,8 +6,8 @@ enum Color {
 }
 
 // Usage
-var b: Color = .Blue;
-var g: Color = .Green;
+const b: Color = .Blue;
+const g: Color = .Green;
 
 var result = match b {
     .Red => "It's red",
@@ -27,7 +27,7 @@ result?;
 
 
 function fizzbuzz(x: int) {
-    var current = x;
+    var current is x;
     while current <= 15 {
         if current % 15 equals 0 then "fizzbuzz"?;
         else if current % 3 equals 0 then "fizz"?;
