@@ -1,17 +1,2 @@
-// Declaration
-enum Color {
-    Red,
-    Green,
-    Blue,
-}
 
-// Usage
-var color: Color = .Blue;
 
-var result = match color {
-    .Red => "It's red",
-    .Blue => "It's blue",
-    else => "It's something else",
-};
-
-result?;

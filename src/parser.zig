@@ -95,6 +95,7 @@ pub const Parser = struct {
         r.set(.CONST, .{ .prefix = variable });
         r.set(.IDENTIFIER, .{ .prefix = variable });
         r.set(.ASSIGN, .{ .infix = assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
+        r.set(.ARRAY_TYPE, .{ .prefix = variable, .infix = fieldAccess });
 
         // Control flow
         r.set(.IF, .{ .prefix = parseIfExpr });
@@ -441,17 +442,34 @@ pub const Parser = struct {
 
         // Check if we need a semicolon
         const needs_semicolon = if (expr) |e| switch (e.*) {
-            .Block => false, // Blocks don't need semicolons
-            .If => false, // If expressions don't need semicolons
-            .While => false, // While loops don't need semicolons
-            .For => false, // For loops don't need semicolons
-            .ForEach => false, // ForEach loops don't need semicolons
-            .Print => true, // Print expressions need semicolons
-            .Match => false, // Match expressions don't need semicolons
-            else => true, // All other expressions need semicolons
+            .Block => false,
+            .If => false,
+            .While => false,
+            .For => false,
+            .ForEach => false,
+            .Print => true,
+            .Match => false,
+            .Index => false, // Change this to false since we handle ? operator
+            else => true,
         } else true;
 
-        if (needs_semicolon) {
+        // Handle question mark operator
+        var final_expr = expr;
+        if (expr != null and self.peek().type == .QUESTION) {
+            self.advance(); // consume ?
+            const print_expr = try self.allocator.create(ast.Expr);
+            print_expr.* = .{ .Print = .{
+                .expr = expr.?,
+                .location = .{
+                    .file = self.current_file,
+                    .line = self.peek().line,
+                    .column = self.peek().column,
+                },
+            } };
+            final_expr = print_expr;
+        }
+
+        if (needs_semicolon or (final_expr != null and final_expr.?.* == .Print)) {
             if (self.peek().type != .SEMICOLON) {
                 if (self.debug_enabled) {
                     std.debug.print("Expected semicolon but found: {s} at position {}\n", .{
@@ -459,7 +477,7 @@ pub const Parser = struct {
                         self.current,
                     });
                 }
-                if (expr) |e| {
+                if (final_expr) |e| {
                     e.deinit(self.allocator);
                     self.allocator.destroy(e);
                 }
@@ -468,11 +486,38 @@ pub const Parser = struct {
             self.advance(); // Consume the semicolon
         }
 
-        return ast.Stmt{ .Expression = expr };
+        return ast.Stmt{ .Expression = final_expr };
     }
 
     fn parseExpression(self: *Parser) ErrorList!?*ast.Expr {
-        // Start parsing at lowest precedence
+        if (self.debug_enabled) {
+            std.debug.print("\nParsing expression...\n", .{});
+        }
+
+        // Special handling for array type expressions
+        if (self.peek().type == .ARRAY_TYPE) {
+            self.advance(); // consume 'array'
+
+            // Create array variable expression
+            const array_expr = try self.allocator.create(ast.Expr);
+            array_expr.* = .{ .Variable = .{
+                .type = .IDENTIFIER,
+                .lexeme = "array",
+                .literal = .{ .nothing = {} },
+                .line = 0,
+                .column = 0,
+            } };
+
+            // Check if this is an array indexing operation
+            if (self.peek().type == .LEFT_BRACKET) {
+                self.advance(); // consume '['
+                return self.index(array_expr, .NONE);
+            }
+
+            return array_expr;
+        }
+
+        // Start parsing at lowest precedence for other expressions
         return try self.parsePrecedence(.ASSIGNMENT);
     }
 
@@ -771,33 +816,6 @@ pub const Parser = struct {
 
         if (left == null) return error.ExpectedExpression;
 
-        // Special handling for match expressions
-        if (self.peek().type == .MATCH) {
-            const value = try self.parseMatchExpr(null, .NONE) orelse return error.ExpectedExpression;
-
-            // Check if left side is a valid assignment target
-            switch (left.?.*) {
-                .Variable => |name| {
-                    const assign = try self.allocator.create(ast.Expr);
-                    assign.* = .{ .Assignment = .{
-                        .name = name,
-                        .value = value,
-                    } };
-                    return assign;
-                },
-                .FieldAccess => |field_access| {
-                    const assign = try self.allocator.create(ast.Expr);
-                    assign.* = .{ .FieldAssignment = .{
-                        .object = field_access.object,
-                        .field = field_access.field,
-                        .value = value,
-                    } };
-                    return assign;
-                },
-                else => return error.InvalidAssignmentTarget,
-            }
-        }
-
         // Handle other expressions
         const value = try self.parseExpression() orelse return error.ExpectedExpression;
 
@@ -816,6 +834,15 @@ pub const Parser = struct {
                 assign.* = .{ .FieldAssignment = .{
                     .object = field_access.object,
                     .field = field_access.field,
+                    .value = value,
+                } };
+                return assign;
+            },
+            .Index => |index_expr| {
+                const assign = try self.allocator.create(ast.Expr);
+                assign.* = .{ .IndexAssign = .{
+                    .array = index_expr.array,
+                    .index = index_expr.index,
                     .value = value,
                 } };
                 return assign;
@@ -1163,8 +1190,7 @@ pub const Parser = struct {
             std.debug.print("Parsing array index\n", .{});
         }
 
-        // We're already at the LEFT_BRACKET when this function is called
-        // No need to check for it or advance - we were called because we found it
+        // Parse the index expression
         const index_expr = try self.parsePrecedence(.NONE) orelse return error.ExpectedExpression;
 
         // Check for and consume the RIGHT_BRACKET
@@ -1180,6 +1206,20 @@ pub const Parser = struct {
             .array = array_expr.?,
             .index = index_expr,
         } };
+
+        // Check for assignment
+        if (self.peek().type == .ASSIGN) {
+            self.advance(); // consume =
+            const value = try self.parseExpression() orelse return error.ExpectedExpression;
+            const assign_expr = try self.allocator.create(ast.Expr);
+            assign_expr.* = .{ .IndexAssign = .{
+                .array = array_expr.?,
+                .index = index_expr,
+                .value = value,
+            } };
+            return assign_expr;
+        }
+
         return expr;
     }
 
