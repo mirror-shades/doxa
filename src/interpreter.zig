@@ -1006,17 +1006,14 @@ pub const Interpreter = struct {
                 var quantifier_env = Environment.init(self.memory.getAllocator(), self.environment, self.debug_enabled);
                 self.environment = &quantifier_env;
 
-                // Try different values to verify the condition holds for all
-                const test_values = [_]token.TokenLiteral{
-                    .{ .int = 0 },
-                    .{ .int = 1 },
-                    .{ .int = -1 },
-                    .{ .float = 0.5 },
-                    .{ .boolean = true },
-                    .{ .boolean = false },
-                };
+                // Evaluate the array expression to get the actual array
+                const array_value = try self.evaluate(f.array);
+                if (array_value != .array) {
+                    return error.TypeError;
+                }
 
-                for (test_values) |val| {
+                // Iterate over the actual array elements
+                for (array_value.array) |val| {
                     try self.environment.define(var_name, val, .{ .base = .Dynamic });
                     const result = try self.evaluate(f.condition);
                     if (!(result == .boolean and result.boolean)) {
