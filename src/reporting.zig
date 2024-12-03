@@ -121,6 +121,8 @@ pub const ErrorList = error{
     ExpectedType,
     ExpectedFunctionKeyword,
     ExpectedFunctionName,
+    ExpectedArrayExpression,
+    ExpectedArrayType,
     UnsupportedCompoundOperator,
 
     // Miscellaneous

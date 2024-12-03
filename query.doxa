@@ -1,22 +1,5 @@
-struct Person {
-    name: string;
-    age: int;
-};
+var array = [1, 2, 3, 4, 5];
 
-struct Employee {
-    person: Person;
-    salary: int;
-};
+var e = exists x in array where x > 0;
 
-var mike = Employee {
-    person = Person {
-        name = "Mike",
-        age = 25,
-    },
-    salary = 1000,
-};
-
-mike.person.age = 26;
-mike.person.age?;
-
-mike.salary?;
+e?;

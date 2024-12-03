@@ -15,11 +15,12 @@ const Precedence = enum(u8) {
     XOR = 4, // xor
     EQUALITY = 5, // == !=
     COMPARISON = 6, // < > <= >=
-    TERM = 7, // + -
-    FACTOR = 8, // * /
-    UNARY = 9, // ! -
-    CALL = 10, // . () []
-    PRIMARY = 11,
+    QUANTIFIER = 7, // ∃ ∀
+    TERM = 8, // + -
+    FACTOR = 9, // * /
+    UNARY = 10, // ! -
+    CALL = 11, // . () []
+    PRIMARY = 12,
 };
 
 const ParseFn = *const fn (*Parser, ?*ast.Expr, Precedence) ErrorList!?*ast.Expr;
@@ -91,7 +92,7 @@ pub const Parser = struct {
 
         // Grouping
         r.set(.LEFT_PAREN, .{ .prefix = grouping, .infix = call, .precedence = .CALL });
-        r.set(.LEFT_BRACKET, .{ .prefix = array, .infix = index, .precedence = .CALL });
+        r.set(.LEFT_BRACKET, .{ .prefix = parseArrayLiteral, .infix = index, .precedence = .CALL });
 
         // Variables and assignment
         r.set(.VAR, .{ .prefix = variable });
@@ -126,6 +127,19 @@ pub const Parser = struct {
         // Add struct instantiation support
         r.set(.IDENTIFIER, .{ .prefix = variable, .infix = fieldAccess });
         r.set(.DOT, .{ .infix = fieldAccess, .precedence = .CALL });
+
+        // Add quantifier operators
+        r.set(.EXISTS, .{ .prefix = existentialQuantifier, .precedence = .QUANTIFIER });
+        r.set(.FORALL, .{ .prefix = universalQuantifier, .precedence = .QUANTIFIER });
+
+        // Add array type support
+        r.set(.ARRAY_TYPE, .{ .prefix = arrayType });
+
+        // Add 'in' keyword support for quantifiers
+        r.set(.IN, .{ .infix = inOperator, .precedence = .TERM });
+
+        // Add array literal support
+        r.set(.LEFT_BRACKET, .{ .prefix = parseArrayLiteral });
 
         break :blk r;
     };
@@ -276,35 +290,46 @@ pub const Parser = struct {
     fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
         self.advance(); // consume 'var'
 
-        if (self.peek().type != .IDENTIFIER) {
-            return error.ExpectedIdentifier;
+        if (self.debug_enabled) {
+            std.debug.print("\nParsing var declaration\n", .{});
+            std.debug.print("Current token: {s}\n", .{@tagName(self.peek().type)});
         }
-        const name = self.peek();
-        self.advance();
 
-        // Parse type annotation if present
         var type_info: ast.TypeInfo = .{ .base = .Dynamic };
-        if (self.peek().type == .COLON) {
+        const is_array = self.peek().type == .ARRAY_TYPE;
+        if (is_array) {
+            self.advance(); // consume 'array'
+            type_info.base = .Array;
+            if (self.debug_enabled) {
+                std.debug.print("Found array type, next token: {s}\n", .{@tagName(self.peek().type)});
+            }
+        }
+
+        // For array declarations, we might not have an identifier yet
+        const name = if (is_array and self.peek().type == .ASSIGN)
+            token.Token{
+                .type = .IDENTIFIER,
+                .lexeme = "array",
+                .literal = .{ .nothing = {} },
+                .line = 0,
+                .column = 0,
+            }
+        else blk: {
+            if (self.peek().type != .IDENTIFIER and !is_array) {
+                return error.ExpectedIdentifier;
+            }
+            const n = self.peek();
             self.advance();
-            const type_token = self.peek();
-            type_info.base = switch (type_token.type) {
-                .INT_TYPE => .Int,
-                .FLOAT_TYPE => .Float,
-                .STRING_TYPE => .String,
-                .BOOLEAN_TYPE => .Boolean,
-                .AUTO => .Auto,
-                .IDENTIFIER => .Custom,
-                else => return error.InvalidType,
-            };
-            self.advance();
-        } else if (self.mode == .Strict) {
-            return error.ExpectedTypeAnnotation;
+            break :blk n;
+        };
+
+        if (self.debug_enabled) {
+            std.debug.print("After name, current token: {s}\n", .{@tagName(self.peek().type)});
         }
 
         var initializer: ?*ast.Expr = null;
         if (self.peek().type == .ASSIGN) {
             self.advance();
-
             if (self.debug_enabled) {
                 std.debug.print("\nParsing var initializer at position {}, token: {s}\n", .{
                     self.current,
@@ -312,19 +337,13 @@ pub const Parser = struct {
                 });
             }
 
-            // Try to parse as struct initialization first
-            if (self.peek().type == .IDENTIFIER) {
-                if (try self.parseStructInit()) |struct_init| {
-                    initializer = struct_init;
-                } else {
-                    initializer = try self.parseExpression() orelse return error.ExpectedExpression;
-                }
-            } else {
-                initializer = try self.parseExpression() orelse return error.ExpectedExpression;
-            }
+            initializer = try self.parseExpression() orelse return error.ExpectedExpression;
         }
 
         if (self.peek().type != .SEMICOLON) {
+            if (self.debug_enabled) {
+                std.debug.print("Expected semicolon, but found: {s}\n", .{@tagName(self.peek().type)});
+            }
             return error.ExpectedSemicolon;
         }
         self.advance();
@@ -334,6 +353,53 @@ pub const Parser = struct {
             .type_info = type_info,
             .initializer = initializer,
         } };
+    }
+
+    fn parseArrayLiteral(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+        if (self.debug_enabled) {
+            std.debug.print("\nParsing array literal\n", .{});
+        }
+
+        self.advance(); // consume '['
+
+        var elements = std.ArrayList(*ast.Expr).init(self.allocator);
+        errdefer {
+            for (elements.items) |element| {
+                element.deinit(self.allocator);
+                self.allocator.destroy(element);
+            }
+            elements.deinit();
+        }
+
+        while (self.peek().type != .RIGHT_BRACKET) {
+            if (self.debug_enabled) {
+                std.debug.print("Parsing array element, current token: {s}\n", .{@tagName(self.peek().type)});
+            }
+
+            const element = try self.parseExpression() orelse return error.ExpectedExpression;
+            try elements.append(element);
+
+            if (self.peek().type == .COMMA) {
+                self.advance();
+                if (self.peek().type == .RIGHT_BRACKET) break;
+            } else if (self.peek().type != .RIGHT_BRACKET) {
+                return error.ExpectedCommaOrBracket;
+            }
+        }
+
+        if (self.debug_enabled) {
+            std.debug.print("Found closing bracket, advancing...\n", .{});
+        }
+
+        self.advance(); // consume ']'
+
+        if (self.debug_enabled) {
+            std.debug.print("Next token after array: {s}\n", .{@tagName(self.peek().type)});
+        }
+
+        const array_expr = try self.allocator.create(ast.Expr);
+        array_expr.* = .{ .Array = try elements.toOwnedSlice() };
+        return array_expr;
     }
 
     fn parseExpressionStmt(self: *Parser) ErrorList!ast.Stmt {
@@ -1678,5 +1744,129 @@ pub const Parser = struct {
             .fields = try fields.toOwnedSlice(),
         } };
         return struct_init;
+    }
+
+    fn existentialQuantifier(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+        if (self.debug_enabled) {
+            std.debug.print("\nParsing existential quantifier...\n", .{});
+        }
+
+        self.advance(); // consume 'exists'
+
+        // Parse the bound variable
+        if (self.peek().type != .IDENTIFIER) {
+            if (self.debug_enabled) {
+                std.debug.print("Expected identifier, found: {s}\n", .{@tagName(self.peek().type)});
+            }
+            return error.ExpectedIdentifier;
+        }
+        const bound_variable = self.peek();
+        self.advance();
+
+        // Parse 'in' keyword
+        if (self.peek().type != .IN) {
+            return error.ExpectedInKeyword;
+        }
+        self.advance();
+
+        if (self.debug_enabled) {
+            std.debug.print("Before array expression, token: {s}\n", .{@tagName(self.peek().type)});
+        }
+
+        // Parse array type or expression
+        var array_expr: *ast.Expr = undefined;
+        if (self.peek().type == .ARRAY_TYPE) {
+            self.advance(); // consume 'array'
+            const array_type = try self.allocator.create(ast.Expr);
+            array_type.* = .{ .ArrayType = .{ .element_type = null } };
+            array_expr = array_type;
+        } else {
+            array_expr = try self.parseExpression() orelse return error.ExpectedExpression;
+        }
+
+        if (self.debug_enabled) {
+            std.debug.print("After array expression, token: {s}\n", .{@tagName(self.peek().type)});
+        }
+
+        // Parse predicate in braces
+        if (self.peek().type != .LEFT_BRACE) {
+            array_expr.deinit(self.allocator);
+            self.allocator.destroy(array_expr);
+            if (self.debug_enabled) {
+                std.debug.print("Expected LEFT_BRACE, found: {s}\n", .{@tagName(self.peek().type)});
+            }
+            return error.ExpectedLeftBrace;
+        }
+        self.advance();
+
+        const condition = try self.parseExpression() orelse {
+            array_expr.deinit(self.allocator);
+            self.allocator.destroy(array_expr);
+            return error.ExpectedExpression;
+        };
+
+        if (self.peek().type != .RIGHT_BRACE) {
+            array_expr.deinit(self.allocator);
+            self.allocator.destroy(array_expr);
+            condition.deinit(self.allocator);
+            self.allocator.destroy(condition);
+            return error.ExpectedRightBrace;
+        }
+        self.advance();
+
+        const exists_expr = try self.allocator.create(ast.Expr);
+        exists_expr.* = .{ .Exists = .{
+            .variable = bound_variable,
+            .condition = condition,
+        } };
+        return exists_expr;
+    }
+
+    fn universalQuantifier(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+        if (self.debug_enabled) {
+            std.debug.print("\nParsing universal quantifier...\n", .{});
+        }
+
+        // Parse variable name
+        if (self.peek().type != .IDENTIFIER) {
+            return error.ExpectedIdentifier;
+        }
+        const var_name = self.peek();
+        self.advance();
+
+        // Parse condition
+        const condition = try self.parsePrecedence(.QUANTIFIER) orelse return error.ExpectedExpression;
+
+        const forall_expr = try self.allocator.create(ast.Expr);
+        forall_expr.* = .{ .ForAll = .{
+            .variable = var_name,
+            .condition = condition,
+        } };
+
+        return forall_expr;
+    }
+
+    fn inOperator(self: *Parser, left: ?*ast.Expr, precedence: Precedence) ErrorList!?*ast.Expr {
+        if (left == null) return error.ExpectedLeftOperand;
+
+        // Parse the array expression
+        const array_expr = try self.parsePrecedence(@enumFromInt(@intFromEnum(precedence) + 1)) orelse
+            return error.ExpectedArrayExpression;
+
+        const in_expr = try self.allocator.create(ast.Expr);
+        in_expr.* = .{ .Binary = .{
+            .left = left,
+            .operator = self.tokens[self.current - 1],
+            .right = array_expr,
+        } };
+        return in_expr;
+    }
+
+    fn arrayType(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+        const array_expr = try self.allocator.create(ast.Expr);
+        array_expr.* = .{ .ArrayType = .{
+            .element_type = null,
+        } };
+        return array_expr;
     }
 };

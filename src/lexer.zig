@@ -111,6 +111,8 @@ pub const Lexer = struct {
         try self.keywords.put("struct", .STRUCT_TYPE);
         try self.keywords.put("enum", .ENUM_TYPE);
         try self.keywords.put("xor", .XOR);
+        try self.keywords.put("exists", .EXISTS);
+        try self.keywords.put("forall", .FORALL);
     }
 
     //======================================================================
@@ -141,7 +143,6 @@ pub const Lexer = struct {
         self.advance();
 
         switch (c) {
-
             //strings
             'r' => {
                 if (self.peekAt(0) == '"') {
