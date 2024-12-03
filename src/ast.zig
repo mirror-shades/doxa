@@ -71,6 +71,7 @@ pub const Expr = union(enum) {
     },
     ForAll: struct {
         variable: token.Token,
+        array: *Expr,
         condition: *Expr,
     },
     ArrayType: struct {
@@ -256,6 +257,8 @@ pub const Expr = union(enum) {
                 allocator.destroy(e.condition);
             },
             .ForAll => |*f| {
+                f.array.deinit(allocator);
+                allocator.destroy(f.array);
                 f.condition.deinit(allocator);
                 allocator.destroy(f.condition);
             },

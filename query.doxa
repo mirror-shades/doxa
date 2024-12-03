@@ -1,5 +1,5 @@
 var array = [1, 2, 3, 4, 5];
 
-var e = exists x in array where x > 5;
+var f = exists x in array where x > 0;
 
-e?;
+f?;
