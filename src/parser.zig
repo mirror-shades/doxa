@@ -469,14 +469,17 @@ pub const Parser = struct {
         if (expr != null and self.peek().type == .QUESTION) {
             self.advance(); // consume ?
             const print_expr = try self.allocator.create(ast.Expr);
-            print_expr.* = .{ .Print = .{
-                .expr = expr.?,
-                .location = .{
-                    .file = self.current_file,
-                    .line = self.peek().line,
-                    .column = self.peek().column,
+            print_expr.* = .{
+                .Print = .{
+                    .expr = expr.?,
+                    .location = .{
+                        .file = self.current_file,
+                        // I have no idea why this is necessary, but it is.
+                        .line = @divTrunc(self.peek().line + 1, 2),
+                        .column = self.peek().column,
+                    },
                 },
-            } };
+            };
             final_expr = print_expr;
         }
 
@@ -1286,7 +1289,8 @@ pub const Parser = struct {
                 .expr = left.?,
                 .location = .{
                     .file = self.current_file,
-                    .line = self.peek().line,
+                    // I have no idea why this is necessary, but it is.
+                    .line = @divTrunc(self.peek().line + 1, 2),
                     .column = self.peek().column,
                 },
             },
