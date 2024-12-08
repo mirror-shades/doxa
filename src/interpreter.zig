@@ -278,7 +278,13 @@ pub const Interpreter = struct {
                         else => {},
                     }
                     break :blk init_value;
-                } else token.TokenLiteral{ .nothing = {} };
+                } else switch (decl.type_info.base) {
+                    .Int => token.TokenLiteral{ .int = 0 },
+                    .Float => token.TokenLiteral{ .float = 0.0 },
+                    .String => token.TokenLiteral{ .string = try self.string_interner.intern("") },
+                    .Boolean => token.TokenLiteral{ .boolean = false },
+                    else => token.TokenLiteral{ .nothing = {} },
+                };
 
                 try self.environment.define(decl.name.lexeme, value, decl.type_info);
                 return null;
