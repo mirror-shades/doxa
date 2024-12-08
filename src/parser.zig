@@ -1403,7 +1403,10 @@ pub const Parser = struct {
                     ast.Stmt{ .Expression = null };
                 break :blk block_expr;
             },
-            .STRUCT_TYPE => self.parseStructDeclStmt(),
+            .STRUCT_TYPE => if (self.peekAhead(1).type == .LEFT_BRACE)
+                try self.parseStructDeclStmt()
+            else
+                try self.parseExpressionStmt(),
             .ENUM_TYPE => self.parseEnumDecl(),
             else => self.parseExpressionStmt(),
         };
@@ -1647,11 +1650,15 @@ pub const Parser = struct {
             };
             try fields.append(field);
 
-            // Handle field separator (semicolon or comma)
-            if (self.peek().type == .SEMICOLON) {
+            // Handle field separator (comma)
+            if (self.peek().type == .COMMA) {
                 self.advance();
+                // Allow trailing comma by checking for closing brace
+                if (self.peek().type == .RIGHT_BRACE) {
+                    break;
+                }
             } else if (self.peek().type != .RIGHT_BRACE) {
-                return error.ExpectedSemicolonOrBrace;
+                return error.ExpectedCommaOrBrace;
             }
         }
 
