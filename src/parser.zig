@@ -147,6 +147,9 @@ pub const Parser = struct {
         // Add match expression support
         r.set(.MATCH, .{ .prefix = parseMatchExpr });
 
+        // Add typeof support
+        r.set(.TYPEOF, .{ .prefix = typeofExpr, .precedence = .CALL }); // Added precedence
+
         break :blk r;
     };
 
@@ -2254,5 +2257,35 @@ pub const Parser = struct {
         const enum_member = try self.allocator.create(ast.Expr);
         enum_member.* = .{ .EnumMember = member };
         return enum_member;
+    }
+
+    fn typeofExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+        if (self.debug_enabled) {
+            std.debug.print("\nParsing typeof expression...\n", .{});
+        }
+
+        // We're already at 'typeof', advance to the next token
+        self.advance();
+
+        // Expect opening parenthesis
+        if (self.peek().type != .LEFT_PAREN) {
+            return error.ExpectedLeftParen;
+        }
+        self.advance();
+
+        // Parse the expression whose type we want to check
+        const expr = try self.parseExpression() orelse return error.ExpectedExpression;
+
+        // Expect closing parenthesis
+        if (self.peek().type != .RIGHT_PAREN) {
+            expr.deinit(self.allocator);
+            self.allocator.destroy(expr);
+            return error.ExpectedRightParen;
+        }
+        self.advance();
+
+        const typeof_expr = try self.allocator.create(ast.Expr);
+        typeof_expr.* = .{ .TypeOf = expr };
+        return typeof_expr;
     }
 };

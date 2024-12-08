@@ -84,6 +84,7 @@ pub const Expr = union(enum) {
     },
     EnumMember: token.Token,
     DefaultArgPlaceholder: void,
+    TypeOf: *Expr,
 
     pub fn deinit(self: *Expr, allocator: std.mem.Allocator) void {
         switch (self.*) {
@@ -289,6 +290,10 @@ pub const Expr = union(enum) {
             },
             .EnumMember => {}, // No allocation to free
             .DefaultArgPlaceholder => {}, // Nothing to deallocate
+            .TypeOf => |expr| {
+                expr.deinit(allocator);
+                allocator.destroy(expr);
+            },
         }
     }
 };

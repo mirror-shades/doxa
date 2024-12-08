@@ -1,4 +1,30 @@
+var x = 5;
+typeof(x)?;
 
-fn foo(a, b=5) {return a+b;}
+var y = 5.5;
+typeof(y)?;
 
-foo(1, ~)?;
+var z = "hello";
+typeof(z)?;
+
+var b = true;
+typeof(b)?;
+
+var arr = [1, 2, 3];
+typeof(arr)?;
+
+enum Color {
+    Red,
+    Green,
+    Blue,
+}
+typeof(Color)?;
+
+
+
+
+// struct Point {
+//     x: int,
+//     y: int,
+// };
+// typeof(Point)?;

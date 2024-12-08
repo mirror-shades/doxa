@@ -122,7 +122,7 @@ pub const StructField = struct {
 
 pub const TokenLiteral = union(enum) {
     int: i32,
-    float: f32,
+    float: f64,
     string: []const u8,
     boolean: bool,
     nothing: void,

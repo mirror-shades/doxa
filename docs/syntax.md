@@ -8,11 +8,11 @@ both `||` and `&&` are supported alongside `and` and `or`. a clarity warning is 
 
 No operator or function overloading.
 
-Memory management is handled via garbage collection.
+TODO: Memory management is handled via garbage collection.
 
 No classes, only structs and composition.
 
-Try catch is based on Zig's error union model which allows for safer error handling.
+TODO: Try catch is based on Zig's error union model which allows for safer error handling.
 
 ```
 fn divide(a: int, b: int) !int {
@@ -35,7 +35,7 @@ Doxa has some choice code keywords:
 - `and` and `&&` are functionally identical
 - `or` and `||` are functionally identical
 
-warnings are given for projects that mix symbolic and keyword conditionals.
+TODO: Warnings are given for projects that mix symbolic and keyword conditionals.
 
 ```
 struct Animal {
@@ -58,7 +58,7 @@ var dog = Dog {
 };
 ```
 
-modules are supported. strict files can only import other strict files.
+TODO: Modules are supported. strict files can only import other strict files.
 normal files can import both strict and normal files.
 
 ```
