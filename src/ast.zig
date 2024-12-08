@@ -83,6 +83,7 @@ pub const Expr = union(enum) {
         variants: []token.Token,
     },
     EnumMember: token.Token,
+    DefaultArgPlaceholder: void,
 
     pub fn deinit(self: *Expr, allocator: std.mem.Allocator) void {
         switch (self.*) {
@@ -287,6 +288,7 @@ pub const Expr = union(enum) {
                 allocator.free(e.variants);
             },
             .EnumMember => {}, // No allocation to free
+            .DefaultArgPlaceholder => {}, // Nothing to deallocate
         }
     }
 };
@@ -540,12 +542,18 @@ pub const Index = struct {
 
 pub const FunctionParam = struct {
     name: token.Token,
-    type_info: TypeInfo,
+    type_expr: ?*TypeExpr,
+    default_value: ?*Expr = null,
 
     pub fn deinit(self: *FunctionParam, allocator: std.mem.Allocator) void {
-        // Nothing to deinit since all fields are value types
-        _ = self;
-        _ = allocator;
+        if (self.type_expr) |te| {
+            te.deinit(allocator);
+            allocator.destroy(te);
+        }
+        if (self.default_value) |dv| {
+            dv.deinit(allocator);
+            allocator.destroy(dv);
+        }
     }
 };
 

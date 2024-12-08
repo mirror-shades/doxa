@@ -1,5 +1,4 @@
 
+fn foo(a, b=5) {return a+b;}
 
-const c = 1;
-c = 2;
-c?;
+foo(1, ~)?;

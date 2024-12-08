@@ -683,15 +683,23 @@ pub const Parser = struct {
             return call_expr;
         }
 
-        // Parse first argument
-        const arg = (try self.parseExpression()) orelse return error.ExpectedExpression;
-        try arguments.append(arg);
+        // Parse arguments
+        while (true) {
+            var arg: *ast.Expr = undefined;
+            if (self.peek().type == .TILDE) {
+                // Handle default argument placeholder
+                self.advance(); // consume ~
+                const placeholder = try self.allocator.create(ast.Expr);
+                placeholder.* = .DefaultArgPlaceholder; // Added semicolon here
+                arg = placeholder;
+            } else {
+                arg = try self.parseExpression() orelse return error.ExpectedExpression;
+            }
+            try arguments.append(arg);
 
-        // Parse any additional arguments
-        while (self.peek().type == .COMMA) {
+            if (self.peek().type == .RIGHT_PAREN) break;
+            if (self.peek().type != .COMMA) return error.ExpectedComma;
             self.advance(); // consume comma
-            const next_arg = (try self.parseExpression()) orelse return error.ExpectedExpression;
-            try arguments.append(next_arg);
         }
 
         if (self.debug_enabled) {
@@ -1012,56 +1020,29 @@ pub const Parser = struct {
         }
 
         if (self.peek().type != .RIGHT_PAREN) {
-            while (true) {
-                if (self.peek().type != .IDENTIFIER) {
-                    return error.ExpectedIdentifier;
-                }
-                const param_name = self.peek();
-                self.advance();
+            try self.parseParameters(&params);
+        }
 
-                // Parse type annotation if present
-                var param_type = ast.TypeInfo{ .base = .Dynamic };
-                if (self.peek().type == .COLON) {
-                    self.advance();
-                    param_type.base = switch (self.peek().type) {
-                        .INT_TYPE => .Int,
-                        .FLOAT_TYPE => .Float,
-                        .STRING_TYPE => .String,
-                        .BOOLEAN_TYPE => .Boolean,
-                        else => return error.InvalidType,
-                    };
-                    self.advance();
-                }
-
-                try params.append(.{
-                    .name = param_name,
-                    .type_info = param_type,
-                });
-
-                if (self.peek().type == .RIGHT_PAREN) break;
-                if (self.peek().type != .COMMA) {
-                    return error.ExpectedComma;
-                }
-                self.advance();
-            }
+        if (self.peek().type != .RIGHT_PAREN) {
+            return error.ExpectedRightParen;
         }
         self.advance();
 
         // Parse return type
-        var return_type_info: ast.TypeInfo = .{ .base = .Dynamic };
+        var return_type = ast.TypeInfo{ .base = .Dynamic };
         if (self.peek().type == .COLON) {
             self.advance();
             if (self.peek().type == .AUTO) {
                 self.advance();
-                return_type_info.base = .Auto;
+                return_type.base = .Auto;
             } else {
                 const type_name = self.peek();
                 self.advance();
-                return_type_info.base = switch (type_name.type) {
-                    .INT => .Int,
-                    .FLOAT => .Float,
-                    .STRING => .String,
-                    .BOOL => .Boolean,
+                return_type.base = switch (type_name.type) {
+                    .INT_TYPE => .Int,
+                    .FLOAT_TYPE => .Float,
+                    .STRING_TYPE => .String,
+                    .BOOLEAN_TYPE => .Boolean,
                     else => return error.InvalidType,
                 };
             }
@@ -1077,7 +1058,7 @@ pub const Parser = struct {
         return ast.Stmt{ .Function = .{
             .name = name,
             .params = try params.toOwnedSlice(),
-            .return_type_info = return_type_info,
+            .return_type_info = return_type,
             .body = body,
         } };
     }
@@ -1367,22 +1348,33 @@ pub const Parser = struct {
             const param_name = self.peek();
             self.advance();
 
-            var param_type: ?*ast.TypeExpr = null;
+            // Parse type annotation if present
+            var type_expr: ?*ast.TypeExpr = null;
             if (self.peek().type == .COLON) {
-                self.advance();
-                param_type = try self.parseTypeExpr() orelse return error.ExpectedType;
+                self.advance(); // consume :
+                type_expr = try self.parseTypeExpr();
+            }
+
+            // Handle default value
+            var default_value: ?*ast.Expr = null;
+            if (self.peek().type == .ASSIGN) {
+                self.advance(); // consume =
+                const value_expr = try self.parseExpression() orelse return error.ExpectedExpression;
+                const default_literal = try self.allocator.create(ast.Expr);
+                default_literal.* = .{ .Literal = value_expr.Literal };
+                default_value = default_literal;
             }
 
             try params.append(.{
                 .name = param_name,
-                .type_expr = param_type,
+                .type_expr = type_expr,
+                .default_value = default_value,
             });
 
             if (self.peek().type == .COMMA) {
                 self.advance();
                 continue;
             }
-
             break;
         }
 
