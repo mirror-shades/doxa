@@ -21,6 +21,10 @@ pub const ErrorList = error{
     InvalidDirective,
     ExpectedEquals,
     ExpectedEnumValue,
+    InvalidReturnValue,
+    TooManyArguments,
+    NoDefaultValue,
+    TooFewArguments,
 
     // Variable Management
     VariableNotFound,

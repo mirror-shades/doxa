@@ -84,3 +84,9 @@ array[3]?;
 
 var condition is if true then "true" else "false";
 condition?;
+
+
+fn foo(a, b=5) {return a+b;}
+
+foo(1, 2)?;
+foo(1, ~)?;

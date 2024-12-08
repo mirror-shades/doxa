@@ -204,8 +204,8 @@ pub const Interpreter = struct {
         return 0;
     }
 
-    pub fn executeStatement(self: *Interpreter, stmt: *const ast.Stmt, debug: bool) ErrorList!?token.TokenLiteral {
-        if (debug) {
+    pub fn executeStatement(self: *Interpreter, stmt: *const ast.Stmt, debug_enabled: bool) ErrorList!?token.TokenLiteral {
+        if (debug_enabled) {
             self.debug_enabled = true;
         }
         if (self.debug_enabled) {
@@ -283,36 +283,33 @@ pub const Interpreter = struct {
                 try self.environment.define(decl.name.lexeme, value, decl.type_info);
                 return null;
             },
-            .Function => |func| {
-                if (self.debug_enabled) {
-                    std.debug.print("Defining function '{s}' with {} parameters\n", .{ func.name.lexeme, func.params.len });
-                }
+            .Function => |f| {
+                // Create new environment for the function
+                const closure = try self.memory.getAllocator().create(Environment);
+                closure.* = Environment.init(self.memory.getAllocator(), self.environment, debug_enabled);
 
-                // Make a copy of the parameters
-                var params = try self.memory.getAllocator().alloc(ast.FunctionParam, func.params.len);
-                errdefer {
-                    self.memory.getAllocator().free(params);
-                }
+                // Create function literal
+                const func = token.TokenLiteral{ .function = .{
+                    .params = f.params,
+                    .body = f.body,
+                    .closure = closure,
+                } };
 
-                // Deep copy each parameter
-                for (func.params, 0..) |param, i| {
-                    params[i] = .{
-                        .name = param.name,
-                        .type_info = param.type_info,
-                    };
-                    if (self.debug_enabled) {
+                // Store the function's return type in its environment
+                try closure.define("return_type", .{ .nothing = {} }, f.return_type_info);
+
+                // Define the function in current scope with its type info
+                try self.environment.define(f.name.lexeme, func, .{ .base = .Function });
+
+                if (debug_enabled) {
+                    std.debug.print("Defined function '{s}' with {} parameters\n", .{
+                        f.name.lexeme,
+                        f.params.len,
+                    });
+                    for (f.params, 0..) |param, i| {
                         std.debug.print("  Parameter {}: '{s}'\n", .{ i, param.name.lexeme });
                     }
                 }
-
-                const function = token.TokenLiteral{ .function = .{
-                    .params = params,
-                    .body = func.body,
-                    .closure = self.environment,
-                } };
-
-                // Use return_type_info for function type info
-                try self.environment.define(func.name.lexeme, function, func.return_type_info);
                 return null;
             },
             .Block => |statements| {
@@ -376,7 +373,7 @@ pub const Interpreter = struct {
                 }
 
                 try self.environment.define(decl.name.lexeme, .{ .nothing = {} }, enum_type);
-                return null;
+                return .{ .nothing = {} };
             },
         };
     }
@@ -1102,6 +1099,9 @@ pub const Interpreter = struct {
                 // Return the enum variant as a string
                 return token.TokenLiteral{ .enum_variant = member.lexeme };
             },
+            .DefaultArgPlaceholder => {
+                return token.TokenLiteral{ .nothing = {} };
+            },
         };
     }
 
@@ -1159,55 +1159,70 @@ pub const Interpreter = struct {
         return value;
     }
 
-    fn callFunction(self: *Interpreter, callee: token.TokenLiteral, arguments: []const *ast.Expr) ErrorList!token.TokenLiteral {
+    pub fn callFunction(self: *Interpreter, callee: token.TokenLiteral, arguments: []const *ast.Expr) ErrorList!token.TokenLiteral {
         switch (callee) {
             .function => |f| {
-                var environment = Environment.init(self.memory.getAllocator(), f.closure, self.debug_enabled);
-                defer environment.deinit();
+                // Create new environment for function call
+                var function_env = Environment.init(self.memory.getAllocator(), f.closure, self.debug_enabled);
+                errdefer function_env.deinit();
 
-                // Type check arguments against parameter types
-                if (arguments.len != f.params.len) {
-                    return error.InvalidArgumentCount;
+                // Check argument count
+                if (arguments.len > f.params.len) {
+                    return error.TooManyArguments;
                 }
 
-                for (arguments, f.params) |arg, param| {
-                    const arg_value = try self.evaluate(arg);
+                // Evaluate and bind arguments to parameters
+                for (f.params, 0..) |param, i| {
+                    var value: token.TokenLiteral = undefined;
 
-                    // Type check argument against parameter type
-                    switch (param.type_info.base) {
-                        .Int => if (arg_value != .int) {
-                            std.debug.print("Type error: Expected int argument, got {s}\n", .{@tagName(arg_value)});
-                            return error.TypeError;
-                        },
-                        .Float => if (arg_value != .float) {
-                            std.debug.print("Type error: Expected float argument, got {s}\n", .{@tagName(arg_value)});
-                            return error.TypeError;
-                        },
-                        .Boolean => if (arg_value != .boolean) {
-                            std.debug.print("Type error: Expected boolean argument, got {s}\n", .{@tagName(arg_value)});
-                            return error.TypeError;
-                        },
-                        .String => if (arg_value != .string) {
-                            std.debug.print("Type error: Expected string argument, got {s}\n", .{@tagName(arg_value)});
-                            return error.TypeError;
-                        },
-                        .Dynamic => {},
-                        else => {},
+                    if (i < arguments.len) {
+                        // If an argument is provided and it's not ~, use it
+                        const arg = arguments[i];
+                        if (arg.* == .DefaultArgPlaceholder) {
+                            // Use default value if available, otherwise error
+                            if (param.default_value) |default| {
+                                if (self.debug_enabled) {
+                                    std.debug.print("Using default value for parameter '{s}'\n", .{param.name.lexeme});
+                                }
+                                value = try self.evaluate(default);
+                            } else {
+                                return error.NoDefaultValue;
+                            }
+                        } else {
+                            value = try self.evaluate(arg);
+                        }
+                    } else if (param.default_value) |default| {
+                        // No argument provided, use default value
+                        if (self.debug_enabled) {
+                            std.debug.print("Using default value for parameter '{s}'\n", .{param.name.lexeme});
+                        }
+                        value = try self.evaluate(default);
+                    } else {
+                        return error.TooFewArguments;
                     }
 
-                    try environment.define(param.name.lexeme, arg_value, param.type_info);
+                    if (self.debug_enabled) {
+                        std.debug.print("Binding parameter '{s}' = {any}\n", .{ param.name.lexeme, value });
+                    }
+
+                    try function_env.define(param.name.lexeme, value, .{ .base = .Dynamic, .is_dynamic = true, .is_mutable = true });
                 }
 
-                const old_env = self.environment;
-                self.environment = &environment;
-                defer self.environment = old_env;
+                // Execute function body with the new environment
+                const result = self.executeBlock(f.body, &function_env) catch |err| {
+                    if (err == error.ReturnValue) {
+                        if (function_env.get("return")) |return_value| {
+                            return return_value;
+                        }
+                    }
+                    return err;
+                };
 
-                _ = try self.executeBlock(f.body, &environment);
+                // If we get here, there was no return statement
+                return if (result) |value| value else .{ .nothing = {} };
             },
             else => return error.NotCallable,
         }
-
-        return token.TokenLiteral{ .nothing = {} };
     }
 
     fn assignField(self: *Interpreter, object: token.TokenLiteral, field: token.Token, value: *ast.Expr) ErrorList!token.TokenLiteral {
