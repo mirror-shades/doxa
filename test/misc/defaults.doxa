@@ -1,0 +1,16 @@
+
+fn foo(a, b=5) {return a+b;}
+
+foo(1, ~)?;
+
+fn faa(a=20, b) {return a+b;}
+
+faa(1, 10)?;
+faa(~, 10)?;
+
+fn bar(a, b=5, c=10, d) {return a+b+c+d;}
+
+bar(1, 2, 3, 4)?;
+bar(1, 2, ~, 4)?;
+bar(1, ~, 3, 4)?;
+bar(1, ~, ~, 4)?;

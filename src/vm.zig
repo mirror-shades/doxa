@@ -20,7 +20,7 @@ pub const Frame = struct {
         };
     }
 
-    pub fn initFloat(x: f32) Frame {
+    pub fn initFloat(x: f64) Frame {
         return Frame{
             .value = instructions.Value{ .type = .FLOAT, .nothing = false, .data = .{ .float = x } },
             .allocator = null,
@@ -95,7 +95,7 @@ pub const Frame = struct {
         return self.value.data.int;
     }
 
-    pub fn asFloat(self: Frame) !f32 {
+    pub fn asFloat(self: Frame) !f64 {
         if (!self.typeIs(.FLOAT)) {
             return error.TypeError;
         }
@@ -815,7 +815,7 @@ pub const VM = struct {
                 switch (a.value.type) {
                     .INT => switch (b.value.type) {
                         .FLOAT => {
-                            const a_float = @as(f32, @floatFromInt(a.asInt() catch return te));
+                            const a_float = @as(f64, @floatFromInt(a.asInt() catch return te));
                             const result = switch (opcode) {
                                 .OP_IADD => f_add(a_float, b.asFloat() catch return te),
                                 .OP_ISUB => f_sub(a_float, b.asFloat() catch return te),
@@ -831,7 +831,7 @@ pub const VM = struct {
                     },
                     .FLOAT => switch (b.value.type) {
                         .INT => {
-                            const b_float = @as(f32, @floatFromInt(b.asInt() catch return te));
+                            const b_float = @as(f64, @floatFromInt(b.asInt() catch return te));
                             const result = switch (opcode) {
                                 .OP_IADD => f_add(a.asFloat() catch return te, b_float),
                                 .OP_ISUB => f_sub(a.asFloat() catch return te, b_float),
@@ -865,18 +865,18 @@ pub const VM = struct {
                 const a = self.pop().?;
 
                 // Convert operands to float if needed
-                const a_val: f32 = switch (a.value.type) {
+                const a_val: f64 = switch (a.value.type) {
                     .FLOAT => a.asFloat() catch return ErrorList.TypeError,
-                    .INT => @as(f32, @floatFromInt(a.asInt() catch return ErrorList.TypeError)),
+                    .INT => @as(f64, @floatFromInt(a.asInt() catch return ErrorList.TypeError)),
                     else => {
                         self.reporter.reportFatalError("Invalid type for float operation", .{});
                         return ErrorList.TypeError;
                     },
                 };
 
-                const b_val: f32 = switch (b.value.type) {
+                const b_val: f64 = switch (b.value.type) {
                     .FLOAT => b.asFloat() catch return ErrorList.TypeError,
-                    .INT => @as(f32, @floatFromInt(b.asInt() catch return ErrorList.TypeError)),
+                    .INT => @as(f64, @floatFromInt(b.asInt() catch return ErrorList.TypeError)),
                     else => {
                         self.reporter.reportFatalError("Invalid type for float operation", .{});
                         return ErrorList.TypeError;
@@ -896,18 +896,18 @@ pub const VM = struct {
                 const a = self.pop() orelse return error.StackUnderflow;
 
                 // Convert operands to float if needed
-                const a_val: f32 = switch (a.value.type) {
+                const a_val: f64 = switch (a.value.type) {
                     .FLOAT => a.asFloat() catch return error.TypeError,
-                    .INT => @as(f32, @floatFromInt(a.asInt() catch return error.TypeError)),
+                    .INT => @as(f64, @floatFromInt(a.asInt() catch return error.TypeError)),
                     else => {
                         self.reporter.reportFatalError("Invalid type for float operation", .{});
                         return error.TypeError;
                     },
                 };
 
-                const b_val: f32 = switch (b.value.type) {
+                const b_val: f64 = switch (b.value.type) {
                     .FLOAT => b.asFloat() catch return error.TypeError,
-                    .INT => @as(f32, @floatFromInt(b.asInt() catch return error.TypeError)),
+                    .INT => @as(f64, @floatFromInt(b.asInt() catch return error.TypeError)),
                     else => {
                         self.reporter.reportFatalError("Invalid type for float operation", .{});
                         return error.TypeError;
@@ -948,7 +948,7 @@ pub const VM = struct {
                 std.debug.print("CONVERT_NUMBER: Popped value type: {}\n", .{value.value.type});
                 if (value.typeIs(.INT)) {
                     const int_val = value.asInt() catch return ErrorList.TypeError;
-                    const float_val = @as(f32, @floatFromInt(int_val));
+                    const float_val = @as(f64, @floatFromInt(int_val));
                     self.stack.push(Frame.initFloat(float_val)) catch return ErrorList.StackUnderflow;
                 } else if (value.typeIs(.FLOAT)) {
                     const float_val = value.asFloat() catch return ErrorList.TypeError;
@@ -1341,11 +1341,11 @@ pub const VM = struct {
     }
 
     fn i2f(self: *VM, a: i32) !void {
-        const result: f32 = @as(f32, @floatFromInt(a));
+        const result: f64 = @as(f64, @floatFromInt(a));
         self.stack.push(Frame.initFloat(result));
     }
 
-    fn f2i(self: *VM, a: f32) !void {
+    fn f2i(self: *VM, a: f64) !void {
         const result: i32 = @intFromFloat(std.math.trunc(a));
         self.stack.push(Frame.initInt(result));
     }
@@ -1395,28 +1395,28 @@ pub const VM = struct {
         return Frame.initInt(a * b);
     }
 
-    fn f_add(a: f32, b: f32) !Frame {
-        if (a + b < -std.math.floatMax(f32) or a + b > std.math.floatMax(f32)) {
+    fn f_add(a: f64, b: f64) !Frame {
+        if (a + b < -std.math.floatMax(f64) or a + b > std.math.floatMax(f64)) {
             return error.FloatOverflow;
         }
         return Frame.initFloat(a + b);
     }
 
-    fn f_sub(a: f32, b: f32) !Frame {
-        if (a - b < -std.math.floatMax(f32) or a - b > std.math.floatMax(f32)) {
+    fn f_sub(a: f64, b: f64) !Frame {
+        if (a - b < -std.math.floatMax(f64) or a - b > std.math.floatMax(f64)) {
             return error.FloatOverflow;
         }
         return Frame.initFloat(a - b);
     }
 
-    fn f_mul(a: f32, b: f32) !Frame {
-        if (a * b < -std.math.floatMax(f32) or a * b > std.math.floatMax(f32)) {
+    fn f_mul(a: f64, b: f64) !Frame {
+        if (a * b < -std.math.floatMax(f64) or a * b > std.math.floatMax(f64)) {
             return error.FloatOverflow;
         }
         return Frame.initFloat(a * b);
     }
 
-    fn f_div(a: f32, b: f32) !f32 {
+    fn f_div(a: f64, b: f64) !f64 {
         std.debug.print("f_div: a={}, b={}\n", .{ a, b });
         if (b == 0e0 or a == 0e0) {
             return error.DivisionByZero;
@@ -1447,13 +1447,13 @@ pub const VM = struct {
             (a.value.type == .FLOAT and b.value.type == .INT))
         {
             // Convert both to floats for comparison
-            const a_val: f32 = if (a.value.type == .INT)
-                @as(f32, @floatFromInt(try a.asInt()))
+            const a_val: f64 = if (a.value.type == .INT)
+                @as(f64, @floatFromInt(try a.asInt()))
             else
                 try a.asFloat();
 
-            const b_val: f32 = if (b.value.type == .INT)
-                @as(f32, @floatFromInt(try b.asInt()))
+            const b_val: f64 = if (b.value.type == .INT)
+                @as(f64, @floatFromInt(try b.asInt()))
             else
                 try b.asFloat();
 
@@ -1486,13 +1486,13 @@ pub const VM = struct {
             (a.value.type == .FLOAT and b.value.type == .INT))
         {
             // Convert both to floats for comparison
-            const a_val: f32 = if (a.value.type == .INT)
-                @as(f32, @floatFromInt(try a.asInt()))
+            const a_val: f64 = if (a.value.type == .INT)
+                @as(f64, @floatFromInt(try a.asInt()))
             else
                 try a.asFloat();
 
-            const b_val: f32 = if (b.value.type == .INT)
-                @as(f32, @floatFromInt(try b.asInt()))
+            const b_val: f64 = if (b.value.type == .INT)
+                @as(f64, @floatFromInt(try b.asInt()))
             else
                 try b.asFloat();
 
@@ -1564,13 +1564,13 @@ pub const VM = struct {
             (a.value.type == .FLOAT and b.value.type == .INT))
         {
             // Convert both to floats for comparison
-            const a_val: f32 = if (a.value.type == .INT)
-                @as(f32, @floatFromInt(try a.asInt()))
+            const a_val: f64 = if (a.value.type == .INT)
+                @as(f64, @floatFromInt(try a.asInt()))
             else
                 try a.asFloat();
 
-            const b_val: f32 = if (b.value.type == .INT)
-                @as(f32, @floatFromInt(try b.asInt()))
+            const b_val: f64 = if (b.value.type == .INT)
+                @as(f64, @floatFromInt(try b.asInt()))
             else
                 try b.asFloat();
 

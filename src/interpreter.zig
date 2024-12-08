@@ -188,12 +188,12 @@ pub const Interpreter = struct {
     }
 
     pub fn compare(a: anytype, b: anytype) i8 {
-        var a_float: f32 = undefined;
-        var b_float: f32 = undefined;
+        var a_float: f64 = undefined;
+        var b_float: f64 = undefined;
         if (@TypeOf(a) == i32 or @TypeOf(b) == i32) {
-            a_float = @as(f32, @floatFromInt(a));
-            b_float = @as(f32, @floatFromInt(b));
-        } else if (@TypeOf(a) == f32 or @TypeOf(b) == f32) {
+            a_float = @as(f64, @floatFromInt(a));
+            b_float = @as(f64, @floatFromInt(b));
+        } else if (@TypeOf(a) == f64 or @TypeOf(b) == f64) {
             a_float = a;
             b_float = b;
         } else {
@@ -442,10 +442,10 @@ pub const Interpreter = struct {
                             return token.TokenLiteral{ .boolean = Interpreter.compare(left.int, right.int) > 0 };
                         }
                         if (left == .float and right == .int) {
-                            return token.TokenLiteral{ .boolean = left.float > @as(f32, @floatFromInt(right.int)) };
+                            return token.TokenLiteral{ .boolean = left.float > @as(f64, @floatFromInt(right.int)) };
                         }
                         if (left == .int and right == .float) {
-                            return token.TokenLiteral{ .boolean = @as(f32, @floatFromInt(left.int)) > right.float };
+                            return token.TokenLiteral{ .boolean = @as(f64, @floatFromInt(left.int)) > right.float };
                         }
                         if (left == .float and right == .float) {
                             return token.TokenLiteral{ .boolean = left.float > right.float };
@@ -1101,6 +1101,23 @@ pub const Interpreter = struct {
             },
             .DefaultArgPlaceholder => {
                 return token.TokenLiteral{ .nothing = {} };
+            },
+            .TypeOf => |expr_value| {
+                const value = try self.evaluate(expr_value);
+                return token.TokenLiteral{
+                    .string = switch (value) {
+                        .int => "int",
+                        .float => "float",
+                        .string => "string",
+                        .boolean => "boolean",
+                        .nothing => if (expr_value.* == .EnumDecl or
+                            if (expr_value.* == .Variable) if (self.environment.getTypeInfo(expr_value.Variable.lexeme) catch null) |type_info| type_info.base == .Enum else false else false) "enum" else "nothing",
+                        .array => "array",
+                        .function => "function",
+                        .struct_value => |sv| sv.type_name,
+                        .enum_variant => |ev| ev, // Return the enum instance's type name
+                    },
+                };
             },
         };
     }

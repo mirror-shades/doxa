@@ -777,17 +777,17 @@ pub const Lexer = struct {
             const num_str_lower = std.ascii.lowerString(num_str_buf, num_str);
 
             if (std.mem.eql(u8, num_str_lower, "inf") or std.mem.eql(u8, num_str_lower, "infinity")) {
-                const float_val = if (is_negative) -std.math.inf(f32) else std.math.inf(f32);
+                const float_val = if (is_negative) -std.math.inf(f64) else std.math.inf(f64);
                 try self.addToken(.FLOAT, .{ .float = float_val });
                 return;
             }
             if (std.mem.eql(u8, num_str_lower, "nan")) {
-                try self.addToken(.FLOAT, .{ .float = std.math.nan(f32) });
+                try self.addToken(.FLOAT, .{ .float = std.math.nan(f64) });
                 return;
             }
 
             // Parse the float value
-            const float_val = std.fmt.parseFloat(f32, num_str) catch {
+            const float_val = std.fmt.parseFloat(f64, num_str) catch {
                 return error.InvalidNumber;
             };
 

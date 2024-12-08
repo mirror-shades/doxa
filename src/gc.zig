@@ -3,7 +3,7 @@ const instructions = @import("instructions.zig");
 
 pub const GCConfig = struct {
     initial_threshold: i32 = 3,
-    growth_factor: f32 = 1.5, // Grow threshold after each collection
+    growth_factor: f64 = 1.5, // Grow threshold after each collection
 };
 
 pub const GC = struct {
@@ -21,7 +21,7 @@ pub const GC = struct {
         type: instructions.ValueType,
         data: union {
             int: i32,
-            float: f32,
+            float: f64,
             string: []const u8,
             array: *instructions.ArrayValue,
             struct_val: *instructions.StructValue,

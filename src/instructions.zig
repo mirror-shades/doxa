@@ -179,7 +179,7 @@ pub const Value = struct {
     nothing: bool,
     data: union {
         int: i32,
-        float: f32,
+        float: f64,
         boolean: bool,
         string: []const u8,
         struct_val: *StructValue,
