@@ -1,10 +1,5 @@
+var naught;
+typeof(naught)?;
 
-enum Color {
-    Red,
-    Green,
-    Blue,
-}
-typeof(Color)?;
-typeof(Color.Red)?;
 
 

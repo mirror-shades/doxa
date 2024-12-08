@@ -359,13 +359,20 @@ pub const Parser = struct {
         // Handle type annotation
         if (self.peek().type == .COLON) {
             self.advance(); // consume ':'
-            if (self.peek().type == .IDENTIFIER) {
-                type_info.base = .Custom;
-                type_info.custom_type = self.peek().lexeme;
-                self.advance(); // consume type identifier
-            } else {
-                return error.ExpectedType;
-            }
+
+            // Map token types to base types
+            type_info.base = switch (self.peek().type) {
+                .INT_TYPE => .Int,
+                .FLOAT_TYPE => .Float,
+                .STRING_TYPE => .String,
+                .BOOLEAN_TYPE => .Boolean,
+                .IDENTIFIER => blk: {
+                    type_info.custom_type = self.peek().lexeme;
+                    break :blk .Custom;
+                },
+                else => return error.ExpectedType,
+            };
+            self.advance(); // consume type identifier
         }
 
         var initializer: ?*ast.Expr = null;
@@ -587,12 +594,11 @@ pub const Parser = struct {
             std.debug.print("Attempting to parse literal, token: {s}\n", .{@tagName(current.type)});
         }
 
-        // Don't try to parse tokens that aren't literals
         const expr = switch (current.type) {
-            .INT, .FLOAT, .BOOL => blk: {
+            .INT, .FLOAT, .BOOL, .NOTHING => blk: {
                 const new_expr = try self.allocator.create(ast.Expr);
                 new_expr.* = .{ .Literal = current.literal };
-                self.advance(); // Advance past the literal token
+                self.advance();
                 break :blk new_expr;
             },
             .STRING => blk: {
@@ -600,7 +606,7 @@ pub const Parser = struct {
                 const string_copy = try self.allocator.dupe(u8, current.literal.string);
                 const new_expr = try self.allocator.create(ast.Expr);
                 new_expr.* = .{ .Literal = .{ .string = string_copy } };
-                self.advance(); // Advance past the literal token
+                self.advance();
                 break :blk new_expr;
             },
             else => {
