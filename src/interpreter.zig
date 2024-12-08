@@ -885,6 +885,21 @@ pub const Interpreter = struct {
             },
             .FieldAccess => |field| {
                 const object = try self.evaluate(field.object);
+                // First check if this is an enum type access
+                if (object == .nothing) {
+                    // Try to get type info for the object
+                    const type_info = self.environment.getTypeInfo(field.object.Variable.lexeme) catch |err| {
+                        if (self.debug_enabled) {
+                            std.debug.print("Error getting type info: {}\n", .{err});
+                        }
+                        return err;
+                    };
+                    if (type_info.base == .Enum) {
+                        // This is an enum member access
+                        return token.TokenLiteral{ .enum_variant = field.field.lexeme };
+                    }
+                }
+                // Otherwise handle as struct field access
                 if (object != .struct_value) {
                     return error.NotAStruct;
                 }
@@ -1110,12 +1125,35 @@ pub const Interpreter = struct {
                         .float => "float",
                         .string => "string",
                         .boolean => "boolean",
-                        .nothing => if (expr_value.* == .EnumDecl or
-                            if (expr_value.* == .Variable) if (self.environment.getTypeInfo(expr_value.Variable.lexeme) catch null) |type_info| type_info.base == .Enum else false else false) "enum" else "nothing",
+                        .nothing => if (expr_value.* == .EnumDecl or expr_value.* == .StructDecl or
+                            if (expr_value.* == .Variable)
+                            if (self.environment.getTypeInfo(expr_value.Variable.lexeme) catch null) |type_info|
+                                type_info.base == .Enum or type_info.base == .Struct
+                            else
+                                false
+                        else
+                            false)
+                            switch (expr_value.*) {
+                                .EnumDecl => "enum",
+                                .StructDecl => "struct",
+                                .Variable => |var_token| if (self.environment.getTypeInfo(var_token.lexeme) catch null) |type_info|
+                                    if (type_info.base == .Enum) "enum" else "struct"
+                                else
+                                    "nothing",
+                                else => "nothing",
+                            }
+                        else
+                            "nothing",
                         .array => "array",
                         .function => "function",
                         .struct_value => |sv| sv.type_name,
-                        .enum_variant => |ev| ev, // Return the enum instance's type name
+                        .enum_variant => |_| {
+                            // Get the enum type name from the field access expression
+                            if (expr_value.* == .FieldAccess) {
+                                return token.TokenLiteral{ .string = expr_value.FieldAccess.object.Variable.lexeme };
+                            }
+                            return token.TokenLiteral{ .string = "enum_variant" };
+                        },
                     },
                 };
             },

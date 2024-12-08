@@ -53,13 +53,13 @@ fn fber(x: int) {
 fber(1);
 
 struct Person {
-    name: string;
-    age: int;
+    name: string,
+    age: int,
 }
 
 struct Employee {
-    person: Person;
-    salary: int;
+    person: Person,
+    salary: int,
 }
 
 var mike = Employee {
@@ -90,3 +90,26 @@ fn foo(a, b=5) {return a+b;}
 
 foo(1, 2)?;
 foo(1, ~)?;
+
+
+var _int = 5;
+typeof(_int)?;
+
+var _float = 5.5;
+typeof(_float)?;
+
+var _string = "hello";
+typeof(_string)?;
+
+var _boolean = true;
+typeof(_boolean)?;
+
+var _array = [1, 2, 3];
+typeof(_array)?;
+
+typeof(Employee)?;
+
+typeof(mike)?;
+
+typeof(Color)?;
+typeof(Color.Blue)?;
