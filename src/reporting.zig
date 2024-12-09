@@ -25,6 +25,7 @@ pub const ErrorList = error{
     TooManyArguments,
     NoDefaultValue,
     TooFewArguments,
+    CannotModifyTuple,
 
     // Variable Management
     VariableNotFound,

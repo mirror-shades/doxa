@@ -760,6 +760,11 @@ pub const Interpreter = struct {
                 const index = try self.evaluate(idx_assign.index);
                 const new_value = try self.evaluate(idx_assign.value);
 
+                // Prevent tuple modification
+                if (array_val == .tuple) {
+                    return error.CannotModifyTuple;
+                }
+
                 if (array_val != .array) {
                     return error.TypeError;
                 }
