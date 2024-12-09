@@ -54,9 +54,14 @@ pub const Parser = struct {
     debug_enabled: bool,
     mode: Mode = .Normal,
     current_file: []const u8,
+
+    // tracking style conflicts
     fn_style: TokenStyle = .Undefined,
     and_style: TokenStyle = .Undefined,
     or_style: TokenStyle = .Undefined,
+    fn_style_warning_shown: bool = false,
+    and_style_warning_shown: bool = false,
+    or_style_warning_shown: bool = false,
 
     const rules = blk: {
         var r = std.EnumArray(token.TokenType, ParseRule).initFill(ParseRule{});
@@ -1193,12 +1198,56 @@ pub const Parser = struct {
             const first_element = try self.parsePrecedence(.NONE) orelse return error.ExpectedExpression;
             try elements.append(first_element);
 
-            // Parse remaining elements without type checking
+            // Get the type of the first element
+            const first_type = switch (first_element.*) {
+                .Literal => |lit| @as(token.TokenType, switch (lit) {
+                    .int => .INT_TYPE,
+                    .float => .FLOAT_TYPE,
+                    .string => .STRING_TYPE,
+                    .boolean => .BOOLEAN_TYPE,
+                    .nothing => .NOTHING,
+                    .array => .ARRAY_TYPE,
+                    .tuple => .TUPLE_TYPE,
+                    .struct_value => .STRUCT_TYPE,
+                    .function => .FUNCTION_KEYWORD,
+                    .enum_variant => .ENUM_TYPE,
+                    .map => .MAP_TYPE,
+                }),
+                else => .IDENTIFIER, // Handle other expression types
+            };
+
+            // Parse remaining elements
             while (self.peek().type == .COMMA) {
                 self.advance(); // consume comma
                 if (self.peek().type == .RIGHT_BRACKET) break;
 
                 const element = try self.parseExpression() orelse return error.ExpectedExpression;
+
+                // Check if the new element matches the type of the first element
+                const element_type = switch (element.*) {
+                    .Literal => |lit| @as(token.TokenType, switch (lit) {
+                        .int => .INT_TYPE,
+                        .float => .FLOAT_TYPE,
+                        .string => .STRING_TYPE,
+                        .boolean => .BOOLEAN_TYPE,
+                        .nothing => .NOTHING,
+                        .array => .ARRAY_TYPE,
+                        .tuple => .TUPLE_TYPE,
+                        .struct_value => .STRUCT_TYPE,
+                        .function => .FUNCTION_KEYWORD,
+                        .enum_variant => .ENUM_TYPE,
+                        .map => .MAP_TYPE,
+                    }),
+                    else => .IDENTIFIER,
+                };
+
+                if (element_type != first_type) {
+                    // Clean up the element we just created
+                    element.deinit(self.allocator);
+                    self.allocator.destroy(element);
+                    return error.HeterogeneousArray;
+                }
+
                 try elements.append(element);
             }
         }
@@ -2533,7 +2582,7 @@ pub const Parser = struct {
         _ = self;
         const writer = std.io.getStdErr().writer();
         var reporting = Reporting.init(writer);
-        reporting.reportWarning("Warning: {s}", .{message});
+        reporting.reportWarning("{s}", .{message});
     }
 
     fn updateTokenStyle(self: *Parser, token_type: token.TokenType) void {
@@ -2550,8 +2599,9 @@ pub const Parser = struct {
         // Check and update styles
         switch (token_type) {
             .FN_KEYWORD, .FUNCTION_KEYWORD => {
-                if (self.fn_style != .Undefined and self.fn_style != new_style) {
+                if (self.fn_style != .Undefined and self.fn_style != new_style and !self.fn_style_warning_shown) {
                     self.reportWarning("Style conflict for 'fn' and 'function' keywords");
+                    self.fn_style_warning_shown = true;
                     return;
                 }
                 if (self.fn_style == .Undefined) {
@@ -2559,8 +2609,9 @@ pub const Parser = struct {
                 }
             },
             .AND_KEYWORD, .AND_SYMBOL => {
-                if (self.and_style != .Undefined and self.and_style != new_style) {
+                if (self.and_style != .Undefined and self.and_style != new_style and !self.and_style_warning_shown) {
                     self.reportWarning("Style conflict for 'and' keyword and '&&' symbol");
+                    self.and_style_warning_shown = true;
                     return;
                 }
                 if (self.and_style == .Undefined) {
@@ -2568,8 +2619,9 @@ pub const Parser = struct {
                 }
             },
             .OR_KEYWORD, .OR_SYMBOL => {
-                if (self.or_style != .Undefined and self.or_style != new_style) {
+                if (self.or_style != .Undefined and self.or_style != new_style and !self.or_style_warning_shown) {
                     self.reportWarning("Style conflict for 'or' keyword and '||' symbol");
+                    self.or_style_warning_shown = true;
                     return;
                 }
                 if (self.or_style == .Undefined) {

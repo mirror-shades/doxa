@@ -2,19 +2,19 @@ try {
     var intvar: int = 1;
     intvar = "hello";
 } catch {
-    "invalid assignment failed ✅"?;
+    "invalid assignment caught ✅"?;
 }
 
 try {
     var array = [1, "hello", true];
     array[1]?;
 } catch {
-    "heterogeneous array failed ✅"?;
+    "heterogeneous array caught ✅"?;
 }
 
-// try {
-//     var array = [1, 2, 3, 4, 5];
-//     array[10]?;
-// } catch {
-//     "out of bounds array failed ✅"?;
-// }
+try {
+    var array = [1, 2, 3, 4, 5];
+    array[10]?;
+} catch {
+    "out of bounds array caught ✅"?;
+}
