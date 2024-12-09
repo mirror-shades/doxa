@@ -1,9 +1,10 @@
-var x: int = 1;
-
-try {
-    x = 2;
-} catch {
-    "can't do that"?;
+fn foo() {
+    (5 and 6)?;
+    (5 or 6)?;
 }
 
-x?;
+function bar() {
+    (5 && 6)?;
+    (5 || 6)?;
+}
+

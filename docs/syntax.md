@@ -35,7 +35,7 @@ Doxa has some choice code keywords:
 - `and` and `&&` are functionally identical
 - `or` and `||` are functionally identical
 
-TODO: Warnings are given for projects that mix symbolic and keyword conditionals.
+Warnings are given for projects that mix symbolic and keyword conditionals.
 
 ```
 struct Animal {
