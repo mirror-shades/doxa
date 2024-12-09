@@ -465,31 +465,25 @@ pub const Parser = struct {
             elements.deinit();
         }
 
-        while (self.peek().type != .RIGHT_BRACKET) {
-            if (self.debug_enabled) {
-                std.debug.print("Parsing array element, current token: {s}\n", .{@tagName(self.peek().type)});
-            }
+        // Parse first element to establish the type
+        if (self.peek().type != .RIGHT_BRACKET) {
+            const first_element = try self.parseExpression() orelse return error.ExpectedExpression;
+            try elements.append(first_element);
 
-            const element = try self.parseExpression() orelse return error.ExpectedExpression;
-            try elements.append(element);
-
-            if (self.peek().type == .COMMA) {
-                self.advance();
+            // Parse remaining elements without type checking
+            while (self.peek().type == .COMMA) {
+                self.advance(); // consume comma
                 if (self.peek().type == .RIGHT_BRACKET) break;
-            } else if (self.peek().type != .RIGHT_BRACKET) {
-                return error.ExpectedCommaOrBracket;
+
+                const element = try self.parseExpression() orelse return error.ExpectedExpression;
+                try elements.append(element);
             }
         }
 
-        if (self.debug_enabled) {
-            std.debug.print("Found closing bracket, advancing...\n", .{});
+        if (self.peek().type != .RIGHT_BRACKET) {
+            return error.ExpectedRightBracket;
         }
-
         self.advance(); // consume ']'
-
-        if (self.debug_enabled) {
-            std.debug.print("Next token after array: {s}\n", .{@tagName(self.peek().type)});
-        }
 
         const array_expr = try self.allocator.create(ast.Expr);
         array_expr.* = .{ .Array = try elements.toOwnedSlice() };
@@ -1199,10 +1193,12 @@ pub const Parser = struct {
             const first_element = try self.parsePrecedence(.NONE) orelse return error.ExpectedExpression;
             try elements.append(first_element);
 
-            // Parse remaining elements
+            // Parse remaining elements without type checking
             while (self.peek().type == .COMMA) {
                 self.advance(); // consume comma
-                const element = try self.parsePrecedence(.NONE) orelse return error.ExpectedExpression;
+                if (self.peek().type == .RIGHT_BRACKET) break;
+
+                const element = try self.parseExpression() orelse return error.ExpectedExpression;
                 try elements.append(element);
             }
         }
@@ -1210,39 +1206,7 @@ pub const Parser = struct {
         if (self.peek().type != .RIGHT_BRACKET) {
             return error.ExpectedRightBracket;
         }
-        self.advance(); // consume ]
-
-        // Type check all elements after parsing
-        if (elements.items.len > 1) {
-            const first = elements.items[0];
-            const is_int = first.* == .Literal and first.Literal == .int;
-            const is_float = first.* == .Literal and first.Literal == .float;
-            const is_string = first.* == .Literal and first.Literal == .string;
-            const is_boolean = first.* == .Literal and first.Literal == .boolean;
-
-            for (elements.items[1..]) |element| {
-                const matches = if (is_int)
-                    element.* == .Literal and element.Literal == .int
-                else if (is_float)
-                    element.* == .Literal and element.Literal == .float
-                else if (is_string)
-                    element.* == .Literal and element.Literal == .string
-                else if (is_boolean)
-                    element.* == .Literal and element.Literal == .boolean
-                else
-                    true;
-
-                if (!matches) {
-                    // Clean up all elements
-                    for (elements.items) |elem| {
-                        elem.deinit(self.allocator);
-                        self.allocator.destroy(elem);
-                    }
-                    elements.deinit();
-                    return error.ArrayTypeMismatch;
-                }
-            }
-        }
+        self.advance(); // consume ']'
 
         const array_expr = try self.allocator.create(ast.Expr);
         array_expr.* = .{ .Array = try elements.toOwnedSlice() };

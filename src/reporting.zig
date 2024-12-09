@@ -29,6 +29,7 @@ pub const ErrorList = error{
     InvalidMapKey,
     KeyNotFound,
     ExpectedCatch,
+    HeterogeneousArray,
 
     // Variable Management
     VariableNotFound,

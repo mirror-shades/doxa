@@ -4,3 +4,17 @@ try {
 } catch {
     "invalid assignment failed ✅"?;
 }
+
+try {
+    var array = [1, "hello", true];
+    array[1]?;
+} catch {
+    "heterogeneous array failed ✅"?;
+}
+
+// try {
+//     var array = [1, 2, 3, 4, 5];
+//     array[10]?;
+// } catch {
+//     "out of bounds array failed ✅"?;
+// }
