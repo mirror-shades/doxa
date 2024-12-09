@@ -332,6 +332,51 @@ pub const Parser = struct {
             .is_mutable = !is_const, // const variables can't change value
         };
 
+        // Special handling for array type declarations
+        if (self.peek().type == .ARRAY_TYPE) {
+            type_info.base = .Array;
+            type_info.is_dynamic = false;
+            self.advance(); // consume 'array'
+
+            // Create implicit name for array
+            const name = token.Token{
+                .type = .IDENTIFIER,
+                .lexeme = "array",
+                .literal = .{ .nothing = {} },
+                .line = 0,
+                .column = 0,
+            };
+
+            var initializer: ?*ast.Expr = null;
+            if (self.peek().type == .ASSIGN) {
+                self.advance();
+                if (self.debug_enabled) {
+                    std.debug.print("\nParsing array initializer at position {}, token: {s}\n", .{
+                        self.current,
+                        @tagName(self.peek().type),
+                    });
+                }
+
+                initializer = try self.parseExpression();
+                if (initializer == null) return error.ExpectedExpression;
+            }
+
+            if (self.peek().type != .SEMICOLON) {
+                if (self.debug_enabled) {
+                    std.debug.print("Expected semicolon, but found: {s}\n", .{@tagName(self.peek().type)});
+                }
+                return error.ExpectedSemicolon;
+            }
+            self.advance();
+
+            return ast.Stmt{ .VarDecl = .{
+                .name = name,
+                .type_info = type_info,
+                .initializer = initializer,
+            } };
+        }
+
+        // Original variable declaration parsing logic
         const name = if (self.peek().type != .IDENTIFIER) {
             return error.ExpectedIdentifier;
         } else blk: {
@@ -374,7 +419,19 @@ pub const Parser = struct {
                 });
             }
 
-            initializer = try self.parseExpression() orelse return error.ExpectedExpression;
+            // Try parsing struct initialization first
+            if (self.peek().type == .IDENTIFIER) {
+                // First try struct initialization
+                if (try self.parseStructInit()) |struct_init| {
+                    initializer = struct_init;
+                } else {
+                    // If not a struct init, try regular expression
+                    initializer = try self.parseExpression();
+                }
+            } else {
+                initializer = try self.parseExpression();
+            }
+            if (initializer == null) return error.ExpectedExpression;
         }
 
         if (self.peek().type != .SEMICOLON) {
@@ -461,6 +518,7 @@ pub const Parser = struct {
             .Print => true,
             .Match => false,
             .Index => true,
+            .Assignment => true, // Added this case
             else => true,
         } else true;
 
@@ -490,6 +548,9 @@ pub const Parser = struct {
                         @tagName(self.peek().type),
                         self.current,
                     });
+                    if (final_expr != null) {
+                        std.debug.print("Expression type: {s}\n", .{@tagName(@as(std.meta.Tag(ast.Expr), final_expr.?.*))});
+                    }
                 }
                 if (final_expr) |e| {
                     e.deinit(self.allocator);
