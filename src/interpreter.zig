@@ -236,27 +236,23 @@ pub const Interpreter = struct {
                     // Type checking for initialization
                     switch (decl.type_info.base) {
                         .Int => if (init_value != .int) {
-                            const writer = std.io.getStdErr().writer();
-                            var reporting = ReportingModule.Reporting.init(writer);
+                            var reporting = ReportingModule.Reporting.init();
                             reporting.reportRuntimeError("Type error: Cannot initialize int variable with {s}", .{@tagName(init_value)});
                             return error.TypeError;
                         },
                         .Float => if (init_value != .float and init_value != .int) {
-                            const writer = std.io.getStdErr().writer();
-                            var reporting = ReportingModule.Reporting.init(writer);
+                            var reporting = ReportingModule.Reporting.init();
                             reporting.reportRuntimeError("Type error: Cannot initialize float variable with {s}", .{@tagName(init_value)});
                             return error.TypeError;
                         },
                         .Boolean => if (init_value != .boolean) {
-                            const writer = std.io.getStdErr().writer();
-                            var reporting = ReportingModule.Reporting.init(writer);
+                            var reporting = ReportingModule.Reporting.init();
                             reporting.reportRuntimeError("Type error: Cannot initialize bool variable with {s}", .{@tagName(init_value)});
                             return error.TypeError;
                         },
                         .Array => {
                             if (init_value != .array) {
-                                const writer = std.io.getStdErr().writer();
-                                var reporting = ReportingModule.Reporting.init(writer);
+                                var reporting = ReportingModule.Reporting.init();
                                 reporting.reportRuntimeError("Type error: Cannot initialize array variable with {s}", .{@tagName(init_value)});
                                 return error.TypeError;
                             }
@@ -278,8 +274,7 @@ pub const Interpreter = struct {
                         },
                         .Map => {
                             if (init_value != .map) {
-                                const writer = std.io.getStdErr().writer();
-                                var reporting = ReportingModule.Reporting.init(writer);
+                                var reporting = ReportingModule.Reporting.init();
                                 reporting.reportRuntimeError("Type error: Cannot initialize map variable with {s}", .{@tagName(init_value)});
                                 return error.TypeError;
                             }
@@ -615,32 +610,28 @@ pub const Interpreter = struct {
                     switch (var_type.base) {
                         .Int => {
                             if (value != .int) {
-                                const writer = std.io.getStdErr().writer();
-                                var reporting = ReportingModule.Reporting.init(writer);
+                                var reporting = ReportingModule.Reporting.init();
                                 reporting.reportRuntimeError("Type error: Cannot assign {s} to int variable", .{@tagName(value)});
                                 return error.TypeError;
                             }
                         },
                         .Float => {
                             if (value != .float) {
-                                const writer = std.io.getStdErr().writer();
-                                var reporting = ReportingModule.Reporting.init(writer);
+                                var reporting = ReportingModule.Reporting.init();
                                 reporting.reportRuntimeError("Type error: Cannot assign {s} to float variable", .{@tagName(value)});
                                 return error.TypeError;
                             }
                         },
                         .String => {
                             if (value != .string) {
-                                const writer = std.io.getStdErr().writer();
-                                var reporting = ReportingModule.Reporting.init(writer);
+                                var reporting = ReportingModule.Reporting.init();
                                 reporting.reportRuntimeError("Type error: Cannot assign {s} to string variable", .{@tagName(value)});
                                 return error.TypeError;
                             }
                         },
                         .Boolean => {
                             if (value != .boolean) {
-                                const writer = std.io.getStdErr().writer();
-                                var reporting = ReportingModule.Reporting.init(writer);
+                                var reporting = ReportingModule.Reporting.init();
                                 reporting.reportRuntimeError("Type error: Cannot assign {s} to boolean variable", .{@tagName(value)});
                                 return error.TypeError;
                             }
@@ -751,8 +742,7 @@ pub const Interpreter = struct {
 
                         if (value_type != first_type) {
                             array_values.deinit();
-                            const writer = std.io.getStdErr().writer();
-                            var reporting = ReportingModule.Reporting.init(writer);
+                            var reporting = ReportingModule.Reporting.init();
                             reporting.reportRuntimeError("Heterogeneous array detected: cannot mix {s} and {s}", .{ @tagName(first_type), @tagName(value_type) });
                             return error.HeterogeneousArray;
                         }
@@ -791,15 +781,13 @@ pub const Interpreter = struct {
                             return error.TypeError;
                         }
                         if (index_value.int < 0) {
-                            const writer = std.io.getStdErr().writer();
-                            var reporting = ReportingModule.Reporting.init(writer);
+                            var reporting = ReportingModule.Reporting.init();
                             reporting.reportRuntimeError("Array index out of bounds: negative index {d}", .{index_value.int});
                             return error.IndexOutOfBounds;
                         }
                         const idx = @as(usize, @intCast(index_value.int));
                         if (idx >= arr.len) {
-                            const writer = std.io.getStdErr().writer();
-                            var reporting = ReportingModule.Reporting.init(writer);
+                            var reporting = ReportingModule.Reporting.init();
                             reporting.reportRuntimeError("Array index out of bounds: index {d} for array of length {d}", .{ idx, arr.len });
                             return error.IndexOutOfBounds;
                         }
@@ -1382,32 +1370,28 @@ pub const Interpreter = struct {
             switch (var_type.base) {
                 .Int => {
                     if (value != .int) {
-                        const writer = std.io.getStdErr().writer();
-                        var reporting = ReportingModule.Reporting.init(writer);
+                        var reporting = ReportingModule.Reporting.init();
                         reporting.reportRuntimeError("Type error: Cannot assign {s} to int variable", .{@tagName(value)});
                         return error.TypeError;
                     }
                 },
                 .Float => {
                     if (value != .float) {
-                        const writer = std.io.getStdErr().writer();
-                        var reporting = ReportingModule.Reporting.init(writer);
+                        var reporting = ReportingModule.Reporting.init();
                         reporting.reportRuntimeError("Type error: Cannot assign {s} to float variable", .{@tagName(value)});
                         return error.TypeError;
                     }
                 },
                 .String => {
                     if (value != .string) {
-                        const writer = std.io.getStdErr().writer();
-                        var reporting = ReportingModule.Reporting.init(writer);
+                        var reporting = ReportingModule.Reporting.init();
                         reporting.reportRuntimeError("Type error: Cannot assign {s} to string variable", .{@tagName(value)});
                         return error.TypeError;
                     }
                 },
                 .Boolean => {
                     if (value != .boolean) {
-                        const writer = std.io.getStdErr().writer();
-                        var reporting = ReportingModule.Reporting.init(writer);
+                        var reporting = ReportingModule.Reporting.init();
                         reporting.reportRuntimeError("Type error: Cannot assign {s} to boolean variable", .{@tagName(value)});
                         return error.TypeError;
                     }
