@@ -32,6 +32,7 @@ pub const Expr = union(enum) {
         value: ?*Expr,
     },
     Array: []const *Expr,
+    Tuple: []const *Expr,
     Struct: []*StructLiteralField,
     Index: Index,
     IndexAssign: struct {
@@ -85,19 +86,6 @@ pub const Expr = union(enum) {
     EnumMember: token.Token,
     DefaultArgPlaceholder: void,
     TypeOf: *Expr,
-    Map: struct {
-        keys: []*Expr,
-        values: []*Expr,
-    },
-    Tuple: []*Expr,
-    MapAccess: struct {
-        map: *Expr,
-        key: *Expr,
-    },
-    TupleAccess: struct {
-        tuple: *Expr,
-        index: *Expr,
-    },
 
     pub fn deinit(self: *Expr, allocator: std.mem.Allocator) void {
         switch (self.*) {
@@ -307,36 +295,12 @@ pub const Expr = union(enum) {
                 expr.deinit(allocator);
                 allocator.destroy(expr);
             },
-            .Map => |map| {
-                for (map.keys) |key| {
-                    key.deinit(allocator);
-                    allocator.destroy(key);
-                }
-                allocator.free(map.keys);
-                for (map.values) |value| {
-                    value.deinit(allocator);
-                    allocator.destroy(value);
-                }
-                allocator.free(map.values);
-            },
-            .Tuple => |tuple| {
-                for (tuple) |element| {
+            .Tuple => |elements| {
+                for (elements) |element| {
                     element.deinit(allocator);
                     allocator.destroy(element);
                 }
-                allocator.free(tuple);
-            },
-            .MapAccess => |access| {
-                access.map.deinit(allocator);
-                allocator.destroy(access.map);
-                access.key.deinit(allocator);
-                allocator.destroy(access.key);
-            },
-            .TupleAccess => |access| {
-                access.tuple.deinit(allocator);
-                allocator.destroy(access.tuple);
-                access.index.deinit(allocator);
-                allocator.destroy(access.index);
+                allocator.free(elements);
             },
         }
     }

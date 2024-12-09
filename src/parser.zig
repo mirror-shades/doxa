@@ -21,7 +21,6 @@ const Precedence = enum(u8) {
     UNARY = 10, // ! -
     CALL = 11, // . () []
     PRIMARY = 12,
-    INDEX = 13, // []
 };
 
 const ParseFn = *const fn (*Parser, ?*ast.Expr, Precedence) ErrorList!?*ast.Expr;
@@ -151,12 +150,8 @@ pub const Parser = struct {
         // Add typeof support
         r.set(.TYPEOF, .{ .prefix = typeofExpr, .precedence = .CALL }); // Added precedence
 
-        // Add map and tuple literal support
-        r.set(.LEFT_BRACE, .{ .prefix = parseMapLiteral, .infix = block }); // Maps use {}
-        r.set(.LEFT_PAREN, .{ .prefix = parseTupleOrGrouping, .infix = call, .precedence = .CALL }); // Tuples use ()
-
-        // Add indexing support
-        r.set(.LEFT_BRACKET, .{ .prefix = null, .infix = index, .precedence = .INDEX });
+        // Add tuple support
+        r.set(.LEFT_PAREN, .{ .prefix = parseTuple, .infix = call, .precedence = .CALL });
 
         break :blk r;
     };
@@ -478,7 +473,7 @@ pub const Parser = struct {
             .ForEach => false,
             .Print => true,
             .Match => false,
-            .Index => false, // Change this to false since we handle ? operator
+            .Index => true,
             else => true,
         } else true;
 
@@ -584,8 +579,8 @@ pub const Parser = struct {
                 std.debug.print("Found infix operator: {s}\n", .{@tagName(self.peek().type)});
             }
 
-            // Don't advance here for function calls - let the call handler do it
-            if (self.peek().type != .LEFT_PAREN) {
+            // Don't advance here for function calls or indexing operations
+            if (self.peek().type != .LEFT_PAREN and self.peek().type != .LEFT_BRACKET) {
                 self.advance();
             }
 
@@ -912,9 +907,18 @@ pub const Parser = struct {
 
     fn variable(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
         const name = self.peek();
-        self.advance(); // Advance past the identifier
+        self.advance();
+
+        // Create variable expression
         const var_expr = try self.allocator.create(ast.Expr);
         var_expr.* = .{ .Variable = name };
+
+        // Check for indexing operation
+        if (self.peek().type == .LEFT_BRACKET) {
+            self.advance(); // consume '['
+            return self.index(var_expr, .NONE);
+        }
+
         return var_expr;
     }
 
@@ -1690,25 +1694,13 @@ pub const Parser = struct {
     fn fieldAccess(self: *Parser, object: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
         if (object == null) return error.ExpectedExpression;
 
-        if (self.peek().type == .INT) {
-            const index_token = self.peek();
-            self.advance();
+        // The dot has already been consumed by the time we get here
+        // Don't advance again
 
-            const index_expr = try self.allocator.create(ast.Expr);
-            index_expr.* = .{ .Literal = index_token.literal };
-
-            const tuple_access = try self.allocator.create(ast.Expr);
-            tuple_access.* = .{
-                .TupleAccess = .{
-                    .tuple = object.?,
-                    .index = index_expr,
-                },
-            };
-            return tuple_access;
-        } else if (self.peek().type != .IDENTIFIER) {
+        // Parse the field name
+        if (self.peek().type != .IDENTIFIER) {
             return error.ExpectedIdentifier;
         }
-
         const field = self.peek();
         self.advance();
 
@@ -2322,53 +2314,12 @@ pub const Parser = struct {
         return typeof_expr;
     }
 
-    fn parseMapLiteral(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-        var keys = std.ArrayList(*ast.Expr).init(self.allocator);
-        var values = std.ArrayList(*ast.Expr).init(self.allocator);
-        errdefer {
-            for (keys.items) |key| {
-                key.deinit(self.allocator);
-                self.allocator.destroy(key);
-            }
-            for (values.items) |value| {
-                value.deinit(self.allocator);
-                self.allocator.destroy(value);
-            }
-            keys.deinit();
-            values.deinit();
+    fn parseTuple(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+        if (self.debug_enabled) {
+            std.debug.print("\nParsing tuple...\n", .{});
         }
 
-        // Skip the opening brace as it's already consumed
-        while (self.peek().type != .RIGHT_BRACE) {
-            // Parse key
-            const key = try self.parseExpression() orelse return error.ExpectedExpression;
-            try keys.append(key);
-
-            if (self.peek().type != .COLON) return error.ExpectedColon;
-            self.advance();
-
-            // Parse value
-            const value = try self.parseExpression() orelse return error.ExpectedExpression;
-            try values.append(value);
-
-            if (self.peek().type == .COMMA) {
-                self.advance();
-            } else if (self.peek().type != .RIGHT_BRACE) {
-                return error.ExpectedCommaOrRightBrace;
-            }
-        }
-        self.advance(); // consume right brace
-
-        const map_expr = try self.allocator.create(ast.Expr);
-        map_expr.* = .{ .Map = .{
-            .keys = try keys.toOwnedSlice(),
-            .values = try values.toOwnedSlice(),
-        } };
-        return map_expr;
-    }
-
-    fn parseTupleOrGrouping(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-        self.advance();
+        self.advance(); // consume '('
 
         var elements = std.ArrayList(*ast.Expr).init(self.allocator);
         errdefer {
@@ -2379,46 +2330,48 @@ pub const Parser = struct {
             elements.deinit();
         }
 
-        // Handle empty tuple case
-        if (self.peek().type == .RIGHT_PAREN) {
-            self.advance(); // consume right paren
+        // Parse first element
+        const first = try self.parseExpression() orelse return error.ExpectedExpression;
+        try elements.append(first);
+
+        // If there's a comma, this is a tuple. Otherwise, it's just a grouped expression
+        if (self.peek().type == .COMMA) {
+            // Parse remaining elements
+            while (true) {
+                if (self.peek().type == .COMMA) {
+                    self.advance(); // consume comma
+
+                    // Allow trailing comma
+                    if (self.peek().type == .RIGHT_PAREN) break;
+
+                    const element = try self.parseExpression() orelse return error.ExpectedExpression;
+                    try elements.append(element);
+                } else if (self.peek().type == .RIGHT_PAREN) {
+                    break;
+                } else {
+                    return error.ExpectedCommaOrParen;
+                }
+            }
+
+            self.advance(); // consume ')'
+
             const tuple_expr = try self.allocator.create(ast.Expr);
             tuple_expr.* = .{ .Tuple = try elements.toOwnedSlice() };
             return tuple_expr;
-        }
+        } else {
+            // Not a tuple, just a grouped expression
+            elements.deinit();
 
-        // Parse first expression
-        const first = try self.parseExpression() orelse return error.ExpectedExpression;
-
-        // If there's no comma, it's a grouping
-        if (self.peek().type == .RIGHT_PAREN) {
-            self.advance(); // consume right paren
-            return first;
-        }
-
-        // It's a tuple, add the first expression and continue
-        try elements.append(first);
-
-        // Parse remaining elements
-        while (self.peek().type == .COMMA) {
-            self.advance(); // consume comma
-
-            // Handle trailing comma
-            if (self.peek().type == .RIGHT_PAREN) {
-                break;
+            if (self.peek().type != .RIGHT_PAREN) {
+                first.deinit(self.allocator);
+                self.allocator.destroy(first);
+                return error.ExpectedRightParen;
             }
+            self.advance(); // consume ')'
 
-            const element = try self.parseExpression() orelse return error.ExpectedExpression;
-            try elements.append(element);
+            const group_expr = try self.allocator.create(ast.Expr);
+            group_expr.* = .{ .Grouping = first };
+            return group_expr;
         }
-
-        if (self.peek().type != .RIGHT_PAREN) {
-            return error.ExpectedRightParen;
-        }
-        self.advance(); // consume right paren
-
-        const tuple_expr = try self.allocator.create(ast.Expr);
-        tuple_expr.* = .{ .Tuple = try elements.toOwnedSlice() };
-        return tuple_expr;
     }
 };

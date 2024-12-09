@@ -73,13 +73,6 @@ pub fn run(memory: *MemoryManager, interpreter: *Interpreter, source: []const u8
     try lexer.initKeywords();
     const token_list = try lexer.lexTokens();
 
-    if (memory.debug_enabled) {
-        for (token_list.items) |tok| {
-            const type_str = @tagName(tok.type);
-            std.debug.print("Token type: {s}\n", .{type_str});
-        }
-    }
-
     if (!hadError) {
         var parser_instance = Parser.init(
             memory.getAllocator(),
