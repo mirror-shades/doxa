@@ -1,8 +1,9 @@
-var Map = {
-    "a": 1,
-    "b": 2,
-    "c": 3,
-};
+var x: int = 1;
 
-Map["a"]?; // 1
-Map["c"]?; // 3
+try {
+    x = 2;
+} catch {
+    "can't do that"?;
+}
+
+x?;

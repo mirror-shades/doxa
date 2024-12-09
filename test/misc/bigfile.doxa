@@ -111,6 +111,14 @@ var Map = {
 Map["a"]?; // 1
 Map["c"]?; // 3
 
+// try catch
+const con: int = 1;
+try {
+    con = 2;
+} catch {
+    "can't do that"?;
+}
+con?; // 1
 
 // typeof
 var _int = 5;

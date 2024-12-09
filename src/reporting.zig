@@ -28,6 +28,7 @@ pub const ErrorList = error{
     CannotModifyTuple,
     InvalidMapKey,
     KeyNotFound,
+    ExpectedCatch,
 
     // Variable Management
     VariableNotFound,
