@@ -114,6 +114,8 @@ pub const Lexer = struct {
         try self.keywords.put("exists", .EXISTS);
         try self.keywords.put("forall", .FORALL);
         try self.keywords.put("where", .WHERE_KEYWORD);
+        try self.keywords.put("tuple", .TUPLE_TYPE);
+        try self.keywords.put("map", .MAP_TYPE);
     }
 
     //======================================================================

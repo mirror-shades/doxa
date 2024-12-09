@@ -98,6 +98,8 @@ pub const TokenType = enum {
     STRUCT, // struct
     ENUM, // enum
     AUTO, // auto
+    TUPLE, // tuple
+    MAP, // map
 
     // Type keywords
     INT_TYPE, // int type declaration
@@ -108,7 +110,8 @@ pub const TokenType = enum {
     STRUCT_TYPE, // struct type declaration
     ENUM_TYPE, // enum type declaration
     AUTO_TYPE, // auto type declaration
-
+    TUPLE_TYPE, // tuple type declaration
+    MAP_TYPE, // map type declaration
     NOTHING, // nothing
     EQUALITY, // == or equals
     ASSIGN, // = or is
