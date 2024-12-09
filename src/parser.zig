@@ -2580,8 +2580,7 @@ pub const Parser = struct {
 
     fn reportWarning(self: *Parser, message: []const u8) void {
         _ = self;
-        const writer = std.io.getStdErr().writer();
-        var reporting = Reporting.init(writer);
+        var reporting = Reporting.init();
         reporting.reportWarning("{s}", .{message});
     }
 

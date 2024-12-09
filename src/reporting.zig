@@ -190,7 +190,8 @@ pub const Reporting = struct {
     writer: std.fs.File.Writer,
 
     /// Initialize a new Reporter that writes to the given writer
-    pub fn init(writer: std.fs.File.Writer) Reporting {
+    pub fn init() Reporting {
+        const writer = std.io.getStdErr().writer();
         return .{
             .writer = writer,
         };
