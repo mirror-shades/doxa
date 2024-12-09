@@ -791,10 +791,16 @@ pub const Interpreter = struct {
                             return error.TypeError;
                         }
                         if (index_value.int < 0) {
+                            const writer = std.io.getStdErr().writer();
+                            var reporting = ReportingModule.Reporting.init(writer);
+                            reporting.reportRuntimeError("Array index out of bounds: negative index {d}", .{index_value.int});
                             return error.IndexOutOfBounds;
                         }
                         const idx = @as(usize, @intCast(index_value.int));
                         if (idx >= arr.len) {
+                            const writer = std.io.getStdErr().writer();
+                            var reporting = ReportingModule.Reporting.init(writer);
+                            reporting.reportRuntimeError("Array index out of bounds: index {d} for array of length {d}", .{ idx, arr.len });
                             return error.IndexOutOfBounds;
                         }
                         return arr[idx];
