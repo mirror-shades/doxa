@@ -18,6 +18,11 @@ pub const If = struct {
     else_branch: ?*Expr,
 };
 
+pub const MapEntry = struct {
+    key: *Expr,
+    value: *Expr,
+};
+
 pub const Expr = union(enum) {
     Literal: token.TokenLiteral,
     Binary: Binary,
@@ -86,6 +91,7 @@ pub const Expr = union(enum) {
     EnumMember: token.Token,
     DefaultArgPlaceholder: void,
     TypeOf: *Expr,
+    Map: []MapEntry,
 
     pub fn deinit(self: *Expr, allocator: std.mem.Allocator) void {
         switch (self.*) {
@@ -302,6 +308,15 @@ pub const Expr = union(enum) {
                 }
                 allocator.free(elements);
             },
+            .Map => |entries| {
+                for (entries) |entry| {
+                    entry.key.deinit(allocator);
+                    allocator.destroy(entry.key);
+                    entry.value.deinit(allocator);
+                    allocator.destroy(entry.value);
+                }
+                allocator.free(entries);
+            },
         }
     }
 };
@@ -316,16 +331,19 @@ pub const Type = enum {
     Float,
     String,
     Boolean,
+    Array,
+    Tuple,
+    Function,
+    Struct,
+    Enum,
+    Dynamic,
+    Auto,
+    Custom,
+    Map,
     Nothing,
-    Dynamic, // For variables without explicit type
-    Auto, // For type inference
-    Array, // Will need a subtype field
-    Struct, // For struct types
-    Function, // For function types
-    Enum, // For enum types
-    Custom, // For custom types
-    Exists, // For existential quantifiers
-    Forall, // For universal quantifiers
+    // these are conditionals not types, investigate why it breaks when I take them out
+    Exists,
+    Forall,
 };
 
 pub const TypeInfo = struct {
@@ -430,7 +448,7 @@ pub const Stmt = union(enum) {
         type_info: TypeInfo,
     },
     EnumDecl: EnumDecl,
-
+    Map: []MapEntry,
     pub fn deinit(self: *Stmt, allocator: std.mem.Allocator) void {
         switch (self.*) {
             .Expression => |maybe_expr| {
@@ -466,6 +484,15 @@ pub const Stmt = union(enum) {
             },
             .EnumDecl => |decl| {
                 allocator.free(decl.variants);
+            },
+            .Map => |entries| {
+                for (entries) |entry| {
+                    entry.key.deinit(allocator);
+                    allocator.destroy(entry.key);
+                    entry.value.deinit(allocator);
+                    allocator.destroy(entry.value);
+                }
+                allocator.free(entries);
             },
         }
     }

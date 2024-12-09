@@ -66,7 +66,7 @@ pub fn reportError(line: i32, where: []const u8, message: []const u8) void {
 ///==========================================================================
 /// Run
 ///==========================================================================
-pub fn run(memory: *MemoryManager, interpreter: *Interpreter, source: []const u8, is_repl: bool, file_path: []const u8) !?TokenLiteral {
+pub fn run(memory: *MemoryManager, interpreter: *Interpreter, source: []const u8, file_path: []const u8) !?TokenLiteral {
     var lexer = Lexer.init(memory.getAllocator(), source, file_path);
     defer lexer.deinit();
 
@@ -77,10 +77,8 @@ pub fn run(memory: *MemoryManager, interpreter: *Interpreter, source: []const u8
         var parser_instance = Parser.init(
             memory.getAllocator(),
             token_list.items,
-            memory.debug_enabled,
-            if (is_strict_repl) Parser.Mode.Strict else Parser.Mode.Normal,
-            is_repl,
             file_path,
+            memory.debug_enabled,
         );
         defer parser_instance.deinit();
 
@@ -111,7 +109,7 @@ fn runFile(memory: *MemoryManager, path: []const u8) !void {
     const source = try file.readToEndAlloc(memory.getAllocator(), MAX_FILE_SIZE);
     defer memory.getAllocator().free(source);
 
-    _ = try run(memory, &interpreter, source, false, path);
+    _ = try run(memory, &interpreter, source, path);
     if (hadError) {
         std.process.exit(65);
     }

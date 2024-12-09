@@ -26,6 +26,8 @@ pub const ErrorList = error{
     NoDefaultValue,
     TooFewArguments,
     CannotModifyTuple,
+    InvalidMapKey,
+    KeyNotFound,
 
     // Variable Management
     VariableNotFound,

@@ -93,6 +93,14 @@ fn foo(a, b=5) {return a+b;}
 foo(1, 2)?; // 3
 foo(1, ~)?; // 6
 
+// tuple
+var point = (10, 20, 30, 40, 50);
+point[0]?; // 10
+point[1]?; // 20
+
+var point2 = ((10, 20), (30, 40));
+point2[1][0]?; // 30
+
 // typeof
 var _int = 5;
 typeof(_int)?; // int
@@ -116,10 +124,4 @@ typeof(mike)?; // Employee
 typeof(Color)?; // enum
 typeof(Color.Blue)?; // Color
 
-// tuple
-var point = (10, 20, 30, 40, 50);
-point[0]?; // 10
-point[1]?; // 20
-
-var point2 = ((10, 20), (30, 40));
-point2[1][0]?; // 30
+typeof(point)?; // tuple
