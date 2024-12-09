@@ -274,6 +274,12 @@ pub const Interpreter = struct {
                                 }
                             }
                         },
+                        .Map => {
+                            if (init_value != .map) {
+                                std.debug.print("Type error: Cannot initialize map variable with {s}\n", .{@tagName(init_value)});
+                                return error.TypeError;
+                            }
+                        },
                         .Dynamic => {},
                         else => {},
                     }
@@ -283,6 +289,7 @@ pub const Interpreter = struct {
                     .Float => token.TokenLiteral{ .float = 0.0 },
                     .String => token.TokenLiteral{ .string = try self.string_interner.intern("") },
                     .Boolean => token.TokenLiteral{ .boolean = false },
+                    .Map => token.TokenLiteral{ .map = std.StringHashMap(token.TokenLiteral).init(self.memory.getAllocator()) },
                     else => token.TokenLiteral{ .nothing = {} },
                 };
 
@@ -381,6 +388,24 @@ pub const Interpreter = struct {
                 try self.environment.define(decl.name.lexeme, .{ .nothing = {} }, enum_type);
                 return .{ .nothing = {} };
             },
+            .Map => |entries| {
+                var map = std.StringHashMap(token.TokenLiteral).init(self.memory.getAllocator());
+                errdefer map.deinit();
+
+                for (entries) |entry| {
+                    const key = try self.evaluate(entry.key);
+                    const value = try self.evaluate(entry.value);
+
+                    // Only support string keys for now
+                    if (key != .string) {
+                        return error.InvalidMapKey;
+                    }
+
+                    try map.put(key.string, value);
+                }
+
+                return token.TokenLiteral{ .map = map };
+            },
         };
     }
 
@@ -430,6 +455,7 @@ pub const Interpreter = struct {
                             },
                             else => token.TokenLiteral{ .boolean = false },
                         },
+                        .map => token.TokenLiteral{ .boolean = false },
                     },
                     .PLUS => {
                         if (left == .int and right == .int) {
@@ -729,31 +755,47 @@ pub const Interpreter = struct {
                 } };
             },
             .Index => |index| {
-                const array = try self.evaluate(index.array);
+                const array_value = try self.evaluate(index.array);
                 const index_value = try self.evaluate(index.index);
 
-                if (index_value != .int) {
-                    return error.TypeError;
-                }
-
-                const usize_index = @as(usize, @intCast(index_value.int));
-
-                // Handle tuple indexing
-                if (array == .tuple) {
-                    if (usize_index >= array.tuple.len) {
-                        return error.IndexOutOfBounds;
-                    }
-                    return array.tuple[usize_index];
-                }
-
-                // Handle array indexing
-                if (array != .array) {
-                    return error.TypeError;
-                }
-                if (usize_index >= array.array.len) {
-                    return error.IndexOutOfBounds;
-                }
-                return array.array[usize_index];
+                return switch (array_value) {
+                    .array => |arr| {
+                        if (index_value != .int) {
+                            return error.TypeError;
+                        }
+                        if (index_value.int < 0) {
+                            return error.IndexOutOfBounds;
+                        }
+                        const idx = @as(usize, @intCast(index_value.int));
+                        if (idx >= arr.len) {
+                            return error.IndexOutOfBounds;
+                        }
+                        return arr[idx];
+                    },
+                    .map => |m| {
+                        if (index_value != .string) {
+                            return error.TypeError;
+                        }
+                        if (m.get(index_value.string)) |value| {
+                            return value;
+                        }
+                        return error.KeyNotFound;
+                    },
+                    .tuple => |tup| {
+                        if (index_value != .int) {
+                            return error.TypeError;
+                        }
+                        if (index_value.int >= tup.len) {
+                            return error.IndexOutOfBounds;
+                        }
+                        const idx = @as(usize, @intCast(index_value.int));
+                        if (idx >= tup.len) {
+                            return error.IndexOutOfBounds;
+                        }
+                        return tup[idx];
+                    },
+                    else => error.TypeError,
+                };
             },
             .IndexAssign => |idx_assign| {
                 const array_val = try self.evaluate(idx_assign.array);
@@ -848,7 +890,50 @@ pub const Interpreter = struct {
                         }
                         try buffer.writer().print(")", .{});
                     },
+                    .map => |m| {
+                        try buffer.writer().print("{{", .{}); // Double {{ to escape
+                        var iter = m.iterator();
+                        var first = true;
+                        while (iter.next()) |entry| {
+                            if (!first) {
+                                try buffer.writer().print(", ", .{});
+                            }
+                            first = false;
+                            try buffer.writer().print("\"{s}\": ", .{entry.key_ptr.*});
+
+                            // Format the value based on its type
+                            switch (entry.value_ptr.*) {
+                                .int => |i| try buffer.writer().print("{d}", .{i}),
+                                .float => |f| try buffer.writer().print("{d}", .{f}),
+                                .boolean => |b| try buffer.writer().print("{}", .{b}),
+                                .string => |s| try buffer.writer().print("\"{s}\"", .{s}),
+                                .nothing => try buffer.writer().print("nothing", .{}),
+                                .array => |arr| {
+                                    try buffer.writer().print("[", .{});
+                                    for (arr, 0..) |item, i| {
+                                        if (i > 0) try buffer.writer().print(", ", .{});
+                                        try buffer.writer().print("{any}", .{item});
+                                    }
+                                    try buffer.writer().print("]", .{});
+                                },
+                                .map => try buffer.writer().print("<nested-map>", .{}),
+                                .function => try buffer.writer().print("<function>", .{}),
+                                .struct_value => |sv| try buffer.writer().print("{any}", .{sv}),
+                                .enum_variant => |variant| try buffer.writer().print(".{s}", .{variant}),
+                                .tuple => |tup| {
+                                    try buffer.writer().print("(", .{});
+                                    for (tup, 0..) |item, i| {
+                                        if (i > 0) try buffer.writer().print(", ", .{});
+                                        try buffer.writer().print("{any}", .{item});
+                                    }
+                                    try buffer.writer().print(")", .{});
+                                },
+                            }
+                        }
+                        try buffer.writer().print("}}", .{});
+                    },
                 }
+
                 try buffer.writer().print("\n", .{});
 
                 // Write the entire buffer at once
@@ -1202,6 +1287,7 @@ pub const Interpreter = struct {
                             return token.TokenLiteral{ .string = "enum_variant" };
                         },
                         .tuple => "tuple",
+                        .map => "map",
                     },
                 };
             },
@@ -1219,6 +1305,24 @@ pub const Interpreter = struct {
                 errdefer self.memory.getAllocator().free(owned_slice);
 
                 return token.TokenLiteral{ .tuple = owned_slice };
+            },
+            .Map => |entries| {
+                var map = std.StringHashMap(token.TokenLiteral).init(self.memory.getAllocator());
+                errdefer map.deinit();
+
+                for (entries) |entry| {
+                    const key = try self.evaluate(entry.key);
+                    const value = try self.evaluate(entry.value);
+
+                    // Only support string keys for now
+                    if (key != .string) {
+                        return error.InvalidMapKey;
+                    }
+
+                    try map.put(key.string, value);
+                }
+
+                return token.TokenLiteral{ .map = map };
             },
         };
     }
@@ -1364,7 +1468,6 @@ pub const Interpreter = struct {
     }
 
     fn valuesEqual(self: *Interpreter, a: token.TokenLiteral, b: token.TokenLiteral) bool {
-        _ = self;
         return switch (a) {
             .int => |val| b == .int and val == b.int,
             .float => |val| b == .float and val == b.float,
@@ -1376,6 +1479,23 @@ pub const Interpreter = struct {
             .function => b == .function,
             .enum_variant => b == .enum_variant and std.mem.eql(u8, a.enum_variant, b.enum_variant),
             .tuple => |arr| b == .tuple and arr.len == b.tuple.len,
+            .map => |m| {
+                if (b != .map) return false;
+                if (m.count() != b.map.count()) return false;
+
+                // Check that all key-value pairs match
+                var iter = m.iterator();
+                while (iter.next()) |entry| {
+                    if (b.map.get(entry.key_ptr.*)) |other_value| {
+                        if (!self.valuesEqual(entry.value_ptr.*, other_value)) {
+                            return false;
+                        }
+                    } else {
+                        return false; // Key not found in other map
+                    }
+                }
+                return true;
+            },
         };
     }
 };

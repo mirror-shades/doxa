@@ -95,9 +95,10 @@ pub const TokenType = enum {
     STRING, // string
     ARRAY, // array
     BOOL, // boolean
-    STRUCT, //
+    STRUCT, // struct
     ENUM, // enum
     AUTO, // auto
+
     // Type keywords
     INT_TYPE, // int type declaration
     FLOAT_TYPE, // float type declaration
@@ -138,6 +139,7 @@ pub const TokenLiteral = union(enum) {
         closure: *Environment, // Capture the environment where the function was defined
     },
     enum_variant: []const u8,
+    map: std.StringHashMap(TokenLiteral),
 };
 
 pub const Token = struct {
@@ -157,3 +159,17 @@ pub const Token = struct {
         };
     }
 };
+
+pub fn deinit(self: *TokenLiteral, allocator: std.mem.Allocator) void {
+    switch (self.*) {
+        .map => |*m| {
+            var iter = m.iterator();
+            while (iter.next()) |entry| {
+                var value = entry.value_ptr.*;
+                value.deinit(allocator);
+            }
+            m.deinit();
+        },
+        else => {},
+    }
+}

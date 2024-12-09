@@ -45,9 +45,8 @@ pub const Parser = struct {
     current: usize,
     allocator: std.mem.Allocator,
     debug_enabled: bool,
+    mode: Mode = .Normal,
     current_file: []const u8,
-    mode: Mode, // Use the enum type
-    is_repl: bool,
 
     const rules = blk: {
         var r = std.EnumArray(token.TokenType, ParseRule).initFill(ParseRule{});
@@ -153,6 +152,9 @@ pub const Parser = struct {
         // Add tuple support
         r.set(.LEFT_PAREN, .{ .prefix = parseTuple, .infix = call, .precedence = .CALL });
 
+        // Add map literal support
+        r.set(.LEFT_BRACE, .{ .prefix = map, .infix = null, .precedence = .NONE });
+
         break :blk r;
     };
 
@@ -160,23 +162,16 @@ pub const Parser = struct {
         return rules.get(token_type);
     }
 
-    pub fn init(
-        allocator: std.mem.Allocator,
-        tokens: []const token.Token,
-        debug_enabled: bool,
-        mode: Mode, // Use the enum type
-        is_repl: bool,
-        current_file: []const u8,
-    ) Parser {
-        return .{
+    pub fn init(allocator: std.mem.Allocator, tokens: []const token.Token, current_file: []const u8, debug_enabled: bool) Parser {
+        const parser = Parser{
+            .allocator = allocator,
             .tokens = tokens,
             .current = 0,
-            .allocator = allocator,
             .debug_enabled = debug_enabled,
             .current_file = current_file,
-            .mode = mode,
-            .is_repl = is_repl,
         };
+
+        return parser;
     }
 
     pub fn deinit(_: *Parser) void {}
@@ -2380,5 +2375,63 @@ pub const Parser = struct {
             group_expr.* = .{ .Grouping = first };
             return group_expr;
         }
+    }
+
+    fn map(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+        if (self.debug_enabled) {
+            std.debug.print("Parsing map literal\n", .{});
+        }
+
+        self.advance();
+
+        var entries = std.ArrayList(ast.MapEntry).init(self.allocator);
+        errdefer {
+            for (entries.items) |entry| {
+                entry.key.deinit(self.allocator);
+                entry.value.deinit(self.allocator);
+            }
+            entries.deinit();
+        }
+
+        // Parse entries until we hit a closing brace
+        while (self.peek().type != .RIGHT_BRACE and self.peek().type != .EOF) {
+            // Parse key
+            const key = try self.parseExpression() orelse return error.ExpectedExpression;
+
+            // Expect colon
+            if (self.peek().type != .COLON) {
+                key.deinit(self.allocator);
+                return error.ExpectedColon;
+            }
+            self.advance(); // consume :
+
+            // Parse value
+            const value = try self.parseExpression() orelse {
+                key.deinit(self.allocator);
+                return error.ExpectedExpression;
+            };
+
+            try entries.append(.{
+                .key = key,
+                .value = value,
+            });
+
+            // Handle comma
+            if (self.peek().type == .COMMA) {
+                self.advance();
+                if (self.peek().type == .RIGHT_BRACE) break; // Allow trailing comma
+            } else if (self.peek().type != .RIGHT_BRACE) {
+                return error.ExpectedCommaOrBrace;
+            }
+        }
+
+        if (self.peek().type != .RIGHT_BRACE) {
+            return error.ExpectedRightBrace;
+        }
+        self.advance(); // consume }
+
+        const map_expr = try self.allocator.create(ast.Expr);
+        map_expr.* = .{ .Map = try entries.toOwnedSlice() };
+        return map_expr;
     }
 };
