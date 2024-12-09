@@ -171,20 +171,14 @@ pub const Interpreter = struct {
             return null;
         }
 
-        // Execute all statements except the last one
-        if (statements.len > 1) {
-            for (statements[0 .. statements.len - 1]) |stmt| {
-                _ = try self.executeStatement(&stmt, self.debug_enabled);
-            }
+        var result: ?token.TokenLiteral = null;
+
+        // Execute all statements, allowing errors to propagate
+        for (statements) |stmt| {
+            result = try self.executeStatement(&stmt, self.debug_enabled);
         }
 
-        // Handle the last statement
-        const last = statements[statements.len - 1];
-        if (last == .Expression) {
-            return try self.executeStatement(&last, self.debug_enabled);
-        }
-        _ = try self.executeStatement(&last, self.debug_enabled);
-        return null;
+        return result;
     }
 
     pub fn compare(a: anytype, b: anytype) i8 {
