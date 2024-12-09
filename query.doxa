@@ -1,5 +1,5 @@
-var naught;
-typeof(naught)?;
+var point = (10, 20);
+point?;  
 
-
-
+point[0]?;
+point[1]?; 

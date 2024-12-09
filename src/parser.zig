@@ -21,6 +21,7 @@ const Precedence = enum(u8) {
     UNARY = 10, // ! -
     CALL = 11, // . () []
     PRIMARY = 12,
+    INDEX = 13, // []
 };
 
 const ParseFn = *const fn (*Parser, ?*ast.Expr, Precedence) ErrorList!?*ast.Expr;
@@ -149,6 +150,13 @@ pub const Parser = struct {
 
         // Add typeof support
         r.set(.TYPEOF, .{ .prefix = typeofExpr, .precedence = .CALL }); // Added precedence
+
+        // Add map and tuple literal support
+        r.set(.LEFT_BRACE, .{ .prefix = parseMapLiteral, .infix = block }); // Maps use {}
+        r.set(.LEFT_PAREN, .{ .prefix = parseTupleOrGrouping, .infix = call, .precedence = .CALL }); // Tuples use ()
+
+        // Add indexing support
+        r.set(.LEFT_BRACKET, .{ .prefix = null, .infix = index, .precedence = .INDEX });
 
         break :blk r;
     };
@@ -1682,13 +1690,25 @@ pub const Parser = struct {
     fn fieldAccess(self: *Parser, object: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
         if (object == null) return error.ExpectedExpression;
 
-        // The dot has already been consumed by the time we get here
-        // Don't advance again
+        if (self.peek().type == .INT) {
+            const index_token = self.peek();
+            self.advance();
 
-        // Parse the field name
-        if (self.peek().type != .IDENTIFIER) {
+            const index_expr = try self.allocator.create(ast.Expr);
+            index_expr.* = .{ .Literal = index_token.literal };
+
+            const tuple_access = try self.allocator.create(ast.Expr);
+            tuple_access.* = .{
+                .TupleAccess = .{
+                    .tuple = object.?,
+                    .index = index_expr,
+                },
+            };
+            return tuple_access;
+        } else if (self.peek().type != .IDENTIFIER) {
             return error.ExpectedIdentifier;
         }
+
         const field = self.peek();
         self.advance();
 
@@ -2300,5 +2320,105 @@ pub const Parser = struct {
         const typeof_expr = try self.allocator.create(ast.Expr);
         typeof_expr.* = .{ .TypeOf = expr };
         return typeof_expr;
+    }
+
+    fn parseMapLiteral(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+        var keys = std.ArrayList(*ast.Expr).init(self.allocator);
+        var values = std.ArrayList(*ast.Expr).init(self.allocator);
+        errdefer {
+            for (keys.items) |key| {
+                key.deinit(self.allocator);
+                self.allocator.destroy(key);
+            }
+            for (values.items) |value| {
+                value.deinit(self.allocator);
+                self.allocator.destroy(value);
+            }
+            keys.deinit();
+            values.deinit();
+        }
+
+        // Skip the opening brace as it's already consumed
+        while (self.peek().type != .RIGHT_BRACE) {
+            // Parse key
+            const key = try self.parseExpression() orelse return error.ExpectedExpression;
+            try keys.append(key);
+
+            if (self.peek().type != .COLON) return error.ExpectedColon;
+            self.advance();
+
+            // Parse value
+            const value = try self.parseExpression() orelse return error.ExpectedExpression;
+            try values.append(value);
+
+            if (self.peek().type == .COMMA) {
+                self.advance();
+            } else if (self.peek().type != .RIGHT_BRACE) {
+                return error.ExpectedCommaOrRightBrace;
+            }
+        }
+        self.advance(); // consume right brace
+
+        const map_expr = try self.allocator.create(ast.Expr);
+        map_expr.* = .{ .Map = .{
+            .keys = try keys.toOwnedSlice(),
+            .values = try values.toOwnedSlice(),
+        } };
+        return map_expr;
+    }
+
+    fn parseTupleOrGrouping(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+        self.advance();
+
+        var elements = std.ArrayList(*ast.Expr).init(self.allocator);
+        errdefer {
+            for (elements.items) |element| {
+                element.deinit(self.allocator);
+                self.allocator.destroy(element);
+            }
+            elements.deinit();
+        }
+
+        // Handle empty tuple case
+        if (self.peek().type == .RIGHT_PAREN) {
+            self.advance(); // consume right paren
+            const tuple_expr = try self.allocator.create(ast.Expr);
+            tuple_expr.* = .{ .Tuple = try elements.toOwnedSlice() };
+            return tuple_expr;
+        }
+
+        // Parse first expression
+        const first = try self.parseExpression() orelse return error.ExpectedExpression;
+
+        // If there's no comma, it's a grouping
+        if (self.peek().type == .RIGHT_PAREN) {
+            self.advance(); // consume right paren
+            return first;
+        }
+
+        // It's a tuple, add the first expression and continue
+        try elements.append(first);
+
+        // Parse remaining elements
+        while (self.peek().type == .COMMA) {
+            self.advance(); // consume comma
+
+            // Handle trailing comma
+            if (self.peek().type == .RIGHT_PAREN) {
+                break;
+            }
+
+            const element = try self.parseExpression() orelse return error.ExpectedExpression;
+            try elements.append(element);
+        }
+
+        if (self.peek().type != .RIGHT_PAREN) {
+            return error.ExpectedRightParen;
+        }
+        self.advance(); // consume right paren
+
+        const tuple_expr = try self.allocator.create(ast.Expr);
+        tuple_expr.* = .{ .Tuple = try elements.toOwnedSlice() };
+        return tuple_expr;
     }
 };

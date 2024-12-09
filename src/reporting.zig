@@ -25,7 +25,14 @@ pub const ErrorList = error{
     TooManyArguments,
     NoDefaultValue,
     TooFewArguments,
-
+    ExpectedCommaOrRightParen,
+    ExpectedCommaOrRightBrace,
+    NotAMap,
+    NotATuple,
+    KeyNotFound,
+    InvalidTupleIndex,
+    TupleIndexOutOfBounds,
+    InvalidIndex,
     // Variable Management
     VariableNotFound,
     VariableOutOfScope,
