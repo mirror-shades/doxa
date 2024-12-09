@@ -98,9 +98,6 @@ pub const TokenType = enum {
     STRUCT, //
     ENUM, // enum
     AUTO, // auto
-    MAP, // map
-    TUPLE, // tuple
-
     // Type keywords
     INT_TYPE, // int type declaration
     FLOAT_TYPE, // float type declaration
@@ -110,8 +107,6 @@ pub const TokenType = enum {
     STRUCT_TYPE, // struct type declaration
     ENUM_TYPE, // enum type declaration
     AUTO_TYPE, // auto type declaration
-    MAP_TYPE, // map type declaration
-    TUPLE_TYPE, // tuple type declaration
 
     NOTHING, // nothing
     EQUALITY, // == or equals
@@ -132,6 +127,7 @@ pub const TokenLiteral = union(enum) {
     boolean: bool,
     nothing: void,
     array: []TokenLiteral,
+    tuple: []TokenLiteral,
     struct_value: struct {
         type_name: []const u8,
         fields: []StructField,
@@ -142,11 +138,6 @@ pub const TokenLiteral = union(enum) {
         closure: *Environment, // Capture the environment where the function was defined
     },
     enum_variant: []const u8,
-    map: struct {
-        keys: []TokenLiteral,
-        values: []TokenLiteral,
-    },
-    tuple: []TokenLiteral,
 };
 
 pub const Token = struct {

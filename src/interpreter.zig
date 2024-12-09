@@ -395,39 +395,41 @@ pub const Interpreter = struct {
 
                 return switch (binary.operator.type) {
                     .EQUALITY => switch (left) {
-                        .int => |i| switch (right) {
-                            .int => |j| token.TokenLiteral{ .boolean = i == j },
-                            else => return error.TypeError,
-                        },
-                        .float => |f| switch (right) {
-                            .float => |g| token.TokenLiteral{ .boolean = f == g },
-                            else => return error.TypeError,
-                        },
-                        .string => |s| switch (right) {
-                            .string => |t| token.TokenLiteral{ .boolean = std.mem.eql(u8, s, t) },
-                            else => return error.TypeError,
-                        },
-                        .boolean => |b| switch (right) {
-                            .boolean => |c| token.TokenLiteral{ .boolean = b == c },
-                            else => return error.TypeError,
-                        },
-                        .nothing => switch (right) {
-                            .nothing => token.TokenLiteral{ .boolean = true },
+                        .int => token.TokenLiteral{ .boolean = Interpreter.compare(left.int, right.int) == 0 },
+                        .float => token.TokenLiteral{ .boolean = left.float == right.float },
+                        .boolean => token.TokenLiteral{ .boolean = left.boolean == right.boolean },
+                        .string => token.TokenLiteral{ .boolean = std.mem.eql(u8, left.string, right.string) },
+                        .nothing => token.TokenLiteral{ .boolean = right == .nothing },
+                        .array => if (right == .array) blk: {
+                            if (left.array.len != right.array.len) break :blk token.TokenLiteral{ .boolean = false };
+                            for (left.array, right.array) |l, r| {
+                                if (!std.meta.eql(l, r)) break :blk token.TokenLiteral{ .boolean = false };
+                            }
+                            break :blk token.TokenLiteral{ .boolean = true };
+                        } else token.TokenLiteral{ .boolean = false },
+                        .struct_value => if (right == .struct_value) blk: {
+                            if (left.struct_value.fields.len != right.struct_value.fields.len) break :blk token.TokenLiteral{ .boolean = false };
+                            for (left.struct_value.fields, right.struct_value.fields) |l, r| {
+                                if (!std.mem.eql(u8, l.name, r.name)) break :blk token.TokenLiteral{ .boolean = false };
+                                if (!self.valuesEqual(l.value, r.value)) break :blk token.TokenLiteral{ .boolean = false };
+                            }
+                            break :blk token.TokenLiteral{ .boolean = true };
+                        } else token.TokenLiteral{ .boolean = false },
+                        .function => token.TokenLiteral{ .boolean = false }, // Functions are never equal
+                        .enum_variant => token.TokenLiteral{ .boolean = std.mem.eql(u8, left.enum_variant, right.enum_variant) },
+                        .tuple => |l| switch (right) {
+                            .tuple => |r| {
+                                if (l.len != r.len) return token.TokenLiteral{ .boolean = false };
+                                // Compare each element
+                                for (l, 0..) |item, i| {
+                                    if (!self.valuesEqual(item, r[i])) {
+                                        return token.TokenLiteral{ .boolean = false };
+                                    }
+                                }
+                                return token.TokenLiteral{ .boolean = true };
+                            },
                             else => token.TokenLiteral{ .boolean = false },
                         },
-                        .array => |arr| switch (right) {
-                            .array => |other| token.TokenLiteral{ .boolean = self.arraysEqual(arr, other) },
-                            else => token.TokenLiteral{ .boolean = false },
-                        },
-                        .map => |m| switch (right) {
-                            .map => |other| token.TokenLiteral{ .boolean = self.valuesEqual(.{ .map = m }, .{ .map = other }) },
-                            else => token.TokenLiteral{ .boolean = false },
-                        },
-                        .tuple => |t| switch (right) {
-                            .tuple => |other| token.TokenLiteral{ .boolean = self.valuesEqual(.{ .tuple = t }, .{ .tuple = other }) },
-                            else => token.TokenLiteral{ .boolean = false },
-                        },
-                        else => token.TokenLiteral{ .boolean = false },
                     },
                     .PLUS => {
                         if (left == .int and right == .int) {
@@ -726,32 +728,32 @@ pub const Interpreter = struct {
                     .fields = try struct_fields.toOwnedSlice(),
                 } };
             },
-            .Index => |idx| {
-                const target = try self.evaluate(idx.array);
-                const index = try self.evaluate(idx.index);
+            .Index => |index| {
+                const array = try self.evaluate(index.array);
+                const index_value = try self.evaluate(index.index);
 
-                if (index != .int) {
+                if (index_value != .int) {
                     return error.TypeError;
                 }
 
-                const usize_index = @as(usize, @intCast(index.int));
+                const usize_index = @as(usize, @intCast(index_value.int));
 
-                // Handle both arrays and tuples
-                switch (target) {
-                    .array => |arr| {
-                        if (usize_index >= arr.len) {
-                            return error.IndexOutOfBounds;
-                        }
-                        return arr[usize_index];
-                    },
-                    .tuple => |tup| {
-                        if (usize_index >= tup.len) {
-                            return error.IndexOutOfBounds;
-                        }
-                        return tup[usize_index];
-                    },
-                    else => return error.TypeError,
+                // Handle tuple indexing
+                if (array == .tuple) {
+                    if (usize_index >= array.tuple.len) {
+                        return error.IndexOutOfBounds;
+                    }
+                    return array.tuple[usize_index];
                 }
+
+                // Handle array indexing
+                if (array != .array) {
+                    return error.TypeError;
+                }
+                if (usize_index >= array.array.len) {
+                    return error.IndexOutOfBounds;
+                }
+                return array.array[usize_index];
             },
             .IndexAssign => |idx_assign| {
                 const array_val = try self.evaluate(idx_assign.array);
@@ -833,29 +835,11 @@ pub const Interpreter = struct {
                     .function => try buffer.writer().print("<function>", .{}),
                     .struct_value => |sv| try buffer.writer().print("{any}", .{sv}),
                     .enum_variant => |variant| try buffer.writer().print(".{s}", .{variant}),
-                    .map => |m| {
-                        try buffer.writer().print("{{", .{});
-                        for (m.keys, m.values, 0..) |key, value_expr, i| {
-                            if (i > 0) try buffer.writer().print(", ", .{});
-                            try buffer.writer().print("{any}: {any}", .{ key, value_expr });
-                        }
-                        try buffer.writer().print("}}", .{});
-                    },
-                    .tuple => |t| {
+                    .tuple => |tup| {
                         try buffer.writer().print("(", .{});
-                        for (t, 0..) |element, i| {
+                        for (tup, 0..) |item, i| {
                             if (i > 0) try buffer.writer().print(", ", .{});
-                            switch (element) {
-                                .int => |n| try buffer.writer().print("{d}", .{n}),
-                                .float => |f| try buffer.writer().print("{d}", .{f}),
-                                .string => |s| try buffer.writer().print("\"{s}\"", .{s}),
-                                .boolean => |b| try buffer.writer().print("{}", .{b}),
-                                .nothing => try buffer.writer().print("nothing", .{}),
-                                .array => |arr| try self.printArray(arr, buffer.writer()),
-                                .tuple => |inner| try self.printTuple(inner, buffer.writer()),
-                                .map => |m| try self.printMap(.{ .keys = m.keys, .values = m.values }, buffer.writer()),
-                                else => try buffer.writer().print("<{s}>", .{@tagName(element)}),
-                            }
+                            try buffer.writer().print("{any}", .{item});
                         }
                         try buffer.writer().print(")", .{});
                     },
@@ -1172,90 +1156,64 @@ pub const Interpreter = struct {
                 // Return the enum variant as a string
                 return token.TokenLiteral{ .enum_variant = member.lexeme };
             },
-            .DefaultArgPlaceholder => token.TokenLiteral{ .nothing = {} },
-
-            .TypeOf => |type_expr| {
-                const value = try self.evaluate(type_expr);
-                return switch (value) {
-                    .int => token.TokenLiteral{ .string = try self.string_interner.intern("int") },
-                    .float => token.TokenLiteral{ .string = try self.string_interner.intern("float") },
-                    .string => token.TokenLiteral{ .string = try self.string_interner.intern("string") },
-                    .boolean => token.TokenLiteral{ .string = try self.string_interner.intern("boolean") },
-                    .array => token.TokenLiteral{ .string = try self.string_interner.intern("array") },
-                    .nothing => token.TokenLiteral{ .string = try self.string_interner.intern("nothing") },
-                    .function => token.TokenLiteral{ .string = try self.string_interner.intern("function") },
-                    .struct_value => token.TokenLiteral{ .string = try self.string_interner.intern("struct") },
-                    .enum_variant => token.TokenLiteral{ .string = try self.string_interner.intern("enum") },
-                    .map => token.TokenLiteral{ .string = try self.string_interner.intern("map") },
-                    .tuple => token.TokenLiteral{ .string = try self.string_interner.intern("tuple") },
+            .DefaultArgPlaceholder => {
+                return token.TokenLiteral{ .nothing = {} };
+            },
+            .TypeOf => |expr_value| {
+                const value = try self.evaluate(expr_value);
+                return token.TokenLiteral{
+                    .string = switch (value) {
+                        .int => "int",
+                        .float => "float",
+                        .string => "string",
+                        .boolean => "boolean",
+                        .nothing => if (expr_value.* == .EnumDecl or expr_value.* == .StructDecl or
+                            if (expr_value.* == .Variable)
+                            if (self.environment.getTypeInfo(expr_value.Variable.lexeme) catch null) |type_info|
+                                type_info.base == .Enum or type_info.base == .Struct
+                            else
+                                false
+                        else
+                            false)
+                            switch (expr_value.*) {
+                                .EnumDecl => "enum",
+                                .StructDecl => "struct",
+                                .Variable => |var_token| if (self.environment.getTypeInfo(var_token.lexeme) catch null) |type_info|
+                                    if (type_info.base == .Enum) "enum" else "struct"
+                                else
+                                    "nothing",
+                                else => "nothing",
+                            }
+                        else
+                            "nothing",
+                        .array => "array",
+                        .function => "function",
+                        .struct_value => |sv| sv.type_name,
+                        .enum_variant => |_| {
+                            // Get the enum type name from the field access expression
+                            if (expr_value.* == .FieldAccess) {
+                                return token.TokenLiteral{ .string = expr_value.FieldAccess.object.Variable.lexeme };
+                            }
+                            return token.TokenLiteral{ .string = "enum_variant" };
+                        },
+                        .tuple => "tuple",
+                    },
                 };
             },
-
-            .Map => |map| {
-                var keys = std.ArrayList(token.TokenLiteral).init(self.memory.getAllocator());
-                var values = std.ArrayList(token.TokenLiteral).init(self.memory.getAllocator());
-                errdefer {
-                    keys.deinit();
-                    values.deinit();
-                }
-
-                for (map.keys, map.values) |key, value| {
-                    const evaluated_key = try self.evaluate(key);
-                    const evaluated_value = try self.evaluate(value);
-                    try keys.append(evaluated_key);
-                    try values.append(evaluated_value);
-                }
-
-                return token.TokenLiteral{ .map = .{
-                    .keys = try keys.toOwnedSlice(),
-                    .values = try values.toOwnedSlice(),
-                } };
-            },
-
             .Tuple => |elements| {
                 var tuple_values = std.ArrayList(token.TokenLiteral).init(self.memory.getAllocator());
                 errdefer tuple_values.deinit();
 
+                // Evaluate each element in the tuple
                 for (elements) |element| {
                     const value = try self.evaluate(element);
                     try tuple_values.append(value);
                 }
 
-                return token.TokenLiteral{ .tuple = try tuple_values.toOwnedSlice() };
-            },
+                const owned_slice = try tuple_values.toOwnedSlice();
+                errdefer self.memory.getAllocator().free(owned_slice);
 
-            .MapAccess => |access| {
-                const map_value = try self.evaluate(access.map);
-                const key = try self.evaluate(access.key);
-
-                if (map_value != .map) {
-                    return error.NotAMap;
-                }
-
-                for (map_value.map.keys, map_value.map.values) |k, v| {
-                    if (self.valuesEqual(k, key)) {
-                        return v;
-                    }
-                }
-                return error.KeyNotFound;
-            },
-
-            .TupleAccess => |access| {
-                const tuple_value = try self.evaluate(access.tuple);
-                if (tuple_value != .tuple) {
-                    return error.NotATuple;
-                }
-
-                const index_value = try self.evaluate(access.index);
-                if (index_value != .int) {
-                    return error.InvalidIndex;
-                }
-
-                if (index_value.int >= tuple_value.tuple.len) {
-                    return error.IndexOutOfBounds;
-                }
-
-                return tuple_value.tuple[@intCast(index_value.int)];
+                return token.TokenLiteral{ .tuple = owned_slice };
             },
         };
     }
@@ -1401,107 +1359,18 @@ pub const Interpreter = struct {
     }
 
     fn valuesEqual(self: *Interpreter, a: token.TokenLiteral, b: token.TokenLiteral) bool {
+        _ = self;
         return switch (a) {
             .int => |val| b == .int and val == b.int,
             .float => |val| b == .float and val == b.float,
             .string => |val| b == .string and std.mem.eql(u8, val, b.string),
             .boolean => |val| b == .boolean and val == b.boolean,
             .nothing => b == .nothing,
-            .array => |arr| b == .array and self.arraysEqual(arr, b.array),
+            .array => |arr| b == .array and arr.len == b.array.len,
             .struct_value => |s| b == .struct_value and std.mem.eql(u8, s.type_name, b.struct_value.type_name),
             .function => b == .function,
             .enum_variant => b == .enum_variant and std.mem.eql(u8, a.enum_variant, b.enum_variant),
-            .map => |m| b == .map and m.keys.len == b.map.keys.len and blk: {
-                for (m.keys, m.values, b.map.keys, b.map.values) |k1, v1, k2, v2| {
-                    if (!self.valuesEqual(k1, k2) or !self.valuesEqual(v1, v2)) {
-                        break :blk false;
-                    }
-                }
-                break :blk true;
-            },
-            .tuple => |t| b == .tuple and t.len == b.tuple.len and blk: {
-                for (t, b.tuple) |e1, e2| {
-                    if (!self.valuesEqual(e1, e2)) {
-                        break :blk false;
-                    }
-                }
-                break :blk true;
-            },
+            .tuple => |arr| b == .tuple and arr.len == b.tuple.len,
         };
-    }
-
-    fn arraysEqual(self: *Interpreter, a: []token.TokenLiteral, b: []token.TokenLiteral) bool {
-        if (a.len != b.len) return false;
-
-        for (a, b) |item_a, item_b| {
-            if (!self.valuesEqual(item_a, item_b)) return false;
-        }
-
-        return true;
-    }
-    fn printTuple(self: *Interpreter, tuple: []token.TokenLiteral, writer: anytype) ErrorList!void {
-        try writer.print("(", .{});
-        for (tuple, 0..) |element, i| {
-            if (i > 0) try writer.print(", ", .{});
-            switch (element) {
-                .int => |n| try writer.print("{d}", .{n}),
-                .float => |f| try writer.print("{d}", .{f}),
-                .string => |s| try writer.print("\"{s}\"", .{s}),
-                .boolean => |b| try writer.print("{}", .{b}),
-                .nothing => try writer.print("nothing", .{}),
-                .array => |arr| try self.printArray(arr, writer),
-                .tuple => |inner| try self.printTuple(inner, writer),
-                .map => |m| try self.printMap(.{ .keys = m.keys, .values = m.values }, writer),
-                else => try writer.print("<{s}>", .{@tagName(element)}),
-            }
-        }
-        try writer.print(")", .{});
-    }
-
-    fn printArray(self: *Interpreter, array: []token.TokenLiteral, writer: anytype) ErrorList!void {
-        try writer.print("[", .{});
-        for (array, 0..) |element, i| {
-            if (i > 0) try writer.print(", ", .{});
-            switch (element) {
-                .int => |n| try writer.print("{d}", .{n}),
-                .float => |f| try writer.print("{d}", .{f}),
-                .string => |s| try writer.print("\"{s}\"", .{s}),
-                .boolean => |b| try writer.print("{}", .{b}),
-                .nothing => try writer.print("nothing", .{}),
-                .array => |arr| try self.printArray(arr, writer),
-                .tuple => |t| try self.printTuple(t, writer),
-                .map => |m| try self.printMap(.{ .keys = m.keys, .values = m.values }, writer),
-                else => try writer.print("<{s}>", .{@tagName(element)}),
-            }
-        }
-        try writer.print("]", .{});
-    }
-
-    fn printMap(self: *Interpreter, map: struct { keys: []token.TokenLiteral, values: []token.TokenLiteral }, writer: anytype) ErrorList!void {
-        try writer.print("{{", .{});
-        for (map.keys, map.values, 0..) |key, value, i| {
-            if (i > 0) try writer.print(", ", .{});
-            switch (key) {
-                .int => |n| try writer.print("{d}", .{n}),
-                .float => |f| try writer.print("{d}", .{f}),
-                .string => |s| try writer.print("\"{s}\"", .{s}),
-                .boolean => |b| try writer.print("{}", .{b}),
-                .nothing => try writer.print("nothing", .{}),
-                else => try writer.print("<{s}>", .{@tagName(key)}),
-            }
-            try writer.print(": ", .{});
-            switch (value) {
-                .int => |n| try writer.print("{d}", .{n}),
-                .float => |f| try writer.print("{d}", .{f}),
-                .string => |s| try writer.print("\"{s}\"", .{s}),
-                .boolean => |b| try writer.print("{}", .{b}),
-                .nothing => try writer.print("nothing", .{}),
-                .array => |arr| try self.printArray(arr, writer),
-                .tuple => |t| try self.printTuple(t, writer),
-                .map => |m| try self.printMap(.{ .keys = m.keys, .values = m.values }, writer),
-                else => try writer.print("<{s}>", .{@tagName(value)}),
-            }
-        }
-        try writer.print("}}", .{});
     }
 };
