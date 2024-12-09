@@ -328,36 +328,13 @@ pub const Parser = struct {
 
         var type_info: ast.TypeInfo = .{
             .base = .Dynamic,
-            .is_dynamic = !is_const, // const variables can't change type
+            .is_dynamic = true, // Start as dynamic
             .is_mutable = !is_const, // const variables can't change value
         };
 
-        // If there's a type annotation, it's not dynamic
-        if (self.peek().type == .COLON) {
-            type_info.is_dynamic = false;
-        }
-
-        const is_array = self.peek().type == .ARRAY_TYPE;
-        if (is_array) {
-            self.advance(); // consume 'array'
-            type_info.base = .Array;
-            if (self.debug_enabled) {
-                std.debug.print("Found array type, next token: {s}\n", .{@tagName(self.peek().type)});
-            }
-        }
-
-        const name = if (is_array and self.peek().type == .ASSIGN)
-            token.Token{
-                .type = .IDENTIFIER,
-                .lexeme = "array",
-                .literal = .{ .nothing = {} },
-                .line = 0,
-                .column = 0,
-            }
-        else blk: {
-            if (self.peek().type != .IDENTIFIER and !is_array) {
-                return error.ExpectedIdentifier;
-            }
+        const name = if (self.peek().type != .IDENTIFIER) {
+            return error.ExpectedIdentifier;
+        } else blk: {
             const n = self.peek();
             self.advance();
             break :blk n;
@@ -370,6 +347,7 @@ pub const Parser = struct {
         // Handle type annotation
         if (self.peek().type == .COLON) {
             self.advance(); // consume ':'
+            type_info.is_dynamic = false; // Explicitly typed variables are not dynamic
 
             // Map token types to base types
             type_info.base = switch (self.peek().type) {
@@ -396,11 +374,7 @@ pub const Parser = struct {
                 });
             }
 
-            // Allow struct initialization as an initializer
-            initializer = if (self.peek().type == .IDENTIFIER and self.peekAhead(1).type == .LEFT_BRACE)
-                try self.parseStructInit()
-            else
-                try self.parseExpression() orelse return error.ExpectedExpression;
+            initializer = try self.parseExpression() orelse return error.ExpectedExpression;
         }
 
         if (self.peek().type != .SEMICOLON) {
@@ -468,6 +442,11 @@ pub const Parser = struct {
     fn parseExpressionStmt(self: *Parser) ErrorList!ast.Stmt {
         if (self.debug_enabled) {
             std.debug.print("\nParsing expression statement...\n", .{});
+        }
+
+        // Special handling for variable declarations
+        if (self.peek().type == .VAR) {
+            return self.parseVarDecl(); // Handle var declarations separately
         }
 
         const expr = try self.parseExpression();
@@ -2472,7 +2451,7 @@ pub const Parser = struct {
         }
 
         while (self.peek().type != .RIGHT_BRACE and self.peek().type != .EOF) {
-            const stmt = try self.parseExpressionStmt();
+            const stmt = try self.parseStatement();
             try try_statements.append(stmt);
         }
 

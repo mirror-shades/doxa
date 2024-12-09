@@ -1,0 +1,6 @@
+try {
+    var intvar: int = 1;
+    intvar = "hello";
+} catch {
+    "invalid assignment failed ✅"?;
+}
