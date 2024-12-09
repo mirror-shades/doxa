@@ -406,6 +406,30 @@ pub const Interpreter = struct {
 
                 return token.TokenLiteral{ .map = map };
             },
+            .Try => |try_stmt| {
+                // Create new environment for try block
+                var try_env = Environment.init(self.memory.getAllocator(), self.environment, self.debug_enabled);
+                defer try_env.deinit();
+
+                // Execute try block
+                const try_result = self.executeBlock(try_stmt.try_body, &try_env) catch |err| {
+                    // Create new environment for catch block
+                    var catch_env = Environment.init(self.memory.getAllocator(), self.environment, self.debug_enabled);
+                    defer catch_env.deinit();
+
+                    // If there's an error variable, bind the error to it
+                    if (try_stmt.error_var) |error_var| {
+                        try catch_env.define(error_var.lexeme, .{ .string = @errorName(err) }, .{ .base = .String });
+                    }
+
+                    // Execute catch block
+                    return self.executeBlock(try_stmt.catch_body, &catch_env) catch |catch_err| {
+                        return catch_err;
+                    };
+                };
+
+                return try_result;
+            },
         };
     }
 

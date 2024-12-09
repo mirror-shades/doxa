@@ -12,7 +12,7 @@ TODO: Memory management is handled via garbage collection.
 
 No classes, only structs and composition.
 
-TODO: Try catch is based on Zig's error union model which allows for safer error handling.
+Try catch is based on Zig's error union model which allows for safer error handling.
 
 ```
 fn divide(a: int, b: int) !int {

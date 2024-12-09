@@ -449,6 +449,7 @@ pub const Stmt = union(enum) {
     },
     EnumDecl: EnumDecl,
     Map: []MapEntry,
+    Try: TryStmt,
     pub fn deinit(self: *Stmt, allocator: std.mem.Allocator) void {
         switch (self.*) {
             .Expression => |maybe_expr| {
@@ -493,6 +494,16 @@ pub const Stmt = union(enum) {
                     allocator.destroy(entry.value);
                 }
                 allocator.free(entries);
+            },
+            .Try => |*t| {
+                for (t.try_body) |*stmt| {
+                    stmt.deinit(allocator);
+                }
+                allocator.free(t.try_body);
+                for (t.catch_body) |*stmt| {
+                    stmt.deinit(allocator);
+                }
+                allocator.free(t.catch_body);
             },
         }
     }
@@ -723,4 +734,10 @@ pub const MatchExpr = struct {
 pub const MatchCase = struct {
     pattern: token.Token,
     body: *Expr,
+};
+
+pub const TryStmt = struct {
+    try_body: []Stmt,
+    catch_body: []Stmt,
+    error_var: ?token.Token,
 };

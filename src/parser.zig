@@ -9,18 +9,19 @@ const ErrorList = @import("reporting.zig").ErrorList;
 // for pratt parsing
 const Precedence = enum(u8) {
     NONE = 0,
-    ASSIGNMENT = 1, // =
-    OR = 2, // or
-    AND = 3, // and
-    XOR = 4, // xor
-    EQUALITY = 5, // == !=
-    COMPARISON = 6, // < > <= >=
-    QUANTIFIER = 7, // ∃ ∀
-    TERM = 8, // + -
-    FACTOR = 9, // * /
-    UNARY = 10, // ! -
-    CALL = 11, // . () []
-    PRIMARY = 12,
+    TRY = 1,
+    ASSIGNMENT = 2, // =
+    OR = 3, // or
+    AND = 4, // and
+    XOR = 5, // xor
+    EQUALITY = 6, // == !=
+    COMPARISON = 7, // < > <= >=
+    QUANTIFIER = 8, // ∃ ∀
+    TERM = 9, // + -
+    FACTOR = 10, // * /
+    UNARY = 11, // ! -
+    CALL = 12, // . () []
+    PRIMARY = 13,
 };
 
 const ParseFn = *const fn (*Parser, ?*ast.Expr, Precedence) ErrorList!?*ast.Expr;
@@ -273,7 +274,7 @@ pub const Parser = struct {
             if (current.type == .EOF) break;
 
             const stmt = blk: {
-                if (self.peek().type == .VAR or self.peek().type == .CONST) // Add CONST here
+                if (self.peek().type == .VAR or self.peek().type == .CONST)
                     break :blk try self.parseVarDecl()
                 else if (self.peek().type == .LEFT_BRACE) {
                     const block_stmt = if (try self.block(null, .NONE)) |expr|
@@ -287,6 +288,8 @@ pub const Parser = struct {
                     break :blk try self.parseStructDeclStmt();
                 } else if (self.peek().type == .ENUM_TYPE) {
                     break :blk try self.parseEnumDecl();
+                } else if (self.peek().type == .TRY) {
+                    break :blk try self.parseTryStmt();
                 } else break :blk try self.parseExpressionStmt();
             };
 
@@ -1428,6 +1431,7 @@ pub const Parser = struct {
             else
                 try self.parseExpressionStmt(),
             .ENUM_TYPE => self.parseEnumDecl(),
+            .TRY => try self.parseTryStmt(),
             else => self.parseExpressionStmt(),
         };
     }
@@ -2433,5 +2437,81 @@ pub const Parser = struct {
         const map_expr = try self.allocator.create(ast.Expr);
         map_expr.* = .{ .Map = try entries.toOwnedSlice() };
         return map_expr;
+    }
+
+    fn parseTryStmt(self: *Parser) ErrorList!ast.Stmt {
+        if (self.debug_enabled) {
+            std.debug.print("\nParsing try statement...\n", .{});
+        }
+
+        self.advance(); // consume 'try'
+
+        // Parse the try block
+        if (self.peek().type != .LEFT_BRACE) {
+            return error.ExpectedLeftBrace;
+        }
+
+        // Parse try block statements
+        self.advance(); // consume {
+        var try_statements = std.ArrayList(ast.Stmt).init(self.allocator);
+        errdefer {
+            for (try_statements.items) |*stmt| {
+                stmt.deinit(self.allocator);
+            }
+            try_statements.deinit();
+        }
+
+        while (self.peek().type != .RIGHT_BRACE and self.peek().type != .EOF) {
+            const stmt = try self.parseExpressionStmt();
+            try try_statements.append(stmt);
+        }
+
+        if (self.peek().type != .RIGHT_BRACE) {
+            return error.ExpectedRightBrace;
+        }
+        self.advance(); // consume }
+
+        // Parse catch block
+        if (self.peek().type != .CATCH) {
+            return error.ExpectedCatch;
+        }
+        self.advance(); // consume 'catch'
+
+        // Parse optional error variable
+        var error_var: ?token.Token = null;
+        if (self.peek().type == .IDENTIFIER) {
+            error_var = self.peek();
+            self.advance();
+        }
+
+        // Parse catch block
+        if (self.peek().type != .LEFT_BRACE) {
+            return error.ExpectedLeftBrace;
+        }
+
+        self.advance(); // consume {
+        var catch_statements = std.ArrayList(ast.Stmt).init(self.allocator);
+        errdefer {
+            for (catch_statements.items) |*stmt| {
+                stmt.deinit(self.allocator);
+            }
+            catch_statements.deinit();
+        }
+
+        while (self.peek().type != .RIGHT_BRACE and self.peek().type != .EOF) {
+            const stmt = try self.parseExpressionStmt();
+            try catch_statements.append(stmt);
+        }
+
+        if (self.peek().type != .RIGHT_BRACE) {
+            return error.ExpectedRightBrace;
+        }
+        self.advance(); // consume }
+
+        return ast.Stmt{ .Try = .{
+            .try_body = try try_statements.toOwnedSlice(),
+            .catch_body = try catch_statements.toOwnedSlice(),
+            .error_var = error_var,
+        } };
     }
 };
