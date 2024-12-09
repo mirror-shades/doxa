@@ -39,6 +39,12 @@ const ParseRule = struct {
     associativity: Associativity = .LEFT,
 };
 
+const TokenStyle = enum {
+    Keyword,
+    Symbol,
+    Undefined,
+};
+
 pub const Parser = struct {
     pub const Mode = enum { Strict, Normal }; // Declare enum once at struct level
 
@@ -48,6 +54,9 @@ pub const Parser = struct {
     debug_enabled: bool,
     mode: Mode = .Normal,
     current_file: []const u8,
+    fn_style: TokenStyle = .Undefined,
+    and_style: TokenStyle = .Undefined,
+    or_style: TokenStyle = .Undefined,
 
     const rules = blk: {
         var r = std.EnumArray(token.TokenType, ParseRule).initFill(ParseRule{});
@@ -283,6 +292,7 @@ pub const Parser = struct {
                         ast.Stmt{ .Expression = null };
                     break :blk block_stmt;
                 } else if (self.peek().type == .FN_KEYWORD or self.peek().type == .FUNCTION_KEYWORD) {
+                    self.updateTokenStyle(self.peek().type);
                     break :blk try self.parseFunctionDecl();
                 } else if (self.peek().type == .STRUCT_TYPE) {
                     break :blk try self.parseStructDeclStmt();
@@ -1257,7 +1267,7 @@ pub const Parser = struct {
 
         const operator = self.tokens[self.current - 1]; // Get the operator token (AND/OR)
         const right = try self.parsePrecedence(precedence) orelse return error.ExpectedExpression;
-
+        self.updateTokenStyle(operator.type);
         const logical_expr = try self.allocator.create(ast.Expr);
         logical_expr.* = .{ .Logical = .{
             .left = left.?,
@@ -2513,5 +2523,56 @@ pub const Parser = struct {
             .catch_body = try catch_statements.toOwnedSlice(),
             .error_var = error_var,
         } };
+    }
+
+    fn reportWarning(self: *Parser, message: []const u8) void {
+        _ = self;
+        const writer = std.io.getStdErr().writer();
+        var reporting = Reporting.init(writer);
+        reporting.reportWarning("Warning: {s}", .{message});
+    }
+
+    fn updateTokenStyle(self: *Parser, token_type: token.TokenType) void {
+        // Runtime style determination
+        var new_style: TokenStyle = .Undefined;
+        if (token_type == .FUNCTION_KEYWORD or token_type == .AND_KEYWORD or token_type == .OR_KEYWORD) {
+            new_style = .Keyword;
+        } else if (token_type == .FN_KEYWORD or token_type == .AND_SYMBOL or token_type == .OR_SYMBOL) {
+            new_style = .Symbol;
+        } else {
+            return;
+        }
+
+        // Check and update styles
+        switch (token_type) {
+            .FN_KEYWORD, .FUNCTION_KEYWORD => {
+                if (self.fn_style != .Undefined and self.fn_style != new_style) {
+                    self.reportWarning("Style conflict for 'fn' and 'function' keywords");
+                    return;
+                }
+                if (self.fn_style == .Undefined) {
+                    self.fn_style = new_style;
+                }
+            },
+            .AND_KEYWORD, .AND_SYMBOL => {
+                if (self.and_style != .Undefined and self.and_style != new_style) {
+                    self.reportWarning("Style conflict for 'and' keyword and '&&' symbol");
+                    return;
+                }
+                if (self.and_style == .Undefined) {
+                    self.and_style = new_style;
+                }
+            },
+            .OR_KEYWORD, .OR_SYMBOL => {
+                if (self.or_style != .Undefined and self.or_style != new_style) {
+                    self.reportWarning("Style conflict for 'or' keyword and '||' symbol");
+                    return;
+                }
+                if (self.or_style == .Undefined) {
+                    self.or_style = new_style;
+                }
+            },
+            else => {},
+        }
     }
 };
