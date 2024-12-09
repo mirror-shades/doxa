@@ -124,6 +124,28 @@ var mixed = [1, "two", true];      // Error: mixed types in array
 var noType = [1, 2, 3];            // Error: array type must be explicit
 ```
 
+tuples are supported
+
+```
+var x = (1, 2, 3);
+x[0]; // 1
+x[1]; // 2
+x[2]; // 3
+```
+
+mapping is supported
+
+```
+var x = {
+    "a": 1,
+    "b": 2,
+    "c": 3
+};
+x["a"]; // 1
+x["b"]; // 2
+x["c"]; // 3
+```
+
 Doxa has an inspect operator `?` which can be used to inspect the value of any expression.
 
 ```
