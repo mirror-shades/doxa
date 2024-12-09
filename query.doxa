@@ -1,6 +1,6 @@
 var point = (10, 20);
-point?;  
+point[0]?; // 10
+point[1]?; // 20
 
-point[0]?;
-point[1]?; 
-
+var point2 = ((10, 20), (30, 40));
+point2[1][0]?; // 30

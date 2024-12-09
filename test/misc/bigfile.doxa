@@ -1,11 +1,10 @@
-// Declaration
+// Enums
 enum Color {
     Red,
     Green,
     Blue,
 }
 
-// Usage
 const b: Color = .Blue;
 const g: Color = .Green;
 
@@ -15,7 +14,7 @@ var result = match b {
     else => "It's something else",
 };
 
-result?;
+result?; // It's blue
 
 result = match g {
     .Red => "It's red",
@@ -23,9 +22,10 @@ result = match g {
     else => "It's something else",
 };
 
-result?;
+result?; // It's something else
 
 
+// functions and loops / recursion
 function fizzbuzz(x: int) {
     var current is x;
     while current <= 15 {
@@ -52,6 +52,7 @@ fn fber(x: int) {
 
 fber(1);
 
+// structs
 struct Person {
     name: string,
     age: int,
@@ -71,45 +72,54 @@ var mike = Employee {
 };
 
 mike.person.age = 26;
-mike.person.age?;
+mike.person.age?; // 26
 
-mike.salary?;
+mike.salary?; // 1000
 
-
+// arrays
 var array = [1, 2, 3, 4, 5];
 
-array[3]?;
+array[3]?; // 4
 array[3] = 6;
-array[3]?;
+array[3]?; // 6
 
+// conditionals
 var condition is if true then "true" else "false";
-condition?;
+condition?; // true
 
-
+// default arguments
 fn foo(a, b=5) {return a+b;}
 
-foo(1, 2)?;
-foo(1, ~)?;
+foo(1, 2)?; // 3
+foo(1, ~)?; // 6
 
-
+// typeof
 var _int = 5;
-typeof(_int)?;
+typeof(_int)?; // int
 
 var _float = 5.5;
-typeof(_float)?;
+typeof(_float)?; // float
 
 var _string = "hello";
-typeof(_string)?;
+typeof(_string)?; // string
 
 var _boolean = true;
-typeof(_boolean)?;
+typeof(_boolean)?; // boolean
 
 var _array = [1, 2, 3];
-typeof(_array)?;
+typeof(_array)?; // array
 
-typeof(Employee)?;
+typeof(Employee)?; // struct
 
-typeof(mike)?;
+typeof(mike)?; // Employee
 
-typeof(Color)?;
-typeof(Color.Blue)?;
+typeof(Color)?; // enum
+typeof(Color.Blue)?; // Color
+
+// tuple
+var point = (10, 20, 30, 40, 50);
+point[0]?; // 10
+point[1]?; // 20
+
+var point2 = ((10, 20), (30, 40));
+point2[1][0]?; // 30

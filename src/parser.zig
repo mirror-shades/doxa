@@ -1203,7 +1203,7 @@ pub const Parser = struct {
 
     fn index(self: *Parser, array_expr: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
         if (self.debug_enabled) {
-            std.debug.print("Parsing array index\n", .{});
+            std.debug.print("Parsing array/tuple index\n", .{});
         }
 
         // Parse the index expression
@@ -1217,23 +1217,30 @@ pub const Parser = struct {
         }
         self.advance(); // consume ]
 
+        // Check if this is an assignment
+        if (self.peek().type == .ASSIGN) {
+            self.advance(); // consume =
+            const value = try self.parsePrecedence(.NONE) orelse return error.ExpectedExpression;
+
+            const expr = try self.allocator.create(ast.Expr);
+            expr.* = .{ .IndexAssign = .{
+                .array = array_expr.?,
+                .index = index_expr,
+                .value = value,
+            } };
+            return expr;
+        }
+
         const expr = try self.allocator.create(ast.Expr);
         expr.* = .{ .Index = .{
             .array = array_expr.?,
             .index = index_expr,
         } };
 
-        // Check for assignment
-        if (self.peek().type == .ASSIGN) {
-            self.advance(); // consume =
-            const value = try self.parseExpression() orelse return error.ExpectedExpression;
-            const assign_expr = try self.allocator.create(ast.Expr);
-            assign_expr.* = .{ .IndexAssign = .{
-                .array = array_expr.?,
-                .index = index_expr,
-                .value = value,
-            } };
-            return assign_expr;
+        // Check for another index operation (for nested access)
+        if (self.peek().type == .LEFT_BRACKET) {
+            self.advance(); // consume [
+            return self.index(expr, .NONE);
         }
 
         return expr;
