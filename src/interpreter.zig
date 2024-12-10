@@ -442,7 +442,7 @@ pub const Interpreter = struct {
                 const right = try self.evaluate(binary.right orelse return error.InvalidExpression);
 
                 return switch (binary.operator.type) {
-                    .EQUALITY => switch (left) {
+                    .EQUALITY_SYMBOL, .EQUALITY_KEYWORD => switch (left) {
                         .int => token.TokenLiteral{ .boolean = Interpreter.compare(left.int, right.int) == 0 },
                         .float => token.TokenLiteral{ .boolean = left.float == right.float },
                         .boolean => token.TokenLiteral{ .boolean = left.boolean == right.boolean },

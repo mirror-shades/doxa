@@ -65,7 +65,6 @@ pub const TokenType = enum {
     FORALL, // forall ∀
     FROM, // from
     IN, // in
-    IS, // is
     AS, // as
     ASYNC, // async
     AWAIT, // await
@@ -81,6 +80,10 @@ pub const TokenType = enum {
     FUNCTION_KEYWORD, // function
     WHERE_KEYWORD, // where
     WHERE_SYMBOL, // |
+    EQUALITY_KEYWORD, // equals
+    EQUALITY_SYMBOL, // ==
+    ASSIGN_KEYWORD, // is
+    ASSIGN_SYMBOL, // =
 
     // logical operators
     IF, // if
@@ -113,8 +116,6 @@ pub const TokenType = enum {
     TUPLE_TYPE, // tuple type declaration
     MAP_TYPE, // map type declaration
     NOTHING, // nothing
-    EQUALITY, // == or equals
-    ASSIGN, // = or is
 
     EOF, // end of file
 };
