@@ -12,23 +12,6 @@ TODO: Memory management is handled via garbage collection.
 
 No classes, only structs and composition.
 
-Try catch is based on Zig's error union model which allows for safer error handling.
-
-```
-fn divide(a: int, b: int) !int {
-    if (b == 0) return error.DivisionByZero;
-    return a / b;
-}
-
-// Usage
-var result = try divide(10, 0);
-// or
-var result = divide(10, 0) catch |err| {
-    log.error("Failed to divide: {}", err);
-    return;
-};
-```
-
 Doxa has some choice code keywords:
 
 - `function` and `fn` are functionally identical
@@ -77,27 +60,27 @@ import { add } from "./math.doxa";
 var sum = add(1, 2);
 ```
 
-match is supported rather than switch. match cases must be exhaustive but
-else is supported as a fallback.
+match is supported. all cases must be exhaustive but else is
+supported as a fallback.
 
 ```
 enum Number {
+    ZERO,
     ONE,
-    TWO,
     UNKNOWN
 }
 
-match x {
+switch x {
+    .ZERO => print("zero"),
     .ONE => print("one"),
-    .TWO => print("two"),
     .UNKNOWN => print("unknown")
 }
 
 // this is functionally identical to the previous example
-match x {
+switch x {
+    .ZERO => print("zero"),
     .ONE => print("one"),
-    .TWO => print("two"),
-    else => print("unknown")
+    .UNKNOWN => print("unknown")
 }
 ```
 
@@ -106,8 +89,19 @@ all cases must be covered
 ```
 //this is an error, as one or more cases are not covered
 match x {
+    .ZERO => print("zero"),
     .ONE => print("one"),
-    .TWO => print("two")
+}
+```
+
+try catch is supported
+
+```
+var x = 0;
+try {
+    var x = 1 / x;
+} catch {
+    handle_error();
 }
 ```
 
