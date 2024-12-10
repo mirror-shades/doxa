@@ -219,5 +219,5 @@ pub const Value = struct {
 pub const Variable = struct {
     index: i32,
     is_constant: bool,
-    is_dynamic: bool, // NEVER assigned true in strict mode!!!
+    is_dynamic: bool, // NEVER assigned true in safe mode!!!
 };

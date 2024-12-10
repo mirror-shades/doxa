@@ -147,10 +147,10 @@ pub const ErrorList = error{
     NotImplemented,
     Overflow,
 
-    // Strict Mode
+    // Safe Mode
     UnknownType,
-    StrictModeRequiresType,
-    StrictModeNoDynamicTypes,
+    SafeModeRequiresType,
+    SafeModeNoDynamicTypes,
 
     // Print Statements
     UnsupportedPrintStatement,

@@ -12,7 +12,6 @@ pub const TokenType = enum {
     LEFT_BRACKET, // [
     RIGHT_BRACKET, // ]
     COMMA, // ,
-    DOT, // .
     COLON, // :
     SEMICOLON, // ;
     MODULO, // %
@@ -21,6 +20,8 @@ pub const TokenType = enum {
     QUESTION, // ?
 
     //one or two character tokens
+    DOT, // .
+    DOT_DOT, // ..
     AMPERSAND, // &
     ARROW, // =>
     SLASH, // /
@@ -69,7 +70,9 @@ pub const TokenType = enum {
     ASYNC, // async
     AWAIT, // await
     TYPEOF, // typeof
-    DOT_DOT, // ..
+    GUIDE, // guide
+    SAFE, // safe
+    NORMAL, // normal
 
     // keywords with alternate tokens
     AND_KEYWORD, // and
