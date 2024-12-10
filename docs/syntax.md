@@ -1,28 +1,39 @@
-By default, Doxa runs in normal mode. Strict mode is enabled via `#strict` at the file start.
-To preserve type safety, strict files can only import other strict files. There is an intermediate
-mode called `warn` which compiles files in normal mode but gives warnings when strict conventions are not followed.
+# Doxa Language Reference
 
-## General syntax
+## Modes of Operation
 
-both `||` and `&&` are supported alongside `and` and `or`. a clarity warning is given if both are used in the same file.
+Doxa supports three operational modes:
 
-No operator or function overloading.
+- **Normal Mode** (default): Dynamic typing with flexible syntax
+- **Strict Mode**: Enabled via `#strict` at file start, enforces static typing
+- **Warn Mode**: Compiles in normal mode but warns about strict convention violations
 
-TODO: Memory management is handled via garbage collection.
+!!! note
+Strict files can only import other strict files, while normal files can import both.
 
-No classes, only structs and composition.
+## Core Language Features
 
-Doxa has some choice code keywords:
+### Syntax Alternatives
 
-- `function` and `fn` are functionally identical
-- `and` and `&&` are functionally identical
-- `or` and `||` are functionally identical
-- `equals` and `==` are functionally identical
-- `where` and `|` are functionally identical
+Doxa provides alternative syntax for common operations. Using mixed styles in the same file triggers warnings.
 
-Warnings are given for projects that mix alternate tokens.
+| Primary    | Alternative | Purpose              |
+| ---------- | ----------- | -------------------- |
+| `and`      | `&&`        | Logical AND          |
+| `or`       | `\|\|`      | Logical OR           |
+| `equals`   | `==`        | Equality             |
+| `where`    | `\|`        | Filter conditions    |
+| `function` | `fn`        | Function declaration |
 
-```
+### Type System
+
+- No operator or function overloading
+- No classes, only structs and composition
+- Garbage collected memory management
+
+### Basic Composition Example
+
+```doxa
 struct Animal {
     name: string
 }
@@ -43,277 +54,150 @@ var dog = Dog {
 };
 ```
 
-TODO: Modules are supported. strict files can only import other strict files.
-normal files can import both strict and normal files.
+### Modules
 
-```
+```doxa
 // math.doxa
 #strict
-
-// Explicit exports
 export fn add(a: int, b: int) -> int {
     return a + b;
 }
 
 // main.doxa
 import { add } from "./math.doxa";
-
-// Explicit usage
 var sum = add(1, 2);
 ```
 
-match is supported. all cases must be exhaustive but else is
-supported as a fallback.
+## Data Types
 
-```
-enum Number {
-    ZERO,
-    ONE,
-    UNKNOWN
-}
+### Arrays
 
-switch x {
-    .ZERO => print("zero"),
-    .ONE => print("one"),
-    .UNKNOWN => print("unknown")
-}
+Arrays are homogeneous collections with type inference:
 
-// this is functionally identical to the previous example
-switch x {
-    .ZERO => print("zero"),
-    .ONE => print("one"),
-    .UNKNOWN => print("unknown")
-}
+```doxa
+var nums = [1, 2, 3];             // Inferred as int[]
+var strs = ["a", "b"];            // Inferred as string[]
+var explicit: int[] = [1, 2, 3];  // Explicit typing
+
+// Invalid operations
+var mixed = [1, "two", true];     // Error: mixed types
+nums.push("four");                // Error: type mismatch
 ```
 
-all cases must be covered
+### Tuples
 
-```
-//this is an error, as one or more cases are not covered
-match x {
-    .ZERO => print("zero"),
-    .ONE => print("one"),
-}
-```
+Fixed-size collections supporting different types:
 
-try catch is supported
+```doxa
+var point = (10, 20, 30);         // Simple tuple
+var nested = ((1, 2), (3, 4));    // Nested tuple
 
-```
-var x = 0;
-try {
-    var x = 1 / x;
-} catch {
-    handle_error();
-}
+point[0];                         // Access first element
+nested[1][0];                     // Access nested element
 ```
 
-arrays can only be declared with a homogeneous type. Heterogeneous arrays
-are not supported. Structs are the preferred way to group different types.
+### Maps
 
-```
-// Only homogeneous arrays allowed
-var nums: int[] = [1, 2, 3];       // OK
-var strs: string[] = ["a", "b"];   // OK
+String-keyed dictionaries:
 
-// These would be errors
-var mixed = [1, "two", true];      // Error: mixed types in array
-var noType = [1, 2, 3];            // Error: array type must be explicit
-```
-
-tuples are supported
-
-```
-var x = (1, 2, 3);
-x[0]; // 1
-x[1]; // 2
-x[2]; // 3
-```
-
-mapping is supported
-
-```
-var x = {
-    "a": 1,
-    "b": 2,
-    "c": 3
+```doxa
+var scores = {
+    "alice": 100,
+    "bob": 85
 };
-x["a"]; // 1
-x["b"]; // 2
-x["c"]; // 3
+scores["alice"];                  // Access value
 ```
 
-there are xor, existensial quantifiers, and universal quantifiers
+## Control Flow
 
-```
-var a = true xor false;
-var b = exists i in [1, 2, 3] where i > 1;
-var c = forall i in [1, 2, 3] | i > 1;
-```
+### Pattern Matching
 
-Doxa has an inspect operator `?` which can be used to inspect the value of any expression.
+```doxa
+enum Status { Success, Error, Pending }
 
-```
-var x = 1;
-x?; // prints [main.doxa:1:1] x = 1
-```
-
-## Doxa normal syntax
-
-in normal mode, all variables are dynamically typed by default.
-this can be explicitly marked with the auto type. this allows for
-cross type assignments.
-
-```
-var x = 1;                //int
-x = true;                 //bool
-
-var x: auto = 3.14;      //float
-x = "pi";                //string
+var result = match status {
+    .Success => "all good",
+    .Error => "failed",
+    else => "waiting"
+};
 ```
 
-constants are declared with the const keyword
+!!! warning
+Match expressions must be exhaustive or include an `else` clause.
 
-```
-const x = 1;              //int
-const x = "two";          //string
-const x = [1, 2, 3];      //array
-```
+### Error Handling
 
-constants cannot be declared without a value but
-type can be inferred like variables.
-
-```
-const x;                  //error, needs a value
-const x = 1;              //int
-const y: auto = 3.14;    //float
+```doxa
+try {
+    riskyOperation();
+} catch {
+    handleError();
+}
 ```
 
-type declarations are allowed. when a type is declared safety is enforced.
+## Special Operators
 
-```
-var x: int = 1;           //int
-x = "two";                //error, expected type int
-```
+### Inspect (`?`)
 
-variables can be declared without a value
-
-```
-var x: int;               //int
-var x: string;            //string
-var x: float;             //float
-var x: bool;              //bool
-var x: []int;             //array
+```doxa
+var x = computeValue();
+x?;                              // Prints value with location
 ```
 
-variables can be declared without a type
+### Type Information
 
-```
-var x;                    //auto
-var x: auto;              //auto
-```
-
-cross-type assignments are allowed for auto variables
-
-```
-var x = 5;                //auto
-x = "five";               //auto
+```doxa
+typeof(42);                      // "int"
+typeof("hello");                // "string"
+typeof([1,2,3]);               // "array"
 ```
 
-arrays can be declared either with a homogeneous type or a mixed type
+### Collection Quantifiers
 
-## Doxa strict syntax
-
-constants must be declared with a type and a value
-
-```
-const x;                  //error, needs a type and a value
-const x: int;             //error, needs a value
+```doxa
+exists x in numbers where x > 10  // Any match
+forall x in numbers | x > 0      // All match
 ```
 
-variables can be declared without a value as long as they are given an explicit type.
-if a variable is declared without a type, it and error is thrown. There is an auto type
-which can be used however type safety is still enforced.
+## Type System Details
 
-```
-var x: int;               //int
-var x = "two";            //error, needs explicit type
-var x: auto = 3.14;       //float
-```
+### Normal Mode
 
-variables can be declared without a value as long as they are given an explicit type
+Variables are dynamically typed by default:
 
-```
-var x: int;               //int
-var x: string;            //string
-var x: float;             //float
-var x: bool;              //bool
-var x: []int;             //array
+```doxa
+var x = 1;                      // int
+x = true;                       // bool (allowed)
+
+var y: auto = 3.14;            // float
+y = "pi";                      // string (allowed)
 ```
 
-variables cannot be declared without a type
+### Strict Mode
 
-```
-var x;                    //error, needs explicit type
-var x: auto;              //error, needs explicit type
-```
+Variables require explicit typing:
 
-Auto will default the variable to the type of the initial value. no cross-type
-assignments are allowed for strict variables
-
-```
-var x: auto = 5;          //int
-x = "five";               //error, given value does not match type int
+```doxa
+var x: int;                    // Valid declaration
+var x = "two";                // Error: needs type
+var x: auto = 3.14;           // Type locked to float
+x = "five";                   // Error: type mismatch
 ```
 
-Arrays must be explicitly typed.
+## Conditional Expressions
 
-```
-var x: int[] = [1, 2, 3];   //OK
-var x = [1, 2, 3];         //error, needs explicit type
-```
+All conditionals are expressions and return values:
 
-## Conditionals
-
-In Doxa, all conditionals are expressions, so they return a value.
-this allows a unified syntax for conditionals and assignments.
-
-All of the following are functionally equivalent:
-
-```
-var a;
-if false then a is 5
-else if true then a is 20
-else a is 30;
-
-var b;
-if (false) then {b = 5;}
-else if (true) then {b = 20;}
-else {b = 30;}
-
-var c is
-if false then 5
-else if true then 20
-else 30;
-
-var d =
-if (false) then {5;}
-else if (true) then {20;}
-else {30;};
+```doxa
+var result = if condition then {
+    value1
+} else {
+    value2
+};
 ```
 
-if an if expression doesn't return a value, it defaults to `nothing`.
-
-```
-var x = if (y == 1) { y = 1 } else { y = 2 };
-print(x); // prints the 'nothing' value
-
-var x = if (false) { y = 1 } else {};
-print(x); // prints the 'nothing' value
-```
-
-if statements without an else branch default to `nothing`. the following are functionally equivalent:
-
-```
-var x = if (false) { y = 1 }; // warning raised about possible 'nothing' return value
-var x = if (false) { y = 1 } else nothing;
-```
+!!! note
+Expressions without a value return `nothing`:
+`doxa
+    var x = if (false) { y = 1 };  // x becomes nothing
+    `
