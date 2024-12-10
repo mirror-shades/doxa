@@ -70,7 +70,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#general-syntax" class="md-skip">
+        <a href="#doxa-language-reference" class="md-skip">
           Skip to content
         </a>
       
@@ -300,6 +300,8 @@
       <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
       
       
+        
+      
       
         <label class="md-nav__link md-nav__link--active" for="__toc">
           
@@ -328,6 +330,8 @@
   
   
   
+    
+  
   
     <label class="md-nav__title" for="__toc">
       <span class="md-nav__icon md-icon"></span>
@@ -336,36 +340,219 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#general-syntax" class="md-nav__link">
+  <a href="#modes-of-operation" class="md-nav__link">
     <span class="md-ellipsis">
-      General syntax
+      Modes of Operation
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#doxa-normal-syntax" class="md-nav__link">
+  <a href="#core-language-features" class="md-nav__link">
     <span class="md-ellipsis">
-      Doxa normal syntax
+      Core Language Features
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Core Language Features">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#syntax-alternatives" class="md-nav__link">
+    <span class="md-ellipsis">
+      Syntax Alternatives
     </span>
   </a>
   
 </li>
-      
-        <li class="md-nav__item">
-  <a href="#doxa-strict-syntax" class="md-nav__link">
+        
+          <li class="md-nav__item">
+  <a href="#type-system" class="md-nav__link">
     <span class="md-ellipsis">
-      Doxa strict syntax
+      Type System
     </span>
   </a>
   
 </li>
+        
+          <li class="md-nav__item">
+  <a href="#basic-composition-example" class="md-nav__link">
+    <span class="md-ellipsis">
+      Basic Composition Example
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#modules" class="md-nav__link">
+    <span class="md-ellipsis">
+      Modules
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
       
         <li class="md-nav__item">
-  <a href="#conditionals" class="md-nav__link">
+  <a href="#data-types" class="md-nav__link">
     <span class="md-ellipsis">
-      Conditionals
+      Data Types
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Data Types">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#arrays" class="md-nav__link">
+    <span class="md-ellipsis">
+      Arrays
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tuples" class="md-nav__link">
+    <span class="md-ellipsis">
+      Tuples
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#maps" class="md-nav__link">
+    <span class="md-ellipsis">
+      Maps
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#control-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      Control Flow
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Control Flow">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pattern-matching" class="md-nav__link">
+    <span class="md-ellipsis">
+      Pattern Matching
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#error-handling" class="md-nav__link">
+    <span class="md-ellipsis">
+      Error Handling
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#special-operators" class="md-nav__link">
+    <span class="md-ellipsis">
+      Special Operators
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Special Operators">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#inspect" class="md-nav__link">
+    <span class="md-ellipsis">
+      Inspect (?)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#type-information" class="md-nav__link">
+    <span class="md-ellipsis">
+      Type Information
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#collection-quantifiers" class="md-nav__link">
+    <span class="md-ellipsis">
+      Collection Quantifiers
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#type-system-details" class="md-nav__link">
+    <span class="md-ellipsis">
+      Type System Details
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Type System Details">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#normal-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      Normal Mode
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#strict-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      Strict Mode
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#conditional-expressions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Conditional Expressions
     </span>
   </a>
   
@@ -394,25 +581,64 @@
                   
 
 
-  <h1>Syntax</h1>
-
-<p>By default, Doxa runs in normal mode. Strict mode is enabled via <code>#strict</code> at the file start.
-To preserve type safety, strict files can only import other strict files. There is an intermediate
-mode called <code>warn</code> which compiles files in normal mode but gives warnings when strict conventions are not followed.</p>
-<h2 id="general-syntax">General syntax</h2>
-<p>both <code>||</code> and <code>&amp;&amp;</code> are supported alongside <code>and</code> and <code>or</code>. a clarity warning is given if both are used in the same file.</p>
-<p>No operator or function overloading.</p>
-<p>TODO: Memory management is handled via garbage collection.</p>
-<p>No classes, only structs and composition.</p>
-<p>Doxa has some choice code keywords:</p>
+<h1 id="doxa-language-reference">Doxa Language Reference</h1>
+<h2 id="modes-of-operation">Modes of Operation</h2>
+<p>Doxa supports three operational modes:</p>
 <ul>
-<li><code>function</code> and <code>fn</code> are functionally identical</li>
-<li><code>and</code> and <code>&amp;&amp;</code> are functionally identical</li>
-<li><code>or</code> and <code>||</code> are functionally identical</li>
-<li><code>equals</code> and <code>==</code> are functionally identical</li>
-<li><code>where</code> and <code>|</code> are functionally identical</li>
+<li><strong>Normal Mode</strong> (default): Dynamic typing with flexible syntax</li>
+<li><strong>Strict Mode</strong>: Enabled via <code>#strict</code> at file start, enforces static typing</li>
+<li><strong>Warn Mode</strong>: Compiles in normal mode but warns about strict convention violations</li>
 </ul>
-<p>Warnings are given for projects that mix alternate tokens.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+</div>
+<p>Strict files can only import other strict files, while normal files can import both.</p>
+<h2 id="core-language-features">Core Language Features</h2>
+<h3 id="syntax-alternatives">Syntax Alternatives</h3>
+<p>Doxa provides alternative syntax for common operations. Using mixed styles in the same file triggers warnings.</p>
+<table>
+<thead>
+<tr>
+<th>Primary</th>
+<th>Alternative</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>and</code></td>
+<td><code>&amp;&amp;</code></td>
+<td>Logical AND</td>
+</tr>
+<tr>
+<td><code>or</code></td>
+<td><code>\|\|</code></td>
+<td>Logical OR</td>
+</tr>
+<tr>
+<td><code>equals</code></td>
+<td><code>==</code></td>
+<td>Equality</td>
+</tr>
+<tr>
+<td><code>where</code></td>
+<td><code>\|</code></td>
+<td>Filter conditions</td>
+</tr>
+<tr>
+<td><code>function</code></td>
+<td><code>fn</code></td>
+<td>Function declaration</td>
+</tr>
+</tbody>
+</table>
+<h3 id="type-system">Type System</h3>
+<ul>
+<li>No operator or function overloading</li>
+<li>No classes, only structs and composition</li>
+<li>Garbage collected memory management</li>
+</ul>
+<h3 id="basic-composition-example">Basic Composition Example</h3>
 <div class="highlight"><pre><span></span><code>struct Animal {
     name: string
 }
@@ -432,201 +658,109 @@ var dog = Dog {
     breed: &quot;Labrador&quot;
 };
 </code></pre></div>
-<p>TODO: Modules are supported. strict files can only import other strict files.
-normal files can import both strict and normal files.</p>
+<h3 id="modules">Modules</h3>
 <div class="highlight"><pre><span></span><code>// math.doxa
 #strict
-
-// Explicit exports
 export fn add(a: int, b: int) -&gt; int {
     return a + b;
 }
 
 // main.doxa
 import { add } from &quot;./math.doxa&quot;;
-
-// Explicit usage
 var sum = add(1, 2);
 </code></pre></div>
-<p>match is supported. all cases must be exhaustive but else is
-supported as a fallback.</p>
-<div class="highlight"><pre><span></span><code>enum Number {
-    ZERO,
-    ONE,
-    UNKNOWN
-}
+<h2 id="data-types">Data Types</h2>
+<h3 id="arrays">Arrays</h3>
+<p>Arrays are homogeneous collections with type inference:</p>
+<div class="highlight"><pre><span></span><code>var nums = [1, 2, 3];             // Inferred as int[]
+var strs = [&quot;a&quot;, &quot;b&quot;];            // Inferred as string[]
+var explicit: int[] = [1, 2, 3];  // Explicit typing
 
-switch x {
-    .ZERO =&gt; print(&quot;zero&quot;),
-    .ONE =&gt; print(&quot;one&quot;),
-    .UNKNOWN =&gt; print(&quot;unknown&quot;)
-}
+// Invalid operations
+var mixed = [1, &quot;two&quot;, true];     // Error: mixed types
+nums.push(&quot;four&quot;);                // Error: type mismatch
+</code></pre></div>
+<h3 id="tuples">Tuples</h3>
+<p>Fixed-size collections supporting different types:</p>
+<div class="highlight"><pre><span></span><code>var point = (10, 20, 30);         // Simple tuple
+var nested = ((1, 2), (3, 4));    // Nested tuple
 
-// this is functionally identical to the previous example
-switch x {
-    .ZERO =&gt; print(&quot;zero&quot;),
-    .ONE =&gt; print(&quot;one&quot;),
-    .UNKNOWN =&gt; print(&quot;unknown&quot;)
-}
+point[0];                         // Access first element
+nested[1][0];                     // Access nested element
 </code></pre></div>
-<p>all cases must be covered</p>
-<div class="highlight"><pre><span></span><code>//this is an error, as one or more cases are not covered
-match x {
-    .ZERO =&gt; print(&quot;zero&quot;),
-    .ONE =&gt; print(&quot;one&quot;),
-}
-</code></pre></div>
-<p>try catch is supported</p>
-<div class="highlight"><pre><span></span><code>var x = 0;
-try {
-    var x = 1 / x;
-} catch {
-    handle_error();
-}
-</code></pre></div>
-<p>arrays can only be declared with a homogeneous type. Heterogeneous arrays
-are not supported. Structs are the preferred way to group different types.</p>
-<div class="highlight"><pre><span></span><code>// Only homogeneous arrays allowed
-var nums: int[] = [1, 2, 3];       // OK
-var strs: string[] = [&quot;a&quot;, &quot;b&quot;];   // OK
-
-// These would be errors
-var mixed = [1, &quot;two&quot;, true];      // Error: mixed types in array
-var noType = [1, 2, 3];            // Error: array type must be explicit
-</code></pre></div>
-<p>tuples are supported</p>
-<div class="highlight"><pre><span></span><code>var x = (1, 2, 3);
-x[0]; // 1
-x[1]; // 2
-x[2]; // 3
-</code></pre></div>
-<p>mapping is supported</p>
-<div class="highlight"><pre><span></span><code>var x = {
-    &quot;a&quot;: 1,
-    &quot;b&quot;: 2,
-    &quot;c&quot;: 3
+<h3 id="maps">Maps</h3>
+<p>String-keyed dictionaries:</p>
+<div class="highlight"><pre><span></span><code>var scores = {
+    &quot;alice&quot;: 100,
+    &quot;bob&quot;: 85
 };
-x[&quot;a&quot;]; // 1
-x[&quot;b&quot;]; // 2
-x[&quot;c&quot;]; // 3
+scores[&quot;alice&quot;];                  // Access value
 </code></pre></div>
-<p>there are xor, existensial quantifiers, and universal quantifiers</p>
-<div class="highlight"><pre><span></span><code>var a = true xor false;
-var b = exists i in [1, 2, 3] where i &gt; 1;
-var c = forall i in [1, 2, 3] | i &gt; 1;
-</code></pre></div>
-<p>Doxa has an inspect operator <code>?</code> which can be used to inspect the value of any expression.</p>
-<div class="highlight"><pre><span></span><code>var x = 1;
-x?; // prints [main.doxa:1:1] x = 1
-</code></pre></div>
-<h2 id="doxa-normal-syntax">Doxa normal syntax</h2>
-<p>in normal mode, all variables are dynamically typed by default.
-this can be explicitly marked with the auto type. this allows for
-cross type assignments.</p>
-<div class="highlight"><pre><span></span><code>var x = 1;                //int
-x = true;                 //bool
+<h2 id="control-flow">Control Flow</h2>
+<h3 id="pattern-matching">Pattern Matching</h3>
+<div class="highlight"><pre><span></span><code>enum Status { Success, Error, Pending }
 
-var x: auto = 3.14;      //float
-x = &quot;pi&quot;;                //string
+var result = match status {
+    .Success =&gt; &quot;all good&quot;,
+    .Error =&gt; &quot;failed&quot;,
+    else =&gt; &quot;waiting&quot;
+};
 </code></pre></div>
-<p>constants are declared with the const keyword</p>
-<div class="highlight"><pre><span></span><code>const x = 1;              //int
-const x = &quot;two&quot;;          //string
-const x = [1, 2, 3];      //array
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+</div>
+<p>Match expressions must be exhaustive or include an <code>else</code> clause.</p>
+<h3 id="error-handling">Error Handling</h3>
+<div class="highlight"><pre><span></span><code>try {
+    riskyOperation();
+} catch {
+    handleError();
+}
 </code></pre></div>
-<p>constants cannot be declared without a value but
-type can be inferred like variables.</p>
-<div class="highlight"><pre><span></span><code>const x;                  //error, needs a value
-const x = 1;              //int
-const y: auto = 3.14;    //float
+<h2 id="special-operators">Special Operators</h2>
+<h3 id="inspect">Inspect (<code>?</code>)</h3>
+<div class="highlight"><pre><span></span><code>var x = computeValue();
+x?;                              // Prints value with location
 </code></pre></div>
-<p>type declarations are allowed. when a type is declared safety is enforced.</p>
-<div class="highlight"><pre><span></span><code>var x: int = 1;           //int
-x = &quot;two&quot;;                //error, expected type int
+<h3 id="type-information">Type Information</h3>
+<div class="highlight"><pre><span></span><code>typeof(42);                      // &quot;int&quot;
+typeof(&quot;hello&quot;);                // &quot;string&quot;
+typeof([1,2,3]);               // &quot;array&quot;
 </code></pre></div>
-<p>variables can be declared without a value</p>
-<div class="highlight"><pre><span></span><code>var x: int;               //int
-var x: string;            //string
-var x: float;             //float
-var x: bool;              //bool
-var x: []int;             //array
+<h3 id="collection-quantifiers">Collection Quantifiers</h3>
+<div class="highlight"><pre><span></span><code>exists x in numbers where x &gt; 10  // Any match
+forall x in numbers | x &gt; 0      // All match
 </code></pre></div>
-<p>variables can be declared without a type</p>
-<div class="highlight"><pre><span></span><code>var x;                    //auto
-var x: auto;              //auto
-</code></pre></div>
-<p>cross-type assignments are allowed for auto variables</p>
-<div class="highlight"><pre><span></span><code>var x = 5;                //auto
-x = &quot;five&quot;;               //auto
-</code></pre></div>
-<p>arrays can be declared either with a homogeneous type or a mixed type</p>
-<h2 id="doxa-strict-syntax">Doxa strict syntax</h2>
-<p>constants must be declared with a type and a value</p>
-<div class="highlight"><pre><span></span><code>const x;                  //error, needs a type and a value
-const x: int;             //error, needs a value
-</code></pre></div>
-<p>variables can be declared without a value as long as they are given an explicit type.
-if a variable is declared without a type, it and error is thrown. There is an auto type
-which can be used however type safety is still enforced.</p>
-<div class="highlight"><pre><span></span><code>var x: int;               //int
-var x = &quot;two&quot;;            //error, needs explicit type
-var x: auto = 3.14;       //float
-</code></pre></div>
-<p>variables can be declared without a value as long as they are given an explicit type</p>
-<div class="highlight"><pre><span></span><code>var x: int;               //int
-var x: string;            //string
-var x: float;             //float
-var x: bool;              //bool
-var x: []int;             //array
-</code></pre></div>
-<p>variables cannot be declared without a type</p>
-<div class="highlight"><pre><span></span><code>var x;                    //error, needs explicit type
-var x: auto;              //error, needs explicit type
-</code></pre></div>
-<p>Auto will default the variable to the type of the initial value. no cross-type
-assignments are allowed for strict variables</p>
-<div class="highlight"><pre><span></span><code>var x: auto = 5;          //int
-x = &quot;five&quot;;               //error, given value does not match type int
-</code></pre></div>
-<p>Arrays must be explicitly typed.</p>
-<div class="highlight"><pre><span></span><code>var x: int[] = [1, 2, 3];   //OK
-var x = [1, 2, 3];         //error, needs explicit type
-</code></pre></div>
-<h2 id="conditionals">Conditionals</h2>
-<p>In Doxa, all conditionals are expressions, so they return a value.
-this allows a unified syntax for conditionals and assignments.</p>
-<p>All of the following are functionally equivalent:</p>
-<div class="highlight"><pre><span></span><code>var a;
-if false then a is 5
-else if true then a is 20
-else a is 30;
+<h2 id="type-system-details">Type System Details</h2>
+<h3 id="normal-mode">Normal Mode</h3>
+<p>Variables are dynamically typed by default:</p>
+<div class="highlight"><pre><span></span><code>var x = 1;                      // int
+x = true;                       // bool (allowed)
 
-var b;
-if (false) then {b = 5;}
-else if (true) then {b = 20;}
-else {b = 30;}
-
-var c is
-if false then 5
-else if true then 20
-else 30;
-
-var d =
-if (false) then {5;}
-else if (true) then {20;}
-else {30;};
+var y: auto = 3.14;            // float
+y = &quot;pi&quot;;                      // string (allowed)
 </code></pre></div>
-<p>if an if expression doesn't return a value, it defaults to <code>nothing</code>.</p>
-<div class="highlight"><pre><span></span><code>var x = if (y == 1) { y = 1 } else { y = 2 };
-print(x); // prints the &#39;nothing&#39; value
-
-var x = if (false) { y = 1 } else {};
-print(x); // prints the &#39;nothing&#39; value
+<h3 id="strict-mode">Strict Mode</h3>
+<p>Variables require explicit typing:</p>
+<div class="highlight"><pre><span></span><code>var x: int;                    // Valid declaration
+var x = &quot;two&quot;;                // Error: needs type
+var x: auto = 3.14;           // Type locked to float
+x = &quot;five&quot;;                   // Error: type mismatch
 </code></pre></div>
-<p>if statements without an else branch default to <code>nothing</code>. the following are functionally equivalent:</p>
-<div class="highlight"><pre><span></span><code>var x = if (false) { y = 1 }; // warning raised about possible &#39;nothing&#39; return value
-var x = if (false) { y = 1 } else nothing;
+<h2 id="conditional-expressions">Conditional Expressions</h2>
+<p>All conditionals are expressions and return values:</p>
+<div class="highlight"><pre><span></span><code>var result = if condition then {
+    value1
+} else {
+    value2
+};
 </code></pre></div>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+</div>
+<p>Expressions without a value return <code>nothing</code>:
+<code>doxa
+    var x = if (false) { y = 1 };  // x becomes nothing</code></p>
 
 
 
