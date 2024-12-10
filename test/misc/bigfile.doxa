@@ -29,9 +29,9 @@ result?; // It's something else
 function fizzbuzz(x: int) {
     var current is x;
     while current <= 15 {
-        if current % 15 equals 0 then "fizzbuzz"?;
-        else if current % 3 equals 0 then "fizz"?;
-        else if current % 5 equals 0 then "buzz"?;
+        if current % 3 == 0 && current % 5 == 0 then "fizzbuzz"?;
+        else if current % 3 == 0 then "fizz"?;
+        else if current % 5 == 0 then "buzz"?;
         else current?;
         
         current += 1;
@@ -87,7 +87,7 @@ arr[3]?; // 6
 var ex = exists e in arr where e > 3;
 ex?; // true
 
-var uni = forall u in arr where u > 3;
+var uni = forall u in arr | u > 3;
 uni?; // false
 
 // conditionals
@@ -126,6 +126,10 @@ try {
     "can't do that"?;
 }
 con?; // 1
+
+//trigger or warning conflict
+var or1 is true or false;
+var or2 is true || false;
 
 // typeof
 var _int = 5;

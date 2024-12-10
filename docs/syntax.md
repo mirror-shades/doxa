@@ -17,8 +17,10 @@ Doxa has some choice code keywords:
 - `function` and `fn` are functionally identical
 - `and` and `&&` are functionally identical
 - `or` and `||` are functionally identical
+- `equals` and `==` are functionally identical
+- `where` and `|` are functionally identical
 
-Warnings are given for projects that mix symbolic and keyword conditionals.
+Warnings are given for projects that mix alternate tokens.
 
 ```
 struct Animal {
@@ -138,6 +140,14 @@ var x = {
 x["a"]; // 1
 x["b"]; // 2
 x["c"]; // 3
+```
+
+there are xor, existensial quantifiers, and universal quantifiers
+
+```
+var a = true xor false;
+var b = exists i in [1, 2, 3] where i > 1;
+var c = forall i in [1, 2, 3] | i > 1;
 ```
 
 Doxa has an inspect operator `?` which can be used to inspect the value of any expression.
