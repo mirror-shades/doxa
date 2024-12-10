@@ -14,7 +14,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.46">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.48">
     
     
       
@@ -402,29 +402,17 @@ mode called <code>warn</code> which compiles files in normal mode but gives warn
 <h2 id="general-syntax">General syntax</h2>
 <p>both <code>||</code> and <code>&amp;&amp;</code> are supported alongside <code>and</code> and <code>or</code>. a clarity warning is given if both are used in the same file.</p>
 <p>No operator or function overloading.</p>
-<p>Memory management is handled via garbage collection.</p>
+<p>TODO: Memory management is handled via garbage collection.</p>
 <p>No classes, only structs and composition.</p>
-<p>Try catch is based on Zig's error union model which allows for safer error handling.</p>
-<div class="highlight"><pre><span></span><code>fn divide(a: int, b: int) !int {
-    if (b == 0) return error.DivisionByZero;
-    return a / b;
-}
-
-// Usage
-var result = try divide(10, 0);
-// or
-var result = divide(10, 0) catch |err| {
-    log.error(&quot;Failed to divide: {}&quot;, err);
-    return;
-};
-</code></pre></div>
 <p>Doxa has some choice code keywords:</p>
 <ul>
 <li><code>function</code> and <code>fn</code> are functionally identical</li>
 <li><code>and</code> and <code>&amp;&amp;</code> are functionally identical</li>
 <li><code>or</code> and <code>||</code> are functionally identical</li>
+<li><code>equals</code> and <code>==</code> are functionally identical</li>
+<li><code>where</code> and <code>|</code> are functionally identical</li>
 </ul>
-<p>warnings are given for projects that mix symbolic and keyword conditionals.</p>
+<p>Warnings are given for projects that mix alternate tokens.</p>
 <div class="highlight"><pre><span></span><code>struct Animal {
     name: string
 }
@@ -444,7 +432,7 @@ var dog = Dog {
     breed: &quot;Labrador&quot;
 };
 </code></pre></div>
-<p>modules are supported. strict files can only import other strict files.
+<p>TODO: Modules are supported. strict files can only import other strict files.
 normal files can import both strict and normal files.</p>
 <div class="highlight"><pre><span></span><code>// math.doxa
 #strict
@@ -460,43 +448,76 @@ import { add } from &quot;./math.doxa&quot;;
 // Explicit usage
 var sum = add(1, 2);
 </code></pre></div>
-<p>match is supported rather than switch. match cases must be exhaustive but
-else is supported as a fallback.</p>
+<p>match is supported. all cases must be exhaustive but else is
+supported as a fallback.</p>
 <div class="highlight"><pre><span></span><code>enum Number {
+    ZERO,
     ONE,
-    TWO,
     UNKNOWN
 }
 
-match x {
+switch x {
+    .ZERO =&gt; print(&quot;zero&quot;),
     .ONE =&gt; print(&quot;one&quot;),
-    .TWO =&gt; print(&quot;two&quot;),
     .UNKNOWN =&gt; print(&quot;unknown&quot;)
 }
 
 // this is functionally identical to the previous example
-match x {
+switch x {
+    .ZERO =&gt; print(&quot;zero&quot;),
     .ONE =&gt; print(&quot;one&quot;),
-    .TWO =&gt; print(&quot;two&quot;),
-    else =&gt; print(&quot;unknown&quot;)
+    .UNKNOWN =&gt; print(&quot;unknown&quot;)
 }
 </code></pre></div>
 <p>all cases must be covered</p>
 <div class="highlight"><pre><span></span><code>//this is an error, as one or more cases are not covered
 match x {
+    .ZERO =&gt; print(&quot;zero&quot;),
     .ONE =&gt; print(&quot;one&quot;),
-    .TWO =&gt; print(&quot;two&quot;)
+}
+</code></pre></div>
+<p>try catch is supported</p>
+<div class="highlight"><pre><span></span><code>var x = 0;
+try {
+    var x = 1 / x;
+} catch {
+    handle_error();
 }
 </code></pre></div>
 <p>arrays can only be declared with a homogeneous type. Heterogeneous arrays
 are not supported. Structs are the preferred way to group different types.</p>
 <div class="highlight"><pre><span></span><code>// Only homogeneous arrays allowed
-var nums: []int = [1, 2, 3];       // OK
-var strs: []string = [&quot;a&quot;, &quot;b&quot;];   // OK
+var nums: int[] = [1, 2, 3];       // OK
+var strs: string[] = [&quot;a&quot;, &quot;b&quot;];   // OK
 
 // These would be errors
 var mixed = [1, &quot;two&quot;, true];      // Error: mixed types in array
 var noType = [1, 2, 3];            // Error: array type must be explicit
+</code></pre></div>
+<p>tuples are supported</p>
+<div class="highlight"><pre><span></span><code>var x = (1, 2, 3);
+x[0]; // 1
+x[1]; // 2
+x[2]; // 3
+</code></pre></div>
+<p>mapping is supported</p>
+<div class="highlight"><pre><span></span><code>var x = {
+    &quot;a&quot;: 1,
+    &quot;b&quot;: 2,
+    &quot;c&quot;: 3
+};
+x[&quot;a&quot;]; // 1
+x[&quot;b&quot;]; // 2
+x[&quot;c&quot;]; // 3
+</code></pre></div>
+<p>there are xor, existensial quantifiers, and universal quantifiers</p>
+<div class="highlight"><pre><span></span><code>var a = true xor false;
+var b = exists i in [1, 2, 3] where i &gt; 1;
+var c = forall i in [1, 2, 3] | i &gt; 1;
+</code></pre></div>
+<p>Doxa has an inspect operator <code>?</code> which can be used to inspect the value of any expression.</p>
+<div class="highlight"><pre><span></span><code>var x = 1;
+x?; // prints [main.doxa:1:1] x = 1
 </code></pre></div>
 <h2 id="doxa-normal-syntax">Doxa normal syntax</h2>
 <p>in normal mode, all variables are dynamically typed by default.
@@ -566,6 +587,10 @@ var x: auto;              //error, needs explicit type
 assignments are allowed for strict variables</p>
 <div class="highlight"><pre><span></span><code>var x: auto = 5;          //int
 x = &quot;five&quot;;               //error, given value does not match type int
+</code></pre></div>
+<p>Arrays must be explicitly typed.</p>
+<div class="highlight"><pre><span></span><code>var x: int[] = [1, 2, 3];   //OK
+var x = [1, 2, 3];         //error, needs explicit type
 </code></pre></div>
 <h2 id="conditionals">Conditionals</h2>
 <p>In Doxa, all conditionals are expressions, so they return a value.
