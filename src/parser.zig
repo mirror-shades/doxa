@@ -57,11 +57,18 @@ pub const Parser = struct {
 
     // tracking style conflicts
     fn_style: TokenStyle = .Undefined,
+    assign_style: TokenStyle = .Undefined,
+    equality_style: TokenStyle = .Undefined,
     and_style: TokenStyle = .Undefined,
     or_style: TokenStyle = .Undefined,
+    where_style: TokenStyle = .Undefined,
+
     fn_style_warning_shown: bool = false,
+    assign_style_warning_shown: bool = false,
+    equality_style_warning_shown: bool = false,
     and_style_warning_shown: bool = false,
     or_style_warning_shown: bool = false,
+    where_style_warning_shown: bool = false,
 
     const rules = blk: {
         var r = std.EnumArray(token.TokenType, ParseRule).initFill(ParseRule{});
@@ -77,7 +84,8 @@ pub const Parser = struct {
         r.set(.PLUS_EQUAL, .{ .infix = compound_assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
 
         // Comparison operators
-        r.set(.EQUALITY, .{ .infix = binary, .precedence = .EQUALITY });
+        r.set(.EQUALITY_SYMBOL, .{ .infix = binary, .precedence = .EQUALITY });
+        r.set(.EQUALITY_KEYWORD, .{ .infix = binary, .precedence = .EQUALITY });
         r.set(.BANG_EQUAL, .{ .infix = binary, .precedence = .EQUALITY });
         r.set(.LESS, .{ .infix = binary, .precedence = .COMPARISON });
         r.set(.LESS_EQUAL, .{ .infix = binary, .precedence = .COMPARISON });
@@ -108,7 +116,8 @@ pub const Parser = struct {
         r.set(.VAR, .{ .prefix = variable });
         r.set(.CONST, .{ .prefix = variable });
         r.set(.IDENTIFIER, .{ .prefix = variable });
-        r.set(.ASSIGN, .{ .infix = assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
+        r.set(.ASSIGN_SYMBOL, .{ .infix = assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
+        r.set(.ASSIGN_KEYWORD, .{ .infix = assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
         r.set(.ARRAY_TYPE, .{ .prefix = variable, .infix = fieldAccess });
 
         // Control flow
@@ -226,6 +235,16 @@ pub const Parser = struct {
                 self.current + 1,
             });
         }
+
+        // Check for alternate tokens before advancing
+        const current = self.peek();
+        if (isAlternateToken(current.type)) {
+            if (self.debug_enabled) {
+                std.debug.print("Checking alternate token: {s}\n", .{@tagName(current.type)});
+            }
+            self.updateTokenStyle(current.type);
+        }
+
         // Only advance if we're not at the end
         if (self.current < self.tokens.len - 1) {
             self.current += 1;
@@ -267,6 +286,13 @@ pub const Parser = struct {
         }
     }
 
+    fn isAlternateToken(token_type: token.TokenType) bool {
+        return switch (token_type) {
+            .ASSIGN_SYMBOL, .ASSIGN_KEYWORD, .EQUALITY_SYMBOL, .EQUALITY_KEYWORD, .AND_SYMBOL, .AND_KEYWORD, .OR_SYMBOL, .OR_KEYWORD, .WHERE_SYMBOL, .WHERE_KEYWORD, .FN_KEYWORD, .FUNCTION_KEYWORD => true,
+            else => false,
+        };
+    }
+
     pub fn parse(self: *Parser) ErrorList![]ast.Stmt {
         if (self.debug_enabled) {
             std.debug.print("\nToken stream:\n", .{});
@@ -300,7 +326,6 @@ pub const Parser = struct {
                         ast.Stmt{ .Expression = null };
                     break :blk block_stmt;
                 } else if (self.peek().type == .FN_KEYWORD or self.peek().type == .FUNCTION_KEYWORD) {
-                    self.updateTokenStyle(self.peek().type);
                     break :blk try self.parseFunctionDecl();
                 } else if (self.peek().type == .STRUCT_TYPE) {
                     break :blk try self.parseStructDeclStmt();
@@ -356,7 +381,7 @@ pub const Parser = struct {
             };
 
             var initializer: ?*ast.Expr = null;
-            if (self.peek().type == .ASSIGN) {
+            if (self.peek().type == .ASSIGN_SYMBOL or self.peek().type == .ASSIGN_KEYWORD) {
                 self.advance();
                 if (self.debug_enabled) {
                     std.debug.print("\nParsing array initializer at position {}, token: {s}\n", .{
@@ -436,7 +461,7 @@ pub const Parser = struct {
         }
 
         var initializer: ?*ast.Expr = null;
-        if (self.peek().type == .ASSIGN) {
+        if (self.peek().type == .ASSIGN_SYMBOL or self.peek().type == .ASSIGN_KEYWORD) {
             self.advance();
             if (self.debug_enabled) {
                 std.debug.print("\nParsing var initializer at position {}, token: {s}\n", .{
@@ -1301,7 +1326,7 @@ pub const Parser = struct {
         self.advance(); // consume ]
 
         // Check if this is an assignment
-        if (self.peek().type == .ASSIGN) {
+        if (self.peek().type == .ASSIGN_SYMBOL or self.peek().type == .ASSIGN_KEYWORD) {
             self.advance(); // consume =
             const value = try self.parsePrecedence(.NONE) orelse return error.ExpectedExpression;
 
@@ -1342,7 +1367,6 @@ pub const Parser = struct {
 
         const operator = self.tokens[self.current - 1]; // Get the operator token (AND/OR)
         const right = try self.parsePrecedence(precedence) orelse return error.ExpectedExpression;
-        self.updateTokenStyle(operator.type);
         const logical_expr = try self.allocator.create(ast.Expr);
         logical_expr.* = .{ .Logical = .{
             .left = left.?,
@@ -1468,7 +1492,7 @@ pub const Parser = struct {
 
             // Handle default value
             var default_value: ?*ast.Expr = null;
-            if (self.peek().type == .ASSIGN) {
+            if (self.peek().type == .ASSIGN_SYMBOL or self.peek().type == .ASSIGN_KEYWORD) {
                 self.advance(); // consume =
                 const value_expr = try self.parseExpression() orelse return error.ExpectedExpression;
                 const default_literal = try self.allocator.create(ast.Expr);
@@ -1850,7 +1874,7 @@ pub const Parser = struct {
             self.advance();
 
             // Expect equals
-            if (self.peek().type != .ASSIGN) {
+            if (self.peek().type != .ASSIGN_SYMBOL and self.peek().type != .ASSIGN_KEYWORD) {
                 return error.ExpectedEquals;
             }
             self.advance();
@@ -2618,16 +2642,48 @@ pub const Parser = struct {
     fn updateTokenStyle(self: *Parser, token_type: token.TokenType) void {
         // Runtime style determination
         var new_style: TokenStyle = .Undefined;
-        if (token_type == .FUNCTION_KEYWORD or token_type == .AND_KEYWORD or token_type == .OR_KEYWORD) {
+        if (token_type == .FUNCTION_KEYWORD or token_type == .AND_KEYWORD or token_type == .OR_KEYWORD or token_type == .ASSIGN_KEYWORD or token_type == .EQUALITY_KEYWORD or token_type == .WHERE_KEYWORD) {
             new_style = .Keyword;
-        } else if (token_type == .FN_KEYWORD or token_type == .AND_SYMBOL or token_type == .OR_SYMBOL) {
+        } else if (token_type == .FN_KEYWORD or token_type == .AND_SYMBOL or token_type == .OR_SYMBOL or token_type == .ASSIGN_SYMBOL or token_type == .EQUALITY_SYMBOL or token_type == .WHERE_SYMBOL) {
             new_style = .Symbol;
         } else {
             return;
         }
-
+        if (self.debug_enabled) {
+            std.debug.print("Updating token style for: {s}\n", .{@tagName(token_type)});
+        }
         // Check and update styles
         switch (token_type) {
+            .WHERE_KEYWORD, .WHERE_SYMBOL => {
+                if (self.where_style != .Undefined and self.where_style != new_style and !self.where_style_warning_shown) {
+                    self.reportWarning("Style conflict for 'where' keyword and '|' symbol");
+                    self.where_style_warning_shown = true;
+                    return;
+                }
+                if (self.where_style == .Undefined) {
+                    self.where_style = new_style;
+                }
+            },
+            .ASSIGN_KEYWORD, .ASSIGN_SYMBOL => {
+                if (self.assign_style != .Undefined and self.assign_style != new_style and !self.assign_style_warning_shown) {
+                    self.reportWarning("Style conflict for 'assignment' keyword and '=' symbol");
+                    self.assign_style_warning_shown = true;
+                    return;
+                }
+                if (self.assign_style == .Undefined) {
+                    self.assign_style = new_style;
+                }
+            },
+            .EQUALITY_KEYWORD, .EQUALITY_SYMBOL => {
+                if (self.equality_style != .Undefined and self.equality_style != new_style and !self.equality_style_warning_shown) {
+                    self.reportWarning("Style conflict for 'equality' keyword and '==' symbol");
+                    self.equality_style_warning_shown = true;
+                    return;
+                }
+                if (self.equality_style == .Undefined) {
+                    self.equality_style = new_style;
+                }
+            },
             .FN_KEYWORD, .FUNCTION_KEYWORD => {
                 if (self.fn_style != .Undefined and self.fn_style != new_style and !self.fn_style_warning_shown) {
                     self.reportWarning("Style conflict for 'fn' and 'function' keywords");

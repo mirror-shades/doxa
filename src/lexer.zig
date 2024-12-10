@@ -98,11 +98,11 @@ pub const Lexer = struct {
         try self.keywords.put("async", .ASYNC);
         try self.keywords.put("await", .AWAIT);
         try self.keywords.put("typeof", .TYPEOF);
-        try self.keywords.put("is", .IS);
+        try self.keywords.put("is", .ASSIGN_KEYWORD);
         try self.keywords.put("as", .AS);
         try self.keywords.put("from", .FROM);
         try self.keywords.put("auto", .AUTO);
-        try self.keywords.put("equals", .EQUALITY);
+        try self.keywords.put("equals", .EQUALITY_KEYWORD);
         try self.keywords.put("int", .INT_TYPE);
         try self.keywords.put("float", .FLOAT_TYPE);
         try self.keywords.put("string", .STRING_TYPE);
@@ -266,11 +266,11 @@ pub const Lexer = struct {
             },
             '=' => {
                 if (self.match('=')) {
-                    try self.addMinimalToken(.EQUALITY);
+                    try self.addMinimalToken(.EQUALITY_SYMBOL);
                 } else if (self.match('>')) {
                     try self.addMinimalToken(.ARROW);
                 } else {
-                    try self.addMinimalToken(.ASSIGN);
+                    try self.addMinimalToken(.ASSIGN_SYMBOL);
                 }
             },
             '<' => {
@@ -498,8 +498,6 @@ pub const Lexer = struct {
         if (self.keywords.get(text)) |keyword_type| {
             switch (keyword_type) {
                 .BOOL => try self.addToken(.BOOL, .{ .boolean = std.mem.eql(u8, text, "true") }),
-                .IS => try self.addMinimalToken(.ASSIGN),
-                .EQUALITY => try self.addMinimalToken(.EQUALITY),
                 else => try self.addMinimalToken(keyword_type),
             }
         } else {

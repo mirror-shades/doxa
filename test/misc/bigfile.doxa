@@ -77,11 +77,18 @@ mike.person.age?; // 26
 mike.salary?; // 1000
 
 // arrays
-var array = [1, 2, 3, 4, 5];
+var arr = [1, 2, 3, 4, 5];
 
-array[3]?; // 4
-array[3] = 6;
-array[3]?; // 6
+arr[3]?; // 4
+arr[3] = 6;
+arr[3]?; // 6
+
+// quantifiers
+var ex = exists e in arr where e > 3;
+ex?; // true
+
+var uni = forall u in arr where u > 3;
+uni?; // false
 
 // conditionals
 var condition is if true then "true" else "false";
@@ -133,8 +140,7 @@ typeof(_string)?; // string
 var _boolean = true;
 typeof(_boolean)?; // boolean
 
-var _array = [1, 2, 3];
-typeof(_array)?; // array
+typeof(arr)?; // array
 
 typeof(Employee)?; // struct
 
