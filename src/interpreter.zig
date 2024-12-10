@@ -885,34 +885,47 @@ pub const Interpreter = struct {
                     else => "value",
                 } });
 
-                // Format the value into the buffer
+                // Format the value into the buffer based on its type
                 switch (value) {
                     .int => |i| try buffer.writer().print("{d}", .{i}),
                     .float => |f| try buffer.writer().print("{d}", .{f}),
                     .boolean => |b| try buffer.writer().print("{}", .{b}),
-                    .string => |s| try buffer.writer().print("\"{s}\"", .{s}),
+                    .string => |s| {
+                        // Only wrap in quotes if it's a literal string value, not a type name or enum variant
+                        if (print.expr.* == .TypeOf or print.expr.* == .EnumMember) {
+                            try buffer.writer().print("{s}", .{s});
+                        } else {
+                            try buffer.writer().print("\"{s}\"", .{s});
+                        }
+                    },
                     .nothing => try buffer.writer().print("nothing", .{}),
                     .array => |arr| {
                         try buffer.writer().print("[", .{});
                         for (arr, 0..) |item, i| {
                             if (i > 0) try buffer.writer().print(", ", .{});
-                            try buffer.writer().print("{any}", .{item});
+                            switch (item) {
+                                .string => |s| try buffer.writer().print("\"{s}\"", .{s}),
+                                else => try buffer.writer().print("{any}", .{item}),
+                            }
                         }
                         try buffer.writer().print("]", .{});
                     },
-                    .function => try buffer.writer().print("<function>", .{}),
+                    .function => try buffer.writer().print("function", .{}),
                     .struct_value => |sv| try buffer.writer().print("{any}", .{sv}),
                     .enum_variant => |variant| try buffer.writer().print(".{s}", .{variant}),
                     .tuple => |tup| {
                         try buffer.writer().print("(", .{});
                         for (tup, 0..) |item, i| {
                             if (i > 0) try buffer.writer().print(", ", .{});
-                            try buffer.writer().print("{any}", .{item});
+                            switch (item) {
+                                .string => |s| try buffer.writer().print("\"{s}\"", .{s}),
+                                else => try buffer.writer().print("{any}", .{item}),
+                            }
                         }
                         try buffer.writer().print(")", .{});
                     },
                     .map => |m| {
-                        try buffer.writer().print("{{", .{}); // Double {{ to escape
+                        try buffer.writer().print("{{", .{}); // Double braces for escaping
                         var iter = m.iterator();
                         var first = true;
                         while (iter.next()) |entry| {
@@ -920,46 +933,48 @@ pub const Interpreter = struct {
                                 try buffer.writer().print(", ", .{});
                             }
                             first = false;
-                            try buffer.writer().print("\"{s}\": ", .{entry.key_ptr.*});
+                            try buffer.writer().print("{s}: ", .{entry.key_ptr.*});
 
-                            // Format the value based on its type
                             switch (entry.value_ptr.*) {
+                                .string => |s| try buffer.writer().print("\"{s}\"", .{s}),
                                 .int => |i| try buffer.writer().print("{d}", .{i}),
                                 .float => |f| try buffer.writer().print("{d}", .{f}),
                                 .boolean => |b| try buffer.writer().print("{}", .{b}),
-                                .string => |s| try buffer.writer().print("\"{s}\"", .{s}),
                                 .nothing => try buffer.writer().print("nothing", .{}),
                                 .array => |arr| {
                                     try buffer.writer().print("[", .{});
                                     for (arr, 0..) |item, i| {
                                         if (i > 0) try buffer.writer().print(", ", .{});
-                                        try buffer.writer().print("{any}", .{item});
+                                        switch (item) {
+                                            .string => |s| try buffer.writer().print("\"{s}\"", .{s}),
+                                            else => try buffer.writer().print("{any}", .{item}),
+                                        }
                                     }
                                     try buffer.writer().print("]", .{});
                                 },
-                                .map => try buffer.writer().print("<nested-map>", .{}),
-                                .function => try buffer.writer().print("<function>", .{}),
+                                .map => try buffer.writer().print("nested-map", .{}),
+                                .function => try buffer.writer().print("function", .{}),
                                 .struct_value => |sv| try buffer.writer().print("{any}", .{sv}),
                                 .enum_variant => |variant| try buffer.writer().print(".{s}", .{variant}),
                                 .tuple => |tup| {
                                     try buffer.writer().print("(", .{});
                                     for (tup, 0..) |item, i| {
                                         if (i > 0) try buffer.writer().print(", ", .{});
-                                        try buffer.writer().print("{any}", .{item});
+                                        switch (item) {
+                                            .string => |s| try buffer.writer().print("\"{s}\"", .{s}),
+                                            else => try buffer.writer().print("{any}", .{item}),
+                                        }
                                     }
                                     try buffer.writer().print(")", .{});
                                 },
                             }
                         }
-                        try buffer.writer().print("}}", .{});
+                        try buffer.writer().print("}}", .{}); // Double braces for escaping
                     },
                 }
 
                 try buffer.writer().print("\n", .{});
-
-                // Write the entire buffer at once
                 try std.io.getStdOut().writeAll(buffer.items);
-
                 return value;
             },
             .While => |while_expr| {
@@ -1301,7 +1316,6 @@ pub const Interpreter = struct {
                         .function => "function",
                         .struct_value => |sv| sv.type_name,
                         .enum_variant => |_| {
-                            // Get the enum type name from the field access expression
                             if (expr_value.* == .FieldAccess) {
                                 return token.TokenLiteral{ .string = expr_value.FieldAccess.object.Variable.lexeme };
                             }
