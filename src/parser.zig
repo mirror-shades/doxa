@@ -46,7 +46,7 @@ const TokenStyle = enum {
 };
 
 pub const Parser = struct {
-    pub const Mode = enum { Strict, Normal }; // Declare enum once at struct level
+    pub const Mode = enum { Safe, Normal }; // Declare enum once at struct level
 
     tokens: []const token.Token,
     current: usize,
@@ -267,20 +267,19 @@ pub const Parser = struct {
 
     fn parseDirective(self: *Parser) ErrorList!void {
         const current = self.peek();
-        // Handle directives at the start of parsing
         if (current.type == .HASH) {
             self.advance(); // consume #
             if (self.peek().type == .IDENTIFIER) {
-                const directive = self.peek().lexeme;
-                if (std.mem.eql(u8, directive, "strict")) {
-                    self.mode = .Strict;
-                    if (self.debug_enabled) {
-                        std.debug.print("Strict mode enabled\n", .{});
-                    }
-                    self.advance(); // consume directive name
-                    return;
+                // if identifer, do something for custom doxas, ect. ect.
+                // this wont be added for a long time so don't wait around
+            }
+            if (self.peek().type == .SAFE) {
+                self.mode = .Safe;
+                if (self.debug_enabled) {
+                    std.debug.print("Safe mode enabled\n", .{});
                 }
-                return error.UnknownDirective;
+                self.advance(); // consume directive name
+                return;
             }
             return error.InvalidDirective;
         }
@@ -456,7 +455,7 @@ pub const Parser = struct {
                     .is_mutable = !is_const,
                 };
             }
-        } else if (self.mode == .Strict) {
+        } else if (self.mode == .Safe) {
             return error.MissingTypeAnnotation;
         }
 

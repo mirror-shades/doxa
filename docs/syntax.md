@@ -5,11 +5,11 @@
 Doxa supports three operational modes:
 
 - **Normal Mode** (default): Dynamic typing with flexible syntax
-- **Strict Mode**: Enabled via `#strict` at file start, enforces static typing
-- **Warn Mode**: Compiles in normal mode but warns about strict convention violations
+- **Safe Mode**: Enabled via `#safe` at file start, enforces static typing
+- **Warn Mode**: Compiles in normal mode but warns about safe convention violations
 
 !!! note
-Strict files can only import other strict files, while normal files can import both.
+Safe files can only import other safe files, while normal files can import both.
 
 ## Core Language Features
 
@@ -58,7 +58,7 @@ var dog = Dog {
 
 ```doxa
 // math.doxa
-#strict
+#safe
 export fn add(a: int, b: int) -> int {
     return a + b;
 }
@@ -173,7 +173,7 @@ var y: auto = 3.14;            // float
 y = "pi";                      // string (allowed)
 ```
 
-### Strict Mode
+### Safe Mode
 
 Variables require explicit typing:
 
@@ -182,6 +182,20 @@ var x: int;                    // Valid declaration
 var x = "two";                // Error: needs type
 var x: auto = 3.14;           // Type locked to float
 x = "five";                   // Error: type mismatch
+```
+
+Explicit return type declarations are required:
+
+```doxa
+// Safe Mode - Valid
+fn greet(name: string) -> string {
+    return "Hello ${name}!";
+}
+
+// Safe Mode - Error: missing return type
+fn greet(name: string) {
+    return "Hello ${name}!";
+}
 ```
 
 ## Conditional Expressions
@@ -201,3 +215,27 @@ Expressions without a value return `nothing`:
 `doxa
     var x = if (false) { y = 1 };  // x becomes nothing
     `
+
+### Function Return Types
+
+Functions can specify return types using either `->` or `returns` syntax:
+
+```doxa
+fn add(a: int, b: int) -> int {
+    return a + b;
+}
+
+// Alternative syntax
+fn add(a: int, b: int) returns(int) {
+    return a + b;
+}
+```
+
+return types are optional and inferred by default:
+
+```doxa
+// Normal Mode - Valid
+fn add(a, b) {
+    return a + b;
+}
+```

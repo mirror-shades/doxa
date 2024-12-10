@@ -1,7 +1,7 @@
 data types:
 
 - int: i32
-- float: f32
+- float: f64
 - bool: bool
 - nothing: void
 - string: []const u8

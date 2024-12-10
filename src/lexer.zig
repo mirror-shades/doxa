@@ -116,6 +116,9 @@ pub const Lexer = struct {
         try self.keywords.put("where", .WHERE_KEYWORD);
         try self.keywords.put("tuple", .TUPLE_TYPE);
         try self.keywords.put("map", .MAP_TYPE);
+        try self.keywords.put("safe", .SAFE);
+        try self.keywords.put("normal", .NORMAL);
+        try self.keywords.put("guide", .GUIDE);
     }
 
     //======================================================================

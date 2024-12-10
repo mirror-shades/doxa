@@ -24,7 +24,7 @@ const DOXA_EXTENSION = ".doxa";
 ///==========================================================================
 pub var hadError: bool = false;
 var compile: bool = false;
-var is_strict_repl: bool = false;
+var is_safe_repl: bool = false;
 ///==========================================================================
 /// Types & Errors
 ///==========================================================================
@@ -132,8 +132,8 @@ pub fn main() !void {
     var script_path: ?[]const u8 = null;
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
-        if (std.mem.eql(u8, args[i], "--strict-repl")) {
-            is_strict_repl = true;
+        if (std.mem.eql(u8, args[i], "--safe-repl")) {
+            is_safe_repl = true;
         } else if (std.mem.eql(u8, args[i], "--debug")) {
             memory.debug_enabled = true;
         } else if (std.mem.eql(u8, args[i], "--compile")) {
