@@ -78,6 +78,7 @@ pub const Lexer = struct {
         try self.keywords.put("fn", .FN_KEYWORD);
         try self.keywords.put("function", .FUNCTION_KEYWORD);
         try self.keywords.put("return", .RETURN);
+        try self.keywords.put("returns", .RETURNS);
         try self.keywords.put("const", .CONST);
         try self.keywords.put("var", .VAR);
         try self.keywords.put("struct", .STRUCT);

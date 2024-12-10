@@ -142,6 +142,8 @@ pub const ErrorList = error{
     ExpectedArrayType,
     ExpectedWhereKeyword,
     UnsupportedCompoundOperator,
+    MissingParameterType,
+    MissingReturnType,
 
     // Miscellaneous
     NotImplemented,

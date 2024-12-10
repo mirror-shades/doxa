@@ -1143,13 +1143,16 @@ pub const Parser = struct {
         self.advance();
 
         // Parse return type
-        var return_type = ast.TypeInfo{ .base = .Dynamic };
-        if (self.peek().type == .COLON) {
+        var return_type = ast.TypeInfo{ .base = .Nothing }; // Default to nothing
+        var has_return_type = false;
+
+        if (self.peek().type == .RETURNS) {
+            has_return_type = true;
             self.advance();
-            if (self.peek().type == .AUTO) {
-                self.advance();
-                return_type.base = .Auto;
-            } else {
+            if (self.peek().type == .LEFT_PAREN) {
+                self.advance(); // consume (
+
+                // Parse return type
                 const type_name = self.peek();
                 self.advance();
                 return_type.base = switch (type_name.type) {
@@ -1159,6 +1162,28 @@ pub const Parser = struct {
                     .BOOLEAN_TYPE => .Boolean,
                     else => return error.InvalidType,
                 };
+
+                if (self.peek().type != .RIGHT_PAREN) {
+                    return error.ExpectedRightParen;
+                }
+                self.advance();
+            } else {
+                return error.ExpectedLeftParen; // In Safe Mode, must use returns(type) syntax
+            }
+        }
+
+        if (self.mode == .Safe) {
+            // In safe mode:
+            // 1. All parameters must have types
+            for (params.items) |param| {
+                if (param.type_expr == null) {
+                    return error.MissingParameterType;
+                }
+            }
+
+            // 2. If function has any return statements with values, must use returns(type)
+            if ((try self.hasReturnWithValue()) and !has_return_type) {
+                return error.MissingReturnType;
             }
         }
 
@@ -1175,6 +1200,61 @@ pub const Parser = struct {
             .return_type_info = return_type,
             .body = body,
         } };
+    }
+
+    fn hasReturnWithValue(self: *Parser) !bool {
+        // Find the opening brace of the function body
+        var pos = self.current;
+        while (pos < self.tokens.len and self.tokens[pos].type != .LEFT_BRACE) {
+            pos += 1;
+        }
+        if (pos >= self.tokens.len) return false;
+
+        // Start scanning after the opening brace
+        pos += 1;
+        var brace_count: usize = 1;
+        var found_return_value = false;
+
+        if (self.debug_enabled) {
+            std.debug.print("Scanning for return values starting at position {}\n", .{pos});
+        }
+
+        while (pos < self.tokens.len) {
+            const current_token = self.tokens[pos];
+
+            if (self.debug_enabled) {
+                std.debug.print("Scanning token: {s} at position {}\n", .{ @tagName(current_token.type), pos });
+            }
+
+            switch (current_token.type) {
+                .LEFT_BRACE => {
+                    brace_count += 1;
+                },
+                .RIGHT_BRACE => {
+                    brace_count -= 1;
+                    if (brace_count == 0) break;
+                },
+                .RETURN => {
+                    // Check next token
+                    if (pos + 1 < self.tokens.len) {
+                        const next_token = self.tokens[pos + 1];
+                        if (next_token.type != .SEMICOLON) {
+                            found_return_value = true;
+                            break;
+                        }
+                    }
+                },
+                else => {},
+            }
+
+            pos += 1;
+        }
+
+        if (self.debug_enabled) {
+            std.debug.print("Scan complete. Found return value: {}\n", .{found_return_value});
+        }
+
+        return found_return_value;
     }
 
     fn parseBlockStmt(self: *Parser) ErrorList![]ast.Stmt {
