@@ -255,6 +255,9 @@ pub const Parser = struct {
                 const directive = self.peek().lexeme;
                 if (std.mem.eql(u8, directive, "strict")) {
                     self.mode = .Strict;
+                    if (self.debug_enabled) {
+                        std.debug.print("Strict mode enabled\n", .{});
+                    }
                     self.advance(); // consume directive name
                     return;
                 }
@@ -412,6 +415,8 @@ pub const Parser = struct {
                 else => return error.ExpectedType,
             };
             self.advance(); // consume type identifier
+        } else if (self.mode == .Strict) {
+            return error.MissingTypeAnnotation;
         }
 
         var initializer: ?*ast.Expr = null;
