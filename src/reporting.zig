@@ -172,6 +172,13 @@ pub const ErrorList = error{
     InvalidArgument,
     NotOpenForWriting,
     LockViolation,
+
+    // Entry Points
+    MultipleEntryPoints,
+    EntryPointMustBeMain,
+    MissingEntryPoint,
+    ExpectedFunction,
+    InvalidEntryPoint,
 };
 
 /// Reporting provides structured error handling and reporting capabilities

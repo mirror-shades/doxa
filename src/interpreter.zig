@@ -140,25 +140,81 @@ pub const Interpreter = struct {
     debug_enabled: bool,
     string_interner: StringInterner,
     stdout_buffer: std.ArrayList(u8),
+    entry_point: ?[]const u8 = null,
 
     pub fn init(memory: *MemoryManager) !Interpreter {
         const globals = try memory.getAllocator().create(Environment);
         globals.* = Environment.init(memory.getAllocator(), null, memory.debug_enabled);
 
-        return Interpreter{
+        var interpreter = Interpreter{
             .memory = memory,
             .environment = globals,
             .globals = globals,
             .debug_enabled = memory.debug_enabled,
             .string_interner = StringInterner.init(memory.getAllocator()),
             .stdout_buffer = std.ArrayList(u8).init(memory.getAllocator()),
+            .entry_point = null,
         };
+
+        // Explicitly set debug mode
+        interpreter.debug_enabled = memory.debug_enabled;
+
+        if (memory.debug_enabled) {
+            std.debug.print("Interpreter initialized with debug mode: {}\n", .{interpreter.debug_enabled});
+        }
+
+        return interpreter;
     }
 
     pub fn deinit(self: *Interpreter) void {
         self.environment.deinit();
         self.string_interner.deinit();
         self.stdout_buffer.deinit();
+    }
+
+    pub fn interpret(self: *Interpreter, statements: []ast.Stmt) ErrorList!void {
+        if (self.debug_enabled) {
+            std.debug.print("\n=== Starting interpretation ===\n", .{});
+            std.debug.print("Debug mode is: {}\n", .{self.debug_enabled});
+            std.debug.print("Number of statements: {d}\n", .{statements.len});
+        }
+
+        // First pass - find entry point and execute all statements
+        for (statements) |*stmt| {
+            if (self.debug_enabled) {
+                std.debug.print("\nExecuting statement type: {s}\n", .{@tagName(stmt.*)});
+            }
+
+            if (stmt.* == .Function) {
+                if (stmt.Function.is_entry) {
+                    if (self.debug_enabled) {
+                        std.debug.print("Found entry point function: {s}\n", .{stmt.Function.name.lexeme});
+                    }
+                    self.entry_point = stmt.Function.name.lexeme;
+                }
+            }
+
+            _ = try self.executeStatement(stmt, self.debug_enabled);
+        }
+
+        // Execute entry point immediately after all declarations
+        if (self.entry_point) |main_fn| {
+            if (self.debug_enabled) {
+                std.debug.print("\n=== Executing entry point ===\n", .{});
+            }
+
+            const main_value = try self.environment.get(main_fn);
+            if (main_value != .function) {
+                return error.InvalidEntryPoint;
+            }
+
+            var args = [_]token.TokenLiteral{};
+            _ = try self.callFunction(main_value.function, &args);
+        }
+
+        if (self.debug_enabled) {
+            std.debug.print("\n=== Interpretation complete ===\n", .{});
+        }
     }
 
     pub fn executeBlock(self: *Interpreter, statements: []ast.Stmt, environment: *Environment) ErrorList!?token.TokenLiteral {
@@ -296,32 +352,37 @@ pub const Interpreter = struct {
                 return null;
             },
             .Function => |f| {
-                // Create new environment for the function
-                const closure = try self.memory.getAllocator().create(Environment);
-                closure.* = Environment.init(self.memory.getAllocator(), self.environment, debug_enabled);
-
-                // Create function literal
-                const func = token.TokenLiteral{ .function = .{
-                    .params = f.params,
-                    .body = f.body,
-                    .closure = closure,
-                } };
-
-                // Store the function's return type in its environment
-                try closure.define("return_type", .{ .nothing = {} }, f.return_type_info);
-
-                // Define the function in current scope with its type info
-                try self.environment.define(f.name.lexeme, func, .{ .base = .Function });
-
-                if (debug_enabled) {
-                    std.debug.print("Defined function '{s}' with {} parameters\n", .{
-                        f.name.lexeme,
-                        f.params.len,
-                    });
-                    for (f.params, 0..) |param, i| {
-                        std.debug.print("  Parameter {}: '{s}'\n", .{ i, param.name.lexeme });
-                    }
+                if (self.debug_enabled) {
+                    std.debug.print("Executing function declaration: {s}\n", .{f.name.lexeme});
                 }
+
+                const function = token.TokenLiteral{
+                    .function = .{
+                        .params = f.params,
+                        .body = f.body,
+                        .closure = self.environment,
+                    },
+                };
+
+                try self.environment.define(
+                    f.name.lexeme,
+                    function,
+                    f.return_type_info,
+                );
+
+                if (self.debug_enabled) {
+                    std.debug.print("Defined function '{s}' with {d} parameters\n", .{ f.name.lexeme, f.params.len });
+                }
+
+                // If this is an entry point function, execute it immediately
+                if (f.is_entry) {
+                    if (self.debug_enabled) {
+                        std.debug.print("\n=== Executing entry point function ===\n", .{});
+                    }
+                    const empty_args: []const *ast.Expr = &[_]*ast.Expr{}; // Create empty slice of correct type
+                    return try self.callFunction(function, empty_args);
+                }
+
                 return null;
             },
             .Block => |statements| {

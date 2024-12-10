@@ -70,8 +70,15 @@ pub const Parser = struct {
     or_style_warning_shown: bool = false,
     where_style_warning_shown: bool = false,
 
+    // Add these fields to track entry points
+    has_entry_point: bool = false,
+    entry_point_location: ?token.Token = null,
+
     const rules = blk: {
         var r = std.EnumArray(token.TokenType, ParseRule).initFill(ParseRule{});
+
+        // Add rule for entry point arrow
+        r.set(.MAIN, .{ .prefix = functionExpr });
 
         // Binary operators
         r.set(.PLUS, .{ .prefix = unary, .infix = binary, .precedence = .TERM });
@@ -324,7 +331,10 @@ pub const Parser = struct {
                     else
                         ast.Stmt{ .Expression = null };
                     break :blk block_stmt;
-                } else if (self.peek().type == .FN_KEYWORD or self.peek().type == .FUNCTION_KEYWORD) {
+                } else if (self.peek().type == .FN_KEYWORD or
+                    self.peek().type == .FUNCTION_KEYWORD or
+                    self.peek().type == .MAIN)
+                { // Add MAIN here
                     break :blk try self.parseFunctionDecl();
                 } else if (self.peek().type == .STRUCT_TYPE) {
                     break :blk try self.parseStructDeclStmt();
@@ -344,6 +354,11 @@ pub const Parser = struct {
                 },
                 else => try statements.append(stmt),
             }
+        }
+
+        // After parsing everything, check if we need an entry point in safe mode
+        if (self.mode == .Safe and !self.has_entry_point) {
+            return error.MissingEntryPoint;
         }
 
         return statements.toOwnedSlice();
@@ -1111,12 +1126,38 @@ pub const Parser = struct {
     }
 
     fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
-        self.advance(); // consume 'fn' or 'function'
+        var is_entry = false;
+
+        // Check for entry point marker
+        if (self.peek().type == .MAIN) {
+            is_entry = true;
+
+            // Check if we already have an entry point
+            if (self.has_entry_point) {
+                return error.MultipleEntryPoints;
+            }
+
+            self.has_entry_point = true;
+            self.entry_point_location = self.peek();
+            self.advance(); // consume ->
+        }
+
+        // Expect fn or function keyword
+        if (self.peek().type != .FN_KEYWORD and self.peek().type != .FUNCTION_KEYWORD) {
+            return error.ExpectedFunction;
+        }
+        self.advance(); // consume fn/function keyword
 
         if (self.peek().type != .IDENTIFIER) {
             return error.ExpectedIdentifier;
         }
         const name = self.peek();
+
+        // If this is an entry point, verify it's named 'main'
+        if (is_entry and !std.mem.eql(u8, name.lexeme, "main")) {
+            return error.EntryPointMustBeMain;
+        }
+
         self.advance();
 
         // Parse parameter list
@@ -1199,6 +1240,7 @@ pub const Parser = struct {
             .params = try params.toOwnedSlice(),
             .return_type_info = return_type,
             .body = body,
+            .is_entry = is_entry,
         } };
     }
 
@@ -1456,22 +1498,125 @@ pub const Parser = struct {
     }
 
     fn functionExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-        // Convert the function declaration into an expression
-        const fn_stmt = try self.parseFunctionDecl();
+        var is_entry = false;
 
-        // Create and return a function expression
-        const fn_expr = try self.allocator.create(ast.Expr);
-        fn_expr.* = switch (fn_stmt) {
-            .Function => |f| .{ .Function = .{
-                .name = f.name,
-                .params = f.params,
-                .return_type_info = f.return_type_info,
-                .body = f.body,
-            } },
-            else => unreachable,
-        };
+        // Check if this is an entry point
+        if (self.peek().type == .MAIN) {
+            is_entry = true;
 
-        return fn_expr;
+            // Check if we already have an entry point
+            if (self.has_entry_point) {
+                return error.MultipleEntryPoints;
+            }
+
+            self.has_entry_point = true;
+            self.entry_point_location = self.peek();
+            self.advance(); // consume ->
+        }
+
+        // Expect fn or function keyword
+        if (self.peek().type != .FN_KEYWORD and self.peek().type != .FUNCTION_KEYWORD) {
+            return error.ExpectedFunction;
+        }
+        self.advance(); // consume fn/function keyword
+
+        // Parse function name
+        if (self.peek().type != .IDENTIFIER) {
+            return error.ExpectedIdentifier;
+        }
+        const name = self.peek();
+
+        // If this is an entry point, verify it's named 'main'
+        if (is_entry and !std.mem.eql(u8, name.lexeme, "main")) {
+            return error.EntryPointMustBeMain;
+        }
+
+        self.advance();
+
+        // Parse parameter list
+        if (self.peek().type != .LEFT_PAREN) {
+            return error.ExpectedLeftParen;
+        }
+        self.advance();
+
+        var params = std.ArrayList(ast.FunctionParam).init(self.allocator);
+        errdefer {
+            for (params.items) |*param| {
+                param.deinit(self.allocator);
+            }
+            params.deinit();
+        }
+
+        if (self.peek().type != .RIGHT_PAREN) {
+            try self.parseParameters(&params);
+        }
+
+        if (self.peek().type != .RIGHT_PAREN) {
+            return error.ExpectedRightParen;
+        }
+        self.advance();
+
+        // Parse return type
+        var return_type = ast.TypeInfo{ .base = .Nothing }; // Default to nothing
+        var has_return_type = false;
+
+        if (self.peek().type == .RETURNS) {
+            has_return_type = true;
+            self.advance();
+            if (self.peek().type == .LEFT_PAREN) {
+                self.advance(); // consume (
+
+                // Parse return type
+                const type_name = self.peek();
+                self.advance();
+                return_type.base = switch (type_name.type) {
+                    .INT_TYPE => .Int,
+                    .FLOAT_TYPE => .Float,
+                    .STRING_TYPE => .String,
+                    .BOOLEAN_TYPE => .Boolean,
+                    else => return error.InvalidType,
+                };
+
+                if (self.peek().type != .RIGHT_PAREN) {
+                    return error.ExpectedRightParen;
+                }
+                self.advance();
+            } else {
+                return error.ExpectedLeftParen; // In Safe Mode, must use returns(type) syntax
+            }
+        }
+
+        if (self.mode == .Safe) {
+            // In safe mode:
+            // 1. All parameters must have types
+            for (params.items) |param| {
+                if (param.type_expr == null) {
+                    return error.MissingParameterType;
+                }
+            }
+
+            // 2. If function has any return statements with values, must use returns(type)
+            if ((try self.hasReturnWithValue()) and !has_return_type) {
+                return error.MissingReturnType;
+            }
+        }
+
+        // Parse function body
+        if (self.peek().type != .LEFT_BRACE) {
+            return error.ExpectedLeftBrace;
+        }
+
+        const body = try self.parseBlockStmt();
+
+        const function = try self.allocator.create(ast.Expr);
+        function.* = .{ .Function = .{
+            .name = name,
+            .params = try params.toOwnedSlice(),
+            .return_type_info = return_type,
+            .body = body,
+            .is_entry = is_entry,
+        } };
+        return function;
     }
 
     // Add the print parsing function
