@@ -115,7 +115,10 @@ pub const Parser = struct {
         r.set(.IF, .{ .prefix = parseIfExpr });
 
         // Blocks
-        r.set(.LEFT_BRACE, .{ .prefix = block });
+        r.set(.LEFT_BRACE, .{
+            .prefix = braceExpr, // New function that handles both blocks and maps
+            .precedence = .NONE,
+        });
 
         // Add function declaration support
         r.set(.FN_KEYWORD, .{ .prefix = functionExpr });
@@ -166,9 +169,6 @@ pub const Parser = struct {
 
         // Add tuple support
         r.set(.LEFT_PAREN, .{ .prefix = parseTuple, .infix = call, .precedence = .CALL });
-
-        // Add map literal support
-        r.set(.LEFT_BRACE, .{ .prefix = map, .infix = null, .precedence = .NONE });
 
         break :blk r;
     };
@@ -988,7 +988,7 @@ pub const Parser = struct {
             statements.deinit();
         }
 
-        var last_expr: ?*ast.Expr = null;
+        const last_expr: ?*ast.Expr = null;
 
         while (self.peek().type != .RIGHT_BRACE and self.peek().type != .EOF) {
             // Special handling for return statements
@@ -998,21 +998,22 @@ pub const Parser = struct {
                 break; // Exit after return statement
             }
 
-            // Check if this is the last statement/expression
-            const next_is_brace = self.peekAhead(1).type == .RIGHT_BRACE;
+            // Parse regular statement
+            const stmt = try self.parseExpressionStmt();
 
-            if (next_is_brace) {
-                // For the last expression, make semicolon optional
-                if (self.peek().type == .SEMICOLON) {
-                    self.advance(); // Skip trailing semicolon
-                    break;
-                }
-                last_expr = try self.parseExpression();
+            // Only append non-null expression statements
+            switch (stmt) {
+                .Expression => |expr| {
+                    if (expr != null) {
+                        try statements.append(stmt);
+                    }
+                },
+                else => try statements.append(stmt),
+            }
+
+            // Don't break on semicolon before right brace
+            if (self.peek().type == .RIGHT_BRACE) {
                 break;
-            } else {
-                // Parse regular statement
-                const stmt = try self.parseExpressionStmt();
-                try statements.append(stmt);
             }
         }
 
@@ -2446,38 +2447,46 @@ pub const Parser = struct {
 
     fn map(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
         if (self.debug_enabled) {
-            std.debug.print("Parsing map literal\n", .{});
+            std.debug.print("\nParsing map literal...\n", .{});
         }
 
+        // Consume the left brace
         self.advance();
 
-        var entries = std.ArrayList(ast.MapEntry).init(self.allocator);
+        var entries = std.ArrayList(ast.MapEntry).init(self.allocator); // Changed from *ast.MapEntry
         errdefer {
-            for (entries.items) |entry| {
+            for (entries.items) |*entry| { // Changed to use pointer to entry
                 entry.key.deinit(self.allocator);
+                self.allocator.destroy(entry.key);
                 entry.value.deinit(self.allocator);
+                self.allocator.destroy(entry.value);
             }
             entries.deinit();
         }
 
-        // Parse entries until we hit a closing brace
+        // Parse entries until we hit a right brace
         while (self.peek().type != .RIGHT_BRACE and self.peek().type != .EOF) {
             // Parse key
             const key = try self.parseExpression() orelse return error.ExpectedExpression;
 
             // Expect colon
             if (self.peek().type != .COLON) {
-                key.deinit(self.allocator);
+                // If we don't see a colon, this might be a block instead
+                if (entries.items.len == 0) {
+                    // Clean up the key we just parsed
+                    key.deinit(self.allocator);
+                    self.allocator.destroy(key);
+                    // Fall back to block parsing
+                    return self.block(null, .NONE);
+                }
                 return error.ExpectedColon;
             }
-            self.advance(); // consume :
+            self.advance(); // consume colon
 
             // Parse value
-            const value = try self.parseExpression() orelse {
-                key.deinit(self.allocator);
-                return error.ExpectedExpression;
-            };
+            const value = try self.parseExpression() orelse return error.ExpectedExpression;
 
+            // Create and append entry directly
             try entries.append(.{
                 .key = key,
                 .value = value,
@@ -2486,7 +2495,8 @@ pub const Parser = struct {
             // Handle comma
             if (self.peek().type == .COMMA) {
                 self.advance();
-                if (self.peek().type == .RIGHT_BRACE) break; // Allow trailing comma
+                // Allow trailing comma
+                if (self.peek().type == .RIGHT_BRACE) break;
             } else if (self.peek().type != .RIGHT_BRACE) {
                 return error.ExpectedCommaOrBrace;
             }
@@ -2495,7 +2505,7 @@ pub const Parser = struct {
         if (self.peek().type != .RIGHT_BRACE) {
             return error.ExpectedRightBrace;
         }
-        self.advance(); // consume }
+        self.advance();
 
         const map_expr = try self.allocator.create(ast.Expr);
         map_expr.* = .{ .Map = try entries.toOwnedSlice() };
@@ -2629,5 +2639,113 @@ pub const Parser = struct {
             },
             else => {},
         }
+    }
+
+    // Add new braceExpr function
+    fn braceExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+        if (self.debug_enabled) {
+            std.debug.print("\nParsing brace expression...\n", .{});
+        }
+
+        // Consume the left brace
+        self.advance();
+
+        // Look ahead to see if this might be a map
+        // A map must have a key followed by a colon
+        if (self.peek().type != .RIGHT_BRACE and self.peekAhead(1).type == .COLON) {
+            return self.parseMap();
+        }
+
+        // Otherwise, treat it as a block
+        return self.parseBlock();
+    }
+
+    fn parseMap(self: *Parser) ErrorList!?*ast.Expr {
+        var entries = std.ArrayList(ast.MapEntry).init(self.allocator);
+        errdefer {
+            for (entries.items) |*entry| {
+                entry.key.deinit(self.allocator);
+                self.allocator.destroy(entry.key);
+                entry.value.deinit(self.allocator);
+                self.allocator.destroy(entry.value);
+            }
+            entries.deinit();
+        }
+
+        // Parse entries until we hit a right brace
+        while (self.peek().type != .RIGHT_BRACE and self.peek().type != .EOF) {
+            // Parse key
+            const key = try self.parseExpression() orelse return error.ExpectedExpression;
+
+            // Expect colon
+            if (self.peek().type != .COLON) {
+                key.deinit(self.allocator);
+                self.allocator.destroy(key);
+                return error.ExpectedColon;
+            }
+            self.advance(); // consume colon
+
+            // Parse value
+            const value = try self.parseExpression() orelse return error.ExpectedExpression;
+
+            // Create and append entry
+            try entries.append(.{
+                .key = key,
+                .value = value,
+            });
+
+            // Handle comma
+            if (self.peek().type == .COMMA) {
+                self.advance();
+                // Allow trailing comma
+                if (self.peek().type == .RIGHT_BRACE) break;
+            } else if (self.peek().type != .RIGHT_BRACE) {
+                return error.ExpectedCommaOrBrace;
+            }
+        }
+
+        if (self.peek().type != .RIGHT_BRACE) {
+            return error.ExpectedRightBrace;
+        }
+        self.advance();
+
+        const map_expr = try self.allocator.create(ast.Expr);
+        map_expr.* = .{ .Map = try entries.toOwnedSlice() };
+        return map_expr;
+    }
+
+    fn parseBlock(self: *Parser) ErrorList!?*ast.Expr {
+        var statements = std.ArrayList(ast.Stmt).init(self.allocator);
+        errdefer {
+            for (statements.items) |*stmt| {
+                stmt.deinit(self.allocator);
+            }
+            statements.deinit();
+        }
+
+        while (self.peek().type != .RIGHT_BRACE and self.peek().type != .EOF) {
+            const stmt = try self.parseExpressionStmt();
+            try statements.append(stmt);
+
+            // Don't break on semicolon before right brace
+            if (self.peek().type == .RIGHT_BRACE) {
+                break;
+            }
+        }
+
+        if (self.peek().type != .RIGHT_BRACE) {
+            return error.ExpectedRightBrace;
+        }
+        self.advance();
+
+        const block_expr = try self.allocator.create(ast.Expr);
+        block_expr.* = .{
+            .Block = .{
+                .statements = try statements.toOwnedSlice(),
+                .value = null, // Last expression value
+            },
+        };
+
+        return block_expr;
     }
 };
