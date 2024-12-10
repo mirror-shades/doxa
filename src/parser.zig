@@ -402,7 +402,6 @@ pub const Parser = struct {
             self.advance(); // consume ':'
             type_info.is_dynamic = false; // Explicitly typed variables are not dynamic
 
-            // Map token types to base types
             type_info.base = switch (self.peek().type) {
                 .INT_TYPE => .Int,
                 .FLOAT_TYPE => .Float,
@@ -415,6 +414,23 @@ pub const Parser = struct {
                 else => return error.ExpectedType,
             };
             self.advance(); // consume type identifier
+
+            // Check for array type with [] syntax
+            while (self.peek().type == .LEFT_BRACKET) {
+                self.advance(); // consume '['
+                if (self.peek().type != .RIGHT_BRACKET) {
+                    return error.ExpectedRightBracket;
+                }
+                self.advance(); // consume ']'
+
+                // Wrap the current type in an array type
+                type_info = ast.TypeInfo{
+                    .base = .Array,
+                    .element_type = type_info.base,
+                    .is_dynamic = false,
+                    .is_mutable = !is_const,
+                };
+            }
         } else if (self.mode == .Strict) {
             return error.MissingTypeAnnotation;
         }
