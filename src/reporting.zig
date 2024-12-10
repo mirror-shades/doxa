@@ -30,6 +30,7 @@ pub const ErrorList = error{
     KeyNotFound,
     ExpectedCatch,
     HeterogeneousArray,
+    MissingTypeAnnotation,
 
     // Variable Management
     VariableNotFound,
