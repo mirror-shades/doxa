@@ -536,9 +536,9 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#strict-mode" class="md-nav__link">
+  <a href="#safe-mode" class="md-nav__link">
     <span class="md-ellipsis">
-      Strict Mode
+      Safe Mode
     </span>
   </a>
   
@@ -555,6 +555,21 @@
       Conditional Expressions
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Conditional Expressions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#function-return-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      Function Return Types
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -586,13 +601,13 @@
 <p>Doxa supports three operational modes:</p>
 <ul>
 <li><strong>Normal Mode</strong> (default): Dynamic typing with flexible syntax</li>
-<li><strong>Strict Mode</strong>: Enabled via <code>#strict</code> at file start, enforces static typing</li>
-<li><strong>Warn Mode</strong>: Compiles in normal mode but warns about strict convention violations</li>
+<li><strong>Safe Mode</strong>: Enabled via <code>#safe</code> at file start, enforces static typing</li>
+<li><strong>Warn Mode</strong>: Compiles in normal mode but warns about safe convention violations</li>
 </ul>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
 </div>
-<p>Strict files can only import other strict files, while normal files can import both.</p>
+<p>Safe files can only import other safe files, while normal files can import both.</p>
 <h2 id="core-language-features">Core Language Features</h2>
 <h3 id="syntax-alternatives">Syntax Alternatives</h3>
 <p>Doxa provides alternative syntax for common operations. Using mixed styles in the same file triggers warnings.</p>
@@ -660,7 +675,7 @@ var dog = Dog {
 </code></pre></div>
 <h3 id="modules">Modules</h3>
 <div class="highlight"><pre><span></span><code>// math.doxa
-#strict
+#safe
 export fn add(a: int, b: int) -&gt; int {
     return a + b;
 }
@@ -740,12 +755,23 @@ x = true;                       // bool (allowed)
 var y: auto = 3.14;            // float
 y = &quot;pi&quot;;                      // string (allowed)
 </code></pre></div>
-<h3 id="strict-mode">Strict Mode</h3>
+<h3 id="safe-mode">Safe Mode</h3>
 <p>Variables require explicit typing:</p>
 <div class="highlight"><pre><span></span><code>var x: int;                    // Valid declaration
 var x = &quot;two&quot;;                // Error: needs type
 var x: auto = 3.14;           // Type locked to float
 x = &quot;five&quot;;                   // Error: type mismatch
+</code></pre></div>
+<p>Explicit return type declarations are required:</p>
+<div class="highlight"><pre><span></span><code>// Safe Mode - Valid
+fn greet(name: string) -&gt; string {
+    return &quot;Hello ${name}!&quot;;
+}
+
+// Safe Mode - Error: missing return type
+fn greet(name: string) {
+    return &quot;Hello ${name}!&quot;;
+}
 </code></pre></div>
 <h2 id="conditional-expressions">Conditional Expressions</h2>
 <p>All conditionals are expressions and return values:</p>
@@ -761,6 +787,23 @@ x = &quot;five&quot;;                   // Error: type mismatch
 <p>Expressions without a value return <code>nothing</code>:
 <code>doxa
     var x = if (false) { y = 1 };  // x becomes nothing</code></p>
+<h3 id="function-return-types">Function Return Types</h3>
+<p>Functions can specify return types using either <code>-&gt;</code> or <code>returns</code> syntax:</p>
+<div class="highlight"><pre><span></span><code>fn add(a: int, b: int) -&gt; int {
+    return a + b;
+}
+
+// Alternative syntax
+fn add(a: int, b: int) returns(int) {
+    return a + b;
+}
+</code></pre></div>
+<p>return types are optional and inferred by default:</p>
+<div class="highlight"><pre><span></span><code>// Normal Mode - Valid
+fn add(a, b) {
+    return a + b;
+}
+</code></pre></div>
 
 
 

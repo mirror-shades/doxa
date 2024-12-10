@@ -333,9 +333,9 @@
 
 
 <h1 id="doxa">Doxa</h1>
-<p>Doxa is a compiled language which focuses on simplicity, readability, and gradualized type safety. It enables seamless transition from prototype to production code through strict and normal directives.</p>
+<p>Doxa is a compiled language which focuses on simplicity, readability, and gradualized type safety. It enables seamless transition from prototype to production code through safe and normal directives.</p>
 <p>Doxa is built using Zig. It's designed to be a highly readable language that brings gradual type safety which is controlled by directives. This allows Doxa to act as a flexible and dynamically typed scripting language while providing the ability to enforce type safety when needed.</p>
-<p>Here is a comparison of a simple program written in Doxa's normal mode vs strict mode:</p>
+<p>Here is a comparison of a simple program written in Doxa's normal mode vs safe mode:</p>
 <div class="highlight"><pre><span></span><code>var x = 1;
 var y = 2;
 
@@ -345,7 +345,7 @@ fn add(a, b) {
 
 add(x, y);
 </code></pre></div>
-<div class="highlight"><pre><span></span><code>#strict
+<div class="highlight"><pre><span></span><code>#safe
 
 fn add(a: int, b: int) returns(int) {
     return (a + b);
@@ -358,9 +358,9 @@ fn add(a: int, b: int) returns(int) {
     add(a, b);
 }
 </code></pre></div>
-<p>The normal mode is a superset of the strict mode. This means that any valid strict mode code is also valid normal mode code.
+<p>The normal mode is a superset of the safe mode. This means that any valid safe mode code is also valid normal mode code.
 Transition from prototype to production code is aided by the use of the <code>#warn</code> directive. Warn mode will compile the code in
-normal mode but provides warnings where strict syntax isn't followed.</p>
+normal mode but provides warnings where safe syntax isn't followed.</p>
 
 
 
