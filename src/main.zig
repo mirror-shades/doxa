@@ -67,6 +67,10 @@ pub fn reportError(line: i32, where: []const u8, message: []const u8) void {
 /// Run
 ///==========================================================================
 pub fn run(memory: *MemoryManager, interpreter: *Interpreter, source: []const u8, file_path: []const u8) !?TokenLiteral {
+    if (memory.debug_enabled) {
+        std.debug.print("\n=== Starting run ===\n", .{});
+    }
+
     var lexer = Lexer.init(memory.getAllocator(), source, file_path);
     defer lexer.deinit();
 
@@ -82,17 +86,32 @@ pub fn run(memory: *MemoryManager, interpreter: *Interpreter, source: []const u8
         );
         defer parser_instance.deinit();
 
+        if (memory.debug_enabled) {
+            std.debug.print("\n=== Starting parse ===\n", .{});
+        }
         const statements = try parser_instance.parse();
+        if (memory.debug_enabled) {
+            std.debug.print("hadError parsing: {}\n", .{hadError});
+            std.debug.print("\n=== Parse complete, statement count: {} ===\n", .{statements.len});
+            for (statements, 0..) |stmt, i| {
+                std.debug.print("Statement {}: {s}\n", .{ i, @tagName(stmt) });
+            }
+        }
 
         if (compile) {
             //TODO: Compile to bytecode
             return null;
         } else {
+            // Add debug print to verify we get here
+            if (memory.debug_enabled) {
+                std.debug.print("\n=== Starting interpretation ===\n", .{});
+            }
             // Return the result of the last statement
             var last_result: ?TokenLiteral = null;
             for (statements) |stmt| {
                 last_result = try interpreter.executeStatement(&stmt, memory.debug_enabled);
             }
+
             return last_result;
         }
     }
@@ -100,7 +119,14 @@ pub fn run(memory: *MemoryManager, interpreter: *Interpreter, source: []const u8
 }
 
 fn runFile(memory: *MemoryManager, path: []const u8) !void {
+    if (memory.debug_enabled) {
+        std.debug.print("Debug enabled in memory manager\n", .{});
+    }
+
     var interpreter = try Interpreter.init(memory);
+    if (interpreter.debug_enabled) {
+        std.debug.print("Debug enabled in interpreter\n", .{});
+    }
     defer interpreter.deinit();
 
     var file = try std.fs.cwd().openFile(path, .{});

@@ -55,6 +55,7 @@ pub const Expr = union(enum) {
         params: []FunctionParam,
         return_type_info: TypeInfo,
         body: []Stmt,
+        is_entry: bool = false,
     },
     While: WhileExpr,
     For: ForExpr,
@@ -442,6 +443,7 @@ pub const Stmt = union(enum) {
         params: []FunctionParam,
         return_type_info: TypeInfo,
         body: []Stmt,
+        is_entry: bool = false,
     },
     Return: struct {
         value: ?*Expr,
