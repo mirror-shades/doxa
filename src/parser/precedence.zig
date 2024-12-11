@@ -1,45 +1,52 @@
 const std = @import("std");
 const token = @import("../token.zig");
+const parser = @import("./parser.zig");
 const Parser = @import("./parser.zig").Parser;
 const expr_parser = @import("expression_parser.zig");
 const decl_parser = @import("declaration_parser.zig");
-const control_parser = @import("control_parser.zig");
-const type_parser = @import("type_parser.zig");
-const quantifier_parser = @import("quantifier_parser.zig");
+const quantifer_parser = @import("quantifer_parser.zig");
+const ast = @import("../ast.zig");
+const ErrorList = @import("../reporting.zig").ErrorList;
 
 // Import all the parsing functions used in rules
 const unary = expr_parser.unary;
 const binary = expr_parser.binary;
-const compound_assignment = expr_parser.compound_assignment;
-const logical = expr_parser.logical;
 const literal = expr_parser.literal;
 const grouping = expr_parser.grouping;
 const parseArrayLiteral = expr_parser.parseArrayLiteral;
-const call = expr_parser.call;
-const index = expr_parser.index;
+const call = Parser.call;
+const index = Parser.index;
 const variable = expr_parser.variable;
-const assignment = expr_parser.assignment;
-const fieldAccess = expr_parser.fieldAccess;
-const print = expr_parser.print;
+const assignment = Parser.assignment;
+const fieldAccess = Parser.fieldAccess;
+const print = Parser.print;
 const braceExpr = expr_parser.braceExpr;
-const parseTuple = expr_parser.parseTuple;
+const parseTuple = Parser.parseTuple;
 
-const functionExpr = decl_parser.functionExpr;
+const functionExpr = expr_parser.functionExpr;
 const parseStructDecl = decl_parser.parseStructDecl;
 const enumDeclPrefix = decl_parser.enumDeclPrefix;
-const enumMember = decl_parser.enumMember;
+const enumMember = Parser.enumMember;
 
-const parseIfExpr = control_parser.parseIfExpr;
-const whileExpr = control_parser.whileExpr;
-const forExpr = control_parser.forExpr;
-const parseMatchExpr = control_parser.parseMatchExpr;
+const parseIfExpr = expr_parser.parseIfExpr;
+const whileExpr = expr_parser.whileExpr;
+const forExpr = expr_parser.forExpr;
+const parseMatchExpr = expr_parser.parseMatchExpr;
 
-const arrayType = type_parser.arrayType;
-const typeofExpr = type_parser.typeofExpr;
+const arrayType = expr_parser.arrayType;
+const typeofExpr = expr_parser.typeofExpr;
 
-const existentialQuantifier = quantifier_parser.existentialQuantifier;
-const universalQuantifier = quantifier_parser.universalQuantifier;
-const inOperator = quantifier_parser.inOperator;
+const existentialQuantifier = quantifer_parser.existentialQuantifier;
+const universalQuantifier = quantifer_parser.universalQuantifier;
+const inOperator = quantifer_parser.inOperator;
+
+pub const ParseFn = *const fn (*Parser, ?*ast.Expr, Precedence) ErrorList!?*ast.Expr;
+
+pub const Associativity = enum {
+    LEFT,
+    RIGHT,
+    NONE,
+};
 
 pub const Precedence = enum(u8) {
     NONE = 0,
@@ -59,10 +66,10 @@ pub const Precedence = enum(u8) {
 };
 
 pub const ParseRule = struct {
-    prefix: ?Parser.ParseFn = null,
-    infix: ?Parser.ParseFn = null,
+    prefix: ?ParseFn = null,
+    infix: ?ParseFn = null,
     precedence: Precedence = .NONE,
-    associativity: ?Parser.Associativity = .LEFT,
+    associativity: ?Associativity = .LEFT,
 };
 
 pub const rules = blk: {
@@ -184,4 +191,121 @@ pub const rules = blk: {
 
 pub fn getRule(token_type: token.TokenType) ParseRule {
     return rules.get(token_type);
+}
+
+fn compound_assignment(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+    if (left == null) return error.InvalidAssignmentTarget;
+
+    // Verify left side is a valid assignment target
+    const is_valid_target = switch (left.?.*) {
+        .Variable => true,
+        .Index => true,
+        else => false,
+    };
+
+    if (!is_valid_target) {
+        return error.InvalidAssignmentTarget;
+    }
+
+    const operator = self.tokens[self.current - 1];
+    const value = try parsePrecedence(self, .ASSIGNMENT) orelse return error.ExpectedExpression;
+
+    // Create binary expression for the operation
+    const binary_expr = try self.allocator.create(ast.Expr);
+    binary_expr.* = .{
+        .Binary = .{
+            .left = left,
+            .operator = .{ // Convert += to + for the operation
+                .type = switch (operator.type) {
+                    .PLUS_EQUAL => .PLUS,
+                    else => return error.UnsupportedCompoundOperator,
+                },
+                .lexeme = operator.lexeme,
+                .line = operator.line,
+                .column = operator.column,
+                .literal = operator.literal,
+            },
+            .right = value,
+        },
+    };
+
+    // Create assignment expression
+    const assign_expr = try self.allocator.create(ast.Expr);
+    assign_expr.* = switch (left.?.*) {
+        .Variable => |v| .{ .Assignment = .{
+            .name = v,
+            .value = binary_expr,
+        } },
+        .Index => |idx| .{ .IndexAssign = .{
+            .array = idx.array,
+            .index = idx.index,
+            .value = binary_expr,
+        } },
+        else => unreachable,
+    };
+
+    return assign_expr;
+}
+
+fn logical(self: *Parser, left: ?*ast.Expr, precedence: Precedence) ErrorList!?*ast.Expr {
+    if (self.debug_enabled) {
+        std.debug.print("Parsing logical expression\n", .{});
+    }
+
+    const operator = self.tokens[self.current - 1]; // Get the operator token (AND/OR)
+    const right = try parsePrecedence(self, precedence) orelse return error.ExpectedExpression;
+    const logical_expr = try self.allocator.create(ast.Expr);
+    logical_expr.* = .{ .Logical = .{
+        .left = left.?,
+        .operator = operator,
+        .right = right,
+    } };
+    return logical_expr;
+}
+
+pub fn parsePrecedence(self: *Parser, prec: Precedence) ErrorList!?*ast.Expr {
+    if (self.debug_enabled) {
+        std.debug.print("\nParsing with precedence: {}\n", .{@intFromEnum(prec)});
+        std.debug.print("Current token: {s} at position {}\n", .{
+            @tagName(self.peek().type),
+            self.current,
+        });
+    }
+
+    // Add specific check for BANG token
+    if (self.peek().type == .BANG) {
+        return error.BangNegationNotSupported; // New error type
+    }
+
+    // Get the prefix rule for the current token
+    const prefix_rule = getRule(self.peek().type).prefix;
+    if (prefix_rule == null) {
+        if (self.debug_enabled) {
+            std.debug.print("No prefix rule for token: {s}\n", .{@tagName(self.peek().type)});
+        }
+        return null;
+    }
+
+    // Parse prefix expression
+    var left = try prefix_rule.?(self, null, prec);
+    if (left == null) return null;
+
+    // Keep parsing infix expressions as long as we have higher precedence
+    while (@intFromEnum(prec) <= @intFromEnum(getRule(self.peek().type).precedence)) {
+        const infix_rule = getRule(self.peek().type).infix;
+        if (infix_rule == null) break;
+
+        if (self.debug_enabled) {
+            std.debug.print("Found infix operator: {s}\n", .{@tagName(self.peek().type)});
+        }
+
+        // Don't advance here for function calls or indexing operations
+        if (self.peek().type != .LEFT_PAREN and self.peek().type != .LEFT_BRACKET) {
+            self.advance();
+        }
+
+        left = try infix_rule.?(self, left, prec);
+    }
+
+    return left;
 }
