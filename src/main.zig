@@ -1,6 +1,6 @@
 const std = @import("std");
 const Lexer = @import("lexer.zig").Lexer;
-const Parser = @import("./parser/parser.zig").Parser;
+const Parser = @import("./parser/parser_types.zig").Parser;
 const Reporting = @import("reporting.zig");
 const MemoryManager = @import("memory.zig").MemoryManager;
 
@@ -89,7 +89,7 @@ pub fn run(memory: *MemoryManager, interpreter: *Interpreter, source: []const u8
         if (memory.debug_enabled) {
             std.debug.print("\n=== Starting parse ===\n", .{});
         }
-        const statements = try parser_instance.parse();
+        const statements = try parser_instance.execute();
         if (memory.debug_enabled) {
             std.debug.print("hadError parsing: {}\n", .{hadError});
             std.debug.print("\n=== Parse complete, statement count: {} ===\n", .{statements.len});

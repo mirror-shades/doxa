@@ -1,6 +1,6 @@
 const std = @import("std");
 const ast = @import("../ast.zig");
-const Parser = @import("parser.zig").Parser;
+const Parser = @import("parser_types.zig").Parser;
 const expr_parser = @import("expression_parser.zig");
 const ErrorList = @import("../reporting.zig").ErrorList;
 const token = @import("../token.zig");
@@ -257,7 +257,7 @@ pub fn parseStatement(self: *Parser) ErrorList!ast.Stmt {
         .FN_KEYWORD, .FUNCTION_KEYWORD => declaration_parser.parseFunctionDecl(self),
         .RETURN => parseReturnStmt(self),
         .LEFT_BRACE => blk: {
-            const block_expr = if (try self.block(null, .NONE)) |expr|
+            const block_expr = if (try Parser.block(self, null, .NONE)) |expr|
                 ast.Stmt{ .Expression = expr }
             else
                 ast.Stmt{ .Expression = null };
