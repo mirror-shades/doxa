@@ -32,6 +32,7 @@ pub const ErrorList = error{
     HeterogeneousArray,
     MissingTypeAnnotation,
     BangNegationNotSupported,
+    UndeclaredFunction,
 
     // Variable Management
     VariableNotFound,

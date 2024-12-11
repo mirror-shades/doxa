@@ -310,6 +310,35 @@ pub const Parser = struct {
             std.debug.print("\n", .{});
         }
 
+        // First pass: collect all function declarations and create them
+        var function_table = std.StringHashMap(*ast.Stmt).init(self.allocator);
+        defer function_table.deinit();
+
+        // Store current position
+        const original_pos = self.current;
+
+        // First pass to find and store all function declarations
+        while (self.peek().type != .EOF) {
+            if (self.peek().type == .FN_KEYWORD or
+                self.peek().type == .FUNCTION_KEYWORD)
+            {
+                // Don't advance here - let parseFunctionDecl handle it
+                const fn_stmt = try self.parseFunctionDecl();
+                const fn_ptr = try self.allocator.create(ast.Stmt);
+                fn_ptr.* = fn_stmt;
+
+                // Get the function name from the statement
+                if (fn_stmt == .Function) {
+                    try function_table.put(fn_stmt.Function.name.lexeme, fn_ptr);
+                }
+            }
+            self.advance();
+        }
+
+        // Reset position for main parse
+        self.current = original_pos;
+
+        // Create statements array with function declarations first
         var statements = std.ArrayList(ast.Stmt).init(self.allocator);
         errdefer {
             for (statements.items) |*stmt| {
@@ -318,6 +347,13 @@ pub const Parser = struct {
             statements.deinit();
         }
 
+        // Add all function declarations first
+        var it = function_table.iterator();
+        while (it.next()) |entry| {
+            try statements.append(entry.value_ptr.*.*);
+        }
+
+        // Now parse the rest of the statements normally
         try self.parseDirective();
 
         while (true) {
@@ -336,8 +372,22 @@ pub const Parser = struct {
                 } else if (self.peek().type == .FN_KEYWORD or
                     self.peek().type == .FUNCTION_KEYWORD or
                     self.peek().type == .MAIN)
-                { // Add MAIN here
-                    break :blk try self.parseFunctionDecl();
+                {
+                    // Skip the entire function declaration
+                    var brace_count: usize = 0;
+                    while (self.peek().type != .EOF) {
+                        if (self.peek().type == .LEFT_BRACE) {
+                            brace_count += 1;
+                        } else if (self.peek().type == .RIGHT_BRACE) {
+                            brace_count -= 1;
+                            if (brace_count == 0) {
+                                self.advance(); // consume the final }
+                                break;
+                            }
+                        }
+                        self.advance();
+                    }
+                    break :blk ast.Stmt{ .Expression = null };
                 } else if (self.peek().type == .STRUCT_TYPE) {
                     break :blk try self.parseStructDeclStmt();
                 } else if (self.peek().type == .ENUM_TYPE) {
