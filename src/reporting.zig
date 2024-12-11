@@ -42,6 +42,7 @@ pub const ErrorList = error{
     VariableAlreadyDefined,
     InvalidAssignment,
     InvalidAssignmentTarget,
+    ImmutableVariable,
 
     // Function & Frame Management
     InvalidFunction,

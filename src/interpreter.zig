@@ -67,16 +67,25 @@ pub const Environment = struct {
         self.types.deinit();
     }
 
-    pub fn define(self: *Environment, name: []const u8, value: token.TokenLiteral, type_info: ast.TypeInfo) !void {
-        // Duplicate the name string to ensure we own it
-        const key = try self.allocator.dupe(u8, name);
-        errdefer self.allocator.free(key);
-
-        // If we're replacing an existing value, free the old key
-        if (self.values.getKey(name)) |old_key| {
-            self.allocator.free(old_key);
+    pub fn define(self: *Environment, key: []const u8, value: token.TokenLiteral, type_info: ast.TypeInfo) !void {
+        if (self.debug_enabled) {
+            std.debug.print("Defining variable '{s}' = {any}\n", .{ key, value });
         }
 
+        // Check if the variable already exists in this scope
+        if (self.values.contains(key)) {
+            // If it exists and is mutable, update it
+            const type_info_result = try self.getTypeInfo(key);
+            if (type_info_result.is_mutable) {
+                try self.values.put(key, value);
+                try self.types.put(key, type_info);
+                return;
+            } else {
+                return error.ImmutableVariable;
+            }
+        }
+
+        // If it doesn't exist, add it
         try self.values.put(key, value);
         try self.types.put(key, type_info);
 
@@ -263,6 +272,48 @@ pub const Interpreter = struct {
         }
 
         return switch (stmt.*) {
+            .Function => |f| {
+                if (self.debug_enabled) {
+                    std.debug.print("Executing function declaration: {s}\n", .{f.name.lexeme});
+                }
+
+                const function = token.TokenLiteral{
+                    .function = .{
+                        .params = f.params,
+                        .body = f.body,
+                        .closure = self.environment,
+                    },
+                };
+
+                // Define the return type first
+                try self.environment.define(
+                    "return_type",
+                    .{ .nothing = {} },
+                    f.return_type_info,
+                );
+
+                // Then define the function
+                try self.environment.define(
+                    f.name.lexeme,
+                    function,
+                    f.return_type_info,
+                );
+
+                if (self.debug_enabled) {
+                    std.debug.print("Defined function '{s}' with {d} parameters\n", .{ f.name.lexeme, f.params.len });
+                }
+
+                // If this is an entry point function, execute it immediately
+                if (f.is_entry) {
+                    if (self.debug_enabled) {
+                        std.debug.print("\n=== Executing entry point function ===\n", .{});
+                    }
+                    const empty_args: []const *ast.Expr = &[_]*ast.Expr{};
+                    return try self.callFunction(function, empty_args);
+                }
+
+                return null;
+            },
             .Expression => |expr| {
                 if (self.debug_enabled) {
                     std.debug.print("Executing expression statement\n", .{});
@@ -349,40 +400,6 @@ pub const Interpreter = struct {
                 };
 
                 try self.environment.define(decl.name.lexeme, value, decl.type_info);
-                return null;
-            },
-            .Function => |f| {
-                if (self.debug_enabled) {
-                    std.debug.print("Executing function declaration: {s}\n", .{f.name.lexeme});
-                }
-
-                const function = token.TokenLiteral{
-                    .function = .{
-                        .params = f.params,
-                        .body = f.body,
-                        .closure = self.environment,
-                    },
-                };
-
-                try self.environment.define(
-                    f.name.lexeme,
-                    function,
-                    f.return_type_info,
-                );
-
-                if (self.debug_enabled) {
-                    std.debug.print("Defined function '{s}' with {d} parameters\n", .{ f.name.lexeme, f.params.len });
-                }
-
-                // If this is an entry point function, execute it immediately
-                if (f.is_entry) {
-                    if (self.debug_enabled) {
-                        std.debug.print("\n=== Executing entry point function ===\n", .{});
-                    }
-                    const empty_args: []const *ast.Expr = &[_]*ast.Expr{}; // Create empty slice of correct type
-                    return try self.callFunction(function, empty_args);
-                }
-
                 return null;
             },
             .Block => |statements| {
