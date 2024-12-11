@@ -1,5 +1,5 @@
 const std = @import("std");
-const Parser = @import("parser.zig").Parser;
+const Parser = @import("parser_types.zig").Parser;
 const ast = @import("../ast.zig");
 const token = @import("../token.zig");
 const ErrorList = @import("../reporting.zig").ErrorList;
@@ -173,7 +173,7 @@ pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
     }
 
     if (self.peek().type != .RIGHT_PAREN) {
-        try self.parseParameters(&params);
+        try Parser.parseParameters(self, &params);
     }
 
     if (self.peek().type != .RIGHT_PAREN) {
@@ -221,7 +221,7 @@ pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
         }
 
         // 2. If function has any return statements with values, must use returns(type)
-        if ((try self.hasReturnWithValue()) and !has_return_type) {
+        if ((try Parser.hasReturnWithValue(self)) and !has_return_type) {
             return error.MissingReturnType;
         }
     }
@@ -365,7 +365,7 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
         // Try parsing struct initialization first
         if (self.peek().type == .IDENTIFIER) {
             // First try struct initialization
-            if (try self.parseStructInit()) |struct_init| {
+            if (try Parser.parseStructInit(self)) |struct_init| {
                 initializer = struct_init;
             } else {
                 // If not a struct init, try regular expression

@@ -1,12 +1,13 @@
 const std = @import("std");
 const ast = @import("../ast.zig");
-const Parser = @import("parser.zig").Parser;
+const Parser = @import("parser_types.zig").Parser;
 const token = @import("../token.zig");
 const precedence = @import("precedence.zig");
 const Precedence = @import("precedence.zig").Precedence;
 const ErrorList = @import("../reporting.zig").ErrorList;
 const statement_parser = @import("./statement_parser.zig");
 const declaration_parser = @import("./declaration_parser.zig");
+
 pub fn parseExpression(self: *Parser) ErrorList!?*ast.Expr {
     if (self.debug_enabled) {
         std.debug.print("\nParsing expression...\n", .{});
@@ -29,7 +30,7 @@ pub fn parseExpression(self: *Parser) ErrorList!?*ast.Expr {
         // Check if this is an array indexing operation
         if (self.peek().type == .LEFT_BRACKET) {
             self.advance(); // consume '['
-            return self.index(array_expr, .NONE);
+            return Parser.index(self, array_expr, .NONE);
         }
 
         return array_expr;
