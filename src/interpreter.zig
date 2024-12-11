@@ -638,6 +638,12 @@ pub const Interpreter = struct {
                         }
                         return error.TypeError;
                     },
+                    .NOT => {
+                        if (operand == .boolean) {
+                            return token.TokenLiteral{ .boolean = !operand.boolean };
+                        }
+                        return error.TypeError;
+                    },
                     .BANG => {
                         if (operand == .boolean) {
                             return token.TokenLiteral{ .boolean = !operand.boolean };

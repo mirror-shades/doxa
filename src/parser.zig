@@ -105,8 +105,10 @@ pub const Parser = struct {
         r.set(.AND_SYMBOL, .{ .infix = logical, .precedence = .AND });
         r.set(.OR_SYMBOL, .{ .infix = logical, .precedence = .OR });
         r.set(.XOR, .{ .infix = logical, .precedence = .XOR });
+        r.set(.NOT, .{ .prefix = unary, .precedence = .UNARY });
+
         // Unary operators
-        r.set(.BANG, .{ .prefix = unary });
+        //r.set(.BANG, .{ .prefix = unary });
 
         // Literals
         r.set(.INT, .{ .prefix = literal });
@@ -662,6 +664,11 @@ pub const Parser = struct {
                 @tagName(self.peek().type),
                 self.current,
             });
+        }
+
+        // Add specific check for BANG token
+        if (self.peek().type == .BANG) {
+            return error.BangNegationNotSupported; // New error type
         }
 
         // Get the prefix rule for the current token
@@ -2708,9 +2715,9 @@ pub const Parser = struct {
             }
             self.advance(); // consume ')'
 
-            const group_expr = try self.allocator.create(ast.Expr);
-            group_expr.* = .{ .Grouping = first };
-            return group_expr;
+            const grouping_expr = try self.allocator.create(ast.Expr);
+            grouping_expr.* = .{ .Grouping = first };
+            return grouping_expr;
         }
     }
 
