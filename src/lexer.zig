@@ -121,6 +121,7 @@ pub const Lexer = struct {
         try self.keywords.put("normal", .NORMAL);
         try self.keywords.put("guide", .GUIDE);
         try self.keywords.put("not", .NOT);
+        try self.keywords.put("module", .MODULE);
     }
 
     //======================================================================
