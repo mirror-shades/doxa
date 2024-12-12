@@ -1,5 +1,6 @@
 const std = @import("std");
 const ast = @import("../ast.zig");
+const ModuleInfo = @import("../ast.zig").ModuleInfo;
 const token = @import("../token.zig");
 const declaration_parser = @import("declaration_parser.zig");
 const expression_parser = @import("expression_parser.zig");
@@ -7,6 +8,7 @@ const statement_parser = @import("statement_parser.zig");
 const ErrorList = @import("../reporting.zig").ErrorList;
 const Precedence = @import("./precedence.zig").Precedence;
 const Reporting = @import("../reporting.zig").Reporting;
+const Lexer = @import("../lexer.zig").Lexer;
 pub const Mode = enum { Safe, Normal };
 
 const TokenStyle = enum {
@@ -42,6 +44,12 @@ pub const Parser = struct {
     has_entry_point: bool = false,
     entry_point_location: ?token.Token = null,
 
+    current_module: ?ModuleInfo = null,
+    module_cache: std.StringHashMap(ModuleInfo),
+
+    // Add lexer field
+    lexer: Lexer,
+
     pub fn init(allocator: std.mem.Allocator, tokens: []const token.Token, current_file: []const u8, debug_enabled: bool) Parser {
         const parser = Parser{
             .allocator = allocator,
@@ -49,6 +57,8 @@ pub const Parser = struct {
             .current = 0,
             .debug_enabled = debug_enabled,
             .current_file = current_file,
+            .module_cache = std.StringHashMap(ModuleInfo).init(allocator),
+            .lexer = Lexer.init(allocator, "", current_file),
         };
 
         return parser;
@@ -66,10 +76,6 @@ pub const Parser = struct {
             return self.tokens[self.tokens.len - 1];
         }
         return self.tokens[pos];
-    }
-
-    fn check(self: *Parser, token_type: token.TokenType) bool {
-        return self.peek().type == token_type;
     }
 
     pub fn advance(self: *Parser) void {
@@ -92,112 +98,6 @@ pub const Parser = struct {
         // Only advance if we're not at the end
         if (self.current < self.tokens.len - 1) {
             self.current += 1;
-        }
-    }
-
-    fn isAlternateToken(token_type: token.TokenType) bool {
-        return switch (token_type) {
-            .ASSIGN_SYMBOL, .ASSIGN_KEYWORD, .EQUALITY_SYMBOL, .EQUALITY_KEYWORD, .AND_SYMBOL, .AND_KEYWORD, .OR_SYMBOL, .OR_KEYWORD, .WHERE_SYMBOL, .WHERE_KEYWORD, .FN_KEYWORD, .FUNCTION_KEYWORD => true,
-            else => false,
-        };
-    }
-
-    fn updateTokenStyle(self: *Parser, token_type: token.TokenType) void {
-        // Runtime style determination
-        var new_style: TokenStyle = .Undefined;
-        if (token_type == .FUNCTION_KEYWORD or token_type == .AND_KEYWORD or token_type == .OR_KEYWORD or token_type == .ASSIGN_KEYWORD or token_type == .EQUALITY_KEYWORD or token_type == .WHERE_KEYWORD) {
-            new_style = .Keyword;
-        } else if (token_type == .FN_KEYWORD or token_type == .AND_SYMBOL or token_type == .OR_SYMBOL or token_type == .ASSIGN_SYMBOL or token_type == .EQUALITY_SYMBOL or token_type == .WHERE_SYMBOL) {
-            new_style = .Symbol;
-        } else {
-            return;
-        }
-        if (self.debug_enabled) {
-            std.debug.print("Updating token style for: {s}\n", .{@tagName(token_type)});
-        }
-        // Check and update styles
-        switch (token_type) {
-            .WHERE_KEYWORD, .WHERE_SYMBOL => {
-                if (self.where_style != .Undefined and self.where_style != new_style and !self.where_style_warning_shown) {
-                    self.reportWarning("Style conflict for 'where' keyword and '|' symbol");
-                    self.where_style_warning_shown = true;
-                    return;
-                }
-                if (self.where_style == .Undefined) {
-                    self.where_style = new_style;
-                }
-            },
-            .ASSIGN_KEYWORD, .ASSIGN_SYMBOL => {
-                if (self.assign_style != .Undefined and self.assign_style != new_style and !self.assign_style_warning_shown) {
-                    self.reportWarning("Style conflict for 'assignment' keyword and '=' symbol");
-                    self.assign_style_warning_shown = true;
-                    return;
-                }
-                if (self.assign_style == .Undefined) {
-                    self.assign_style = new_style;
-                }
-            },
-            .EQUALITY_KEYWORD, .EQUALITY_SYMBOL => {
-                if (self.equality_style != .Undefined and self.equality_style != new_style and !self.equality_style_warning_shown) {
-                    self.reportWarning("Style conflict for 'equality' keyword and '==' symbol");
-                    self.equality_style_warning_shown = true;
-                    return;
-                }
-                if (self.equality_style == .Undefined) {
-                    self.equality_style = new_style;
-                }
-            },
-            .FN_KEYWORD, .FUNCTION_KEYWORD => {
-                if (self.fn_style != .Undefined and self.fn_style != new_style and !self.fn_style_warning_shown) {
-                    self.reportWarning("Style conflict for 'fn' and 'function' keywords");
-                    self.fn_style_warning_shown = true;
-                    return;
-                }
-                if (self.fn_style == .Undefined) {
-                    self.fn_style = new_style;
-                }
-            },
-            .AND_KEYWORD, .AND_SYMBOL => {
-                if (self.and_style != .Undefined and self.and_style != new_style and !self.and_style_warning_shown) {
-                    self.reportWarning("Style conflict for 'and' keyword and '&&' symbol");
-                    self.and_style_warning_shown = true;
-                    return;
-                }
-                if (self.and_style == .Undefined) {
-                    self.and_style = new_style;
-                }
-            },
-            .OR_KEYWORD, .OR_SYMBOL => {
-                if (self.or_style != .Undefined and self.or_style != new_style and !self.or_style_warning_shown) {
-                    self.reportWarning("Style conflict for 'or' keyword and '||' symbol");
-                    self.or_style_warning_shown = true;
-                    return;
-                }
-                if (self.or_style == .Undefined) {
-                    self.or_style = new_style;
-                }
-            },
-            else => {},
-        }
-    }
-
-    fn parseDirective(self: *Parser) ErrorList!void {
-        const current = self.peek();
-        if (current.type == .HASH) {
-            self.advance(); // consume #
-            if (self.peek().type == .IDENTIFIER) {
-                // if identifer, do something for custom doxas, ect. ect.
-                // this wont be added for a long time so don't wait around
-            }
-            if (self.peek().type == .SAFE) {
-                self.mode = .Safe;
-                if (self.debug_enabled) {
-                    std.debug.print("Safe mode enabled\n", .{});
-                }
-                self.advance(); // consume directive name
-                return;
-            }
-            return error.InvalidDirective;
         }
     }
 
@@ -551,12 +451,6 @@ pub const Parser = struct {
         } };
 
         return call_expr;
-    }
-
-    fn reportWarning(self: *Parser, message: []const u8) void {
-        _ = self;
-        var reporting = Reporting.init();
-        reporting.reportWarning("{s}", .{message});
     }
 
     pub fn parseStructInit(self: *Parser) ErrorList!?*ast.Expr {
@@ -1021,5 +915,211 @@ pub const Parser = struct {
         };
 
         return block_expr;
+    }
+
+    fn reportWarning(self: *Parser, message: []const u8) void {
+        _ = self;
+        var reporting = Reporting.init();
+        reporting.reportWarning("{s}", .{message});
+    }
+
+    fn check(self: *Parser, token_type: token.TokenType) bool {
+        return self.peek().type == token_type;
+    }
+
+    fn isAlternateToken(token_type: token.TokenType) bool {
+        return switch (token_type) {
+            .ASSIGN_SYMBOL, .ASSIGN_KEYWORD, .EQUALITY_SYMBOL, .EQUALITY_KEYWORD, .AND_SYMBOL, .AND_KEYWORD, .OR_SYMBOL, .OR_KEYWORD, .WHERE_SYMBOL, .WHERE_KEYWORD, .FN_KEYWORD, .FUNCTION_KEYWORD => true,
+            else => false,
+        };
+    }
+
+    fn updateTokenStyle(self: *Parser, token_type: token.TokenType) void {
+        // Runtime style determination
+        var new_style: TokenStyle = .Undefined;
+        if (token_type == .FUNCTION_KEYWORD or token_type == .AND_KEYWORD or token_type == .OR_KEYWORD or token_type == .ASSIGN_KEYWORD or token_type == .EQUALITY_KEYWORD or token_type == .WHERE_KEYWORD) {
+            new_style = .Keyword;
+        } else if (token_type == .FN_KEYWORD or token_type == .AND_SYMBOL or token_type == .OR_SYMBOL or token_type == .ASSIGN_SYMBOL or token_type == .EQUALITY_SYMBOL or token_type == .WHERE_SYMBOL) {
+            new_style = .Symbol;
+        } else {
+            return;
+        }
+        if (self.debug_enabled) {
+            std.debug.print("Updating token style for: {s}\n", .{@tagName(token_type)});
+        }
+        // Check and update styles
+        switch (token_type) {
+            .WHERE_KEYWORD, .WHERE_SYMBOL => {
+                if (self.where_style != .Undefined and self.where_style != new_style and !self.where_style_warning_shown) {
+                    self.reportWarning("Style conflict for 'where' keyword and '|' symbol");
+                    self.where_style_warning_shown = true;
+                    return;
+                }
+                if (self.where_style == .Undefined) {
+                    self.where_style = new_style;
+                }
+            },
+            .ASSIGN_KEYWORD, .ASSIGN_SYMBOL => {
+                if (self.assign_style != .Undefined and self.assign_style != new_style and !self.assign_style_warning_shown) {
+                    self.reportWarning("Style conflict for 'assignment' keyword and '=' symbol");
+                    self.assign_style_warning_shown = true;
+                    return;
+                }
+                if (self.assign_style == .Undefined) {
+                    self.assign_style = new_style;
+                }
+            },
+            .EQUALITY_KEYWORD, .EQUALITY_SYMBOL => {
+                if (self.equality_style != .Undefined and self.equality_style != new_style and !self.equality_style_warning_shown) {
+                    self.reportWarning("Style conflict for 'equality' keyword and '==' symbol");
+                    self.equality_style_warning_shown = true;
+                    return;
+                }
+                if (self.equality_style == .Undefined) {
+                    self.equality_style = new_style;
+                }
+            },
+            .FN_KEYWORD, .FUNCTION_KEYWORD => {
+                if (self.fn_style != .Undefined and self.fn_style != new_style and !self.fn_style_warning_shown) {
+                    self.reportWarning("Style conflict for 'fn' and 'function' keywords");
+                    self.fn_style_warning_shown = true;
+                    return;
+                }
+                if (self.fn_style == .Undefined) {
+                    self.fn_style = new_style;
+                }
+            },
+            .AND_KEYWORD, .AND_SYMBOL => {
+                if (self.and_style != .Undefined and self.and_style != new_style and !self.and_style_warning_shown) {
+                    self.reportWarning("Style conflict for 'and' keyword and '&&' symbol");
+                    self.and_style_warning_shown = true;
+                    return;
+                }
+                if (self.and_style == .Undefined) {
+                    self.and_style = new_style;
+                }
+            },
+            .OR_KEYWORD, .OR_SYMBOL => {
+                if (self.or_style != .Undefined and self.or_style != new_style and !self.or_style_warning_shown) {
+                    self.reportWarning("Style conflict for 'or' keyword and '||' symbol");
+                    self.or_style_warning_shown = true;
+                    return;
+                }
+                if (self.or_style == .Undefined) {
+                    self.or_style = new_style;
+                }
+            },
+            else => {},
+        }
+    }
+
+    fn parseDirective(self: *Parser) ErrorList!void {
+        const current = self.peek();
+        if (current.type == .HASH) {
+            self.advance(); // consume #
+            if (self.peek().type == .IDENTIFIER) {
+                // if identifer, do something for custom doxas, ect. ect.
+                // this wont be added for a long time so don't wait around
+            }
+            if (self.peek().type == .SAFE) {
+                self.mode = .Safe;
+                if (self.debug_enabled) {
+                    std.debug.print("Safe mode enabled\n", .{});
+                }
+                self.advance(); // consume directive name
+                return;
+            }
+            return error.InvalidDirective;
+        }
+    }
+
+    pub fn resolveModule(self: *Parser, module_name: []const u8) ErrorList!ast.ModuleInfo {
+        // Check module cache first
+        if (self.module_cache.get(module_name)) |info| {
+            return info;
+        }
+
+        // Load and parse module file
+        const module_source = try self.loadModuleSource(module_name);
+        var module_lexer = Lexer.init(self.allocator, module_source, module_name);
+        defer module_lexer.deinit();
+
+        try module_lexer.initKeywords();
+        const tokens = try module_lexer.lexTokens();
+
+        var new_parser = Parser.init(self.allocator, tokens.items, module_name, self.debug_enabled);
+
+        // Create a block expression to hold the module statements
+        const module_block = try self.allocator.create(ast.Expr);
+        module_block.* = .{ .Block = .{
+            .statements = try new_parser.execute(),
+            .value = null,
+        } };
+
+        // Extract module info and cache it
+        const info = try self.extractModuleInfo(module_block);
+        try self.module_cache.put(module_name, info);
+
+        return info;
+    }
+
+    pub fn loadModuleSource(self: *Parser, module_name: []const u8) ErrorList![]const u8 {
+        // Construct the module path
+        // Assuming modules are in a "modules" directory relative to the current file
+        var path_buffer = std.ArrayList(u8).init(self.allocator);
+        defer path_buffer.deinit();
+
+        // Get the directory of the current file
+        const current_dir = std.fs.path.dirname(self.current_file) orelse ".";
+        try path_buffer.appendSlice(current_dir);
+        try path_buffer.appendSlice("/modules/");
+        try path_buffer.appendSlice(module_name);
+        try path_buffer.appendSlice(".dx"); // Assuming .dx is your file extension
+
+        // Read the file
+        const file = try std.fs.openFileAbsolute(path_buffer.items, .{});
+        defer file.close();
+
+        // Get file size
+        const file_size = try file.getEndPos();
+
+        // Allocate buffer and read file
+        const buffer = try self.allocator.alloc(u8, file_size);
+        const bytes_read = try file.readAll(buffer);
+        if (bytes_read != file_size) {
+            self.allocator.free(buffer);
+            return error.IncompleteRead;
+        }
+
+        return buffer;
+    }
+
+    pub fn extractModuleInfo(self: *Parser, module_ast: *ast.Expr) ErrorList!ast.ModuleInfo {
+        var imports = std.ArrayList(ast.ImportInfo).init(self.allocator);
+        var mode: ast.ModuleMode = .Normal;
+        var name: []const u8 = "";
+
+        // If the module AST is a block, process its statements
+        if (module_ast.* == .Block) {
+            const statements = module_ast.Block.statements;
+            for (statements) |stmt| {
+                switch (stmt) {
+                    .Module => |module| {
+                        name = module.name.lexeme;
+                        mode = if (module.is_safe) .Safe else .Normal;
+                        for (module.imports) |import| {
+                            try imports.append(import);
+                        }
+                    },
+                    else => {}, // Skip other statement types
+                }
+            }
+        }
+
+        return ast.ModuleInfo{
+            .name = name,
+            .mode = mode,
+            .imports = try imports.toOwnedSlice(),
+        };
     }
 };
