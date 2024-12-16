@@ -203,7 +203,7 @@ pub fn parsePrecedence(self: *Parser, prec: Precedence) ErrorList!?*ast.Expr {
 
     // Add specific check for BANG token
     if (self.peek().type == .BANG) {
-        return error.BangNegationNotSupported; // New error type
+        return error.BangNegationNotSupported;
     }
 
     // Get the prefix rule for the current token
@@ -215,9 +215,15 @@ pub fn parsePrecedence(self: *Parser, prec: Precedence) ErrorList!?*ast.Expr {
         return null;
     }
 
-    // Parse prefix expression
-    var left = try prefix_rule.?(self, null, prec);
-    if (left == null) return null;
+    // Parse prefix expression with error handling
+    var left = try prefix_rule.?(self, null, prec) orelse return null;
+    errdefer {
+        if (self.debug_enabled) {
+            std.debug.print("Cleaning up left expression in parsePrecedence\n", .{});
+        }
+        left.deinit(self.allocator);
+        self.allocator.destroy(left);
+    }
 
     // Keep parsing infix expressions as long as we have higher precedence
     while (@intFromEnum(prec) <= @intFromEnum(getRule(self.peek().type).precedence)) {
@@ -233,7 +239,14 @@ pub fn parsePrecedence(self: *Parser, prec: Precedence) ErrorList!?*ast.Expr {
             self.advance();
         }
 
-        left = try infix_rule.?(self, left, prec);
+        const new_left = try infix_rule.?(self, left, prec);
+        if (new_left == null) {
+            // Clean up left if infix parsing fails
+            left.deinit(self.allocator);
+            self.allocator.destroy(left);
+            return null;
+        }
+        left = new_left.?;
     }
 
     return left;

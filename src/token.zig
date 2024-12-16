@@ -12,7 +12,6 @@ pub const TokenType = enum {
     LEFT_BRACKET, // [
     RIGHT_BRACKET, // ]
     COMMA, // ,
-    COLON, // :
     SEMICOLON, // ;
     MODULO, // %
     HASH, // #
@@ -43,6 +42,7 @@ pub const TokenType = enum {
     GREATER_EQUAL, // >=
     LESS, // <
     LESS_EQUAL, // <=
+    TYPE_SYMBOL, // ::
 
     // keywords
     VAR, // var
@@ -83,8 +83,8 @@ pub const TokenType = enum {
     OR_SYMBOL, // ||
     FN_KEYWORD, // fn
     FUNCTION_KEYWORD, // function
+    WHERE_SYMBOL, // :
     WHERE_KEYWORD, // where
-    WHERE_SYMBOL, // |
     EQUALITY_KEYWORD, // equals
     EQUALITY_SYMBOL, // ==
     ASSIGN_KEYWORD, // is

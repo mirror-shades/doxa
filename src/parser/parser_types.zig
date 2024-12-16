@@ -295,8 +295,8 @@ pub const Parser = struct {
 
             // Parse type annotation if present
             var type_expr: ?*ast.TypeExpr = null;
-            if (self.peek().type == .COLON) {
-                self.advance(); // consume :
+            if (self.peek().type == .TYPE_SYMBOL) {
+                self.advance(); // consume ::
                 type_expr = try expression_parser.parseTypeExpr(self);
             }
 
@@ -776,15 +776,51 @@ pub const Parser = struct {
 
         var elements = std.ArrayList(*ast.Expr).init(self.allocator);
         errdefer {
-            for (elements.items) |element| {
-                element.deinit(self.allocator);
-                self.allocator.destroy(element);
+            if (self.debug_enabled) {
+                std.debug.print("Starting tuple cleanup with {} elements\n", .{elements.items.len});
+            }
+            // Safe cleanup of any successfully parsed elements
+            if (elements.items.len > 0) {
+                for (elements.items) |element| {
+                    if (self.debug_enabled) {
+                        std.debug.print("About to clean up element of type {s}\n", .{
+                            @tagName(element.*),
+                        });
+                    }
+                    element.deinit(self.allocator);
+                    self.allocator.destroy(element);
+                    if (self.debug_enabled) {
+                        std.debug.print("Element cleanup complete\n", .{});
+                    }
+                }
             }
             elements.deinit();
+            if (self.debug_enabled) {
+                std.debug.print("Tuple cleanup complete\n", .{});
+            }
         }
 
-        // Parse first element
-        const first = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
+        // Try to parse first element with error handling
+        if (self.debug_enabled) {
+            std.debug.print("About to parse first element\n", .{});
+        }
+
+        const first = expression_parser.parseExpression(self) catch |err| {
+            if (self.debug_enabled) {
+                std.debug.print("Error parsing first element: {}\n", .{err});
+            }
+            return err;
+        } orelse {
+            if (self.debug_enabled) {
+                std.debug.print("No expression returned\n", .{});
+            }
+            return error.ExpectedExpression;
+        };
+
+        if (self.debug_enabled) {
+            std.debug.print("Successfully parsed first element\n", .{});
+        }
+
         try elements.append(first);
 
         // If there's a comma, this is a tuple. Otherwise, it's just a grouped expression
@@ -845,13 +881,13 @@ pub const Parser = struct {
             // Parse key
             const key = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
 
-            // Expect colon
-            if (self.peek().type != .COLON) {
+            // Expect :
+            if (self.peek().type != .WHERE_SYMBOL) {
                 key.deinit(self.allocator);
                 self.allocator.destroy(key);
                 return error.ExpectedColon;
             }
-            self.advance(); // consume colon
+            self.advance(); // consume :
 
             // Parse value
             const value = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;

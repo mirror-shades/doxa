@@ -83,8 +83,8 @@ pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*
         const field_name = self.peek();
         self.advance();
 
-        // Expect colon
-        if (self.peek().type != .COLON) {
+        // Expect :
+        if (self.peek().type != .WHERE_SYMBOL) {
             return error.ExpectedColon;
         }
         self.advance();
@@ -315,8 +315,8 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
     }
 
     // Handle type annotation
-    if (self.peek().type == .COLON) {
-        self.advance(); // consume ':'
+    if (self.peek().type == .TYPE_SYMBOL) {
+        self.advance(); // consume ::
         type_info.is_dynamic = false; // Explicitly typed variables are not dynamic
 
         type_info.base = switch (self.peek().type) {
