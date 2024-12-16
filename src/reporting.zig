@@ -147,6 +147,7 @@ pub const ErrorList = error{
     UnsupportedCompoundOperator,
     MissingParameterType,
     MissingReturnType,
+    ExpectedStringLiteral,
 
     // Miscellaneous
     NotImplemented,
@@ -182,6 +183,40 @@ pub const ErrorList = error{
     MissingEntryPoint,
     ExpectedFunction,
     InvalidEntryPoint,
+
+    // Module System
+    ModuleNotFound,
+    ModuleAlreadyLoaded,
+    ModuleParseError,
+    ExpectedModuleName,
+    ExpectedImportName,
+    UnsafeImportInSafeModule,
+    ModuleNotImplemented,
+
+    // modules
+    SharingViolation,
+    PathAlreadyExists,
+    FileNotFound,
+    PipeBusy,
+    NameTooLong,
+    InvalidUtf8,
+    InvalidWtf8,
+    BadPathName,
+    NetworkNotFound,
+    AntivirusInterference,
+    SymLinkLoop,
+    ProcessFdQuotaExceeded,
+    SystemFdQuotaExceeded,
+    NoDevice,
+    IsDir,
+    NotDir,
+    FileLocksNotSupported,
+    FileBusy,
+    Unseekable,
+    ConnectionTimedOut,
+    NotOpenForReading,
+    SocketNotConnected,
+    IncompleteRead,
 };
 
 /// Reporting provides structured error handling and reporting capabilities

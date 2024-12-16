@@ -430,6 +430,11 @@ pub const EnumDecl = struct {
     variants: []const token.Token,
 };
 
+pub const ImportInfo = struct {
+    module_name: []const u8,
+    mode: enum { Safe, Normal },
+};
+
 pub const Stmt = union(enum) {
     Expression: ?*Expr,
     VarDecl: struct {
@@ -452,6 +457,17 @@ pub const Stmt = union(enum) {
     EnumDecl: EnumDecl,
     Map: []MapEntry,
     Try: TryStmt,
+    Module: struct {
+        name: token.Token,
+        is_safe: bool,
+        imports: []const ImportInfo,
+    },
+    Import: struct {
+        module_name: token.Token,
+        path: []const u8,
+        specific_symbol: ?[]const u8,
+    },
+    Path: []const u8,
     pub fn deinit(self: *Stmt, allocator: std.mem.Allocator) void {
         switch (self.*) {
             .Expression => |maybe_expr| {
@@ -507,6 +523,9 @@ pub const Stmt = union(enum) {
                 }
                 allocator.free(t.catch_body);
             },
+            .Module => {},
+            .Import => {},
+            .Path => {},
         }
     }
 };
@@ -742,4 +761,12 @@ pub const TryStmt = struct {
     try_body: []Stmt,
     catch_body: []Stmt,
     error_var: ?token.Token,
+};
+
+pub const ModuleMode = enum { Safe, Normal };
+
+pub const ModuleInfo = struct {
+    name: []const u8,
+    mode: ModuleMode,
+    imports: []const ImportInfo,
 };

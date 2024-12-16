@@ -63,8 +63,8 @@ pub fn braceExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Ex
     self.advance();
 
     // Look ahead to see if this might be a map
-    // A map must have a key followed by a colon
-    if (self.peek().type != .RIGHT_BRACE and self.peekAhead(1).type == .COLON) {
+    // A map must have a key followed by a :
+    if (self.peek().type != .RIGHT_BRACE and self.peekAhead(1).type == .WHERE_SYMBOL) {
         return self.parseMap();
     }
 
