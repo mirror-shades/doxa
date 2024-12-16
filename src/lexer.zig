@@ -121,6 +121,10 @@ pub const Lexer = struct {
         try self.keywords.put("normal", .NORMAL);
         try self.keywords.put("guide", .GUIDE);
         try self.keywords.put("not", .NOT);
+        try self.keywords.put("module", .MODULE);
+        try self.keywords.put("∃", .EXISTS);
+        try self.keywords.put("∀", .FORALL);
+        try self.keywords.put("∈", .IN);
     }
 
     //======================================================================
@@ -147,8 +151,17 @@ pub const Lexer = struct {
 
         self.start = self.current;
         self.token_line = self.line; // Save line number at start of token
-        const c = self.source[self.current];
-        self.advance();
+
+        // Don't advance here anymore
+        const c = self.peekAt(0);
+
+        // Check for UTF-8 sequence
+        if (c >= 0x80) {
+            try self.identifier();
+            return;
+        }
+
+        self.advance(); // Only advance for ASCII characters
 
         switch (c) {
             //strings
@@ -229,7 +242,6 @@ pub const Lexer = struct {
                     try self.addMinimalToken(.DOT);
                 }
             },
-            ':' => try self.addMinimalToken(.COLON),
             ';' => try self.addMinimalToken(.SEMICOLON),
             '%' => try self.addMinimalToken(.MODULO),
             '#' => try self.addMinimalToken(.HASH),
@@ -244,6 +256,11 @@ pub const Lexer = struct {
             '|' => {
                 if (self.match('|')) {
                     try self.addMinimalToken(.OR_SYMBOL);
+                }
+            },
+            ':' => {
+                if (self.match(':')) {
+                    try self.addMinimalToken(.TYPE_SYMBOL);
                 } else {
                     try self.addMinimalToken(.WHERE_SYMBOL);
                 }
@@ -470,36 +487,65 @@ pub const Lexer = struct {
     //======================================================================
 
     fn identifier(self: *Lexer) !void {
+        // First, check if we're at a quantifier symbol
+        if (self.current > 0) {
+            const text = self.source[self.start..self.current];
+            if (std.mem.eql(u8, text, "∃") or std.mem.eql(u8, text, "∀")) {
+                // Handle the quantifier symbol as a separate token
+                if (self.keywords.get(text)) |keyword_type| {
+                    try self.addMinimalToken(keyword_type);
+                    return;
+                }
+            }
+        }
+
+        // Rest of the identifier handling...
         while (!self.isAtEnd()) {
             const remaining = self.source[self.current..];
-            // First check if we have a valid UTF-8 sequence
-            const sequence_length = try std.unicode.utf8ByteSequenceLength(remaining[0]);
-            if (sequence_length > remaining.len) break;
 
-            // Try to decode the codepoint
-            const view = std.unicode.Utf8View.init(remaining[0..sequence_length]) catch break;
-            var iterator = view.iterator();
-            if (iterator.nextCodepoint()) |codepoint| {
-                // Check if it's a letter, number, or underscore
-                if ((codepoint >= 'a' and codepoint <= 'z') or
-                    (codepoint >= 'A' and codepoint <= 'Z') or
-                    (codepoint >= '0' and codepoint <= '9') or
-                    codepoint == '_' or
-                    codepoint > 127)
-                { // Accept all Unicode characters above ASCII
-                    var i: i32 = 0;
-                    while (i < sequence_length) : (i += 1) {
-                        self.advance();
+            // Handle UTF-8 sequences
+            if (remaining[0] >= 0x80) {
+                const sequence_length = try std.unicode.utf8ByteSequenceLength(remaining[0]);
+                if (sequence_length > remaining.len) break;
+
+                // Validate the sequence
+                _ = std.unicode.utf8Decode(remaining[0..sequence_length]) catch break;
+
+                // Check if this is a quantifier symbol at the start
+                if (self.current == self.start) {
+                    const symbol = remaining[0..sequence_length];
+                    if (std.mem.eql(u8, symbol, "∃") or std.mem.eql(u8, symbol, "∀")) {
+                        // Advance past the symbol
+                        var i: usize = 0;
+                        while (i < sequence_length) : (i += 1) {
+                            self.advance();
+                        }
+                        // Add the quantifier token
+                        const text = self.source[self.start..self.current];
+                        if (self.keywords.get(text)) |keyword_type| {
+                            try self.addMinimalToken(keyword_type);
+                            return;
+                        }
                     }
-                    continue;
                 }
+
+                // Advance past the whole sequence
+                var i: usize = 0;
+                while (i < sequence_length) : (i += 1) {
+                    self.advance();
+                }
+                continue;
+            }
+
+            // Handle ASCII
+            if (isAlpha(remaining[0]) or isDigit(remaining[0]) or remaining[0] == '_') {
+                self.advance();
+                continue;
             }
             break;
         }
 
         const text = self.source[self.start..self.current];
-
-        // Check if it's a keyword
         if (self.keywords.get(text)) |keyword_type| {
             switch (keyword_type) {
                 .BOOL => try self.addToken(.BOOL, .{ .boolean = std.mem.eql(u8, text, "true") }),

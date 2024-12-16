@@ -59,7 +59,7 @@ var dog = Dog {
 ```doxa
 // math.doxa
 #safe
-export fn add(a: int, b: int) -> int {
+export fn add(a :: int, b :: int) -> int {
     return a + b;
 }
 
@@ -77,7 +77,7 @@ Arrays are homogeneous collections with type inference:
 ```doxa
 var nums = [1, 2, 3];             // Inferred as int[]
 var strs = ["a", "b"];            // Inferred as string[]
-var explicit: int[] = [1, 2, 3];  // Explicit typing
+var explicit :: int[] = [1, 2, 3];  // Explicit typing
 
 // Invalid operations
 var mixed = [1, "two", true];     // Error: mixed types
@@ -155,8 +155,10 @@ typeof([1,2,3]);               // "array"
 ### Collection Quantifiers
 
 ```doxa
-exists x in numbers where x > 10  // Any match
-forall x in numbers | x > 0      // All match
+(∃x ∈ numbers : x > 10) // Logical notation
+(exists x in numbers where x > 10) // English prose
+(∀x ∈ numbers : x > 0) // Logical notation
+(forall x in numbers where x > 0) // English prose
 ```
 
 ## Type System Details
@@ -178,22 +180,22 @@ y = "pi";                      // string (allowed)
 Variables require explicit typing:
 
 ```doxa
-var x: int;                    // Valid declaration
-var x = "two";                // Error: needs type
-var x: auto = 3.14;           // Type locked to float
-x = "five";                   // Error: type mismatch
+var x :: int;                   // Valid declaration
+var x = "two";                  // Error: needs type
+var x :: auto = 3.14;           // Type locked to float
+x = "five";                     // Error: type mismatch
 ```
 
 Explicit return type declarations are required:
 
 ```doxa
 // Safe Mode - Valid
-fn greet(name: string) -> string {
+fn greet(name :: string) -> string {
     return "Hello ${name}!";
 }
 
 // Safe Mode - Error: missing return type
-fn greet(name: string) {
+fn greet(name :: string) {
     return "Hello ${name}!";
 }
 ```

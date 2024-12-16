@@ -200,10 +200,53 @@ pub fn universalQuantifier(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorLis
 pub fn inOperator(self: *Parser, left: ?*ast.Expr, prec: Precedence) ErrorList!?*ast.Expr {
     if (left == null) return error.ExpectedLeftOperand;
 
-    // Parse the array expression
-    const array_expr = try precedence.parsePrecedence(self, @enumFromInt(@intFromEnum(prec) + 1)) orelse
-        return error.ExpectedArrayExpression;
+    if (self.debug_enabled) {
+        std.debug.print("\nParsing in operator...\n", .{});
+    }
 
+    // Parse the array expression
+    const array_expr = try precedence.parsePrecedence(self, @enumFromInt(@intFromEnum(prec) + 1)) orelse {
+        if (self.debug_enabled) {
+            std.debug.print("Failed to parse array expression\n", .{});
+        }
+        return error.ExpectedArrayExpression;
+    };
+    errdefer {
+        if (self.debug_enabled) {
+            std.debug.print("Cleaning up array expression in inOperator\n", .{});
+        }
+        array_expr.deinit(self.allocator);
+        self.allocator.destroy(array_expr);
+    }
+
+    // Parse 'where' keyword if it exists
+    if (self.peek().type == .WHERE_KEYWORD or self.peek().type == .WHERE_SYMBOL) {
+        if (self.debug_enabled) {
+            std.debug.print("Found where keyword\n", .{});
+        }
+        self.advance();
+
+        // Parse the condition
+        const condition = try expression_parser.parseExpression(self) orelse {
+            if (self.debug_enabled) {
+                std.debug.print("Failed to parse condition\n", .{});
+            }
+            return error.ExpectedExpression;
+        };
+
+        // Create exists expression
+        const exists_expr = try self.allocator.create(ast.Expr);
+        exists_expr.* = .{
+            .Exists = .{
+                .variable = left.?.Variable, // We know left is a Variable
+                .array = array_expr,
+                .condition = condition,
+            },
+        };
+        return exists_expr;
+    }
+
+    // If no 'where' keyword, create regular in expression
     const in_expr = try self.allocator.create(ast.Expr);
     in_expr.* = .{ .Binary = .{
         .left = left,
