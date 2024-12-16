@@ -68,7 +68,8 @@ pub const TokenType = enum {
     FROM, // from
     IN, // in
     AS, // as
-    NOT, // not
+    NOT_KEYWORD, // not
+    NOT_LOGICAL, // ¬
     ASYNC, // async
     AWAIT, // await
     TYPEOF, // typeof

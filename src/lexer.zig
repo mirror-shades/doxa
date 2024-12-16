@@ -120,11 +120,12 @@ pub const Lexer = struct {
         try self.keywords.put("safe", .SAFE);
         try self.keywords.put("normal", .NORMAL);
         try self.keywords.put("guide", .GUIDE);
-        try self.keywords.put("not", .NOT);
+        try self.keywords.put("not", .NOT_KEYWORD);
         try self.keywords.put("module", .MODULE);
         try self.keywords.put("∃", .EXISTS);
         try self.keywords.put("∀", .FORALL);
         try self.keywords.put("∈", .IN);
+        try self.keywords.put("¬", .NOT_LOGICAL);
     }
 
     //======================================================================
@@ -490,7 +491,7 @@ pub const Lexer = struct {
         // First, check if we're at a quantifier symbol
         if (self.current > 0) {
             const text = self.source[self.start..self.current];
-            if (std.mem.eql(u8, text, "∃") or std.mem.eql(u8, text, "∀")) {
+            if (std.mem.eql(u8, text, "∃") or std.mem.eql(u8, text, "∀") or std.mem.eql(u8, text, "¬")) {
                 // Handle the quantifier symbol as a separate token
                 if (self.keywords.get(text)) |keyword_type| {
                     try self.addMinimalToken(keyword_type);
@@ -511,16 +512,16 @@ pub const Lexer = struct {
                 // Validate the sequence
                 _ = std.unicode.utf8Decode(remaining[0..sequence_length]) catch break;
 
-                // Check if this is a quantifier symbol at the start
+                // Check if this is a quantifier or logical symbol at the start
                 if (self.current == self.start) {
                     const symbol = remaining[0..sequence_length];
-                    if (std.mem.eql(u8, symbol, "∃") or std.mem.eql(u8, symbol, "∀")) {
+                    if (std.mem.eql(u8, symbol, "∃") or std.mem.eql(u8, symbol, "∀") or std.mem.eql(u8, symbol, "¬")) {
                         // Advance past the symbol
                         var i: usize = 0;
                         while (i < sequence_length) : (i += 1) {
                             self.advance();
                         }
-                        // Add the quantifier token
+                        // Add the token
                         const text = self.source[self.start..self.current];
                         if (self.keywords.get(text)) |keyword_type| {
                             try self.addMinimalToken(keyword_type);
