@@ -126,6 +126,7 @@ pub const Lexer = struct {
         try self.keywords.put("∀", .FORALL);
         try self.keywords.put("∈", .IN);
         try self.keywords.put("¬", .NOT_LOGICAL);
+        try self.keywords.put("⊕", .XOR);
     }
 
     //======================================================================
