@@ -205,9 +205,9 @@ fn map(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
         // Parse key
         const key = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
 
-        // Expect colon
-        if (self.peek().type != .COLON) {
-            // If we don't see a colon, this might be a block instead
+        // Expect :
+        if (self.peek().type != .WHERE_SYMBOL) {
+            // If we don't see a :, this might be a block instead
             if (entries.items.len == 0) {
                 // Clean up the key we just parsed
                 key.deinit(self.allocator);

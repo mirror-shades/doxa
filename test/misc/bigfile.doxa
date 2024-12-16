@@ -5,8 +5,8 @@ enum Color {
     Blue,
 }
 
-const b: Color = .Blue;
-const g: Color = .Green;
+const b:: Color = .Blue;
+const g:: Color = .Green;
 
 var result = match b {
     .Red => "It's red",
@@ -26,7 +26,7 @@ result?; // It's something else
 
 
 // functions and loops / recursion
-function fizzbuzz(x: int) {
+function fizzbuzz(x:: int) {
     var current is x;
     while current <= 15 {
         if current % 3 == 0 && current % 5 == 0 then "fizzbuzz"?;
@@ -41,7 +41,7 @@ function fizzbuzz(x: int) {
 fizzbuzz(1);
 
 
-fn fber(x: int) {
+fn fber(x:: int) {
     if x % 3 equals 0 and x % 5 equals 0 then "fizzbuzzer"?;
     else if x % 3 equals 0 then "fizzer"?;
     else if x % 5 equals 0 then "buzzer"?;
@@ -87,7 +87,7 @@ arr[3]?; // 6
 var ex = exists e in arr where e > 3;
 ex?; // true
 
-var uni = forall u in arr | u > 3;
+var uni = forall u in arr : u > 3;
 uni?; // false
 
 // conditionals
@@ -119,7 +119,7 @@ Map["a"]?; // 1
 Map["c"]?; // 3
 
 // try catch
-const con: int = 1;
+const con:: int = 1;
 try {
     con = 2;
 } catch {
