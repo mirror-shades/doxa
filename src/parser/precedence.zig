@@ -102,7 +102,8 @@ pub const rules = blk: {
     r.set(.AND_SYMBOL, .{ .infix = logical, .precedence = .AND });
     r.set(.OR_SYMBOL, .{ .infix = logical, .precedence = .OR });
     r.set(.XOR, .{ .infix = logical, .precedence = .XOR });
-    r.set(.NOT, .{ .prefix = unary, .precedence = .UNARY });
+    r.set(.NOT_LOGICAL, .{ .prefix = unary, .precedence = .UNARY });
+    r.set(.NOT_KEYWORD, .{ .prefix = unary, .precedence = .UNARY });
 
     // Unary operators
     //r.set(.BANG, .{ .prefix = unary });

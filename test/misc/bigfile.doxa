@@ -127,6 +127,11 @@ try {
 }
 con?; // 1
 
+// formal logical notation
+(∃x ∈ arr : x > 3)?;
+(∀x ∈ arr : x > 3)?;
+(¬∀x ∈ arr : x > 3)?;
+
 //trigger or warning conflict
 var or1 is true or false;
 var or2 is true || false;

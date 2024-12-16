@@ -647,7 +647,7 @@ pub const Interpreter = struct {
                         }
                         return error.TypeError;
                     },
-                    .NOT => {
+                    .NOT_LOGICAL, .NOT_KEYWORD => {
                         if (operand == .boolean) {
                             return token.TokenLiteral{ .boolean = !operand.boolean };
                         }
