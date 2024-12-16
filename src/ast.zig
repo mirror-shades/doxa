@@ -464,7 +464,10 @@ pub const Stmt = union(enum) {
     },
     Import: struct {
         module_name: token.Token,
+        path: []const u8,
+        specific_symbol: ?[]const u8,
     },
+    Path: []const u8,
     pub fn deinit(self: *Stmt, allocator: std.mem.Allocator) void {
         switch (self.*) {
             .Expression => |maybe_expr| {
@@ -522,6 +525,7 @@ pub const Stmt = union(enum) {
             },
             .Module => {},
             .Import => {},
+            .Path => {},
         }
     }
 };

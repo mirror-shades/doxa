@@ -147,6 +147,7 @@ pub const ErrorList = error{
     UnsupportedCompoundOperator,
     MissingParameterType,
     MissingReturnType,
+    ExpectedStringLiteral,
 
     // Miscellaneous
     NotImplemented,
