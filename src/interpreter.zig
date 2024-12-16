@@ -513,6 +513,9 @@ pub const Interpreter = struct {
             .Import => |_| {
                 return .{ .nothing = {} };
             },
+            .Path => |_| {
+                return .{ .nothing = {} };
+            },
         };
     }
 

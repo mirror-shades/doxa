@@ -1122,4 +1122,12 @@ pub const Parser = struct {
             .imports = try imports.toOwnedSlice(),
         };
     }
+
+    /// Returns the previous token in the token list
+    pub fn previous(self: *Parser) token.Token {
+        if (self.current == 0) {
+            return self.tokens[0];
+        }
+        return self.tokens[self.current - 1];
+    }
 };

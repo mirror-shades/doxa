@@ -270,7 +270,7 @@ pub fn parseStatement(self: *Parser) ErrorList!ast.Stmt {
         .ENUM_TYPE => declaration_parser.parseEnumDecl(self),
         .TRY => try parseTryStmt(self),
         .MODULE => try module_parser.parseModuleDecl(self),
-        .IMPORT => try module_parser.parseImport(self, self.peek()),
+        .IMPORT => try module_parser.parseImport(self),
         else => parseExpressionStmt(self),
     };
 }
