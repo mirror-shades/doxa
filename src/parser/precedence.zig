@@ -114,7 +114,7 @@ pub const rules = blk: {
     r.set(.INT, .{ .prefix = literal });
     r.set(.FLOAT, .{ .prefix = literal });
     r.set(.STRING, .{ .prefix = literal });
-    r.set(.BOOL, .{ .prefix = literal });
+    r.set(.LOGIC, .{ .prefix = literal });
     r.set(.NOTHING, .{ .prefix = literal });
 
     // Grouping

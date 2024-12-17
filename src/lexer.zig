@@ -66,10 +66,10 @@ pub const Lexer = struct {
     }
 
     pub fn initKeywords(self: *Lexer) !void {
-        try self.keywords.put("true", .BOOL);
-        try self.keywords.put("false", .BOOL);
-        try self.keywords.put("both", .TETRA);
-        try self.keywords.put("neither", .TETRA);
+        try self.keywords.put("true", .LOGIC);
+        try self.keywords.put("false", .LOGIC);
+        try self.keywords.put("both", .LOGIC);
+        try self.keywords.put("neither", .LOGIC);
         try self.keywords.put("if", .IF);
         try self.keywords.put("then", .THEN);
         try self.keywords.put("else", .ELSE);
@@ -552,7 +552,18 @@ pub const Lexer = struct {
         const text = self.source[self.start..self.current];
         if (self.keywords.get(text)) |keyword_type| {
             switch (keyword_type) {
-                .BOOL => try self.addToken(.BOOL, .{ .boolean = std.mem.eql(u8, text, "true") }),
+                .LOGIC => {
+                    // Convert logic keywords to their appropriate literal values
+                    if (std.mem.eql(u8, text, "true") or std.mem.eql(u8, text, "false")) {
+                        try self.addToken(.LOGIC, .{ .boolean = std.mem.eql(u8, text, "true") });
+                    } else if (std.mem.eql(u8, text, "both") or std.mem.eql(u8, text, "neither")) {
+                        const value: token.Tetra = if (std.mem.eql(u8, text, "both"))
+                            .Both
+                        else
+                            .Neither;
+                        try self.addToken(.LOGIC, .{ .tetra = value });
+                    }
+                },
                 else => try self.addMinimalToken(keyword_type),
             }
         } else {
