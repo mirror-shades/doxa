@@ -536,18 +536,18 @@ pub const Interpreter = struct {
                             return token.TokenLiteral{ .boolean = left.boolean == right.boolean };
                         } else if (right == .tetra) {
                             return token.TokenLiteral{ .boolean = switch (right.tetra) {
-                                .True => left.boolean == true,
-                                .False => left.boolean == false,
-                                .Both => true,
-                                .Neither => false,
+                                .true => left.boolean == true,
+                                .false => left.boolean == false,
+                                .both => true,
+                                .neither => false,
                             } };
                         } else token.TokenLiteral{ .boolean = false },
                         .tetra => if (right == .boolean) {
                             return token.TokenLiteral{ .boolean = switch (left.tetra) {
-                                .True => right.boolean == true,
-                                .False => right.boolean == false,
-                                .Both => true,
-                                .Neither => false,
+                                .true => right.boolean == true,
+                                .false => right.boolean == false,
+                                .both => true,
+                                .neither => false,
                             } };
                         } else if (right == .tetra) {
                             return token.TokenLiteral{ .boolean = left.tetra == right.tetra };
@@ -963,32 +963,74 @@ pub const Interpreter = struct {
             .Logical => |logical| {
                 const left = try self.evaluate(logical.left);
                 const right = try self.evaluate(logical.right);
-                return token.TokenLiteral{
-                    .boolean = switch (logical.operator.type) {
-                        .AND_KEYWORD, .AND_SYMBOL, .AND_LOGICAL => left.boolean and right.boolean,
-                        .OR_KEYWORD, .OR_SYMBOL, .OR_LOGICAL => left.boolean or right.boolean,
-                        .XOR => {
-                            // Both operands must be boolean
-                            if (left != .boolean) return error.TypeError;
-                            if (right != .boolean) return error.TypeError;
+                // Convert boolean operands to tetra if needed
+                var left_val: token.TokenLiteral = undefined;
+                if (left == .boolean)
+                    left_val = token.TokenLiteral{ .tetra = if (left.boolean) .true else .false }
+                else
+                    left_val = left;
+                const right_val = if (right == .boolean)
+                    token.TokenLiteral{ .tetra = if (right.boolean) .true else .false }
+                else
+                    right;
 
-                            // XOR is true if operands are different
-                            return token.TokenLiteral{ .boolean = left.boolean != right.boolean };
+                return token.TokenLiteral{
+                    .tetra = switch (logical.operator.type) {
+                        .AND_KEYWORD, .AND_SYMBOL, .AND_LOGICAL => switch (left_val.tetra) {
+                            .true => right_val.tetra,
+                            .false => .false,
+                            .both => if (right_val.tetra == .false) .false else .both,
+                            .neither => .neither,
                         },
-                        .IFF => {
-                            if (left != .boolean) return error.TypeError;
-                            if (right != .boolean) return error.TypeError;
-                            return token.TokenLiteral{ .boolean = left.boolean == right.boolean };
+                        .OR_KEYWORD, .OR_SYMBOL, .OR_LOGICAL => switch (left_val.tetra) {
+                            .true => .true,
+                            .false => right_val.tetra,
+                            .both => .both,
+                            .neither => if (right_val.tetra == .true) .true else .neither,
                         },
-                        .NAND => {
-                            if (left != .boolean) return error.TypeError;
-                            if (right != .boolean) return error.TypeError;
-                            return token.TokenLiteral{ .boolean = !(left.boolean and right.boolean) };
+                        .XOR => switch (left_val.tetra) {
+                            .true => switch (right_val.tetra) {
+                                .true => .false,
+                                .false => .true,
+                                .both => .both,
+                                .neither => .neither,
+                            },
+                            .false => right_val.tetra,
+                            .both => .both,
+                            .neither => .neither,
                         },
-                        .NOR => {
-                            if (left != .boolean) return error.TypeError;
-                            if (right != .boolean) return error.TypeError;
-                            return token.TokenLiteral{ .boolean = !(left.boolean or right.boolean) };
+                        .IFF => switch (left_val.tetra) {
+                            .true => right_val.tetra,
+                            .false => switch (right_val.tetra) {
+                                .true => .false,
+                                .false => .true,
+                                .both => .both,
+                                .neither => .neither,
+                            },
+                            .both => .both,
+                            .neither => .neither,
+                        },
+                        .NAND => switch (left_val.tetra) {
+                            .true => switch (right_val.tetra) {
+                                .true => .false,
+                                .false => .true,
+                                .both => .both,
+                                .neither => .neither,
+                            },
+                            .false => .true,
+                            .both => .both,
+                            .neither => .neither,
+                        },
+                        .NOR => switch (left_val.tetra) {
+                            .true => .false,
+                            .false => switch (right_val.tetra) {
+                                .true => .false,
+                                .false => .true,
+                                .both => .both,
+                                .neither => .neither,
+                            },
+                            .both => .both,
+                            .neither => .neither,
                         },
                         else => return error.InvalidOperator,
                     },
@@ -1018,12 +1060,7 @@ pub const Interpreter = struct {
                     .float => |f| try buffer.writer().print("{d}", .{f}),
                     .boolean => |b| try buffer.writer().print("{}", .{b}),
                     .tetra => |t| {
-                        const name = @tagName(t);
-                        var lower_buffer: [16]u8 = undefined; // Adjust size as needed
-                        for (name, 0..) |c, i| {
-                            lower_buffer[i] = std.ascii.toLower(c);
-                        }
-                        try buffer.writer().print("{s}", .{lower_buffer[0..name.len]});
+                        try buffer.writer().print("{s}", .{@tagName(t)});
                     },
                     .string => |s| {
                         // Only wrap in quotes if it's a literal string value, not a type name or enum variant
@@ -1656,18 +1693,18 @@ pub const Interpreter = struct {
             .boolean => if (b == .boolean or b == .tetra) switch (b) {
                 .boolean => a.boolean == b.boolean,
                 .tetra => switch (b.tetra) {
-                    .True => a.boolean == true,
-                    .False => a.boolean == false,
-                    .Both => true,
-                    .Neither => false,
+                    .true => a.boolean == true,
+                    .false => a.boolean == false,
+                    .both => true,
+                    .neither => false,
                 },
                 else => unreachable,
             } else false,
             .tetra => if (b == .boolean) switch (a.tetra) {
-                .True => b.boolean == true,
-                .False => b.boolean == false,
-                .Both => true,
-                .Neither => false,
+                .true => b.boolean == true,
+                .false => b.boolean == false,
+                .both => true,
+                .neither => false,
             } else if (b == .tetra) {
                 return a.tetra == b.tetra;
             } else false,
