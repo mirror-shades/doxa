@@ -6,8 +6,8 @@ enum Color {
 }
 
 // Usage
-var b: Color = .Blue;
-var g: Color = .Green;
+var b :: Color = .Blue;
+var g :: Color = .Green;
 
 var result = match b {
     .Red => "It's red",

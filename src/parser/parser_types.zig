@@ -50,6 +50,8 @@ pub const Parser = struct {
     // Add lexer field
     lexer: Lexer,
 
+    declared_types: std.StringHashMap(void),
+
     pub fn init(allocator: std.mem.Allocator, tokens: []const token.Token, current_file: []const u8, debug_enabled: bool) Parser {
         const parser = Parser{
             .allocator = allocator,
@@ -59,6 +61,7 @@ pub const Parser = struct {
             .current_file = current_file,
             .module_cache = std.StringHashMap(ModuleInfo).init(allocator),
             .lexer = Lexer.init(allocator, "", current_file),
+            .declared_types = std.StringHashMap(void).init(allocator),
         };
 
         return parser;
