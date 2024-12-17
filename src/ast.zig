@@ -332,6 +332,7 @@ pub const Type = enum {
     Float,
     String,
     Boolean,
+    Tetra,
     Array,
     Tuple,
     Function,
@@ -392,6 +393,7 @@ pub const TypeInfo = struct {
             .float => .Float,
             .string => .String,
             .boolean => .Boolean,
+            .tetra => .Tetra,
             .nothing => .Nothing,
             .array => .Array,
             .struct_value => .Struct,
@@ -580,6 +582,7 @@ pub const BasicType = enum {
     Float,
     String,
     Boolean,
+    Tetra,
     Auto,
 };
 
@@ -702,6 +705,7 @@ pub fn typeInfoFromExpr(allocator: std.mem.Allocator, type_expr: ?*TypeExpr) !*T
             .Float => TypeInfo{ .base = .Float },
             .String => TypeInfo{ .base = .String },
             .Boolean => TypeInfo{ .base = .Boolean },
+            .Tetra => TypeInfo{ .base = .Tetra },
             .Auto => TypeInfo{ .base = .Auto },
         },
         .Array => |array| blk: {

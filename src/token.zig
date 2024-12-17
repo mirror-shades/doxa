@@ -105,6 +105,7 @@ pub const TokenType = enum {
     STRING, // string
     ARRAY, // array
     BOOL, // boolean
+    TETRA, // tetra
     STRUCT, // struct
     ENUM, // enum
     AUTO, // auto

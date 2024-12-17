@@ -132,6 +132,13 @@ con?; // 1
 (∀x ∈ arr : x > 3)?; // false
 (¬∀x ∈ arr : x > 3)?; // true
 (false ↔ false)?; // true
+(true ⊕ true)?; // false
+// ∧ and
+// ∨ or
+// ↑ nand
+// ↓ nor
+// → implies
+
 
 //trigger or warning conflict
 var or1 is true or false;
