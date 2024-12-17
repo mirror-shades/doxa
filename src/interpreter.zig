@@ -532,8 +532,26 @@ pub const Interpreter = struct {
                     .EQUALITY_SYMBOL, .EQUALITY_KEYWORD => switch (left) {
                         .int => token.TokenLiteral{ .boolean = Interpreter.compare(left.int, right.int) == 0 },
                         .float => token.TokenLiteral{ .boolean = left.float == right.float },
-                        .boolean => token.TokenLiteral{ .boolean = left.boolean == right.boolean },
-                        .tetra => token.TokenLiteral{ .tetra = left.tetra },
+                        .boolean => if (right == .boolean) {
+                            return token.TokenLiteral{ .boolean = left.boolean == right.boolean };
+                        } else if (right == .tetra) {
+                            return token.TokenLiteral{ .boolean = switch (right.tetra) {
+                                .True => left.boolean == true,
+                                .False => left.boolean == false,
+                                .Both => true,
+                                .Neither => false,
+                            } };
+                        } else token.TokenLiteral{ .boolean = false },
+                        .tetra => if (right == .boolean) {
+                            return token.TokenLiteral{ .boolean = switch (left.tetra) {
+                                .True => right.boolean == true,
+                                .False => right.boolean == false,
+                                .Both => true,
+                                .Neither => false,
+                            } };
+                        } else if (right == .tetra) {
+                            return token.TokenLiteral{ .boolean = left.tetra == right.tetra };
+                        } else token.TokenLiteral{ .boolean = false },
                         .string => token.TokenLiteral{ .boolean = std.mem.eql(u8, left.string, right.string) },
                         .nothing => token.TokenLiteral{ .boolean = right == .nothing },
                         .array => if (right == .array) blk: {
@@ -989,7 +1007,14 @@ pub const Interpreter = struct {
                     .int => |i| try buffer.writer().print("{d}", .{i}),
                     .float => |f| try buffer.writer().print("{d}", .{f}),
                     .boolean => |b| try buffer.writer().print("{}", .{b}),
-                    .tetra => |t| try buffer.writer().print("{}", .{t}),
+                    .tetra => |t| {
+                        const name = @tagName(t);
+                        var lower_buffer: [16]u8 = undefined; // Adjust size as needed
+                        for (name, 0..) |c, i| {
+                            lower_buffer[i] = std.ascii.toLower(c);
+                        }
+                        try buffer.writer().print("{s}", .{lower_buffer[0..name.len]});
+                    },
                     .string => |s| {
                         // Only wrap in quotes if it's a literal string value, not a type name or enum variant
                         if (print.expr.* == .TypeOf or print.expr.* == .EnumMember) {
@@ -1012,7 +1037,7 @@ pub const Interpreter = struct {
                     },
                     .function => try buffer.writer().print("function", .{}),
                     .struct_value => |sv| try buffer.writer().print("{any}", .{sv}),
-                    .enum_variant => |variant| try buffer.writer().print(".{s}", .{variant}),
+                    .enum_variant => |variant| try buffer.writer().print("{s}", .{variant}),
                     .tuple => |tup| {
                         try buffer.writer().print("(", .{});
                         for (tup, 0..) |item, i| {
@@ -1040,7 +1065,14 @@ pub const Interpreter = struct {
                                 .int => |i| try buffer.writer().print("{d}", .{i}),
                                 .float => |f| try buffer.writer().print("{d}", .{f}),
                                 .boolean => |b| try buffer.writer().print("{}", .{b}),
-                                .tetra => |t| try buffer.writer().print("{}", .{t}),
+                                .tetra => |t| {
+                                    const name = @tagName(t);
+                                    var lower_buffer: [16]u8 = undefined; // Adjust size as needed
+                                    for (name, 0..) |c, i| {
+                                        lower_buffer[i] = std.ascii.toLower(c);
+                                    }
+                                    try buffer.writer().print("{s}", .{lower_buffer[0..name.len]});
+                                },
                                 .nothing => try buffer.writer().print("nothing", .{}),
                                 .array => |arr| {
                                     try buffer.writer().print("[", .{});
@@ -1417,12 +1449,10 @@ pub const Interpreter = struct {
                         .array => "array",
                         .function => "function",
                         .struct_value => |sv| sv.type_name,
-                        .enum_variant => |_| {
-                            if (expr_value.* == .FieldAccess) {
-                                return token.TokenLiteral{ .string = expr_value.FieldAccess.object.Variable.lexeme };
-                            }
-                            return token.TokenLiteral{ .string = "enum_variant" };
-                        },
+                        .enum_variant => |ev| return token.TokenLiteral{ .string = if (value == .enum_variant and std.mem.eql(u8, ev, value.enum_variant))
+                            value.enum_variant
+                        else
+                            "enum_variant" },
                         .tuple => "tuple",
                         .map => "map",
                     },
@@ -1613,13 +1643,31 @@ pub const Interpreter = struct {
             .int => |val| b == .int and val == b.int,
             .float => |val| b == .float and val == b.float,
             .string => |val| b == .string and std.mem.eql(u8, val, b.string),
-            .boolean => |val| b == .boolean and val == b.boolean,
-            .tetra => |t| b == .tetra and t == b.tetra,
+            .boolean => if (b == .boolean or b == .tetra) switch (b) {
+                .boolean => a.boolean == b.boolean,
+                .tetra => switch (b.tetra) {
+                    .True => a.boolean == true,
+                    .False => a.boolean == false,
+                    .Both => true,
+                    .Neither => false,
+                },
+                else => unreachable,
+            } else false,
+            .tetra => if (b == .boolean) switch (a.tetra) {
+                .True => b.boolean == true,
+                .False => b.boolean == false,
+                .Both => true,
+                .Neither => false,
+            } else if (b == .tetra) {
+                return a.tetra == b.tetra;
+            } else false,
             .nothing => b == .nothing,
             .array => |arr| b == .array and arr.len == b.array.len,
             .struct_value => |s| b == .struct_value and std.mem.eql(u8, s.type_name, b.struct_value.type_name),
             .function => b == .function,
-            .enum_variant => b == .enum_variant and std.mem.eql(u8, a.enum_variant, b.enum_variant),
+            .enum_variant => |ev| if (b == .enum_variant) {
+                return std.mem.eql(u8, ev, b.enum_variant);
+            } else false,
             .tuple => |arr| b == .tuple and arr.len == b.tuple.len,
             .map => |m| {
                 if (b != .map) return false;

@@ -153,6 +153,13 @@ pub fn parseExpressionStmt(self: *Parser) ErrorList!ast.Stmt {
     if (expr != null and self.peek().type == .QUESTION) {
         self.advance(); // consume ?
         const print_expr = try self.allocator.create(ast.Expr);
+
+        // Get the variable name if this is a variable expression
+        var name_token: ?[]const u8 = null;
+        if (expr.?.* == .Variable) {
+            name_token = expr.?.Variable.lexeme;
+        }
+
         print_expr.* = .{
             .Print = .{
                 .expr = expr.?,
@@ -162,6 +169,7 @@ pub fn parseExpressionStmt(self: *Parser) ErrorList!ast.Stmt {
                     .line = @divTrunc(self.peek().line + 1, 2),
                     .column = self.peek().column,
                 },
+                .variable_name = name_token,
             },
         };
         final_expr = print_expr;

@@ -76,6 +76,17 @@ mike.person.age?; // 26
 
 mike.salary?; // 1000
 
+// Tetras
+var firstFold :: tetra = true;
+var secondFold :: tetra = false;
+var thirdFold :: tetra = both;
+var fourthFold :: tetra = neither;
+
+firstFold?;
+secondFold?;
+thirdFold?;
+fourthFold?;    
+
 // arrays
 var arr = [1, 2, 3, 4, 5];
 

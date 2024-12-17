@@ -328,6 +328,7 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
             .FLOAT_TYPE => .Float,
             .STRING_TYPE => .String,
             .BOOLEAN_TYPE => .Boolean,
+            .TETRA_TYPE => .Tetra,
             .IDENTIFIER => blk: {
                 const type_name = self.peek().lexeme;
                 // Check built-in types first

@@ -70,14 +70,37 @@ var sum = add(1, 2);
 
 ## Data Types
 
+### Basic Types
+
+Standard types include:
+
+- `int`: Integer numbers
+- `float`: Floating point numbers
+- `string`: Text strings
+- `bool`: Boolean true/false
+- `tetra`: Four-valued logic system
+
+The `tetra` type represents a four-valued logic system with these possible values:
+
+- `true`: Logical truth
+- `false`: Logical false
+- `both`: Both true and false
+- `neither`: Neither true nor false
+
+Example:
+
+```doxa
+var logic :: tetra = both;
+var uncertain :: tetra = neither;
+```
+
 ### Arrays
 
 Arrays are homogeneous collections with type inference:
 
 ```doxa
-var nums = [1, 2, 3];             // Inferred as int[]
+var nums :: int[] = [1, 2, 3];    // Explicit typing
 var strs = ["a", "b"];            // Inferred as string[]
-var explicit :: int[] = [1, 2, 3];  // Explicit typing
 
 // Invalid operations
 var mixed = [1, "two", true];     // Error: mixed types
@@ -182,8 +205,8 @@ Variables require explicit typing:
 ```doxa
 var x :: int;                   // Valid declaration
 var x = "two";                  // Error: needs type
-var x :: auto = 3.14;           // Type locked to float
-x = "five";                     // Error: type mismatch
+var x :: auto = 3.14;          // Type locked to float
+x = "five";                    // Error: type mismatch
 ```
 
 Explicit return type declarations are required:
@@ -240,4 +263,40 @@ return types are optional and inferred by default:
 fn add(a, b) {
     return a + b;
 }
+```
+
+## Logical Operators
+
+### First-Order Logic Notation
+
+Doxa supports traditional first-order logic notation alongside standard programming syntax:
+
+| Symbol | Meaning     | Description                              |
+| ------ | ----------- | ---------------------------------------- |
+| `∃`    | Exists      | At least one element satisfies condition |
+| `∀`    | For all     | All elements satisfy condition           |
+| `¬`    | Not         | Logical negation                         |
+| `∧`    | And         | Logical AND                              |
+| `∨`    | Or          | Logical OR                               |
+| `↔`    | Equivalence | Logical equivalence (if and only if)     |
+| `⊕`    | XOR         | Exclusive OR                             |
+| `↑`    | NAND        | Not AND                                  |
+| `↓`    | NOR         | Not OR                                   |
+| `→`    | Implies     | Logical implication                      |
+
+Examples:
+
+```doxa
+const arr :: int[] = [1, 2, 3, 4, 5];
+// Quantifiers
+(∃x ∈ arr : x > 3)?;     // true
+(∀x ∈ arr : x > 3)?;     // false
+(¬∀x ∈ arr : x > 3)?;    // true
+
+// Logical operations
+(false ↔ false)?;        // true (equivalent)
+(true ⊕ true)?;         // false (XOR)
+(true ∧ false)?;        // false
+(true ∨ false)?;        // true
+(true → false)?;        // false
 ```

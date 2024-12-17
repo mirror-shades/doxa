@@ -682,6 +682,12 @@ pub const Parser = struct {
     pub fn print(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
         if (left == null) return error.ExpectedExpression;
 
+        // Get the variable name if this is a variable expression
+        var name_token: ?token.Token = null;
+        if (left.?.* == .Variable) {
+            name_token = left.?.Variable;
+        }
+
         const print_expr = try self.allocator.create(ast.Expr);
         print_expr.* = .{
             .Print = .{
@@ -692,6 +698,7 @@ pub const Parser = struct {
                     .line = @divTrunc(self.peek().line + 1, 2),
                     .column = self.peek().column,
                 },
+                .variable_name = if (name_token) |token_name| token_name.lexeme else null,
             },
         };
 
