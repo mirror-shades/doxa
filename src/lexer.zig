@@ -68,6 +68,8 @@ pub const Lexer = struct {
     pub fn initKeywords(self: *Lexer) !void {
         try self.keywords.put("true", .BOOL);
         try self.keywords.put("false", .BOOL);
+        try self.keywords.put("both", .TETRA);
+        try self.keywords.put("neither", .TETRA);
         try self.keywords.put("if", .IF);
         try self.keywords.put("then", .THEN);
         try self.keywords.put("else", .ELSE);
