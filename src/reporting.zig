@@ -81,6 +81,7 @@ pub const ErrorList = error{
     InvalidFieldAccessTarget,
     InvalidEnumVariant,
     NoMatchCase,
+    UndefinedType,
 
     // Error Handling
     NoTryBlock,

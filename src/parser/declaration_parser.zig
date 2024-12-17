@@ -17,7 +17,11 @@ pub fn parseEnumDecl(self: *Parser) ErrorList!ast.Stmt {
         return error.ExpectedIdentifier;
     }
     const name = self.peek();
-    self.advance();
+
+    // Register the enum type before advancing
+    try self.declared_types.put(name.lexeme, {});
+
+    self.advance(); // Now advance past the identifier
 
     // Parse opening brace
     if (self.peek().type != .LEFT_BRACE) {
@@ -325,8 +329,23 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
             .STRING_TYPE => .String,
             .BOOLEAN_TYPE => .Boolean,
             .IDENTIFIER => blk: {
-                type_info.custom_type = self.peek().lexeme;
-                break :blk .Custom;
+                const type_name = self.peek().lexeme;
+                // Check built-in types first
+                if (std.mem.eql(u8, type_name, "bool")) {
+                    break :blk .Boolean;
+                } else if (std.mem.eql(u8, type_name, "int")) {
+                    break :blk .Int;
+                } else if (std.mem.eql(u8, type_name, "float")) {
+                    break :blk .Float;
+                } else if (std.mem.eql(u8, type_name, "string")) {
+                    break :blk .String;
+                } else if (self.declared_types.contains(type_name)) {
+                    // It's a valid custom type
+                    type_info.custom_type = type_name;
+                    break :blk .Custom;
+                } else {
+                    return error.UndefinedType;
+                }
             },
             else => return error.ExpectedType,
         };
