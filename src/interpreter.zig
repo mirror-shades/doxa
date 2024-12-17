@@ -965,8 +965,8 @@ pub const Interpreter = struct {
                 const right = try self.evaluate(logical.right);
                 return token.TokenLiteral{
                     .boolean = switch (logical.operator.type) {
-                        .AND_KEYWORD, .AND_SYMBOL => left.boolean and right.boolean,
-                        .OR_KEYWORD, .OR_SYMBOL => left.boolean or right.boolean,
+                        .AND_KEYWORD, .AND_SYMBOL, .AND_LOGICAL => left.boolean and right.boolean,
+                        .OR_KEYWORD, .OR_SYMBOL, .OR_LOGICAL => left.boolean or right.boolean,
                         .XOR => {
                             // Both operands must be boolean
                             if (left != .boolean) return error.TypeError;
@@ -979,6 +979,16 @@ pub const Interpreter = struct {
                             if (left != .boolean) return error.TypeError;
                             if (right != .boolean) return error.TypeError;
                             return token.TokenLiteral{ .boolean = left.boolean == right.boolean };
+                        },
+                        .NAND => {
+                            if (left != .boolean) return error.TypeError;
+                            if (right != .boolean) return error.TypeError;
+                            return token.TokenLiteral{ .boolean = !(left.boolean and right.boolean) };
+                        },
+                        .NOR => {
+                            if (left != .boolean) return error.TypeError;
+                            if (right != .boolean) return error.TypeError;
+                            return token.TokenLiteral{ .boolean = !(left.boolean or right.boolean) };
                         },
                         else => return error.InvalidOperator,
                     },

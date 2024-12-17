@@ -54,15 +54,17 @@ pub const Precedence = enum(u8) {
     OR = 3, // or
     AND = 4, // and
     XOR = 5, // xor
-    IFF = 6, // iff
-    EQUALITY = 7, // == !=
-    COMPARISON = 8, // < > <= >=
-    QUANTIFIER = 9, // ∃ ∀
-    TERM = 10, // + -
-    FACTOR = 11, // * /
-    UNARY = 12, // ! -
-    CALL = 13, // . () []
-    PRIMARY = 14,
+    NAND = 6, // ↑
+    NOR = 7, // ↓
+    IFF = 8, // iff
+    EQUALITY = 9, // == !=
+    COMPARISON = 10, // < > <= >=
+    QUANTIFIER = 11, // ∃ ∀
+    TERM = 12, // + -
+    FACTOR = 13, // * /
+    UNARY = 14, // ! -
+    CALL = 15, // . () []
+    PRIMARY = 16,
 };
 
 pub const ParseRule = struct {
@@ -99,9 +101,13 @@ pub const rules = blk: {
 
     // Logical operators
     r.set(.AND_KEYWORD, .{ .infix = logical, .precedence = .AND });
-    r.set(.OR_KEYWORD, .{ .infix = logical, .precedence = .OR });
     r.set(.AND_SYMBOL, .{ .infix = logical, .precedence = .AND });
+    r.set(.AND_LOGICAL, .{ .infix = logical, .precedence = .AND });
+    r.set(.OR_KEYWORD, .{ .infix = logical, .precedence = .OR });
     r.set(.OR_SYMBOL, .{ .infix = logical, .precedence = .OR });
+    r.set(.OR_LOGICAL, .{ .infix = logical, .precedence = .OR });
+    r.set(.NAND, .{ .infix = logical, .precedence = .NAND });
+    r.set(.NOR, .{ .infix = logical, .precedence = .NOR });
     r.set(.XOR, .{ .infix = logical, .precedence = .XOR });
     r.set(.IFF, .{ .infix = logical, .precedence = .IFF });
     r.set(.NOT_LOGICAL, .{ .prefix = unary, .precedence = .UNARY });

@@ -77,6 +77,10 @@ pub fn run(memory: *MemoryManager, interpreter: *Interpreter, source: []const u8
     try lexer.initKeywords();
     const token_list = try lexer.lexTokens();
 
+    // finish logical operators
+    // async/await
+    // generics
+
     // the file has been lexed, now we need to parse it
     // first pass goes over the file and creates forward declaration for all function, as well as anything in an imported module marked as public
     // second pass processes the imports to resolve any modules that are imported, fail gracefully if any imports fail or are circular
