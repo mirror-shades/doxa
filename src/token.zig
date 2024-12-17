@@ -80,8 +80,10 @@ pub const TokenType = enum {
     // keywords with alternate tokens
     AND_KEYWORD, // and
     AND_SYMBOL, // &&
+    AND_LOGICAL, // ∧
     OR_KEYWORD, // or
     OR_SYMBOL, // ||
+    OR_LOGICAL, // ∨
     FN_KEYWORD, // fn
     FUNCTION_KEYWORD, // function
     WHERE_SYMBOL, // :
@@ -96,6 +98,8 @@ pub const TokenType = enum {
     IFF, // iff
     THEN, // then
     ELSE, // else
+    NAND, // ↑
+    NOR, // ↓
 
     // literals
     IDENTIFIER, // identifier

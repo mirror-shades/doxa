@@ -144,10 +144,10 @@ con?; // 1
 (¬∀x ∈ arr : x > 3)?; // true
 (false ↔ false)?; // true
 (true ⊕ true)?; // false
-// ∧ and
-// ∨ or
-// ↑ nand
-// ↓ nor
+(true ∧ false)?; // false
+(true ∨ false)?; // true
+(true ↑ false)?; // true
+(true ↓ false)?; // false
 // → implies
 
 

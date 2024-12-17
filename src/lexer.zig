@@ -131,6 +131,10 @@ pub const Lexer = struct {
         try self.keywords.put("¬", .NOT_LOGICAL);
         try self.keywords.put("⊕", .XOR);
         try self.keywords.put("↔", .IFF);
+        try self.keywords.put("∧", .AND_LOGICAL);
+        try self.keywords.put("∨", .OR_LOGICAL);
+        try self.keywords.put("↑", .NAND);
+        try self.keywords.put("↓", .NOR);
     }
 
     //======================================================================
