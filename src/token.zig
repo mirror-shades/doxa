@@ -27,8 +27,8 @@ pub const TokenType = enum {
     SLASH_EQUAL, // /=
     ASTERISK, // *
     ASTERISK_EQUAL, // *=
-    POWER, // ^
-    POWER_EQUAL, // ^=
+    POWER, // **
+    POWER_EQUAL, // **=
     PLUS, // +
     PLUS_PLUS, // ++
     PLUS_EQUAL, // +=
@@ -93,6 +93,7 @@ pub const TokenType = enum {
 
     // logical operators
     IF, // if
+    IFF, // iff
     THEN, // then
     ELSE, // else
 

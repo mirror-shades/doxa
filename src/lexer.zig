@@ -127,6 +127,7 @@ pub const Lexer = struct {
         try self.keywords.put("∈", .IN);
         try self.keywords.put("¬", .NOT_LOGICAL);
         try self.keywords.put("⊕", .XOR);
+        try self.keywords.put("↔", .IFF);
     }
 
     //======================================================================
@@ -267,15 +268,14 @@ pub const Lexer = struct {
                     try self.addMinimalToken(.WHERE_SYMBOL);
                 }
             },
-            '^' => {
-                if (self.match('=')) {
-                    try self.addMinimalToken(.POWER_EQUAL);
-                } else {
-                    try self.addMinimalToken(.POWER);
-                }
-            },
             '*' => {
-                if (self.match('=')) {
+                if (self.match('*')) {
+                    if (self.match('=')) {
+                        try self.addMinimalToken(.POWER_EQUAL);
+                    } else {
+                        try self.addMinimalToken(.POWER);
+                    }
+                } else if (self.match('=')) {
                     try self.addMinimalToken(.ASTERISK_EQUAL);
                 } else {
                     try self.addMinimalToken(.ASTERISK);
