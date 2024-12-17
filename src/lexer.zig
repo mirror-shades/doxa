@@ -563,9 +563,9 @@ pub const Lexer = struct {
                         try self.addToken(.LOGIC, .{ .boolean = std.mem.eql(u8, text, "true") });
                     } else if (std.mem.eql(u8, text, "both") or std.mem.eql(u8, text, "neither")) {
                         const value: token.Tetra = if (std.mem.eql(u8, text, "both"))
-                            .Both
+                            .both
                         else
-                            .Neither;
+                            .neither;
                         try self.addToken(.LOGIC, .{ .tetra = value });
                     }
                 },

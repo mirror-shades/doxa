@@ -140,10 +140,10 @@ pub const StructField = struct {
 };
 
 pub const Tetra = enum {
-    True,
-    False,
-    Both,
-    Neither,
+    true,
+    false,
+    both,
+    neither,
 };
 
 pub const TokenLiteral = union(enum) {
