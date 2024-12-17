@@ -14,7 +14,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.48">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
     
     
       
@@ -410,6 +410,15 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#basic-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      Basic Types
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#arrays" class="md-nav__link">
     <span class="md-ellipsis">
       Arrays
@@ -573,6 +582,30 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#logical-operators" class="md-nav__link">
+    <span class="md-ellipsis">
+      Logical Operators
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Logical Operators">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#first-order-logic-notation" class="md-nav__link">
+    <span class="md-ellipsis">
+      First-Order Logic Notation
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -676,7 +709,7 @@ var dog = Dog {
 <h3 id="modules">Modules</h3>
 <div class="highlight"><pre><span></span><code>// math.doxa
 #safe
-export fn add(a: int, b: int) -&gt; int {
+export fn add(a :: int, b :: int) -&gt; int {
     return a + b;
 }
 
@@ -685,11 +718,30 @@ import { add } from &quot;./math.doxa&quot;;
 var sum = add(1, 2);
 </code></pre></div>
 <h2 id="data-types">Data Types</h2>
+<h3 id="basic-types">Basic Types</h3>
+<p>Standard types include:</p>
+<ul>
+<li><code>int</code>: Integer numbers</li>
+<li><code>float</code>: Floating point numbers</li>
+<li><code>string</code>: Text strings</li>
+<li><code>bool</code>: Boolean true/false</li>
+<li><code>tetra</code>: Four-valued logic system</li>
+</ul>
+<p>The <code>tetra</code> type represents a four-valued logic system with these possible values:</p>
+<ul>
+<li><code>true</code>: Logical truth</li>
+<li><code>false</code>: Logical false</li>
+<li><code>both</code>: Both true and false</li>
+<li><code>neither</code>: Neither true nor false</li>
+</ul>
+<p>Example:</p>
+<div class="highlight"><pre><span></span><code>var logic :: tetra = both;
+var uncertain :: tetra = neither;
+</code></pre></div>
 <h3 id="arrays">Arrays</h3>
 <p>Arrays are homogeneous collections with type inference:</p>
-<div class="highlight"><pre><span></span><code>var nums = [1, 2, 3];             // Inferred as int[]
+<div class="highlight"><pre><span></span><code>var nums :: int[] = [1, 2, 3];    // Explicit typing
 var strs = [&quot;a&quot;, &quot;b&quot;];            // Inferred as string[]
-var explicit: int[] = [1, 2, 3];  // Explicit typing
 
 // Invalid operations
 var mixed = [1, &quot;two&quot;, true];     // Error: mixed types
@@ -743,8 +795,10 @@ typeof(&quot;hello&quot;);                // &quot;string&quot;
 typeof([1,2,3]);               // &quot;array&quot;
 </code></pre></div>
 <h3 id="collection-quantifiers">Collection Quantifiers</h3>
-<div class="highlight"><pre><span></span><code>exists x in numbers where x &gt; 10  // Any match
-forall x in numbers | x &gt; 0      // All match
+<div class="highlight"><pre><span></span><code>(∃x ∈ numbers : x &gt; 10) // Logical notation
+(exists x in numbers where x &gt; 10) // English prose
+(∀x ∈ numbers : x &gt; 0) // Logical notation
+(forall x in numbers where x &gt; 0) // English prose
 </code></pre></div>
 <h2 id="type-system-details">Type System Details</h2>
 <h3 id="normal-mode">Normal Mode</h3>
@@ -757,19 +811,19 @@ y = &quot;pi&quot;;                      // string (allowed)
 </code></pre></div>
 <h3 id="safe-mode">Safe Mode</h3>
 <p>Variables require explicit typing:</p>
-<div class="highlight"><pre><span></span><code>var x: int;                    // Valid declaration
-var x = &quot;two&quot;;                // Error: needs type
-var x: auto = 3.14;           // Type locked to float
-x = &quot;five&quot;;                   // Error: type mismatch
+<div class="highlight"><pre><span></span><code>var x :: int;                   // Valid declaration
+var x = &quot;two&quot;;                  // Error: needs type
+var x :: auto = 3.14;          // Type locked to float
+x = &quot;five&quot;;                    // Error: type mismatch
 </code></pre></div>
 <p>Explicit return type declarations are required:</p>
 <div class="highlight"><pre><span></span><code>// Safe Mode - Valid
-fn greet(name: string) -&gt; string {
+fn greet(name :: string) -&gt; string {
     return &quot;Hello ${name}!&quot;;
 }
 
 // Safe Mode - Error: missing return type
-fn greet(name: string) {
+fn greet(name :: string) {
     return &quot;Hello ${name}!&quot;;
 }
 </code></pre></div>
@@ -803,6 +857,84 @@ fn add(a: int, b: int) returns(int) {
 fn add(a, b) {
     return a + b;
 }
+</code></pre></div>
+<h2 id="logical-operators">Logical Operators</h2>
+<h3 id="first-order-logic-notation">First-Order Logic Notation</h3>
+<p>Doxa supports traditional first-order logic notation alongside standard programming syntax:</p>
+<table>
+<thead>
+<tr>
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>∃</code></td>
+<td>Exists</td>
+<td>At least one element satisfies condition</td>
+</tr>
+<tr>
+<td><code>∀</code></td>
+<td>For all</td>
+<td>All elements satisfy condition</td>
+</tr>
+<tr>
+<td><code>¬</code></td>
+<td>Not</td>
+<td>Logical negation</td>
+</tr>
+<tr>
+<td><code>∧</code></td>
+<td>And</td>
+<td>Logical AND</td>
+</tr>
+<tr>
+<td><code>∨</code></td>
+<td>Or</td>
+<td>Logical OR</td>
+</tr>
+<tr>
+<td><code>↔</code></td>
+<td>Equivalence</td>
+<td>Logical equivalence (if and only if)</td>
+</tr>
+<tr>
+<td><code>⊕</code></td>
+<td>XOR</td>
+<td>Exclusive OR</td>
+</tr>
+<tr>
+<td><code>↑</code></td>
+<td>NAND</td>
+<td>Not AND</td>
+</tr>
+<tr>
+<td><code>↓</code></td>
+<td>NOR</td>
+<td>Not OR</td>
+</tr>
+<tr>
+<td><code>→</code></td>
+<td>Implies</td>
+<td>Logical implication</td>
+</tr>
+</tbody>
+</table>
+<p>Examples:</p>
+<div class="highlight"><pre><span></span><code>const arr :: int[] = [1, 2, 3, 4, 5];
+// Quantifiers
+(∃x ∈ arr : x &gt; 3)?;     // true
+(∀x ∈ arr : x &gt; 3)?;     // false
+(¬∀x ∈ arr : x &gt; 3)?;    // true
+
+// Logical operations
+(false ↔ false)?;        // true (equivalent)
+(true ⊕ true)?;         // false (XOR)
+(true ∧ false)?;        // false
+(true ∨ false)?;        // true
+(true → false)?;        // false
 </code></pre></div>
 
 
@@ -870,7 +1002,7 @@ fn add(a, b) {
     <script id="__config" type="application/json">{"base": "..", "features": ["navigation.tabs", "navigation.sections", "toc.integrate", "search.highlight", "search.suggest", "content.tabs.link", "content.code.annotation", "content.code.copy"], "search": "../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
     
     
-      <script src="../assets/javascripts/bundle.83f73b43.min.js"></script>
+      <script src="../assets/javascripts/bundle.88dd0f4e.min.js"></script>
       
     
   </body>
