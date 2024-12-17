@@ -956,6 +956,11 @@ pub const Interpreter = struct {
                             // XOR is true if operands are different
                             return token.TokenLiteral{ .boolean = left.boolean != right.boolean };
                         },
+                        .IFF => {
+                            if (left != .boolean) return error.TypeError;
+                            if (right != .boolean) return error.TypeError;
+                            return token.TokenLiteral{ .boolean = left.boolean == right.boolean };
+                        },
                         else => return error.InvalidOperator,
                     },
                 };

@@ -54,14 +54,15 @@ pub const Precedence = enum(u8) {
     OR = 3, // or
     AND = 4, // and
     XOR = 5, // xor
-    EQUALITY = 6, // == !=
-    COMPARISON = 7, // < > <= >=
-    QUANTIFIER = 8, // ∃ ∀
-    TERM = 9, // + -
-    FACTOR = 10, // * /
-    UNARY = 11, // ! -
-    CALL = 12, // . () []
-    PRIMARY = 13,
+    IFF = 6, // iff
+    EQUALITY = 7, // == !=
+    COMPARISON = 8, // < > <= >=
+    QUANTIFIER = 9, // ∃ ∀
+    TERM = 10, // + -
+    FACTOR = 11, // * /
+    UNARY = 12, // ! -
+    CALL = 13, // . () []
+    PRIMARY = 14,
 };
 
 pub const ParseRule = struct {
@@ -102,6 +103,7 @@ pub const rules = blk: {
     r.set(.AND_SYMBOL, .{ .infix = logical, .precedence = .AND });
     r.set(.OR_SYMBOL, .{ .infix = logical, .precedence = .OR });
     r.set(.XOR, .{ .infix = logical, .precedence = .XOR });
+    r.set(.IFF, .{ .infix = logical, .precedence = .IFF });
     r.set(.NOT_LOGICAL, .{ .prefix = unary, .precedence = .UNARY });
     r.set(.NOT_KEYWORD, .{ .prefix = unary, .precedence = .UNARY });
 
