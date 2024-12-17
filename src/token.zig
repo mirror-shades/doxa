@@ -106,6 +106,7 @@ pub const TokenType = enum {
     ARRAY, // array
     BOOL, // boolean
     TETRA, // tetra
+    LOGIC, // logic
     STRUCT, // struct
     ENUM, // enum
     AUTO, // auto
@@ -117,6 +118,7 @@ pub const TokenType = enum {
     FLOAT_TYPE, // float type declaration
     STRING_TYPE, // string type declaration
     BOOLEAN_TYPE, // bool type declaration
+    TETRA_TYPE, // tetra type declaration
     ARRAY_TYPE, // array type declaration
     STRUCT_TYPE, // struct type declaration
     ENUM_TYPE, // enum type declaration
@@ -133,11 +135,19 @@ pub const StructField = struct {
     value: TokenLiteral,
 };
 
+pub const Tetra = enum {
+    True,
+    False,
+    Both,
+    Neither,
+};
+
 pub const TokenLiteral = union(enum) {
     int: i32,
     float: f64,
     string: []const u8,
     boolean: bool,
+    tetra: Tetra,
     nothing: void,
     array: []TokenLiteral,
     tuple: []TokenLiteral,

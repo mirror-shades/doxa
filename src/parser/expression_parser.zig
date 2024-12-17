@@ -605,7 +605,7 @@ pub fn literal(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr
     }
 
     const expr = switch (current.type) {
-        .INT, .FLOAT, .BOOL, .NOTHING => blk: {
+        .INT, .FLOAT, .LOGIC, .NOTHING => blk: {
             const new_expr = try self.allocator.create(ast.Expr);
             new_expr.* = .{ .Literal = current.literal };
             self.advance();

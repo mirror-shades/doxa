@@ -533,6 +533,7 @@ pub const Interpreter = struct {
                         .int => token.TokenLiteral{ .boolean = Interpreter.compare(left.int, right.int) == 0 },
                         .float => token.TokenLiteral{ .boolean = left.float == right.float },
                         .boolean => token.TokenLiteral{ .boolean = left.boolean == right.boolean },
+                        .tetra => token.TokenLiteral{ .tetra = left.tetra },
                         .string => token.TokenLiteral{ .boolean = std.mem.eql(u8, left.string, right.string) },
                         .nothing => token.TokenLiteral{ .boolean = right == .nothing },
                         .array => if (right == .array) blk: {
@@ -747,7 +748,7 @@ pub const Interpreter = struct {
                     return error.TypeError;
                 }
 
-                const branch = if (condition.boolean)
+                const branch = if ((condition.boolean))
                     if_expr.then_branch orelse return error.InvalidExpression
                 else
                     if_expr.else_branch orelse return error.InvalidExpression;
@@ -988,6 +989,7 @@ pub const Interpreter = struct {
                     .int => |i| try buffer.writer().print("{d}", .{i}),
                     .float => |f| try buffer.writer().print("{d}", .{f}),
                     .boolean => |b| try buffer.writer().print("{}", .{b}),
+                    .tetra => |t| try buffer.writer().print("{}", .{t}),
                     .string => |s| {
                         // Only wrap in quotes if it's a literal string value, not a type name or enum variant
                         if (print.expr.* == .TypeOf or print.expr.* == .EnumMember) {
@@ -1038,6 +1040,7 @@ pub const Interpreter = struct {
                                 .int => |i| try buffer.writer().print("{d}", .{i}),
                                 .float => |f| try buffer.writer().print("{d}", .{f}),
                                 .boolean => |b| try buffer.writer().print("{}", .{b}),
+                                .tetra => |t| try buffer.writer().print("{}", .{t}),
                                 .nothing => try buffer.writer().print("nothing", .{}),
                                 .array => |arr| {
                                     try buffer.writer().print("[", .{});
@@ -1391,6 +1394,7 @@ pub const Interpreter = struct {
                         .float => "float",
                         .string => "string",
                         .boolean => "boolean",
+                        .tetra => "tetra",
                         .nothing => if (expr_value.* == .EnumDecl or expr_value.* == .StructDecl or
                             if (expr_value.* == .Variable)
                             if (self.environment.getTypeInfo(expr_value.Variable.lexeme) catch null) |type_info|
@@ -1610,6 +1614,7 @@ pub const Interpreter = struct {
             .float => |val| b == .float and val == b.float,
             .string => |val| b == .string and std.mem.eql(u8, val, b.string),
             .boolean => |val| b == .boolean and val == b.boolean,
+            .tetra => |t| b == .tetra and t == b.tetra,
             .nothing => b == .nothing,
             .array => |arr| b == .array and arr.len == b.array.len,
             .struct_value => |s| b == .struct_value and std.mem.eql(u8, s.type_name, b.struct_value.type_name),
