@@ -20,13 +20,13 @@ add(x, y);
 ```
 #safe
 
-fn add(a: int, b: int) returns(int) {
+fn add(a :: int, b :: int) returns(int) {
     return (a + b);
 }
 
 -> fn main() {
-    var a: int = 1;
-    var b: int = 2;
+    var a :: int = 1;
+    var b :: int = 2;
 
     add(a, b);
 }

@@ -677,6 +677,7 @@ pub const Location = struct {
 pub const PrintExpr = struct {
     expr: *Expr,
     location: Location,
+    variable_name: ?[]const u8,
 };
 
 pub const FieldAccess = struct {

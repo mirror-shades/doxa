@@ -110,6 +110,7 @@ pub const Lexer = struct {
         try self.keywords.put("float", .FLOAT_TYPE);
         try self.keywords.put("string", .STRING_TYPE);
         try self.keywords.put("bool", .BOOLEAN_TYPE);
+        try self.keywords.put("tetra", .TETRA_TYPE);
         try self.keywords.put("array", .ARRAY_TYPE);
         try self.keywords.put("struct", .STRUCT_TYPE);
         try self.keywords.put("enum", .ENUM_TYPE);
