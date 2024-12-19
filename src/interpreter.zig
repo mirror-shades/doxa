@@ -394,7 +394,7 @@ pub const Interpreter = struct {
                     .Int => token.TokenLiteral{ .int = 0 },
                     .Float => token.TokenLiteral{ .float = 0.0 },
                     .String => token.TokenLiteral{ .string = try self.string_interner.intern("") },
-                    .Boolean => token.TokenLiteral{ .boolean = false },
+                    .Boolean => token.TokenLiteral{ .boolean = token.Boolean.false },
                     .Map => token.TokenLiteral{ .map = std.StringHashMap(token.TokenLiteral).init(self.memory.getAllocator()) },
                     else => token.TokenLiteral{ .nothing = {} },
                 };
@@ -530,61 +530,70 @@ pub const Interpreter = struct {
 
                 return switch (binary.operator.type) {
                     .EQUALITY_SYMBOL, .EQUALITY_KEYWORD => switch (left) {
-                        .int => token.TokenLiteral{ .boolean = Interpreter.compare(left.int, right.int) == 0 },
-                        .float => token.TokenLiteral{ .boolean = left.float == right.float },
-                        .boolean => if (right == .boolean) {
-                            return token.TokenLiteral{ .boolean = left.boolean == right.boolean };
-                        } else if (right == .tetra) {
-                            return token.TokenLiteral{ .boolean = switch (right.tetra) {
-                                .true => left.boolean == true,
-                                .false => left.boolean == false,
-                                .both => true,
-                                .neither => false,
-                            } };
-                        } else token.TokenLiteral{ .boolean = false },
-                        .tetra => if (right == .boolean) {
-                            return token.TokenLiteral{ .boolean = switch (left.tetra) {
-                                .true => right.boolean == true,
-                                .false => right.boolean == false,
-                                .both => true,
-                                .neither => false,
-                            } };
-                        } else if (right == .tetra) {
-                            return token.TokenLiteral{ .boolean = left.tetra == right.tetra };
-                        } else token.TokenLiteral{ .boolean = false },
-                        .string => token.TokenLiteral{ .boolean = std.mem.eql(u8, left.string, right.string) },
-                        .nothing => token.TokenLiteral{ .boolean = right == .nothing },
+                        .int, .float => {
+                            if (Interpreter.compare(left.int, right.int) == 0) {
+                                return token.TokenLiteral{ .boolean = token.Boolean.true };
+                            } else {
+                                return token.TokenLiteral{ .boolean = token.Boolean.false };
+                            }
+                        },
+                        .boolean, .tetra => {
+                            if (right == .boolean or right == .tetra) {
+                                return compareLogical(left, right);
+                            }
+                            return error.TypeError;
+                        },
+                        .string => {
+                            if (std.mem.eql(u8, left.string, right.string)) {
+                                return token.TokenLiteral{ .boolean = token.Boolean.true };
+                            } else {
+                                return token.TokenLiteral{ .boolean = token.Boolean.false };
+                            }
+                        },
+                        .nothing => {
+                            if (right == .nothing) {
+                                return token.TokenLiteral{ .boolean = token.Boolean.true };
+                            } else {
+                                return token.TokenLiteral{ .boolean = token.Boolean.false };
+                            }
+                        },
                         .array => if (right == .array) blk: {
-                            if (left.array.len != right.array.len) break :blk token.TokenLiteral{ .boolean = false };
+                            if (left.array.len != right.array.len) break :blk token.TokenLiteral{ .boolean = token.Boolean.false };
                             for (left.array, right.array) |l, r| {
-                                if (!std.meta.eql(l, r)) break :blk token.TokenLiteral{ .boolean = false };
+                                if (!std.meta.eql(l, r)) break :blk token.TokenLiteral{ .boolean = token.Boolean.false };
                             }
-                            break :blk token.TokenLiteral{ .boolean = true };
-                        } else token.TokenLiteral{ .boolean = false },
+                            break :blk token.TokenLiteral{ .boolean = token.Boolean.true };
+                        } else token.TokenLiteral{ .boolean = token.Boolean.false },
                         .struct_value => if (right == .struct_value) blk: {
-                            if (left.struct_value.fields.len != right.struct_value.fields.len) break :blk token.TokenLiteral{ .boolean = false };
+                            if (left.struct_value.fields.len != right.struct_value.fields.len) break :blk token.TokenLiteral{ .boolean = token.Boolean.false };
                             for (left.struct_value.fields, right.struct_value.fields) |l, r| {
-                                if (!std.mem.eql(u8, l.name, r.name)) break :blk token.TokenLiteral{ .boolean = false };
-                                if (!self.valuesEqual(l.value, r.value)) break :blk token.TokenLiteral{ .boolean = false };
+                                if (!std.mem.eql(u8, l.name, r.name)) break :blk token.TokenLiteral{ .boolean = token.Boolean.false };
+                                if (!self.valuesEqual(l.value, r.value)) break :blk token.TokenLiteral{ .boolean = token.Boolean.false };
                             }
-                            break :blk token.TokenLiteral{ .boolean = true };
-                        } else token.TokenLiteral{ .boolean = false },
-                        .function => token.TokenLiteral{ .boolean = false }, // Functions are never equal
-                        .enum_variant => token.TokenLiteral{ .boolean = std.mem.eql(u8, left.enum_variant, right.enum_variant) },
+                            break :blk token.TokenLiteral{ .boolean = token.Boolean.true };
+                        } else token.TokenLiteral{ .boolean = token.Boolean.false },
+                        .function => token.TokenLiteral{ .boolean = token.Boolean.false }, // Functions are never equal
+                        .enum_variant => {
+                            if (std.mem.eql(u8, left.enum_variant, right.enum_variant)) {
+                                return token.TokenLiteral{ .boolean = token.Boolean.true };
+                            } else {
+                                return token.TokenLiteral{ .boolean = token.Boolean.false };
+                            }
+                        },
                         .tuple => |l| switch (right) {
                             .tuple => |r| {
-                                if (l.len != r.len) return token.TokenLiteral{ .boolean = false };
+                                if (l.len != r.len) return token.TokenLiteral{ .boolean = token.Boolean.false };
                                 // Compare each element
                                 for (l, 0..) |item, i| {
                                     if (!self.valuesEqual(item, r[i])) {
-                                        return token.TokenLiteral{ .boolean = false };
+                                        return token.TokenLiteral{ .boolean = token.Boolean.false };
                                     }
                                 }
-                                return token.TokenLiteral{ .boolean = true };
+                                return token.TokenLiteral{ .boolean = token.Boolean.true };
                             },
-                            else => token.TokenLiteral{ .boolean = false },
+                            else => token.TokenLiteral{ .boolean = token.Boolean.false },
                         },
-                        .map => token.TokenLiteral{ .boolean = false },
+                        .map => token.TokenLiteral{ .boolean = token.Boolean.false },
                     },
                     .PLUS => {
                         if (left == .int and right == .int) {
@@ -613,39 +622,74 @@ pub const Interpreter = struct {
                     },
                     .GREATER => {
                         if (left == .int and right == .int) {
-                            return token.TokenLiteral{ .boolean = Interpreter.compare(left.int, right.int) > 0 };
+                            if (Interpreter.compare(left.int, right.int) > 0) {
+                                return token.TokenLiteral{ .boolean = token.Boolean.true };
+                            } else {
+                                return token.TokenLiteral{ .boolean = token.Boolean.false };
+                            }
                         }
                         if (left == .float and right == .int) {
-                            return token.TokenLiteral{ .boolean = left.float > @as(f64, @floatFromInt(right.int)) };
+                            if (left.float > @as(f64, @floatFromInt(right.int))) {
+                                return token.TokenLiteral{ .boolean = token.Boolean.true };
+                            } else {
+                                return token.TokenLiteral{ .boolean = token.Boolean.false };
+                            }
                         }
                         if (left == .int and right == .float) {
-                            return token.TokenLiteral{ .boolean = @as(f64, @floatFromInt(left.int)) > right.float };
+                            if (@as(f64, @floatFromInt(left.int)) > right.float) {
+                                return token.TokenLiteral{ .boolean = token.Boolean.true };
+                            } else {
+                                return token.TokenLiteral{ .boolean = token.Boolean.false };
+                            }
                         }
                         if (left == .float and right == .float) {
-                            return token.TokenLiteral{ .boolean = left.float > right.float };
+                            if (left.float > right.float) {
+                                return token.TokenLiteral{ .boolean = token.Boolean.true };
+                            } else {
+                                return token.TokenLiteral{ .boolean = token.Boolean.false };
+                            }
                         }
                         return error.TypeError;
                     },
                     .GREATER_EQUAL => {
                         if (left == .int and right == .int) {
-                            return token.TokenLiteral{ .boolean = Interpreter.compare(left.int, right.int) >= 0 };
+                            if (Interpreter.compare(left.int, right.int) >= 0) {
+                                return token.TokenLiteral{ .boolean = token.Boolean.true };
+                            } else {
+                                return token.TokenLiteral{ .boolean = token.Boolean.false };
+                            }
                         }
                         return error.TypeError;
                     },
                     .LESS => {
                         if (left == .int and right == .int) {
-                            return token.TokenLiteral{ .boolean = Interpreter.compare(left.int, right.int) < 0 };
+                            if (Interpreter.compare(left.int, right.int) < 0) {
+                                return token.TokenLiteral{ .boolean = token.Boolean.true };
+                            } else {
+                                return token.TokenLiteral{ .boolean = token.Boolean.false };
+                            }
                         }
                         return error.TypeError;
                     },
                     .LESS_EQUAL => {
                         if (left == .int and right == .int) {
-                            return token.TokenLiteral{ .boolean = Interpreter.compare(left.int, right.int) <= 0 };
+                            if (Interpreter.compare(left.int, right.int) <= 0) {
+                                return token.TokenLiteral{ .boolean = token.Boolean.true };
+                            } else {
+                                return token.TokenLiteral{ .boolean = token.Boolean.false };
+                            }
                         }
                         return error.TypeError;
                     },
                     .BANG_EQUAL => {
-                        return token.TokenLiteral{ .boolean = Interpreter.compare(left.int, right.int) != 0 };
+                        if (left == .int and right == .int) {
+                            if (Interpreter.compare(left.int, right.int) != 0) {
+                                return token.TokenLiteral{ .boolean = token.Boolean.true };
+                            } else {
+                                return token.TokenLiteral{ .boolean = token.Boolean.false };
+                            }
+                        }
+                        return error.TypeError;
                     },
                     .MODULO => {
                         if (left == .int and right == .int) {
@@ -666,15 +710,9 @@ pub const Interpreter = struct {
                         }
                         return error.TypeError;
                     },
-                    .NOT_LOGICAL, .NOT_KEYWORD => {
-                        if (operand == .boolean) {
-                            return token.TokenLiteral{ .boolean = !operand.boolean };
-                        }
-                        return error.TypeError;
-                    },
-                    .BANG => {
-                        if (operand == .boolean) {
-                            return token.TokenLiteral{ .boolean = !operand.boolean };
+                    .NOT_LOGICAL, .NOT_KEYWORD, .BANG => {
+                        if (operand == .boolean or operand == .tetra) {
+                            return negateLogical(operand);
                         }
                         return error.TypeError;
                     },
@@ -766,7 +804,7 @@ pub const Interpreter = struct {
                     return error.TypeError;
                 }
 
-                const branch = if ((condition.boolean))
+                const branch = if (condition.boolean == token.Boolean.true)
                     if_expr.then_branch orelse return error.InvalidExpression
                 else
                     if_expr.else_branch orelse return error.InvalidExpression;
@@ -966,11 +1004,11 @@ pub const Interpreter = struct {
                 // Convert boolean operands to tetra if needed
                 var left_val: token.TokenLiteral = undefined;
                 if (left == .boolean)
-                    left_val = token.TokenLiteral{ .tetra = if (left.boolean) .true else .false }
+                    left_val = token.TokenLiteral{ .tetra = if (left.boolean == token.Boolean.true) .true else .false }
                 else
                     left_val = left;
                 const right_val = if (right == .boolean)
-                    token.TokenLiteral{ .tetra = if (right.boolean) .true else .false }
+                    token.TokenLiteral{ .tetra = if (right.boolean == token.Boolean.true) .true else .false }
                 else
                     right;
 
@@ -1163,7 +1201,7 @@ pub const Interpreter = struct {
                     if (condition_result != .boolean) {
                         return error.TypeError;
                     }
-                    if (!condition_result.boolean) break;
+                    if (condition_result.boolean == token.Boolean.false) break;
 
                     _ = try self.evaluate(while_expr.body);
                 }
@@ -1183,7 +1221,7 @@ pub const Interpreter = struct {
                         if (condition_result != .boolean) {
                             return error.TypeError;
                         }
-                        if (!condition_result.boolean) break;
+                        if (condition_result.boolean == token.Boolean.false) break;
                     }
 
                     // Execute body
@@ -1388,12 +1426,12 @@ pub const Interpreter = struct {
                     if (self.debug_enabled) {
                         std.debug.print("Condition result: {any}\n", .{result});
                     }
-                    if (result == .boolean and result.boolean) {
-                        return token.TokenLiteral{ .boolean = true };
+                    if (result == .boolean and result.boolean == token.Boolean.true) {
+                        return token.TokenLiteral{ .boolean = token.Boolean.true };
                     }
                 }
 
-                return token.TokenLiteral{ .boolean = false };
+                return token.TokenLiteral{ .boolean = token.Boolean.false };
             },
             .ForAll => |f| {
                 // Get the variable name
@@ -1417,12 +1455,12 @@ pub const Interpreter = struct {
                 for (array_value.array) |val| {
                     try self.environment.define(var_name, val, .{ .base = .Dynamic });
                     const result = try self.evaluate(f.condition);
-                    if (!(result == .boolean and result.boolean)) {
-                        return token.TokenLiteral{ .boolean = false };
+                    if (!(result == .boolean and result.boolean == token.Boolean.true)) {
+                        return token.TokenLiteral{ .boolean = token.Boolean.false };
                     }
                 }
 
-                return token.TokenLiteral{ .boolean = true };
+                return token.TokenLiteral{ .boolean = token.Boolean.true };
             },
             .ArrayType => {
                 return token.TokenLiteral{ .nothing = {} };
@@ -1544,6 +1582,58 @@ pub const Interpreter = struct {
     fn makeNothing(self: *Interpreter) token.TokenLiteral {
         _ = self;
         return .{ .nothing = {} };
+    }
+
+    fn convertToTetra(value: token.TokenLiteral) token.Tetra {
+        return switch (value) {
+            .boolean => {
+                if (value.boolean == token.Boolean.true) {
+                    return token.Tetra.true;
+                } else {
+                    return token.Tetra.false;
+                }
+            },
+            .tetra => value.tetra,
+            else => .neither,
+        };
+    }
+
+    fn negateLogical(value: token.TokenLiteral) ErrorList!token.TokenLiteral {
+        return switch (value) {
+            .boolean => if (value.boolean == token.Boolean.true)
+                token.TokenLiteral{ .boolean = token.Boolean.false }
+            else
+                token.TokenLiteral{ .boolean = token.Boolean.true },
+            .tetra => switch (value.tetra) {
+                .neither => token.TokenLiteral{ .tetra = .both },
+                .both => token.TokenLiteral{ .tetra = .neither },
+                .true => token.TokenLiteral{ .tetra = .false },
+                .false => token.TokenLiteral{ .tetra = .true },
+            },
+            else => return error.TypeError,
+        };
+    }
+
+    fn compareLogical(left: token.TokenLiteral, right: token.TokenLiteral) token.TokenLiteral {
+        // convert left and right to tetra
+        const left_tetra = convertToTetra(left);
+        const right_tetra = convertToTetra(right);
+        // neither cancels all other cases
+        if (left_tetra == .neither or right_tetra == .neither) {
+            return token.TokenLiteral{ .boolean = token.Boolean.false };
+        }
+        // if both an no neither then true
+        if (left_tetra == .both or right_tetra == .both) {
+            return token.TokenLiteral{ .boolean = token.Boolean.true };
+        }
+        // normal cases
+        if (left_tetra == .true and right_tetra == .true) {
+            return token.TokenLiteral{ .boolean = token.Boolean.true };
+        } else if (left_tetra == .false and right_tetra == .false) {
+            return token.TokenLiteral{ .boolean = token.Boolean.true };
+        }
+
+        return token.TokenLiteral{ .boolean = token.Boolean.false };
     }
 
     fn executeAssignment(self: *Interpreter, expr: *const ast.Expr) ErrorList!token.TokenLiteral {
@@ -1685,30 +1775,24 @@ pub const Interpreter = struct {
         return error.FieldNotFound;
     }
 
+    fn compareLiteralValues(a: anytype, b: @TypeOf(a)) token.TokenLiteral {
+        if (a == b) {
+            return token.TokenLiteral{ .boolean = token.Boolean.true };
+        } else {
+            return token.TokenLiteral{ .boolean = token.Boolean.false };
+        }
+    }
+
     fn valuesEqual(self: *Interpreter, a: token.TokenLiteral, b: token.TokenLiteral) bool {
         return switch (a) {
             .int => |val| b == .int and val == b.int,
             .float => |val| b == .float and val == b.float,
             .string => |val| b == .string and std.mem.eql(u8, val, b.string),
-            .boolean => if (b == .boolean or b == .tetra) switch (b) {
-                .boolean => a.boolean == b.boolean,
-                .tetra => switch (b.tetra) {
-                    .true => a.boolean == true,
-                    .false => a.boolean == false,
-                    .both => true,
-                    .neither => false,
-                },
-                else => unreachable,
-            } else false,
-            .tetra => if (b == .boolean) switch (a.tetra) {
-                .true => b.boolean == true,
-                .false => b.boolean == false,
-                .both => true,
-                .neither => false,
-            } else if (b == .tetra) {
-                return a.tetra == b.tetra;
-            } else false,
             .nothing => b == .nothing,
+            .boolean, .tetra => {
+                const result = compareLogical(a, b);
+                return result.boolean == token.Boolean.true;
+            },
             .array => |arr| b == .array and arr.len == b.array.len,
             .struct_value => |s| b == .struct_value and std.mem.eql(u8, s.type_name, b.struct_value.type_name),
             .function => b == .function,

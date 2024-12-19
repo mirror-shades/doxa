@@ -174,13 +174,26 @@ pub const EnumValue = struct {
     variant: u8,
 };
 
+pub const Tetra = enum {
+    true,
+    false,
+    both,
+    neither,
+};
+
+pub const Boolean = enum {
+    true,
+    false,
+};
+
 pub const Value = struct {
     type: ValueType,
     nothing: bool,
     data: union {
         int: i32,
         float: f64,
-        boolean: bool,
+        boolean: Boolean,
+        tetra: Tetra,
         string: []const u8,
         struct_val: *StructValue,
         array_val: *ArrayValue,

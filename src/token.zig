@@ -146,11 +146,16 @@ pub const Tetra = enum {
     neither,
 };
 
+pub const Boolean = enum {
+    true,
+    false,
+};
+
 pub const TokenLiteral = union(enum) {
     int: i32,
     float: f64,
     string: []const u8,
-    boolean: bool,
+    boolean: Boolean,
     tetra: Tetra,
     nothing: void,
     array: []TokenLiteral,
