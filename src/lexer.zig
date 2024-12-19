@@ -560,7 +560,7 @@ pub const Lexer = struct {
                 .LOGIC => {
                     // Convert logic keywords to their appropriate literal values
                     if (std.mem.eql(u8, text, "true") or std.mem.eql(u8, text, "false")) {
-                        try self.addToken(.LOGIC, .{ .boolean = std.mem.eql(u8, text, "true") });
+                        try self.addToken(.LOGIC, .{ .boolean = token.Boolean.true });
                     } else if (std.mem.eql(u8, text, "both") or std.mem.eql(u8, text, "neither")) {
                         const value: token.Tetra = if (std.mem.eql(u8, text, "both"))
                             .both
