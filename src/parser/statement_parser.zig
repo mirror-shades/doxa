@@ -7,6 +7,7 @@ const token = @import("../token.zig");
 const declaration_parser = @import("./declaration_parser.zig");
 const expression_parser = @import("./expression_parser.zig");
 const module_parser = @import("./module_parser.zig");
+
 pub fn parse(self: *Parser) ErrorList![]ast.Stmt {
     if (self.debug_enabled) {
         std.debug.print("\nToken stream:\n", .{});
