@@ -112,9 +112,7 @@ pub const rules = blk: {
     r.set(.IFF, .{ .infix = logical, .precedence = .IFF });
     r.set(.NOT_LOGICAL, .{ .prefix = unary, .precedence = .UNARY });
     r.set(.NOT_KEYWORD, .{ .prefix = unary, .precedence = .UNARY });
-
-    // Unary operators
-    //r.set(.BANG, .{ .prefix = unary });
+    r.set(.NOT_TRANCENDENTAL, .{ .prefix = unary, .precedence = .UNARY });
 
     // Literals
     r.set(.INT, .{ .prefix = literal });

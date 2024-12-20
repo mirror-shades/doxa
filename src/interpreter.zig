@@ -714,7 +714,13 @@ pub const Interpreter = struct {
                         }
                         return error.TypeError;
                     },
-                    .NOT_LOGICAL, .NOT_KEYWORD, .BANG => {
+                    .NOT_TRANCENDENTAL => {
+                        if (operand == .boolean or operand == .tetra) {
+                            return token.TokenLiteral{ .tetra = token.Tetra.neither };
+                        }
+                        return error.TypeError;
+                    },
+                    .NOT_LOGICAL, .NOT_KEYWORD => {
                         if (operand == .boolean or operand == .tetra) {
                             return negateLogical(operand);
                         }
