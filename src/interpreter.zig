@@ -531,6 +531,8 @@ pub const Interpreter = struct {
                 return switch (binary.operator.type) {
                     .EQUALITY_SYMBOL, .EQUALITY_KEYWORD => switch (left) {
                         .int, .float => {
+                            if (right != .int and right != .float) return error.TypeError;
+
                             if (Interpreter.compare(left.int, right.int) == 0) {
                                 return token.TokenLiteral{ .boolean = token.Boolean.true };
                             } else {
@@ -568,7 +570,8 @@ pub const Interpreter = struct {
                             if (left.struct_value.fields.len != right.struct_value.fields.len) break :blk token.TokenLiteral{ .boolean = token.Boolean.false };
                             for (left.struct_value.fields, right.struct_value.fields) |l, r| {
                                 if (!std.mem.eql(u8, l.name, r.name)) break :blk token.TokenLiteral{ .boolean = token.Boolean.false };
-                                if (!self.valuesEqual(l.value, r.value)) break :blk token.TokenLiteral{ .boolean = token.Boolean.false };
+                                const values_equal = try self.valuesEqual(l.value, r.value);
+                                if (!values_equal) break :blk token.TokenLiteral{ .boolean = token.Boolean.false };
                             }
                             break :blk token.TokenLiteral{ .boolean = token.Boolean.true };
                         } else token.TokenLiteral{ .boolean = token.Boolean.false },
@@ -585,7 +588,8 @@ pub const Interpreter = struct {
                                 if (l.len != r.len) return token.TokenLiteral{ .boolean = token.Boolean.false };
                                 // Compare each element
                                 for (l, 0..) |item, i| {
-                                    if (!self.valuesEqual(item, r[i])) {
+                                    const values_equal = try self.valuesEqual(item, r[i]);
+                                    if (!values_equal) {
                                         return token.TokenLiteral{ .boolean = token.Boolean.false };
                                     }
                                 }
@@ -1001,32 +1005,33 @@ pub const Interpreter = struct {
             .Logical => |logical| {
                 const left = try self.evaluate(logical.left);
                 const right = try self.evaluate(logical.right);
-                // Convert boolean operands to tetra if needed
-                var left_val: token.TokenLiteral = undefined;
-                if (left == .boolean)
-                    left_val = token.TokenLiteral{ .tetra = if (left.boolean == token.Boolean.true) .true else .false }
-                else
-                    left_val = left;
-                const right_val = if (right == .boolean)
-                    token.TokenLiteral{ .tetra = if (right.boolean == token.Boolean.true) .true else .false }
-                else
-                    right;
+                // Only allow boolean inputs
+                if (left != .boolean or right != .boolean) return error.TypeError;
 
-                return token.TokenLiteral{
-                    .tetra = switch (logical.operator.type) {
-                        .AND_KEYWORD, .AND_SYMBOL, .AND_LOGICAL => switch (left_val.tetra) {
+                const left_val = token.TokenLiteral{ .tetra = if (left.boolean == token.Boolean.true) .true else .false };
+                const right_val = token.TokenLiteral{ .tetra = if (right.boolean == token.Boolean.true) .true else .false };
+
+                // Store the tetra result in a comptime-known variable
+                var result_tetra: token.Tetra = undefined;
+                switch (logical.operator.type) {
+                    .AND_KEYWORD, .AND_SYMBOL, .AND_LOGICAL => {
+                        result_tetra = switch (left_val.tetra) {
                             .true => right_val.tetra,
                             .false => .false,
                             .both => if (right_val.tetra == .false) .false else .both,
                             .neither => .neither,
-                        },
-                        .OR_KEYWORD, .OR_SYMBOL, .OR_LOGICAL => switch (left_val.tetra) {
+                        };
+                    },
+                    .OR_KEYWORD, .OR_SYMBOL, .OR_LOGICAL => {
+                        result_tetra = switch (left_val.tetra) {
                             .true => .true,
                             .false => right_val.tetra,
                             .both => .both,
                             .neither => if (right_val.tetra == .true) .true else .neither,
-                        },
-                        .XOR => switch (left_val.tetra) {
+                        };
+                    },
+                    .XOR => {
+                        result_tetra = switch (left_val.tetra) {
                             .true => switch (right_val.tetra) {
                                 .true => .false,
                                 .false => .true,
@@ -1036,8 +1041,10 @@ pub const Interpreter = struct {
                             .false => right_val.tetra,
                             .both => .both,
                             .neither => .neither,
-                        },
-                        .IFF => switch (left_val.tetra) {
+                        };
+                    },
+                    .IFF => {
+                        result_tetra = switch (left_val.tetra) {
                             .true => right_val.tetra,
                             .false => switch (right_val.tetra) {
                                 .true => .false,
@@ -1047,8 +1054,10 @@ pub const Interpreter = struct {
                             },
                             .both => .both,
                             .neither => .neither,
-                        },
-                        .NAND => switch (left_val.tetra) {
+                        };
+                    },
+                    .NAND => {
+                        result_tetra = switch (left_val.tetra) {
                             .true => switch (right_val.tetra) {
                                 .true => .false,
                                 .false => .true,
@@ -1058,8 +1067,10 @@ pub const Interpreter = struct {
                             .false => .true,
                             .both => .both,
                             .neither => .neither,
-                        },
-                        .NOR => switch (left_val.tetra) {
+                        };
+                    },
+                    .NOR => {
+                        result_tetra = switch (left_val.tetra) {
                             .true => .false,
                             .false => switch (right_val.tetra) {
                                 .true => .false,
@@ -1069,10 +1080,13 @@ pub const Interpreter = struct {
                             },
                             .both => .both,
                             .neither => .neither,
-                        },
-                        else => return error.InvalidOperator,
+                        };
                     },
-                };
+                    else => return error.InvalidOperator,
+                }
+
+                const is_true = result_tetra == .true;
+                return token.TokenLiteral{ .boolean = if (is_true) token.Boolean.true else token.Boolean.false };
             },
             .Function => |f| token.TokenLiteral{ .function = .{
                 .params = f.params,
@@ -1096,7 +1110,7 @@ pub const Interpreter = struct {
                 switch (value) {
                     .int => |i| try buffer.writer().print("{d}", .{i}),
                     .float => |f| try buffer.writer().print("{d}", .{f}),
-                    .boolean => |b| try buffer.writer().print("{}", .{b}),
+                    .boolean => |b| try buffer.writer().print("{s}", .{@tagName(b)}),
                     .tetra => |t| {
                         try buffer.writer().print("{s}", .{@tagName(t)});
                     },
@@ -1584,7 +1598,7 @@ pub const Interpreter = struct {
         return .{ .nothing = {} };
     }
 
-    fn convertToTetra(value: token.TokenLiteral) token.Tetra {
+    fn convertToTetra(value: token.TokenLiteral) !token.Tetra {
         return switch (value) {
             .boolean => {
                 if (value.boolean == token.Boolean.true) {
@@ -1594,7 +1608,7 @@ pub const Interpreter = struct {
                 }
             },
             .tetra => value.tetra,
-            else => .neither,
+            else => error.TypeError,
         };
     }
 
@@ -1614,10 +1628,11 @@ pub const Interpreter = struct {
         };
     }
 
-    fn compareLogical(left: token.TokenLiteral, right: token.TokenLiteral) token.TokenLiteral {
+    fn compareLogical(left: token.TokenLiteral, right: token.TokenLiteral) !token.TokenLiteral {
         // convert left and right to tetra
-        const left_tetra = convertToTetra(left);
-        const right_tetra = convertToTetra(right);
+        const left_tetra = try convertToTetra(left);
+        const right_tetra = try convertToTetra(right);
+
         // neither cancels all other cases
         if (left_tetra == .neither or right_tetra == .neither) {
             return token.TokenLiteral{ .boolean = token.Boolean.false };
@@ -1783,14 +1798,14 @@ pub const Interpreter = struct {
         }
     }
 
-    fn valuesEqual(self: *Interpreter, a: token.TokenLiteral, b: token.TokenLiteral) bool {
+    fn valuesEqual(self: *Interpreter, a: token.TokenLiteral, b: token.TokenLiteral) ErrorList!bool {
         return switch (a) {
             .int => |val| b == .int and val == b.int,
             .float => |val| b == .float and val == b.float,
             .string => |val| b == .string and std.mem.eql(u8, val, b.string),
             .nothing => b == .nothing,
             .boolean, .tetra => {
-                const result = compareLogical(a, b);
+                const result = try compareLogical(a, b);
                 return result.boolean == token.Boolean.true;
             },
             .array => |arr| b == .array and arr.len == b.array.len,
@@ -1808,7 +1823,8 @@ pub const Interpreter = struct {
                 var iter = m.iterator();
                 while (iter.next()) |entry| {
                     if (b.map.get(entry.key_ptr.*)) |other_value| {
-                        if (!self.valuesEqual(entry.value_ptr.*, other_value)) {
+                        const values_equal = try self.valuesEqual(entry.value_ptr.*, other_value);
+                        if (!values_equal) {
                             return false;
                         }
                     } else {

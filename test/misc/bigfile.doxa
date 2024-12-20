@@ -168,6 +168,9 @@ typeof(_string)?; // string
 var _boolean = true;
 typeof(_boolean)?; // boolean
 
+var _tetra = both;
+typeof(_tetra)?; // tetra
+
 typeof(arr)?; // array
 
 typeof(Employee)?; // struct

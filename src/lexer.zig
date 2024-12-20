@@ -135,6 +135,8 @@ pub const Lexer = struct {
         try self.keywords.put("∨", .OR_LOGICAL);
         try self.keywords.put("↑", .NAND);
         try self.keywords.put("↓", .NOR);
+        //try self.keywords.put("→", .IMPLIES);
+        try self.keywords.put("⊖", .TOR);
     }
 
     //======================================================================
