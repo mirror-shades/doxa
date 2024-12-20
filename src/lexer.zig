@@ -136,7 +136,7 @@ pub const Lexer = struct {
         try self.keywords.put("↑", .NAND);
         try self.keywords.put("↓", .NOR);
         //try self.keywords.put("→", .IMPLIES);
-        try self.keywords.put("⊖", .TOR);
+        try self.keywords.put("⊖", .NOT_TRANCENDENTAL);
     }
 
     //======================================================================
@@ -498,15 +498,17 @@ pub const Lexer = struct {
     //======================================================================
 
     fn identifier(self: *Lexer) !void {
-        // First, check if we're at a quantifier symbol
-        if (self.current > 0) {
-            const text = self.source[self.start..self.current];
-            if (std.mem.eql(u8, text, "∃") or std.mem.eql(u8, text, "∀") or std.mem.eql(u8, text, "¬")) {
-                // Handle the quantifier symbol as a separate token
-                if (self.keywords.get(text)) |keyword_type| {
-                    try self.addMinimalToken(keyword_type);
-                    return;
-                }
+        // Check for special symbols at the start
+        const identifier_text = self.source[self.start..self.current];
+        if (std.mem.eql(u8, identifier_text, "∃") or
+            std.mem.eql(u8, identifier_text, "∀") or
+            std.mem.eql(u8, identifier_text, "¬") or
+            std.mem.eql(u8, identifier_text, "⊖"))
+        {
+            // Handle the quantifier symbol as a separate token
+            if (self.keywords.get(identifier_text)) |keyword_type| {
+                try self.addMinimalToken(keyword_type);
+                return;
             }
         }
 
@@ -525,7 +527,7 @@ pub const Lexer = struct {
                 // Check if this is a quantifier or logical symbol at the start
                 if (self.current == self.start) {
                     const symbol = remaining[0..sequence_length];
-                    if (std.mem.eql(u8, symbol, "∃") or std.mem.eql(u8, symbol, "∀") or std.mem.eql(u8, symbol, "¬")) {
+                    if (std.mem.eql(u8, symbol, "∃") or std.mem.eql(u8, symbol, "∀") or std.mem.eql(u8, symbol, "¬") or std.mem.eql(u8, symbol, "⊖")) {
                         // Advance past the symbol
                         var i: usize = 0;
                         while (i < sequence_length) : (i += 1) {
