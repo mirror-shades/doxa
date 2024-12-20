@@ -203,6 +203,7 @@ pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
                 .FLOAT_TYPE => .Float,
                 .STRING_TYPE => .String,
                 .BOOLEAN_TYPE => .Boolean,
+                .TETRA_TYPE => .Tetra,
                 else => return error.InvalidType,
             };
 
