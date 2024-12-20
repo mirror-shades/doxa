@@ -68,8 +68,35 @@ pub fn braceExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Ex
         return self.parseMap();
     }
 
-    // Otherwise, treat it as a block
-    return self.parseBlock();
+    // Parse block statements
+    var statements = std.ArrayList(ast.Stmt).init(self.allocator);
+    errdefer {
+        for (statements.items) |*stmt| {
+            stmt.deinit(self.allocator);
+        }
+        statements.deinit();
+    }
+
+    while (self.peek().type != .RIGHT_BRACE and self.peek().type != .EOF) {
+        const stmt = try statement_parser.parseStatement(self);
+        try statements.append(stmt);
+
+        // Break after return statement
+        if (stmt == .Return) break;
+    }
+
+    if (self.peek().type != .RIGHT_BRACE) {
+        return error.ExpectedRightBrace;
+    }
+    self.advance();
+
+    const block_expr = try self.allocator.create(ast.Expr);
+    block_expr.* = .{ .Block = .{
+        .statements = try statements.toOwnedSlice(),
+        .value = null,
+    } };
+
+    return block_expr;
 }
 
 pub fn typeofExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
@@ -605,7 +632,7 @@ pub fn literal(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr
     }
 
     const expr = switch (current.type) {
-        .INT, .FLOAT, .LOGIC, .NOTHING => blk: {
+        .INT, .FLOAT, .LOGIC, .NOTHING, .TETRA => blk: {
             const new_expr = try self.allocator.create(ast.Expr);
             new_expr.* = .{ .Literal = current.literal };
             self.advance();

@@ -126,25 +126,12 @@ pub const Parser = struct {
         const last_expr: ?*ast.Expr = null;
 
         while (self.peek().type != .RIGHT_BRACE and self.peek().type != .EOF) {
-            // Special handling for return statements
-            if (self.peek().type == .RETURN) {
-                const return_stmt = try statement_parser.parseReturnStmt(self);
-                try statements.append(return_stmt);
-                break; // Exit after return statement
-            }
+            // Parse any statement type
+            const stmt = try statement_parser.parseStatement(self);
+            try statements.append(stmt);
 
-            // Parse regular statement
-            const stmt = try statement_parser.parseExpressionStmt(self);
-
-            // Only append non-null expression statements
-            switch (stmt) {
-                .Expression => |expr| {
-                    if (expr != null) {
-                        try statements.append(stmt);
-                    }
-                },
-                else => try statements.append(stmt),
-            }
+            // Break after return statement
+            if (stmt == .Return) break;
 
             // Don't break on semicolon before right brace
             if (self.peek().type == .RIGHT_BRACE) {
