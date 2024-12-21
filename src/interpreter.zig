@@ -284,9 +284,37 @@ pub const Interpreter = struct {
 
         // Execute all statements, allowing errors to propagate
         for (statements) |stmt| {
-            result = try self.executeStatement(&stmt, self.debug_enabled);
+            result = self.executeStatement(&stmt, self.debug_enabled) catch |err| {
+                if (err == error.ReturnValue) {
+                    // Get the return value from the environment
+                    if (environment.get("return")) |return_value| {
+                        // Make a copy of the return value
+                        const value = switch (return_value) {
+                            .tetra => |t| token.TokenLiteral{ .tetra = t },
+                            .boolean => |b| token.TokenLiteral{ .boolean = b },
+                            else => return_value,
+                        };
+                        return value;
+                    }
+                }
+                return err;
+            };
+
+            // Check for return value after each statement
+            if (environment.get("return")) |return_value| {
+                // Make a copy of the return value
+                const value = switch (return_value) {
+                    .tetra => |t| token.TokenLiteral{ .tetra = t },
+                    .boolean => |b| token.TokenLiteral{ .boolean = b },
+                    else => return_value,
+                };
+                return value;
+            }
         }
 
+        if (self.debug_enabled) {
+            std.debug.print("Block evaluated to: {any}\n", .{result});
+        }
         return result;
     }
 
@@ -716,6 +744,53 @@ pub const Interpreter = struct {
                     else => return error.InvalidOperator,
                 };
             },
+            .If => |if_expr| {
+                const condition = try self.evaluate(if_expr.condition orelse return error.InvalidExpression);
+                if (condition != .boolean) {
+                    return error.TypeError;
+                }
+
+                const branch = if (condition.boolean == token.Boolean.true)
+                    if_expr.then_branch orelse return error.InvalidExpression
+                else
+                    if_expr.else_branch orelse return error.InvalidExpression;
+
+                // Create a new environment for the if block
+                var if_env = Environment.init(self.memory.getAllocator(), self.environment, self.debug_enabled);
+                defer if_env.deinit();
+
+                // Allocate the statement array
+                var statements = try self.memory.getAllocator().alloc(ast.Stmt, 1);
+                defer self.memory.getAllocator().free(statements);
+                statements[0] = .{ .Expression = branch };
+
+                // Execute the chosen branch in the new environment
+                const result = self.executeBlock(statements, &if_env) catch |err| {
+                    if (err == error.ReturnValue) {
+                        if (if_env.get("return")) |return_value| {
+                            return return_value;
+                        }
+                    }
+                    return err;
+                };
+
+                return result orelse .{ .nothing = {} };
+            },
+            .Block => |block| {
+                var block_env = Environment.init(self.memory.getAllocator(), self.environment, self.debug_enabled);
+                defer block_env.deinit();
+
+                const result = self.executeBlock(block.statements, &block_env) catch |err| {
+                    if (err == error.ReturnValue) {
+                        if (block_env.get("return")) |return_value| {
+                            return return_value;
+                        }
+                    }
+                    return err;
+                };
+
+                return result orelse .{ .nothing = {} };
+            },
             .Unary => |un| {
                 const operand = try self.evaluate(un.right orelse return error.InvalidExpression);
                 switch (un.operator.type) {
@@ -1119,18 +1194,19 @@ pub const Interpreter = struct {
                 try buffer.writer().print("[{s}:{d}:{d}] {s} = ", .{ print.location.file, print.location.line, print.location.column, switch (print.expr.*) {
                     .Variable => |v| v.lexeme,
                     .Binary => "expression",
-                    .Call => "function call",
+                    .Call => |call| switch (call.callee.*) {
+                        .Variable => |v| v.lexeme,
+                        else => "function call",
+                    },
                     else => "value",
                 } });
 
                 // Format the value into the buffer based on its type
                 switch (value) {
+                    .tetra => |t| try buffer.writer().print("{s}", .{@tagName(t)}),
                     .int => |i| try buffer.writer().print("{d}", .{i}),
                     .float => |f| try buffer.writer().print("{d}", .{f}),
                     .boolean => |b| try buffer.writer().print("{s}", .{@tagName(b)}),
-                    .tetra => |t| {
-                        try buffer.writer().print("{s}", .{@tagName(t)});
-                    },
                     .string => |s| {
                         // Only wrap in quotes if it's a literal string value, not a type name or enum variant
                         if (print.expr.* == .TypeOf or print.expr.* == .EnumMember) {
@@ -1224,7 +1300,12 @@ pub const Interpreter = struct {
 
                 try buffer.writer().print("\n", .{});
                 try std.io.getStdOut().writeAll(buffer.items);
-                return value;
+
+                // Make sure we're returning a copy of the value
+                return switch (value) {
+                    .tetra => |t| token.TokenLiteral{ .tetra = t },
+                    else => value,
+                };
             },
             .While => |while_expr| {
                 while (true) {
@@ -1726,7 +1807,7 @@ pub const Interpreter = struct {
             .function => |f| {
                 // Create new environment for function call
                 var function_env = Environment.init(self.memory.getAllocator(), f.closure, self.debug_enabled);
-                errdefer function_env.deinit();
+                defer function_env.deinit();
 
                 // Check argument count
                 if (arguments.len > f.params.len) {

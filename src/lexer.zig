@@ -136,7 +136,8 @@ pub const Lexer = struct {
         try self.keywords.put("↑", .NAND);
         try self.keywords.put("↓", .NOR);
         //try self.keywords.put("→", .IMPLIES);
-        try self.keywords.put("⊖", .NOT_TRANCENDENTAL);
+        //try self.keywords.put("⊞", .AND_TRANCENDENTAL); // let you add true and false to get both
+        try self.keywords.put("⊟", .NOT_TRANCENDENTAL);
     }
 
     //======================================================================
@@ -503,7 +504,7 @@ pub const Lexer = struct {
         if (std.mem.eql(u8, identifier_text, "∃") or
             std.mem.eql(u8, identifier_text, "∀") or
             std.mem.eql(u8, identifier_text, "¬") or
-            std.mem.eql(u8, identifier_text, "⊖"))
+            std.mem.eql(u8, identifier_text, "⊟"))
         {
             // Handle the quantifier symbol as a separate token
             if (self.keywords.get(identifier_text)) |keyword_type| {
@@ -527,7 +528,7 @@ pub const Lexer = struct {
                 // Check if this is a quantifier or logical symbol at the start
                 if (self.current == self.start) {
                     const symbol = remaining[0..sequence_length];
-                    if (std.mem.eql(u8, symbol, "∃") or std.mem.eql(u8, symbol, "∀") or std.mem.eql(u8, symbol, "¬") or std.mem.eql(u8, symbol, "⊖")) {
+                    if (std.mem.eql(u8, symbol, "∃") or std.mem.eql(u8, symbol, "∀") or std.mem.eql(u8, symbol, "¬") or std.mem.eql(u8, symbol, "⊟")) {
                         // Advance past the symbol
                         var i: usize = 0;
                         while (i < sequence_length) : (i += 1) {
