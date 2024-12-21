@@ -183,8 +183,9 @@ pub const Parser = struct {
                 if (fn_stmt == .Function) {
                     try function_table.put(fn_stmt.Function.name.lexeme, fn_ptr);
                 }
+            } else {
+                self.advance(); // Only advance if we didn't parse a function
             }
-            self.advance();
         }
 
         // Reset position for main parse

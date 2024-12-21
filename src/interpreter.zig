@@ -190,23 +190,29 @@ pub const Interpreter = struct {
         }
 
         // First pass - create forward declarations for all functions
-        for (statements) |*stmt| {
+        for (statements, 0..) |*stmt, i| {
+            if (self.debug_enabled) {
+                std.debug.print("\nChecking statement {d}: {s}\n", .{ i, @tagName(stmt.*) });
+                std.debug.print("Raw statement: {any}\n", .{stmt.*});
+                if (stmt.* == .Function) {
+                    const f = stmt.Function;
+                    std.debug.print("Found function: {s}\n", .{f.name.lexeme});
+                }
+            }
             if (stmt.* == .Function) {
                 const f = stmt.Function;
                 if (self.debug_enabled) {
                     std.debug.print("\nCreating forward declaration for: {s}\n", .{f.name.lexeme});
                 }
 
-                // Create the function object
                 const function = token.TokenLiteral{
                     .function = .{
                         .params = f.params,
-                        .body = f.body, // Include the body right away
+                        .body = f.body,
                         .closure = self.environment,
                     },
                 };
 
-                // Define the function in the environment
                 try self.environment.define(f.name.lexeme, function, .{
                     .base = .Function,
                     .is_mutable = false,
@@ -219,38 +225,16 @@ pub const Interpreter = struct {
             }
         }
 
-        // Second pass - define function bodies and execute statements
+        // Second pass - execute statements
         for (statements) |*stmt| {
             if (stmt.* == .Function) {
-                const f = stmt.Function;
-                if (self.debug_enabled) {
-                    std.debug.print("\nDefining function body: {s}\n", .{f.name.lexeme});
-                }
-
-                // Update the function with its body
-                const function = token.TokenLiteral{ .function = .{
-                    .params = f.params,
-                    .body = f.body,
-                    .closure = self.environment,
-                } };
-
-                try self.environment.assign(f.name.lexeme, function);
-
-                if (self.debug_enabled) {
-                    std.debug.print("Attempting to assign '{s}' = {any}\n", .{ f.name.lexeme, function });
-                }
+                // Skip function declarations in second pass since they're already defined
+                continue;
             }
-
-            if (self.debug_enabled) {
-                std.debug.print("\nExecuting statement type: {s}\n", .{@tagName(stmt.*)});
-            }
-
-            if (stmt.* != .Function) {
-                self.last_result = try self.executeStatement(stmt, self.debug_enabled);
-            }
+            self.last_result = try self.executeStatement(stmt, self.debug_enabled);
         }
 
-        // Execute entry point if found
+        // Handle entry point execution
         if (self.entry_point) |main_fn| {
             if (self.debug_enabled) {
                 std.debug.print("\n=== Executing entry point ===\n", .{});
@@ -268,6 +252,16 @@ pub const Interpreter = struct {
         if (self.debug_enabled) {
             std.debug.print("\n=== Interpretation complete ===\n", .{});
         }
+    }
+
+    fn createForwardDeclaration(self: *Interpreter, func: ast.FunctionStmt) !void {
+        const name = func.name.lexeme;
+        const function = token.TokenLiteral{ .function = .{
+            .params = func.params,
+            .body = func.body,
+            .closure = self.environment,
+        } };
+        try self.environment.define(name, function);
     }
 
     pub fn executeBlock(self: *Interpreter, statements: []ast.Stmt, environment: *Environment) ErrorList!?token.TokenLiteral {
