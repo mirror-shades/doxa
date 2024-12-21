@@ -287,7 +287,7 @@ pub const Interpreter = struct {
             result = self.executeStatement(&stmt, self.debug_enabled) catch |err| {
                 if (err == error.ReturnValue) {
                     // Get the return value from the environment
-                    if (environment.get("return")) |return_value| {
+                    if (try environment.get("return")) |return_value| {
                         // Make a copy of the return value
                         const value = switch (return_value) {
                             .tetra => |t| token.TokenLiteral{ .tetra = t },
@@ -301,7 +301,7 @@ pub const Interpreter = struct {
             };
 
             // Check for return value after each statement
-            if (environment.get("return")) |return_value| {
+            if (try environment.get("return")) |return_value| {
                 // Make a copy of the return value
                 const value = switch (return_value) {
                     .tetra => |t| token.TokenLiteral{ .tetra = t },
@@ -767,7 +767,7 @@ pub const Interpreter = struct {
                 // Execute the chosen branch in the new environment
                 const result = self.executeBlock(statements, &if_env) catch |err| {
                     if (err == error.ReturnValue) {
-                        if (if_env.get("return")) |return_value| {
+                        if (try if_env.get("return")) |return_value| {
                             return return_value;
                         }
                     }
@@ -782,7 +782,7 @@ pub const Interpreter = struct {
 
                 const result = self.executeBlock(block.statements, &block_env) catch |err| {
                     if (err == error.ReturnValue) {
-                        if (block_env.get("return")) |return_value| {
+                        if (try block_env.get("return")) |return_value| {
                             return return_value;
                         }
                     }
@@ -893,83 +893,6 @@ pub const Interpreter = struct {
             },
             .Grouping => |group| {
                 return try self.evaluate(group orelse return error.InvalidExpression);
-            },
-            .If => |if_expr| {
-                const condition = try self.evaluate(if_expr.condition orelse return error.InvalidExpression);
-                if (condition != .boolean) {
-                    return error.TypeError;
-                }
-
-                const branch = if (condition.boolean == token.Boolean.true)
-                    if_expr.then_branch orelse return error.InvalidExpression
-                else
-                    if_expr.else_branch orelse return error.InvalidExpression;
-
-                // Special handling for block expressions
-                switch (branch.*) {
-                    .Block => |block| {
-                        var block_env = Environment.init(self.memory.getAllocator(), self.environment, self.debug_enabled);
-                        defer block_env.deinit();
-
-                        // If we have a value expression without statements, evaluate it directly
-                        if (block.statements.len == 0 and block.value != null) {
-                            return try self.evaluate(block.value.?);
-                        }
-
-                        // Execute the block and handle return values
-                        const block_result = self.executeBlock(block.statements, &block_env) catch |err| {
-                            if (err == error.ReturnValue) {
-                                if (try block_env.get("return")) |return_value| {
-                                    if (self.debug_enabled) {
-                                        std.debug.print("Block returned: {any}\n", .{return_value});
-                                    }
-                                    return return_value;
-                                }
-                            }
-                            return err;
-                        };
-
-                        return if (block_result) |result|
-                            result
-                        else if (block.value) |value|
-                            try self.evaluate(value)
-                        else
-                            .{ .nothing = {} };
-                    },
-                    else => return try self.evaluate(branch),
-                }
-            },
-            .Block => |block| {
-                if (self.debug_enabled) {
-                    std.debug.print("Evaluating block with {} statements\n", .{block.statements.len});
-                    if (block.value) |value| {
-                        std.debug.print("Block has value expression: {any}\n", .{value});
-                    }
-                }
-
-                var block_env = Environment.init(self.memory.getAllocator(), self.environment, self.debug_enabled);
-                defer block_env.deinit();
-
-                // If we have a value expression without statements, evaluate it directly
-                if (block.statements.len == 0 and block.value != null) {
-                    const result = try self.evaluate(block.value.?);
-                    if (self.debug_enabled) {
-                        std.debug.print("Block evaluated to: {any}\n", .{result});
-                    }
-                    return result;
-                }
-
-                // Otherwise execute statements and handle value
-                _ = try self.executeBlock(block.statements, &block_env);
-                const result = if (block.value) |value|
-                    try self.evaluate(value)
-                else
-                    token.TokenLiteral{ .nothing = {} };
-
-                if (self.debug_enabled) {
-                    std.debug.print("Block evaluated to: {any}\n", .{result});
-                }
-                return result;
             },
             .Array => |elements| {
                 var array_values = std.ArrayList(token.TokenLiteral).init(self.memory.getAllocator());
