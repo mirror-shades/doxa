@@ -265,9 +265,6 @@ pub const Interpreter = struct {
 
     pub fn executeStatement(self: *Interpreter, stmt: *const ast.Stmt, debug_enabled: bool) ErrorList!?token.TokenLiteral {
         if (debug_enabled) {
-            self.debug_enabled = true;
-        }
-        if (self.debug_enabled) {
             std.debug.print("Executing statement: {any}\n", .{stmt.*});
         }
 
@@ -411,45 +408,6 @@ pub const Interpreter = struct {
                 }
                 return result;
             },
-            .Return => |ret| {
-                if (ret.value) |value_expr| {
-                    const return_value = try self.evaluate(value_expr);
-
-                    // Get the function's return type from the current environment
-                    const func_return_type = try self.environment.getTypeInfo("return_type");
-
-                    // Type check the return value
-                    switch (func_return_type.base) {
-                        .Int => {
-                            if (return_value != .int) {
-                                return error.TypeError;
-                            }
-                        },
-                        .Float => {
-                            if (return_value != .float and return_value != .int) {
-                                return error.TypeError;
-                            }
-                        },
-                        .String => {
-                            if (return_value != .string) {
-                                return error.TypeError;
-                            }
-                        },
-                        .Boolean => {
-                            if (return_value != .boolean) {
-                                return error.TypeError;
-                            }
-                        },
-                        .Dynamic => {}, // Allow any return type
-                        .Auto => {}, // Type is inferred from the return value
-                        else => {},
-                    }
-
-                    try self.environment.define("return", return_value, func_return_type);
-                    return error.ReturnValue;
-                }
-                return error.ReturnNothing;
-            },
             .EnumDecl => |decl| {
                 // Create an enum type and store it in environment
                 const enum_type = TypeInfo{
@@ -515,6 +473,15 @@ pub const Interpreter = struct {
             },
             .Path => |_| {
                 return .{ .nothing = {} };
+            },
+            .Return => |ret| {
+                if (ret.value) |value| {
+                    const return_value = try self.evaluate(value);
+                    try self.environment.define("return", return_value, .{ .base = .Dynamic });
+                    return error.ReturnValue;
+                }
+                try self.environment.define("return", .{ .nothing = {} }, .{ .base = .Nothing });
+                return error.ReturnValue;
             },
         };
     }
@@ -1727,15 +1694,16 @@ pub const Interpreter = struct {
                     var value: token.TokenLiteral = undefined;
 
                     if (i < arguments.len) {
-                        // If an argument is provided and it's not ~, use it
                         const arg = arguments[i];
                         if (arg.* == .DefaultArgPlaceholder) {
-                            // Use default value if available, otherwise error
                             if (param.default_value) |default| {
                                 if (self.debug_enabled) {
                                     std.debug.print("Using default value for parameter '{s}'\n", .{param.name.lexeme});
                                 }
+                                const previous_env = self.environment;
+                                self.environment = f.closure;
                                 value = try self.evaluate(default);
+                                self.environment = previous_env;
                             } else {
                                 return error.NoDefaultValue;
                             }
@@ -1743,11 +1711,13 @@ pub const Interpreter = struct {
                             value = try self.evaluate(arg);
                         }
                     } else if (param.default_value) |default| {
-                        // No argument provided, use default value
                         if (self.debug_enabled) {
                             std.debug.print("Using default value for parameter '{s}'\n", .{param.name.lexeme});
                         }
+                        const previous_env = self.environment;
+                        self.environment = f.closure;
                         value = try self.evaluate(default);
+                        self.environment = previous_env;
                     } else {
                         return error.TooFewArguments;
                     }
@@ -1756,11 +1726,33 @@ pub const Interpreter = struct {
                         std.debug.print("Binding parameter '{s}' = {any}\n", .{ param.name.lexeme, value });
                     }
 
-                    try function_env.define(param.name.lexeme, value, .{ .base = .Dynamic, .is_dynamic = true, .is_mutable = true });
+                    // Convert TypeExpr to TypeInfo if available, otherwise use dynamic type
+                    var type_info: ast.TypeInfo = undefined;
+                    if (param.type_expr) |te| {
+                        const ptr = try ast.typeInfoFromExpr(self.memory.getAllocator(), te);
+                        defer self.memory.getAllocator().destroy(ptr);
+                        type_info = ptr.*;
+                        if (self.debug_enabled) {
+                            std.debug.print("Parameter '{s}' type: {any}\n", .{ param.name.lexeme, type_info });
+                        }
+                    } else {
+                        type_info = .{ .base = .Dynamic, .is_dynamic = true, .is_mutable = true };
+                    }
+
+                    // Define parameter only in function environment
+                    try function_env.define(param.name.lexeme, value, type_info);
+                    if (self.debug_enabled) {
+                        std.debug.print("Defined parameter '{s}' in function environment\n", .{param.name.lexeme});
+                    }
                 }
 
-                // Execute function body with the new environment
+                // Store current environment and switch to function environment
+                const previous_env = self.environment;
+                self.environment = &function_env;
+
+                // Execute function body
                 const result = self.executeBlock(f.body, &function_env) catch |err| {
+                    self.environment = previous_env;
                     if (err == error.ReturnValue) {
                         if (function_env.get("return")) |return_value| {
                             return return_value;
@@ -1769,7 +1761,9 @@ pub const Interpreter = struct {
                     return err;
                 };
 
-                // If we get here, there was no return statement
+                // Restore previous environment
+                self.environment = previous_env;
+
                 return if (result) |value| value else .{ .nothing = {} };
             },
             else => return error.NotCallable,
