@@ -156,6 +156,7 @@ con?; // 1
 (true ∨ false)?; // true
 (true ↑ false)?; // true
 (true ↓ false)?; // false
+(⊟true)?; // neither
 // → implies
 
 
