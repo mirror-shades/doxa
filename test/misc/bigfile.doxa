@@ -5,8 +5,8 @@ enum Color {
     Blue,
 }
 
-const b:: Color = .Blue;
-const g:: Color = .Green;
+const b :: Color = .Blue;
+const g :: Color = .Green;
 
 var result = match b {
     .Red => "It's red",
