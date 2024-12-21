@@ -94,7 +94,7 @@ pub const Environment = struct {
         }
     }
 
-    pub fn get(self: *Environment, name: []const u8) ?token.TokenLiteral {
+    pub fn get(self: *Environment, name: []const u8) ErrorList!?token.TokenLiteral {
         if (self.values.get(name)) |value| {
             return value;
         }
@@ -150,6 +150,7 @@ pub const Interpreter = struct {
     string_interner: StringInterner,
     stdout_buffer: std.ArrayList(u8),
     entry_point: ?[]const u8 = null,
+    last_result: ?token.TokenLiteral = null,
 
     pub fn init(memory: *MemoryManager) !Interpreter {
         const globals = try memory.getAllocator().create(Environment);
@@ -185,40 +186,83 @@ pub const Interpreter = struct {
         if (self.debug_enabled) {
             std.debug.print("\n=== Starting interpretation ===\n", .{});
             std.debug.print("Debug mode is: {}\n", .{self.debug_enabled});
-            std.debug.print("Number of statements: {d}\n", .{statements.len});
+            std.debug.print("Number of statements: {}\n", .{statements.len});
         }
 
-        // First pass - find entry point and execute all statements
+        // First pass - create forward declarations for all functions
         for (statements) |*stmt| {
+            if (stmt.* == .Function) {
+                const f = stmt.Function;
+                if (self.debug_enabled) {
+                    std.debug.print("\nCreating forward declaration for: {s}\n", .{f.name.lexeme});
+                }
+
+                // Create the function object
+                const function = token.TokenLiteral{
+                    .function = .{
+                        .params = f.params,
+                        .body = f.body, // Include the body right away
+                        .closure = self.environment,
+                    },
+                };
+
+                // Define the function in the environment
+                try self.environment.define(f.name.lexeme, function, .{
+                    .base = .Function,
+                    .is_mutable = false,
+                    .is_dynamic = false,
+                });
+
+                if (self.debug_enabled) {
+                    std.debug.print("Defined function '{s}' with {d} parameters\n", .{ f.name.lexeme, f.params.len });
+                }
+            }
+        }
+
+        // Second pass - define function bodies and execute statements
+        for (statements) |*stmt| {
+            if (stmt.* == .Function) {
+                const f = stmt.Function;
+                if (self.debug_enabled) {
+                    std.debug.print("\nDefining function body: {s}\n", .{f.name.lexeme});
+                }
+
+                // Update the function with its body
+                const function = token.TokenLiteral{ .function = .{
+                    .params = f.params,
+                    .body = f.body,
+                    .closure = self.environment,
+                } };
+
+                try self.environment.assign(f.name.lexeme, function);
+
+                if (self.debug_enabled) {
+                    std.debug.print("Attempting to assign '{s}' = {any}\n", .{ f.name.lexeme, function });
+                }
+            }
+
             if (self.debug_enabled) {
                 std.debug.print("\nExecuting statement type: {s}\n", .{@tagName(stmt.*)});
             }
 
-            if (stmt.* == .Function) {
-                if (stmt.Function.is_entry) {
-                    if (self.debug_enabled) {
-                        std.debug.print("Found entry point function: {s}\n", .{stmt.Function.name.lexeme});
-                    }
-                    self.entry_point = stmt.Function.name.lexeme;
-                }
+            if (stmt.* != .Function) {
+                self.last_result = try self.executeStatement(stmt, self.debug_enabled);
             }
-
-            _ = try self.executeStatement(stmt, self.debug_enabled);
         }
 
-        // Execute entry point immediately after all declarations
+        // Execute entry point if found
         if (self.entry_point) |main_fn| {
             if (self.debug_enabled) {
                 std.debug.print("\n=== Executing entry point ===\n", .{});
             }
 
-            const main_value = try self.environment.get(main_fn);
+            const main_value = (try self.environment.get(main_fn)) orelse return error.InvalidEntryPoint;
             if (main_value != .function) {
                 return error.InvalidEntryPoint;
             }
 
-            var args = [_]token.TokenLiteral{};
-            _ = try self.callFunction(main_value.function, &args);
+            var empty_args = [_]*ast.Expr{}; // Create empty slice of ast.Expr pointers
+            _ = try self.callFunction(main_value, &empty_args);
         }
 
         if (self.debug_enabled) {
@@ -711,7 +755,7 @@ pub const Interpreter = struct {
                 }
 
                 // Check if variable exists
-                if (self.environment.get(var_token.lexeme)) |value| {
+                if (try self.environment.get(var_token.lexeme)) |value| {
                     return value;
                 }
 
@@ -800,7 +844,7 @@ pub const Interpreter = struct {
                         // Execute the block and handle return values
                         const block_result = self.executeBlock(block.statements, &block_env) catch |err| {
                             if (err == error.ReturnValue) {
-                                if (block_env.get("return")) |return_value| {
+                                if (try block_env.get("return")) |return_value| {
                                     if (self.debug_enabled) {
                                         std.debug.print("Block returned: {any}\n", .{return_value});
                                     }
@@ -1754,7 +1798,7 @@ pub const Interpreter = struct {
                 const result = self.executeBlock(f.body, &function_env) catch |err| {
                     self.environment = previous_env;
                     if (err == error.ReturnValue) {
-                        if (function_env.get("return")) |return_value| {
+                        if (try function_env.get("return")) |return_value| {
                             return return_value;
                         }
                     }
