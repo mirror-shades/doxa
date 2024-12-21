@@ -52,6 +52,14 @@ fn fber(x:: int) {
 
 fber(1);
 
+// return statements
+fn return_test() {
+    return "return";
+}
+
+return_test()?; // return
+
+
 // structs
 struct Person {
     name: string,

@@ -114,17 +114,11 @@ pub fn run(memory: *MemoryManager, interpreter: *Interpreter, source: []const u8
             //TODO: Compile to bytecode
             return null;
         } else {
-            // Add debug print to verify we get here
             if (memory.debug_enabled) {
                 std.debug.print("\n=== Starting interpretation ===\n", .{});
             }
-            // Return the result of the last statement
-            var last_result: ?TokenLiteral = null;
-            for (statements) |stmt| {
-                last_result = try interpreter.executeStatement(&stmt, memory.debug_enabled);
-            }
-
-            return last_result;
+            try interpreter.interpret(statements);
+            return interpreter.last_result;
         }
     }
     return null;
