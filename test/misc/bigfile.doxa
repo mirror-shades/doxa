@@ -38,7 +38,7 @@ function fizzbuzz(x:: int) {
     }
 }
 
-fizzbuzz(1);
+fizzbuzz(1);//fizzbuzz 1-15
 
 
 fn fber(x:: int) {
@@ -50,10 +50,18 @@ fn fber(x:: int) {
     if x < 15 then fber(x + 1);
 }
 
-fber(1);
+fber(1); //fizzerbuzzer 1-15
+
+fn forloop(x :: int) {
+    for (var i = 0; i < x; i++) {
+        (i+1)?;
+    }
+}
+
+forloop(5); //just lists 1-5
 
 // return statements
-fn return_test() {
+fn return_test() returns(string) {
     return "return";
 }
 
@@ -84,7 +92,7 @@ mike.person.age?; // 26
 
 mike.salary?; // 1000
 
-// Tetras
+// Tetras and contradictions
 var firstFold :: tetra = true;
 var secondFold :: tetra = false;
 var thirdFold :: tetra = both;
@@ -95,12 +103,22 @@ secondFold?;
 thirdFold?;
 fourthFold?;    
 
+//both is both true and false, tests against bools and tetras and returns true
+(thirdFold equals true and thirdFold equals false)?; 
+(thirdFold equals firstFold and thirdFold equals secondFold)?; 
+//neither is neither true or false, tests against bools and tetras and returns false
+(fourthFold equals true or fourthFold equals false)?; 
+(fourthFold equals firstFold or fourthFold equals secondFold)?;
+
+
 // arrays
-var arr = [1, 2, 3, 4, 5];
+var arr :: int[] = [1, 2, 3, 4, 5];
 
 arr[3]?; // 4
 arr[3] = 6;
 arr[3]?; // 6
+arr.push(42);
+arr[5]?; // 42
 
 // quantifiers
 var ex = exists e in arr where e > 3;
@@ -147,6 +165,7 @@ try {
 con?; // 1
 
 // formal logical notation
+// first order logic, always returns a boolean value
 (∃x ∈ arr : x > 3)?; // true
 (∀x ∈ arr : x > 3)?; // false
 (¬∀x ∈ arr : x > 3)?; // true
@@ -156,8 +175,11 @@ con?; // 1
 (true ∨ false)?; // true
 (true ↑ false)?; // true
 (true ↓ false)?; // false
-(⊟true)?; // neither
 // → implies
+
+// trancendental logic notation
+// always returns a tetra value, preserves contradiction in values
+(⊟true)?; // neither
 
 
 //trigger or warning conflict
