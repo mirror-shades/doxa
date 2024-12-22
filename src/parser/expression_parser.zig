@@ -318,16 +318,18 @@ pub fn forExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr
     var initializer: ?*ast.Stmt = null;
     if (self.peek().type != .SEMICOLON) {
         if (self.peek().type == .VAR) {
-            const init_stmt = try declaration_parser.parseVarDecl(self);
-            const stmt_ptr = try self.allocator.create(ast.Stmt);
-            stmt_ptr.* = init_stmt;
-            initializer = stmt_ptr;
+            const var_decl = try declaration_parser.parseVarDecl(self);
+            const stmt = try self.allocator.create(ast.Stmt);
+            stmt.* = var_decl;
+            initializer = stmt;
         } else {
             const expr_stmt = try statement_parser.parseExpressionStmt(self);
-            const stmt_ptr = try self.allocator.create(ast.Stmt);
-            stmt_ptr.* = expr_stmt;
-            initializer = stmt_ptr;
+            const stmt = try self.allocator.create(ast.Stmt);
+            stmt.* = expr_stmt;
+            initializer = stmt;
         }
+    } else {
+        self.advance(); // consume ';'
     }
 
     // Parse condition
@@ -338,28 +340,77 @@ pub fn forExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr
     if (self.peek().type != .SEMICOLON) {
         return error.ExpectedSemicolon;
     }
-    self.advance();
+    self.advance(); // consume ';'
 
     // Parse increment
     var increment: ?*ast.Expr = null;
     if (self.peek().type != .RIGHT_PAREN) {
         increment = try parseExpression(self);
+        // Handle ++ operator specially
+        if (self.peek().type == .PLUS_PLUS) {
+            if (increment) |var_expr| {
+                self.advance(); // consume '++'
+                // Create assignment expression: i = i + 1
+                const one = try self.allocator.create(ast.Expr);
+                one.* = .{ .Literal = .{ .int = 1 } };
+
+                const add = try self.allocator.create(ast.Expr);
+                add.* = .{ .Binary = .{
+                    .left = var_expr,
+                    .operator = .{ .type = .PLUS, .lexeme = "+", .line = self.peek().line, .column = self.peek().column, .literal = .nothing },
+                    .right = one,
+                } };
+
+                const new_increment = try self.allocator.create(ast.Expr);
+                new_increment.* = .{ .Assignment = .{
+                    .name = var_expr.Variable,
+                    .value = add,
+                } };
+                increment = new_increment;
+            }
+        }
     }
+
     if (self.peek().type != .RIGHT_PAREN) {
         return error.ExpectedRightParen;
     }
     self.advance();
 
     // Parse body
-    const body = (try parseExpression(self)) orelse return error.ExpectedExpression;
+    if (self.peek().type != .LEFT_BRACE) {
+        return error.ExpectedLeftBrace;
+    }
+    self.advance(); // consume '{'
+
+    var body = std.ArrayList(ast.Stmt).init(self.allocator);
+    errdefer body.deinit();
+
+    while (self.peek().type != .RIGHT_BRACE and self.peek().type != .EOF) {
+        const stmt = try statement_parser.parseStatement(self);
+        try body.append(stmt);
+    }
+
+    if (self.peek().type != .RIGHT_BRACE) {
+        return error.ExpectedRightBrace;
+    }
+    self.advance(); // consume '}'
+
+    // Create block expression for body
+    const block_expr = try self.allocator.create(ast.Expr);
+    block_expr.* = .{ .Block = .{
+        .statements = try body.toOwnedSlice(),
+        .value = null,
+    } };
 
     const for_expr = try self.allocator.create(ast.Expr);
-    for_expr.* = .{ .For = .{
-        .initializer = initializer,
-        .condition = condition,
-        .increment = increment,
-        .body = body,
-    } };
+    for_expr.* = .{
+        .For = .{
+            .initializer = initializer,
+            .condition = condition,
+            .increment = increment,
+            .body = block_expr,
+        },
+    };
 
     return for_expr;
 }

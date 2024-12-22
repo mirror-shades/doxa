@@ -1347,6 +1347,15 @@ pub const Interpreter = struct {
             },
             .FieldAccess => |field| {
                 const object = try self.evaluate(field.object);
+
+                // Handle array properties first
+                if (object == .array) {
+                    if (std.mem.eql(u8, field.field.lexeme, "len")) {
+                        return .{ .int = @intCast(object.array.len) };
+                    }
+                    return error.UnknownMethod;
+                }
+
                 // First check if this is an enum type access
                 if (object == .nothing) {
                     // Try to get type info for the object
