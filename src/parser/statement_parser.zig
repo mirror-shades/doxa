@@ -262,7 +262,7 @@ pub fn parseStatement(self: *Parser) ErrorList!ast.Stmt {
     }
 
     return switch (self.peek().type) {
-        .VAR => declaration_parser.parseVarDecl(self),
+        .VAR, .CONST => declaration_parser.parseVarDecl(self),
         .FN_KEYWORD, .FUNCTION_KEYWORD => declaration_parser.parseFunctionDecl(self),
         .RETURN => parseReturnStmt(self),
         .LEFT_BRACE => blk: {
