@@ -1185,7 +1185,21 @@ pub const Interpreter = struct {
                         for (arr, 0..) |item, i| {
                             if (i > 0) try buffer.writer().print(", ", .{});
                             switch (item) {
+                                .int => |n| try buffer.writer().print("{d}", .{n}),
+                                .float => |f| try buffer.writer().print("{d}", .{f}),
+                                .boolean => |b| try buffer.writer().print("{}", .{b}),
                                 .string => |s| try buffer.writer().print("\"{s}\"", .{s}),
+                                .array => |nested| {
+                                    try buffer.writer().print("[", .{});
+                                    for (nested, 0..) |nested_item, j| {
+                                        if (j > 0) try buffer.writer().print(", ", .{});
+                                        switch (nested_item) {
+                                            .int => |n| try buffer.writer().print("{d}", .{n}),
+                                            else => try buffer.writer().print("{any}", .{nested_item}),
+                                        }
+                                    }
+                                    try buffer.writer().print("]", .{});
+                                },
                                 else => try buffer.writer().print("{any}", .{item}),
                             }
                         }
@@ -1236,6 +1250,17 @@ pub const Interpreter = struct {
                                         if (i > 0) try buffer.writer().print(", ", .{});
                                         switch (item) {
                                             .string => |s| try buffer.writer().print("\"{s}\"", .{s}),
+                                            .int => |n| try buffer.writer().print("{d}", .{n}),
+                                            .float => |f| try buffer.writer().print("{d}", .{f}),
+                                            .boolean => |b| try buffer.writer().print("{}", .{b}),
+                                            .array => |nested| {
+                                                try buffer.writer().print("[", .{});
+                                                for (nested, 0..) |nested_item, j| {
+                                                    if (j > 0) try buffer.writer().print(", ", .{});
+                                                    try buffer.writer().print("{any}", .{nested_item});
+                                                }
+                                                try buffer.writer().print("]", .{});
+                                            },
                                             else => try buffer.writer().print("{any}", .{item}),
                                         }
                                     }
@@ -1860,7 +1885,28 @@ pub const Interpreter = struct {
                     self.environment = previous_env;
                     if (err == error.ReturnValue) {
                         if (try function_env.get("return")) |return_value| {
-                            return return_value;
+                            // Deep copy the return value to preserve array contents
+                            return switch (return_value) {
+                                .array => |arr| blk: {
+                                    var new_array = try self.memory.getAllocator().alloc(token.TokenLiteral, arr.len);
+                                    for (arr, 0..) |item, i| {
+                                        new_array[i] = switch (item) {
+                                            .int => |n| token.TokenLiteral{ .int = n },
+                                            .boolean => |b| token.TokenLiteral{ .boolean = b },
+                                            .array => |a| blk2: {
+                                                var inner_array = try self.memory.getAllocator().alloc(token.TokenLiteral, a.len);
+                                                for (a, 0..) |inner_item, j| {
+                                                    inner_array[j] = inner_item;
+                                                }
+                                                break :blk2 token.TokenLiteral{ .array = inner_array };
+                                            },
+                                            else => item,
+                                        };
+                                    }
+                                    break :blk token.TokenLiteral{ .array = new_array };
+                                },
+                                else => return_value,
+                            };
                         }
                     }
                     return err;

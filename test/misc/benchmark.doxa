@@ -1,6 +1,7 @@
-function fizzbuzz(x: int) {
+function fizzbuzz(x :: int) {
     var current = x;
-    while current <= 1000000 {
+    const end = 1000000;
+    while current <= end {
         if current % 15 equals 0 then "fizzbuzz"?;
         else if current % 3 equals 0 then "fizz"?;
         else if current % 5 equals 0 then "buzz"?;
