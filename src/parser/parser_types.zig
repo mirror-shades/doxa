@@ -695,9 +695,11 @@ pub const Parser = struct {
                 .expr = left.?,
                 .location = .{
                     .file = self.current_file,
-                    // I have no idea why this is necessary, but it is.
+                    // I have no idea why I have to do this shit but it is necessary
+                    // add one to the line and div by 2 (it will always be even)
                     .line = @divTrunc(self.peek().line + 1, 2),
-                    .column = self.peek().column,
+                    // subtract one from the column
+                    .column = self.peek().column - 1,
                 },
                 .variable_name = if (name_token) |token_name| token_name.lexeme else null,
             },

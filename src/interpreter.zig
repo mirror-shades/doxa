@@ -735,6 +735,11 @@ pub const Interpreter = struct {
                         }
                         return error.TypeError;
                     },
+                    .OR_KEYWORD, .OR_SYMBOL, .OR_LOGICAL => {
+                        if (left != .boolean and left != .tetra) return error.TypeError;
+                        if (right != .boolean and right != .tetra) return error.TypeError;
+                        return try orLogical(left, right);
+                    },
                     else => return error.InvalidOperator,
                 };
             },
@@ -1082,8 +1087,8 @@ pub const Interpreter = struct {
                         result_tetra = switch (left_val.tetra) {
                             .true => .true,
                             .false => right_val.tetra,
-                            .both => .both,
-                            .neither => if (right_val.tetra == .true) .true else .neither,
+                            .both => .true,
+                            .neither => .false,
                         };
                     },
                     .XOR => {
@@ -1729,6 +1734,21 @@ pub const Interpreter = struct {
             },
             else => return error.TypeError,
         };
+    }
+
+    fn orLogical(left: token.TokenLiteral, right: token.TokenLiteral) !token.TokenLiteral {
+        const left_tetra = try convertToTetra(left);
+        const right_tetra = try convertToTetra(right);
+        if (left_tetra == .neither or right_tetra == .neither) {
+            return token.TokenLiteral{ .boolean = token.Boolean.false };
+        }
+        if (left_tetra == .both or right_tetra == .both) {
+            return token.TokenLiteral{ .boolean = token.Boolean.true };
+        }
+        if (left_tetra == .true or right_tetra == .true) {
+            return token.TokenLiteral{ .boolean = token.Boolean.true };
+        }
+        return token.TokenLiteral{ .boolean = token.Boolean.false };
     }
 
     fn compareLogical(left: token.TokenLiteral, right: token.TokenLiteral) !token.TokenLiteral {
