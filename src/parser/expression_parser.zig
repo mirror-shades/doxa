@@ -381,17 +381,30 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
     else
         null;
 
-    self.advance(); // Always advance past the type token
+    self.advance(); // Advance past the type token
 
-    const type_expr = try self.allocator.create(ast.TypeExpr);
+    // Create the base type expression
+    const base_type_expr = try self.allocator.create(ast.TypeExpr);
     if (basic_type) |basic| {
-        type_expr.* = .{ .Basic = basic };
+        base_type_expr.* = .{ .Basic = basic };
     } else {
-        // Handle custom type (like struct names)
-        type_expr.* = .{ .Custom = type_token };
+        base_type_expr.* = .{ .Custom = type_token };
     }
 
-    return type_expr;
+    // Check for array type
+    if (self.peek().type == .LEFT_BRACKET) {
+        self.advance(); // consume [
+        if (self.peek().type != .RIGHT_BRACKET) {
+            return error.ExpectedRightBracket;
+        }
+        self.advance(); // consume ]
+
+        const array_type_expr = try self.allocator.create(ast.TypeExpr);
+        array_type_expr.* = .{ .Array = .{ .element_type = base_type_expr } };
+        return array_type_expr;
+    }
+
+    return base_type_expr;
 }
 
 pub fn allocExpr(self: *Parser, expr: ast.Expr) ErrorList!*ast.Expr {

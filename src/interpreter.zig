@@ -277,8 +277,8 @@ pub const Interpreter = struct {
         var result: ?token.TokenLiteral = null;
 
         // Execute all statements, allowing errors to propagate
-        for (statements) |stmt| {
-            result = self.executeStatement(&stmt, self.debug_enabled) catch |err| {
+        for (statements) |*stmt| {
+            result = self.executeStatement(stmt, self.debug_enabled) catch |err| {
                 if (err == error.ReturnValue) {
                     // Get the return value from the environment
                     if (try environment.get("return")) |return_value| {
@@ -1008,6 +1008,53 @@ pub const Interpreter = struct {
                 return new_value;
             },
             .Call => |call| {
+                // Check if this is a method call (callee is a field access)
+                if (call.callee.* == .FieldAccess) {
+                    const field_access = call.callee.FieldAccess;
+                    const object = try self.evaluate(field_access.object);
+
+                    // Handle array methods
+                    if (object == .array) {
+                        if (std.mem.eql(u8, field_access.field.lexeme, "push")) {
+                            if (call.arguments.len != 1) {
+                                return error.InvalidArgumentCount;
+                            }
+
+                            const arg_value = try self.evaluate(call.arguments[0]);
+
+                            // Get the current array
+                            const current_array = object.array;
+
+                            // Create new array with one more element
+                            var new_array = try self.memory.getAllocator().alloc(token.TokenLiteral, current_array.len + 1);
+                            errdefer self.memory.getAllocator().free(new_array);
+
+                            // Copy existing elements
+                            @memcpy(new_array[0..current_array.len], current_array);
+
+                            // Add new element
+                            new_array[current_array.len] = arg_value;
+
+                            // Free old array
+                            self.memory.getAllocator().free(current_array);
+
+                            // Create new token literal with the new array
+                            const new_value = token.TokenLiteral{ .array = new_array };
+
+                            // Update the variable in the environment
+                            if (field_access.object.* == .Variable) {
+                                try self.environment.assign(field_access.object.Variable.lexeme, new_value);
+                            }
+
+                            return new_value;
+                        }
+                        return error.UnknownMethod;
+                    }
+                    // Handle struct methods or return error.NotAStruct for other types
+                    return error.NotAStruct;
+                }
+
+                // Handle regular function calls
                 const callee = try self.evaluate(call.callee);
                 return self.callFunction(callee, call.arguments);
             },
@@ -1605,6 +1652,13 @@ pub const Interpreter = struct {
 
                 return token.TokenLiteral{ .map = map };
             },
+            .MethodCall => |method_call| {
+                return try self.callMethod(.{
+                    .receiver = method_call.receiver,
+                    .method = method_call.method,
+                    .arguments = method_call.arguments,
+                });
+            },
         };
     }
 
@@ -1876,5 +1930,53 @@ pub const Interpreter = struct {
                 return true;
             },
         };
+    }
+
+    const MethodCallExpr = struct {
+        receiver: *ast.Expr,
+        method: token.Token,
+        arguments: []const *ast.Expr,
+    };
+
+    fn callMethod(self: *Interpreter, method_call: MethodCallExpr) ErrorList!token.TokenLiteral {
+        // First evaluate the receiver to get the actual array
+        const receiver_value = try self.evaluate(method_call.receiver);
+
+        // Handle array methods
+        if (receiver_value == .array) {
+            if (std.mem.eql(u8, method_call.method.lexeme, "push")) {
+                // Verify argument count
+                if (method_call.arguments.len != 1) {
+                    return error.InvalidArgumentCount;
+                }
+
+                // Evaluate the argument
+                const arg_value = try self.evaluate(method_call.arguments[0]);
+
+                // Get the current array
+                const current_array = receiver_value.array;
+
+                // Create new array with one more element
+                var new_array = try self.memory.getAllocator().alloc(token.TokenLiteral, current_array.len + 1);
+                errdefer self.memory.getAllocator().free(new_array);
+
+                // Copy existing elements
+                @memcpy(new_array[0..current_array.len], current_array);
+
+                // Add new element
+                new_array[current_array.len] = arg_value;
+
+                // Free old array
+                self.memory.getAllocator().free(current_array);
+
+                // Create new token literal with the new array
+                return token.TokenLiteral{ .array = new_array };
+            }
+            // Add other array methods here (pop, length, etc.)
+            return error.UnknownMethod;
+        }
+
+        // Handle other types' methods here
+        return error.MethodNotFound;
     }
 };

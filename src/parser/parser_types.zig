@@ -277,6 +277,10 @@ pub const Parser = struct {
         }
 
         while (true) {
+            if (self.debug_enabled) {
+                std.debug.print("Current token: {s} ({s})\n", .{ @tagName(self.peek().type), self.peek().lexeme });
+            }
+
             if (self.peek().type != .IDENTIFIER) {
                 return error.ExpectedIdentifier;
             }
@@ -288,7 +292,13 @@ pub const Parser = struct {
             var type_expr: ?*ast.TypeExpr = null;
             if (self.peek().type == .TYPE_SYMBOL) {
                 self.advance(); // consume ::
+                if (self.debug_enabled) {
+                    std.debug.print("Parsing type expression, current token: {s} ({s})\n", .{ @tagName(self.peek().type), self.peek().lexeme });
+                }
                 type_expr = try expression_parser.parseTypeExpr(self);
+                if (self.debug_enabled) {
+                    std.debug.print("Finished parsing type expression\n", .{});
+                }
             }
 
             // Handle default value
@@ -308,6 +318,9 @@ pub const Parser = struct {
             });
 
             if (self.peek().type == .COMMA) {
+                if (self.debug_enabled) {
+                    std.debug.print("Found comma, continuing to next parameter\n", .{});
+                }
                 self.advance();
                 continue;
             }

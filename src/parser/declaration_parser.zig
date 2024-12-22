@@ -195,15 +195,37 @@ pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
         if (self.peek().type == .LEFT_PAREN) {
             self.advance(); // consume (
 
-            // Parse return type
-            const type_name = self.peek();
-            self.advance();
-            return_type.base = switch (type_name.type) {
-                .INT_TYPE => .Int,
-                .FLOAT_TYPE => .Float,
-                .STRING_TYPE => .String,
-                .BOOLEAN_TYPE => .Boolean,
-                .TETRA_TYPE => .Tetra,
+            // Use parseTypeExpr instead of direct type parsing
+            const type_expr = try expression_parser.parseTypeExpr(self) orelse return error.InvalidType;
+
+            // Convert TypeExpr to TypeInfo
+            return_type = switch (type_expr.*) {
+                .Basic => |basic| ast.TypeInfo{ .base = switch (basic) {
+                    .Integer => ast.Type.Int,
+                    .Float => ast.Type.Float,
+                    .String => ast.Type.String,
+                    .Boolean => ast.Type.Boolean,
+                    .Auto => ast.Type.Dynamic,
+                    .Tetra => ast.Type.Tetra,
+                } },
+                .Array => |array| blk: {
+                    const element_type = try self.allocator.create(ast.TypeInfo);
+                    element_type.* = .{ .base = switch (array.element_type.*) {
+                        .Basic => |basic| switch (basic) {
+                            .Integer => ast.Type.Int,
+                            .Float => ast.Type.Float,
+                            .String => ast.Type.String,
+                            .Boolean => ast.Type.Boolean,
+                            .Auto => ast.Type.Dynamic,
+                            .Tetra => ast.Type.Tetra,
+                        },
+                        else => return error.InvalidType,
+                    } };
+                    break :blk ast.TypeInfo{
+                        .base = ast.Type.Array,
+                        .array_type = element_type,
+                    };
+                },
                 else => return error.InvalidType,
             };
 
@@ -212,7 +234,7 @@ pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
             }
             self.advance();
         } else {
-            return error.ExpectedLeftParen; // In Safe Mode, must use returns(type) syntax
+            return error.ExpectedLeftParen;
         }
     }
 
