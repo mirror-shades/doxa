@@ -33,6 +33,8 @@ pub const ErrorList = error{
     MissingTypeAnnotation,
     BangNegationNotSupported,
     UndeclaredFunction,
+    UnknownMethod,
+    MethodNotFound,
 
     // Variable Management
     VariableNotFound,

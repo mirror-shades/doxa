@@ -247,3 +247,34 @@ fn map(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     map_expr.* = .{ .Map = try entries.toOwnedSlice() };
     return map_expr;
 }
+
+fn parseMethodCall(self: *Parser, receiver: *ast.Expr) ErrorList!?*ast.Expr {
+    const method_name = self.peek();
+    self.advance(); // consume method name
+
+    if (method_name.lexeme.eql("push")) {
+        // Expect opening parenthesis
+        if (self.peek().type != .LEFT_PAREN) {
+            return error.ExpectedLeftParen;
+        }
+        self.advance();
+
+        // Parse the argument
+        const argument = try expression_parser.parseExpression(self) orelse
+            return error.ExpectedExpression;
+
+        // Expect closing parenthesis
+        if (self.peek().type != .RIGHT_PAREN) {
+            return error.ExpectedRightParen;
+        }
+        self.advance();
+
+        const push_expr = try self.allocator.create(ast.Expr);
+        push_expr.* = .{ .MethodCall = .{
+            .receiver = receiver,
+            .method = method_name,
+            .arguments = &[_]*ast.Expr{argument},
+        } };
+        return push_expr;
+    }
+}

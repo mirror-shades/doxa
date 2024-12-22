@@ -93,6 +93,11 @@ pub const Expr = union(enum) {
     DefaultArgPlaceholder: void,
     TypeOf: *Expr,
     Map: []MapEntry,
+    MethodCall: struct {
+        receiver: *Expr,
+        method: token.Token,
+        arguments: []const *Expr,
+    },
 
     pub fn deinit(self: *Expr, allocator: std.mem.Allocator) void {
         switch (self.*) {
@@ -317,6 +322,15 @@ pub const Expr = union(enum) {
                     allocator.destroy(entry.value);
                 }
                 allocator.free(entries);
+            },
+            .MethodCall => |*m| {
+                m.receiver.deinit(allocator);
+                allocator.destroy(m.receiver);
+                for (m.arguments) |arg| {
+                    arg.deinit(allocator);
+                    allocator.destroy(arg);
+                }
+                allocator.free(m.arguments);
             },
         }
     }
