@@ -665,7 +665,7 @@ pub const Parser = struct {
         // The dot has already been consumed
         // Check for either IDENTIFIER or PUSH
         const next_token = self.peek();
-        if (next_token.type != .IDENTIFIER and next_token.type != .PUSH) {
+        if (next_token.type != .IDENTIFIER and next_token.type != .PUSH and next_token.type != .LENGTH) {
             return error.ExpectedIdentifier;
         }
 
@@ -1194,5 +1194,17 @@ pub const Parser = struct {
             return self.tokens[0];
         }
         return self.tokens[self.current - 1];
+    }
+
+    pub fn arrayLength(self: *Parser, array: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+        if (array == null) return error.ExpectedExpression;
+
+        // Create the array length expression
+        const length_expr = try self.allocator.create(ast.Expr);
+        length_expr.* = .{ .ArrayLength = .{
+            .array = array.?,
+        } };
+
+        return length_expr;
     }
 };

@@ -946,6 +946,13 @@ pub const Interpreter = struct {
                 return switch (array_value) {
                     .array => |arr| {
                         if (index_value != .int) {
+                            // Special case: check if this is a length access
+                            if (index.index.* == .Literal and
+                                index.index.Literal == .string and
+                                std.mem.eql(u8, "length", index.index.Literal.string))
+                            {
+                                return token.TokenLiteral{ .int = @intCast(arr.len) };
+                            }
                             return error.TypeError;
                         }
                         if (index_value.int < 0) {
@@ -1052,6 +1059,9 @@ pub const Interpreter = struct {
                             }
 
                             return new_value;
+                        }
+                        if (std.mem.eql(u8, field_access.field.lexeme, "length")) {
+                            return try self.arrayLength(field_access.object);
                         }
                         return error.UnknownMethod;
                     }
@@ -1160,15 +1170,24 @@ pub const Interpreter = struct {
                 defer buffer.deinit();
 
                 // Format the output into the buffer
-                try buffer.writer().print("[{s}:{d}:{d}] {s} = ", .{ print.location.file, print.location.line, print.location.column, switch (print.expr.*) {
-                    .Variable => |v| v.lexeme,
-                    .Binary => "expression",
-                    .Call => |call| switch (call.callee.*) {
+                try buffer.writer().print("[{s}:{d}:{d}] {s} = ", .{
+                    print.location.file,
+                    print.location.line,
+                    print.location.column,
+                    switch (print.expr.*) {
                         .Variable => |v| v.lexeme,
-                        else => "function call",
+                        .Binary => "expression",
+                        .Call => |call| switch (call.callee.*) {
+                            .Variable => |v| v.lexeme,
+                            .FieldAccess => |field| field.field.lexeme, // Add this case for method calls
+                            else => "function call",
+                        },
+                        .MethodCall => |method| method.method.lexeme,
+                        else => blk: {
+                            break :blk "value";
+                        },
                     },
-                    else => "value",
-                } });
+                });
 
                 // Format the value into the buffer based on its type
                 switch (value) {
@@ -1380,7 +1399,7 @@ pub const Interpreter = struct {
 
                 // Handle array properties first
                 if (object == .array) {
-                    if (std.mem.eql(u8, field.field.lexeme, "len")) {
+                    if (std.mem.eql(u8, field.field.lexeme, "length")) {
                         return .{ .int = @intCast(object.array.len) };
                     }
                     return error.UnknownMethod;
@@ -1692,6 +1711,13 @@ pub const Interpreter = struct {
                 return token.TokenLiteral{ .map = map };
             },
             .MethodCall => |method_call| {
+                if (std.mem.eql(u8, method_call.method.lexeme, "length")) {
+                    const receiver_value = try self.evaluate(method_call.receiver);
+                    if (receiver_value != .array) {
+                        return error.TypeError;
+                    }
+                    return token.TokenLiteral{ .int = @intCast(receiver_value.array.len) };
+                }
                 return try self.callMethod(.{
                     .receiver = method_call.receiver,
                     .method = method_call.method,
@@ -1700,6 +1726,13 @@ pub const Interpreter = struct {
             },
             .ArrayPush => |ap| {
                 return try self.arrayPush(ap.array, ap.element);
+            },
+            .ArrayLength => |al| {
+                const array_value = try self.evaluate(al.array);
+                if (array_value != .array) {
+                    return error.TypeError;
+                }
+                return token.TokenLiteral{ .int = @intCast(array_value.array.len) };
             },
         };
     }
@@ -2050,12 +2083,23 @@ pub const Interpreter = struct {
                 // Create new token literal with the new array
                 return token.TokenLiteral{ .array = new_array };
             }
+            if (method_call.method.type == .LENGTH) {
+                return try self.arrayLength(method_call.receiver);
+            }
             // Add other array methods here (pop, length, etc.)
             return error.UnknownMethod;
         }
 
         // Handle other types' methods here
         return error.MethodNotFound;
+    }
+
+    fn arrayLength(self: *Interpreter, array_expr: *const ast.Expr) ErrorList!token.TokenLiteral {
+        const array_value = try self.evaluate(array_expr);
+        if (array_value != .array) {
+            return error.TypeError;
+        }
+        return token.TokenLiteral{ .int = @intCast(array_value.array.len) };
     }
 
     fn arrayPush(self: *Interpreter, array: *ast.Expr, element: *ast.Expr) ErrorList!token.TokenLiteral {

@@ -102,6 +102,9 @@ pub const Expr = union(enum) {
         array: *Expr,
         element: *Expr,
     },
+    ArrayLength: struct {
+        array: *Expr,
+    },
 
     pub fn deinit(self: *Expr, allocator: std.mem.Allocator) void {
         switch (self.*) {
@@ -341,6 +344,10 @@ pub const Expr = union(enum) {
                 allocator.destroy(ap.array);
                 ap.element.deinit(allocator);
                 allocator.destroy(ap.element);
+            },
+            .ArrayLength => |*a| {
+                a.array.deinit(allocator);
+                allocator.destroy(a.array);
             },
         }
     }

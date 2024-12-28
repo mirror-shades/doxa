@@ -16,8 +16,8 @@ var arr = [1, 2, 3, 4, 5];
 arr[3]?; // 4
 arr[3] = 6;
 arr[3]?; // 6
-arr.push(42);
+arr.push(42)?;
 arr[5]?; // 42
 
-//arr.len()?; // 6
+arr.length()?; // 6
 

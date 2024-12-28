@@ -120,7 +120,7 @@ pub const TokenType = enum {
 
     //array methods
     PUSH, // push
-
+    LENGTH, // length
     // Type keywords
     INT_TYPE, // int type declaration
     FLOAT_TYPE, // float type declaration
