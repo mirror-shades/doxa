@@ -41,6 +41,7 @@ const inOperator = quantifer_parser.inOperator;
 
 const arrayPush = Parser.arrayPush;
 const arrayLength = Parser.arrayLength;
+const arrayPop = Parser.arrayPop;
 
 pub const ParseFn = *const fn (*Parser, ?*ast.Expr, Precedence) ErrorList!?*ast.Expr;
 
@@ -181,8 +182,9 @@ pub const rules = blk: {
     r.set(.LEFT_BRACKET, .{ .prefix = parseArrayLiteral });
 
     // Add array methods
-    r.set(.PUSH, .{ .infix = arrayPush, .precedence = .CALL });
-    r.set(.LENGTH, .{ .infix = arrayLength, .precedence = .CALL });
+    r.set(.PUSH, .{ .infix = fieldAccess, .precedence = .CALL });
+    r.set(.LENGTH, .{ .infix = fieldAccess, .precedence = .CALL });
+    r.set(.POP, .{ .infix = fieldAccess, .precedence = .CALL });
 
     // Add enum declaration support using the wrapper
     r.set(.ENUM_TYPE, .{ .prefix = enumDeclPrefix });

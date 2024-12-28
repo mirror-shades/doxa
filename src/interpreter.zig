@@ -1734,6 +1734,9 @@ pub const Interpreter = struct {
                 }
                 return token.TokenLiteral{ .int = @intCast(array_value.array.len) };
             },
+            .ArrayPop => |ap| {
+                return try self.arrayPop(ap.array);
+            },
         };
     }
 
@@ -2081,7 +2084,14 @@ pub const Interpreter = struct {
                 self.memory.getAllocator().free(current_array);
 
                 // Create new token literal with the new array
-                return token.TokenLiteral{ .array = new_array };
+                const new_value = token.TokenLiteral{ .array = new_array };
+
+                // Update the variable in the environment
+                if (method_call.receiver.* == .Variable) {
+                    try self.environment.assign(method_call.receiver.Variable.lexeme, new_value);
+                }
+
+                return new_value;
             }
             if (method_call.method.type == .LENGTH) {
                 return try self.arrayLength(method_call.receiver);
@@ -2092,6 +2102,14 @@ pub const Interpreter = struct {
 
         // Handle other types' methods here
         return error.MethodNotFound;
+    }
+
+    fn arrayPop(self: *Interpreter, array_expr: *const ast.Expr) ErrorList!token.TokenLiteral {
+        const array_value = try self.evaluate(array_expr);
+        if (array_value != .array) {
+            return error.TypeError;
+        }
+        return token.TokenLiteral{ .int = @intCast(array_value.array.len) };
     }
 
     fn arrayLength(self: *Interpreter, array_expr: *const ast.Expr) ErrorList!token.TokenLiteral {
