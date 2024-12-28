@@ -1,5 +1,23 @@
-var array = [1, 2, 3, 4, 5];
+// len()          // Fundamental - need to know array size
+// push()/pop()   // Basic stack operations
+// isEmpty()      // Basic state check
+// indexOf()      // Basic search functionality
+// includes()     // Basic membership test
+// slice()        // Array subsetting
+// concat()       // Array combining
+// sort()         // Ordering
+// map()          // Transform elements
+// filter()       // Selection
 
-array[3]?; // 4
-array[3] = 6;
-array[3]?; // 6
+
+
+var arr = [1, 2, 3, 4, 5];
+
+arr[3]?; // 4
+arr[3] = 6;
+arr[3]?; // 6
+arr.push(42);
+arr[5]?; // 42
+
+//arr.len()?; // 6
+

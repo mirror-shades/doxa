@@ -39,6 +39,8 @@ const existentialQuantifier = quantifer_parser.existentialQuantifier;
 const universalQuantifier = quantifer_parser.universalQuantifier;
 const inOperator = quantifer_parser.inOperator;
 
+const arrayPush = Parser.arrayPush;
+
 pub const ParseFn = *const fn (*Parser, ?*ast.Expr, Precedence) ErrorList!?*ast.Expr;
 
 pub const Associativity = enum {
@@ -176,6 +178,9 @@ pub const rules = blk: {
 
     // Add array literal support
     r.set(.LEFT_BRACKET, .{ .prefix = parseArrayLiteral });
+
+    // Add array methods
+    r.set(.PUSH, .{ .infix = arrayPush, .precedence = .CALL });
 
     // Add enum declaration support using the wrapper
     r.set(.ENUM_TYPE, .{ .prefix = enumDeclPrefix });

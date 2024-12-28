@@ -179,7 +179,9 @@ con?; // 1
 
 // trancendental logic notation
 // always returns a tetra value, preserves contradiction in values
-(⊟true)?; // neither
+(
+    
+    true)?; // neither
 
 
 //trigger or warning conflict

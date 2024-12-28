@@ -662,13 +662,13 @@ pub const Parser = struct {
     pub fn fieldAccess(self: *Parser, object: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
         if (object == null) return error.ExpectedExpression;
 
-        // The dot has already been consumed by the time we get here
-        // Don't advance again
-
-        // Parse the field name
-        if (self.peek().type != .IDENTIFIER) {
+        // The dot has already been consumed
+        // Check for either IDENTIFIER or PUSH
+        const next_token = self.peek();
+        if (next_token.type != .IDENTIFIER and next_token.type != .PUSH) {
             return error.ExpectedIdentifier;
         }
+
         const field = self.peek();
         self.advance();
 
@@ -1141,6 +1141,22 @@ pub const Parser = struct {
         }
 
         return buffer;
+    }
+
+    pub fn arrayPush(self: *Parser, array: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+        if (array == null) return error.ExpectedExpression;
+
+        // Parse the element to push
+        const element = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
+
+        // Create the array push expression
+        const push_expr = try self.allocator.create(ast.Expr);
+        push_expr.* = .{ .ArrayPush = .{
+            .array = array.?,
+            .element = element,
+        } };
+
+        return push_expr;
     }
 
     pub fn extractModuleInfo(self: *Parser, module_ast: *ast.Expr) ErrorList!ast.ModuleInfo {
