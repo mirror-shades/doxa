@@ -126,6 +126,7 @@ pub const Lexer = struct {
         try self.keywords.put("not", .NOT_KEYWORD);
         try self.keywords.put("module", .MODULE);
         try self.keywords.put("push", .PUSH);
+        try self.keywords.put("pop", .POP);
         try self.keywords.put("length", .LENGTH);
         try self.keywords.put("∃", .EXISTS);
         try self.keywords.put("∀", .FORALL);

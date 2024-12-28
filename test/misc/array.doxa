@@ -1,5 +1,3 @@
-// len()          // Fundamental - need to know array size
-// push()/pop()   // Basic stack operations
 // isEmpty()      // Basic state check
 // indexOf()      // Basic search functionality
 // includes()     // Basic membership test
@@ -19,5 +17,9 @@ arr[3]?; // 6
 arr.push(42)?;
 arr[5]?; // 42
 
-arr.length()?; // 6
+arr.length()?; // 6\
 
+var popped = arr.pop();
+popped?; // 42
+arr.length()?; // 5
+arr?; // 5

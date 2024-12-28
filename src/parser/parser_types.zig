@@ -659,25 +659,108 @@ pub const Parser = struct {
         }
     }
 
-    pub fn fieldAccess(self: *Parser, object: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-        if (object == null) return error.ExpectedExpression;
-
-        // The dot has already been consumed
-        // Check for either IDENTIFIER or PUSH
-        const next_token = self.peek();
-        if (next_token.type != .IDENTIFIER and next_token.type != .PUSH and next_token.type != .LENGTH) {
-            return error.ExpectedIdentifier;
+    pub fn fieldAccess(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+        if (self.debug_enabled) {
+            std.debug.print("\nStarting field access parse\n", .{});
+            std.debug.print("Current position: {}\n", .{self.current});
+            std.debug.print("Current token: {s} ({s})\n", .{
+                @tagName(self.peek().type),
+                self.peek().lexeme,
+            });
         }
 
-        const field = self.peek();
-        self.advance();
+        // Store current position and token
+        const current_token = self.peek();
 
-        const field_access = try self.allocator.create(ast.Expr);
-        field_access.* = .{ .FieldAccess = .{
-            .object = object.?,
-            .field = field,
-        } };
-        return field_access;
+        // Don't advance yet - first check if this is a method call
+        if (current_token.type == .PUSH or
+            (current_token.type == .IDENTIFIER and std.mem.eql(u8, current_token.lexeme, "push")))
+        {
+            if (self.debug_enabled) {
+                std.debug.print("Found push method\n", .{});
+            }
+
+            self.advance(); // consume push
+
+            // Expect left parenthesis
+            if (self.peek().type != .LEFT_PAREN) {
+                if (self.debug_enabled) {
+                    std.debug.print("Expected left paren, got: {s} ({s})\n", .{
+                        @tagName(self.peek().type),
+                        self.peek().lexeme,
+                    });
+                }
+                return error.ExpectedLeftParen;
+            }
+            self.advance(); // consume (
+
+            const result = try self.arrayPush(left, .NONE);
+
+            // Expect closing parenthesis
+            if (self.peek().type != .RIGHT_PAREN) {
+                if (self.debug_enabled) {
+                    std.debug.print("Expected right paren, got: {s} ({s})\n", .{
+                        @tagName(self.peek().type),
+                        self.peek().lexeme,
+                    });
+                }
+                return error.ExpectedRightParen;
+            }
+            self.advance(); // consume )
+
+            return result;
+        }
+        // Similar blocks for pop and length...
+        else if (current_token.type == .POP or
+            (current_token.type == .IDENTIFIER and std.mem.eql(u8, current_token.lexeme, "pop")))
+        {
+            self.advance(); // consume pop
+
+            if (self.peek().type != .LEFT_PAREN) return error.ExpectedLeftParen;
+            self.advance(); // consume (
+
+            const result = try self.arrayPop(left, .NONE);
+
+            if (self.peek().type != .RIGHT_PAREN) return error.ExpectedRightParen;
+            self.advance(); // consume )
+
+            return result;
+        } else if (current_token.type == .LENGTH or
+            (current_token.type == .IDENTIFIER and std.mem.eql(u8, current_token.lexeme, "length")))
+        {
+            self.advance(); // consume length
+
+            if (self.peek().type != .LEFT_PAREN) return error.ExpectedLeftParen;
+            self.advance(); // consume (
+
+            const result = try self.arrayLength(left, .NONE);
+
+            if (self.peek().type != .RIGHT_PAREN) return error.ExpectedRightParen;
+            self.advance(); // consume )
+
+            return result;
+        }
+        // Handle regular field access
+        else if (current_token.type == .IDENTIFIER) {
+            self.advance(); // consume identifier
+
+            const field_access = try self.allocator.create(ast.Expr);
+            field_access.* = .{
+                .FieldAccess = .{
+                    .object = left.?,
+                    .field = current_token,
+                },
+            };
+            return field_access;
+        } else {
+            if (self.debug_enabled) {
+                std.debug.print("Invalid token: {s} ({s})\n", .{
+                    @tagName(current_token.type),
+                    current_token.lexeme,
+                });
+            }
+            return error.ExpectedIdentifier;
+        }
     }
 
     pub fn print(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
@@ -1194,6 +1277,18 @@ pub const Parser = struct {
             return self.tokens[0];
         }
         return self.tokens[self.current - 1];
+    }
+
+    pub fn arrayPop(self: *Parser, array: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+        if (array == null) return error.ExpectedExpression;
+
+        // Create the array pop expression
+        const pop_expr = try self.allocator.create(ast.Expr);
+        pop_expr.* = .{ .ArrayPop = .{
+            .array = array.?,
+        } };
+
+        return pop_expr;
     }
 
     pub fn arrayLength(self: *Parser, array: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
