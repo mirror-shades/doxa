@@ -1698,6 +1698,9 @@ pub const Interpreter = struct {
                     .arguments = method_call.arguments,
                 });
             },
+            .ArrayPush => |ap| {
+                return try self.arrayPush(ap.array, ap.element);
+            },
         };
     }
 
@@ -2019,7 +2022,7 @@ pub const Interpreter = struct {
 
         // Handle array methods
         if (receiver_value == .array) {
-            if (std.mem.eql(u8, method_call.method.lexeme, "push")) {
+            if (method_call.method.type == .PUSH) {
                 // Verify argument count
                 if (method_call.arguments.len != 1) {
                     return error.InvalidArgumentCount;
@@ -2053,5 +2056,23 @@ pub const Interpreter = struct {
 
         // Handle other types' methods here
         return error.MethodNotFound;
+    }
+
+    fn arrayPush(self: *Interpreter, array: *ast.Expr, element: *ast.Expr) ErrorList!token.TokenLiteral {
+        // Create a method call expression using the PUSH token
+        const method_call = MethodCallExpr{
+            .receiver = array,
+            .method = .{
+                .type = .PUSH,
+                .lexeme = "push",
+                .literal = .{ .nothing = {} }, // Use .nothing instead of null
+                .line = 0, // Since this is synthetic, we use 0
+                .column = 0, // Since this is synthetic, we use 0
+            },
+            .arguments = &[_]*ast.Expr{element},
+        };
+
+        // Use the existing callMethod implementation
+        return try self.callMethod(method_call);
     }
 };

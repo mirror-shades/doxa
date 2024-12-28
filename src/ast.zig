@@ -98,6 +98,10 @@ pub const Expr = union(enum) {
         method: token.Token,
         arguments: []const *Expr,
     },
+    ArrayPush: struct {
+        array: *Expr,
+        element: *Expr,
+    },
 
     pub fn deinit(self: *Expr, allocator: std.mem.Allocator) void {
         switch (self.*) {
@@ -331,6 +335,12 @@ pub const Expr = union(enum) {
                     allocator.destroy(arg);
                 }
                 allocator.free(m.arguments);
+            },
+            .ArrayPush => |*ap| {
+                ap.array.deinit(allocator);
+                allocator.destroy(ap.array);
+                ap.element.deinit(allocator);
+                allocator.destroy(ap.element);
             },
         }
     }
