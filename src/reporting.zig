@@ -35,6 +35,7 @@ pub const ErrorList = error{
     UndeclaredFunction,
     UnknownMethod,
     MethodNotFound,
+    EmptyArray,
 
     // Variable Management
     VariableNotFound,
