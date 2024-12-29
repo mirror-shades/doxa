@@ -108,6 +108,13 @@ pub const Expr = union(enum) {
     ArrayPop: struct {
         array: *Expr,
     },
+    ArrayIsEmpty: struct {
+        array: *Expr,
+    },
+    ArrayConcat: struct {
+        array: *Expr,
+        array2: *Expr,
+    },
 
     pub fn deinit(self: *Expr, allocator: std.mem.Allocator) void {
         switch (self.*) {
@@ -353,6 +360,14 @@ pub const Expr = union(enum) {
                 allocator.destroy(a.array);
             },
             .ArrayPop => |*a| {
+                a.array.deinit(allocator);
+                allocator.destroy(a.array);
+            },
+            .ArrayIsEmpty => |*a| {
+                a.array.deinit(allocator);
+                allocator.destroy(a.array);
+            },
+            .ArrayConcat => |*a| {
                 a.array.deinit(allocator);
                 allocator.destroy(a.array);
             },

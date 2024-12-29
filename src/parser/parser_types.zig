@@ -672,8 +672,41 @@ pub const Parser = struct {
         // Store current position and token
         const current_token = self.peek();
 
-        // Don't advance yet - first check if this is a method call
-        if (current_token.type == .PUSH or
+        // Add concat to the method checks
+        if (current_token.type == .CONCAT or
+            (current_token.type == .IDENTIFIER and std.mem.eql(u8, current_token.lexeme, "concat")))
+        {
+            self.advance(); // consume concat
+
+            if (self.peek().type != .LEFT_PAREN) return error.ExpectedLeftParen;
+            self.advance(); // consume (
+
+            const result = try self.arrayConcat(left, .NONE);
+
+            if (self.peek().type != .RIGHT_PAREN) return error.ExpectedRightParen;
+            self.advance(); // consume )
+
+            return result;
+        }
+
+        // Add isEmpty to the method checks
+        if (current_token.type == .ISEMPTY or
+            (current_token.type == .IDENTIFIER and std.mem.eql(u8, current_token.lexeme, "isEmpty")))
+        {
+            self.advance(); // consume isEmpty
+
+            if (self.peek().type != .LEFT_PAREN) return error.ExpectedLeftParen;
+            self.advance(); // consume (
+
+            const result = try self.arrayIsEmpty(left, .NONE);
+
+            if (self.peek().type != .RIGHT_PAREN) return error.ExpectedRightParen;
+            self.advance(); // consume )
+
+            return result;
+        }
+        // Similar blocks for push and length...
+        else if (current_token.type == .PUSH or
             (current_token.type == .IDENTIFIER and std.mem.eql(u8, current_token.lexeme, "push")))
         {
             if (self.debug_enabled) {
@@ -709,9 +742,7 @@ pub const Parser = struct {
             self.advance(); // consume )
 
             return result;
-        }
-        // Similar blocks for pop and length...
-        else if (current_token.type == .POP or
+        } else if (current_token.type == .POP or
             (current_token.type == .IDENTIFIER and std.mem.eql(u8, current_token.lexeme, "pop")))
         {
             self.advance(); // consume pop
@@ -1242,6 +1273,14 @@ pub const Parser = struct {
         return push_expr;
     }
 
+    pub fn arrayIsEmpty(self: *Parser, array: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+        if (array == null) return error.ExpectedExpression;
+
+        const empty_expr = try self.allocator.create(ast.Expr);
+        empty_expr.* = .{ .ArrayIsEmpty = .{ .array = array.? } };
+        return empty_expr;
+    }
+
     pub fn extractModuleInfo(self: *Parser, module_ast: *ast.Expr) ErrorList!ast.ModuleInfo {
         var imports = std.ArrayList(ast.ImportInfo).init(self.allocator);
         var mode: ast.ModuleMode = .Normal;
@@ -1289,6 +1328,21 @@ pub const Parser = struct {
         } };
 
         return pop_expr;
+    }
+
+    pub fn arrayConcat(self: *Parser, array: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+        if (array == null) return error.ExpectedExpression;
+
+        // Parse the second array expression
+        const array2 = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
+
+        // Don't consume the right paren here - let fieldAccess handle it
+        const concat_expr = try self.allocator.create(ast.Expr);
+        concat_expr.* = .{ .ArrayConcat = .{
+            .array = array.?,
+            .array2 = array2,
+        } };
+        return concat_expr;
     }
 
     pub fn arrayLength(self: *Parser, array: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
