@@ -2109,7 +2109,32 @@ pub const Interpreter = struct {
         if (array_value != .array) {
             return error.TypeError;
         }
-        return token.TokenLiteral{ .int = @intCast(array_value.array.len) };
+
+        const current_array = array_value.array;
+        if (current_array.len == 0) {
+            return error.EmptyArray;
+        }
+
+        // Get the last element
+        const popped_value = current_array[current_array.len - 1];
+
+        // Create new array with one less element
+        var new_array = try self.memory.getAllocator().alloc(token.TokenLiteral, current_array.len - 1);
+        errdefer self.memory.getAllocator().free(new_array);
+
+        // Copy all elements except the last one
+        @memcpy(new_array[0..(current_array.len - 1)], current_array[0..(current_array.len - 1)]);
+
+        // Update the array in the environment if it's a variable
+        if (array_expr.* == .Variable) {
+            try self.environment.assign(array_expr.Variable.lexeme, .{ .array = new_array });
+        }
+
+        // Free old array
+        self.memory.getAllocator().free(current_array);
+
+        // Return the popped value
+        return popped_value;
     }
 
     fn arrayLength(self: *Interpreter, array_expr: *const ast.Expr) ErrorList!token.TokenLiteral {
