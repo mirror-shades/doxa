@@ -122,6 +122,8 @@ pub const TokenType = enum {
     PUSH, // push
     POP, // pop
     LENGTH, // length
+    ISEMPTY, // isEmpty
+    CONCAT, // concat
 
     // Type keywords
     INT_TYPE, // int type declaration

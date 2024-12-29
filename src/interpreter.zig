@@ -1737,6 +1737,12 @@ pub const Interpreter = struct {
             .ArrayPop => |ap| {
                 return try self.arrayPop(ap.array);
             },
+            .ArrayIsEmpty => |ae| {
+                return try self.arrayIsEmpty(ae.array);
+            },
+            .ArrayConcat => |ac| {
+                return try self.arrayConcat(ac.array, ac.array2);
+            },
         };
     }
 
@@ -2104,6 +2110,14 @@ pub const Interpreter = struct {
         return error.MethodNotFound;
     }
 
+    fn arrayIsEmpty(self: *Interpreter, array_expr: *const ast.Expr) ErrorList!token.TokenLiteral {
+        const array_value = try self.evaluate(array_expr);
+        return token.TokenLiteral{ .boolean = if (array_value.array.len == 0)
+            token.Boolean.true
+        else
+            token.Boolean.false };
+    }
+
     fn arrayPop(self: *Interpreter, array_expr: *const ast.Expr) ErrorList!token.TokenLiteral {
         const array_value = try self.evaluate(array_expr);
         if (array_value != .array) {
@@ -2143,6 +2157,23 @@ pub const Interpreter = struct {
             return error.TypeError;
         }
         return token.TokenLiteral{ .int = @intCast(array_value.array.len) };
+    }
+
+    fn arrayConcat(self: *Interpreter, array: *ast.Expr, array2: *ast.Expr) ErrorList!token.TokenLiteral {
+        const array_value = try self.evaluate(array);
+        const array2_value = try self.evaluate(array2);
+
+        // Create new array with combined length
+        var new_array = try self.memory.getAllocator().alloc(token.TokenLiteral, array_value.array.len + array2_value.array.len);
+        errdefer self.memory.getAllocator().free(new_array);
+
+        // Copy first array
+        @memcpy(new_array[0..array_value.array.len], array_value.array);
+
+        // Copy second array
+        @memcpy(new_array[array_value.array.len..], array2_value.array);
+
+        return token.TokenLiteral{ .array = new_array };
     }
 
     fn arrayPush(self: *Interpreter, array: *ast.Expr, element: *ast.Expr) ErrorList!token.TokenLiteral {

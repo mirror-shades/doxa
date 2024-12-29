@@ -1,8 +1,7 @@
-// isEmpty()      // Basic state check
 // indexOf()      // Basic search functionality
+// indexOfAll()   // returns array of indices
 // includes()     // Basic membership test
 // slice()        // Array subsetting
-// concat()       // Array combining
 // sort()         // Ordering
 // map()          // Transform elements
 // filter()       // Selection
@@ -10,6 +9,8 @@
 
 
 var arr = [1, 2, 3, 4, 5];
+var arr2 = [55, 66];
+var arrEmpty = [];
 
 arr[3]?; // 4
 arr[3] = 6;
@@ -23,3 +24,10 @@ var popped = arr.pop();
 popped?; // 42
 arr.length()?; // 5
 arr?; // 5
+
+arr.isEmpty()?; // false
+arrEmpty.isEmpty()?; // true
+
+var arr3 = arr.concat(arr2);
+arr?;
+arr3?; // [1, 2, 3, 4, 5, 55, 66]
