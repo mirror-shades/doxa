@@ -10,10 +10,6 @@ const statement_parser = @import("statement_parser.zig");
 const expression_parser = @import("expression_parser.zig");
 const declaration_parser = @import("declaration_parser.zig");
 
-pub fn parse(self: *Parser) ErrorList![]ast.Stmt {
-    return parser_types.execute(self);
-}
-
 fn isAlternateToken(token_type: token.TokenType) bool {
     return switch (token_type) {
         .ASSIGN_SYMBOL, .ASSIGN_KEYWORD, .EQUALITY_SYMBOL, .EQUALITY_KEYWORD, .AND_SYMBOL, .AND_KEYWORD, .OR_SYMBOL, .OR_KEYWORD, .WHERE_SYMBOL, .WHERE_KEYWORD, .FN_KEYWORD, .FUNCTION_KEYWORD => true,

@@ -14,7 +14,7 @@ pub const TokenType = enum {
     COMMA, // ,
     SEMICOLON, // ;
     MODULO, // %
-    HASH, // #
+    DIRECTIVE, // #___
     TILDE, // ~
     QUESTION, // ?
 
@@ -74,9 +74,6 @@ pub const TokenType = enum {
     ASYNC, // async
     AWAIT, // await
     TYPEOF, // typeof
-    GUIDE, // guide
-    SAFE, // safe
-    NORMAL, // normal
 
     // keywords with alternate tokens
     AND_KEYWORD, // and

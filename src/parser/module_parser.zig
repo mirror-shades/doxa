@@ -17,21 +17,13 @@ pub const ModuleInfo = struct {
 };
 
 pub fn parseModuleDecl(self: *Parser) ErrorList!ast.Stmt {
-    self.advance(); // consume 'module' keyword
-
+    const is_safe = false; // fix this
     // Parse module name
     if (self.peek().type != .IDENTIFIER) {
         return error.ExpectedModuleName;
     }
     const name = self.peek();
     self.advance();
-
-    // Check for safe modifier
-    var is_safe = false;
-    if (self.peek().type == .SAFE) {
-        is_safe = true;
-        self.advance();
-    }
 
     // Parse imports
     var imports = std.ArrayList(ast.ImportInfo).init(self.allocator);

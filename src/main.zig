@@ -77,6 +77,20 @@ pub fn run(memory: *MemoryManager, interpreter: *Interpreter, source: []const u8
     try lexer.initKeywords();
     const token_list = try lexer.lexTokens();
 
+    var is_safe = false;
+    var declarations = false;
+    var imports = false;
+
+    findDeclarations(token_list, &declarations, &imports, &is_safe);
+
+    if (declarations) {
+        std.debug.print("Declarations found\n", .{});
+    }
+
+    if (imports) {
+        std.debug.print("Imports found\n", .{});
+    }
+
     // finish logical operators
     // async/await
     // generics
@@ -95,6 +109,7 @@ pub fn run(memory: *MemoryManager, interpreter: *Interpreter, source: []const u8
             token_list.items,
             file_path,
             memory.debug_enabled,
+            is_safe,
         );
         defer parser_instance.deinit();
 
@@ -122,6 +137,19 @@ pub fn run(memory: *MemoryManager, interpreter: *Interpreter, source: []const u8
         }
     }
     return null;
+}
+
+fn findDeclarations(token_list: std.ArrayList(Token), declarations: *bool, imports: *bool, is_safe: *bool) void {
+    for (token_list.items) |token| {
+        if (token.type == .DIRECTIVE) {
+            declarations.* = true;
+            if (std.mem.eql(u8, token.lexeme, "#safe")) {
+                is_safe.* = true;
+            }
+        } else if (token.type == .IMPORT) {
+            imports.* = true;
+        }
+    }
 }
 
 fn runFile(memory: *MemoryManager, path: []const u8) !void {

@@ -120,9 +120,6 @@ pub const Lexer = struct {
         try self.keywords.put("where", .WHERE_KEYWORD);
         try self.keywords.put("tuple", .TUPLE_TYPE);
         try self.keywords.put("map", .MAP_TYPE);
-        try self.keywords.put("safe", .SAFE);
-        try self.keywords.put("normal", .NORMAL);
-        try self.keywords.put("guide", .GUIDE);
         try self.keywords.put("not", .NOT_KEYWORD);
         try self.keywords.put("module", .MODULE);
         try self.keywords.put("push", .PUSH);
@@ -262,7 +259,7 @@ pub const Lexer = struct {
             },
             ';' => try self.addMinimalToken(.SEMICOLON),
             '%' => try self.addMinimalToken(.MODULO),
-            '#' => try self.addMinimalToken(.HASH),
+            '#' => try self.buildDirective(),
 
             '&' => {
                 if (self.match('&')) {
@@ -635,6 +632,20 @@ pub const Lexer = struct {
         self.start = self.current; // Set start position to current before consuming right bracket
         self.advance(); // consume closing bracket
         try self.addMinimalToken(.RIGHT_BRACKET);
+    }
+
+    fn buildDirective(self: *Lexer) !void {
+        var newDirective = std.ArrayList(u8).init(self.allocator);
+        defer newDirective.deinit();
+
+        // Skip the # we already consumed
+        while (!self.isAtEnd() and isAlpha(self.peekAt(0))) {
+            try newDirective.append(self.peekAt(0));
+            self.advance();
+        }
+
+        const directive = try newDirective.toOwnedSlice();
+        try self.addLongToken(.DIRECTIVE, .{ .string = directive }, self.source[self.start..self.current]);
     }
 
     //======================================================================

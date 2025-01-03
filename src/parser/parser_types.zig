@@ -50,9 +50,11 @@ pub const Parser = struct {
     // Add lexer field
     lexer: Lexer,
 
+    is_safe: bool,
+
     declared_types: std.StringHashMap(void),
 
-    pub fn init(allocator: std.mem.Allocator, tokens: []const token.Token, current_file: []const u8, debug_enabled: bool) Parser {
+    pub fn init(allocator: std.mem.Allocator, tokens: []const token.Token, current_file: []const u8, debug_enabled: bool, is_safe: bool) Parser {
         const parser = Parser{
             .allocator = allocator,
             .tokens = tokens,
@@ -62,6 +64,7 @@ pub const Parser = struct {
             .module_cache = std.StringHashMap(ModuleInfo).init(allocator),
             .lexer = Lexer.init(allocator, "", current_file),
             .declared_types = std.StringHashMap(void).init(allocator),
+            .is_safe = is_safe,
         };
 
         return parser;
@@ -1178,13 +1181,8 @@ pub const Parser = struct {
 
     fn parseDirective(self: *Parser) ErrorList!void {
         const current = self.peek();
-        if (current.type == .HASH) {
-            self.advance(); // consume #
-            if (self.peek().type == .IDENTIFIER) {
-                // if identifer, do something for custom doxas, ect. ect.
-                // this wont be added for a long time so don't wait around
-            }
-            if (self.peek().type == .SAFE) {
+        if (current.type == .DIRECTIVE) {
+            if (std.mem.eql(u8, current.lexeme, "#safe")) {
                 self.mode = .Safe;
                 if (self.debug_enabled) {
                     std.debug.print("Safe mode enabled\n", .{});
@@ -1192,8 +1190,10 @@ pub const Parser = struct {
                 self.advance(); // consume directive name
                 return;
             }
+            // TODO: add more directives here
             return error.InvalidDirective;
         }
+        self.advance(); // consume directive
     }
 
     pub fn resolveModule(self: *Parser, module_name: []const u8) ErrorList!ast.ModuleInfo {
