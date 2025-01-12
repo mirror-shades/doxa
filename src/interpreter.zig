@@ -151,6 +151,7 @@ pub const Interpreter = struct {
     stdout_buffer: std.ArrayList(u8),
     entry_point: ?[]const u8 = null,
     last_result: ?token.TokenLiteral = null,
+    had_error: bool = false,
 
     pub fn init(memory: *MemoryManager) !Interpreter {
         const globals = try memory.getAllocator().create(Environment);
@@ -164,6 +165,7 @@ pub const Interpreter = struct {
             .string_interner = StringInterner.init(memory.getAllocator()),
             .stdout_buffer = std.ArrayList(u8).init(memory.getAllocator()),
             .entry_point = null,
+            .had_error = false,
         };
 
         // Explicitly set debug mode

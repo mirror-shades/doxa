@@ -241,22 +241,20 @@ pub const Reporting = struct {
     /// Output writer for error messages
     writer: std.fs.File.Writer,
 
-    /// Initialize a new Reporter that writes to the given writer
+    /// Initialize a new Reporter that writes to stderr
     pub fn init() Reporting {
-        const writer = std.io.getStdErr().writer();
         return .{
-            .writer = writer,
+            .writer = std.io.getStdErr().writer(),
+            .error_count = 0,
+            .warning_count = 0,
+            .had_error = false,
+            .had_warning = false,
         };
     }
 
     pub fn deinit(self: *Reporting) void {
         _ = self;
         //self.writer.flush() catch {};
-    }
-
-    /// Initialize a Reporter that writes to stderr
-    pub fn initStderr() Reporting {
-        return Reporting.init(std.io.getStdErr().writer());
     }
 
     /// Location information for error reporting
