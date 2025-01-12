@@ -93,8 +93,6 @@ pub const Lexer = struct {
         try self.keywords.put("or", .OR_KEYWORD);
         try self.keywords.put("nothing", .NOTHING);
         try self.keywords.put("import", .IMPORT);
-        try self.keywords.put("public", .PUBLIC);
-        try self.keywords.put("import", .IMPORT);
         try self.keywords.put("assert", .ASSERT);
         try self.keywords.put("match", .MATCH);
         try self.keywords.put("enum", .ENUM);
@@ -124,7 +122,6 @@ pub const Lexer = struct {
         try self.keywords.put("normal", .NORMAL);
         try self.keywords.put("guide", .GUIDE);
         try self.keywords.put("not", .NOT_KEYWORD);
-        try self.keywords.put("module", .MODULE);
         try self.keywords.put("push", .PUSH);
         try self.keywords.put("pop", .POP);
         try self.keywords.put("length", .LENGTH);

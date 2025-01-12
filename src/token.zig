@@ -48,8 +48,6 @@ pub const TokenType = enum {
     VAR, // var
     CONST, // const
     IMPORT, // import
-    MODULE, // module
-    PUBLIC, // public
     ASSERT, // assert
     RETURN, // return
     RETURNS, // assign an expected return type
