@@ -6,7 +6,6 @@ const ErrorList = @import("../reporting.zig").ErrorList;
 const token = @import("../token.zig");
 const declaration_parser = @import("./declaration_parser.zig");
 const expression_parser = @import("./expression_parser.zig");
-const module_parser = @import("./module_parser.zig");
 
 pub fn parse(self: *Parser) ErrorList![]ast.Stmt {
     if (self.debug_enabled) {
@@ -278,8 +277,6 @@ pub fn parseStatement(self: *Parser) ErrorList!ast.Stmt {
             try parseExpressionStmt(self),
         .ENUM_TYPE => declaration_parser.parseEnumDecl(self),
         .TRY => try parseTryStmt(self),
-        .MODULE => try module_parser.parseModuleDecl(self),
-        .IMPORT => try module_parser.parseImport(self),
         else => parseExpressionStmt(self),
     };
 }
