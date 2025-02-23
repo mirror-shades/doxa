@@ -105,8 +105,6 @@ pub fn run(memory: *MemoryManager, interpreter: *Interpreter, file_path: []const
         }
     }
 
-    _ = interpreter;
-
     // finish logical operators
     // async/await
     // generics
@@ -119,38 +117,38 @@ pub fn run(memory: *MemoryManager, interpreter: *Interpreter, file_path: []const
     // fifth pass is an optional pass that can be used to optimize the code
     // sixth pass will turn it into IR which can interact with LLVM
 
-    //     if (!hadError) {
-    //         var parser_instance = Parser.init(
-    //             memory.getAllocator(),
-    //             token_list.items,
-    //             file_path,
-    //             memory.debug_enabled,
-    //         );
-    //         defer parser_instance.deinit();
+    if (!hadError) {
+        var parser_instance = Parser.init(
+            memory.getAllocator(),
+            token_list.items,
+            file_path,
+            memory.debug_enabled,
+        );
+        defer parser_instance.deinit();
 
-    //         if (memory.debug_enabled) {
-    //             std.debug.print("\n=== Starting parse ===\n", .{});
-    //         }
-    //         const statements = try parser_instance.execute();
-    //         if (memory.debug_enabled) {
-    //             std.debug.print("hadError parsing: {}\n", .{hadError});
-    //             std.debug.print("\n=== Parse complete, statement count: {} ===\n", .{statements.len});
-    //             for (statements, 0..) |stmt, i| {
-    //                 std.debug.print("Statement {}: {s}\n", .{ i, @tagName(stmt) });
-    //             }
-    //         }
+        if (memory.debug_enabled) {
+            std.debug.print("\n=== Starting parse ===\n", .{});
+        }
+        const statements = try parser_instance.execute();
+        if (memory.debug_enabled) {
+            std.debug.print("hadError parsing: {}\n", .{hadError});
+            std.debug.print("\n=== Parse complete, statement count: {} ===\n", .{statements.len});
+            for (statements, 0..) |stmt, i| {
+                std.debug.print("Statement {}: {s}\n", .{ i, @tagName(stmt) });
+            }
+        }
 
-    //         if (compile) {
-    //             //TODO: Compile to bytecode
-    //             return null;
-    //         } else {
-    //             if (memory.debug_enabled) {
-    //                 std.debug.print("\n=== Starting interpretation ===\n", .{});
-    //             }
-    //             try interpreter.interpret(statements);
-    //             return interpreter.last_result;
-    //         }
-    //     }
+        if (compile) {
+            //TODO: Compile to bytecode
+            return null;
+        } else {
+            if (memory.debug_enabled) {
+                std.debug.print("\n=== Starting interpretation ===\n", .{});
+            }
+            try interpreter.interpret(statements);
+            return interpreter.last_result;
+        }
+    }
     return null;
 }
 
