@@ -115,6 +115,7 @@ pub const Expr = union(enum) {
         array: *Expr,
         array2: *Expr,
     },
+    CompoundAssign: CompoundAssignment,
 
     pub fn deinit(self: *Expr, allocator: std.mem.Allocator) void {
         switch (self.*) {
@@ -370,6 +371,12 @@ pub const Expr = union(enum) {
             .ArrayConcat => |*a| {
                 a.array.deinit(allocator);
                 allocator.destroy(a.array);
+            },
+            .CompoundAssign => |*ca| {
+                if (ca.value) |value| {
+                    value.deinit(allocator);
+                    allocator.destroy(value);
+                }
             },
         }
     }
@@ -827,4 +834,10 @@ pub const ModuleInfo = struct {
     name: []const u8,
     mode: ModuleMode,
     imports: []const ImportInfo,
+};
+
+pub const CompoundAssignment = struct {
+    name: token.Token,
+    operator: token.Token, // The compound operator (e.g., MINUS_EQUALS)
+    value: ?*Expr,
 };

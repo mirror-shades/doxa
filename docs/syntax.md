@@ -13,18 +13,6 @@ Safe files can only import other safe files, while normal files can import both.
 
 ## Core Language Features
 
-### Syntax Alternatives
-
-Doxa provides alternative syntax for common operations. Using mixed styles in the same file triggers warnings.
-
-| Primary    | Alternative | Purpose              |
-| ---------- | ----------- | -------------------- |
-| `and`      | `&&`        | Logical AND          |
-| `or`       | `\|\|`      | Logical OR           |
-| `equals`   | `==`        | Equality             |
-| `where`    | `\|`        | Filter conditions    |
-| `function` | `fn`        | Function declaration |
-
 ### Type System
 
 - No operator or function overloading
@@ -48,7 +36,7 @@ struct Dog {
     }
 }
 
-var dog = Dog {
+var dog is Dog {
     animal: Animal { name: "Spot" },
     breed: "Labrador"
 };
@@ -65,7 +53,7 @@ export fn add(a :: int, b :: int) -> int {
 
 // main.doxa
 import { add } from "./math.doxa";
-var sum = add(1, 2);
+var sum is add(1, 2);
 ```
 
 ## Data Types
@@ -90,8 +78,8 @@ The `tetra` type represents a four-valued logic system with these possible value
 Example:
 
 ```doxa
-var logic :: tetra = both;
-var uncertain :: tetra = neither;
+var logic :: tetra is both;
+var uncertain :: tetra is neither;
 ```
 
 ### Arrays
@@ -99,11 +87,11 @@ var uncertain :: tetra = neither;
 Arrays are homogeneous collections with type inference:
 
 ```doxa
-var nums :: int[] = [1, 2, 3];    // Explicit typing
-var strs = ["a", "b"];            // Inferred as string[]
+var nums :: int[] is [1, 2, 3];    // Explicit typing
+var strs is ["a", "b"];            // Inferred as string[]
 
 // Invalid operations
-var mixed = [1, "two", true];     // Error: mixed types
+var mixed is [1, "two", true];     // Error: mixed types
 nums.push("four");                // Error: type mismatch
 ```
 
@@ -112,8 +100,8 @@ nums.push("four");                // Error: type mismatch
 Fixed-size collections supporting different types:
 
 ```doxa
-var point = (10, 20, 30);         // Simple tuple
-var nested = ((1, 2), (3, 4));    // Nested tuple
+var point is (10, 20, 30);         // Simple tuple
+var nested is ((1, 2), (3, 4));    // Nested tuple
 
 point[0];                         // Access first element
 nested[1][0];                     // Access nested element
@@ -124,7 +112,7 @@ nested[1][0];                     // Access nested element
 String-keyed dictionaries:
 
 ```doxa
-var scores = {
+var scores is {
     "alice": 100,
     "bob": 85
 };
@@ -138,7 +126,7 @@ scores["alice"];                  // Access value
 ```doxa
 enum Status { Success, Error, Pending }
 
-var result = match status {
+var result is match status {
     .Success => "all good",
     .Error => "failed",
     else => "waiting"
@@ -163,7 +151,7 @@ try {
 ### Inspect (`?`)
 
 ```doxa
-var x = computeValue();
+var x is computeValue();
 x?;                              // Prints value with location
 ```
 
@@ -191,11 +179,11 @@ typeof([1,2,3]);               // "array"
 Variables are dynamically typed by default:
 
 ```doxa
-var x = 1;                      // int
-x = true;                       // bool (allowed)
+var x is 1;                      // int
+x is true;                       // bool (allowed)
 
-var y: auto = 3.14;            // float
-y = "pi";                      // string (allowed)
+var y: auto is 3.14;            // float
+y is "pi";                      // string (allowed)
 ```
 
 ### Safe Mode
@@ -204,9 +192,9 @@ Variables require explicit typing:
 
 ```doxa
 var x :: int;                   // Valid declaration
-var x = "two";                  // Error: needs type
-var x :: auto = 3.14;          // Type locked to float
-x = "five";                    // Error: type mismatch
+var x is "two";                  // Error: needs type
+var x :: auto is 3.14;          // Type locked to float
+x is "five";                    // Error: type mismatch
 ```
 
 Explicit return type declarations are required:
@@ -228,7 +216,7 @@ fn greet(name :: string) {
 All conditionals are expressions and return values:
 
 ```doxa
-var result = if condition then {
+var result is if condition then {
     value1
 } else {
     value2
@@ -238,7 +226,7 @@ var result = if condition then {
 !!! note
 Expressions without a value return `nothing`:
 `doxa
-    var x = if (false) { y = 1 };  // x becomes nothing
+    var x is if (false) { y is 1 };  // x becomes nothing
     `
 
 ### Function Return Types
@@ -287,7 +275,7 @@ Doxa supports traditional first-order logic notation alongside standard programm
 Examples:
 
 ```doxa
-const arr :: int[] = [1, 2, 3, 4, 5];
+const arr :: int[] is [1, 2, 3, 4, 5];
 // Quantifiers
 (∃x ∈ arr : x > 3)?;     // true
 (∀x ∈ arr : x > 3)?;     // false

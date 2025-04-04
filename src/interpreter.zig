@@ -564,7 +564,7 @@ pub const Interpreter = struct {
                 const right = try self.evaluate(binary.right orelse return error.InvalidExpression);
 
                 return switch (binary.operator.type) {
-                    .EQUALITY_SYMBOL, .EQUALITY_KEYWORD => switch (left) {
+                    .EQUALITY => switch (left) {
                         .int, .float => {
                             if (right != .int and right != .float) return error.TypeError;
 
@@ -737,7 +737,7 @@ pub const Interpreter = struct {
                         }
                         return error.TypeError;
                     },
-                    .OR_KEYWORD, .OR_SYMBOL, .OR_LOGICAL => {
+                    .OR_KEYWORD, .OR_LOGICAL => {
                         if (left != .boolean and left != .tetra) return error.TypeError;
                         if (right != .boolean and right != .tetra) return error.TypeError;
                         return try orLogical(left, right);
@@ -891,6 +891,42 @@ pub const Interpreter = struct {
 
                 try self.environment.assign(assign.name.lexeme, value);
                 return value;
+            },
+            .CompoundAssign => |compound| {
+                // Get the current value of the variable
+                const current_value = (try self.environment.get(compound.name.lexeme)) orelse return error.UndefinedVariable;
+
+                // Get the value to add/subtract
+                const rhs_value = try self.evaluate(compound.value orelse return error.InvalidExpression);
+
+                // Get variable's type info for mutability check
+                const var_type = try self.environment.getTypeInfo(compound.name.lexeme);
+                if (!var_type.is_mutable) {
+                    return error.ConstAssignment;
+                }
+
+                // Perform the compound operation
+                const result = switch (compound.operator.type) {
+                    .PLUS_EQUAL => switch (current_value) {
+                        .int => if (rhs_value == .int)
+                            token.TokenLiteral{ .int = current_value.int + rhs_value.int }
+                        else
+                            return error.TypeError,
+                        else => return error.TypeError,
+                    },
+                    .MINUS_EQUAL => switch (current_value) {
+                        .int => if (rhs_value == .int)
+                            token.TokenLiteral{ .int = current_value.int - rhs_value.int }
+                        else
+                            return error.TypeError,
+                        else => return error.TypeError,
+                    },
+                    else => return error.InvalidOperator,
+                };
+
+                // Assign the result back to the variable
+                try self.environment.assign(compound.name.lexeme, result);
+                return result;
             },
             .Grouping => |group| {
                 return try self.evaluate(group orelse return error.InvalidExpression);
@@ -1087,7 +1123,7 @@ pub const Interpreter = struct {
                 // Store the tetra result in a comptime-known variable
                 var result_tetra: token.Tetra = undefined;
                 switch (logical.operator.type) {
-                    .AND_KEYWORD, .AND_SYMBOL, .AND_LOGICAL => {
+                    .AND_KEYWORD, .AND_LOGICAL => {
                         result_tetra = switch (left_val.tetra) {
                             .true => right_val.tetra,
                             .false => .false,
@@ -1095,7 +1131,7 @@ pub const Interpreter = struct {
                             .neither => .neither,
                         };
                     },
-                    .OR_KEYWORD, .OR_SYMBOL, .OR_LOGICAL => {
+                    .OR_KEYWORD, .OR_LOGICAL => {
                         result_tetra = switch (left_val.tetra) {
                             .true => .true,
                             .false => right_val.tetra,
@@ -1398,6 +1434,11 @@ pub const Interpreter = struct {
             },
             .FieldAccess => |field| {
                 const object = try self.evaluate(field.object);
+
+                // Handle string length property
+                if (object == .string and std.mem.eql(u8, field.field.lexeme, "length")) {
+                    return token.TokenLiteral{ .int = @intCast(object.string.len) };
+                }
 
                 // Handle array properties first
                 if (object == .array) {
@@ -2105,6 +2146,14 @@ pub const Interpreter = struct {
                 return try self.arrayLength(method_call.receiver);
             }
             // Add other array methods here (pop, length, etc.)
+            return error.UnknownMethod;
+        }
+
+        // Handle string methods
+        if (receiver_value == .string) {
+            if (method_call.method.type == .LENGTH) {
+                return token.TokenLiteral{ .int = @intCast(receiver_value.string.len) };
+            }
             return error.UnknownMethod;
         }
 

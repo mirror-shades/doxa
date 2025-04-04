@@ -25,21 +25,6 @@ pub const Parser = struct {
     mode: Mode = .Normal,
     current_file: []const u8,
 
-    // tracking style conflicts
-    fn_style: TokenStyle = .Undefined,
-    assign_style: TokenStyle = .Undefined,
-    equality_style: TokenStyle = .Undefined,
-    and_style: TokenStyle = .Undefined,
-    or_style: TokenStyle = .Undefined,
-    where_style: TokenStyle = .Undefined,
-
-    fn_style_warning_shown: bool = false,
-    assign_style_warning_shown: bool = false,
-    equality_style_warning_shown: bool = false,
-    and_style_warning_shown: bool = false,
-    or_style_warning_shown: bool = false,
-    where_style_warning_shown: bool = false,
-
     // Add these fields to track entry points
     has_entry_point: bool = false,
     entry_point_location: ?token.Token = null,
@@ -87,15 +72,6 @@ pub const Parser = struct {
                 self.current,
                 self.current + 1,
             });
-        }
-
-        // Check for alternate tokens before advancing
-        const current = self.peek();
-        if (isAlternateToken(current.type)) {
-            if (self.debug_enabled) {
-                std.debug.print("Checking alternate token: {s}\n", .{@tagName(current.type)});
-            }
-            self.updateTokenStyle(current.type);
         }
 
         // Only advance if we're not at the end
@@ -171,9 +147,7 @@ pub const Parser = struct {
 
         // First pass to find and store all function declarations
         while (self.peek().type != .EOF) {
-            if (self.peek().type == .FN_KEYWORD or
-                self.peek().type == .FUNCTION_KEYWORD)
-            {
+            if (self.peek().type == .FUNCTION) {
                 // Don't advance here - let parseFunctionDecl handle it
                 const fn_stmt = try declaration_parser.parseFunctionDecl(self);
                 const fn_ptr = try self.allocator.create(ast.Stmt);
@@ -222,8 +196,7 @@ pub const Parser = struct {
                     else
                         ast.Stmt{ .Expression = null };
                     break :blk block_stmt;
-                } else if (self.peek().type == .FN_KEYWORD or
-                    self.peek().type == .FUNCTION_KEYWORD or
+                } else if (self.peek().type == .FUNCTION or
                     self.peek().type == .MAIN)
                 {
                     // Skip the entire function declaration
@@ -303,7 +276,7 @@ pub const Parser = struct {
 
             // Handle default value
             var default_value: ?*ast.Expr = null;
-            if (self.peek().type == .ASSIGN_SYMBOL or self.peek().type == .ASSIGN_KEYWORD) {
+            if (self.peek().type == .ASSIGN) {
                 self.advance(); // consume =
                 const value_expr = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
                 const default_literal = try self.allocator.create(ast.Expr);
@@ -504,7 +477,7 @@ pub const Parser = struct {
             self.advance();
 
             // Expect equals
-            if (self.peek().type != .ASSIGN_SYMBOL and self.peek().type != .ASSIGN_KEYWORD) {
+            if (self.peek().type != .ASSIGN) {
                 return error.ExpectedEquals;
             }
             self.advance();
@@ -585,7 +558,7 @@ pub const Parser = struct {
         self.advance(); // consume ]
 
         // Check if this is an assignment
-        if (self.peek().type == .ASSIGN_SYMBOL or self.peek().type == .ASSIGN_KEYWORD) {
+        if (self.peek().type == .ASSIGN) {
             self.advance(); // consume =
             const value = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
 
@@ -672,6 +645,22 @@ pub const Parser = struct {
         // Store current position and token
         const current_token = self.peek();
 
+        // Handle length as a property access
+        if (current_token.type == .LENGTH or
+            (current_token.type == .IDENTIFIER and std.mem.eql(u8, current_token.lexeme, "length")))
+        {
+            self.advance(); // consume length
+
+            const field_access = try self.allocator.create(ast.Expr);
+            field_access.* = .{
+                .FieldAccess = .{
+                    .object = left.?,
+                    .field = current_token,
+                },
+            };
+            return field_access;
+        }
+
         // Add concat to the method checks
         if (current_token.type == .CONCAT or
             (current_token.type == .IDENTIFIER and std.mem.eql(u8, current_token.lexeme, "concat")))
@@ -705,74 +694,9 @@ pub const Parser = struct {
 
             return result;
         }
-        // Similar blocks for push and length...
-        else if (current_token.type == .PUSH or
-            (current_token.type == .IDENTIFIER and std.mem.eql(u8, current_token.lexeme, "push")))
-        {
-            if (self.debug_enabled) {
-                std.debug.print("Found push method\n", .{});
-            }
 
-            self.advance(); // consume push
-
-            // Expect left parenthesis
-            if (self.peek().type != .LEFT_PAREN) {
-                if (self.debug_enabled) {
-                    std.debug.print("Expected left paren, got: {s} ({s})\n", .{
-                        @tagName(self.peek().type),
-                        self.peek().lexeme,
-                    });
-                }
-                return error.ExpectedLeftParen;
-            }
-            self.advance(); // consume (
-
-            const result = try self.arrayPush(left, .NONE);
-
-            // Expect closing parenthesis
-            if (self.peek().type != .RIGHT_PAREN) {
-                if (self.debug_enabled) {
-                    std.debug.print("Expected right paren, got: {s} ({s})\n", .{
-                        @tagName(self.peek().type),
-                        self.peek().lexeme,
-                    });
-                }
-                return error.ExpectedRightParen;
-            }
-            self.advance(); // consume )
-
-            return result;
-        } else if (current_token.type == .POP or
-            (current_token.type == .IDENTIFIER and std.mem.eql(u8, current_token.lexeme, "pop")))
-        {
-            self.advance(); // consume pop
-
-            if (self.peek().type != .LEFT_PAREN) return error.ExpectedLeftParen;
-            self.advance(); // consume (
-
-            const result = try self.arrayPop(left, .NONE);
-
-            if (self.peek().type != .RIGHT_PAREN) return error.ExpectedRightParen;
-            self.advance(); // consume )
-
-            return result;
-        } else if (current_token.type == .LENGTH or
-            (current_token.type == .IDENTIFIER and std.mem.eql(u8, current_token.lexeme, "length")))
-        {
-            self.advance(); // consume length
-
-            if (self.peek().type != .LEFT_PAREN) return error.ExpectedLeftParen;
-            self.advance(); // consume (
-
-            const result = try self.arrayLength(left, .NONE);
-
-            if (self.peek().type != .RIGHT_PAREN) return error.ExpectedRightParen;
-            self.advance(); // consume )
-
-            return result;
-        }
         // Handle regular field access
-        else if (current_token.type == .IDENTIFIER) {
+        if (current_token.type == .IDENTIFIER) {
             self.advance(); // consume identifier
 
             const field_access = try self.allocator.create(ast.Expr);
@@ -1009,7 +933,7 @@ pub const Parser = struct {
             const key = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
 
             // Expect :
-            if (self.peek().type != .WHERE_SYMBOL) {
+            if (self.peek().type != .WHERE) {
                 key.deinit(self.allocator);
                 self.allocator.destroy(key);
                 return error.ExpectedColon;
@@ -1095,85 +1019,6 @@ pub const Parser = struct {
             .ASSIGN_SYMBOL, .ASSIGN_KEYWORD, .EQUALITY_SYMBOL, .EQUALITY_KEYWORD, .AND_SYMBOL, .AND_KEYWORD, .OR_SYMBOL, .OR_KEYWORD, .WHERE_SYMBOL, .WHERE_KEYWORD, .FN_KEYWORD, .FUNCTION_KEYWORD => true,
             else => false,
         };
-    }
-
-    fn updateTokenStyle(self: *Parser, token_type: token.TokenType) void {
-        // Runtime style determination
-        var new_style: TokenStyle = .Undefined;
-        if (token_type == .FUNCTION_KEYWORD or token_type == .AND_KEYWORD or token_type == .OR_KEYWORD or token_type == .ASSIGN_KEYWORD or token_type == .EQUALITY_KEYWORD or token_type == .WHERE_KEYWORD) {
-            new_style = .Keyword;
-        } else if (token_type == .FN_KEYWORD or token_type == .AND_SYMBOL or token_type == .OR_SYMBOL or token_type == .ASSIGN_SYMBOL or token_type == .EQUALITY_SYMBOL or token_type == .WHERE_SYMBOL) {
-            new_style = .Symbol;
-        } else {
-            return;
-        }
-        if (self.debug_enabled) {
-            std.debug.print("Updating token style for: {s}\n", .{@tagName(token_type)});
-        }
-        // Check and update styles
-        switch (token_type) {
-            .WHERE_KEYWORD, .WHERE_SYMBOL => {
-                if (self.where_style != .Undefined and self.where_style != new_style and !self.where_style_warning_shown) {
-                    self.reportWarning("Style conflict for 'where' keyword and '|' symbol");
-                    self.where_style_warning_shown = true;
-                    return;
-                }
-                if (self.where_style == .Undefined) {
-                    self.where_style = new_style;
-                }
-            },
-            .ASSIGN_KEYWORD, .ASSIGN_SYMBOL => {
-                if (self.assign_style != .Undefined and self.assign_style != new_style and !self.assign_style_warning_shown) {
-                    self.reportWarning("Style conflict for 'assignment' keyword and '=' symbol");
-                    self.assign_style_warning_shown = true;
-                    return;
-                }
-                if (self.assign_style == .Undefined) {
-                    self.assign_style = new_style;
-                }
-            },
-            .EQUALITY_KEYWORD, .EQUALITY_SYMBOL => {
-                if (self.equality_style != .Undefined and self.equality_style != new_style and !self.equality_style_warning_shown) {
-                    self.reportWarning("Style conflict for 'equality' keyword and '==' symbol");
-                    self.equality_style_warning_shown = true;
-                    return;
-                }
-                if (self.equality_style == .Undefined) {
-                    self.equality_style = new_style;
-                }
-            },
-            .FN_KEYWORD, .FUNCTION_KEYWORD => {
-                if (self.fn_style != .Undefined and self.fn_style != new_style and !self.fn_style_warning_shown) {
-                    self.reportWarning("Style conflict for 'fn' and 'function' keywords");
-                    self.fn_style_warning_shown = true;
-                    return;
-                }
-                if (self.fn_style == .Undefined) {
-                    self.fn_style = new_style;
-                }
-            },
-            .AND_KEYWORD, .AND_SYMBOL => {
-                if (self.and_style != .Undefined and self.and_style != new_style and !self.and_style_warning_shown) {
-                    self.reportWarning("Style conflict for 'and' keyword and '&&' symbol");
-                    self.and_style_warning_shown = true;
-                    return;
-                }
-                if (self.and_style == .Undefined) {
-                    self.and_style = new_style;
-                }
-            },
-            .OR_KEYWORD, .OR_SYMBOL => {
-                if (self.or_style != .Undefined and self.or_style != new_style and !self.or_style_warning_shown) {
-                    self.reportWarning("Style conflict for 'or' keyword and '||' symbol");
-                    self.or_style_warning_shown = true;
-                    return;
-                }
-                if (self.or_style == .Undefined) {
-                    self.or_style = new_style;
-                }
-            },
-            else => {},
-        }
     }
 
     fn parseDirective(self: *Parser) ErrorList!void {

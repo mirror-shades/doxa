@@ -48,7 +48,7 @@ pub fn existentialQuantifier(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorL
         }
 
         // Parse 'where' keyword
-        if (self.peek().type != .WHERE_KEYWORD and self.peek().type != .WHERE_SYMBOL) {
+        if (self.peek().type != .WHERE) {
             array_expr.deinit(self.allocator);
             self.allocator.destroy(array_expr);
             return error.ExpectedWhereKeyword;
@@ -78,7 +78,7 @@ pub fn existentialQuantifier(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorL
         }
 
         // Parse 'where' keyword
-        if (self.peek().type != .WHERE_KEYWORD and self.peek().type != .WHERE_SYMBOL) {
+        if (self.peek().type != .WHERE) {
             array_expr.deinit(self.allocator);
             self.allocator.destroy(array_expr);
             return error.ExpectedWhereKeyword;
@@ -143,7 +143,7 @@ pub fn universalQuantifier(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorLis
         }
 
         // Parse 'where' keyword
-        if (self.peek().type != .WHERE_KEYWORD and self.peek().type != .WHERE_SYMBOL) {
+        if (self.peek().type != .WHERE) {
             array_expr.deinit(self.allocator);
             self.allocator.destroy(array_expr);
             return error.ExpectedWhereKeyword;
@@ -173,7 +173,7 @@ pub fn universalQuantifier(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorLis
         }
 
         // Parse 'where' keyword
-        if (self.peek().type != .WHERE_KEYWORD and self.peek().type != .WHERE_SYMBOL) {
+        if (self.peek().type != .WHERE) {
             array_expr.deinit(self.allocator);
             self.allocator.destroy(array_expr);
             return error.ExpectedWhereKeyword;
@@ -220,7 +220,7 @@ pub fn inOperator(self: *Parser, left: ?*ast.Expr, prec: Precedence) ErrorList!?
     }
 
     // Parse 'where' keyword if it exists
-    if (self.peek().type == .WHERE_KEYWORD or self.peek().type == .WHERE_SYMBOL) {
+    if (self.peek().type == .WHERE) {
         if (self.debug_enabled) {
             std.debug.print("Found where keyword\n", .{});
         }

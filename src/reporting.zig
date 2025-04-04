@@ -156,6 +156,10 @@ pub const ErrorList = error{
     // Miscellaneous
     NotImplemented,
     Overflow,
+    PermissionDenied,
+    ProcessNotFound,
+    MessageTooBig,
+    Canceled,
 
     // Safe Mode
     UnknownType,

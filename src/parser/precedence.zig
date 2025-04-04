@@ -95,10 +95,13 @@ pub const rules = blk: {
 
     // Add compound assignment operators
     r.set(.PLUS_EQUAL, .{ .infix = compound_assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
+    r.set(.MINUS_EQUAL, .{ .infix = compound_assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
+    // r.set(.ASTERISK_EQUAL, .{ .infix = compound_assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
+    // r.set(.SLASH_EQUAL, .{ .infix = compound_assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
+    // r.set(.MODULO_EQUAL, .{ .infix = compound_assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
 
     // Comparison operators
-    r.set(.EQUALITY_SYMBOL, .{ .infix = binary, .precedence = .EQUALITY });
-    r.set(.EQUALITY_KEYWORD, .{ .infix = binary, .precedence = .EQUALITY });
+    r.set(.EQUALITY, .{ .infix = binary, .precedence = .EQUALITY });
     r.set(.BANG_EQUAL, .{ .infix = binary, .precedence = .EQUALITY });
     r.set(.LESS, .{ .infix = binary, .precedence = .COMPARISON });
     r.set(.LESS_EQUAL, .{ .infix = binary, .precedence = .COMPARISON });
@@ -107,10 +110,8 @@ pub const rules = blk: {
 
     // Logical operators
     r.set(.AND_KEYWORD, .{ .infix = logical, .precedence = .AND });
-    r.set(.AND_SYMBOL, .{ .infix = logical, .precedence = .AND });
     r.set(.AND_LOGICAL, .{ .infix = logical, .precedence = .AND });
     r.set(.OR_KEYWORD, .{ .infix = logical, .precedence = .OR });
-    r.set(.OR_SYMBOL, .{ .infix = logical, .precedence = .OR });
     r.set(.OR_LOGICAL, .{ .infix = logical, .precedence = .OR });
     r.set(.NAND, .{ .infix = logical, .precedence = .NAND });
     r.set(.NOR, .{ .infix = logical, .precedence = .NOR });
@@ -135,8 +136,7 @@ pub const rules = blk: {
     r.set(.VAR, .{ .prefix = variable });
     r.set(.CONST, .{ .prefix = variable });
     r.set(.IDENTIFIER, .{ .prefix = variable });
-    r.set(.ASSIGN_SYMBOL, .{ .infix = assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
-    r.set(.ASSIGN_KEYWORD, .{ .infix = assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
+    r.set(.ASSIGN, .{ .infix = assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
     r.set(.ARRAY_TYPE, .{ .prefix = variable, .infix = fieldAccess });
 
     // Control flow
@@ -149,8 +149,7 @@ pub const rules = blk: {
     });
 
     // Add function declaration support
-    r.set(.FN_KEYWORD, .{ .prefix = functionExpr });
-    r.set(.FUNCTION_KEYWORD, .{ .prefix = functionExpr });
+    r.set(.FUNCTION, .{ .prefix = functionExpr });
 
     // Add rule for the ? operator with lower precedence
     r.set(.QUESTION, .{ .infix = print, .precedence = .UNARY });
@@ -297,6 +296,7 @@ fn compound_assignment(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList
             .operator = .{ // Convert += to + for the operation
                 .type = switch (operator.type) {
                     .PLUS_EQUAL => .PLUS,
+                    .MINUS_EQUAL => .MINUS,
                     else => return error.UnsupportedCompoundOperator,
                 },
                 .lexeme = operator.lexeme,

@@ -77,8 +77,8 @@ pub const Lexer = struct {
         try self.keywords.put("for", .FOR);
         try self.keywords.put("foreach", .FOREACH);
         try self.keywords.put("in", .IN);
-        try self.keywords.put("fn", .FN_KEYWORD);
-        try self.keywords.put("function", .FUNCTION_KEYWORD);
+        try self.keywords.put("fn", .FUNCTION);
+        try self.keywords.put("function", .FUNCTION);
         try self.keywords.put("return", .RETURN);
         try self.keywords.put("returns", .RETURNS);
         try self.keywords.put("const", .CONST);
@@ -99,11 +99,11 @@ pub const Lexer = struct {
         try self.keywords.put("async", .ASYNC);
         try self.keywords.put("await", .AWAIT);
         try self.keywords.put("typeof", .TYPEOF);
-        try self.keywords.put("is", .ASSIGN_KEYWORD);
+        try self.keywords.put("is", .ASSIGN);
         try self.keywords.put("as", .AS);
         try self.keywords.put("from", .FROM);
         try self.keywords.put("auto", .AUTO);
-        try self.keywords.put("equals", .EQUALITY_KEYWORD);
+        try self.keywords.put("equals", .EQUALITY);
         try self.keywords.put("int", .INT_TYPE);
         try self.keywords.put("float", .FLOAT_TYPE);
         try self.keywords.put("string", .STRING_TYPE);
@@ -115,7 +115,7 @@ pub const Lexer = struct {
         try self.keywords.put("xor", .XOR);
         try self.keywords.put("exists", .EXISTS);
         try self.keywords.put("forall", .FORALL);
-        try self.keywords.put("where", .WHERE_KEYWORD);
+        try self.keywords.put("where", .WHERE);
         try self.keywords.put("tuple", .TUPLE_TYPE);
         try self.keywords.put("map", .MAP_TYPE);
         try self.keywords.put("safe", .SAFE);
@@ -261,23 +261,12 @@ pub const Lexer = struct {
             '%' => try self.addMinimalToken(.MODULO),
             '#' => try self.addMinimalToken(.HASH),
 
-            '&' => {
-                if (self.match('&')) {
-                    try self.addMinimalToken(.AND_SYMBOL);
-                } else {
-                    try self.addMinimalToken(.AMPERSAND);
-                }
-            },
-            '|' => {
-                if (self.match('|')) {
-                    try self.addMinimalToken(.OR_SYMBOL);
-                }
-            },
+            '&' => try self.addMinimalToken(.AMPERSAND),
             ':' => {
                 if (self.match(':')) {
                     try self.addMinimalToken(.TYPE_SYMBOL);
                 } else {
-                    try self.addMinimalToken(.WHERE_SYMBOL);
+                    try self.addMinimalToken(.WHERE);
                 }
             },
             '*' => {
@@ -302,11 +291,9 @@ pub const Lexer = struct {
             },
             '=' => {
                 if (self.match('=')) {
-                    try self.addMinimalToken(.EQUALITY_SYMBOL);
+                    try self.addMinimalToken(.EQUALITY);
                 } else if (self.match('>')) {
                     try self.addMinimalToken(.ARROW);
-                } else {
-                    try self.addMinimalToken(.ASSIGN_SYMBOL);
                 }
             },
             '<' => {

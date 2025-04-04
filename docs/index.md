@@ -7,8 +7,8 @@ Doxa is built using Zig. It's designed to be a highly readable language that bri
 Here is a comparison of a simple program written in Doxa's normal mode vs safe mode:
 
 ```
-var x = 1;
-var y = 2;
+var x is 1;
+var y is 2;
 
 fn add(a, b) {
     return (a + b);
@@ -25,8 +25,8 @@ fn add(a :: int, b :: int) returns(int) {
 }
 
 -> fn main() {
-    var a :: int = 1;
-    var b :: int = 2;
+    var a :: int is 1;
+    var b :: int is 2;
 
     add(a, b);
 }
