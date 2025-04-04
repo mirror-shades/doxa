@@ -182,13 +182,6 @@ pub const rules = blk: {
     // Add array literal support
     r.set(.LEFT_BRACKET, .{ .prefix = parseArrayLiteral });
 
-    // Add array methods
-    r.set(.PUSH, .{ .infix = fieldAccess, .precedence = .CALL });
-    r.set(.LENGTH, .{ .infix = fieldAccess, .precedence = .CALL });
-    r.set(.POP, .{ .infix = fieldAccess, .precedence = .CALL });
-    r.set(.ISEMPTY, .{ .infix = fieldAccess, .precedence = .CALL });
-    r.set(.CONCAT, .{ .infix = fieldAccess, .precedence = .CALL });
-
     // Add enum declaration support using the wrapper
     r.set(.ENUM_TYPE, .{ .prefix = enumDeclPrefix });
 

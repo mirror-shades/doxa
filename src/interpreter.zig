@@ -982,6 +982,26 @@ pub const Interpreter = struct {
                 const index_value = try self.evaluate(index.index);
 
                 return switch (array_value) {
+                    .string => |str| {
+                        if (index_value != .int) {
+                            return error.TypeError;
+                        }
+                        if (index_value.int < 0) {
+                            var reporting = ReportingModule.Reporting.init();
+                            reporting.reportRuntimeError("String index out of bounds: negative index {d}", .{index_value.int});
+                            return error.IndexOutOfBounds;
+                        }
+                        const idx = @as(usize, @intCast(index_value.int));
+                        if (idx >= str.len) {
+                            var reporting = ReportingModule.Reporting.init();
+                            reporting.reportRuntimeError("String index out of bounds: index {d} for string of length {d}", .{ idx, str.len });
+                            return error.IndexOutOfBounds;
+                        }
+                        // Create a new string containing just the character at the index
+                        var char_str = try self.memory.getAllocator().alloc(u8, 1);
+                        char_str[0] = str[idx];
+                        return token.TokenLiteral{ .string = char_str };
+                    },
                     .array => |arr| {
                         if (index_value != .int) {
                             // Special case: check if this is a length access
@@ -1443,7 +1463,7 @@ pub const Interpreter = struct {
                 // Handle array properties first
                 if (object == .array) {
                     if (std.mem.eql(u8, field.field.lexeme, "length")) {
-                        return .{ .int = @intCast(object.array.len) };
+                        return token.TokenLiteral{ .int = @intCast(object.array.len) };
                     }
                     return error.UnknownMethod;
                 }
@@ -2107,7 +2127,7 @@ pub const Interpreter = struct {
 
         // Handle array methods
         if (receiver_value == .array) {
-            if (method_call.method.type == .PUSH) {
+            if (std.mem.eql(u8, method_call.method.lexeme, "push")) {
                 // Verify argument count
                 if (method_call.arguments.len != 1) {
                     return error.InvalidArgumentCount;
@@ -2142,7 +2162,7 @@ pub const Interpreter = struct {
 
                 return new_value;
             }
-            if (method_call.method.type == .LENGTH) {
+            if (std.mem.eql(u8, method_call.method.lexeme, "length")) {
                 return try self.arrayLength(method_call.receiver);
             }
             // Add other array methods here (pop, length, etc.)
@@ -2151,10 +2171,9 @@ pub const Interpreter = struct {
 
         // Handle string methods
         if (receiver_value == .string) {
-            if (method_call.method.type == .LENGTH) {
+            if (std.mem.eql(u8, method_call.method.lexeme, "length")) {
                 return token.TokenLiteral{ .int = @intCast(receiver_value.string.len) };
             }
-            return error.UnknownMethod;
         }
 
         // Handle other types' methods here
@@ -2232,7 +2251,7 @@ pub const Interpreter = struct {
         const method_call = MethodCallExpr{
             .receiver = array,
             .method = .{
-                .type = .PUSH,
+                .type = .IDENTIFIER,
                 .lexeme = "push",
                 .literal = .{ .nothing = {} }, // Use .nothing instead of null
                 .line = 0, // Since this is synthetic, we use 0

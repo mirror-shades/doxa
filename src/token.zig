@@ -110,13 +110,6 @@ pub const TokenType = enum {
     TUPLE, // tuple
     MAP, // map
 
-    //array methods
-    PUSH, // push
-    POP, // pop
-    LENGTH, // length
-    ISEMPTY, // isEmpty
-    CONCAT, // concat
-
     // Type keywords
     INT_TYPE, // int type declaration
     FLOAT_TYPE, // float type declaration
