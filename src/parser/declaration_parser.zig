@@ -88,7 +88,7 @@ pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*
         self.advance();
 
         // Expect :
-        if (self.peek().type != .WHERE_SYMBOL) {
+        if (self.peek().type != .WHERE) {
             return error.ExpectedColon;
         }
         self.advance();
@@ -145,7 +145,7 @@ pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
     }
 
     // Expect fn or function keyword
-    if (self.peek().type != .FN_KEYWORD and self.peek().type != .FUNCTION_KEYWORD) {
+    if (self.peek().type != .FUNCTION) {
         return error.ExpectedFunction;
     }
     self.advance(); // consume fn/function keyword
@@ -300,7 +300,7 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
         };
 
         var initializer: ?*ast.Expr = null;
-        if (self.peek().type == .ASSIGN_SYMBOL or self.peek().type == .ASSIGN_KEYWORD) {
+        if (self.peek().type == .ASSIGN) {
             self.advance();
             if (self.debug_enabled) {
                 std.debug.print("\nParsing array initializer at position {}, token: {s}\n", .{
@@ -396,7 +396,7 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
     }
 
     var initializer: ?*ast.Expr = null;
-    if (self.peek().type == .ASSIGN_SYMBOL or self.peek().type == .ASSIGN_KEYWORD) {
+    if (self.peek().type == .ASSIGN) {
         self.advance();
         if (self.debug_enabled) {
             std.debug.print("\nParsing var initializer at position {}, token: {s}\n", .{

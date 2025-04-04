@@ -78,19 +78,13 @@ pub const TokenType = enum {
 
     // keywords with alternate tokens
     AND_KEYWORD, // and
-    AND_SYMBOL, // &&
     AND_LOGICAL, // ∧
     OR_KEYWORD, // or
-    OR_SYMBOL, // ||
     OR_LOGICAL, // ∨
-    FN_KEYWORD, // fn
-    FUNCTION_KEYWORD, // function
-    WHERE_SYMBOL, // :
-    WHERE_KEYWORD, // where
-    EQUALITY_KEYWORD, // equals
-    EQUALITY_SYMBOL, // ==
-    ASSIGN_KEYWORD, // is
-    ASSIGN_SYMBOL, // =
+    FUNCTION, // fn
+    WHERE, // where
+    EQUALITY, // equals
+    ASSIGN, // is
 
     // logical operators
     IF, // if

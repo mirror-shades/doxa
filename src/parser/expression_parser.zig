@@ -64,7 +64,7 @@ pub fn braceExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Ex
 
     // Look ahead to see if this might be a map
     // A map must have a key followed by a :
-    if (self.peek().type != .RIGHT_BRACE and self.peekAhead(1).type == .WHERE_SYMBOL) {
+    if (self.peek().type != .RIGHT_BRACE and self.peekAhead(1).type == .WHERE) {
         return self.parseMap();
     }
 
@@ -584,7 +584,7 @@ pub fn functionExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast
     }
 
     // Expect fn or function keyword
-    if (self.peek().type != .FN_KEYWORD and self.peek().type != .FUNCTION_KEYWORD) {
+    if (self.peek().type != .FUNCTION) {
         return error.ExpectedFunction;
     }
     self.advance(); // consume fn/function keyword

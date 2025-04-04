@@ -59,7 +59,7 @@ pub const SourceManager = struct {
     }
 
     fn processImports(self: *SourceManager, content: []const u8) ErrorList!void {
-        var lines = std.mem.split(u8, content, "\n");
+        var lines = std.mem.splitScalar(u8, content, '\n');
         while (lines.next()) |line| {
             if (std.mem.indexOf(u8, line, "import")) |_| {
                 if (std.mem.indexOf(u8, line, "\"")) |start| {
@@ -73,7 +73,7 @@ pub const SourceManager = struct {
     }
 
     fn appendSource(self: *SourceManager, content: []const u8, file_path: []const u8) ErrorList!void {
-        var lines = std.mem.split(u8, content, "\n");
+        var lines = std.mem.splitScalar(u8, content, '\n');
         var line_number: usize = 0;
 
         var new_content = std.ArrayList(u8).init(self.allocator);
