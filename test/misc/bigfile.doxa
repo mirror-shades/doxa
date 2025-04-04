@@ -5,10 +5,10 @@ enum Color {
     Blue,
 }
 
-const b :: Color = .Blue;
-const g :: Color = .Green;
+const b :: Color is .Blue;
+const g :: Color is .Green;
 
-var result = match b {
+var result is match b {
     .Red => "It's red",
     .Blue => "It's blue",
     else => "It's something else",
@@ -16,7 +16,7 @@ var result = match b {
 
 result?; // It's blue
 
-result = match g {
+result is match g {
     .Red => "It's red",
     .Blue => "It's blue",
     else => "It's something else",
@@ -29,9 +29,9 @@ result?; // It's something else
 function fizzbuzz(x:: int) {
     var current is x;
     while current <= 15 {
-        if current % 3 == 0 && current % 5 == 0 then "fizzbuzz"?;
-        else if current % 3 == 0 then "fizz"?;
-        else if current % 5 == 0 then "buzz"?;
+        if current % 3 equals 0 and current % 5 equals 0 then "fizzbuzz"?;
+        else if current % 3 equals 0 then "fizz"?;
+        else if current % 5 equals 0 then "buzz"?;
         else current?;
         
         current += 1;
@@ -53,7 +53,7 @@ fn fber(x:: int) {
 fber(1); //fizzerbuzzer 1-15
 
 fn forloop(x :: int) {
-    for (var i = 0; i < x; i++) {
+    for (var i is 0; i < x; i++) {
         (i+1)?;
     }
 }
@@ -79,24 +79,28 @@ struct Employee {
     salary: int,
 }
 
-var mike = Employee {
-    person = Person {
-        name = "Mike",
-        age = 25,
+var mike is Employee {
+    person is Person {
+        name is "Mike",
+        age is 25,
     },
-    salary = 1000,
+    salary is 1000,
 };
 
-mike.person.age = 26;
+mike.person.age is 26;
 mike.person.age?; // 26
+//testing length method
+mike.person.name.length?;
+// //testing index method
+mike.person.name[0]?; // M
 
 mike.salary?; // 1000
 
 // Tetras and contradictions
-var firstFold :: tetra = true;
-var secondFold :: tetra = false;
-var thirdFold :: tetra = both;
-var fourthFold :: tetra = neither;
+var firstFold :: tetra is true;
+var secondFold :: tetra is false;
+var thirdFold :: tetra is both;
+var fourthFold :: tetra is neither;
 
 firstFold?;
 secondFold?;
@@ -112,19 +116,19 @@ fourthFold?;
 
 
 // arrays
-var arr :: int[] = [1, 2, 3, 4, 5];
+var arr :: int[] is [1, 2, 3, 4, 5];
 
 arr[3]?; // 4
-arr[3] = 6;
+arr[3] is 6;
 arr[3]?; // 6
 arr.push(42);
 arr[5]?; // 42
 
 // quantifiers
-var ex = exists e in arr where e > 3;
+var ex is exists e in arr where e > 3;
 ex?; // true
 
-var uni = forall u in arr : u > 3;
+var uni is forall u in arr where u > 3;
 uni?; // false
 
 // conditionals
@@ -132,21 +136,21 @@ var condition is if true then "true" else "false";
 condition?; // true
 
 // default arguments
-fn foo(a, b=5) {return a+b;}
+fn foo(a, b is 5) {return a+b;}
 
 foo(1, 2)?; // 3
 foo(1, ~)?; // 6
 
 // tuple
-var point = (10, 20, 30, 40, 50);
+var point is (10, 20, 30, 40, 50);
 point[0]?; // 10
 point[1]?; // 20
 
-var point2 = ((10, 20), (30, 40));
+var point2 is ((10, 20), (30, 40));
 point2[1][0]?; // 30
 
 // map
-var Map = {
+var Map is {
     "a": 1,
     "b": 2,
     "c": 3,
@@ -156,9 +160,9 @@ Map["a"]?; // 1
 Map["c"]?; // 3
 
 // try catch
-const con:: int = 1;
+const con:: int is 1;
 try {
-    con = 2;
+    con is 2;
 } catch {
     "can't do that"?;
 }
@@ -184,24 +188,20 @@ con?; // 1
     true)?; // neither
 
 
-//trigger or warning conflict
-var or1 is true or false;
-var or2 is true || false;
-
 // typeof
-var _int = 5;
+var _int is 5;
 typeof(_int)?; // int
 
-var _float = 5.5;
+var _float is 5.5;
 typeof(_float)?; // float
 
-var _string = "hello";
+var _string is "hello";
 typeof(_string)?; // string
 
-var _boolean = true;
+var _boolean is true;
 typeof(_boolean)?; // boolean
 
-var _tetra = both;
+var _tetra is both;
 typeof(_tetra)?; // tetra
 
 typeof(arr)?; // array

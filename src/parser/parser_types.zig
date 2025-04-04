@@ -646,8 +646,11 @@ pub const Parser = struct {
         const current_token = self.peek();
 
         // Handle length as a property access
-        if (current_token.type == .LENGTH or
-            (current_token.type == .IDENTIFIER and std.mem.eql(u8, current_token.lexeme, "length")))
+        if (std.mem.eql(u8, current_token.lexeme, "length") or
+            std.mem.eql(u8, current_token.lexeme, "push") or
+            std.mem.eql(u8, current_token.lexeme, "pop") or
+            std.mem.eql(u8, current_token.lexeme, "isEmpty") or
+            std.mem.eql(u8, current_token.lexeme, "concat"))
         {
             self.advance(); // consume length
 
@@ -661,40 +664,6 @@ pub const Parser = struct {
             return field_access;
         }
 
-        // Add concat to the method checks
-        if (current_token.type == .CONCAT or
-            (current_token.type == .IDENTIFIER and std.mem.eql(u8, current_token.lexeme, "concat")))
-        {
-            self.advance(); // consume concat
-
-            if (self.peek().type != .LEFT_PAREN) return error.ExpectedLeftParen;
-            self.advance(); // consume (
-
-            const result = try self.arrayConcat(left, .NONE);
-
-            if (self.peek().type != .RIGHT_PAREN) return error.ExpectedRightParen;
-            self.advance(); // consume )
-
-            return result;
-        }
-
-        // Add isEmpty to the method checks
-        if (current_token.type == .ISEMPTY or
-            (current_token.type == .IDENTIFIER and std.mem.eql(u8, current_token.lexeme, "isEmpty")))
-        {
-            self.advance(); // consume isEmpty
-
-            if (self.peek().type != .LEFT_PAREN) return error.ExpectedLeftParen;
-            self.advance(); // consume (
-
-            const result = try self.arrayIsEmpty(left, .NONE);
-
-            if (self.peek().type != .RIGHT_PAREN) return error.ExpectedRightParen;
-            self.advance(); // consume )
-
-            return result;
-        }
-
         // Handle regular field access
         if (current_token.type == .IDENTIFIER) {
             self.advance(); // consume identifier
@@ -706,6 +675,13 @@ pub const Parser = struct {
                     .field = current_token,
                 },
             };
+
+            // Check if there's an index operation after the field access
+            if (self.peek().type == .LEFT_BRACKET) {
+                self.advance(); // consume [
+                return try self.index(field_access, .NONE);
+            }
+
             return field_access;
         } else {
             if (self.debug_enabled) {
