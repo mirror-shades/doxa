@@ -675,6 +675,43 @@ pub const Parser = struct {
             return field_access;
         }
 
+        // Handle bytes as a property access
+        if (std.mem.eql(u8, current_token.lexeme, "bytes")) {
+            self.advance(); // consume bytes
+
+            // Create a field access expression
+            const field_access = try self.allocator.create(ast.Expr);
+            field_access.* = .{
+                .FieldAccess = .{
+                    .object = left.?,
+                    .field = current_token,
+                },
+            };
+
+            // Check if there's an array index following
+            if (self.peek().type == .LEFT_BRACKET) {
+                self.advance(); // consume [
+                const idx_expr = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
+
+                if (self.peek().type != .RIGHT_BRACKET) {
+                    return error.ExpectedRightBracket;
+                }
+                self.advance(); // consume ]
+
+                // Create an Index expression wrapping the field access
+                const index_expr = try self.allocator.create(ast.Expr);
+                index_expr.* = .{
+                    .Index = .{
+                        .array = field_access,
+                        .index = idx_expr,
+                    },
+                };
+                return index_expr;
+            }
+
+            return field_access;
+        }
+
         // Handle regular field access
         if (current_token.type == .IDENTIFIER) {
             self.advance(); // consume identifier

@@ -565,7 +565,17 @@ pub const Interpreter = struct {
 
                 return switch (binary.operator.type) {
                     .EQUALITY => switch (left) {
-                        .int, .float => {
+                        .int => |i| switch (right) {
+                            .int => |j| token.TokenLiteral{ .boolean = if (i == j) .true else .false },
+                            .u8 => |j| token.TokenLiteral{ .boolean = if (i == j) .true else .false },
+                            else => token.TokenLiteral{ .boolean = .false },
+                        },
+                        .u8 => |i| switch (right) {
+                            .int => |j| token.TokenLiteral{ .boolean = if (i == j) .true else .false },
+                            .u8 => |j| token.TokenLiteral{ .boolean = if (i == j) .true else .false },
+                            else => token.TokenLiteral{ .boolean = .false },
+                        },
+                        .float => {
                             if (right != .int and right != .float) return error.TypeError;
 
                             if (Interpreter.compare(left.int, right.int) == 0) {
@@ -912,6 +922,11 @@ pub const Interpreter = struct {
                             token.TokenLiteral{ .int = current_value.int + rhs_value.int }
                         else
                             return error.TypeError,
+                        .u8 => if (rhs_value == .int and rhs_value.int >= 0 and rhs_value.int <= 255) {
+                            const sum = current_value.u8 + rhs_value.int;
+                            if (sum > 255) return error.Overflow;
+                            return token.TokenLiteral{ .u8 = @intCast(sum) };
+                        } else return error.TypeError,
                         else => return error.TypeError,
                     },
                     .MINUS_EQUAL => switch (current_value) {
@@ -919,6 +934,22 @@ pub const Interpreter = struct {
                             token.TokenLiteral{ .int = current_value.int - rhs_value.int }
                         else
                             return error.TypeError,
+                        .u8 => switch (rhs_value) {
+                            .u8 => {
+                                const result = @subWithOverflow(current_value.u8, rhs_value.u8);
+                                if (result[1] != 0) return error.Overflow;
+                                return token.TokenLiteral{ .u8 = result[0] };
+                            },
+                            .int => {
+                                if (rhs_value.int < 0 or rhs_value.int > 255)
+                                    return error.Overflow;
+                                const val: u8 = @intCast(rhs_value.int);
+                                const result = @subWithOverflow(current_value.u8, val);
+                                if (result[1] != 0) return error.Overflow;
+                                return token.TokenLiteral{ .u8 = result[0] };
+                            },
+                            else => return error.TypeError,
+                        },
                         else => return error.TypeError,
                     },
                     else => return error.InvalidOperator,
@@ -1054,6 +1085,77 @@ pub const Interpreter = struct {
             .IndexAssign => |idx_assign| {
                 const array_val = try self.evaluate(idx_assign.array);
                 const index = try self.evaluate(idx_assign.index);
+
+                // Check if this is a compound assignment
+                if (idx_assign.value.* == .CompoundAssign) {
+                    // Get the current value at the index
+                    const usize_index = @as(usize, @intCast(index.int));
+                    if (usize_index >= array_val.array.len) {
+                        return error.IndexOutOfBounds;
+                    }
+
+                    const current_value = array_val.array[usize_index];
+
+                    // Evaluate the compound assignment
+                    const compound = idx_assign.value.CompoundAssign;
+                    const rhs_value = try self.evaluate(compound.value orelse return error.InvalidExpression);
+
+                    // Perform the compound operation
+                    const result = switch (compound.operator.type) {
+                        .PLUS_EQUAL => switch (current_value) {
+                            .int => if (rhs_value == .int)
+                                token.TokenLiteral{ .int = current_value.int + rhs_value.int }
+                            else
+                                return error.TypeError,
+                            .u8 => switch (rhs_value) {
+                                .int => {
+                                    if (rhs_value.int < 0 or rhs_value.int > 255) return error.Overflow;
+                                    const val: u8 = @intCast(rhs_value.int);
+                                    const sum = current_value.u8 + val;
+                                    if (sum > 255) return error.Overflow;
+                                    return token.TokenLiteral{ .u8 = sum };
+                                },
+                                .u8 => {
+                                    const sum = current_value.u8 + rhs_value.u8;
+                                    if (sum > 255) return error.Overflow;
+                                    return token.TokenLiteral{ .u8 = sum };
+                                },
+                                else => return error.TypeError,
+                            },
+                            else => return error.TypeError,
+                        },
+                        .MINUS_EQUAL => switch (current_value) {
+                            .int => if (rhs_value == .int)
+                                token.TokenLiteral{ .int = current_value.int - rhs_value.int }
+                            else
+                                return error.TypeError,
+                            .u8 => switch (rhs_value) {
+                                .u8 => {
+                                    const result = @subWithOverflow(current_value.u8, rhs_value.u8);
+                                    if (result[1] != 0) return error.Overflow;
+                                    return token.TokenLiteral{ .u8 = result[0] };
+                                },
+                                .int => {
+                                    if (rhs_value.int < 0 or rhs_value.int > 255)
+                                        return error.Overflow;
+                                    const val: u8 = @intCast(rhs_value.int);
+                                    const result = @subWithOverflow(current_value.u8, val);
+                                    if (result[1] != 0) return error.Overflow;
+                                    return token.TokenLiteral{ .u8 = result[0] };
+                                },
+                                else => return error.TypeError,
+                            },
+                            else => return error.TypeError,
+                        },
+                        else => return error.InvalidOperator,
+                    };
+
+                    // Update the array with the new value
+                    array_val.array[usize_index] = result;
+                    return result;
+                }
+
+                // Regular index assignment
                 const new_value = try self.evaluate(idx_assign.value);
 
                 // Prevent tuple modification
@@ -1227,7 +1329,7 @@ pub const Interpreter = struct {
                 var buffer = std.ArrayList(u8).init(self.memory.getAllocator());
                 defer buffer.deinit();
 
-                // Format the location information first, WITHOUT quotes
+                // Format the location information
                 try buffer.writer().print("[{s}:{d}:{d}] {s} = ", .{
                     print.location.file,
                     print.location.line,
@@ -1235,20 +1337,23 @@ pub const Interpreter = struct {
                     print.variable_name orelse "value",
                 });
 
-                // Then format the value separately
+                // Then format the value
                 switch (value) {
                     .tetra => |t| try buffer.writer().print("{s}", .{@tagName(t)}),
                     .string => |s| try buffer.writer().print("\"{s}\"", .{s}),
                     .int => |i| try buffer.writer().print("{d}", .{i}),
+                    .u8 => |u| try buffer.writer().print("{d}", .{u}),
                     .float => |f| try buffer.writer().print("{d}", .{f}),
                     .boolean => |b| try buffer.writer().print("{s}", .{@tagName(b)}),
                     .nothing => try buffer.writer().print("nothing", .{}),
                     .array => |arr| {
+                        // Regular array printing logic
                         try buffer.writer().print("[", .{});
                         for (arr, 0..) |item, i| {
                             if (i > 0) try buffer.writer().print(", ", .{});
                             switch (item) {
                                 .int => |n| try buffer.writer().print("{d}", .{n}),
+                                .u8 => |u| try buffer.writer().print("{d}", .{u}),
                                 .float => |f| try buffer.writer().print("{d}", .{f}),
                                 .boolean => |b| try buffer.writer().print("{}", .{b}),
                                 .string => |s| try buffer.writer().print("\"{s}\"", .{s}),
@@ -1296,6 +1401,7 @@ pub const Interpreter = struct {
                             switch (entry.value_ptr.*) {
                                 .string => |s| try buffer.writer().print("\"{s}\"", .{s}),
                                 .int => |i| try buffer.writer().print("{d}", .{i}),
+                                .u8 => |u| try buffer.writer().print("{d}", .{u}),
                                 .float => |f| try buffer.writer().print("{d}", .{f}),
                                 .boolean => |b| try buffer.writer().print("{}", .{b}),
                                 .tetra => |t| {
@@ -1433,8 +1539,20 @@ pub const Interpreter = struct {
                 const object = try self.evaluate(field.object);
 
                 // Handle string length property
-                if (object == .string and std.mem.eql(u8, field.field.lexeme, "length")) {
-                    return token.TokenLiteral{ .int = @intCast(object.string.len) };
+                if (object == .string) {
+                    if (std.mem.eql(u8, field.field.lexeme, "length")) {
+                        return token.TokenLiteral{ .int = @intCast(object.string.len) };
+                    }
+                    // Add bytes field access
+                    if (std.mem.eql(u8, field.field.lexeme, "bytes")) {
+                        var bytes = try self.memory.getAllocator().alloc(token.TokenLiteral, object.string.len);
+                        for (object.string, 0..) |byte, i| {
+                            bytes[i] = token.TokenLiteral{ .u8 = byte }; // Use .u8 instead of .int
+                        }
+                        const array_value = token.TokenLiteral{ .array = bytes };
+                        try self.environment.define(field.field.lexeme, array_value, .{ .base = .Array, .element_type = .U8, .is_mutable = true });
+                        return array_value;
+                    }
                 }
 
                 // Handle array properties first
@@ -1682,6 +1800,7 @@ pub const Interpreter = struct {
                 return token.TokenLiteral{
                     .string = switch (value) {
                         .int => "int",
+                        .u8 => "u8",
                         .float => "float",
                         .string => "string",
                         .boolean => "boolean",
@@ -1797,7 +1916,27 @@ pub const Interpreter = struct {
                 var buffer = std.ArrayList(u8).init(self.memory.getAllocator());
                 defer buffer.deinit();
 
-                try stdin.streamUntilDelimiter(buffer.writer(), '\r', 1024);
+                // Read until newline
+                while (true) {
+                    const byte = stdin.readByte() catch |err| switch (err) {
+                        error.EndOfStream => break,
+                        else => return err,
+                    };
+                    if (byte == '\n') break;
+                    if (byte == '\r') {
+                        // If we see a \r, check for and consume a following \n
+                        const next_byte = stdin.readByte() catch |err| switch (err) {
+                            error.EndOfStream => break,
+                            else => return err,
+                        };
+                        if (next_byte != '\n') {
+                            try buffer.append(next_byte);
+                        }
+                        break;
+                    }
+                    try buffer.append(byte);
+                }
+
                 const input_str = try buffer.toOwnedSlice();
                 return token.TokenLiteral{ .string = input_str };
             },
@@ -2075,6 +2214,7 @@ pub const Interpreter = struct {
     fn valuesEqual(self: *Interpreter, a: token.TokenLiteral, b: token.TokenLiteral) ErrorList!bool {
         return switch (a) {
             .int => |val| b == .int and val == b.int,
+            .u8 => |val| b == .u8 and val == b.u8,
             .float => |val| b == .float and val == b.float,
             .string => |val| b == .string and std.mem.eql(u8, val, b.string),
             .nothing => b == .nothing,

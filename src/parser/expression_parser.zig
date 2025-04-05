@@ -432,6 +432,8 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
         ast.BasicType.Auto
     else if (std.mem.eql(u8, type_name, "tetra"))
         ast.BasicType.Tetra
+    else if (std.mem.eql(u8, type_name, "u8"))
+        ast.BasicType.U8
     else
         null;
 

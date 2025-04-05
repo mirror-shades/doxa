@@ -105,6 +105,7 @@ pub const Lexer = struct {
         try self.keywords.put("auto", .AUTO);
         try self.keywords.put("equals", .EQUALITY);
         try self.keywords.put("int", .INT_TYPE);
+        try self.keywords.put("u8", .U8_TYPE);
         try self.keywords.put("float", .FLOAT_TYPE);
         try self.keywords.put("string", .STRING_TYPE);
         try self.keywords.put("bool", .BOOLEAN_TYPE);

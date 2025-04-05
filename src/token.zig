@@ -99,6 +99,7 @@ pub const TokenType = enum {
     IDENTIFIER, // identifier
     SPREAD, // ...
     INT, // integer
+    U8, // 8-bit unsigned integer
     FLOAT, // float
     STRING, // string
     ARRAY, // array
@@ -113,6 +114,7 @@ pub const TokenType = enum {
 
     // Type keywords
     INT_TYPE, // int type declaration
+    U8_TYPE, // 8-bit unsigned integer type declaration
     FLOAT_TYPE, // float type declaration
     STRING_TYPE, // string type declaration
     BOOLEAN_TYPE, // bool type declaration
@@ -147,6 +149,7 @@ pub const Boolean = enum {
 
 pub const TokenLiteral = union(enum) {
     int: i32,
+    u8: u8,
     float: f64,
     string: []const u8,
     boolean: Boolean,

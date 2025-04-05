@@ -284,42 +284,34 @@ fn compound_assignment(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList
     const operator = self.tokens[self.current - 1];
     const value = try parsePrecedence(self, .ASSIGNMENT) orelse return error.ExpectedExpression;
 
-    // Create binary expression for the operation
-    const binary_expr = try self.allocator.create(ast.Expr);
-    binary_expr.* = .{
-        .Binary = .{
-            .left = left,
-            .operator = .{ // Convert += to + for the operation
-                .type = switch (operator.type) {
-                    .PLUS_EQUAL => .PLUS,
-                    .MINUS_EQUAL => .MINUS,
-                    else => return error.UnsupportedCompoundOperator,
-                },
-                .lexeme = operator.lexeme,
-                .line = operator.line,
-                .column = operator.column,
-                .literal = operator.literal,
-            },
-            .right = value,
+    // Create compound assignment expression
+    const compound_expr = try self.allocator.create(ast.Expr);
+
+    // Create the compound assignment value
+    const compound_value = try self.allocator.create(ast.Expr);
+    compound_value.* = .{
+        .CompoundAssign = .{
+            .name = self.tokens[self.current - 2], // Use the token before the operator
+            .operator = operator,
+            .value = value,
         },
     };
 
-    // Create assignment expression
-    const assign_expr = try self.allocator.create(ast.Expr);
-    assign_expr.* = switch (left.?.*) {
-        .Variable => |v| .{ .Assignment = .{
+    compound_expr.* = switch (left.?.*) {
+        .Variable => |v| .{ .CompoundAssign = .{
             .name = v,
-            .value = binary_expr,
+            .operator = operator,
+            .value = value,
         } },
         .Index => |idx| .{ .IndexAssign = .{
             .array = idx.array,
             .index = idx.index,
-            .value = binary_expr,
+            .value = compound_value,
         } },
         else => unreachable,
     };
 
-    return assign_expr;
+    return compound_expr;
 }
 
 fn logical(self: *Parser, left: ?*ast.Expr, precedence: Precedence) ErrorList!?*ast.Expr {
