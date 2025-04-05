@@ -1799,8 +1799,6 @@ pub const Interpreter = struct {
 
                 try stdin.streamUntilDelimiter(buffer.writer(), '\r', 1024);
                 const input_str = try buffer.toOwnedSlice();
-                // print to debug
-                std.debug.print("Input: {s}\n", .{input_str});
                 return token.TokenLiteral{ .string = input_str };
             },
         };
