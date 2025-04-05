@@ -345,58 +345,58 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
     if (self.peek().type == .TYPE_SYMBOL) {
         self.advance(); // consume ::
         type_info.is_dynamic = false; // Explicitly typed variables are not dynamic
-
-        type_info.base = switch (self.peek().type) {
-            .INT_TYPE => .Int,
-            .FLOAT_TYPE => .Float,
-            .STRING_TYPE => .String,
-            .BOOLEAN_TYPE => .Boolean,
-            .TETRA_TYPE => .Tetra,
-            .IDENTIFIER => blk: {
-                const type_name = self.peek().lexeme;
-                // Check built-in types first
-                if (std.mem.eql(u8, type_name, "bool")) {
-                    break :blk .Boolean;
-                } else if (std.mem.eql(u8, type_name, "int")) {
-                    break :blk .Int;
-                } else if (std.mem.eql(u8, type_name, "float")) {
-                    break :blk .Float;
-                } else if (std.mem.eql(u8, type_name, "string")) {
-                    break :blk .String;
-                } else if (self.declared_types.contains(type_name)) {
-                    // It's a valid custom type
-                    type_info.custom_type = type_name;
-                    break :blk .Custom;
+        const type_expr = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
+        type_info.base = switch (type_expr.*) {
+            .Basic => |basic| switch (basic) {
+                .Integer => ast.Type.Int,
+                .Float => ast.Type.Float,
+                .String => ast.Type.String,
+                .Boolean => ast.Type.Boolean,
+                .Auto => ast.Type.Dynamic,
+                .Tetra => ast.Type.Tetra,
+            },
+            .Array => |array| blk: {
+                const element_type = try self.allocator.create(ast.TypeInfo);
+                element_type.* = .{ .base = switch (array.element_type.*) {
+                    .Basic => |basic| switch (basic) {
+                        .Integer => ast.Type.Int,
+                        .Float => ast.Type.Float,
+                        .String => ast.Type.String,
+                        .Boolean => ast.Type.Boolean,
+                        .Auto => ast.Type.Dynamic,
+                        .Tetra => ast.Type.Tetra,
+                    },
+                    else => return error.InvalidType,
+                } };
+                break :blk ast.Type.Array;
+            },
+            .Custom => |custom| blk: {
+                // Check if the type exists in declared types
+                if (self.declared_types.contains(custom.lexeme)) {
+                    break :blk ast.Type.Enum;
                 } else {
-                    return error.UndefinedType;
+                    return error.UndeclaredType;
                 }
             },
-            else => return error.ExpectedType,
+            else => return error.InvalidType,
         };
-        self.advance(); // consume type identifier
-
-        // Check for array type with [] syntax
-        while (self.peek().type == .LEFT_BRACKET) {
-            self.advance(); // consume '['
-            if (self.peek().type != .RIGHT_BRACKET) {
-                return error.ExpectedRightBracket;
-            }
-            self.advance(); // consume ']'
-
-            // Wrap the current type in an array type
-            type_info = ast.TypeInfo{
-                .base = .Array,
-                .element_type = type_info.base,
-                .is_dynamic = false,
-                .is_mutable = !is_const,
-            };
-        }
-    } else if (self.mode == .Safe) {
-        return error.MissingTypeAnnotation;
     }
 
     var initializer: ?*ast.Expr = null;
-    if (self.peek().type == .ASSIGN) {
+
+    // Check if the next token is INPUT, which is a special case
+    if (self.peek().type == .INPUT) {
+        if (self.debug_enabled) {
+            std.debug.print("\nParsing input expression at position {}, token: {s}\n", .{
+                self.current,
+                @tagName(self.peek().type),
+            });
+        }
+
+        // Handle input expression directly without requiring an assignment operator
+        initializer = try Parser.input(self, null, .NONE);
+        if (initializer == null) return error.ExpectedExpression;
+    } else if (self.peek().type == .ASSIGN) {
         self.advance();
         if (self.debug_enabled) {
             std.debug.print("\nParsing var initializer at position {}, token: {s}\n", .{
@@ -405,9 +405,14 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
             });
         }
 
-        // Try parsing struct initialization first
-        if (self.peek().type == .IDENTIFIER) {
-            // First try struct initialization
+        // Try parsing array literal first
+        if (self.peek().type == .LEFT_BRACKET) {
+            initializer = try expression_parser.parseArrayLiteral(self, null, .NONE);
+        } else if (self.peek().type == .INPUT) {
+            // Handle input expression
+            initializer = try Parser.input(self, null, .NONE);
+        } else if (self.peek().type == .IDENTIFIER) {
+            // Try struct initialization
             if (try Parser.parseStructInit(self)) |struct_init| {
                 initializer = struct_init;
             } else {

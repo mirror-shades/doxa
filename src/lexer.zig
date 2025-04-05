@@ -122,6 +122,7 @@ pub const Lexer = struct {
         try self.keywords.put("normal", .NORMAL);
         try self.keywords.put("guide", .GUIDE);
         try self.keywords.put("not", .NOT_KEYWORD);
+        try self.keywords.put("input", .INPUT);
         try self.keywords.put("∃", .EXISTS);
         try self.keywords.put("∀", .FORALL);
         try self.keywords.put("∈", .IN);
@@ -153,7 +154,6 @@ pub const Lexer = struct {
     fn getNextToken(self: *Lexer) (Reporting.ErrorList || std.mem.Allocator.Error)!void {
         // Skip whitespace
         while (!self.isAtEnd() and (self.peekAt(0) == ' ' or self.peekAt(0) == '\r' or self.peekAt(0) == '\t' or self.peekAt(0) == '\n')) {
-            if (self.peekAt(0) == '\n') self.line += 1;
             self.advance();
         }
 

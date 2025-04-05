@@ -36,6 +36,7 @@ pub const ErrorList = error{
     UnknownMethod,
     MethodNotFound,
     EmptyArray,
+    UndeclaredType,
 
     // Variable Management
     VariableNotFound,
@@ -48,6 +49,7 @@ pub const ErrorList = error{
     InvalidAssignment,
     InvalidAssignmentTarget,
     ImmutableVariable,
+    UseIsForAssignment,
 
     // Function & Frame Management
     InvalidFunction,
@@ -160,6 +162,8 @@ pub const ErrorList = error{
     ProcessNotFound,
     MessageTooBig,
     Canceled,
+    EndOfStream,
+    StreamTooLong,
 
     // Safe Mode
     UnknownType,
@@ -264,7 +268,7 @@ pub const Reporting = struct {
     /// Location information for error reporting
     pub const Location = struct {
         line: i32,
-        column: i32,
+        column: usize,
         file: []const u8,
 
         pub fn format(

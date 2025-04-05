@@ -160,14 +160,14 @@ pub fn parseExpressionStmt(self: *Parser) ErrorList!ast.Stmt {
             name_token = expr.?.Variable.lexeme;
         }
 
+        // Create a location that won't interfere with string formatting
         print_expr.* = .{
             .Print = .{
                 .expr = expr.?,
                 .location = .{
                     .file = self.current_file,
-                    // I have no idea why this is necessary, but it is.
-                    .line = @divTrunc(self.peek().line + 1, 2),
-                    .column = self.peek().column,
+                    .line = self.peek().line,
+                    .column = self.peek().column - 1,
                 },
                 .variable_name = name_token,
             },

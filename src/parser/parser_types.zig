@@ -255,6 +255,12 @@ pub const Parser = struct {
             }
 
             if (self.peek().type != .IDENTIFIER) {
+                var reporting = Reporting.init();
+                reporting.reportCompileError(.{
+                    .file = self.current_file,
+                    .line = self.peek().line,
+                    .column = self.peek().column,
+                }, "Expected identifier, but found '{s}'", .{@tagName(self.peek().type)});
                 return error.ExpectedIdentifier;
             }
 
@@ -559,7 +565,7 @@ pub const Parser = struct {
 
         // Check if this is an assignment
         if (self.peek().type == .ASSIGN) {
-            self.advance(); // consume =
+            self.advance(); // consume is
             const value = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
 
             const expr = try self.allocator.create(ast.Expr);
@@ -596,6 +602,11 @@ pub const Parser = struct {
         }
 
         if (left == null) return error.ExpectedExpression;
+
+        // Add check for equals sign
+        if (self.previous().type != .ASSIGN) {
+            return error.UseIsForAssignment;
+        }
 
         // Handle other expressions
         const value = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
@@ -709,10 +720,7 @@ pub const Parser = struct {
                 .expr = left.?,
                 .location = .{
                     .file = self.current_file,
-                    // I have no idea why I have to do this shit but it is necessary
-                    // add one to the line and div by 2 (it will always be even)
-                    .line = @divTrunc(self.peek().line + 1, 2),
-                    // subtract one from the column
+                    .line = self.peek().line,
                     .column = self.peek().column - 1,
                 },
                 .variable_name = if (name_token) |token_name| token_name.lexeme else null,
@@ -1176,5 +1184,40 @@ pub const Parser = struct {
         } };
 
         return length_expr;
+    }
+
+    pub fn input(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+        if (self.debug_enabled) {
+            std.debug.print("\nParsing input expression...\n", .{});
+        }
+
+        self.advance(); // consume 'input' token
+
+        // Check if there's a prompt string
+        var prompt: token.Token = undefined;
+        if (self.peek().type == .STRING) {
+            prompt = self.peek();
+            if (self.debug_enabled) {
+                std.debug.print("Found prompt string: '{s}'\n", .{prompt.lexeme});
+            }
+            self.advance(); // consume the string
+        } else {
+            // Create an empty prompt if none provided
+            prompt = token.Token{
+                .type = .STRING,
+                .lexeme = "",
+                .literal = .{ .string = "" },
+                .line = self.peek().line,
+                .column = self.peek().column,
+            };
+        }
+
+        // Create the input expression
+        const input_expr = try self.allocator.create(ast.Expr);
+        input_expr.* = .{ .Input = .{
+            .prompt = prompt,
+        } };
+
+        return input_expr;
     }
 };

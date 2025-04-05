@@ -126,6 +126,7 @@ arr[5]?; // 42
 
 // quantifiers
 var ex is exists e in arr where e > 3;
+
 ex?; // true
 
 var uni is forall u in arr where u > 3;

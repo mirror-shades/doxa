@@ -1227,40 +1227,21 @@ pub const Interpreter = struct {
                 var buffer = std.ArrayList(u8).init(self.memory.getAllocator());
                 defer buffer.deinit();
 
-                // Format the output into the buffer
+                // Format the location information first, WITHOUT quotes
                 try buffer.writer().print("[{s}:{d}:{d}] {s} = ", .{
                     print.location.file,
                     print.location.line,
                     print.location.column,
-                    switch (print.expr.*) {
-                        .Variable => |v| v.lexeme,
-                        .Binary => "expression",
-                        .Call => |call| switch (call.callee.*) {
-                            .Variable => |v| v.lexeme,
-                            .FieldAccess => |field| field.field.lexeme, // Add this case for method calls
-                            else => "function call",
-                        },
-                        .MethodCall => |method| method.method.lexeme,
-                        else => blk: {
-                            break :blk "value";
-                        },
-                    },
+                    print.variable_name orelse "value",
                 });
 
-                // Format the value into the buffer based on its type
+                // Then format the value separately
                 switch (value) {
                     .tetra => |t| try buffer.writer().print("{s}", .{@tagName(t)}),
+                    .string => |s| try buffer.writer().print("\"{s}\"", .{s}),
                     .int => |i| try buffer.writer().print("{d}", .{i}),
                     .float => |f| try buffer.writer().print("{d}", .{f}),
                     .boolean => |b| try buffer.writer().print("{s}", .{@tagName(b)}),
-                    .string => |s| {
-                        // Only wrap in quotes if it's a literal string value, not a type name or enum variant
-                        if (print.expr.* == .TypeOf or print.expr.* == .EnumMember) {
-                            try buffer.writer().print("{s}", .{s});
-                        } else {
-                            try buffer.writer().print("\"{s}\"", .{s});
-                        }
-                    },
                     .nothing => try buffer.writer().print("nothing", .{}),
                     .array => |arr| {
                         try buffer.writer().print("[", .{});
@@ -1372,11 +1353,7 @@ pub const Interpreter = struct {
                 try buffer.writer().print("\n", .{});
                 try std.io.getStdOut().writeAll(buffer.items);
 
-                // Make sure we're returning a copy of the value
-                return switch (value) {
-                    .tetra => |t| token.TokenLiteral{ .tetra = t },
-                    else => value,
-                };
+                return value;
             },
             .While => |while_expr| {
                 while (true) {
@@ -1805,6 +1782,26 @@ pub const Interpreter = struct {
             },
             .ArrayConcat => |ac| {
                 return try self.arrayConcat(ac.array, ac.array2);
+            },
+            .Input => |input| {
+                if (input.prompt.lexeme.len > 0) {
+                    const prompt = if (input.prompt.lexeme[0] == '"' and
+                        input.prompt.lexeme[input.prompt.lexeme.len - 1] == '"')
+                        input.prompt.lexeme[1 .. input.prompt.lexeme.len - 1]
+                    else
+                        input.prompt.lexeme;
+                    try std.io.getStdOut().writer().print("{s}", .{prompt});
+                }
+
+                const stdin = std.io.getStdIn().reader();
+                var buffer = std.ArrayList(u8).init(self.memory.getAllocator());
+                defer buffer.deinit();
+
+                try stdin.streamUntilDelimiter(buffer.writer(), '\r', 1024);
+                const input_str = try buffer.toOwnedSlice();
+                // print to debug
+                std.debug.print("Input: {s}\n", .{input_str});
+                return token.TokenLiteral{ .string = input_str };
             },
         };
     }

@@ -7,6 +7,7 @@ const Precedence = @import("precedence.zig").Precedence;
 const ErrorList = @import("../reporting.zig").ErrorList;
 const statement_parser = @import("./statement_parser.zig");
 const declaration_parser = @import("./declaration_parser.zig");
+const Reporting = @import("../reporting.zig").Reporting;
 
 pub fn parseExpression(self: *Parser) ErrorList!?*ast.Expr {
     if (self.debug_enabled) {
@@ -429,6 +430,8 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
         ast.BasicType.Boolean
     else if (std.mem.eql(u8, type_name, "auto"))
         ast.BasicType.Auto
+    else if (std.mem.eql(u8, type_name, "tetra"))
+        ast.BasicType.Tetra
     else
         null;
 
@@ -438,7 +441,66 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
     const base_type_expr = try self.allocator.create(ast.TypeExpr);
     if (basic_type) |basic| {
         base_type_expr.* = .{ .Basic = basic };
+    } else if (type_token.type == .STRUCT_TYPE) {
+        // Handle struct type
+        if (self.peek().type != .LEFT_BRACE) {
+            return error.ExpectedLeftBrace;
+        }
+        self.advance(); // consume {
+
+        var fields = std.ArrayList(*ast.StructField).init(self.allocator);
+        errdefer {
+            for (fields.items) |field| {
+                field.deinit(self.allocator);
+                self.allocator.destroy(field);
+            }
+            fields.deinit();
+        }
+
+        while (self.peek().type != .RIGHT_BRACE) {
+            // Parse field name
+            if (self.peek().type != .IDENTIFIER) {
+                return error.ExpectedIdentifier;
+            }
+            const field_name = self.peek();
+            self.advance();
+
+            // Expect :
+            if (self.peek().type != .WHERE) {
+                return error.ExpectedColon;
+            }
+            self.advance();
+
+            // Parse field type
+            const field_type = try parseTypeExpr(self) orelse return error.ExpectedType;
+
+            // Create field
+            const field = try self.allocator.create(ast.StructField);
+            field.* = .{
+                .name = field_name,
+                .type_expr = field_type,
+            };
+            try fields.append(field);
+
+            // Handle field separator (comma)
+            if (self.peek().type == .COMMA) {
+                self.advance();
+                // Allow trailing comma by checking for closing brace
+                if (self.peek().type == .RIGHT_BRACE) {
+                    break;
+                }
+            } else if (self.peek().type != .RIGHT_BRACE) {
+                return error.ExpectedCommaOrBrace;
+            }
+        }
+
+        self.advance(); // consume }
+        base_type_expr.* = .{ .Struct = try fields.toOwnedSlice() };
+    } else if (self.declared_types.contains(type_name)) {
+        // Handle custom types (like enums)
+        base_type_expr.* = .{ .Custom = type_token };
     } else {
+        // For identifiers that could be struct names
         base_type_expr.* = .{ .Custom = type_token };
     }
 
@@ -830,4 +892,31 @@ pub fn parseArrayLiteral(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!
     const array_expr = try self.allocator.create(ast.Expr);
     array_expr.* = .{ .Array = try elements.toOwnedSlice() };
     return array_expr;
+}
+
+pub fn parseExpressionStmt(self: *Parser) ErrorList!*ast.Expr {
+    if (self.debug_enabled) {
+        std.debug.print("\nParsing expression statement...\n", .{});
+    }
+
+    const expr = try parseExpression(self) orelse return error.ExpectedExpression;
+
+    if (self.peek().type != .SEMICOLON) {
+        if (expr) |e| {
+            e.deinit(self.allocator);
+            self.allocator.destroy(e);
+        }
+
+        var reporting = Reporting.init();
+        reporting.reportCompileError(.{
+            .file = self.current_file,
+            .line = self.peek().line,
+            .column = self.peek().column,
+        }, "Expected semicolon after expression, but found '{s}'", .{@tagName(self.peek().type)});
+        return error.ExpectedSemicolon;
+    }
+
+    self.advance(); // consume semicolon
+
+    return expr;
 }
