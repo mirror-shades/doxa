@@ -306,9 +306,13 @@ pub const Expr = union(enum) {
                 allocator.destroy(f.condition);
             },
             .ArrayType => |*array| {
-                if (array.element_type) |element_type| {
-                    element_type.deinit(allocator);
-                    allocator.destroy(element_type);
+                array.element_type.deinit(allocator);
+                allocator.destroy(array.element_type);
+
+                // Also clean up the size expression if it exists
+                if (array.size) |size| {
+                    size.deinit(allocator);
+                    allocator.destroy(size);
                 }
             },
             .Match => |*m| {
@@ -426,7 +430,6 @@ pub const TypeInfo = struct {
     element_type: ?Type = null,
     variants: ?[][]const u8 = null,
     array_size: ?usize = null,
-    is_fixed_size: bool = false,
 
     pub fn deinit(self: *TypeInfo, allocator: std.mem.Allocator) void {
         if (self.array_type) |array_type| {
