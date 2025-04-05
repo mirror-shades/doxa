@@ -848,9 +848,13 @@ pub fn variable(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Exp
 }
 
 pub fn arrayType(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+    // Create a basic type expression for the element type
+    const element_type = try self.allocator.create(ast.TypeExpr);
+    element_type.* = .{ .Basic = .Auto }; // Default to auto type
+
     const array_expr = try self.allocator.create(ast.Expr);
     array_expr.* = .{ .ArrayType = .{
-        .element_type = null,
+        .element_type = element_type,
     } };
     return array_expr;
 }
