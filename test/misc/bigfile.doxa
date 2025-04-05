@@ -118,6 +118,7 @@ fourthFold?;
 // arrays
 var arr :: int[] is [1, 2, 3, 4, 5];
 
+arr?;
 arr[3]?; // 4
 arr[3] is 6;
 arr[3]?; // 6

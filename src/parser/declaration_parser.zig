@@ -202,6 +202,7 @@ pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
             return_type = switch (type_expr.*) {
                 .Basic => |basic| ast.TypeInfo{ .base = switch (basic) {
                     .Integer => ast.Type.Int,
+                    .U8 => ast.Type.U8,
                     .Float => ast.Type.Float,
                     .String => ast.Type.String,
                     .Boolean => ast.Type.Boolean,
@@ -213,6 +214,7 @@ pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
                     element_type.* = .{ .base = switch (array.element_type.*) {
                         .Basic => |basic| switch (basic) {
                             .Integer => ast.Type.Int,
+                            .U8 => ast.Type.U8,
                             .Float => ast.Type.Float,
                             .String => ast.Type.String,
                             .Boolean => ast.Type.Boolean,
@@ -349,6 +351,7 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
         type_info.base = switch (type_expr.*) {
             .Basic => |basic| switch (basic) {
                 .Integer => ast.Type.Int,
+                .U8 => ast.Type.U8,
                 .Float => ast.Type.Float,
                 .String => ast.Type.String,
                 .Boolean => ast.Type.Boolean,
@@ -360,6 +363,7 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
                 element_type.* = .{ .base = switch (array.element_type.*) {
                     .Basic => |basic| switch (basic) {
                         .Integer => ast.Type.Int,
+                        .U8 => ast.Type.U8,
                         .Float => ast.Type.Float,
                         .String => ast.Type.String,
                         .Boolean => ast.Type.Boolean,

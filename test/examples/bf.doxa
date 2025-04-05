@@ -1,0 +1,75 @@
+// a brainfuck interpreter implemented in doxa
+
+// tape is a list of u8 values to represent bytes on the tape
+var tape :: u8[] is [];
+var tp :: int is 0;
+var ip :: int is 0;
+var loops :: int is 0;
+var loopSpot :: int[] is [];
+
+const symbols is [ ">", "<", "+", "-", ".", ",", "[", "]" ];
+
+// tape is initialized with 10000 cells
+// this can be increased to allow for more memory
+fn initTape() {
+    var counter is 10000;
+    while(counter > 0) {
+        tape.push(0);
+        counter is counter - 1;
+    }
+}
+
+// input is read as a string and converted to an
+// array of u8 using the bytes method.
+fn getInput() returns(u8) {
+    var userInput :: string is input;
+    var newByte :: u8 is userInput.bytes[0];
+    return newByte;
+}
+
+fn startLoop() {
+    if loopSpot.length equals loops then {loopSpot.push(ip);}
+    else {loopSpot[loops] is ip;};
+    loops += 1;
+}
+
+fn endLoop() {
+    if loops equals 0 then {nothing;}
+    else {
+        if tape[tp] equals 0 then {
+            loops -= 1;
+        }
+        else {
+            const loopPointer is loops - 1;
+            ip is loopSpot[loopPointer];
+            // cancels the ip += 1 from the main loop
+            ip -= 1;
+        }
+    }
+}
+
+fn interpret(scan :: string) {
+    const scanLength is scan.length;
+    while(ip < scanLength) {
+        var currentByte is tape[tp];
+        const currentInstruction is scan[ip];
+        if(currentInstruction equals ">") then {tp += 1;}
+        if(currentInstruction equals "<") then {tp -= 1;}
+        if(currentInstruction equals "+") then {tape[tp] += 1;}
+        if(currentInstruction equals "-") then {tape[tp] -= 1;}
+        if(currentInstruction equals ".") then {currentByte?;}
+        if(currentInstruction equals ",") then {tape[tp] is getInput();}
+        if(currentInstruction equals "[") then {startLoop();}
+        if(currentInstruction equals "]") then {endLoop();}
+
+        ip += 1;
+    }
+}
+
+fn main(scan :: string) {
+    initTape();
+    interpret(scan);
+}
+
+// programs are accepted as a string
+main(",+.");

@@ -85,7 +85,8 @@ pub const Expr = union(enum) {
         condition: *Expr,
     },
     ArrayType: struct {
-        element_type: ?*TypeExpr = null,
+        element_type: *TypeExpr,
+        size: ?*Expr = null,
     },
     Match: MatchExpr,
     EnumDecl: struct {
@@ -214,9 +215,9 @@ pub const Expr = union(enum) {
             },
             .Variable => {}, // This doesn't own any memory
             .Literal => |lit| {
-                // Add cleanup for string literals
                 switch (lit) {
                     .string => |str| allocator.free(str),
+                    .u8 => {}, // No cleanup needed for u8
                     else => {}, // Other literals don't own memory
                 }
             },
@@ -393,6 +394,7 @@ pub const Assignment = struct {
 
 pub const Type = enum {
     Int,
+    U8,
     Float,
     String,
     Boolean,
@@ -407,6 +409,7 @@ pub const Type = enum {
     Custom,
     Map,
     Nothing,
+    Bytes,
     // these are conditionals not types, investigate why it breaks when I take them out
     Exists,
     Forall,
@@ -422,6 +425,8 @@ pub const TypeInfo = struct {
     function_type: ?*FunctionType = null,
     element_type: ?Type = null,
     variants: ?[][]const u8 = null,
+    array_size: ?usize = null,
+    is_fixed_size: bool = false,
 
     pub fn deinit(self: *TypeInfo, allocator: std.mem.Allocator) void {
         if (self.array_type) |array_type| {
@@ -454,6 +459,7 @@ pub const TypeInfo = struct {
 
         self.base = switch (value) {
             .int => .Int,
+            .u8 => .U8,
             .float => .Float,
             .string => .String,
             .boolean => .Boolean,
@@ -463,6 +469,7 @@ pub const TypeInfo = struct {
             .struct_value => .Struct,
             .function => .Function,
             .enum_variant => .Enum,
+            .bytes => .Bytes,
         };
     }
 };
@@ -643,6 +650,7 @@ pub const TypeExpr = union(enum) {
 
 pub const BasicType = enum {
     Integer,
+    U8,
     Float,
     String,
     Boolean,
@@ -652,6 +660,7 @@ pub const BasicType = enum {
 
 pub const ArrayType = struct {
     element_type: *TypeExpr,
+    size: ?*Expr = null,
 };
 
 pub const StructField = struct {
@@ -767,6 +776,7 @@ pub fn typeInfoFromExpr(allocator: std.mem.Allocator, type_expr: ?*TypeExpr) !*T
     type_info.* = switch (type_expr.?.*) {
         .Basic => |basic| switch (basic) {
             .Integer => TypeInfo{ .base = .Int },
+            .U8 => TypeInfo{ .base = .U8 },
             .Float => TypeInfo{ .base = .Float },
             .String => TypeInfo{ .base = .String },
             .Boolean => TypeInfo{ .base = .Boolean },
