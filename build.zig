@@ -74,10 +74,10 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("test/test.zig"),
     });
     integration_tests.root_module.addImport("lexer", lexer_module);
-    
+
     // Create a run artifact for the integration tests
     const run_integration_tests = b.addRunArtifact(integration_tests);
-    
+
     // Add the integration tests to the test step
     test_step.dependOn(&run_integration_tests.step);
 }

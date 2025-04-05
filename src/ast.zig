@@ -28,6 +28,9 @@ pub const Expr = union(enum) {
     Binary: Binary,
     Unary: Unary,
     Print: PrintExpr,
+    Input: struct {
+        prompt: token.Token,
+    },
     Variable: token.Token,
     Assignment: Assignment,
     Grouping: ?*Expr,
@@ -378,6 +381,7 @@ pub const Expr = union(enum) {
                     allocator.destroy(value);
                 }
             },
+            .Input => {}, // Token doesn't own any memory, so no cleanup needed
         }
     }
 };

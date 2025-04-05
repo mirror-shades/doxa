@@ -194,6 +194,9 @@ pub const rules = blk: {
     // Add typeof support
     r.set(.TYPEOF, .{ .prefix = typeofExpr, .precedence = .CALL }); // Added precedence
 
+    // Add input support
+    r.set(.INPUT, .{ .prefix = Parser.input, .precedence = .PRIMARY });
+
     // Add tuple support
     r.set(.LEFT_PAREN, .{ .prefix = parseTuple, .infix = call, .precedence = .CALL });
 

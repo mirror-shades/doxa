@@ -1,4 +1,0 @@
-
-pub fn sub(x, y) {
-    return x - y;
-}
