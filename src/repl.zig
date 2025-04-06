@@ -9,7 +9,7 @@ const token = @import("token.zig");
 const MAX_REPL_LINE_LENGTH = 1024;
 
 pub fn runRepl(memory: *MemoryManager) !void {
-    var interpreter = try Interpreter.init(memory);
+    var interpreter = try Interpreter.init(memory.getAllocator(), memory.debug_enabled);
     defer interpreter.deinit();
 
     const stdin = std.io.getStdIn().reader();

@@ -28,6 +28,7 @@ pub const Parser = struct {
     // Add these fields to track entry points
     has_entry_point: bool = false,
     entry_point_location: ?token.Token = null,
+    entry_point_name: ?[]const u8 = null,
 
     current_module: ?ModuleInfo = null,
     module_cache: std.StringHashMap(ModuleInfo),
@@ -147,6 +148,15 @@ pub const Parser = struct {
 
         // First pass to find and store all function declarations
         while (self.peek().type != .EOF) {
+            // Check for entry point token (->)
+            var is_entry = false;
+            if (self.peek().type == .MAIN) {
+                is_entry = true;
+                self.has_entry_point = true;
+                self.entry_point_location = self.peek();
+                self.advance(); // consume ->
+            }
+
             if (self.peek().type == .FUNCTION) {
                 // Don't advance here - let parseFunctionDecl handle it
                 const fn_stmt = try declaration_parser.parseFunctionDecl(self);
@@ -155,6 +165,12 @@ pub const Parser = struct {
 
                 // Get the function name from the statement
                 if (fn_stmt == .Function) {
+                    // Store function name as entry point if this is an entry point
+                    if (is_entry) {
+                        self.entry_point_name = fn_stmt.Function.name.lexeme;
+                        // Update the function structure to mark it as an entry point
+                        fn_ptr.*.Function.is_entry = true;
+                    }
                     try function_table.put(fn_stmt.Function.name.lexeme, fn_ptr);
                 }
             } else {

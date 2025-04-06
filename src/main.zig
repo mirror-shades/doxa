@@ -136,6 +136,9 @@ pub fn run(memory: *MemoryManager, interpreter: *Interpreter, file_path: []const
             for (statements, 0..) |stmt, i| {
                 std.debug.print("Statement {}: {s}\n", .{ i, @tagName(stmt) });
             }
+            if (parser_instance.has_entry_point) {
+                std.debug.print("Entry point: {s}\n", .{parser_instance.entry_point_name.?});
+            }
         }
 
         if (compile) {
@@ -145,6 +148,12 @@ pub fn run(memory: *MemoryManager, interpreter: *Interpreter, file_path: []const
             if (memory.debug_enabled) {
                 std.debug.print("\n=== Starting interpretation ===\n", .{});
             }
+
+            // Transfer entry point information from parser to interpreter
+            if (parser_instance.has_entry_point) {
+                interpreter.entry_point_name = parser_instance.entry_point_name;
+            }
+
             try interpreter.interpret(statements);
             return interpreter.last_result;
         }
@@ -157,10 +166,7 @@ fn runFile(memory: *MemoryManager, path: []const u8) !void {
         std.debug.print("Debug enabled in memory manager\n", .{});
     }
 
-    var interpreter = try Interpreter.init(memory);
-    if (interpreter.debug_enabled) {
-        std.debug.print("Debug enabled in interpreter\n", .{});
-    }
+    var interpreter = try Interpreter.init(memory.getAllocator(), memory.debug_enabled);
     defer interpreter.deinit();
 
     var file = try std.fs.cwd().openFile(path, .{});
