@@ -153,11 +153,13 @@ pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
     if (self.peek().type != .IDENTIFIER) {
         return error.ExpectedIdentifier;
     }
-    const name = self.peek();
 
-    // If this is an entry point, verify it's named 'main'
-    if (is_entry and !std.mem.eql(u8, name.lexeme, "main")) {
-        return error.EntryPointMustBeMain;
+    // Store the name after parsing the IDENTIFIER token
+    const function_name = self.peek();
+
+    // If this is an entry point, store the function name
+    if (is_entry) {
+        self.entry_point_name = function_name.lexeme;
     }
 
     self.advance();
@@ -263,7 +265,7 @@ pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
     const body = try statement_parser.parseBlockStmt(self);
 
     return ast.Stmt{ .Function = .{
-        .name = name,
+        .name = function_name,
         .params = try params.toOwnedSlice(),
         .return_type_info = return_type,
         .body = body,

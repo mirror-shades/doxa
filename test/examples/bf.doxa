@@ -13,19 +13,19 @@ const symbols is [ ">", "<", "+", "-", ".", ",", "[", "]" ];
 
 // input is read as a string and converted to an
 // array of u8 using the bytes method.
-fn getInput() returns(u8) {
+function getInput() returns(u8) {
     var userInput :: string is input;
     var newByte :: u8 is userInput.bytes[0];
     return newByte;
 }
 
-fn startLoop() {
+function startLoop() {
     if loopSpot.length equals loops then {loopSpot.push(ip);}
     else {loopSpot[loops] is ip;};
     loops += 1;
 }
 
-fn endLoop() {
+function endLoop() {
     if loops equals 0 then {nothing;}
     else {
         if tape[tp] equals 0 then {
@@ -40,7 +40,7 @@ fn endLoop() {
     }
 }
 
-fn interpret(scan :: string) {
+function interpret(scan :: string) {
     const scanLength is scan.length;
     while(ip < scanLength) {
         var currentByte is tape[tp];
@@ -58,9 +58,6 @@ fn interpret(scan :: string) {
     }
 }
 
-fn main(scan :: string) {
-    interpret(scan);
+-> function main() {
+    interpret(",+.");
 }
-
-// programs are accepted as a string
-main(",+.");

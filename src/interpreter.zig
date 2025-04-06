@@ -143,35 +143,34 @@ pub const Environment = struct {
 };
 
 pub const Interpreter = struct {
-    memory: *MemoryManager,
+    allocator: std.mem.Allocator,
     environment: *Environment,
     globals: *Environment,
     debug_enabled: bool,
     string_interner: StringInterner,
     stdout_buffer: std.ArrayList(u8),
-    entry_point: ?[]const u8 = null,
+    entry_point_name: ?[]const u8 = null,
     last_result: ?token.TokenLiteral = null,
     had_error: bool = false,
+    has_entry_point: bool = false,
+    entry_point_location: ?token.Token = null,
 
-    pub fn init(memory: *MemoryManager) !Interpreter {
-        const globals = try memory.getAllocator().create(Environment);
-        globals.* = Environment.init(memory.getAllocator(), null, memory.debug_enabled);
+    pub fn init(allocator: std.mem.Allocator, debug_enabled: bool) !Interpreter {
+        const globals = try allocator.create(Environment);
+        globals.* = Environment.init(allocator, null, debug_enabled);
 
-        var interpreter = Interpreter{
-            .memory = memory,
+        const interpreter = Interpreter{
+            .allocator = allocator,
             .environment = globals,
             .globals = globals,
-            .debug_enabled = memory.debug_enabled,
-            .string_interner = StringInterner.init(memory.getAllocator()),
-            .stdout_buffer = std.ArrayList(u8).init(memory.getAllocator()),
-            .entry_point = null,
+            .debug_enabled = debug_enabled,
+            .string_interner = StringInterner.init(allocator),
+            .stdout_buffer = std.ArrayList(u8).init(allocator),
+            .entry_point_name = null,
             .had_error = false,
         };
 
-        // Explicitly set debug mode
-        interpreter.debug_enabled = memory.debug_enabled;
-
-        if (memory.debug_enabled) {
+        if (debug_enabled) {
             std.debug.print("Interpreter initialized with debug mode: {}\n", .{interpreter.debug_enabled});
         }
 
@@ -237,7 +236,7 @@ pub const Interpreter = struct {
         }
 
         // Handle entry point execution
-        if (self.entry_point) |main_fn| {
+        if (self.entry_point_name) |main_fn| {
             if (self.debug_enabled) {
                 std.debug.print("\n=== Executing entry point ===\n", .{});
             }
@@ -460,12 +459,12 @@ pub const Interpreter = struct {
                     .Float => token.TokenLiteral{ .float = 0.0 },
                     .String => token.TokenLiteral{ .string = try self.string_interner.intern("") },
                     .Boolean => token.TokenLiteral{ .boolean = token.Boolean.false },
-                    .Map => token.TokenLiteral{ .map = std.StringHashMap(token.TokenLiteral).init(self.memory.getAllocator()) },
+                    .Map => token.TokenLiteral{ .map = std.StringHashMap(token.TokenLiteral).init(self.allocator) },
                     .Array => blk: {
                         // Check if we have a size from the type declaration
                         if (decl.type_info.array_size) |size| {
                             // Create an array of the specified size
-                            const array_elements = try self.memory.getAllocator().alloc(token.TokenLiteral, size);
+                            const array_elements = try self.allocator.alloc(token.TokenLiteral, size);
 
                             // Initialize with default values (0 for u8)
                             for (array_elements) |*elem| {
@@ -498,7 +497,7 @@ pub const Interpreter = struct {
                 return null;
             },
             .Block => |statements| {
-                var block_env = Environment.init(self.memory.getAllocator(), self.environment, self.debug_enabled);
+                var block_env = Environment.init(self.allocator, self.environment, self.debug_enabled);
                 defer block_env.deinit();
                 const result = try self.executeBlock(statements, &block_env);
                 if (self.debug_enabled and result != null) {
@@ -510,7 +509,7 @@ pub const Interpreter = struct {
                 // Create an enum type and store it in environment
                 const enum_type = TypeInfo{
                     .base = .Enum,
-                    .variants = try self.memory.getAllocator().alloc([]const u8, decl.variants.len),
+                    .variants = try self.allocator.alloc([]const u8, decl.variants.len),
                 };
 
                 // Store each variant
@@ -522,7 +521,7 @@ pub const Interpreter = struct {
                 return .{ .nothing = {} };
             },
             .Map => |entries| {
-                var map = std.StringHashMap(token.TokenLiteral).init(self.memory.getAllocator());
+                var map = std.StringHashMap(token.TokenLiteral).init(self.allocator);
                 errdefer map.deinit();
 
                 for (entries) |entry| {
@@ -541,13 +540,13 @@ pub const Interpreter = struct {
             },
             .Try => |try_stmt| {
                 // Create new environment for try block
-                var try_env = Environment.init(self.memory.getAllocator(), self.environment, self.debug_enabled);
+                var try_env = Environment.init(self.allocator, self.environment, self.debug_enabled);
                 defer try_env.deinit();
 
                 // Execute try block
                 const try_result = self.executeBlock(try_stmt.try_body, &try_env) catch |err| {
                     // Create new environment for catch block
-                    var catch_env = Environment.init(self.memory.getAllocator(), self.environment, self.debug_enabled);
+                    var catch_env = Environment.init(self.allocator, self.environment, self.debug_enabled);
                     defer catch_env.deinit();
 
                     // If there's an error variable, bind the error to it
@@ -797,12 +796,12 @@ pub const Interpreter = struct {
                     if_expr.else_branch orelse return error.InvalidExpression;
 
                 // Create a new environment for the if block
-                var if_env = Environment.init(self.memory.getAllocator(), self.environment, self.debug_enabled);
+                var if_env = Environment.init(self.allocator, self.environment, self.debug_enabled);
                 defer if_env.deinit();
 
                 // Allocate the statement array
-                var statements = try self.memory.getAllocator().alloc(ast.Stmt, 1);
-                defer self.memory.getAllocator().free(statements);
+                var statements = try self.allocator.alloc(ast.Stmt, 1);
+                defer self.allocator.free(statements);
                 statements[0] = .{ .Expression = branch };
 
                 // Execute the chosen branch in the new environment
@@ -818,7 +817,7 @@ pub const Interpreter = struct {
                 return result orelse .{ .nothing = {} };
             },
             .Block => |block| {
-                var block_env = Environment.init(self.memory.getAllocator(), self.environment, self.debug_enabled);
+                var block_env = Environment.init(self.allocator, self.environment, self.debug_enabled);
                 defer block_env.deinit();
 
                 const result = self.executeBlock(block.statements, &block_env) catch |err| {
@@ -993,7 +992,7 @@ pub const Interpreter = struct {
                 return try self.evaluate(group orelse return error.InvalidExpression);
             },
             .Array => |elements| {
-                var array_values = std.ArrayList(token.TokenLiteral).init(self.memory.getAllocator());
+                var array_values = std.ArrayList(token.TokenLiteral).init(self.allocator);
                 errdefer array_values.deinit();
 
                 // Evaluate first element to establish type
@@ -1018,12 +1017,12 @@ pub const Interpreter = struct {
                 }
 
                 const owned_slice = try array_values.toOwnedSlice();
-                errdefer self.memory.getAllocator().free(owned_slice);
+                errdefer self.allocator.free(owned_slice);
 
                 return token.TokenLiteral{ .array = owned_slice };
             },
             .Struct => |fields| {
-                var struct_fields = std.ArrayList(token.StructField).init(self.memory.getAllocator());
+                var struct_fields = std.ArrayList(token.StructField).init(self.allocator);
                 errdefer struct_fields.deinit();
 
                 for (fields) |field| {
@@ -1059,7 +1058,7 @@ pub const Interpreter = struct {
                             return error.IndexOutOfBounds;
                         }
                         // Create a new string containing just the character at the index
-                        var char_str = try self.memory.getAllocator().alloc(u8, 1);
+                        var char_str = try self.allocator.alloc(u8, 1);
                         char_str[0] = str[idx];
                         return token.TokenLiteral{ .string = char_str };
                     },
@@ -1228,8 +1227,8 @@ pub const Interpreter = struct {
                             const current_array = object.array;
 
                             // Create new array with one more element
-                            var new_array = try self.memory.getAllocator().alloc(token.TokenLiteral, current_array.len + 1);
-                            errdefer self.memory.getAllocator().free(new_array);
+                            var new_array = try self.allocator.alloc(token.TokenLiteral, current_array.len + 1);
+                            errdefer self.allocator.free(new_array);
 
                             // Copy existing elements
                             @memcpy(new_array[0..current_array.len], current_array);
@@ -1238,7 +1237,7 @@ pub const Interpreter = struct {
                             new_array[current_array.len] = arg_value;
 
                             // Free old array
-                            self.memory.getAllocator().free(current_array);
+                            self.allocator.free(current_array);
 
                             // Create new token literal with the new array
                             const new_value = token.TokenLiteral{ .array = new_array };
@@ -1356,7 +1355,7 @@ pub const Interpreter = struct {
             } },
             .Print => |print| {
                 const value = try self.evaluate(print.expr);
-                var buffer = std.ArrayList(u8).init(self.memory.getAllocator());
+                var buffer = std.ArrayList(u8).init(self.allocator);
                 defer buffer.deinit();
 
                 // Format the location information
@@ -1537,7 +1536,7 @@ pub const Interpreter = struct {
                 }
 
                 // Create a new environment for the loop
-                var iter_env = Environment.init(self.memory.getAllocator(), self.environment, self.debug_enabled);
+                var iter_env = Environment.init(self.allocator, self.environment, self.debug_enabled);
                 defer iter_env.deinit();
 
                 // Infer type from array elements or use dynamic if empty
@@ -1575,7 +1574,7 @@ pub const Interpreter = struct {
                     }
                     // Add bytes field access
                     if (std.mem.eql(u8, field.field.lexeme, "bytes")) {
-                        var bytes = try self.memory.getAllocator().alloc(token.TokenLiteral, object.string.len);
+                        var bytes = try self.allocator.alloc(token.TokenLiteral, object.string.len);
                         for (object.string, 0..) |byte, i| {
                             bytes[i] = token.TokenLiteral{ .u8 = byte }; // Use .u8 instead of .int
                         }
@@ -1624,13 +1623,13 @@ pub const Interpreter = struct {
                 // Create struct type and store it in environment
                 const struct_type = ast.TypeInfo{
                     .base = .Struct,
-                    .struct_fields = try self.memory.getAllocator().alloc(ast.StructFieldType, decl.fields.len),
+                    .struct_fields = try self.allocator.alloc(ast.StructFieldType, decl.fields.len),
                 };
 
                 for (decl.fields, 0..) |field, i| {
                     struct_type.struct_fields.?[i] = .{
                         .name = field.name.lexeme,
-                        .type_info = try ast.typeInfoFromExpr(self.memory.getAllocator(), field.type_expr),
+                        .type_info = try ast.typeInfoFromExpr(self.allocator, field.type_expr),
                     };
                 }
 
@@ -1638,7 +1637,7 @@ pub const Interpreter = struct {
                 return .{ .nothing = {} };
             },
             .StructLiteral => |literal| {
-                var struct_fields = std.ArrayList(token.StructField).init(self.memory.getAllocator());
+                var struct_fields = std.ArrayList(token.StructField).init(self.allocator);
                 errdefer struct_fields.deinit();
 
                 // Get the struct's type info from the environment
@@ -1720,7 +1719,7 @@ pub const Interpreter = struct {
                 defer self.environment = prev_env;
 
                 // Create a new environment for the quantifier scope
-                var quantifier_env = Environment.init(self.memory.getAllocator(), self.environment, self.debug_enabled);
+                var quantifier_env = Environment.init(self.allocator, self.environment, self.debug_enabled);
                 self.environment = &quantifier_env;
 
                 // Evaluate the array expression to get the actual array
@@ -1764,7 +1763,7 @@ pub const Interpreter = struct {
                 defer self.environment = prev_env;
 
                 // Create a new environment for the quantifier scope
-                var quantifier_env = Environment.init(self.memory.getAllocator(), self.environment, self.debug_enabled);
+                var quantifier_env = Environment.init(self.allocator, self.environment, self.debug_enabled);
                 self.environment = &quantifier_env;
 
                 // Evaluate the array expression to get the actual array
@@ -1807,7 +1806,7 @@ pub const Interpreter = struct {
                 // Create an enum type and store it in environment
                 const enum_type = TypeInfo{
                     .base = .Enum,
-                    .variants = try self.memory.getAllocator().alloc([]const u8, decl.variants.len),
+                    .variants = try self.allocator.alloc([]const u8, decl.variants.len),
                 };
 
                 // Store each variant
@@ -1867,7 +1866,7 @@ pub const Interpreter = struct {
                 };
             },
             .Tuple => |elements| {
-                var tuple_values = std.ArrayList(token.TokenLiteral).init(self.memory.getAllocator());
+                var tuple_values = std.ArrayList(token.TokenLiteral).init(self.allocator);
                 errdefer tuple_values.deinit();
 
                 // Evaluate each element in the tuple
@@ -1877,12 +1876,12 @@ pub const Interpreter = struct {
                 }
 
                 const owned_slice = try tuple_values.toOwnedSlice();
-                errdefer self.memory.getAllocator().free(owned_slice);
+                errdefer self.allocator.free(owned_slice);
 
                 return token.TokenLiteral{ .tuple = owned_slice };
             },
             .Map => |entries| {
-                var map = std.StringHashMap(token.TokenLiteral).init(self.memory.getAllocator());
+                var map = std.StringHashMap(token.TokenLiteral).init(self.allocator);
                 errdefer map.deinit();
 
                 for (entries) |entry| {
@@ -1943,7 +1942,7 @@ pub const Interpreter = struct {
                 }
 
                 const stdin = std.io.getStdIn().reader();
-                var buffer = std.ArrayList(u8).init(self.memory.getAllocator());
+                var buffer = std.ArrayList(u8).init(self.allocator);
                 defer buffer.deinit();
 
                 // Read until newline
@@ -2103,7 +2102,7 @@ pub const Interpreter = struct {
         switch (callee) {
             .function => |f| {
                 // Create new environment for function call
-                var function_env = Environment.init(self.memory.getAllocator(), f.closure, self.debug_enabled);
+                var function_env = Environment.init(self.allocator, f.closure, self.debug_enabled);
                 defer function_env.deinit();
 
                 // Check argument count
@@ -2151,8 +2150,8 @@ pub const Interpreter = struct {
                     // Convert TypeExpr to TypeInfo if available, otherwise use dynamic type
                     var type_info: ast.TypeInfo = undefined;
                     if (param.type_expr) |te| {
-                        const ptr = try ast.typeInfoFromExpr(self.memory.getAllocator(), te);
-                        defer self.memory.getAllocator().destroy(ptr);
+                        const ptr = try ast.typeInfoFromExpr(self.allocator, te);
+                        defer self.allocator.destroy(ptr);
                         type_info = ptr.*;
                         if (self.debug_enabled) {
                             std.debug.print("Parameter '{s}' type: {any}\n", .{ param.name.lexeme, type_info });
@@ -2180,13 +2179,13 @@ pub const Interpreter = struct {
                             // Deep copy the return value to preserve array contents
                             return switch (return_value) {
                                 .array => |arr| blk: {
-                                    var new_array = try self.memory.getAllocator().alloc(token.TokenLiteral, arr.len);
+                                    var new_array = try self.allocator.alloc(token.TokenLiteral, arr.len);
                                     for (arr, 0..) |item, i| {
                                         new_array[i] = switch (item) {
                                             .int => |n| token.TokenLiteral{ .int = n },
                                             .boolean => |b| token.TokenLiteral{ .boolean = b },
                                             .array => |a| blk2: {
-                                                var inner_array = try self.memory.getAllocator().alloc(token.TokenLiteral, a.len);
+                                                var inner_array = try self.allocator.alloc(token.TokenLiteral, a.len);
                                                 for (a, 0..) |inner_item, j| {
                                                     inner_array[j] = inner_item;
                                                 }
@@ -2305,8 +2304,8 @@ pub const Interpreter = struct {
                 const current_array = receiver_value.array;
 
                 // Create new array with one more element
-                var new_array = try self.memory.getAllocator().alloc(token.TokenLiteral, current_array.len + 1);
-                errdefer self.memory.getAllocator().free(new_array);
+                var new_array = try self.allocator.alloc(token.TokenLiteral, current_array.len + 1);
+                errdefer self.allocator.free(new_array);
 
                 // Copy existing elements
                 @memcpy(new_array[0..current_array.len], current_array);
@@ -2315,7 +2314,7 @@ pub const Interpreter = struct {
                 new_array[current_array.len] = arg_value;
 
                 // Free old array
-                self.memory.getAllocator().free(current_array);
+                self.allocator.free(current_array);
 
                 // Create new token literal with the new array
                 const new_value = token.TokenLiteral{ .array = new_array };
@@ -2368,8 +2367,8 @@ pub const Interpreter = struct {
         const popped_value = current_array[current_array.len - 1];
 
         // Create new array with one less element
-        var new_array = try self.memory.getAllocator().alloc(token.TokenLiteral, current_array.len - 1);
-        errdefer self.memory.getAllocator().free(new_array);
+        var new_array = try self.allocator.alloc(token.TokenLiteral, current_array.len - 1);
+        errdefer self.allocator.free(new_array);
 
         // Copy all elements except the last one
         @memcpy(new_array[0..(current_array.len - 1)], current_array[0..(current_array.len - 1)]);
@@ -2380,7 +2379,7 @@ pub const Interpreter = struct {
         }
 
         // Free old array
-        self.memory.getAllocator().free(current_array);
+        self.allocator.free(current_array);
 
         // Return the popped value
         return popped_value;
@@ -2399,8 +2398,8 @@ pub const Interpreter = struct {
         const array2_value = try self.evaluate(array2);
 
         // Create new array with combined length
-        var new_array = try self.memory.getAllocator().alloc(token.TokenLiteral, array_value.array.len + array2_value.array.len);
-        errdefer self.memory.getAllocator().free(new_array);
+        var new_array = try self.allocator.alloc(token.TokenLiteral, array_value.array.len + array2_value.array.len);
+        errdefer self.allocator.free(new_array);
 
         // Copy first array
         @memcpy(new_array[0..array_value.array.len], array_value.array);
