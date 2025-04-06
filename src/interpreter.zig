@@ -461,6 +461,36 @@ pub const Interpreter = struct {
                     .String => token.TokenLiteral{ .string = try self.string_interner.intern("") },
                     .Boolean => token.TokenLiteral{ .boolean = token.Boolean.false },
                     .Map => token.TokenLiteral{ .map = std.StringHashMap(token.TokenLiteral).init(self.memory.getAllocator()) },
+                    .Array => blk: {
+                        // Check if we have a size from the type declaration
+                        if (decl.type_info.array_size) |size| {
+                            // Create an array of the specified size
+                            const array_elements = try self.memory.getAllocator().alloc(token.TokenLiteral, size);
+
+                            // Initialize with default values (0 for u8)
+                            for (array_elements) |*elem| {
+                                // Set default value based on element type
+                                if (decl.type_info.element_type) |elem_type| {
+                                    elem.* = switch (elem_type) {
+                                        .Int => token.TokenLiteral{ .int = 0 },
+                                        .U8 => token.TokenLiteral{ .u8 = 0 },
+                                        .Float => token.TokenLiteral{ .float = 0.0 },
+                                        .String => token.TokenLiteral{ .string = try self.string_interner.intern("") },
+                                        .Boolean => token.TokenLiteral{ .boolean = .false },
+                                        else => token.TokenLiteral{ .nothing = {} },
+                                    };
+                                } else {
+                                    // Default to u8 if no element type specified
+                                    elem.* = token.TokenLiteral{ .u8 = 0 };
+                                }
+                            }
+
+                            break :blk token.TokenLiteral{ .array = array_elements };
+                        }
+
+                        // If no size specified, use empty array (current behavior)
+                        break :blk token.TokenLiteral{ .array = &[_]token.TokenLiteral{} };
+                    },
                     else => token.TokenLiteral{ .nothing = {} },
                 };
 

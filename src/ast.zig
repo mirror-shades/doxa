@@ -788,9 +788,22 @@ pub fn typeInfoFromExpr(allocator: std.mem.Allocator, type_expr: ?*TypeExpr) !*T
         },
         .Array => |array| blk: {
             const element_type = try typeInfoFromExpr(allocator, array.element_type);
+
+            // Extract array size if present
+            var array_size: ?usize = null;
+            if (array.size) |size_expr| {
+                if (size_expr.* == .Literal) {
+                    switch (size_expr.Literal) {
+                        .int => |i| array_size = @intCast(i),
+                        else => {}, // Only integer literals are supported for array sizes
+                    }
+                }
+            }
+
             break :blk TypeInfo{
                 .base = .Array,
                 .array_type = element_type,
+                .array_size = array_size,
             };
         },
         .Struct => |fields| blk: {

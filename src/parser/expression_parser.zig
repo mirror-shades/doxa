@@ -509,13 +509,32 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
     // Check for array type
     if (self.peek().type == .LEFT_BRACKET) {
         self.advance(); // consume [
+
+        // Check if we have a size expression
+        var size: ?*ast.Expr = null;
+        if (self.peek().type == .INT) {
+            // Create a literal expression for the size
+            const size_expr = try self.allocator.create(ast.Expr);
+            size_expr.* = .{ .Literal = self.peek().literal };
+            size = size_expr;
+            self.advance(); // consume the integer
+        }
+
+        // Expect closing bracket
         if (self.peek().type != .RIGHT_BRACKET) {
+            if (size) |s| {
+                s.deinit(self.allocator);
+                self.allocator.destroy(s);
+            }
             return error.ExpectedRightBracket;
         }
         self.advance(); // consume ]
 
         const array_type_expr = try self.allocator.create(ast.TypeExpr);
-        array_type_expr.* = .{ .Array = .{ .element_type = base_type_expr } };
+        array_type_expr.* = .{ .Array = .{
+            .element_type = base_type_expr,
+            .size = size,
+        } };
         return array_type_expr;
     }
 

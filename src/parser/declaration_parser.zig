@@ -348,42 +348,14 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
         self.advance(); // consume ::
         type_info.is_dynamic = false; // Explicitly typed variables are not dynamic
         const type_expr = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
-        type_info.base = switch (type_expr.*) {
-            .Basic => |basic| switch (basic) {
-                .Integer => ast.Type.Int,
-                .U8 => ast.Type.U8,
-                .Float => ast.Type.Float,
-                .String => ast.Type.String,
-                .Boolean => ast.Type.Boolean,
-                .Auto => ast.Type.Dynamic,
-                .Tetra => ast.Type.Tetra,
-            },
-            .Array => |array| blk: {
-                const element_type = try self.allocator.create(ast.TypeInfo);
-                element_type.* = .{ .base = switch (array.element_type.*) {
-                    .Basic => |basic| switch (basic) {
-                        .Integer => ast.Type.Int,
-                        .U8 => ast.Type.U8,
-                        .Float => ast.Type.Float,
-                        .String => ast.Type.String,
-                        .Boolean => ast.Type.Boolean,
-                        .Auto => ast.Type.Dynamic,
-                        .Tetra => ast.Type.Tetra,
-                    },
-                    else => return error.InvalidType,
-                } };
-                break :blk ast.Type.Array;
-            },
-            .Custom => |custom| blk: {
-                // Check if the type exists in declared types
-                if (self.declared_types.contains(custom.lexeme)) {
-                    break :blk ast.Type.Enum;
-                } else {
-                    return error.UndeclaredType;
-                }
-            },
-            else => return error.InvalidType,
-        };
+
+        // Use the typeInfoFromExpr function to properly convert TypeExpr to TypeInfo
+        const type_info_ptr = try ast.typeInfoFromExpr(self.allocator, type_expr);
+        type_info = type_info_ptr.*;
+        self.allocator.destroy(type_info_ptr); // Free the pointer since we copied the struct
+
+        // Preserve mutability from our original type_info
+        type_info.is_mutable = !is_const;
     }
 
     var initializer: ?*ast.Expr = null;
