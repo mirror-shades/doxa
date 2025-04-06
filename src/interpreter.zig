@@ -226,13 +226,43 @@ pub const Interpreter = struct {
             }
         }
 
-        // Second pass - execute statements
-        for (statements) |*stmt| {
-            if (stmt.* == .Function) {
-                // Skip function declarations in second pass since they're already defined
-                continue;
+        if (self.entry_point_name == null) {
+            // Script mode - execute all statements
+            if (self.debug_enabled) {
+                std.debug.print("\n=== Running in script mode ===\n", .{});
             }
-            self.last_result = try self.executeStatement(stmt, self.debug_enabled);
+            for (statements) |*stmt| {
+                if (stmt.* == .Function) {
+                    // Skip function declarations in second pass since they're already defined
+                    continue;
+                }
+                self.last_result = try self.executeStatement(stmt, self.debug_enabled);
+            }
+        } else {
+            // Program mode with entry point
+            if (self.debug_enabled) {
+                std.debug.print("\n=== Running in program mode ===\n", .{});
+            }
+
+            // In program mode, still process variable declarations
+            // but skip other top-level expressions
+            for (statements) |*stmt| {
+                if (stmt.* == .Function) {
+                    // Skip function declarations (already processed)
+                    continue;
+                } else if (stmt.* == .VarDecl) {
+                    // Process variable declarations
+                    if (self.debug_enabled) {
+                        std.debug.print("Processing top-level variable declaration in program mode\n", .{});
+                    }
+                    self.last_result = try self.executeStatement(stmt, self.debug_enabled);
+                } else {
+                    // Skip other top-level statements in program mode
+                    if (self.debug_enabled) {
+                        std.debug.print("Skipping top-level expression in program mode\n", .{});
+                    }
+                }
+            }
         }
 
         // Handle entry point execution
@@ -247,7 +277,7 @@ pub const Interpreter = struct {
             }
 
             var empty_args = [_]*ast.Expr{}; // Create empty slice of ast.Expr pointers
-            _ = try self.callFunction(main_value, &empty_args);
+            self.last_result = try self.callFunction(main_value, &empty_args);
         }
 
         if (self.debug_enabled) {
