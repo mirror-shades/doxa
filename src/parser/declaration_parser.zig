@@ -10,6 +10,13 @@ const precedence = @import("./precedence.zig");
 const declaration_parser = @import("./declaration_parser.zig");
 
 pub fn parseEnumDecl(self: *Parser) ErrorList!ast.Stmt {
+    // Check for public keyword
+    var is_public = false;
+    if (self.peek().type == .PUBLIC) {
+        is_public = true;
+        self.advance(); // consume 'public'
+    }
+
     self.advance(); // consume 'enum' keyword
 
     // Parse enum name
@@ -49,10 +56,18 @@ pub fn parseEnumDecl(self: *Parser) ErrorList!ast.Stmt {
     return ast.Stmt{ .EnumDecl = .{
         .name = name,
         .variants = try variants.toOwnedSlice(),
+        .is_public = is_public,
     } };
 }
 
 pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+    // Check for public keyword
+    var is_public = false;
+    if (self.peek().type == .PUBLIC) {
+        is_public = true;
+        self.advance(); // consume 'public'
+    }
+
     // Consume 'struct' keyword
     self.advance();
 
@@ -122,6 +137,7 @@ pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*
     struct_expr.* = .{ .StructDecl = .{
         .name = name,
         .fields = try fields.toOwnedSlice(),
+        .is_public = is_public,
     } };
 
     return struct_expr;
@@ -129,6 +145,13 @@ pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*
 
 pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
     var is_entry = false;
+    var is_public = false;
+
+    // Check for public keyword
+    if (self.peek().type == .PUBLIC) {
+        is_public = true;
+        self.advance(); // consume 'public'
+    }
 
     // Check for entry point marker
     if (self.peek().type == .MAIN) {
@@ -266,6 +289,7 @@ pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
         .return_type_info = return_type,
         .body = body,
         .is_entry = is_entry,
+        .is_public = is_public,
     } };
 }
 

@@ -59,6 +59,7 @@ pub const Expr = union(enum) {
         return_type_info: TypeInfo,
         body: []Stmt,
         is_entry: bool = false,
+        is_public: bool = false,
     },
     While: WhileExpr,
     For: ForExpr,
@@ -92,6 +93,7 @@ pub const Expr = union(enum) {
     EnumDecl: struct {
         name: token.Token,
         variants: []token.Token,
+        is_public: bool = false,
     },
     EnumMember: token.Token,
     DefaultArgPlaceholder: void,
@@ -501,6 +503,7 @@ pub const VarDecl = struct {
 pub const EnumDecl = struct {
     name: token.Token,
     variants: []const token.Token,
+    is_public: bool = false,
 };
 
 pub const ImportInfo = struct {
@@ -743,6 +746,7 @@ pub const FieldAccess = struct {
 pub const StructDecl = struct {
     name: token.Token,
     fields: []*StructField,
+    is_public: bool = false,
 };
 
 // Helper function to create TypeInfo from type expression
@@ -838,6 +842,7 @@ pub const TryStmt = struct {
 pub const ModuleInfo = struct {
     name: []const u8,
     imports: []const ImportInfo,
+    ast: ?*Expr = null, // Store the module's AST for reference
 };
 
 pub const CompoundAssignment = struct {

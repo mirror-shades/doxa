@@ -137,6 +137,9 @@ pub fn run(memory: *MemoryManager, interpreter: *Interpreter, source: []const u8
                 interpreter.entry_point_name = parser_instance.entry_point_name;
             }
 
+            // Set the parser reference for imported module handling
+            interpreter.parser = &parser_instance;
+
             try interpreter.interpret(statements);
             return interpreter.last_result;
         }

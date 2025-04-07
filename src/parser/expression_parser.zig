@@ -499,8 +499,28 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
         self.advance(); // consume }
         base_type_expr.* = .{ .Struct = try fields.toOwnedSlice() };
     } else if (self.declared_types.contains(type_name)) {
-        // Handle custom types (like enums)
+        // Handle custom types (like enums) that are declared in the current file
         base_type_expr.* = .{ .Custom = type_token };
+    } else if (self.imported_symbols) |symbols| {
+        // Check if this is an imported symbol (especially for enums)
+        var found = false;
+        var it = symbols.iterator();
+        while (it.next()) |entry| {
+            const symbol = entry.value_ptr.*;
+            // Check if the type name matches an imported type name
+            if ((symbol.kind == .Enum or symbol.kind == .Struct or symbol.kind == .Type) and
+                std.mem.eql(u8, symbol.name, type_name))
+            {
+                base_type_expr.* = .{ .Custom = type_token };
+                found = true;
+                break;
+            }
+        }
+
+        if (!found) {
+            // For identifiers that could be struct names
+            base_type_expr.* = .{ .Custom = type_token };
+        }
     } else {
         // For identifiers that could be struct names
         base_type_expr.* = .{ .Custom = type_token };
@@ -848,6 +868,38 @@ pub fn unary(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
 pub fn variable(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     const name = self.peek();
     self.advance();
+
+    // Check if this is an imported symbol with namespace prefix
+    if (self.peek().type == .DOT) {
+        // This could be a namespace access (module.symbol)
+        const namespace = name.lexeme;
+
+        // If we have a namespace registered
+        if (self.module_namespaces.contains(namespace)) {
+            // This is a module access - consume the dot
+            self.advance();
+
+            // Get the symbol name
+            if (self.peek().type != .IDENTIFIER) {
+                return error.ExpectedIdentifier;
+            }
+
+            const symbol_name = self.peek();
+            self.advance();
+
+            // Create a variable expression with the qualified name
+            const var_expr = try self.allocator.create(ast.Expr);
+            var_expr.* = .{ .Variable = symbol_name };
+
+            // Check for indexing operation
+            if (self.peek().type == .LEFT_BRACKET) {
+                self.advance(); // consume '['
+                return self.index(var_expr, .NONE);
+            }
+
+            return var_expr;
+        }
+    }
 
     // Create variable expression
     const var_expr = try self.allocator.create(ast.Expr);

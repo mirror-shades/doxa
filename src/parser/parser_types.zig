@@ -33,6 +33,9 @@ pub const Parser = struct {
     module_cache: std.StringHashMap(ModuleInfo),
     module_namespaces: std.StringHashMap(ModuleInfo),
 
+    // Track imported symbols
+    imported_symbols: ?std.StringHashMap(import_parser.ImportedSymbol) = null,
+
     // Add lexer field
     lexer: Lexer,
 
@@ -47,6 +50,7 @@ pub const Parser = struct {
             .current_file = current_file,
             .module_cache = std.StringHashMap(ModuleInfo).init(allocator),
             .module_namespaces = std.StringHashMap(ModuleInfo).init(allocator),
+            .imported_symbols = std.StringHashMap(import_parser.ImportedSymbol).init(allocator),
             .lexer = Lexer.init(allocator, "", current_file),
             .declared_types = std.StringHashMap(void).init(allocator),
         };
@@ -140,14 +144,30 @@ pub const Parser = struct {
             std.debug.print("\n", .{});
         }
 
-        // First pass: collect all function declarations and create them
-        var forward_declarations = std.StringHashMap(*ast.Stmt).init(self.allocator);
-        defer forward_declarations.deinit();
+        // First pass: process all imports so that their symbols are available for the rest
+        var imports = std.ArrayList(ast.ImportInfo).init(self.allocator);
+        defer imports.deinit();
 
         // Store current position
         const original_pos = self.current;
 
-        // First pass to find and store all function declarations
+        // Process imports first
+        while (self.peek().type != .EOF) {
+            if (self.peek().type == .IMPORT) {
+                const import_stmt = try import_parser.parseImportStmt(self);
+                try imports.append(import_stmt.Import);
+            } else {
+                self.advance();
+            }
+        }
+
+        // Reset position for second pass
+        self.current = original_pos;
+
+        // Second pass: collect all function declarations and create them
+        var forward_declarations = std.StringHashMap(*ast.Stmt).init(self.allocator);
+        defer forward_declarations.deinit();
+
         while (self.peek().type != .EOF) {
             // Check for entry point token (->)
             var is_entry = false;
@@ -158,11 +178,23 @@ pub const Parser = struct {
                 self.advance(); // consume ->
             }
 
+            // Check for public modifier
+            var is_public = false;
+            if (self.peek().type == .PUBLIC) {
+                is_public = true;
+                self.advance(); // consume pub/public
+            }
+
             if (self.peek().type == .FUNCTION) {
                 // Don't advance here - let parseFunctionDecl handle it
                 const fn_stmt = try declaration_parser.parseFunctionDecl(self);
                 const fn_ptr = try self.allocator.create(ast.Stmt);
                 fn_ptr.* = fn_stmt;
+
+                // Set the public flag if this was a public function
+                if (fn_stmt == .Function and is_public) {
+                    fn_ptr.*.Function.is_public = true;
+                }
 
                 // Get the function name from the statement
                 if (fn_stmt == .Function) {
@@ -181,28 +213,6 @@ pub const Parser = struct {
                 try forward_declarations.put(var_stmt.VarDecl.name.lexeme, var_ptr);
             } else {
                 self.advance(); // Only advance if we didn't parse a function
-            }
-        }
-
-        // Reset position for imports pass
-        self.current = original_pos;
-
-        // Second pass: process all imports
-        var imports = std.ArrayList(ast.ImportInfo).init(self.allocator);
-        defer imports.deinit();
-
-        while (self.peek().type != .EOF) {
-            if (self.peek().type == .IMPORT) {
-                const import_stmt = try import_parser.parseImportStmt(self);
-                try imports.append(import_stmt.Import);
-
-                // Process each imported module
-                const module_info = try self.resolveModule(import_stmt.Import.module_path);
-
-                // Store the namespace mapping
-                try self.module_namespaces.put(import_stmt.Import.namespace_alias orelse "", module_info);
-            } else {
-                self.advance();
             }
         }
 
@@ -233,7 +243,11 @@ pub const Parser = struct {
             if (current.type == .EOF) break;
 
             const stmt = blk: {
-                if (self.peek().type == .VAR or self.peek().type == .CONST)
+                if (self.peek().type == .IMPORT) {
+                    // We've already processed imports, so just skip this statement
+                    const import_stmt = try import_parser.parseImportStmt(self);
+                    break :blk ast.Stmt{ .Import = import_stmt.Import };
+                } else if (self.peek().type == .VAR or self.peek().type == .CONST)
                     break :blk try declaration_parser.parseVarDecl(self)
                 else if (self.peek().type == .LEFT_BRACE) {
                     const block_stmt = if (try self.block(null, .NONE)) |expr|
@@ -242,11 +256,16 @@ pub const Parser = struct {
                         ast.Stmt{ .Expression = null };
                     break :blk block_stmt;
                 } else if (self.peek().type == .FUNCTION or
-                    self.peek().type == .MAIN)
+                    self.peek().type == .MAIN or
+                    self.peek().type == .PUBLIC)
                 {
                     // We already have the function declarations in forward_declarations
                     // Skip them since we've already processed them
                     var brace_count: usize = 0;
+                    // If this is PUBLIC token, skip it first
+                    if (self.peek().type == .PUBLIC) {
+                        self.advance(); // Skip PUBLIC token
+                    }
                     while (self.peek().type != .EOF) {
                         if (self.peek().type == .LEFT_BRACE) {
                             brace_count += 1;
@@ -280,6 +299,10 @@ pub const Parser = struct {
                     if (expr != null) {
                         try statements.append(stmt);
                     }
+                },
+                .Import => {
+                    // We already processed the imports in the first pass
+                    // Just skip them in the final statements list to avoid duplicates
                 },
                 else => try statements.append(stmt),
             }
@@ -491,6 +514,91 @@ pub const Parser = struct {
         const struct_name = self.peek();
         const start_pos = self.current;
         self.advance();
+
+        // Handle namespace.Symbol struct access
+        if (self.peek().type == .DOT) {
+            // This could be a namespace.Struct initialization
+            const namespace = struct_name.lexeme;
+
+            // Check if namespace exists
+            if (self.module_namespaces.contains(namespace)) {
+                self.advance(); // consume dot
+
+                // Get the struct type name
+                if (self.peek().type != .IDENTIFIER) {
+                    self.current = start_pos; // Reset position
+                    return null;
+                }
+
+                const type_name = self.peek();
+                self.advance();
+
+                // Check for opening brace
+                if (self.peek().type != .LEFT_BRACE) {
+                    self.current = start_pos; // Reset position
+                    return null;
+                }
+
+                // Parse struct initialization
+                self.advance(); // consume {
+
+                var fields = std.ArrayList(*ast.StructInstanceField).init(self.allocator);
+                errdefer {
+                    for (fields.items) |field| {
+                        field.deinit(self.allocator);
+                        self.allocator.destroy(field);
+                    }
+                    fields.deinit();
+                }
+
+                while (self.peek().type != .RIGHT_BRACE) {
+                    // Parse field name
+                    if (self.peek().type != .IDENTIFIER) {
+                        return error.ExpectedIdentifier;
+                    }
+                    const field_name = self.peek();
+                    self.advance();
+
+                    // Expect =
+                    if (self.peek().type != .ASSIGN) {
+                        return error.ExpectedEquals;
+                    }
+                    self.advance();
+
+                    // Parse field value
+                    const value = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
+
+                    // Create field
+                    const field = try self.allocator.create(ast.StructInstanceField);
+                    field.* = .{
+                        .name = field_name,
+                        .value = value,
+                    };
+                    try fields.append(field);
+
+                    // Handle comma
+                    if (self.peek().type == .COMMA) {
+                        self.advance();
+                        // Allow trailing comma
+                        if (self.peek().type == .RIGHT_BRACE) {
+                            break;
+                        }
+                    } else if (self.peek().type != .RIGHT_BRACE) {
+                        return error.ExpectedCommaOrBrace;
+                    }
+                }
+
+                self.advance(); // consume }
+
+                // Create struct literal
+                const struct_init = try self.allocator.create(ast.Expr);
+                struct_init.* = .{ .StructLiteral = .{
+                    .name = type_name,
+                    .fields = try fields.toOwnedSlice(),
+                } };
+                return struct_init;
+            }
+        }
 
         if (self.peek().type != .LEFT_BRACE) {
             if (self.debug_enabled) {
@@ -1102,10 +1210,13 @@ pub const Parser = struct {
 
         var new_parser = Parser.init(self.allocator, tokens.items, module_name, self.debug_enabled);
 
+        // Parse the module file
+        const module_statements = try new_parser.execute();
+
         // Create a block expression to hold the module statements
         const module_block = try self.allocator.create(ast.Expr);
         module_block.* = .{ .Block = .{
-            .statements = try new_parser.execute(),
+            .statements = module_statements,
             .value = null,
         } };
 
@@ -1117,34 +1228,176 @@ pub const Parser = struct {
     }
 
     pub fn loadModuleSource(self: *Parser, module_name: []const u8) ErrorList![]const u8 {
-        // Construct the module path
-        // Assuming modules are in a "modules" directory relative to the current file
-        var path_buffer = std.ArrayList(u8).init(self.allocator);
-        defer path_buffer.deinit();
+        if (self.debug_enabled) {
+            std.debug.print("Loading module: {s}\n", .{module_name});
+        }
+
+        // Remove ./ prefix if present, since we'll be constructing paths properly
+        var clean_name = module_name;
+        if (std.mem.startsWith(u8, clean_name, "./")) {
+            clean_name = clean_name[2..];
+            if (self.debug_enabled) {
+                std.debug.print("Removed ./ prefix, clean name: {s}\n", .{clean_name});
+            }
+        }
+
+        // Check if the module name already has an extension
+        const has_doxa_ext = std.mem.endsWith(u8, clean_name, ".doxa");
+        const has_extension = has_doxa_ext;
+
+        if (self.debug_enabled) {
+            std.debug.print("Module already has extension: {}\n", .{has_extension});
+        }
 
         // Get the directory of the current file
         const current_dir = std.fs.path.dirname(self.current_file) orelse ".";
-        try path_buffer.appendSlice(current_dir);
-        try path_buffer.appendSlice("/modules/");
-        try path_buffer.appendSlice(module_name);
-        try path_buffer.appendSlice(".dx"); // Assuming .dx is your file extension
 
-        // Read the file
-        const file = try std.fs.openFileAbsolute(path_buffer.items, .{});
-        defer file.close();
-
-        // Get file size
-        const file_size = try file.getEndPos();
-
-        // Allocate buffer and read file
-        const buffer = try self.allocator.alloc(u8, file_size);
-        const bytes_read = try file.readAll(buffer);
-        if (bytes_read != file_size) {
-            self.allocator.free(buffer);
-            return error.IncompleteRead;
+        if (self.debug_enabled) {
+            std.debug.print("Current directory: {s}\n", .{current_dir});
         }
 
-        return buffer;
+        // Capture debug flag for the inner function
+        const debug_enabled = self.debug_enabled;
+
+        // We'll use this function to read a file
+        const readFileContents = struct {
+            fn read(alloc: std.mem.Allocator, file_path: []const u8, debug: bool) ![]u8 {
+                if (debug) {
+                    std.debug.print("Attempting to read: {s}\n", .{file_path});
+                }
+
+                var file = try std.fs.cwd().openFile(file_path, .{});
+                defer file.close();
+
+                const size = try file.getEndPos();
+                const buffer = try alloc.alloc(u8, size);
+                errdefer alloc.free(buffer);
+
+                const bytes_read = try file.readAll(buffer);
+                if (bytes_read != size) {
+                    alloc.free(buffer);
+                    return error.IncompleteRead;
+                }
+
+                return buffer;
+            }
+        }.read;
+
+        // Try several file locations in order
+        var err: anyerror = error.FileNotFound;
+
+        // 1. First try directly with the given name (possibly including extension)
+        if (has_extension) {
+            var direct_path = std.ArrayList(u8).init(self.allocator);
+            defer direct_path.deinit();
+            try direct_path.appendSlice(clean_name);
+
+            if (readFileContents(self.allocator, direct_path.items, debug_enabled)) |buffer| {
+                return buffer;
+            } else |e| {
+                err = e;
+                if (self.debug_enabled) {
+                    std.debug.print("Failed to open {s} with existing extension: {}\n", .{ direct_path.items, e });
+                }
+            }
+        }
+
+        // 2. Try in CWD with .doxa extension
+        var cwd_doxa_path = std.ArrayList(u8).init(self.allocator);
+        defer cwd_doxa_path.deinit();
+        try cwd_doxa_path.appendSlice(clean_name);
+        if (!has_extension) try cwd_doxa_path.appendSlice(".doxa");
+
+        if (readFileContents(self.allocator, cwd_doxa_path.items, debug_enabled)) |buffer| {
+            return buffer;
+        } else |e| {
+            err = e;
+            if (self.debug_enabled) {
+                std.debug.print("Failed to open {s} in current working directory: {}\n", .{ cwd_doxa_path.items, e });
+            }
+        }
+
+        // 3. Try in the same directory as the current file with potential existing extension
+        if (has_extension) {
+            var same_dir_exact_path = std.ArrayList(u8).init(self.allocator);
+            defer same_dir_exact_path.deinit();
+            try same_dir_exact_path.appendSlice(current_dir);
+            try same_dir_exact_path.appendSlice("/");
+            try same_dir_exact_path.appendSlice(clean_name);
+
+            if (readFileContents(self.allocator, same_dir_exact_path.items, debug_enabled)) |buffer| {
+                return buffer;
+            } else |e| {
+                err = e;
+                if (self.debug_enabled) {
+                    std.debug.print("Failed to open {s}: {}\n", .{ same_dir_exact_path.items, e });
+                }
+            }
+        }
+
+        // 4. Try in the same directory as the current file with .doxa extension
+        var same_dir_path = std.ArrayList(u8).init(self.allocator);
+        defer same_dir_path.deinit();
+        try same_dir_path.appendSlice(current_dir);
+        try same_dir_path.appendSlice("/");
+        try same_dir_path.appendSlice(clean_name);
+        if (!has_extension) try same_dir_path.appendSlice(".doxa");
+
+        if (self.debug_enabled) {
+            std.debug.print("Trying: {s}\n", .{same_dir_path.items});
+        }
+
+        if (readFileContents(self.allocator, same_dir_path.items, debug_enabled)) |buffer| {
+            return buffer;
+        } else |e| {
+            err = e;
+            if (self.debug_enabled) {
+                std.debug.print("Failed to open {s}: {}\n", .{ same_dir_path.items, e });
+            }
+        }
+
+        // 5. Try the modules subdirectory (with potential existing extension)
+        if (has_extension) {
+            var modules_exact_path = std.ArrayList(u8).init(self.allocator);
+            defer modules_exact_path.deinit();
+            try modules_exact_path.appendSlice(current_dir);
+            try modules_exact_path.appendSlice("/modules/");
+            try modules_exact_path.appendSlice(clean_name);
+
+            if (readFileContents(self.allocator, modules_exact_path.items, debug_enabled)) |buffer| {
+                return buffer;
+            } else |e| {
+                err = e;
+                if (self.debug_enabled) {
+                    std.debug.print("Failed to open {s}: {}\n", .{ modules_exact_path.items, e });
+                }
+            }
+        }
+
+        // 6. Try the modules subdirectory with .doxa extension
+        var modules_path = std.ArrayList(u8).init(self.allocator);
+        defer modules_path.deinit();
+        try modules_path.appendSlice(current_dir);
+        try modules_path.appendSlice("/modules/");
+        try modules_path.appendSlice(clean_name);
+        if (!has_extension) try modules_path.appendSlice(".doxa");
+
+        if (readFileContents(self.allocator, modules_path.items, debug_enabled)) |buffer| {
+            return buffer;
+        } else |e| {
+            err = e;
+            if (self.debug_enabled) {
+                std.debug.print("Failed to open {s}: {}\n", .{ modules_path.items, e });
+            }
+        }
+
+        // If we reach here, all attempts failed
+        if (self.debug_enabled) {
+            std.debug.print("All paths failed for module: {s}\n", .{module_name});
+            std.debug.print("Current directory: {s}\n", .{current_dir});
+        }
+
+        return error.ModuleNotFound;
     }
 
     pub fn arrayPush(self: *Parser, array: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
@@ -1194,6 +1447,7 @@ pub const Parser = struct {
         return ast.ModuleInfo{
             .name = name,
             .imports = try imports.toOwnedSlice(),
+            .ast = module_ast, // Store the full module AST for later reference
         };
     }
 
@@ -1277,5 +1531,118 @@ pub const Parser = struct {
         } };
 
         return input_expr;
+    }
+
+    pub fn loadAndRegisterModule(self: *Parser, module_path: []const u8, namespace: []const u8, specific_symbol: ?[]const u8) ErrorList!void {
+        // Get module info - this will parse the module if not already cached
+        const module_info = try self.resolveModule(module_path);
+
+        // Register the module in namespaces map
+        try self.module_namespaces.put(namespace, module_info);
+
+        // If we have the full module AST available (from module_info),
+        // we can scan it for public symbols and register them
+        if (module_info.ast) |module_ast| {
+            try self.registerPublicSymbols(module_ast, module_path, namespace, specific_symbol);
+        }
+    }
+
+    // Function to scan a module's AST and register its public symbols
+    fn registerPublicSymbols(self: *Parser, module_ast: *ast.Expr, module_path: []const u8, namespace: []const u8, specific_symbol: ?[]const u8) !void {
+        // Initialize symbol table for this module if needed
+        if (self.imported_symbols == null) {
+            self.imported_symbols = std.StringHashMap(import_parser.ImportedSymbol).init(self.allocator);
+        }
+
+        if (self.debug_enabled) {
+            std.debug.print("Registering public symbols from module: {s}, namespace: {s}\n", .{ module_path, namespace });
+        }
+
+        // If this is a block, process its statements
+        if (module_ast.* == .Block) {
+            const statements = module_ast.Block.statements;
+            for (statements) |stmt| {
+                switch (stmt) {
+                    // Handle enum declarations
+                    .EnumDecl => |enum_decl| {
+                        const is_public = enum_decl.is_public;
+                        if (is_public) {
+                            const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ namespace, enum_decl.name.lexeme });
+
+                            if (self.debug_enabled) {
+                                std.debug.print("Registering public enum: {s}\n", .{full_name});
+                            }
+
+                            // Only register if we want all symbols or this specific one
+                            if (specific_symbol == null or std.mem.eql(u8, specific_symbol.?, enum_decl.name.lexeme)) {
+                                try self.imported_symbols.?.put(full_name, .{
+                                    .kind = .Enum,
+                                    .name = enum_decl.name.lexeme,
+                                    .original_module = module_path,
+                                });
+
+                                // Also register each enum variant for easy access
+                                for (enum_decl.variants) |variant| {
+                                    const variant_full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ full_name, variant.lexeme });
+                                    try self.imported_symbols.?.put(variant_full_name, .{
+                                        .kind = .Enum,
+                                        .name = variant.lexeme,
+                                        .original_module = module_path,
+                                    });
+                                }
+                            }
+                        }
+                    },
+                    // Handle function declarations
+                    .Function => |func| {
+                        const is_public = func.is_public;
+                        if (is_public) {
+                            const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ namespace, func.name.lexeme });
+
+                            if (self.debug_enabled) {
+                                std.debug.print("Registering public function: {s}\n", .{full_name});
+                            }
+
+                            if (specific_symbol == null or std.mem.eql(u8, specific_symbol.?, func.name.lexeme)) {
+                                try self.imported_symbols.?.put(full_name, .{
+                                    .kind = .Function,
+                                    .name = func.name.lexeme,
+                                    .original_module = module_path,
+                                });
+                            }
+                        }
+                    },
+                    // Handle struct declarations
+                    .Expression => |expr_opt| {
+                        if (expr_opt) |expr| {
+                            if (expr.* == .StructDecl) {
+                                const struct_decl = expr.StructDecl;
+                                const is_public = struct_decl.is_public;
+                                if (is_public) {
+                                    const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ namespace, struct_decl.name.lexeme });
+
+                                    if (specific_symbol == null or std.mem.eql(u8, specific_symbol.?, struct_decl.name.lexeme)) {
+                                        try self.imported_symbols.?.put(full_name, .{
+                                            .kind = .Struct,
+                                            .name = struct_decl.name.lexeme,
+                                            .original_module = module_path,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    else => {}, // Skip other types of statements
+                }
+            }
+        }
+    }
+
+    // Helper to check if a symbol is imported and from which module
+    pub fn findImportedSymbol(self: *Parser, name: []const u8) ?import_parser.ImportedSymbol {
+        if (self.imported_symbols) |symbols| {
+            return symbols.get(name);
+        }
+        return null;
     }
 };

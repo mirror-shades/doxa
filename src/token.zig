@@ -48,6 +48,7 @@ pub const TokenType = enum {
     VAR, // var
     CONST, // const
     IMPORT, // import
+    PUBLIC, // public
     INPUT, // input
     ASSERT, // assert
     RETURN, // return
