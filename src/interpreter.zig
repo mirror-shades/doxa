@@ -1973,29 +1973,117 @@ pub const Interpreter = struct {
                     .fields = try struct_fields.toOwnedSlice(),
                 } };
             },
-            .FieldAssignment => |field_assign| {
-                const object = try self.evaluate(field_assign.object);
-                const value = try self.evaluate(field_assign.value);
+            .FieldAssignment => |assign| {
+                // Evaluate the RHS first to get the value
+                const value = try self.evaluate(assign.value);
 
-                if (self.debug_enabled) {
-                    std.debug.print("Field assignment: {s} = {any}\n", .{
-                        field_assign.field.lexeme,
-                        value,
-                    });
+                // Check if the object is a variable representing a namespace
+                if (assign.object.* == .Variable) {
+                    const namespace_name = assign.object.Variable.lexeme;
+                    // Check if the parser context is available and contains the namespace
+                    if (self.parser) |p| {
+                        if (p.module_namespaces.contains(namespace_name)) {
+                            // This is an assignment to a variable within a namespace
+                            const field_name = assign.field.lexeme;
+                            // Construct the fully qualified name (e.g., "math.ticker")
+                            const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ namespace_name, field_name });
+                            defer self.allocator.free(full_name);
+
+                            if (self.debug_enabled) {
+                                std.debug.print("Attempting assignment to imported variable: {s} = {any}\n", .{ full_name, value });
+                            }
+
+                            // Check if the global variable exists and get its type info.
+                            // Public symbols are registered globally, so we check self.globals.
+                            const global_type_info = self.globals.getTypeInfo(full_name) catch |err| {
+                                if (self.debug_enabled) {
+                                    std.debug.print("Error looking up TypeInfo for imported var '{s}': {}\n", .{ full_name, err });
+                                }
+                                // Return specific errors or UndefinedVariable if not found globally
+                                return switch (err) {
+                                    error.UndefinedVariable => error.UndefinedVariable,
+                                    else => err, // Propagate other errors like OutOfMemory
+                                };
+                            };
+
+                            // Check mutability (was it declared 'var' or 'const' in the module?)
+                            if (!global_type_info.is_mutable) {
+                                if (self.debug_enabled) {
+                                    std.debug.print("Error: Cannot assign to imported constant {s}\n", .{full_name});
+                                }
+                                return error.ConstAssignment; // Cannot assign to immutable variable
+                            }
+
+                            // Optional but recommended: Add type checking
+                            if (!global_type_info.is_dynamic) {
+                                const value_tag_name = @tagName(value);
+                                const expected_tag_name: ?[]const u8 = switch (global_type_info.base) {
+                                    .Int => "int",
+                                    .Float => "float",
+                                    .String => "string",
+                                    .Boolean => "boolean",
+                                    // Add cases for other types as needed (Array, U8, etc.)
+                                    else => null, // Allow assignment if type is complex or not checked
+                                };
+                                // Check if types match (simple tag check for now)
+                                if (expected_tag_name != null and !std.mem.eql(u8, value_tag_name, expected_tag_name)) {
+                                    if (self.debug_enabled) {
+                                        std.debug.print("Type mismatch assigning to {s}. Expected {s}, got {s}.\n", .{ full_name, expected_tag_name, value_tag_name });
+                                    }
+                                    return error.TypeError; // Type mismatch
+                                }
+                            }
+
+                            // Assign the value in the *global* environment using the full name
+                            try self.globals.assign(full_name, value);
+                            if (self.debug_enabled) {
+                                std.debug.print("Assigned imported variable {s} = {any} in global scope\n", .{ full_name, value });
+                            }
+                            return value; // Return the assigned value successfully
+                        }
+                    }
                 }
 
+                // --- If it wasn't a namespace assignment, proceed with other possibilities (like struct fields) ---
+                const object = try self.evaluate(assign.object);
                 switch (object) {
                     .struct_value => |*struct_val| {
-                        // Find and update the field
-                        for (struct_val.fields) |*field| {
-                            if (std.mem.eql(u8, field.name, field_assign.field.lexeme)) {
-                                field.value = value;
-                                return value;
-                            }
+                        // --- Struct Field Assignment ---
+                        // This requires finding the original struct variable in the environment,
+                        // modifying its field, and potentially assigning the modified struct back.
+                        // This is complex and not fully implemented here.
+                        if (self.debug_enabled) {
+                            std.debug.print("Mutable struct field assignment is not yet fully supported.\n", .{});
                         }
-                        return error.FieldNotFound;
+                        // Placeholder: Return error until proper implementation
+                        return error.NotImplemented;
+
+                        // // --- Future Implementation Sketch ---
+                        // // Find the field in the evaluated struct copy
+                        // for (struct_val.fields) |*field| {
+                        //     if (std.mem.eql(u8, field.name, assign.field.lexeme)) {
+                        //         // TODO: Check field mutability based on struct definition if possible
+                        //         field.value = value; // Modify the temporary copy
+                        //
+                        //         // Find the original struct variable and update it in the environment
+                        //         if (assign.object.* == .Variable) {
+                        //             // Need Environment.assignStructField(varName, fieldName, newValue) or similar
+                        //             // try self.environment.assign(assign.object.Variable.lexeme, object); // This assigns the modified *copy* back
+                        //         } else {
+                        //            // Handle assignment through nested field access, etc.
+                        //         }
+                        //         return value;
+                        //     }
+                        // }
+                        // return error.FieldNotFound; // Field not found in struct
                     },
-                    else => return error.NotAStruct,
+                    else => {
+                        // If it's not a namespace variable or a struct, assignment is invalid
+                        if (self.debug_enabled) {
+                            std.debug.print("Error: Cannot assign to field of type {s}. Expected namespace or struct.\n", .{@tagName(object)});
+                        }
+                        return error.InvalidAssignmentTarget;
+                    },
                 }
             },
             .Exists => |e| {
