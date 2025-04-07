@@ -154,6 +154,7 @@ pub const Interpreter = struct {
     had_error: bool = false,
     has_entry_point: bool = false,
     entry_point_location: ?token.Token = null,
+    parser: ?*@import("parser/parser_types.zig").Parser = null,
 
     pub fn init(allocator: std.mem.Allocator, debug_enabled: bool) !Interpreter {
         const globals = try allocator.create(Environment);
@@ -962,6 +963,27 @@ pub const Interpreter = struct {
                     return value;
                 }
 
+                // Check if this is a namespace (imported module)
+                // Check for imports registered by the parser
+                if (self.parser) |p| {
+                    if (p.imported_symbols) |_| {
+                        if (self.debug_enabled) {
+                            std.debug.print("Checking for imported symbols with name: {s}\n", .{var_token.lexeme});
+                        }
+
+                        // Check if this is an import namespace
+                        if (p.module_namespaces.contains(var_token.lexeme)) {
+                            if (self.debug_enabled) {
+                                std.debug.print("Found module namespace: {s}\n", .{var_token.lexeme});
+                            }
+
+                            // Return a special value to indicate this is a namespace
+                            // The caller should check for namespace when accessing fields
+                            return token.TokenLiteral{ .nothing = {} };
+                        }
+                    }
+                }
+
                 // If we get here, variable wasn't found
                 if (self.debug_enabled) {
                     std.debug.print("Variable not found: '{s}'\n", .{var_token.lexeme});
@@ -1683,15 +1705,70 @@ pub const Interpreter = struct {
                 // First check if this is an enum type access
                 if (object == .nothing) {
                     // Try to get type info for the object
-                    const type_info = self.environment.getTypeInfo(field.object.Variable.lexeme) catch |err| {
-                        if (self.debug_enabled) {
-                            std.debug.print("Error getting type info: {}\n", .{err});
+                    if (field.object.* == .Variable) {
+                        // Check if this is a module namespace
+                        const var_name = field.object.Variable.lexeme;
+                        if (self.parser) |p| {
+                            if (p.module_namespaces.contains(var_name)) {
+                                // This is a module namespace, check for the field in imported symbols
+                                const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ var_name, field.field.lexeme });
+                                defer self.allocator.free(full_name);
+
+                                if (self.debug_enabled) {
+                                    std.debug.print("Looking up imported symbol: {s}\n", .{full_name});
+                                }
+
+                                if (p.imported_symbols) |symbols| {
+                                    if (symbols.get(full_name)) |symbol| {
+                                        if (self.debug_enabled) {
+                                            std.debug.print("Found imported symbol: {s} (kind: {s})\n", .{ full_name, @tagName(symbol.kind) });
+                                        }
+
+                                        // Create function value if it's a function
+                                        if (symbol.kind == .Function) {
+                                            // Load the function from the module
+                                            const module_info = p.module_namespaces.get(var_name).?;
+
+                                            // Find the function in the module's statements
+                                            if (module_info.ast) |module_ast| {
+                                                if (module_ast.* == .Block) {
+                                                    for (module_ast.Block.statements) |stmt| {
+                                                        if (stmt == .Function and
+                                                            std.mem.eql(u8, stmt.Function.name.lexeme, field.field.lexeme))
+                                                        {
+
+                                                            // Create a function value
+                                                            return token.TokenLiteral{
+                                                                .function = .{
+                                                                    .params = stmt.Function.params,
+                                                                    .body = stmt.Function.body,
+                                                                    .closure = self.environment,
+                                                                },
+                                                            };
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        // For other types, we might need different handling
+                                        return token.TokenLiteral{ .nothing = {} };
+                                    }
+                                }
+                            }
                         }
-                        return err;
-                    };
-                    if (type_info.base == .Enum) {
-                        // This is an enum member access
-                        return token.TokenLiteral{ .enum_variant = field.field.lexeme };
+
+                        // Continue with regular type info check
+                        const type_info = self.environment.getTypeInfo(field.object.Variable.lexeme) catch |err| {
+                            if (self.debug_enabled) {
+                                std.debug.print("Error getting type info: {}\n", .{err});
+                            }
+                            return err;
+                        };
+                        if (type_info.base == .Enum) {
+                            // This is an enum member access
+                            return token.TokenLiteral{ .enum_variant = field.field.lexeme };
+                        }
                     }
                 }
                 // Otherwise handle as struct field access

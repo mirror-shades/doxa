@@ -1,5 +1,9 @@
-import "safeMath.doxa" is math; 
+import "./safeMath.doxa" is math; 
 
-pub function test() { 
-    return math.add(2, 3); 
-}
+var x :: int is math.add(2, 3); 
+
+x?;
+
+
+
+
