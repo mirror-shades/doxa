@@ -190,16 +190,87 @@ pub const Interpreter = struct {
             std.debug.print("Number of statements: {}\n", .{statements.len});
         }
 
-        // First pass - create forward declarations for all functions
-        for (statements, 0..) |*stmt, i| {
+        // First pass - Process all struct and enum declarations
+        for (0..statements.len) |i| {
+            const stmt = &statements[i];
             if (self.debug_enabled) {
+                std.debug.print("\nScanning for types - statement {d}: {s}\n", .{ i, @tagName(stmt.*) });
+            }
+
+            if (stmt.* == .Expression) {
+                // Check for struct declarations in expressions
+                if (stmt.Expression) |expr| {
+                    if (expr.* == .StructDecl) {
+                        if (self.debug_enabled) {
+                            std.debug.print("Processing struct declaration: {s}\n", .{expr.StructDecl.name.lexeme});
+                        }
+                        // Define the struct type in the environment
+                        var fields = std.ArrayList(ast.StructFieldType).init(self.allocator);
+                        defer fields.deinit();
+
+                        for (expr.StructDecl.fields) |field| {
+                            const type_info = try ast.typeInfoFromExpr(self.allocator, field.type_expr);
+                            try fields.append(.{
+                                .name = field.name.lexeme,
+                                .type_info = type_info,
+                            });
+                        }
+
+                        try self.environment.define(expr.StructDecl.name.lexeme, .{ .nothing = {} }, .{
+                            .base = .Struct,
+                            .is_mutable = true,
+                            .is_dynamic = false,
+                            .struct_fields = try fields.toOwnedSlice(),
+                        });
+                    }
+                }
+            } else if (stmt.* == .EnumDecl) {
+                if (self.debug_enabled) {
+                    std.debug.print("Processing enum declaration: {s}\n", .{stmt.EnumDecl.name.lexeme});
+                }
+                _ = try self.executeStatement(stmt, self.debug_enabled);
+            }
+        }
+
+        // Second pass - Process all variable declarations
+        var var_declarations = std.ArrayList(*ast.Stmt).init(self.allocator);
+        defer var_declarations.deinit();
+
+        for (0..statements.len) |i| {
+            const stmt = &statements[i];
+            if (self.debug_enabled) {
+                std.debug.print("\nScanning statement {d}: {s}\n", .{ i, @tagName(stmt.*) });
+            }
+
+            if (stmt.* == .VarDecl) {
+                if (self.debug_enabled) {
+                    std.debug.print("Found variable declaration: {s}\n", .{stmt.VarDecl.name.lexeme});
+                }
+                try var_declarations.append(stmt);
+            }
+        }
+
+        // Process variable declarations in order of appearance
+        if (self.debug_enabled) {
+            std.debug.print("\nProcessing {d} variable declarations\n", .{var_declarations.items.len});
+        }
+
+        for (var_declarations.items) |stmt| {
+            if (self.debug_enabled) {
+                std.debug.print("Processing variable declaration: {s}\n", .{stmt.VarDecl.name.lexeme});
+            }
+            _ = try self.executeStatement(stmt, self.debug_enabled);
+        }
+
+        // Third pass - Process all function declarations
+        for (statements, 0..) |*stmt, i| {
+            if (self.debug_enabled and stmt.* == .Function) {
                 std.debug.print("\nChecking statement {d}: {s}\n", .{ i, @tagName(stmt.*) });
                 std.debug.print("Raw statement: {any}\n", .{stmt.*});
-                if (stmt.* == .Function) {
-                    const f = stmt.Function;
-                    std.debug.print("Found function: {s}\n", .{f.name.lexeme});
-                }
+                const f = stmt.Function;
+                std.debug.print("Found function: {s}\n", .{f.name.lexeme});
             }
+
             if (stmt.* == .Function) {
                 const f = stmt.Function;
                 if (self.debug_enabled) {
@@ -214,11 +285,15 @@ pub const Interpreter = struct {
                     },
                 };
 
-                try self.environment.define(f.name.lexeme, function, .{
-                    .base = .Function,
-                    .is_mutable = false,
-                    .is_dynamic = false,
-                });
+                try self.environment.define(
+                    f.name.lexeme,
+                    function,
+                    .{
+                        .base = .Function,
+                        .is_mutable = false,
+                        .is_dynamic = false,
+                    },
+                );
 
                 if (self.debug_enabled) {
                     std.debug.print("Defined function '{s}' with {d} parameters\n", .{ f.name.lexeme, f.params.len });
@@ -227,13 +302,13 @@ pub const Interpreter = struct {
         }
 
         if (self.entry_point_name == null) {
-            // Script mode - execute all statements
+            // Script mode - execute all statements (except functions and variables which were already processed)
             if (self.debug_enabled) {
                 std.debug.print("\n=== Running in script mode ===\n", .{});
             }
             for (statements) |*stmt| {
-                if (stmt.* == .Function) {
-                    // Skip function declarations in second pass since they're already defined
+                if (stmt.* == .Function or stmt.* == .VarDecl) {
+                    // Skip declarations in third pass since they're already defined
                     continue;
                 }
                 self.last_result = try self.executeStatement(stmt, self.debug_enabled);
@@ -244,25 +319,8 @@ pub const Interpreter = struct {
                 std.debug.print("\n=== Running in program mode ===\n", .{});
             }
 
-            // In program mode, still process variable declarations
-            // but skip other top-level expressions
-            for (statements) |*stmt| {
-                if (stmt.* == .Function) {
-                    // Skip function declarations (already processed)
-                    continue;
-                } else if (stmt.* == .VarDecl) {
-                    // Process variable declarations
-                    if (self.debug_enabled) {
-                        std.debug.print("Processing top-level variable declaration in program mode\n", .{});
-                    }
-                    self.last_result = try self.executeStatement(stmt, self.debug_enabled);
-                } else {
-                    // Skip other top-level statements in program mode
-                    if (self.debug_enabled) {
-                        std.debug.print("Skipping top-level expression in program mode\n", .{});
-                    }
-                }
-            }
+            // In program mode, variable declarations and functions are already processed
+            // Only execute the entry point
         }
 
         // Handle entry point execution
@@ -1744,15 +1802,8 @@ pub const Interpreter = struct {
                     std.debug.print("Variable name: {s}\n", .{e.variable.lexeme});
                 }
 
-                // Store the current environment to restore it later
-                const prev_env = self.environment;
-                defer self.environment = prev_env;
-
-                // Create a new environment for the quantifier scope
-                var quantifier_env = Environment.init(self.allocator, self.environment, self.debug_enabled);
-                self.environment = &quantifier_env;
-
-                // Evaluate the array expression to get the actual array
+                // Evaluate the array expression in the current environment
+                // BEFORE creating the new quantifier environment
                 if (self.debug_enabled) {
                     std.debug.print("Evaluating array expression: {any}\n", .{e.array});
                 }
@@ -1766,6 +1817,14 @@ pub const Interpreter = struct {
                     }
                     return error.TypeError;
                 }
+
+                // Store the current environment to restore it later
+                const prev_env = self.environment;
+                defer self.environment = prev_env;
+
+                // Create a new environment for the quantifier scope
+                var quantifier_env = Environment.init(self.allocator, self.environment, self.debug_enabled);
+                self.environment = &quantifier_env;
 
                 // Iterate over the actual array elements
                 for (array_value.array) |val| {
@@ -1788,6 +1847,12 @@ pub const Interpreter = struct {
                 // Get the variable name
                 const var_name = f.variable.lexeme;
 
+                // Evaluate the array expression in the current environment first
+                const array_value = try self.evaluate(f.array);
+                if (array_value != .array) {
+                    return error.TypeError;
+                }
+
                 // Store the current environment to restore it later
                 const prev_env = self.environment;
                 defer self.environment = prev_env;
@@ -1795,12 +1860,6 @@ pub const Interpreter = struct {
                 // Create a new environment for the quantifier scope
                 var quantifier_env = Environment.init(self.allocator, self.environment, self.debug_enabled);
                 self.environment = &quantifier_env;
-
-                // Evaluate the array expression to get the actual array
-                const array_value = try self.evaluate(f.array);
-                if (array_value != .array) {
-                    return error.TypeError;
-                }
 
                 // Iterate over the actual array elements
                 for (array_value.array) |val| {

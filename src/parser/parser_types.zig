@@ -9,7 +9,7 @@ const ErrorList = @import("../reporting.zig").ErrorList;
 const Precedence = @import("./precedence.zig").Precedence;
 const Reporting = @import("../reporting.zig").Reporting;
 const Lexer = @import("../lexer.zig").Lexer;
-pub const Mode = enum { Safe, Normal };
+const import_parser = @import("import_parser.zig");
 
 const TokenStyle = enum {
     Keyword,
@@ -22,7 +22,6 @@ pub const Parser = struct {
     current: usize,
     allocator: std.mem.Allocator,
     debug_enabled: bool,
-    mode: Mode = .Normal,
     current_file: []const u8,
 
     // Add these fields to track entry points
@@ -32,6 +31,7 @@ pub const Parser = struct {
 
     current_module: ?ModuleInfo = null,
     module_cache: std.StringHashMap(ModuleInfo),
+    module_namespaces: std.StringHashMap(ModuleInfo),
 
     // Add lexer field
     lexer: Lexer,
@@ -46,6 +46,7 @@ pub const Parser = struct {
             .debug_enabled = debug_enabled,
             .current_file = current_file,
             .module_cache = std.StringHashMap(ModuleInfo).init(allocator),
+            .module_namespaces = std.StringHashMap(ModuleInfo).init(allocator),
             .lexer = Lexer.init(allocator, "", current_file),
             .declared_types = std.StringHashMap(void).init(allocator),
         };
@@ -140,8 +141,8 @@ pub const Parser = struct {
         }
 
         // First pass: collect all function declarations and create them
-        var function_table = std.StringHashMap(*ast.Stmt).init(self.allocator);
-        defer function_table.deinit();
+        var forward_declarations = std.StringHashMap(*ast.Stmt).init(self.allocator);
+        defer forward_declarations.deinit();
 
         // Store current position
         const original_pos = self.current;
@@ -171,15 +172,39 @@ pub const Parser = struct {
                         // Update the function structure to mark it as an entry point
                         fn_ptr.*.Function.is_entry = true;
                     }
-                    try function_table.put(fn_stmt.Function.name.lexeme, fn_ptr);
+                    try forward_declarations.put(fn_stmt.Function.name.lexeme, fn_ptr);
                 }
+            } else if (self.peek().type == .VAR or self.peek().type == .CONST) {
+                const var_stmt = try declaration_parser.parseVarDecl(self);
+                const var_ptr = try self.allocator.create(ast.Stmt);
+                var_ptr.* = var_stmt;
+                try forward_declarations.put(var_stmt.VarDecl.name.lexeme, var_ptr);
             } else {
                 self.advance(); // Only advance if we didn't parse a function
             }
         }
 
-        // Reset position for main parse
+        // Reset position for imports pass
         self.current = original_pos;
+
+        // Second pass: process all imports
+        var imports = std.ArrayList(ast.ImportInfo).init(self.allocator);
+        defer imports.deinit();
+
+        while (self.peek().type != .EOF) {
+            if (self.peek().type == .IMPORT) {
+                const import_stmt = try import_parser.parseImportStmt(self);
+                try imports.append(import_stmt.Import);
+
+                // Process each imported module
+                const module_info = try self.resolveModule(import_stmt.Import.module_path);
+
+                // Store the namespace mapping
+                try self.module_namespaces.put(import_stmt.Import.namespace_alias orelse "", module_info);
+            } else {
+                self.advance();
+            }
+        }
 
         // Create statements array with function declarations first
         var statements = std.ArrayList(ast.Stmt).init(self.allocator);
@@ -190,16 +215,20 @@ pub const Parser = struct {
             statements.deinit();
         }
 
-        // Add all function declarations first
-        var it = function_table.iterator();
+        // Add function declarations from forward_declarations - keeping them at the beginning is useful
+        // for function forward references
+        var it = forward_declarations.iterator();
         while (it.next()) |entry| {
-            try statements.append(entry.value_ptr.*.*);
+            if (entry.value_ptr.*.* == .Function) {
+                try statements.append(entry.value_ptr.*.*);
+            }
         }
 
-        // Now parse the rest of the statements normally
-        try self.parseDirective();
+        // Reset position to start of file to process statements in source order
+        self.current = 0;
 
-        while (true) {
+        // Process statements in source order
+        while (self.current < self.tokens.len) {
             const current = self.peek();
             if (current.type == .EOF) break;
 
@@ -215,7 +244,8 @@ pub const Parser = struct {
                 } else if (self.peek().type == .FUNCTION or
                     self.peek().type == .MAIN)
                 {
-                    // Skip the entire function declaration
+                    // We already have the function declarations in forward_declarations
+                    // Skip them since we've already processed them
                     var brace_count: usize = 0;
                     while (self.peek().type != .EOF) {
                         if (self.peek().type == .LEFT_BRACE) {
@@ -238,6 +268,9 @@ pub const Parser = struct {
                     break :blk try declaration_parser.parseEnumDecl(self);
                 } else if (self.peek().type == .TRY) {
                     break :blk try statement_parser.parseTryStmt(self);
+                } else if (self.peek().type == .IDENTIFIER) {
+                    // This could be an assignment or other expression
+                    break :blk try statement_parser.parseExpressionStmt(self);
                 } else break :blk try statement_parser.parseExpressionStmt(self);
             };
 
@@ -250,11 +283,6 @@ pub const Parser = struct {
                 },
                 else => try statements.append(stmt),
             }
-        }
-
-        // After parsing everything, check if we need an entry point in safe mode
-        if (self.mode == .Safe and !self.has_entry_point) {
-            return error.MissingEntryPoint;
         }
 
         return statements.toOwnedSlice();
@@ -1058,26 +1086,6 @@ pub const Parser = struct {
         };
     }
 
-    fn parseDirective(self: *Parser) ErrorList!void {
-        const current = self.peek();
-        if (current.type == .HASH) {
-            self.advance(); // consume #
-            if (self.peek().type == .IDENTIFIER) {
-                // if identifer, do something for custom doxas, ect. ect.
-                // this wont be added for a long time so don't wait around
-            }
-            if (self.peek().type == .SAFE) {
-                self.mode = .Safe;
-                if (self.debug_enabled) {
-                    std.debug.print("Safe mode enabled\n", .{});
-                }
-                self.advance(); // consume directive name
-                return;
-            }
-            return error.InvalidDirective;
-        }
-    }
-
     pub fn resolveModule(self: *Parser, module_name: []const u8) ErrorList!ast.ModuleInfo {
         // Check module cache first
         if (self.module_cache.get(module_name)) |info| {
@@ -1165,7 +1173,6 @@ pub const Parser = struct {
 
     pub fn extractModuleInfo(self: *Parser, module_ast: *ast.Expr) ErrorList!ast.ModuleInfo {
         var imports = std.ArrayList(ast.ImportInfo).init(self.allocator);
-        var mode: ast.ModuleMode = .Normal;
         var name: []const u8 = "";
 
         // If the module AST is a block, process its statements
@@ -1175,7 +1182,6 @@ pub const Parser = struct {
                 switch (stmt) {
                     .Module => |module| {
                         name = module.name.lexeme;
-                        mode = if (module.is_safe) .Safe else .Normal;
                         for (module.imports) |import| {
                             try imports.append(import);
                         }
@@ -1187,7 +1193,6 @@ pub const Parser = struct {
 
         return ast.ModuleInfo{
             .name = name,
-            .mode = mode,
             .imports = try imports.toOwnedSlice(),
         };
     }
