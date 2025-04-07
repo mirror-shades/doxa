@@ -1364,8 +1364,35 @@ pub const Interpreter = struct {
                         }
                         return error.UnknownMethod;
                     }
-                    // Handle struct methods or return error.NotAStruct for other types
-                    return error.NotAStruct;
+
+                    // If this is a namespace access, try to evaluate the full field access expression
+                    // to resolve the function, then call it
+                    if (object == .nothing) {
+                        if (self.debug_enabled) {
+                            std.debug.print("Found namespace access in Call, evaluating field access for function\n", .{});
+                        }
+                        // Create a temporary copy of the field access expression
+                        const field_access_expr = try self.allocator.create(ast.Expr);
+                        field_access_expr.* = .{ .FieldAccess = field_access };
+
+                        // Evaluate the field access to get the function
+                        const callee_fn = try self.evaluate(field_access_expr);
+                        self.allocator.destroy(field_access_expr);
+
+                        if (self.debug_enabled) {
+                            std.debug.print("Field access evaluated, calling function\n", .{});
+                        }
+
+                        return self.callFunction(callee_fn, call.arguments);
+                    }
+
+                    // Handle struct methods or return error for other types
+                    if (object != .struct_value) {
+                        return error.NotAStruct;
+                    }
+
+                    // Handle struct methods here if needed
+                    return error.MethodNotImplemented;
                 }
 
                 // Handle regular function calls
@@ -1716,6 +1743,15 @@ pub const Interpreter = struct {
 
                                 if (self.debug_enabled) {
                                     std.debug.print("Looking up imported symbol: {s}\n", .{full_name});
+
+                                    // Debug: List all imported symbols
+                                    if (p.imported_symbols) |symbols| {
+                                        var it = symbols.iterator();
+                                        std.debug.print("Available imported symbols:\n", .{});
+                                        while (it.next()) |entry| {
+                                            std.debug.print("  {s} (kind: {s})\n", .{ entry.key_ptr.*, @tagName(entry.value_ptr.kind) });
+                                        }
+                                    }
                                 }
 
                                 if (p.imported_symbols) |symbols| {
@@ -1736,6 +1772,9 @@ pub const Interpreter = struct {
                                                         if (stmt == .Function and
                                                             std.mem.eql(u8, stmt.Function.name.lexeme, field.field.lexeme))
                                                         {
+                                                            if (self.debug_enabled) {
+                                                                std.debug.print("Found function: {s} in module {s}\n", .{ field.field.lexeme, var_name });
+                                                            }
 
                                                             // Create a function value
                                                             return token.TokenLiteral{
@@ -1747,14 +1786,61 @@ pub const Interpreter = struct {
                                                             };
                                                         }
                                                     }
+
+                                                    if (self.debug_enabled) {
+                                                        std.debug.print("Could not find function {s} in module statements\n", .{field.field.lexeme});
+                                                        // Print all available functions in the module
+                                                        std.debug.print("Available functions in module:\n", .{});
+                                                        for (module_ast.Block.statements) |stmt| {
+                                                            if (stmt == .Function) {
+                                                                std.debug.print("  {s}\n", .{stmt.Function.name.lexeme});
+                                                            }
+                                                        }
+                                                    }
                                                 }
                                             }
                                         }
 
                                         // For other types, we might need different handling
                                         return token.TokenLiteral{ .nothing = {} };
+                                    } else if (self.debug_enabled) {
+                                        std.debug.print("Symbol {s} not found in imported symbols\n", .{full_name});
                                     }
                                 }
+
+                                // If we get here but we're still a namespace access, treat it specially
+                                // This happens when the symbol exists but wasn't properly registered
+                                if (self.debug_enabled) {
+                                    std.debug.print("Trying direct module access for {s}.{s}\n", .{ var_name, field.field.lexeme });
+                                }
+
+                                // Try to find the function directly in the module
+                                const module_info = p.module_namespaces.get(var_name).?;
+                                if (module_info.ast) |module_ast| {
+                                    if (module_ast.* == .Block) {
+                                        for (module_ast.Block.statements) |stmt| {
+                                            if (stmt == .Function and
+                                                std.mem.eql(u8, stmt.Function.name.lexeme, field.field.lexeme))
+                                            {
+                                                if (self.debug_enabled) {
+                                                    std.debug.print("Found function by direct lookup: {s}\n", .{field.field.lexeme});
+                                                }
+
+                                                // Create a function value
+                                                return token.TokenLiteral{
+                                                    .function = .{
+                                                        .params = stmt.Function.params,
+                                                        .body = stmt.Function.body,
+                                                        .closure = self.environment,
+                                                    },
+                                                };
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Still not found, this is a module but the symbol doesn't exist
+                                return error.UndefinedProperty;
                             }
                         }
 
@@ -1770,7 +1856,12 @@ pub const Interpreter = struct {
                             return token.TokenLiteral{ .enum_variant = field.field.lexeme };
                         }
                     }
+
+                    // If we reach here, it's a .nothing value but not a namespace or enum
+                    // This is not a valid struct, so return an error
+                    return error.InvalidFieldAccess;
                 }
+
                 // Otherwise handle as struct field access
                 if (object != .struct_value) {
                     return error.NotAStruct;

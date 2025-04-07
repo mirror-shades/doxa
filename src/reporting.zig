@@ -83,10 +83,13 @@ pub const ErrorList = error{
     EmptyStruct,
     EmptyMatch,
     FieldNotFound,
+    InvalidFieldAccess,
     InvalidFieldAccessTarget,
     InvalidEnumVariant,
     NoMatchCase,
     UndefinedType,
+    UndefinedProperty,
+    MethodNotImplemented,
 
     // Error Handling
     NoTryBlock,

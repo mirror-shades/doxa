@@ -887,17 +887,24 @@ pub fn variable(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Exp
             const symbol_name = self.peek();
             self.advance();
 
-            // Create a variable expression with the qualified name
-            const var_expr = try self.allocator.create(ast.Expr);
-            var_expr.* = .{ .Variable = symbol_name };
+            // Create a namespace object as variable
+            const namespace_var = try self.allocator.create(ast.Expr);
+            namespace_var.* = .{ .Variable = name };
+
+            // Create a FieldAccess expression instead of just Variable
+            const field_access = try self.allocator.create(ast.Expr);
+            field_access.* = .{ .FieldAccess = .{
+                .object = namespace_var,
+                .field = symbol_name,
+            } };
 
             // Check for indexing operation
             if (self.peek().type == .LEFT_BRACKET) {
                 self.advance(); // consume '['
-                return self.index(var_expr, .NONE);
+                return self.index(field_access, .NONE);
             }
 
-            return var_expr;
+            return field_access;
         }
     }
 
