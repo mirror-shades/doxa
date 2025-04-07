@@ -50,6 +50,7 @@ pub const ErrorList = error{
     InvalidAssignmentTarget,
     ImmutableVariable,
     UseIsForAssignment,
+    ExpectedVarOrConst,
 
     // Function & Frame Management
     InvalidFunction,
@@ -68,6 +69,7 @@ pub const ErrorList = error{
     ExpectedOperand,
     ExpectedCallable,
     ConstAssignment,
+    MissingEntryPointFunction,
 
     // Collections & Indexing
     IndexOutOfBounds,
@@ -158,6 +160,7 @@ pub const ErrorList = error{
     MissingParameterType,
     MissingReturnType,
     ExpectedStringLiteral,
+    ParserDidNotAdvance,
 
     // Miscellaneous
     NotImplemented,
@@ -195,6 +198,7 @@ pub const ErrorList = error{
 
     // Entry Points
     MultipleEntryPoints,
+    MisplacedEntryPoint,
     EntryPointMustBeMain,
     MissingEntryPoint,
     ExpectedFunction,
@@ -207,6 +211,7 @@ pub const ErrorList = error{
     ExpectedModuleName,
     ExpectedImportName,
     UnsafeImportInSafeModule,
+    MisplacedPublicModifier,
     ModuleNotImplemented,
 
     // modules

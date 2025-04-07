@@ -294,8 +294,22 @@ pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
 }
 
 pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
-    const is_const = self.peek().type == .CONST;
-    self.advance(); // consume 'var' or 'const'
+    const is_public = (self.peek().type == .PUBLIC) or
+        (self.previous().type == .PUBLIC and
+        (self.peek().type == .VAR or self.peek().type == .CONST));
+    if (is_public) {
+        if (self.debug_enabled) {
+            std.debug.print("Parsing public variable declaration\n", .{});
+        }
+    }
+    var is_const = false;
+    // Check if this is a var or const declaration
+    if (self.peek().type == .VAR or self.peek().type == .CONST) {
+        is_const = self.peek().type == .CONST;
+        self.advance(); // consume 'var' or 'const'
+    } else {
+        return error.ExpectedVarOrConst;
+    }
 
     if (self.debug_enabled) {
         std.debug.print("\nParsing var declaration\n", .{});
@@ -349,6 +363,7 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
             .name = name,
             .type_info = type_info,
             .initializer = initializer,
+            .is_public = is_public,
         } };
     }
 
@@ -435,6 +450,7 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
         .name = name,
         .type_info = type_info,
         .initializer = initializer,
+        .is_public = is_public,
     } };
 }
 

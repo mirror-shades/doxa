@@ -490,6 +490,7 @@ pub const VarDecl = struct {
     name: token.Token,
     initializer: ?*Expr,
     type_info: TypeInfo,
+    is_public: bool = false,
 
     pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
         if (self.initializer) |i| {

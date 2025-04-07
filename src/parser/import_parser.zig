@@ -94,73 +94,99 @@ fn registerPublicSymbols(self: *Parser, module_ast: *ast.Expr, module_path: []co
         self.imported_symbols = std.StringHashMap(ImportedSymbol).init(self.allocator);
     }
 
-    // If this is a block, process its statements
-    if (module_ast.* == .Block) {
-        const statements = module_ast.Block.statements;
-        for (statements) |stmt| {
-            switch (stmt) {
-                // Handle enum declarations
-                .EnumDecl => |enum_decl| {
-                    const is_public = enum_decl.is_public;
-                    if (is_public) {
-                        const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ namespace, enum_decl.name.lexeme });
+    std.debug.print("Module AST type: {s}\n", .{@tagName(module_ast.*)});
 
-                        // Only register if we want all symbols or this specific one
-                        if (specific_symbol == null or std.mem.eql(u8, specific_symbol.?, enum_decl.name.lexeme)) {
-                            try self.imported_symbols.?.put(full_name, .{
-                                .kind = .Enum,
-                                .name = enum_decl.name.lexeme,
-                                .original_module = module_path,
-                            });
-
-                            // Also register each enum variant for easy access
-                            for (enum_decl.variants) |variant| {
-                                const variant_full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ full_name, variant.lexeme });
-                                try self.imported_symbols.?.put(variant_full_name, .{
-                                    .kind = .Enum,
-                                    .name = variant.lexeme,
-                                    .original_module = module_path,
-                                });
-                            }
-                        }
-                    }
-                },
-                // Handle function declarations
-                .Function => |func| {
-                    const is_public = func.is_public;
-                    if (is_public) {
-                        const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ namespace, func.name.lexeme });
-
-                        if (specific_symbol == null or std.mem.eql(u8, specific_symbol.?, func.name.lexeme)) {
-                            try self.imported_symbols.?.put(full_name, .{
-                                .kind = .Function,
-                                .name = func.name.lexeme,
-                                .original_module = module_path,
-                            });
-                        }
-                    }
-                },
-                // Handle struct declarations
-                .Expression => |expr| {
-                    if (expr.* == .StructDecl) {
-                        const struct_decl = expr.StructDecl;
-                        const is_public = struct_decl.is_public;
+    switch (module_ast.*) {
+        .Block => {
+            const statements = module_ast.Block.statements;
+            for (statements) |stmt| {
+                switch (stmt) {
+                    // Handle enum declarations
+                    .EnumDecl => |enum_decl| {
+                        const is_public = enum_decl.is_public;
                         if (is_public) {
-                            const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ namespace, struct_decl.name.lexeme });
+                            const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ namespace, enum_decl.name.lexeme });
 
-                            if (specific_symbol == null or std.mem.eql(u8, specific_symbol.?, struct_decl.name.lexeme)) {
+                            // Only register if we want all symbols or this specific one
+                            if (specific_symbol == null or std.mem.eql(u8, specific_symbol.?, enum_decl.name.lexeme)) {
                                 try self.imported_symbols.?.put(full_name, .{
-                                    .kind = .Struct,
-                                    .name = struct_decl.name.lexeme,
+                                    .kind = .Enum,
+                                    .name = enum_decl.name.lexeme,
+                                    .original_module = module_path,
+                                });
+
+                                // Also register each enum variant for easy access
+                                for (enum_decl.variants) |variant| {
+                                    const variant_full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ full_name, variant.lexeme });
+                                    try self.imported_symbols.?.put(variant_full_name, .{
+                                        .kind = .Enum,
+                                        .name = variant.lexeme,
+                                        .original_module = module_path,
+                                    });
+                                }
+                            }
+                        }
+                    },
+                    // Handle function declarations
+                    .Function => |func| {
+                        const is_public = func.is_public;
+                        if (is_public) {
+                            const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ namespace, func.name.lexeme });
+
+                            if (specific_symbol == null or std.mem.eql(u8, specific_symbol.?, func.name.lexeme)) {
+                                try self.imported_symbols.?.put(full_name, .{
+                                    .kind = .Function,
+                                    .name = func.name.lexeme,
                                     .original_module = module_path,
                                 });
                             }
                         }
-                    }
-                },
-                else => {}, // Skip other types of statements
+                    },
+                    // Handle struct declarations
+                    .Expression => |expr| {
+                        if (expr.* == .StructDecl) {
+                            const struct_decl = expr.StructDecl;
+                            const is_public = struct_decl.is_public;
+                            if (is_public) {
+                                const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ namespace, struct_decl.name.lexeme });
+
+                                if (specific_symbol == null or std.mem.eql(u8, specific_symbol.?, struct_decl.name.lexeme)) {
+                                    try self.imported_symbols.?.put(full_name, .{
+                                        .kind = .Struct,
+                                        .name = struct_decl.name.lexeme,
+                                        .original_module = module_path,
+                                    });
+                                }
+                            }
+                        }
+                    },
+                    .VarDecl => |var_decl| {
+                        std.debug.print("VarDecl: {s}\n", .{var_decl.name.lexeme});
+                        const is_public = var_decl.is_public;
+                        if (is_public) {
+                            const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ namespace, var_decl.name.lexeme });
+                            std.debug.print("Importing variable: {s}\n", .{full_name});
+                            try self.imported_symbols.?.put(full_name, .{
+                                .kind = .Variable,
+                                .name = var_decl.name.lexeme,
+                                .original_module = module_path,
+                            });
+                        }
+                    },
+                    else => {}, // Skip other types of statements
+                }
             }
-        }
+        },
+        .Function => {
+            // Handle if the module is represented as a function
+            if (module_ast.Function.is_public) {
+                // Process and register the function
+            }
+        },
+        // ADD CASES FOR OTHER POSSIBLE MODULE TYPES
+        else => {
+            std.debug.print("Unhandled module AST type: {s}\n", .{@tagName(module_ast.*)});
+        },
     }
 }
 

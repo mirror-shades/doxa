@@ -137,6 +137,7 @@ pub const Parser = struct {
 
     pub fn execute(self: *Parser) ErrorList![]ast.Stmt {
         if (self.debug_enabled) {
+            std.debug.print("\n=== Starting parse ===\n", .{});
             std.debug.print("\nToken stream:\n", .{});
             for (self.tokens, 0..) |t, i| {
                 std.debug.print("{}: {s} ({s})\n", .{ i, @tagName(t.type), t.lexeme });
@@ -144,79 +145,6 @@ pub const Parser = struct {
             std.debug.print("\n", .{});
         }
 
-        // First pass: process all imports so that their symbols are available for the rest
-        var imports = std.ArrayList(ast.ImportInfo).init(self.allocator);
-        defer imports.deinit();
-
-        // Store current position
-        const original_pos = self.current;
-
-        // Process imports first
-        while (self.peek().type != .EOF) {
-            if (self.peek().type == .IMPORT) {
-                const import_stmt = try import_parser.parseImportStmt(self);
-                try imports.append(import_stmt.Import);
-            } else {
-                self.advance();
-            }
-        }
-
-        // Reset position for second pass
-        self.current = original_pos;
-
-        // Second pass: collect all function declarations and create them
-        var forward_declarations = std.StringHashMap(*ast.Stmt).init(self.allocator);
-        defer forward_declarations.deinit();
-
-        while (self.peek().type != .EOF) {
-            // Check for entry point token (->)
-            var is_entry = false;
-            if (self.peek().type == .MAIN) {
-                is_entry = true;
-                self.has_entry_point = true;
-                self.entry_point_location = self.peek();
-                self.advance(); // consume ->
-            }
-
-            // Check for public modifier
-            var is_public = false;
-            if (self.peek().type == .PUBLIC) {
-                is_public = true;
-                self.advance(); // consume pub/public
-            }
-
-            if (self.peek().type == .FUNCTION) {
-                // Don't advance here - let parseFunctionDecl handle it
-                const fn_stmt = try declaration_parser.parseFunctionDecl(self);
-                const fn_ptr = try self.allocator.create(ast.Stmt);
-                fn_ptr.* = fn_stmt;
-
-                // Set the public flag if this was a public function
-                if (fn_stmt == .Function and is_public) {
-                    fn_ptr.*.Function.is_public = true;
-                }
-
-                // Get the function name from the statement
-                if (fn_stmt == .Function) {
-                    // Store function name as entry point if this is an entry point
-                    if (is_entry) {
-                        self.entry_point_name = fn_stmt.Function.name.lexeme;
-                        // Update the function structure to mark it as an entry point
-                        fn_ptr.*.Function.is_entry = true;
-                    }
-                    try forward_declarations.put(fn_stmt.Function.name.lexeme, fn_ptr);
-                }
-            } else if (self.peek().type == .VAR or self.peek().type == .CONST) {
-                const var_stmt = try declaration_parser.parseVarDecl(self);
-                const var_ptr = try self.allocator.create(ast.Stmt);
-                var_ptr.* = var_stmt;
-                try forward_declarations.put(var_stmt.VarDecl.name.lexeme, var_ptr);
-            } else {
-                self.advance(); // Only advance if we didn't parse a function
-            }
-        }
-
-        // Create statements array with function declarations first
         var statements = std.ArrayList(ast.Stmt).init(self.allocator);
         errdefer {
             for (statements.items) |*stmt| {
@@ -225,86 +153,170 @@ pub const Parser = struct {
             statements.deinit();
         }
 
-        // Add function declarations from forward_declarations - keeping them at the beginning is useful
-        // for function forward references
-        var it = forward_declarations.iterator();
-        while (it.next()) |entry| {
-            if (entry.value_ptr.*.* == .Function) {
-                try statements.append(entry.value_ptr.*.*);
+        // --- Pass 1: Imports (Process side effects, don't add to statements list yet) ---
+        // Keep track of the original position after imports are processed
+        var start_index_after_imports = self.current;
+        while (self.tokens[start_index_after_imports].type == .IMPORT) {
+            // Temporarily move parser to process the import
+            const temp_current = self.current;
+            self.current = start_index_after_imports;
+
+            _ = try import_parser.parseImportStmt(self); // Call for side-effects (loading/registration)
+
+            // Advance start_index_after_imports past the import statement
+            // parseImportStmt should have advanced self.current appropriately
+            start_index_after_imports = self.current;
+
+            // Restore original parser position if needed (though we'll reset below)
+            self.current = temp_current;
+        }
+        // Reset parser to position after imports for the main parsing pass
+        self.current = start_index_after_imports;
+
+        // --- Pass 2: All other statements ---
+        while (self.peek().type != .EOF) {
+            const loop_start_pos = self.current; // Track position for progress check
+
+            // --- Handle Modifiers ---
+            var is_public = false;
+            var is_entry = false;
+
+            // IMPORTANT: Check for MAIN first as it might appear before PUBLIC
+            if (self.peek().type == .MAIN) {
+                is_entry = true;
+                const entry_token = self.peek(); // Store token for later use if needed
+                self.advance(); // consume ->
+                // Store entry point location immediately if found
+                if (!self.has_entry_point) { // Only store the first one found
+                    self.has_entry_point = true;
+                    self.entry_point_location = entry_token;
+                }
+            }
+            if (self.peek().type == .PUBLIC) {
+                is_public = true;
+                self.advance(); // consume pub
+            }
+            // --- End Handle Modifiers ---
+
+            // --- Parse Statement ---
+            // Use a general statement parser that handles declarations, expressions, control flow etc.
+            // Pass the detected modifiers to the statement parser if necessary,
+            // or apply them to the result afterwards.
+
+            // Use a specific parser based on the *next* token (after modifiers)
+            const stmt_token_type = self.peek().type;
+            switch (stmt_token_type) {
+                .VAR, .CONST => {
+                    var decl = try declaration_parser.parseVarDecl(self);
+                    decl.VarDecl.is_public = is_public; // Apply modifier
+                    // Cannot be entry point
+                    if (is_entry) {
+                        return error.InvalidEntryPoint;
+                    }
+                    try statements.append(decl);
+                },
+                .FUNCTION => {
+                    var func = try declaration_parser.parseFunctionDecl(self);
+                    func.Function.is_public = is_public; // Apply modifiers
+                    func.Function.is_entry = is_entry;
+                    if (is_entry) {
+                        // Store entry point name if this function is the entry point
+                        // Check if location was already set by '->' token earlier
+                        if (self.entry_point_location != null) {
+                            self.entry_point_name = func.Function.name.lexeme;
+                        } else {
+                            // This case means func keyword without preceding '->', shouldn't happen if logic is correct
+                            {
+                                return error.MultipleEntryPoints;
+                            }
+                        }
+                    }
+                    try statements.append(func);
+                },
+                .STRUCT_TYPE => {
+                    const expr = try declaration_parser.parseStructDecl(self, null, .NONE);
+                    // Apply is_public to struct decl in AST
+                    if (expr) |non_null_expr| {
+                        if (non_null_expr.* == .StructDecl) {
+                            non_null_expr.StructDecl.is_public = is_public;
+                        }
+                    }
+                    // Cannot be entry point
+                    if (is_entry) {
+                        return error.InvalidEntryPoint;
+                    }
+                    // Append only if expr is not null
+                    if (expr) |e| {
+                        try statements.append(.{ .Expression = e });
+                    }
+                },
+                .ENUM_TYPE => {
+                    var enum_decl = try declaration_parser.parseEnumDecl(self);
+                    enum_decl.EnumDecl.is_public = is_public; // Apply modifier
+                    // Cannot be entry point
+                    if (is_entry) {
+                        return error.InvalidEntryPoint;
+                    }
+                    try statements.append(enum_decl);
+                },
+                // Handle other statement types recognised by statement_parser
+                .IF, .WHILE, .RETURN, .LEFT_BRACE, .TRY => {
+                    // Modifiers likely invalid here
+                    if (is_entry) {
+                        return error.MisplacedEntryPoint;
+                    }
+                    if (is_public) {
+                        return error.MisplacedPublicModifier;
+                    }
+                    const parsed_stmt = try statement_parser.parseStatement(self);
+                    // Only append if it's not a null expression (e.g. from empty block)
+                    if (!(parsed_stmt == .Expression and parsed_stmt.Expression == null)) {
+                        try statements.append(parsed_stmt);
+                    }
+                },
+                // Default to expression statement
+                else => {
+                    // Modifiers likely invalid here unless it's a top-level expression
+                    // that somehow should be public/entry? Revisit if needed.
+                    if (is_entry) {
+                        return error.MisplacedEntryPoint;
+                    }
+                    if (is_public) {
+                        return error.MisplacedPublicModifier;
+                    }
+                    const expr_stmt = try statement_parser.parseExpressionStmt(self);
+                    // Only append if it's not a null expression
+                    if (!(expr_stmt == .Expression and expr_stmt.Expression == null)) {
+                        try statements.append(expr_stmt);
+                    }
+                },
+            }
+
+            // --- Progress Check ---
+            // Ensure the parser advanced. If not, it means a sub-parser failed to consume tokens.
+            if (self.current == loop_start_pos and self.peek().type != .EOF) {
+                // Log error, force advance, or return error? Returning error is safest.
+                std.debug.print("Parser did not advance at token index {d}, type: {s}\n", .{ self.current, @tagName(self.peek().type) });
+                return error.ParserDidNotAdvance;
             }
         }
 
-        // Reset position to start of file to process statements in source order
-        self.current = 0;
+        // Final check: If entry point marker '->' was found but no function followed
+        if (self.has_entry_point and self.entry_point_name == null) {
+            // Report error using self.entry_point_location
+            var reporting = Reporting.init();
+            reporting.reportCompileError(.{
+                .file = self.current_file,
+                .line = self.entry_point_location.?.line,
+                .column = self.entry_point_location.?.column,
+            }, "Entry point marker '->' not followed by a function declaration", .{});
+            return error.MissingEntryPointFunction;
+        }
 
-        // Process statements in source order
-        while (self.current < self.tokens.len) {
-            const current = self.peek();
-            if (current.type == .EOF) break;
-
-            const stmt = blk: {
-                if (self.peek().type == .IMPORT) {
-                    // We've already processed imports, so just skip this statement
-                    const import_stmt = try import_parser.parseImportStmt(self);
-                    break :blk ast.Stmt{ .Import = import_stmt.Import };
-                } else if (self.peek().type == .VAR or self.peek().type == .CONST)
-                    break :blk try declaration_parser.parseVarDecl(self)
-                else if (self.peek().type == .LEFT_BRACE) {
-                    const block_stmt = if (try self.block(null, .NONE)) |expr|
-                        ast.Stmt{ .Expression = expr }
-                    else
-                        ast.Stmt{ .Expression = null };
-                    break :blk block_stmt;
-                } else if (self.peek().type == .FUNCTION or
-                    self.peek().type == .MAIN or
-                    self.peek().type == .PUBLIC)
-                {
-                    // We already have the function declarations in forward_declarations
-                    // Skip them since we've already processed them
-                    var brace_count: usize = 0;
-                    // If this is PUBLIC token, skip it first
-                    if (self.peek().type == .PUBLIC) {
-                        self.advance(); // Skip PUBLIC token
-                    }
-                    while (self.peek().type != .EOF) {
-                        if (self.peek().type == .LEFT_BRACE) {
-                            brace_count += 1;
-                        } else if (self.peek().type == .RIGHT_BRACE) {
-                            brace_count -= 1;
-                            if (brace_count == 0) {
-                                self.advance(); // consume the final }
-                                break;
-                            }
-                        }
-                        self.advance();
-                    }
-                    break :blk ast.Stmt{ .Expression = null };
-                } else if (self.peek().type == .STRUCT_TYPE) {
-                    // Convert the struct declaration expression to a statement
-                    const expr = try declaration_parser.parseStructDecl(self, null, .NONE);
-                    break :blk ast.Stmt{ .Expression = expr };
-                } else if (self.peek().type == .ENUM_TYPE) {
-                    break :blk try declaration_parser.parseEnumDecl(self);
-                } else if (self.peek().type == .TRY) {
-                    break :blk try statement_parser.parseTryStmt(self);
-                } else if (self.peek().type == .IDENTIFIER) {
-                    // This could be an assignment or other expression
-                    break :blk try statement_parser.parseExpressionStmt(self);
-                } else break :blk try statement_parser.parseExpressionStmt(self);
-            };
-
-            // Only append non-null expression statements
-            switch (stmt) {
-                .Expression => |expr| {
-                    if (expr != null) {
-                        try statements.append(stmt);
-                    }
-                },
-                .Import => {
-                    // We already processed the imports in the first pass
-                    // Just skip them in the final statements list to avoid duplicates
-                },
-                else => try statements.append(stmt),
+        if (self.debug_enabled) {
+            std.debug.print("\n=== Parse complete, statement count: {} ===\n", .{statements.items.len});
+            for (statements.items, 0..) |st, i| {
+                std.debug.print("Statement {}: {s}\n", .{ i, @tagName(st) });
             }
         }
 
@@ -1221,7 +1233,7 @@ pub const Parser = struct {
         } };
 
         // Extract module info and cache it
-        const info = try self.extractModuleInfo(module_block);
+        const info = try self.extractModuleInfo(module_block, module_name, null);
         try self.module_cache.put(module_name, info);
 
         return info;
@@ -1424,22 +1436,189 @@ pub const Parser = struct {
         return empty_expr;
     }
 
-    pub fn extractModuleInfo(self: *Parser, module_ast: *ast.Expr) ErrorList!ast.ModuleInfo {
+    pub fn extractModuleInfo(self: *Parser, module_ast: *ast.Expr, module_path: []const u8, specific_symbol: ?[]const u8) !ast.ModuleInfo {
+        if (self.debug_enabled) {
+            std.debug.print("\n=== Starting module info extraction ===\n", .{});
+            std.debug.print("Module path: {s}\n", .{module_path});
+            std.debug.print("Specific symbol: {?s}\n", .{specific_symbol});
+            std.debug.print("Module AST type: {s}\n", .{@tagName(module_ast.*)});
+            if (module_ast.* == .Block) {
+                std.debug.print("Block has {d} statements\n", .{module_ast.Block.statements.len});
+            }
+        }
+
         var imports = std.ArrayList(ast.ImportInfo).init(self.allocator);
         var name: []const u8 = "";
+
+        // Extract module name from path
+        var path_iter = std.mem.splitSequence(u8, module_path, "/");
+        var last_part: []const u8 = "";
+        while (path_iter.next()) |part| {
+            last_part = part;
+        }
+
+        if (std.mem.endsWith(u8, last_part, ".doxa")) {
+            name = last_part[0 .. last_part.len - 5];
+        } else {
+            name = last_part;
+        }
+
+        if (self.debug_enabled) {
+            std.debug.print("Using module name from path: {s}\n", .{name});
+        }
+
+        // Initialize symbol table for this module if needed
+        if (self.imported_symbols == null) {
+            self.imported_symbols = std.StringHashMap(import_parser.ImportedSymbol).init(self.allocator);
+        }
 
         // If the module AST is a block, process its statements
         if (module_ast.* == .Block) {
             const statements = module_ast.Block.statements;
-            for (statements) |stmt| {
+            if (self.debug_enabled) {
+                std.debug.print("Processing {d} statements\n", .{statements.len});
+            }
+
+            for (statements, 0..) |stmt, i| {
+                if (self.debug_enabled) {
+                    std.debug.print("\nProcessing statement {d}: {s}\n", .{ i, @tagName(stmt) });
+                    switch (stmt) {
+                        .VarDecl => |v| std.debug.print("  Variable: {s} (public: {any})\n", .{ v.name.lexeme, v.is_public }),
+                        .Function => |f| std.debug.print("  Function: {s} (public: {any})\n", .{ f.name.lexeme, f.is_public }),
+                        .Module => |m| std.debug.print("  Module: {s}\n", .{m.name.lexeme}),
+                        else => std.debug.print("  Other statement type\n", .{}),
+                    }
+                }
+
                 switch (stmt) {
                     .Module => |module| {
+                        // If we find a module declaration, use its name instead
                         name = module.name.lexeme;
+                        if (self.debug_enabled) {
+                            std.debug.print("Found module declaration, using name: {s}\n", .{name});
+                        }
                         for (module.imports) |import| {
                             try imports.append(import);
                         }
                     },
-                    else => {}, // Skip other statement types
+                    .VarDecl => |var_decl| {
+                        const is_public = var_decl.is_public;
+                        if (self.debug_enabled) {
+                            std.debug.print("Found variable declaration: {s} (public: {any})\n", .{ var_decl.name.lexeme, is_public });
+                            std.debug.print("  Type info: {s}\n", .{@tagName(var_decl.type_info.base)});
+                            if (var_decl.initializer) |init_expr| {
+                                std.debug.print("  Has initializer: {s}\n", .{@tagName(init_expr.*)});
+                            }
+                        }
+
+                        if (is_public) {
+                            const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ name, var_decl.name.lexeme });
+
+                            if (self.debug_enabled) {
+                                std.debug.print("Registering public variable: {s}\n", .{full_name});
+                                std.debug.print("Checking specific_symbol condition: specific={?s}, name={s}\n", .{ specific_symbol, var_decl.name.lexeme });
+                            }
+
+                            // Only register if we want all symbols or this specific one
+                            if (specific_symbol == null or std.mem.eql(u8, specific_symbol.?, var_decl.name.lexeme)) {
+                                if (self.debug_enabled) {
+                                    std.debug.print("Adding variable to imported symbols\n", .{});
+                                }
+
+                                try self.imported_symbols.?.put(full_name, .{
+                                    .kind = .Variable,
+                                    .name = var_decl.name.lexeme,
+                                    .original_module = module_path,
+                                });
+
+                                if (self.debug_enabled) {
+                                    std.debug.print("Successfully registered variable {s}\n", .{full_name});
+                                }
+                            } else if (self.debug_enabled) {
+                                std.debug.print("Skipping variable registration - doesn't match specific symbol\n", .{});
+                            }
+                        }
+                    },
+                    .Function => |func| {
+                        const is_public = func.is_public;
+                        if (self.debug_enabled) {
+                            std.debug.print("Found function declaration: {s} (public: {any})\n", .{ func.name.lexeme, is_public });
+                            std.debug.print("  Return type: {s}\n", .{@tagName(func.return_type_info.base)});
+                            std.debug.print("  Parameters: {d}\n", .{func.params.len});
+                        }
+
+                        if (is_public) {
+                            const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ name, func.name.lexeme });
+
+                            if (self.debug_enabled) {
+                                std.debug.print("Registering public function: {s}\n", .{full_name});
+                                std.debug.print("Checking specific_symbol condition: specific={?s}, name={s}\n", .{ specific_symbol, func.name.lexeme });
+                            }
+
+                            if (specific_symbol == null or std.mem.eql(u8, specific_symbol.?, func.name.lexeme)) {
+                                try self.imported_symbols.?.put(full_name, .{
+                                    .kind = .Function,
+                                    .name = func.name.lexeme,
+                                    .original_module = module_path,
+                                });
+
+                                if (self.debug_enabled) {
+                                    std.debug.print("Successfully registered function {s}\n", .{full_name});
+                                }
+                            } else if (self.debug_enabled) {
+                                std.debug.print("Skipping function registration - doesn't match specific symbol\n", .{});
+                            }
+                        }
+                    },
+                    .Expression => |expr_opt| {
+                        if (expr_opt) |expr| {
+                            if (expr.* == .StructDecl) {
+                                const struct_decl = expr.StructDecl;
+                                const is_public = struct_decl.is_public;
+                                if (self.debug_enabled) {
+                                    std.debug.print("Found struct declaration: {s} (public: {any})\n", .{ struct_decl.name.lexeme, is_public });
+                                }
+
+                                if (is_public) {
+                                    const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ name, struct_decl.name.lexeme });
+
+                                    if (self.debug_enabled) {
+                                        std.debug.print("Registering public struct: {s}\n", .{full_name});
+                                        std.debug.print("Checking specific_symbol condition: specific={?s}, name={s}\n", .{ specific_symbol, struct_decl.name.lexeme });
+                                    }
+
+                                    if (specific_symbol == null or std.mem.eql(u8, specific_symbol.?, struct_decl.name.lexeme)) {
+                                        try self.imported_symbols.?.put(full_name, .{
+                                            .kind = .Struct,
+                                            .name = struct_decl.name.lexeme,
+                                            .original_module = module_path,
+                                        });
+
+                                        if (self.debug_enabled) {
+                                            std.debug.print("Successfully registered struct {s}\n", .{full_name});
+                                        }
+                                    } else if (self.debug_enabled) {
+                                        std.debug.print("Skipping struct registration - doesn't match specific symbol\n", .{});
+                                    }
+                                }
+                            }
+                        }
+                    },
+
+                    else => {}, // Skip other types of statements
+                }
+            }
+        }
+
+        if (self.debug_enabled) {
+            std.debug.print("\n=== Module info extraction complete ===\n", .{});
+            std.debug.print("Module name: {s}\n", .{name});
+            std.debug.print("Number of imports: {d}\n", .{imports.items.len});
+            std.debug.print("Current imported symbols:\n", .{});
+            if (self.imported_symbols) |symbols| {
+                var it = symbols.iterator();
+                while (it.next()) |entry| {
+                    std.debug.print("  {s} (kind: {s})\n", .{ entry.key_ptr.*, @tagName(entry.value_ptr.kind) });
                 }
             }
         }
@@ -1534,16 +1713,53 @@ pub const Parser = struct {
     }
 
     pub fn loadAndRegisterModule(self: *Parser, module_path: []const u8, namespace: []const u8, specific_symbol: ?[]const u8) ErrorList!void {
+        if (self.debug_enabled) {
+            std.debug.print("\n=== Starting module loading and registration ===\n", .{});
+            std.debug.print("Module path: {s}\n", .{module_path});
+            std.debug.print("Namespace: {s}\n", .{namespace});
+            std.debug.print("Specific symbol: {?s}\n", .{specific_symbol});
+        }
+
         // Get module info - this will parse the module if not already cached
         const module_info = try self.resolveModule(module_path);
+
+        if (self.debug_enabled) {
+            std.debug.print("\nModule info resolved:\n", .{});
+            std.debug.print("Module name: {s}\n", .{module_info.name});
+            std.debug.print("Has AST: {any}\n", .{module_info.ast != null});
+            if (module_info.ast) |module_ast| {
+                std.debug.print("AST type: {s}\n", .{@tagName(module_ast.*)});
+                if (module_ast.* == .Block) {
+                    std.debug.print("Block has {d} statements\n", .{module_ast.Block.statements.len});
+                }
+            }
+        }
 
         // Register the module in namespaces map
         try self.module_namespaces.put(namespace, module_info);
 
+        if (self.debug_enabled) {
+            std.debug.print("\nRegistered module in namespaces map\n", .{});
+            std.debug.print("Current namespaces:\n", .{});
+            var it = self.module_namespaces.iterator();
+            while (it.next()) |entry| {
+                std.debug.print("  {s}\n", .{entry.key_ptr.*});
+            }
+        }
+
         // If we have the full module AST available (from module_info),
         // we can scan it for public symbols and register them
         if (module_info.ast) |module_ast| {
+            if (self.debug_enabled) {
+                std.debug.print("\nScanning module AST for public symbols...\n", .{});
+            }
             try self.registerPublicSymbols(module_ast, module_path, namespace, specific_symbol);
+        } else if (self.debug_enabled) {
+            std.debug.print("\nNo AST available for module, skipping symbol registration\n", .{});
+        }
+
+        if (self.debug_enabled) {
+            std.debug.print("\n=== Module loading and registration complete ===\n", .{});
         }
     }
 
@@ -1555,22 +1771,45 @@ pub const Parser = struct {
         }
 
         if (self.debug_enabled) {
-            std.debug.print("Registering public symbols from module: {s}, namespace: {s}\n", .{ module_path, namespace });
+            std.debug.print("\n=== Starting symbol registration ===\n", .{});
+            std.debug.print("Module path: {s}\n", .{module_path});
+            std.debug.print("Namespace: {s}\n", .{namespace});
+            std.debug.print("Specific symbol: {?s}\n", .{specific_symbol});
+            std.debug.print("Module AST type: {s}\n", .{@tagName(module_ast.*)});
         }
 
         // If this is a block, process its statements
         if (module_ast.* == .Block) {
             const statements = module_ast.Block.statements;
-            for (statements) |stmt| {
+            if (self.debug_enabled) {
+                std.debug.print("Processing {d} statements\n", .{statements.len});
+            }
+
+            for (statements, 0..) |stmt, i| {
+                if (self.debug_enabled) {
+                    std.debug.print("\nProcessing statement {d}: {s}\n", .{ i, @tagName(stmt) });
+                    switch (stmt) {
+                        .VarDecl => |v| std.debug.print("  Variable: {s} (public: {any})\n", .{ v.name.lexeme, v.is_public }),
+                        .Function => |f| std.debug.print("  Function: {s} (public: {any})\n", .{ f.name.lexeme, f.is_public }),
+                        .Module => |m| std.debug.print("  Module: {s}\n", .{m.name.lexeme}),
+                        else => std.debug.print("  Other statement type\n", .{}),
+                    }
+                }
+
                 switch (stmt) {
                     // Handle enum declarations
                     .EnumDecl => |enum_decl| {
                         const is_public = enum_decl.is_public;
+                        if (self.debug_enabled) {
+                            std.debug.print("Found enum declaration: {s} (public: {any})\n", .{ enum_decl.name.lexeme, is_public });
+                        }
+
                         if (is_public) {
                             const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ namespace, enum_decl.name.lexeme });
 
                             if (self.debug_enabled) {
                                 std.debug.print("Registering public enum: {s}\n", .{full_name});
+                                std.debug.print("Checking specific_symbol condition: specific={?s}, name={s}\n", .{ specific_symbol, enum_decl.name.lexeme });
                             }
 
                             // Only register if we want all symbols or this specific one
@@ -1590,17 +1829,28 @@ pub const Parser = struct {
                                         .original_module = module_path,
                                     });
                                 }
+
+                                if (self.debug_enabled) {
+                                    std.debug.print("Successfully registered enum {s}\n", .{full_name});
+                                }
+                            } else if (self.debug_enabled) {
+                                std.debug.print("Skipping enum registration - doesn't match specific symbol\n", .{});
                             }
                         }
                     },
                     // Handle function declarations
                     .Function => |func| {
                         const is_public = func.is_public;
+                        if (self.debug_enabled) {
+                            std.debug.print("Found function declaration: {s} (public: {any})\n", .{ func.name.lexeme, is_public });
+                        }
+
                         if (is_public) {
                             const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ namespace, func.name.lexeme });
 
                             if (self.debug_enabled) {
                                 std.debug.print("Registering public function: {s}\n", .{full_name});
+                                std.debug.print("Checking specific_symbol condition: specific={?s}, name={s}\n", .{ specific_symbol, func.name.lexeme });
                             }
 
                             if (specific_symbol == null or std.mem.eql(u8, specific_symbol.?, func.name.lexeme)) {
@@ -1609,6 +1859,12 @@ pub const Parser = struct {
                                     .name = func.name.lexeme,
                                     .original_module = module_path,
                                 });
+
+                                if (self.debug_enabled) {
+                                    std.debug.print("Successfully registered function {s}\n", .{full_name});
+                                }
+                            } else if (self.debug_enabled) {
+                                std.debug.print("Skipping function registration - doesn't match specific symbol\n", .{});
                             }
                         }
                     },
@@ -1618,8 +1874,17 @@ pub const Parser = struct {
                             if (expr.* == .StructDecl) {
                                 const struct_decl = expr.StructDecl;
                                 const is_public = struct_decl.is_public;
+                                if (self.debug_enabled) {
+                                    std.debug.print("Found struct declaration: {s} (public: {any})\n", .{ struct_decl.name.lexeme, is_public });
+                                }
+
                                 if (is_public) {
                                     const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ namespace, struct_decl.name.lexeme });
+
+                                    if (self.debug_enabled) {
+                                        std.debug.print("Registering public struct: {s}\n", .{full_name});
+                                        std.debug.print("Checking specific_symbol condition: specific={?s}, name={s}\n", .{ specific_symbol, struct_decl.name.lexeme });
+                                    }
 
                                     if (specific_symbol == null or std.mem.eql(u8, specific_symbol.?, struct_decl.name.lexeme)) {
                                         try self.imported_symbols.?.put(full_name, .{
@@ -1627,12 +1892,63 @@ pub const Parser = struct {
                                             .name = struct_decl.name.lexeme,
                                             .original_module = module_path,
                                         });
+
+                                        if (self.debug_enabled) {
+                                            std.debug.print("Successfully registered struct {s}\n", .{full_name});
+                                        }
+                                    } else if (self.debug_enabled) {
+                                        std.debug.print("Skipping struct registration - doesn't match specific symbol\n", .{});
                                     }
                                 }
                             }
                         }
                     },
+                    .VarDecl => |var_decl| {
+                        const is_public = var_decl.is_public;
+                        if (self.debug_enabled) {
+                            std.debug.print("Found variable declaration: {s} (public: {any})\n", .{ var_decl.name.lexeme, is_public });
+                        }
+
+                        if (is_public) {
+                            const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ namespace, var_decl.name.lexeme });
+
+                            if (self.debug_enabled) {
+                                std.debug.print("Registering public variable: {s}\n", .{full_name});
+                                std.debug.print("Checking specific_symbol condition: specific={?s}, name={s}\n", .{ specific_symbol, var_decl.name.lexeme });
+                            }
+
+                            // Only register if we want all symbols or this specific one
+                            if (specific_symbol == null or std.mem.eql(u8, specific_symbol.?, var_decl.name.lexeme)) {
+                                if (self.debug_enabled) {
+                                    std.debug.print("Adding variable to imported symbols\n", .{});
+                                }
+
+                                try self.imported_symbols.?.put(full_name, .{
+                                    .kind = .Variable,
+                                    .name = var_decl.name.lexeme,
+                                    .original_module = module_path,
+                                });
+
+                                if (self.debug_enabled) {
+                                    std.debug.print("Successfully registered variable {s}\n", .{full_name});
+                                }
+                            } else if (self.debug_enabled) {
+                                std.debug.print("Skipping variable registration - doesn't match specific symbol\n", .{});
+                            }
+                        }
+                    },
                     else => {}, // Skip other types of statements
+                }
+            }
+        }
+
+        if (self.debug_enabled) {
+            std.debug.print("\n=== Symbol registration complete ===\n", .{});
+            std.debug.print("Current imported symbols:\n", .{});
+            if (self.imported_symbols) |symbols| {
+                var it = symbols.iterator();
+                while (it.next()) |entry| {
+                    std.debug.print("  {s} (kind: {s})\n", .{ entry.key_ptr.*, @tagName(entry.value_ptr.kind) });
                 }
             }
         }

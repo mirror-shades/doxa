@@ -1799,6 +1799,40 @@ pub const Interpreter = struct {
                                                     }
                                                 }
                                             }
+                                        } else if (symbol.kind == .Variable) {
+                                            // Handle imported variables
+                                            const module_info = p.module_namespaces.get(var_name).?;
+
+                                            if (self.debug_enabled) {
+                                                std.debug.print("Found variable: {s} in module {s}\n", .{ field.field.lexeme, var_name });
+                                            }
+
+                                            // Find the variable in the module's statements
+                                            if (module_info.ast) |module_ast| {
+                                                if (module_ast.* == .Block) {
+                                                    for (module_ast.Block.statements) |stmt| {
+                                                        if (stmt == .VarDecl and
+                                                            std.mem.eql(u8, stmt.VarDecl.name.lexeme, field.field.lexeme))
+                                                        {
+                                                            if (self.debug_enabled) {
+                                                                std.debug.print("Found variable declaration: {s}\n", .{field.field.lexeme});
+                                                            }
+
+                                                            // Evaluate the variable's initializer expression
+                                                            if (stmt.VarDecl.initializer) |init_expr| {
+                                                                return self.evaluate(init_expr);
+                                                            } else {
+                                                                // If no initializer, return a default value based on type
+                                                                return token.TokenLiteral{ .nothing = {} };
+                                                            }
+                                                        }
+                                                    }
+
+                                                    if (self.debug_enabled) {
+                                                        std.debug.print("Could not find variable {s} in module statements\n", .{field.field.lexeme});
+                                                    }
+                                                }
+                                            }
                                         }
 
                                         // For other types, we might need different handling
