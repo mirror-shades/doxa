@@ -1,0 +1,1 @@
+import "math.doxa" is math; pub function test() { return math.add(2, 3); }

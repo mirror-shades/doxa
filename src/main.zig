@@ -3,15 +3,11 @@ const Lexer = @import("lexer.zig").Lexer;
 const Parser = @import("./parser/parser_types.zig").Parser;
 const Reporting = @import("reporting.zig").Reporting;
 const MemoryManager = @import("memory.zig").MemoryManager;
-const SourceManager = @import("source_manager.zig").SourceManager;
-
 const Token = @import("lexer.zig").Token;
 const TokenLiteral = @import("lexer.zig").TokenLiteral;
 const instructions = @import("instructions.zig");
-const VM = @import("vm.zig").VM;
-const Frame = @import("vm.zig").Frame;
 const Interpreter = @import("interpreter.zig").Interpreter;
-const repl = @import("repl.zig");
+
 ///==========================================================================
 /// Constants
 ///==========================================================================
@@ -67,7 +63,7 @@ pub fn reportError(line: i32, where: []const u8, message: []const u8) void {
 ///==========================================================================
 /// Run
 ///==========================================================================
-pub fn run(memory: *MemoryManager, interpreter: *Interpreter, file_path: []const u8) !?TokenLiteral {
+pub fn run(memory: *MemoryManager, interpreter: *Interpreter, source: []const u8, file_path: []const u8) !?TokenLiteral {
     if (memory.debug_enabled) {
         std.debug.print("\n=== Starting run ===\n", .{});
     }
@@ -82,18 +78,8 @@ pub fn run(memory: *MemoryManager, interpreter: *Interpreter, file_path: []const
     };
     defer reporter.deinit();
 
-    // Create source manager and process the main file
-    var source_manager = SourceManager.init(memory.getAllocator(), memory.debug_enabled, &reporter);
-    defer source_manager.deinit();
-
-    try source_manager.processFile(file_path);
-
-    if (memory.debug_enabled) {
-        std.debug.print("\n=== Unified Source ===\n{s}\n", .{source_manager.unified_source});
-    }
-
     // Now use the unified source for lexing
-    var lexer = Lexer.init(memory.getAllocator(), source_manager.unified_source, file_path);
+    var lexer = Lexer.init(memory.getAllocator(), source, file_path);
     defer lexer.deinit();
 
     try lexer.initKeywords();
@@ -175,7 +161,7 @@ fn runFile(memory: *MemoryManager, path: []const u8) !void {
     const source = try file.readToEndAlloc(memory.getAllocator(), MAX_FILE_SIZE);
     defer memory.getAllocator().free(source);
 
-    _ = try run(memory, &interpreter, path);
+    _ = try run(memory, &interpreter, source, path);
     if (interpreter.had_error) {
         std.process.exit(65);
     }
@@ -220,6 +206,7 @@ pub fn main() !void {
         }
         try runFile(&memory, path);
     } else {
-        try repl.runRepl(&memory);
+        std.debug.print("Usage: doxa [--debug-lexer] [script]\n", .{});
+        std.process.exit(EXIT_CODE_USAGE);
     }
 }
