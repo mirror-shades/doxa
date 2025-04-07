@@ -125,6 +125,7 @@ pub const ErrorList = error{
     ExpectedIdentifier,
     ExpectedAssignmentOperator,
     ExpectedLiteral,
+    ExpectedString,
     UnexpectedToken,
     ExpectedRightParen,
     ExpectedLeftParen,

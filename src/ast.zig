@@ -504,8 +504,9 @@ pub const EnumDecl = struct {
 };
 
 pub const ImportInfo = struct {
-    module_name: []const u8,
-    mode: enum { Safe, Normal },
+    module_path: []const u8,
+    namespace_alias: ?[]const u8 = null,
+    specific_symbol: ?[]const u8 = null,
 };
 
 pub const Stmt = union(enum) {
@@ -534,14 +535,9 @@ pub const Stmt = union(enum) {
     Try: TryStmt,
     Module: struct {
         name: token.Token,
-        is_safe: bool,
         imports: []const ImportInfo,
     },
-    Import: struct {
-        module_name: token.Token,
-        path: []const u8,
-        specific_symbol: ?[]const u8,
-    },
+    Import: ImportInfo,
     Path: []const u8,
     pub fn deinit(self: *Stmt, allocator: std.mem.Allocator) void {
         switch (self.*) {
@@ -839,11 +835,8 @@ pub const TryStmt = struct {
     error_var: ?token.Token,
 };
 
-pub const ModuleMode = enum { Safe, Normal };
-
 pub const ModuleInfo = struct {
     name: []const u8,
-    mode: ModuleMode,
     imports: []const ImportInfo,
 };
 

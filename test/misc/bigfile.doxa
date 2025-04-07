@@ -138,7 +138,9 @@ var condition is if true then "true" else "false";
 condition?; // true
 
 // default arguments
-fn foo(a, b is 5) {return a+b;}
+fn foo(a :: int, b :: int is 5) returns(int) {
+    return a+b;
+}
 
 foo(1, 2)?; // 3
 foo(1, ~)?; // 6
@@ -162,7 +164,7 @@ Map["a"]?; // 1
 Map["c"]?; // 3
 
 // try catch
-const con:: int is 1;
+const con :: int is 1;
 try {
     con is 2;
 } catch {

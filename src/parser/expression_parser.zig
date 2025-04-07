@@ -738,19 +738,15 @@ pub fn functionExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast
         }
     }
 
-    if (self.mode == .Safe) {
-        // In safe mode:
-        // 1. All parameters must have types
-        for (params.items) |param| {
-            if (param.type_expr == null) {
-                return error.MissingParameterType;
-            }
+    for (params.items) |param| {
+        if (param.type_expr == null) {
+            return error.MissingParameterType;
         }
+    }
 
-        // 2. If function has any return statements with values, must use returns(type)
-        if ((try self.hasReturnWithValue()) and !has_return_type) {
-            return error.MissingReturnType;
-        }
+    // 2. If function has any return statements with values, must use returns(type)
+    if ((try self.hasReturnWithValue()) and !has_return_type) {
+        return error.MissingReturnType;
     }
 
     // Parse function body
