@@ -414,9 +414,6 @@ pub const Type = enum {
     Map,
     Nothing,
     Bytes,
-    // these are conditionals not types, investigate why it breaks when I take them out
-    Exists,
-    Forall,
 };
 
 pub const TypeInfo = struct {
@@ -517,6 +514,7 @@ pub const Stmt = union(enum) {
         name: token.Token,
         type_info: TypeInfo,
         initializer: ?*Expr,
+        is_public: bool = false,
     },
     Block: []Stmt,
     Function: struct {
@@ -525,6 +523,7 @@ pub const Stmt = union(enum) {
         return_type_info: TypeInfo,
         body: []Stmt,
         is_entry: bool = false,
+        is_public: bool = false,
     },
     Return: struct {
         value: ?*Expr,
@@ -612,14 +611,6 @@ pub const TypeExpr = union(enum) {
     Array: ArrayType,
     Struct: []*StructField,
     Enum: []const []const u8,
-    Exists: struct {
-        variable: token.Token,
-        condition: *TypeExpr,
-    },
-    Forall: struct {
-        variable: token.Token,
-        condition: *TypeExpr,
-    },
 
     pub fn deinit(self: *TypeExpr, allocator: std.mem.Allocator) void {
         switch (self.*) {
@@ -637,14 +628,6 @@ pub const TypeExpr = union(enum) {
             },
             .Enum => |variants| {
                 allocator.free(variants);
-            },
-            .Exists => |*e| {
-                e.condition.deinit(allocator);
-                allocator.destroy(e.condition);
-            },
-            .Forall => |*f| {
-                f.condition.deinit(allocator);
-                allocator.destroy(f.condition);
             },
             else => {},
         }
@@ -823,8 +806,6 @@ pub fn typeInfoFromExpr(allocator: std.mem.Allocator, type_expr: ?*TypeExpr) !*T
             };
         },
         .Custom => TypeInfo{ .base = .Custom },
-        .Exists => TypeInfo{ .base = .Exists },
-        .Forall => TypeInfo{ .base = .Forall },
         .Enum => TypeInfo{ .base = .Dynamic }, // TODO: Add proper enum support
     };
 
