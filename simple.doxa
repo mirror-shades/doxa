@@ -1,11 +1,9 @@
 import "./safeMath.doxa" is math; 
 
-math.ticker is 6;
 
-var x :: int is math.add(math.ticker, 3); 
+var x :: int is math.add(3); 
 
 x?;
 math.ticker?;
-
 
 

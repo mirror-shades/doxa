@@ -70,6 +70,7 @@ pub const ErrorList = error{
     ExpectedCallable,
     ConstAssignment,
     MissingEntryPointFunction,
+    FunctionNotFound,
 
     // Collections & Indexing
     IndexOutOfBounds,
@@ -213,6 +214,8 @@ pub const ErrorList = error{
     UnsafeImportInSafeModule,
     MisplacedPublicModifier,
     ModuleNotImplemented,
+    ModuleAlreadyExists,
+    ModuleLoadError,
 
     // modules
     SharingViolation,
