@@ -245,7 +245,7 @@ pub const ErrorList = error{
 
 /// Reporting provides structured error handling and reporting capabilities
 /// for the DoxVM compiler and runtime.
-pub const Reporting = struct {
+pub const Reporter = struct {
     /// Total count of errors encountered
     error_count: i32 = 0,
 
@@ -262,7 +262,7 @@ pub const Reporting = struct {
     writer: std.fs.File.Writer,
 
     /// Initialize a new Reporter that writes to stderr
-    pub fn init() Reporting {
+    pub fn init() Reporter {
         return .{
             .writer = std.io.getStdErr().writer(),
             .error_count = 0,
@@ -272,7 +272,7 @@ pub const Reporting = struct {
         };
     }
 
-    pub fn deinit(self: *Reporting) void {
+    pub fn deinit(self: *Reporter) void {
         _ = self;
         //self.writer.flush() catch {};
     }
@@ -300,7 +300,7 @@ pub const Reporting = struct {
     };
 
     /// Report a fatal error and panic
-    pub fn reportFatalError(self: *Reporting, comptime fmt: []const u8, args: anytype) noreturn {
+    pub fn reportFatalError(self: *Reporter, comptime fmt: []const u8, args: anytype) noreturn {
         self.had_error = true;
         self.error_count += 1;
         self.writer.print("DoxVM: Fatal error: " ++ fmt ++ "\n", args) catch {};
@@ -309,7 +309,7 @@ pub const Reporting = struct {
 
     /// Report a compile-time error with location information
     pub fn reportCompileError(
-        self: *Reporting,
+        self: *Reporter,
         location: Location,
         comptime fmt: []const u8,
         args: anytype,
@@ -320,36 +320,40 @@ pub const Reporting = struct {
     }
 
     /// Report a runtime error
-    pub fn reportRuntimeError(self: *Reporting, comptime fmt: []const u8, args: anytype) void {
+    pub fn reportRuntimeError(self: *Reporter, comptime fmt: []const u8, args: anytype) void {
         self.had_error = true;
         self.error_count += 1;
         self.writer.print("DoxVM: Runtime error: " ++ fmt ++ "\n", args) catch {};
     }
 
     /// Report a warning
-    pub fn reportWarning(self: *Reporting, comptime fmt: []const u8, args: anytype) void {
+    pub fn reportWarning(self: *Reporter, comptime fmt: []const u8, args: anytype) void {
         self.had_warning = true;
         self.warning_count += 1;
         self.writer.print("DoxVM: Warning: " ++ fmt ++ "\n", args) catch {};
     }
 
+    pub fn lightMessage(msg: []const u8) void {
+        std.debug.print("DoxVM: {s}\n", .{msg});
+    }
+
     /// Get total error count
-    pub fn getErrorCount(self: Reporting) i32 {
+    pub fn getErrorCount(self: Reporter) i32 {
         return self.error_count;
     }
 
     /// Get total warning count
-    pub fn getWarningCount(self: Reporting) i32 {
+    pub fn getWarningCount(self: Reporter) i32 {
         return self.warning_count;
     }
 
     /// Returns true if any errors occurred
-    pub fn hadError(self: Reporting) bool {
+    pub fn hadError(self: Reporter) bool {
         return self.had_error;
     }
 
     /// Returns true if any warnings occurred
-    pub fn hadWarning(self: Reporting) bool {
+    pub fn hadWarning(self: Reporter) bool {
         return self.had_warning;
     }
 };

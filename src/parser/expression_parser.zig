@@ -4,10 +4,11 @@ const Parser = @import("parser_types.zig").Parser;
 const token = @import("../token.zig");
 const precedence = @import("precedence.zig");
 const Precedence = @import("precedence.zig").Precedence;
-const ErrorList = @import("../reporting.zig").ErrorList;
 const statement_parser = @import("./statement_parser.zig");
 const declaration_parser = @import("./declaration_parser.zig");
-const Reporting = @import("../reporting.zig").Reporting;
+const Reporting = @import("../reporting.zig");
+const Reporter = Reporting.Reporter;
+const ErrorList = Reporting.ErrorList;
 
 pub fn parseExpression(self: *Parser) ErrorList!?*ast.Expr {
     if (self.debug_enabled) {
@@ -369,6 +370,27 @@ pub fn forExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr
                 } };
                 increment = new_increment;
             }
+        } else if (self.peek().type == .MINUS_MINUS) {
+            if (increment) |var_expr| {
+                self.advance(); // consume '--'
+                // Create assignment expression: i = i - 1
+                const one = try self.allocator.create(ast.Expr);
+                one.* = .{ .Literal = .{ .int = 1 } };
+
+                const sub = try self.allocator.create(ast.Expr);
+                sub.* = .{ .Binary = .{
+                    .left = var_expr,
+                    .operator = .{ .type = .MINUS, .lexeme = "-", .line = self.peek().line, .column = self.peek().column, .literal = .nothing },
+                    .right = one,
+                } };
+
+                const new_increment = try self.allocator.create(ast.Expr);
+                new_increment.* = .{ .Assignment = .{
+                    .name = var_expr.Variable,
+                    .value = sub,
+                } };
+                increment = new_increment;
+            }
         }
     }
 
@@ -594,6 +616,13 @@ pub fn parseIfExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
     if (self.peek().type != .THEN) {
         condition.deinit(self.allocator);
         self.allocator.destroy(condition);
+        var reporter = Reporter.init();
+        const location: Reporter.Location = .{
+            .file = self.current_file,
+            .line = self.peek().line,
+            .column = self.peek().column,
+        };
+        reporter.reportCompileError(location, "If is an expression and must be followed by a then. (if (condition) then (expr))", .{});
         return error.ExpectedThen;
     }
     self.advance();
@@ -611,6 +640,14 @@ pub fn parseIfExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
             self.allocator.destroy(condition);
             then_expr.deinit(self.allocator);
             self.allocator.destroy(then_expr);
+            var reporter = Reporter.init();
+            const location = Reporter.Location{
+                .file = self.current_file,
+                .line = self.peek().line,
+                .column = self.peek().column,
+            };
+            reporter.reportCompileError(location, "Expected semicolon", .{});
+
             return error.ExpectedSemicolon;
         }
         self.advance(); // consume semicolon
@@ -624,6 +661,9 @@ pub fn parseIfExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
         // Check if this is an else-if
         if (self.peek().type == .IF) {
             else_expr = try parseIfExpr(self, null, .NONE);
+        } else if (self.peek().type == .LEFT_BRACE) {
+            // Special handling for block expressions
+            else_expr = try braceExpr(self, null, .NONE);
         } else {
             else_expr = try precedence.parsePrecedence(self, .NONE);
 
@@ -636,6 +676,14 @@ pub fn parseIfExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
                     self.allocator.destroy(then_expr);
                     else_expr.?.deinit(self.allocator);
                     self.allocator.destroy(else_expr.?);
+                    var reporter = Reporter.init();
+                    const location = Reporter.Location{
+                        .file = self.current_file,
+                        .line = self.peek().line,
+                        .column = self.peek().column,
+                    };
+                    reporter.reportCompileError(location, "Expected semicolon", .{});
+
                     return error.ExpectedSemicolon;
                 }
                 self.advance(); // consume semicolon
@@ -972,31 +1020,4 @@ pub fn parseArrayLiteral(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!
     const array_expr = try self.allocator.create(ast.Expr);
     array_expr.* = .{ .Array = try elements.toOwnedSlice() };
     return array_expr;
-}
-
-pub fn parseExpressionStmt(self: *Parser) ErrorList!*ast.Expr {
-    if (self.debug_enabled) {
-        std.debug.print("\nParsing expression statement...\n", .{});
-    }
-
-    const expr = try parseExpression(self) orelse return error.ExpectedExpression;
-
-    if (self.peek().type != .SEMICOLON) {
-        if (expr) |e| {
-            e.deinit(self.allocator);
-            self.allocator.destroy(e);
-        }
-
-        var reporting = Reporting.init();
-        reporting.reportCompileError(.{
-            .file = self.current_file,
-            .line = self.peek().line,
-            .column = self.peek().column,
-        }, "Expected semicolon after expression, but found '{s}'", .{@tagName(self.peek().type)});
-        return error.ExpectedSemicolon;
-    }
-
-    self.advance(); // consume semicolon
-
-    return expr;
 }

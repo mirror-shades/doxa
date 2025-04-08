@@ -1,0 +1,73 @@
+enum TokenType {
+    LPAREN,
+    RPAREN,
+    IDENTIFIER,
+    BEGIN,
+    DEFINE,
+    ASTERISK,
+    SLASH,
+    PLUS,
+    MINUS,
+    EQUAL,
+    COMMA,
+    DOT,
+    SEMICOLON,
+    SPACE,
+}
+
+struct Token {
+    type :: TokenType,
+    value :: string,
+}
+
+fn addToken (tokens :: auto, token :: string) {
+    tokens.push(token);
+}
+
+fn tokenize (source :: string) returns(string[]) {
+    var tokens :: string[] is [];
+    var current_index :: int is 0;
+    var current_token :: string is "";
+    var current_char :: string is "";
+    const source_len :: int is source.length;
+
+    while (current_index < source_len) {
+        current_char is source[current_index];
+        
+        if(current_char == "") then {
+            nothing;
+        }
+        else if (current_char == "(") then {
+                tokens.push(current_token);
+                current_token is "";
+            
+            tokens.push(current_char);
+        } else if (current_char == ")") then {
+                tokens.push(current_token);
+                current_token is "";
+            
+            tokens.push(current_char);
+        } else if (current_char == " ") then {
+                tokens.push(current_token);
+                current_token is "";
+            
+        } else {
+            current_token is current_token + current_char;
+        }
+        
+        current_index += 1;        
+    }
+    
+    if (current_token != "") then {
+        tokens.push(current_token);
+    }
+    tokens?;
+    return tokens;
+}
+
+-> fn main () {
+    const source :: string is "(begin (define r 10) (* pi (* r r)))";
+    const tokens :: string[] is tokenize(source);
+    tokens?;
+    source?;
+}

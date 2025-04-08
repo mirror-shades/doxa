@@ -3,6 +3,7 @@ const Parser = @import("parser_types.zig").Parser;
 const ast = @import("../ast.zig");
 const token = @import("../token.zig");
 const ErrorList = @import("../reporting.zig").ErrorList;
+const Reporter = @import("../reporting.zig").Reporter;
 const expression_parser = @import("expression_parser.zig");
 const Precedence = @import("./precedence.zig").Precedence;
 const statement_parser = @import("./statement_parser.zig");
@@ -103,8 +104,8 @@ pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*
         self.advance();
 
         // Expect :
-        if (self.peek().type != .WHERE) {
-            return error.ExpectedColon;
+        if (self.peek().type != .TYPE_SYMBOL) {
+            return error.ExpectedTypeAnnotation;
         }
         self.advance();
 
@@ -265,16 +266,20 @@ pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
         }
     }
 
-    for (params.items) |param| {
-        if (param.type_expr == null) {
-            return error.MissingParameterType;
-        }
-    }
+    // unsure if I want to enforce parameter types
+    // for (params.items) |param| {
+    //     if (param.type_expr == null) {
+    //         var reporter = Reporter.init();
+    //         const location: Reporter.Location = .{ .file = self.current_file, .line = param.name.line, .column = param.name.column };
+    //         reporter.reportCompileError(location, "Missing parameter type", .{});
+    //         return error.MissingParameterType;
+    //     }
+    // }
 
     // 2. If function has any return statements with values, must use returns(type)
-    if ((try Parser.hasReturnWithValue(self)) and !has_return_type) {
-        return error.MissingReturnType;
-    }
+    // if ((try Parser.hasReturnWithValue(self)) and !has_return_type) {
+    //     return error.MissingReturnType;
+    // }
 
     // Parse function body
     if (self.peek().type != .LEFT_BRACE) {
@@ -355,6 +360,13 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
             if (self.debug_enabled) {
                 std.debug.print("Expected semicolon, but found: {s}\n", .{@tagName(self.peek().type)});
             }
+            var reporter = Reporter.init();
+            const location = Reporter.Location{
+                .file = self.current_file,
+                .line = self.peek().line,
+                .column = self.peek().column,
+            };
+            reporter.reportCompileError(location, "Expected semicolon", .{});
             return error.ExpectedSemicolon;
         }
         self.advance();
@@ -379,6 +391,18 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
     if (self.debug_enabled) {
         std.debug.print("After name, current token: {s}\n", .{@tagName(self.peek().type)});
     }
+
+    // still unsure if I should enforce explicit type annotations
+    // if (self.peek().type != .TYPE_SYMBOL) {
+    //     const location = Reporter.Location{
+    //         .file = self.current_file,
+    //         .line = self.peek().line,
+    //         .column = self.peek().column,
+    //     };
+    //     var reporter = Reporter.init();
+    //     reporter.reportCompileError(location, "Type must be declared, use auto if needed.", .{});
+    //     return error.ExpectedTypeAnnotation;
+    // }
 
     // Handle type annotation
     if (self.peek().type == .TYPE_SYMBOL) {
@@ -435,13 +459,29 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
         } else {
             initializer = try expression_parser.parseExpression(self);
         }
-        if (initializer == null) return error.ExpectedExpression;
+        if (initializer == null) {
+            var reporter = Reporter.init();
+            const location = Reporter.Location{
+                .file = self.current_file,
+                .line = self.peek().line,
+                .column = self.peek().column,
+            };
+            reporter.reportCompileError(location, "Expected expression", .{});
+            return error.ExpectedExpression;
+        }
     }
 
     if (self.peek().type != .SEMICOLON) {
         if (self.debug_enabled) {
             std.debug.print("Expected semicolon, but found: {s}\n", .{@tagName(self.peek().type)});
         }
+        var reporter = Reporter.init();
+        const location = Reporter.Location{
+            .file = self.current_file,
+            .line = self.peek().line,
+            .column = self.peek().column,
+        };
+        reporter.reportCompileError(location, "Expected semicolon", .{});
         return error.ExpectedSemicolon;
     }
     self.advance();
