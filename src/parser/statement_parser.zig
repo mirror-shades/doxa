@@ -2,7 +2,9 @@ const std = @import("std");
 const ast = @import("../ast.zig");
 const Parser = @import("parser_types.zig").Parser;
 const expr_parser = @import("expression_parser.zig");
-const ErrorList = @import("../reporting.zig").ErrorList;
+const Reporting = @import("../reporting.zig");
+const ErrorList = Reporting.ErrorList;
+const Reporter = Reporting.Reporter;
 const token = @import("../token.zig");
 const declaration_parser = @import("./declaration_parser.zig");
 const expression_parser = @import("./expression_parser.zig");
@@ -144,7 +146,7 @@ pub fn parseExpressionStmt(self: *Parser) ErrorList!ast.Stmt {
         .Print => true,
         .Match => false,
         .Index => true,
-        .Assignment => true, // Added this case
+        .Assignment => true,
         else => true,
     } else true;
 
@@ -190,6 +192,13 @@ pub fn parseExpressionStmt(self: *Parser) ErrorList!ast.Stmt {
                 e.deinit(self.allocator);
                 self.allocator.destroy(e);
             }
+            var reporter = Reporter.init();
+            const location = Reporter.Location{
+                .file = self.current_file,
+                .line = self.peek().line,
+                .column = self.peek().column,
+            };
+            reporter.reportCompileError(location, "Expected semicolon", .{});
             return error.ExpectedSemicolon;
         }
         self.advance(); // Consume the semicolon
@@ -244,6 +253,13 @@ pub fn parseReturnStmt(self: *Parser) ErrorList!ast.Stmt {
     }
 
     if (self.peek().type != .SEMICOLON) {
+        var reporter = Reporter.init();
+        const location = Reporter.Location{
+            .file = self.current_file,
+            .line = self.peek().line,
+            .column = self.peek().column,
+        };
+        reporter.reportCompileError(location, "Expected semicolon", .{});
         return error.ExpectedSemicolon;
     }
     self.advance();
@@ -256,8 +272,7 @@ pub fn parseReturnStmt(self: *Parser) ErrorList!ast.Stmt {
 
 pub fn parseStatement(self: *Parser) ErrorList!ast.Stmt {
     if (self.debug_enabled) {
-        std.debug.print("\nParsing statement...\n", .{});
-        std.debug.print("Current token: {s}\n", .{@tagName(self.peek().type)});
+        std.debug.print("\nParsing statement, current token: {s}\n", .{@tagName(self.peek().type)});
     }
 
     return switch (self.peek().type) {
@@ -277,7 +292,7 @@ pub fn parseStatement(self: *Parser) ErrorList!ast.Stmt {
             try parseExpressionStmt(self),
         .ENUM_TYPE => declaration_parser.parseEnumDecl(self),
         .TRY => try parseTryStmt(self),
-        else => parseExpressionStmt(self),
+        else => try parseExpressionStmt(self),
     };
 }
 
@@ -360,4 +375,40 @@ pub fn parseTryStmt(self: *Parser) ErrorList!ast.Stmt {
 pub fn parseStructDeclStmt(self: *Parser) ErrorList!ast.Stmt {
     const expr = try declaration_parser.parseStructDecl(self, null, .NONE) orelse return error.InvalidExpression;
     return ast.Stmt{ .Expression = expr };
+}
+
+pub fn parseContinueStmt(self: *Parser) ErrorList!ast.Stmt {
+    self.advance(); // consume 'continue' keyword
+
+    if (self.peek().type != .SEMICOLON) {
+        var reporter = Reporter.init();
+        const location = Reporter.Location{
+            .file = self.current_file,
+            .line = self.peek().line,
+            .column = self.peek().column,
+        };
+        reporter.reportCompileError(location, "Expected semicolon", .{});
+        return error.ExpectedSemicolon;
+    }
+    self.advance(); // consume ';'
+
+    return ast.Stmt{ .Continue = {} };
+}
+
+pub fn parseBreakStmt(self: *Parser) ErrorList!ast.Stmt {
+    self.advance(); // consume 'break' keyword
+
+    if (self.peek().type != .SEMICOLON) {
+        var reporter = Reporter.init();
+        const location = Reporter.Location{
+            .file = self.current_file,
+            .line = self.peek().line,
+            .column = self.peek().column,
+        };
+        reporter.reportCompileError(location, "Expected semicolon", .{});
+        return error.ExpectedSemicolon;
+    }
+    self.advance(); // consume ';'
+
+    return ast.Stmt{ .Break = {} };
 }

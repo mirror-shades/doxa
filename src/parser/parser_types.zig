@@ -5,9 +5,10 @@ const token = @import("../token.zig");
 const declaration_parser = @import("declaration_parser.zig");
 const expression_parser = @import("expression_parser.zig");
 const statement_parser = @import("statement_parser.zig");
-const ErrorList = @import("../reporting.zig").ErrorList;
+const Reporting = @import("../reporting.zig");
+const ErrorList = Reporting.ErrorList;
+const Reporter = Reporting.Reporter;
 const Precedence = @import("./precedence.zig").Precedence;
-const Reporting = @import("../reporting.zig").Reporting;
 const Lexer = @import("../lexer.zig").Lexer;
 const import_parser = @import("import_parser.zig");
 
@@ -73,13 +74,6 @@ pub const Parser = struct {
     }
 
     pub fn advance(self: *Parser) void {
-        if (self.debug_enabled) {
-            std.debug.print("Advancing from position {} to {}\n", .{
-                self.current,
-                self.current + 1,
-            });
-        }
-
         // Only advance if we're not at the end
         if (self.current < self.tokens.len - 1) {
             self.current += 1;
@@ -136,15 +130,6 @@ pub const Parser = struct {
     }
 
     pub fn execute(self: *Parser) ErrorList![]ast.Stmt {
-        if (self.debug_enabled) {
-            std.debug.print("\n=== Starting parse ===\n", .{});
-            std.debug.print("\nToken stream:\n", .{});
-            for (self.tokens, 0..) |t, i| {
-                std.debug.print("{}: {s} ({s})\n", .{ i, @tagName(t.type), t.lexeme });
-            }
-            std.debug.print("\n", .{});
-        }
-
         var statements = std.ArrayList(ast.Stmt).init(self.allocator);
         errdefer {
             for (statements.items) |*stmt| {
@@ -304,7 +289,7 @@ pub const Parser = struct {
         // Final check: If entry point marker '->' was found but no function followed
         if (self.has_entry_point and self.entry_point_name == null) {
             // Report error using self.entry_point_location
-            var reporting = Reporting.init();
+            var reporting = Reporter.init();
             reporting.reportCompileError(.{
                 .file = self.current_file,
                 .line = self.entry_point_location.?.line,
@@ -334,8 +319,8 @@ pub const Parser = struct {
             }
 
             if (self.peek().type != .IDENTIFIER) {
-                var reporting = Reporting.init();
-                reporting.reportCompileError(.{
+                var reporter = Reporter.init();
+                reporter.reportCompileError(.{
                     .file = self.current_file,
                     .line = self.peek().line,
                     .column = self.peek().column,

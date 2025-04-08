@@ -70,13 +70,13 @@ return_test()?; // return
 
 // structs
 struct Person {
-    name: string,
-    age: int,
+    name :: string,
+    age :: int,
 }
 
 struct Employee {
-    person: Person,
-    salary: int,
+    person ::  Person,
+    salary :: int,
 }
 
 var mike is Employee {

@@ -1,8 +1,9 @@
 const std = @import("std");
 const ast = @import("ast.zig");
 const token = @import("token.zig");
-const ReportingModule = @import("reporting.zig");
-const ErrorList = ReportingModule.ErrorList;
+const Reporting = @import("reporting.zig");
+const ErrorList = Reporting.ErrorList;
+const Reporter = Reporting.Reporter;
 const MemoryManager = @import("memory.zig").MemoryManager;
 const TypeInfo = ast.TypeInfo;
 
@@ -155,6 +156,7 @@ pub const Interpreter = struct {
     has_entry_point: bool = false,
     entry_point_location: ?token.Token = null,
     parser: ?*@import("parser/parser_types.zig").Parser = null,
+    has_returned: bool = false,
 
     pub fn init(allocator: std.mem.Allocator, debug_enabled: bool) !Interpreter {
         const globals = try allocator.create(Environment);
@@ -170,10 +172,6 @@ pub const Interpreter = struct {
             .entry_point_name = null,
             .had_error = false,
         };
-
-        if (debug_enabled) {
-            std.debug.print("Interpreter initialized with debug mode: {}\n", .{interpreter.debug_enabled});
-        }
 
         return interpreter;
     }
@@ -233,37 +231,7 @@ pub const Interpreter = struct {
             }
         }
 
-        // Second pass - Process all variable declarations
-        var var_declarations = std.ArrayList(*ast.Stmt).init(self.allocator);
-        defer var_declarations.deinit();
-
-        for (0..statements.len) |i| {
-            const stmt = &statements[i];
-            if (self.debug_enabled) {
-                std.debug.print("\nScanning statement {d}: {s}\n", .{ i, @tagName(stmt.*) });
-            }
-
-            if (stmt.* == .VarDecl) {
-                if (self.debug_enabled) {
-                    std.debug.print("Found variable declaration: {s}\n", .{stmt.VarDecl.name.lexeme});
-                }
-                try var_declarations.append(stmt);
-            }
-        }
-
-        // Process variable declarations in order of appearance
-        if (self.debug_enabled) {
-            std.debug.print("\nProcessing {d} variable declarations\n", .{var_declarations.items.len});
-        }
-
-        for (var_declarations.items) |stmt| {
-            if (self.debug_enabled) {
-                std.debug.print("Processing variable declaration: {s}\n", .{stmt.VarDecl.name.lexeme});
-            }
-            _ = try self.executeStatement(stmt, self.debug_enabled);
-        }
-
-        // Third pass - Process all function declarations
+        // Second pass - Process all function declarations
         for (statements, 0..) |*stmt, i| {
             if (self.debug_enabled and stmt.* == .Function) {
                 std.debug.print("\nChecking statement {d}: {s}\n", .{ i, @tagName(stmt.*) });
@@ -289,7 +257,7 @@ pub const Interpreter = struct {
                 try self.environment.define(
                     f.name.lexeme,
                     function,
-                    .{
+                    .{ // Use default TypeInfo for function, actual types checked during call
                         .base = .Function,
                         .is_mutable = false,
                         .is_dynamic = false,
@@ -302,14 +270,47 @@ pub const Interpreter = struct {
             }
         }
 
-        if (self.entry_point_name == null) {
-            // Script mode - execute all statements (except functions and variables which were already processed)
+        // Third pass - Process all variable declarations
+        var var_declarations = std.ArrayList(*ast.Stmt).init(self.allocator);
+        defer var_declarations.deinit();
+
+        for (0..statements.len) |i| {
+            const stmt = &statements[i];
             if (self.debug_enabled) {
-                std.debug.print("\n=== Running in script mode ===\n", .{});
+                std.debug.print("\nScanning for variables - statement {d}: {s}\n", .{ i, @tagName(stmt.*) });
+            }
+
+            if (stmt.* == .VarDecl) {
+                if (self.debug_enabled) {
+                    std.debug.print("Found variable declaration: {s}\n", .{stmt.VarDecl.name.lexeme});
+                }
+                try var_declarations.append(stmt);
+            }
+        }
+
+        // Process variable declarations in order of appearance
+        if (self.debug_enabled) {
+            std.debug.print("\nProcessing {d} variable declarations\n", .{var_declarations.items.len});
+        }
+
+        for (var_declarations.items) |stmt| {
+            if (self.debug_enabled) {
+                std.debug.print("Processing variable declaration: {s}\n", .{stmt.VarDecl.name.lexeme});
+            }
+            _ = try self.executeStatement(stmt, self.debug_enabled);
+        }
+
+        // --- Final Execution Pass ---
+        if (self.entry_point_name == null) {
+            // Script mode - execute all remaining statements
+            if (self.debug_enabled) {
+                std.debug.print("\n=== Running in script mode (final execution) ===\n", .{});
             }
             for (statements) |*stmt| {
-                if (stmt.* == .Function or stmt.* == .VarDecl) {
-                    // Skip declarations in third pass since they're already defined
+                // Skip declarations handled in previous passes
+                if (stmt.* == .Function or stmt.* == .VarDecl or stmt.* == .EnumDecl or
+                    (stmt.* == .Expression and stmt.Expression != null and stmt.Expression.?.* == .StructDecl))
+                {
                     continue;
                 }
                 self.last_result = try self.executeStatement(stmt, self.debug_enabled);
@@ -317,41 +318,33 @@ pub const Interpreter = struct {
         } else {
             // Program mode with entry point
             if (self.debug_enabled) {
-                std.debug.print("\n=== Running in program mode ===\n", .{});
+                std.debug.print("\n=== Running in program mode (executing entry point) ===\n", .{});
             }
 
-            // In program mode, variable declarations and functions are already processed
-            // Only execute the entry point
+            // Entry point execution (declarations already handled)
+            if (self.entry_point_name) |main_fn| {
+                const main_value = (try self.environment.get(main_fn)) orelse return error.InvalidEntryPoint;
+                if (main_value != .function) {
+                    return error.InvalidEntryPoint;
+                }
+
+                var empty_args = [_]*ast.Expr{}; // Create empty slice of ast.Expr pointers
+                self.last_result = try self.callFunction(main_value, &empty_args);
+            } else {
+                // This case should technically not be reachable if entry_point_name is set
+                // but included for completeness
+                if (self.debug_enabled) {
+                    std.debug.print("Warning: Program mode set but no entry point name found.\n", .{});
+                }
+            }
         }
 
-        // Handle entry point execution
-        if (self.entry_point_name) |main_fn| {
-            if (self.debug_enabled) {
-                std.debug.print("\n=== Executing entry point ===\n", .{});
-            }
-
-            const main_value = (try self.environment.get(main_fn)) orelse return error.InvalidEntryPoint;
-            if (main_value != .function) {
-                return error.InvalidEntryPoint;
-            }
-
-            var empty_args = [_]*ast.Expr{}; // Create empty slice of ast.Expr pointers
-            self.last_result = try self.callFunction(main_value, &empty_args);
-        }
+        // // Handle entry point execution (removed from here, handled in program mode logic)
+        // if (self.entry_point_name) |main_fn| { ... }
 
         if (self.debug_enabled) {
             std.debug.print("\n=== Interpretation complete ===\n", .{});
         }
-    }
-
-    fn createForwardDeclaration(self: *Interpreter, func: ast.FunctionStmt) !void {
-        const name = func.name.lexeme;
-        const function = token.TokenLiteral{ .function = .{
-            .params = func.params,
-            .body = func.body,
-            .closure = self.environment,
-        } };
-        try self.environment.define(name, function);
     }
 
     pub fn executeBlock(self: *Interpreter, statements: []ast.Stmt, environment: *Environment) ErrorList!?token.TokenLiteral {
@@ -366,8 +359,15 @@ pub const Interpreter = struct {
 
         var result: ?token.TokenLiteral = null;
 
-        // Execute all statements, allowing errors to propagate
+        // Reset return flag at start of block (unless we're in a nested call)
+        const previous_return_state = self.has_returned;
+        defer self.has_returned = previous_return_state;
+
+        // Execute all statements, respecting return status
         for (statements) |*stmt| {
+            // Skip statements if we've already returned
+            if (self.has_returned) break;
+
             result = self.executeStatement(stmt, self.debug_enabled) catch |err| {
                 if (err == error.ReturnValue) {
                     // Get the return value from the environment
@@ -378,6 +378,9 @@ pub const Interpreter = struct {
                             .boolean => |b| token.TokenLiteral{ .boolean = b },
                             else => return_value,
                         };
+
+                        // Set the return flag
+                        self.has_returned = true;
                         return value;
                     }
                 }
@@ -392,6 +395,9 @@ pub const Interpreter = struct {
                     .boolean => |b| token.TokenLiteral{ .boolean = b },
                     else => return_value,
                 };
+
+                // Set the return flag
+                self.has_returned = true;
                 return value;
             }
         }
@@ -496,23 +502,23 @@ pub const Interpreter = struct {
                     // Type checking for initialization
                     switch (decl.type_info.base) {
                         .Int => if (init_value != .int) {
-                            var reporting = ReportingModule.Reporting.init();
+                            var reporting = Reporter.init();
                             reporting.reportRuntimeError("Type error: Cannot initialize int variable with {s}", .{@tagName(init_value)});
                             return error.TypeError;
                         },
                         .Float => if (init_value != .float and init_value != .int) {
-                            var reporting = ReportingModule.Reporting.init();
+                            var reporting = Reporter.init();
                             reporting.reportRuntimeError("Type error: Cannot initialize float variable with {s}", .{@tagName(init_value)});
                             return error.TypeError;
                         },
                         .Boolean => if (init_value != .boolean) {
-                            var reporting = ReportingModule.Reporting.init();
+                            var reporting = Reporter.init();
                             reporting.reportRuntimeError("Type error: Cannot initialize bool variable with {s}", .{@tagName(init_value)});
                             return error.TypeError;
                         },
                         .Array => {
                             if (init_value != .array) {
-                                var reporting = ReportingModule.Reporting.init();
+                                var reporting = Reporter.init();
                                 reporting.reportRuntimeError("Type error: Cannot initialize array variable with {s}", .{@tagName(init_value)});
                                 return error.TypeError;
                             }
@@ -534,7 +540,7 @@ pub const Interpreter = struct {
                         },
                         .Map => {
                             if (init_value != .map) {
-                                var reporting = ReportingModule.Reporting.init();
+                                var reporting = Reporter.init();
                                 reporting.reportRuntimeError("Type error: Cannot initialize map variable with {s}", .{@tagName(init_value)});
                                 return error.TypeError;
                             }
@@ -651,22 +657,20 @@ pub const Interpreter = struct {
 
                 return try_result;
             },
-            .Module => |_| {
-                return .{ .nothing = {} };
-            },
-            .Import => |_| {
-                return .{ .nothing = {} };
-            },
-            .Path => |_| {
-                return .{ .nothing = {} };
-            },
+            .Module => return .{ .nothing = {} },
+            .Import => return .{ .nothing = {} },
+            .Path => return .{ .nothing = {} },
+            .Continue => return .{ .nothing = {} },
+            .Break => return .{ .nothing = {} },
             .Return => |ret| {
                 if (ret.value) |value| {
                     const return_value = try self.evaluate(value);
                     try self.environment.define("return", return_value, .{ .base = .Dynamic });
+                    self.has_returned = true; // Set the flag
                     return error.ReturnValue;
                 }
                 try self.environment.define("return", .{ .nothing = {} }, .{ .base = .Nothing });
+                self.has_returned = true; // Set the flag
                 return error.ReturnValue;
             },
         };
@@ -763,6 +767,10 @@ pub const Interpreter = struct {
                         .map => token.TokenLiteral{ .boolean = token.Boolean.false },
                     },
                     .PLUS => {
+                        if (left == .string and right == .string) {
+                            const result = try std.mem.concat(self.allocator, u8, &.{ left.string, right.string });
+                            return token.TokenLiteral{ .string = result };
+                        }
                         if (left == .int and right == .int) {
                             return token.TokenLiteral{ .int = left.int + right.int };
                         }
@@ -849,6 +857,13 @@ pub const Interpreter = struct {
                         return error.TypeError;
                     },
                     .BANG_EQUAL => {
+                        if (left == .string and right == .string) {
+                            if (!std.mem.eql(u8, left.string, right.string)) {
+                                return token.TokenLiteral{ .boolean = token.Boolean.true };
+                            } else {
+                                return token.TokenLiteral{ .boolean = token.Boolean.false };
+                            }
+                        }
                         if (left == .int and right == .int) {
                             if (Interpreter.compare(left.int, right.int) != 0) {
                                 return token.TokenLiteral{ .boolean = token.Boolean.true };
@@ -856,6 +871,9 @@ pub const Interpreter = struct {
                                 return token.TokenLiteral{ .boolean = token.Boolean.false };
                             }
                         }
+                        var reporter = Reporter.init();
+                        const location: Reporter.Location = .{ .file = "stdin", .line = binary.operator.line, .column = binary.operator.column };
+                        reporter.reportCompileError(location, "Cannot compare {s} and {s}. Both sides must be bools.", .{ @tagName(left), @tagName(right) });
                         return error.TypeError;
                     },
                     .MODULO => {
@@ -988,6 +1006,9 @@ pub const Interpreter = struct {
                 if (self.debug_enabled) {
                     std.debug.print("Variable not found: '{s}'\n", .{var_token.lexeme});
                 }
+                var reporter = Reporter.init();
+                const location: Reporter.Location = .{ .file = "stdin", .line = var_token.line, .column = var_token.column };
+                reporter.reportCompileError(location, "Variable '{s}' not found", .{var_token.lexeme});
                 return error.VariableNotFound;
             },
             .Assignment => |assign| {
@@ -1006,28 +1027,28 @@ pub const Interpreter = struct {
                     switch (var_type.base) {
                         .Int => {
                             if (value != .int) {
-                                var reporting = ReportingModule.Reporting.init();
+                                var reporting = Reporter.init();
                                 reporting.reportRuntimeError("Type error: Cannot assign {s} to int variable", .{@tagName(value)});
                                 return error.TypeError;
                             }
                         },
                         .Float => {
                             if (value != .float) {
-                                var reporting = ReportingModule.Reporting.init();
+                                var reporting = Reporter.init();
                                 reporting.reportRuntimeError("Type error: Cannot assign {s} to float variable", .{@tagName(value)});
                                 return error.TypeError;
                             }
                         },
                         .String => {
                             if (value != .string) {
-                                var reporting = ReportingModule.Reporting.init();
+                                var reporting = Reporter.init();
                                 reporting.reportRuntimeError("Type error: Cannot assign {s} to string variable", .{@tagName(value)});
                                 return error.TypeError;
                             }
                         },
                         .Boolean => {
                             if (value != .boolean) {
-                                var reporting = ReportingModule.Reporting.init();
+                                var reporting = Reporter.init();
                                 reporting.reportRuntimeError("Type error: Cannot assign {s} to boolean variable", .{@tagName(value)});
                                 return error.TypeError;
                             }
@@ -1118,7 +1139,7 @@ pub const Interpreter = struct {
 
                         if (value_type != first_type) {
                             array_values.deinit();
-                            var reporting = ReportingModule.Reporting.init();
+                            var reporting = Reporter.init();
                             reporting.reportRuntimeError("Heterogeneous array detected: cannot mix {s} and {s}", .{ @tagName(first_type), @tagName(value_type) });
                             return error.HeterogeneousArray;
                         }
@@ -1157,13 +1178,13 @@ pub const Interpreter = struct {
                             return error.TypeError;
                         }
                         if (index_value.int < 0) {
-                            var reporting = ReportingModule.Reporting.init();
+                            var reporting = Reporter.init();
                             reporting.reportRuntimeError("String index out of bounds: negative index {d}", .{index_value.int});
                             return error.IndexOutOfBounds;
                         }
                         const idx = @as(usize, @intCast(index_value.int));
                         if (idx >= str.len) {
-                            var reporting = ReportingModule.Reporting.init();
+                            var reporting = Reporter.init();
                             reporting.reportRuntimeError("String index out of bounds: index {d} for string of length {d}", .{ idx, str.len });
                             return error.IndexOutOfBounds;
                         }
@@ -1184,13 +1205,13 @@ pub const Interpreter = struct {
                             return error.TypeError;
                         }
                         if (index_value.int < 0) {
-                            var reporting = ReportingModule.Reporting.init();
+                            var reporting = Reporter.init();
                             reporting.reportRuntimeError("Array index out of bounds: negative index {d}", .{index_value.int});
                             return error.IndexOutOfBounds;
                         }
                         const idx = @as(usize, @intCast(index_value.int));
                         if (idx >= arr.len) {
-                            var reporting = ReportingModule.Reporting.init();
+                            var reporting = Reporter.init();
                             reporting.reportRuntimeError("Array index out of bounds: index {d} for array of length {d}", .{ idx, arr.len });
                             return error.IndexOutOfBounds;
                         }
@@ -2353,28 +2374,28 @@ pub const Interpreter = struct {
             switch (var_type.base) {
                 .Int => {
                     if (value != .int) {
-                        var reporting = ReportingModule.Reporting.init();
+                        var reporting = Reporter.init();
                         reporting.reportRuntimeError("Type error: Cannot assign {s} to int variable", .{@tagName(value)});
                         return error.TypeError;
                     }
                 },
                 .Float => {
                     if (value != .float) {
-                        var reporting = ReportingModule.Reporting.init();
+                        var reporting = Reporter.init();
                         reporting.reportRuntimeError("Type error: Cannot assign {s} to float variable", .{@tagName(value)});
                         return error.TypeError;
                     }
                 },
                 .String => {
                     if (value != .string) {
-                        var reporting = ReportingModule.Reporting.init();
+                        var reporting = Reporter.init();
                         reporting.reportRuntimeError("Type error: Cannot assign {s} to string variable", .{@tagName(value)});
                         return error.TypeError;
                     }
                 },
                 .Boolean => {
                     if (value != .boolean) {
-                        var reporting = ReportingModule.Reporting.init();
+                        var reporting = Reporter.init();
                         reporting.reportRuntimeError("Type error: Cannot assign {s} to boolean variable", .{@tagName(value)});
                         return error.TypeError;
                     }
@@ -2462,9 +2483,14 @@ pub const Interpreter = struct {
                 const previous_env = self.environment;
                 self.environment = &function_env;
 
-                // Execute function body
+                // Execute function body with saved return state
+                const previous_return_state = self.has_returned;
+                self.has_returned = false; // Reset for this function call
+
                 const result = self.executeBlock(f.body, &function_env) catch |err| {
                     self.environment = previous_env;
+                    self.has_returned = previous_return_state; // Restore return state
+
                     if (err == error.ReturnValue) {
                         if (try function_env.get("return")) |return_value| {
                             // Deep copy the return value to preserve array contents
@@ -2496,6 +2522,7 @@ pub const Interpreter = struct {
 
                 // Restore previous environment
                 self.environment = previous_env;
+                self.has_returned = previous_return_state; // Restore return state
 
                 return if (result) |value| value else .{ .nothing = {} };
             },

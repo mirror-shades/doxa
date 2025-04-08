@@ -1,7 +1,7 @@
 const std = @import("std");
 const Lexer = @import("lexer.zig").Lexer;
 const Parser = @import("./parser/parser_types.zig").Parser;
-const Reporting = @import("reporting.zig").Reporting;
+const Reporter = @import("reporting.zig").Reporter;
 const MemoryManager = @import("memory.zig").MemoryManager;
 const Token = @import("lexer.zig").Token;
 const TokenLiteral = @import("lexer.zig").TokenLiteral;
@@ -68,16 +68,6 @@ pub fn run(memory: *MemoryManager, interpreter: *Interpreter, source: []const u8
         std.debug.print("\n=== Starting run ===\n", .{});
     }
 
-    // Create a reporter instance
-    var reporter = Reporting{
-        .writer = std.io.getStdErr().writer(),
-        .error_count = 0,
-        .warning_count = 0,
-        .had_error = false,
-        .had_warning = false,
-    };
-    defer reporter.deinit();
-
     // Now use the unified source for lexing
     var lexer = Lexer.init(memory.getAllocator(), source, file_path);
     defer lexer.deinit();
@@ -108,10 +98,6 @@ pub fn run(memory: *MemoryManager, interpreter: *Interpreter, source: []const u8
             memory.debug_enabled,
         );
         defer parser_instance.deinit();
-
-        if (memory.debug_enabled) {
-            std.debug.print("\n=== Starting parse ===\n", .{});
-        }
         const statements = try parser_instance.execute();
         if (memory.debug_enabled) {
             std.debug.print("hadError parsing: {}\n", .{hadError});
@@ -178,6 +164,7 @@ pub fn main() !void {
     }
     var memory = MemoryManager.init(gpa.allocator(), false);
     defer memory.deinit();
+
     const args = try std.process.argsAlloc(memory.getAllocator());
     defer std.process.argsFree(memory.getAllocator(), args);
     // Skip the executable name

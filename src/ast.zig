@@ -416,6 +416,7 @@ pub const Type = enum {
     Map,
     Nothing,
     Bytes,
+    Reference,
 };
 
 pub const TypeInfo = struct {
@@ -429,6 +430,7 @@ pub const TypeInfo = struct {
     element_type: ?Type = null,
     variants: ?[][]const u8 = null,
     array_size: ?usize = null,
+    referenced_type: ?*TypeInfo = null,
 
     pub fn deinit(self: *TypeInfo, allocator: std.mem.Allocator) void {
         if (self.array_type) |array_type| {
@@ -453,6 +455,10 @@ pub const TypeInfo = struct {
         }
         if (self.variants) |variants| {
             allocator.free(variants);
+        }
+        if (self.referenced_type) |ref_type| {
+            ref_type.deinit(allocator);
+            allocator.destroy(ref_type);
         }
     }
 
@@ -491,14 +497,6 @@ pub const VarDecl = struct {
     initializer: ?*Expr,
     type_info: TypeInfo,
     is_public: bool = false,
-
-    pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
-        if (self.initializer) |i| {
-            i.deinit(allocator);
-            allocator.destroy(i);
-        }
-        self.type_info.deinit(allocator);
-    }
 };
 
 pub const EnumDecl = struct {
@@ -543,6 +541,8 @@ pub const Stmt = union(enum) {
     },
     Import: ImportInfo,
     Path: []const u8,
+    Continue: void,
+    Break: void,
     pub fn deinit(self: *Stmt, allocator: std.mem.Allocator) void {
         switch (self.*) {
             .Expression => |maybe_expr| {
@@ -601,6 +601,8 @@ pub const Stmt = union(enum) {
             .Module => {},
             .Import => {},
             .Path => {},
+            .Continue => {},
+            .Break => {},
         }
     }
 };
