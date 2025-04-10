@@ -524,6 +524,12 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
         return error.ExpectedExpression;
     }
 
+    if (type_info.base == .Auto and initializer != null) {
+        // infer type from initializer
+        const inferred_type = try expression_parser.inferType(initializer.?);
+        type_info = inferred_type;
+    }
+
     return ast.Stmt{ .VarDecl = .{
         .name = name,
         .type_info = type_info,

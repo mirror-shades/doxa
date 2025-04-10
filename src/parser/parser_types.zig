@@ -894,7 +894,6 @@ pub const Parser = struct {
     pub fn print(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
         if (left == null) return error.ExpectedExpression;
 
-        // Get the variable name if this is a variable expression
         var name_token: ?token.Token = null;
         if (left.?.* == .Variable) {
             name_token = left.?.Variable;

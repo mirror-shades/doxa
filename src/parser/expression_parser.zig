@@ -1062,3 +1062,51 @@ pub fn parseArrayLiteral(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!
     array_expr.* = .{ .Array = try elements.toOwnedSlice() };
     return array_expr;
 }
+
+pub fn inferType(expr: *ast.Expr) ErrorList!ast.TypeInfo {
+    switch (expr.*) {
+        .Literal => |lit| {
+            return switch (lit) {
+                .int => .{ .base = .Int, .is_dynamic = false },
+                .u8 => .{ .base = .U8, .is_dynamic = false },
+                .float => .{ .base = .Float, .is_dynamic = false },
+                .string => .{ .base = .String, .is_dynamic = false },
+                .boolean => .{ .base = .Boolean, .is_dynamic = false },
+                .tetra => .{ .base = .Tetra, .is_dynamic = false },
+                .nothing => .{ .base = .Nothing, .is_dynamic = false },
+                .array => blk: {
+                    if (lit.array.len == 0) {
+                        break :blk .{ .base = .Array, .element_type = .Auto, .is_dynamic = false };
+                    }
+
+                    break :blk .{ .base = .Array, .element_type = .Auto, .is_dynamic = false };
+                },
+                else => .{ .base = .Auto, .is_dynamic = true },
+            };
+        },
+        .Variable => {
+            return .{ .base = .Auto, .is_dynamic = true };
+        },
+        .Call => |call| {
+            if (std.mem.eql(u8, call.callee.Variable.lexeme, "input")) {
+                return .{ .base = .String, .is_dynamic = false };
+            }
+            return .{ .base = .Auto, .is_dynamic = true };
+        },
+        .StructLiteral => |struct_literal| {
+            return .{ .base = .Struct, .custom_type = struct_literal.name.lexeme, .is_dynamic = false };
+        },
+        .Array => {
+            return .{ .base = .Array, .element_type = .Auto, .is_dynamic = false };
+        },
+        .Map => {
+            return .{ .base = .Map, .is_dynamic = false };
+        },
+        .Tuple => {
+            return .{ .base = .Tuple, .is_dynamic = false };
+        },
+        else => {
+            return .{ .base = .Auto, .is_dynamic = true };
+        },
+    }
+}
