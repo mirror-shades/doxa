@@ -182,6 +182,19 @@ pub const Interpreter = struct {
         self.stdout_buffer.deinit();
     }
 
+    fn u8BoundsCheck(value: token.TokenLiteral) ErrorList!void {
+        if (value.int < 0) {
+            var reporting = Reporter.init();
+            reporting.reportRuntimeError("Underflow: u8 cannot be negative", .{});
+            return error.u8Underflow;
+        }
+        if (value.int > 255) {
+            var reporting = Reporter.init();
+            reporting.reportRuntimeError("Overflow: u8 cannot be greater than 255", .{});
+            return error.u8Overflow;
+        }
+    }
+
     pub fn interpret(self: *Interpreter, statements: []ast.Stmt) ErrorList!void {
         if (self.debug_enabled) {
             std.debug.print("\n=== Starting interpretation ===\n", .{});
@@ -491,7 +504,7 @@ pub const Interpreter = struct {
                 // Handle array type declarations
                 if (decl.type_info.base == .Array) {
                     // Store the array type for use during array initialization
-                    const element_type = decl.type_info.element_type orelse .Dynamic;
+                    const element_type = decl.type_info.element_type orelse .Auto;
                     try self.environment.types.put("current_array_type", .{ .base = element_type });
                     defer _ = self.environment.types.remove("current_array_type");
                 }
@@ -501,10 +514,17 @@ pub const Interpreter = struct {
 
                     // Type checking for initialization
                     switch (decl.type_info.base) {
-                        .Int => if (init_value != .int) {
+                        .Int => if (init_value != .int and init_value != .u8) {
                             var reporting = Reporter.init();
                             reporting.reportRuntimeError("Type error: Cannot initialize int variable with {s}", .{@tagName(init_value)});
                             return error.TypeError;
+                        },
+                        .U8 => {
+                            if (init_value != .u8 and init_value != .int) {
+                                var reporting = Reporter.init();
+                                reporting.reportRuntimeError("Type error: Cannot initialize u8 variable with {s}", .{@tagName(init_value)});
+                                return error.TypeError;
+                            }
                         },
                         .Float => if (init_value != .float and init_value != .int) {
                             var reporting = Reporter.init();
@@ -527,6 +547,7 @@ pub const Interpreter = struct {
                                 for (init_value.array) |element| {
                                     const matches = switch (expected_type) {
                                         .Int => element == .int,
+                                        .U8 => element == .u8,
                                         .Float => element == .float,
                                         .String => element == .string,
                                         .Boolean => element == .boolean,
@@ -545,12 +566,13 @@ pub const Interpreter = struct {
                                 return error.TypeError;
                             }
                         },
-                        .Dynamic => {},
+                        .Auto => {},
                         else => {},
                     }
                     break :blk init_value;
                 } else switch (decl.type_info.base) {
                     .Int => token.TokenLiteral{ .int = 0 },
+                    .U8 => token.TokenLiteral{ .u8 = 0 },
                     .Float => token.TokenLiteral{ .float = 0.0 },
                     .String => token.TokenLiteral{ .string = try self.string_interner.intern("") },
                     .Boolean => token.TokenLiteral{ .boolean = token.Boolean.false },
@@ -665,7 +687,7 @@ pub const Interpreter = struct {
             .Return => |ret| {
                 if (ret.value) |value| {
                     const return_value = try self.evaluate(value);
-                    try self.environment.define("return", return_value, .{ .base = .Dynamic });
+                    try self.environment.define("return", return_value, .{ .base = .Auto });
                     self.has_returned = true; // Set the flag
                     return error.ReturnValue;
                 }
@@ -1026,11 +1048,19 @@ pub const Interpreter = struct {
                 if (!var_type.is_dynamic) {
                     switch (var_type.base) {
                         .Int => {
-                            if (value != .int) {
+                            if (value != .int and value != .u8) {
                                 var reporting = Reporter.init();
                                 reporting.reportRuntimeError("Type error: Cannot assign {s} to int variable", .{@tagName(value)});
                                 return error.TypeError;
                             }
+                        },
+                        .U8 => {
+                            if (value != .u8 and value != .int) {
+                                var reporting = Reporter.init();
+                                reporting.reportRuntimeError("Type error: Cannot assign {s} to u8 variable", .{@tagName(value)});
+                                return error.TypeError;
+                            }
+                            try u8BoundsCheck(value);
                         },
                         .Float => {
                             if (value != .float) {
@@ -1053,9 +1083,13 @@ pub const Interpreter = struct {
                                 return error.TypeError;
                             }
                         },
-                        .Dynamic => {}, // Allow any assignment for dynamic types
                         .Auto => {}, // Type is already fixed from initialization
-                        else => {},
+                        else => {
+                            var reporting = Reporter.init();
+                            const location: Reporter.Location = .{ .file = "stdin", .line = assign.name.line, .column = assign.name.column };
+                            reporting.reportCompileError(location, "Type error: Cannot assign {s} to variable", .{@tagName(value)});
+                            return error.TypeError;
+                        },
                     }
                 }
 
@@ -1082,30 +1116,68 @@ pub const Interpreter = struct {
                             token.TokenLiteral{ .int = current_value.int + rhs_value.int }
                         else
                             return error.TypeError,
-                        .u8 => if (rhs_value == .int and rhs_value.int >= 0 and rhs_value.int <= 255) {
-                            const sum = current_value.u8 + rhs_value.int;
-                            if (sum > 255) return error.Overflow;
-                            return token.TokenLiteral{ .u8 = @intCast(sum) };
-                        } else return error.TypeError,
+                        .u8 => switch (rhs_value) {
+                            // Case 1: u8 += u8
+                            .u8 => {
+                                const result = @addWithOverflow(current_value.u8, rhs_value.u8);
+                                if (result[1] != 0) { // Check overflow flag
+                                    var reporting = Reporter.init();
+                                    reporting.reportRuntimeError("Overflow during u8 addition", .{});
+                                    return error.Overflow;
+                                }
+                                return token.TokenLiteral{ .u8 = result[0] };
+                            },
+                            // Case 2: u8 += int
+                            .int => {
+                                // Check if the int is representable as u8 for addition operand
+                                if (rhs_value.int < 0 or rhs_value.int > 255) {
+                                    var reporting = Reporter.init();
+                                    reporting.reportRuntimeError("Integer value {d} out of range for u8 addition", .{rhs_value.int});
+                                    return error.Overflow;
+                                }
+                                const val: u8 = @intCast(rhs_value.int); // Safe cast due to above check
+                                const result = @addWithOverflow(current_value.u8, val);
+                                if (result[1] != 0) { // Check overflow flag
+                                    var reporting = Reporter.init();
+                                    reporting.reportRuntimeError("Overflow during u8 addition", .{});
+                                    return error.Overflow;
+                                }
+                                return token.TokenLiteral{ .u8 = result[0] };
+                            },
+                            else => return error.TypeError,
+                        },
                         else => return error.TypeError,
                     },
                     .MINUS_EQUAL => switch (current_value) {
                         .int => if (rhs_value == .int)
+                            // TODO: Add i32 overflow check?
                             token.TokenLiteral{ .int = current_value.int - rhs_value.int }
                         else
                             return error.TypeError,
                         .u8 => switch (rhs_value) {
                             .u8 => {
                                 const result = @subWithOverflow(current_value.u8, rhs_value.u8);
-                                if (result[1] != 0) return error.Overflow;
+                                if (result[1] != 0) { // Check underflow flag
+                                    var reporting = Reporter.init();
+                                    reporting.reportRuntimeError("Underflow during u8 subtraction", .{});
+                                    return error.Overflow; // Using Overflow for underflow too
+                                }
                                 return token.TokenLiteral{ .u8 = result[0] };
                             },
                             .int => {
-                                if (rhs_value.int < 0 or rhs_value.int > 255)
+                                // Check if the int is representable as u8 for subtraction operand
+                                if (rhs_value.int < 0 or rhs_value.int > 255) {
+                                    var reporting = Reporter.init();
+                                    reporting.reportRuntimeError("Integer value {d} out of range for u8 subtraction", .{rhs_value.int});
                                     return error.Overflow;
-                                const val: u8 = @intCast(rhs_value.int);
+                                }
+                                const val: u8 = @intCast(rhs_value.int); // Safe cast
                                 const result = @subWithOverflow(current_value.u8, val);
-                                if (result[1] != 0) return error.Overflow;
+                                if (result[1] != 0) { // Check underflow flag
+                                    var reporting = Reporter.init();
+                                    reporting.reportRuntimeError("Underflow during u8 subtraction", .{});
+                                    return error.Overflow; // Using Overflow for underflow too
+                                }
                                 return token.TokenLiteral{ .u8 = result[0] };
                             },
                             else => return error.TypeError,
@@ -1606,6 +1678,7 @@ pub const Interpreter = struct {
                                         if (i > 0) try buffer.writer().print(", ", .{});
                                         switch (item) {
                                             .string => |s| try buffer.writer().print("\"{s}\"", .{s}),
+                                            .u8 => |u| try buffer.writer().print("{d}", .{u}),
                                             .int => |n| try buffer.writer().print("{d}", .{n}),
                                             .float => |f| try buffer.writer().print("{d}", .{f}),
                                             .boolean => |b| try buffer.writer().print("{}", .{b}),
@@ -1698,17 +1771,18 @@ pub const Interpreter = struct {
                 defer iter_env.deinit();
 
                 // Infer type from array elements or use dynamic if empty
-                var item_type = ast.TypeInfo{ .base = .Dynamic };
+                var item_type = ast.TypeInfo{ .base = .Auto };
                 if (array_value.array.len > 0) {
                     item_type = switch (array_value.array[0]) {
                         .int => ast.TypeInfo{ .base = .Int },
+                        .u8 => ast.TypeInfo{ .base = .U8 },
                         .float => ast.TypeInfo{ .base = .Float },
                         .string => ast.TypeInfo{ .base = .String },
                         .boolean => ast.TypeInfo{ .base = .Boolean },
                         .array => ast.TypeInfo{ .base = .Array },
                         .struct_value => ast.TypeInfo{ .base = .Struct },
                         .nothing => ast.TypeInfo{ .base = .Nothing },
-                        else => ast.TypeInfo{ .base = .Dynamic },
+                        else => ast.TypeInfo{ .base = .Auto },
                     };
                 }
 
@@ -1734,7 +1808,7 @@ pub const Interpreter = struct {
                     if (std.mem.eql(u8, field.field.lexeme, "bytes")) {
                         var bytes = try self.allocator.alloc(token.TokenLiteral, object.string.len);
                         for (object.string, 0..) |byte, i| {
-                            bytes[i] = token.TokenLiteral{ .u8 = byte }; // Use .u8 instead of .int
+                            bytes[i] = token.TokenLiteral{ .u8 = byte };
                         }
                         const array_value = token.TokenLiteral{ .array = bytes };
                         try self.environment.define(field.field.lexeme, array_value, .{ .base = .Array, .element_type = .U8, .is_mutable = true });
@@ -1968,6 +2042,7 @@ pub const Interpreter = struct {
                                 // Verify type matches
                                 const matches = switch (type_field.type_info.base) {
                                     .Int => value == .int,
+                                    .U8 => value == .u8,
                                     .Float => value == .float,
                                     .String => value == .string,
                                     .Boolean => value == .boolean,
@@ -2054,7 +2129,7 @@ pub const Interpreter = struct {
                     if (self.debug_enabled) {
                         std.debug.print("Testing value: {any}\n", .{val});
                     }
-                    try self.environment.define(e.variable.lexeme, val, .{ .base = .Dynamic });
+                    try self.environment.define(e.variable.lexeme, val, .{ .base = .Auto });
                     const result = try self.evaluate(e.condition);
                     if (self.debug_enabled) {
                         std.debug.print("Condition result: {any}\n", .{result});
@@ -2086,7 +2161,7 @@ pub const Interpreter = struct {
 
                 // Iterate over the actual array elements
                 for (array_value.array) |val| {
-                    try self.environment.define(var_name, val, .{ .base = .Dynamic });
+                    try self.environment.define(var_name, val, .{ .base = .Auto });
                     const result = try self.evaluate(f.condition);
                     if (!(result == .boolean and result.boolean == token.Boolean.true)) {
                         return token.TokenLiteral{ .boolean = token.Boolean.false };
@@ -2136,46 +2211,61 @@ pub const Interpreter = struct {
             .DefaultArgPlaceholder => {
                 return token.TokenLiteral{ .nothing = {} };
             },
-            .TypeOf => |expr_value| {
-                const value = try self.evaluate(expr_value);
-                return token.TokenLiteral{
-                    .string = switch (value) {
-                        .int => "int",
-                        .u8 => "u8",
-                        .float => "float",
-                        .string => "string",
-                        .boolean => "boolean",
-                        .tetra => "tetra",
-                        .nothing => if (expr_value.* == .EnumDecl or expr_value.* == .StructDecl or
-                            if (expr_value.* == .Variable)
-                            if (self.environment.getTypeInfo(expr_value.Variable.lexeme) catch null) |type_info|
-                                type_info.base == .Enum or type_info.base == .Struct
-                            else
-                                false
-                        else
-                            false)
-                            switch (expr_value.*) {
-                                .EnumDecl => "enum",
-                                .StructDecl => "struct",
-                                .Variable => |var_token| if (self.environment.getTypeInfo(var_token.lexeme) catch null) |type_info|
-                                    if (type_info.base == .Enum) "enum" else "struct"
-                                else
-                                    "nothing",
-                                else => "nothing",
-                            }
-                        else
-                            "nothing",
-                        .array => "array",
-                        .function => "function",
-                        .struct_value => |sv| sv.type_name,
-                        .enum_variant => |ev| return token.TokenLiteral{ .string = if (value == .enum_variant and std.mem.eql(u8, ev, value.enum_variant))
-                            value.enum_variant
-                        else
-                            "enum_variant" },
-                        .tuple => "tuple",
-                        .map => "map",
-                    },
-                };
+            .TypeOf => |expr_to_check| {
+                // Check if the expression inside typeof is a simple variable
+                if (expr_to_check.* == .Variable) {
+                    const var_token = expr_to_check.Variable;
+                    // Get the DECLARED type info from the environment
+                    const type_info = self.environment.getTypeInfo(var_token.lexeme) catch {
+                        // Handle cases where the variable might not be found (shouldn't happen if code is valid)
+                        var reporter = Reporter.init();
+                        const location: Reporter.Location = .{ .file = "stdin", .line = var_token.line, .column = var_token.column };
+                        reporter.reportCompileError(location, "Variable '{s}' not found during typeof", .{var_token.lexeme});
+                        return error.VariableNotFound; // Or return err
+                    };
+
+                    // Return the string based on the DECLARED type_info.base
+                    return token.TokenLiteral{
+                        .string = switch (type_info.base) {
+                            .Int => "int",
+                            .U8 => "u8",
+                            .Float => "float",
+                            .String => "string",
+                            .Boolean => "boolean",
+                            .Tetra => "tetra",
+                            .Nothing => "nothing",
+                            .Array => "array",
+                            .Function => "function",
+                            .Struct => if (type_info.custom_type) |name| name else "struct", // Use stored name if available
+                            .Enum => if (type_info.custom_type) |name| name else "enum", // Use stored name if available
+                            .Tuple => "tuple",
+                            .Map => "map",
+                            .Custom => "custom",
+                            .Reference => "reference",
+                            .Auto => "auto",
+                        },
+                    };
+                } else {
+                    // If it's not a simple variable, evaluate it and report the runtime type (original behavior)
+                    const value = try self.evaluate(expr_to_check);
+                    return token.TokenLiteral{
+                        .string = switch (value) {
+                            .int => "int",
+                            .u8 => "u8",
+                            .float => "float",
+                            .string => "string",
+                            .boolean => "boolean",
+                            .tetra => "tetra",
+                            .nothing => "nothing",
+                            .array => "array",
+                            .function => "function",
+                            .struct_value => |sv| sv.type_name, // Get type name from struct instance
+                            .enum_variant => "enum_variant", // Might want more specific enum type later
+                            .tuple => "tuple",
+                            .map => "map",
+                        },
+                    };
+                }
             },
             .Tuple => |elements| {
                 var tuple_values = std.ArrayList(token.TokenLiteral).init(self.allocator);
@@ -2379,6 +2469,13 @@ pub const Interpreter = struct {
                         return error.TypeError;
                     }
                 },
+                .U8 => {
+                    if (value != .u8) {
+                        var reporting = Reporter.init();
+                        reporting.reportRuntimeError("Type error: Cannot assign {s} to u8 variable", .{@tagName(value)});
+                        return error.TypeError;
+                    }
+                },
                 .Float => {
                     if (value != .float) {
                         var reporting = Reporter.init();
@@ -2400,7 +2497,7 @@ pub const Interpreter = struct {
                         return error.TypeError;
                     }
                 },
-                .Dynamic => {}, // Allow any assignment for dynamic types
+                .Auto => {}, // Allow any assignment for dynamic types
                 .Auto => {}, // Type is already fixed from initialization
                 else => {},
             }
@@ -2469,7 +2566,7 @@ pub const Interpreter = struct {
                             std.debug.print("Parameter '{s}' type: {any}\n", .{ param.name.lexeme, type_info });
                         }
                     } else {
-                        type_info = .{ .base = .Dynamic, .is_dynamic = true, .is_mutable = true };
+                        type_info = .{ .base = .Auto, .is_dynamic = true, .is_mutable = true };
                     }
 
                     // Define parameter only in function environment

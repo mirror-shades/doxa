@@ -439,37 +439,47 @@ pub fn forExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr
 }
 
 pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
-    const type_name = self.peek().lexeme;
     const type_token = self.peek();
+    const type_name = type_token.lexeme;
 
-    const basic_type = if (std.mem.eql(u8, type_name, "int"))
-        ast.BasicType.Integer
-    else if (std.mem.eql(u8, type_name, "float"))
-        ast.BasicType.Float
-    else if (std.mem.eql(u8, type_name, "string"))
-        ast.BasicType.String
-    else if (std.mem.eql(u8, type_name, "bool"))
-        ast.BasicType.Boolean
-    else if (std.mem.eql(u8, type_name, "auto"))
-        ast.BasicType.Auto
-    else if (std.mem.eql(u8, type_name, "tetra"))
-        ast.BasicType.Tetra
-    else if (std.mem.eql(u8, type_name, "u8"))
-        ast.BasicType.U8
-    else
-        null;
+    if (self.debug_enabled) {
+        std.debug.print("Parsing type expression, current token: {s} ({s})\n", .{ @tagName(type_token.type), type_name });
+    }
 
-    self.advance(); // Advance past the type token
+    var base_type_expr: ?*ast.TypeExpr = null;
+    var consumed_token = false;
 
-    // Create the base type expression
-    const base_type_expr = try self.allocator.create(ast.TypeExpr);
-    if (basic_type) |basic| {
-        base_type_expr.* = .{ .Basic = basic };
-    } else if (type_token.type == .STRUCT_TYPE) {
-        // Handle struct type
-        if (self.peek().type != .LEFT_BRACE) {
-            return error.ExpectedLeftBrace;
+    // 1. Check for Basic Types
+    const maybe_basic_type: ?ast.BasicType = blk: {
+        if (std.mem.eql(u8, type_name, "int")) break :blk ast.BasicType.Integer;
+        if (std.mem.eql(u8, type_name, "u8")) break :blk ast.BasicType.U8;
+        if (std.mem.eql(u8, type_name, "float")) break :blk ast.BasicType.Float;
+        if (std.mem.eql(u8, type_name, "string")) break :blk ast.BasicType.String;
+        if (std.mem.eql(u8, type_name, "bool")) break :blk ast.BasicType.Boolean;
+        if (std.mem.eql(u8, type_name, "tetra")) break :blk ast.BasicType.Tetra;
+        if (std.mem.eql(u8, type_name, "auto") or std.mem.eql(u8, type_name, "")) break :blk ast.BasicType.Auto;
+        // Not a basic type keyword
+        break :blk null;
+    };
+
+    if (maybe_basic_type) |basic| {
+        // It's a basic type
+        if (self.debug_enabled) {
+            std.debug.print("Recognized basic type: {s}\n", .{@tagName(basic)});
         }
+        self.advance(); // Consume the basic type keyword token
+        consumed_token = true;
+        base_type_expr = try self.allocator.create(ast.TypeExpr);
+        base_type_expr.?.* = .{ .Basic = basic };
+    } else if (type_token.type == .STRUCT_TYPE) {
+        // 2. Check for Struct Type Syntax
+        if (self.debug_enabled) {
+            std.debug.print("Recognized struct type syntax\n", .{});
+        }
+        self.advance(); // consume 'struct'
+        consumed_token = true;
+
+        if (self.peek().type != .LEFT_BRACE) return error.ExpectedLeftBrace;
         self.advance(); // consume {
 
         var fields = std.ArrayList(*ast.StructField).init(self.allocator);
@@ -483,101 +493,132 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
 
         while (self.peek().type != .RIGHT_BRACE) {
             // Parse field name
-            if (self.peek().type != .IDENTIFIER) {
-                return error.ExpectedIdentifier;
-            }
+            if (self.peek().type != .IDENTIFIER) return error.ExpectedIdentifier;
             const field_name = self.peek();
             self.advance();
-
             // Expect :
-            if (self.peek().type != .WHERE) {
-                return error.ExpectedColon;
-            }
+            if (self.peek().type != .WHERE) return error.ExpectedColon;
             self.advance();
-
             // Parse field type
             const field_type = try parseTypeExpr(self) orelse return error.ExpectedType;
-
             // Create field
             const field = try self.allocator.create(ast.StructField);
-            field.* = .{
-                .name = field_name,
-                .type_expr = field_type,
-            };
+            field.* = .{ .name = field_name, .type_expr = field_type };
             try fields.append(field);
-
-            // Handle field separator (comma)
+            // Handle separator
             if (self.peek().type == .COMMA) {
                 self.advance();
-                // Allow trailing comma by checking for closing brace
-                if (self.peek().type == .RIGHT_BRACE) {
-                    break;
-                }
+                if (self.peek().type == .RIGHT_BRACE) break;
             } else if (self.peek().type != .RIGHT_BRACE) {
                 return error.ExpectedCommaOrBrace;
             }
         }
 
+        if (self.peek().type != .RIGHT_BRACE) return error.ExpectedRightBrace; // Should be caught by loop condition
         self.advance(); // consume }
-        base_type_expr.* = .{ .Struct = try fields.toOwnedSlice() };
-    } else if (self.declared_types.contains(type_name)) {
-        // Handle custom types (like enums) that are declared in the current file
-        base_type_expr.* = .{ .Custom = type_token };
-    } else if (self.imported_symbols) |symbols| {
-        // Check if this is an imported symbol (especially for enums)
-        var found = false;
-        var it = symbols.iterator();
-        while (it.next()) |entry| {
-            const symbol = entry.value_ptr.*;
-            // Check if the type name matches an imported type name
-            if ((symbol.kind == .Enum or symbol.kind == .Struct or symbol.kind == .Type) and
-                std.mem.eql(u8, symbol.name, type_name))
-            {
-                base_type_expr.* = .{ .Custom = type_token };
-                found = true;
-                break;
+
+        base_type_expr = try self.allocator.create(ast.TypeExpr);
+        base_type_expr.?.* = .{ .Struct = try fields.toOwnedSlice() };
+    } else if (type_token.type == .IDENTIFIER) {
+        // 3. Check for Declared or Imported Custom Types
+        var is_known_custom = false;
+        if (self.declared_types.contains(type_name)) {
+            is_known_custom = true;
+            if (self.debug_enabled) {
+                std.debug.print("Recognized locally declared type: {s}\n", .{type_name});
+            }
+        } else if (self.imported_symbols) |symbols| {
+            var it = symbols.iterator();
+            while (it.next()) |entry| {
+                const symbol = entry.value_ptr.*;
+                if ((symbol.kind == .Enum or symbol.kind == .Struct or symbol.kind == .Type) and
+                    std.mem.eql(u8, symbol.name, type_name))
+                {
+                    is_known_custom = true;
+                    if (self.debug_enabled) {
+                        std.debug.print("Recognized imported type: {s}\n", .{type_name});
+                    }
+                    break;
+                }
             }
         }
 
-        if (!found) {
-            // For identifiers that could be struct names
-            base_type_expr.* = .{ .Custom = type_token };
+        if (is_known_custom) {
+            self.advance(); // Consume the identifier token
+            consumed_token = true;
+            base_type_expr = try self.allocator.create(ast.TypeExpr);
+            base_type_expr.?.* = .{ .Custom = type_token };
+        } else {
+            // 4. Unknown Identifier -> Error
+            if (self.debug_enabled) {
+                std.debug.print("Unknown type identifier: {s}\n", .{type_name});
+            }
+            var reporter = Reporter.init();
+            reporter.reportCompileError(.{ .file = self.current_file, .line = type_token.line, .column = type_token.column }, "Unknown type: '{s}'", .{type_name});
+            return error.UnknownType;
         }
     } else {
-        // For identifiers that could be struct names
-        base_type_expr.* = .{ .Custom = type_token };
+        // 5. Not a basic type, not struct syntax, not an identifier -> Error
+        if (self.debug_enabled) {
+            std.debug.print("Invalid token for type expression: {s}\n", .{@tagName(type_token.type)});
+        }
+        var reporter = Reporter.init();
+        reporter.reportCompileError(.{ .file = self.current_file, .line = type_token.line, .column = type_token.column }, "Expected type identifier, found {s}", .{@tagName(type_token.type)});
+        return error.ExpectedType;
     }
 
-    // Check for array type
+    // Make sure we consumed a token if we successfully identified a base type
+    if (!consumed_token and base_type_expr != null) {
+        // This case should ideally not happen with the logic above
+        return error.InternalParserError;
+    }
+    // If base_type_expr is still null here, something went wrong or an error should have been returned
+    if (base_type_expr == null) return error.ExpectedType;
+
+    // --- Check for Array Type ---
     if (self.peek().type == .LEFT_BRACKET) {
+        if (self.debug_enabled) {
+            std.debug.print("Found array brackets after base type\n", .{});
+        }
         self.advance(); // consume [
 
-        // Check if we have a size expression
         var size: ?*ast.Expr = null;
         if (self.peek().type == .INT) {
-            // Create a literal expression for the size
             const size_expr = try self.allocator.create(ast.Expr);
             size_expr.* = .{ .Literal = self.peek().literal };
             size = size_expr;
             self.advance(); // consume the integer
         }
 
-        // Expect closing bracket
         if (self.peek().type != .RIGHT_BRACKET) {
+            // Cleanup size expr if allocated
             if (size) |s| {
                 s.deinit(self.allocator);
                 self.allocator.destroy(s);
             }
+            // Cleanup base_type_expr
+            base_type_expr.?.deinit(self.allocator);
+            self.allocator.destroy(base_type_expr.?);
             return error.ExpectedRightBracket;
         }
         self.advance(); // consume ]
 
         const array_type_expr = try self.allocator.create(ast.TypeExpr);
-        array_type_expr.* = .{ .Array = .{
-            .element_type = base_type_expr,
-            .size = size,
-        } };
+        array_type_expr.* = .{
+            .Array = .{
+                .element_type = base_type_expr.?, // We know it's non-null here
+                .size = size,
+            },
+        };
+        if (self.debug_enabled) {
+            std.debug.print("Successfully parsed array type\n", .{});
+        }
         return array_type_expr;
+    }
+
+    // If no array brackets, return the base type expression
+    if (self.debug_enabled) {
+        std.debug.print("Successfully parsed non-array type\n", .{});
     }
 
     return base_type_expr;

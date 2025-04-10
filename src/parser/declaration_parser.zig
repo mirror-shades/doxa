@@ -77,7 +77,11 @@ pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*
         return error.ExpectedIdentifier;
     }
     const name = self.peek();
-    self.advance();
+
+    // Register the struct type name before advancing
+    try self.declared_types.put(name.lexeme, {});
+
+    self.advance(); // Now advance past the identifier
 
     // Expect opening brace
     if (self.peek().type != .LEFT_BRACE) {
@@ -232,7 +236,7 @@ pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
                     .Float => ast.Type.Float,
                     .String => ast.Type.String,
                     .Boolean => ast.Type.Boolean,
-                    .Auto => ast.Type.Dynamic,
+                    .Auto => ast.Type.Auto,
                     .Tetra => ast.Type.Tetra,
                 } },
                 .Array => |array| blk: {
@@ -244,7 +248,7 @@ pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
                             .Float => ast.Type.Float,
                             .String => ast.Type.String,
                             .Boolean => ast.Type.Boolean,
-                            .Auto => ast.Type.Dynamic,
+                            .Auto => ast.Type.Auto,
                             .Tetra => ast.Type.Tetra,
                         },
                         else => return error.InvalidType,
@@ -322,7 +326,7 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
     }
 
     var type_info: ast.TypeInfo = .{
-        .base = .Dynamic,
+        .base = .Auto,
         .is_dynamic = true, // Start as dynamic
         .is_mutable = !is_const, // const variables can't change value
     };
@@ -353,7 +357,16 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
             }
 
             initializer = try expression_parser.parseExpression(self);
-            if (initializer == null) return error.ExpectedExpression;
+            if (initializer == null) {
+                var reporter = Reporter.init();
+                const location = Reporter.Location{
+                    .file = self.current_file,
+                    .line = self.peek().line,
+                    .column = self.peek().column,
+                };
+                reporter.reportCompileError(location, "Expected expression", .{});
+                return error.ExpectedExpression;
+            }
         }
 
         if (self.peek().type != .SEMICOLON) {
@@ -403,6 +416,20 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
     //     reporter.reportCompileError(location, "Type must be declared, use auto if needed.", .{});
     //     return error.ExpectedTypeAnnotation;
     // }
+
+    // Check specifically for '=' where 'is' or '::' is expected
+    if (std.mem.eql(u8, self.peek().lexeme, "=")) {
+        var reporter = Reporter.init();
+        const location = Reporter.Location{
+            .file = self.current_file,
+            .line = self.peek().line,
+            .column = self.peek().column,
+        };
+        reporter.reportCompileError(location, "The equal sign '=' is not used for variable declarations, use 'is' instead", .{});
+        // Optionally, you could try to recover by treating '=' as 'is' here,
+        // but returning an error is usually better.
+        return error.UseIsForAssignment; // You might need to add this error
+    }
 
     // Handle type annotation
     if (self.peek().type == .TYPE_SYMBOL) {
@@ -485,6 +512,17 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
         return error.ExpectedSemicolon;
     }
     self.advance();
+
+    if (type_info.base == .Auto and initializer == null) {
+        var reporter = Reporter.init();
+        const location = Reporter.Location{
+            .file = self.current_file,
+            .line = self.peek().line,
+            .column = self.peek().column,
+        };
+        reporter.reportCompileError(location, "Auto type must have an initializer", .{});
+        return error.ExpectedExpression;
+    }
 
     return ast.Stmt{ .VarDecl = .{
         .name = name,
