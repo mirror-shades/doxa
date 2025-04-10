@@ -103,6 +103,7 @@ pub const ErrorList = error{
     NoCatchWithoutTry,
     NoTryBlockToEnd,
     UncaughtError,
+    AssertionFailed,
 
     // Lexical Analysis
     UnterminatedMultilineComment,

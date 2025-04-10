@@ -679,6 +679,21 @@ pub const Interpreter = struct {
 
                 return try_result;
             },
+            .Assert => |assert| {
+                const condition = try self.evaluate(assert.condition);
+                if (condition != .boolean) {
+                    var reporter = Reporter.init();
+                    reporter.reportRuntimeError("Assertion failed: {s} is not a boolean", .{@tagName(condition)});
+                    return error.TypeError;
+                }
+                if (condition.boolean == token.Boolean.false) {
+                    var reporter = Reporter.init();
+                    // Use the location from the AST node
+                    reporter.reportCompileError(assert.location, "Assertion failed", .{});
+                    return error.AssertionFailed;
+                }
+                return .{ .nothing = {} };
+            },
             .Module => return .{ .nothing = {} },
             .Import => return .{ .nothing = {} },
             .Path => return .{ .nothing = {} },
@@ -2370,6 +2385,21 @@ pub const Interpreter = struct {
 
                 const input_str = try buffer.toOwnedSlice();
                 return token.TokenLiteral{ .string = input_str };
+            },
+            .Assert => |assert| {
+                const condition = try self.evaluate(assert.condition);
+                if (condition != .boolean) {
+                    var reporter = Reporter.init();
+                    reporter.reportRuntimeError("Assertion failed: {s} is not a boolean", .{@tagName(condition)});
+                    return error.TypeError;
+                }
+                if (condition.boolean == token.Boolean.false) {
+                    var reporter = Reporter.init();
+                    // Use the location from the AST node
+                    reporter.reportCompileError(assert.location, "Assertion failed", .{});
+                    return error.AssertionFailed;
+                }
+                return .{ .nothing = {} };
             },
         };
     }

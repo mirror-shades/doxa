@@ -40,8 +40,25 @@ function endLoop() {
     }
 }
 
+function checkClosingBracket(scan :: string) returns(bool) {
+    var pointer :: int is 0;
+    var openBrackets :: int is 0;
+    while(pointer < scan.length) {
+        if(scan[pointer] equals "[") then {openBrackets += 1;}
+        if(scan[pointer] equals "]") then {openBrackets -= 1;}
+        pointer += 1;
+    }
+    return(openBrackets equals 0);
+}
+
+
 function interpret(scan :: string) {
     const scanLength is scan.length;
+
+    var closedBrackets :: bool is checkClosingBracket(scan);
+    if(not closedBrackets) then {
+        //throw("Unmatched closing bracket");
+    }
     while(ip < scanLength) {
         var currentByte is tape[tp];
         const currentInstruction is scan[ip];
