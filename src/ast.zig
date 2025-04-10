@@ -410,12 +410,10 @@ pub const Type = enum {
     Function,
     Struct,
     Enum,
-    Dynamic,
     Auto,
     Custom,
     Map,
     Nothing,
-    Bytes,
     Reference,
 };
 
@@ -758,7 +756,7 @@ pub fn typeInfoFromExpr(allocator: std.mem.Allocator, type_expr: ?*TypeExpr) !*T
     errdefer allocator.destroy(type_info);
 
     if (type_expr == null) {
-        type_info.* = TypeInfo{ .base = .Dynamic };
+        type_info.* = TypeInfo{ .base = .Auto };
         return type_info;
     }
 
@@ -770,6 +768,7 @@ pub fn typeInfoFromExpr(allocator: std.mem.Allocator, type_expr: ?*TypeExpr) !*T
             .String => TypeInfo{ .base = .String },
             .Boolean => TypeInfo{ .base = .Boolean },
             .Tetra => TypeInfo{ .base = .Tetra },
+            // should never happen, auto is only used for type inference
             .Auto => TypeInfo{ .base = .Auto },
         },
         .Array => |array| blk: {
@@ -809,7 +808,7 @@ pub fn typeInfoFromExpr(allocator: std.mem.Allocator, type_expr: ?*TypeExpr) !*T
             };
         },
         .Custom => TypeInfo{ .base = .Custom },
-        .Enum => TypeInfo{ .base = .Dynamic }, // TODO: Add proper enum support
+        .Enum => TypeInfo{ .base = .Auto },
     };
 
     return type_info;

@@ -51,6 +51,8 @@ pub const ErrorList = error{
     ImmutableVariable,
     UseIsForAssignment,
     ExpectedVarOrConst,
+    u8Overflow,
+    u8Underflow,
 
     // Function & Frame Management
     InvalidFunction,
@@ -172,6 +174,7 @@ pub const ErrorList = error{
     Canceled,
     EndOfStream,
     StreamTooLong,
+    InternalParserError,
 
     // Safe Mode
     UnknownType,

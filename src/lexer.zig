@@ -1,5 +1,6 @@
 const std = @import("std");
 const Reporting = @import("reporting.zig");
+const Reporter = Reporting.Reporter;
 
 const token = @import("token.zig");
 pub const TokenType = token.TokenType;
@@ -292,6 +293,15 @@ pub const Lexer = struct {
                     try self.addMinimalToken(.EQUALITY);
                 } else if (self.match('>')) {
                     try self.addMinimalToken(.ARROW);
+                } else if (self.match(' ')) {
+                    var reporter = Reporter.init();
+                    const location = Reporter.Location{
+                        .file = self.file_path,
+                        .line = self.line,
+                        .column = self.column,
+                    };
+                    reporter.reportCompileError(location, "equals sign '=' is not used for variable declarations, use 'is' instead", .{});
+                    return error.UseIsForAssignment;
                 }
             },
             '<' => {
