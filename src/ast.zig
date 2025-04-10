@@ -1,5 +1,6 @@
 const std = @import("std");
 const token = @import("token.zig");
+const Reporting = @import("reporting.zig");
 
 pub const Binary = struct {
     left: ?*Expr,
@@ -122,6 +123,10 @@ pub const Expr = union(enum) {
         array2: *Expr,
     },
     CompoundAssign: CompoundAssignment,
+    Assert: struct {
+        condition: *Expr,
+        location: Reporting.Reporter.Location,
+    },
 
     pub fn deinit(self: *Expr, allocator: std.mem.Allocator) void {
         switch (self.*) {
@@ -388,7 +393,11 @@ pub const Expr = union(enum) {
                     allocator.destroy(value);
                 }
             },
-            .Input => {}, // Token doesn't own any memory, so no cleanup needed
+            .Input => {},
+            .Assert => |*a| {
+                a.condition.deinit(allocator);
+                allocator.destroy(a.condition);
+            },
         }
     }
 };
@@ -541,6 +550,10 @@ pub const Stmt = union(enum) {
     Path: []const u8,
     Continue: void,
     Break: void,
+    Assert: struct {
+        condition: *Expr,
+        location: Reporting.Reporter.Location,
+    },
     pub fn deinit(self: *Stmt, allocator: std.mem.Allocator) void {
         switch (self.*) {
             .Expression => |maybe_expr| {
@@ -595,6 +608,10 @@ pub const Stmt = union(enum) {
                     stmt.deinit(allocator);
                 }
                 allocator.free(t.catch_body);
+            },
+            .Assert => |*a| {
+                a.condition.deinit(allocator);
+                allocator.destroy(a.condition);
             },
             .Module => {},
             .Import => {},

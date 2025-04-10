@@ -259,6 +259,18 @@ pub const Parser = struct {
                         try statements.append(parsed_stmt);
                     }
                 },
+                .ASSERT => { // Add ASSERT case
+                    if (is_entry) {
+                        return error.MisplacedEntryPoint;
+                    }
+                    if (is_public) {
+                        return error.MisplacedPublicModifier;
+                    }
+                    const parsed_stmt = try statement_parser.parseStatement(self);
+                    if (!(parsed_stmt == .Expression and parsed_stmt.Expression == null)) {
+                        try statements.append(parsed_stmt);
+                    }
+                },
                 // Default to expression statement
                 else => {
                     // Modifiers likely invalid here unless it's a top-level expression

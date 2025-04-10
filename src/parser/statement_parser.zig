@@ -102,6 +102,8 @@ pub fn parse(self: *Parser) ErrorList![]ast.Stmt {
                 break :blk try self.parseEnumDecl();
             } else if (self.peek().type == .TRY) {
                 break :blk try self.parseTryStmt();
+            } else if (self.peek().type == .ASSERT) {
+                break :blk try self.parseAssertStmt();
             } else break :blk try self.parseExpressionStmt();
         };
 
@@ -147,6 +149,7 @@ pub fn parseExpressionStmt(self: *Parser) ErrorList!ast.Stmt {
         .Match => false,
         .Index => true,
         .Assignment => true,
+        .Assert => true,
         else => true,
     } else true;
 
@@ -292,8 +295,34 @@ pub fn parseStatement(self: *Parser) ErrorList!ast.Stmt {
             try parseExpressionStmt(self),
         .ENUM_TYPE => declaration_parser.parseEnumDecl(self),
         .TRY => try parseTryStmt(self),
+        .ASSERT => try parseAssertStmt(self),
         else => try parseExpressionStmt(self),
     };
+}
+
+pub fn parseAssertStmt(self: *Parser) ErrorList!ast.Stmt {
+    if (self.peek().type != .ASSERT) {
+        return error.UnexpectedToken;
+    }
+
+    // Store location information before advancing
+    const assert_token = self.peek();
+    const location = Reporter.Location{
+        .file = self.current_file,
+        .line = assert_token.line,
+        .column = assert_token.column,
+    };
+
+    self.advance();
+
+    const condition = try expression_parser.parseExpression(self);
+    if (condition == null) {
+        return error.ExpectedExpression;
+    }
+    return ast.Stmt{ .Assert = .{
+        .condition = condition.?,
+        .location = location,
+    } };
 }
 
 pub fn parseTryStmt(self: *Parser) ErrorList!ast.Stmt {

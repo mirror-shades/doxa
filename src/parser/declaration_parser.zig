@@ -394,6 +394,13 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
 
     // Original variable declaration parsing logic
     const name = if (self.peek().type != .IDENTIFIER) {
+        var reporter = Reporter.init();
+        const location = Reporter.Location{
+            .file = self.current_file,
+            .line = self.peek().line,
+            .column = self.peek().column,
+        };
+        reporter.reportCompileError(location, "Expected identifier, got {s} \n Proper declaration: var name is 5; or, var name :: int is 5;", .{@tagName(self.peek().type)});
         return error.ExpectedIdentifier;
     } else blk: {
         const n = self.peek();
