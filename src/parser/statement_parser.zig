@@ -1,11 +1,11 @@
 const std = @import("std");
-const ast = @import("../ast.zig");
-const Parser = @import("parser_types.zig").Parser;
-const expr_parser = @import("expression_parser.zig");
-const Reporting = @import("../reporting.zig");
+const ast = @import("../ast/ast.zig");
+const Parser = @import("./parser_types.zig").Parser;
+const expr_parser = @import("./expression_parser.zig");
+const Reporting = @import("../utils/reporting.zig");
 const ErrorList = Reporting.ErrorList;
 const Reporter = Reporting.Reporter;
-const token = @import("../token.zig");
+const token = @import("../lexer/token.zig");
 const declaration_parser = @import("./declaration_parser.zig");
 const expression_parser = @import("./expression_parser.zig");
 

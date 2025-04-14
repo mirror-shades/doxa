@@ -1,15 +1,15 @@
 const std = @import("std");
-const ast = @import("../ast.zig");
-const ModuleInfo = @import("../ast.zig").ModuleInfo;
-const token = @import("../token.zig");
+const ast = @import("../ast/ast.zig");
+const ModuleInfo = ast.ModuleInfo;
+const token = @import("../lexer/token.zig");
 const declaration_parser = @import("declaration_parser.zig");
 const expression_parser = @import("expression_parser.zig");
 const statement_parser = @import("statement_parser.zig");
-const Reporting = @import("../reporting.zig");
+const Reporting = @import("../utils/reporting.zig");
 const ErrorList = Reporting.ErrorList;
 const Reporter = Reporting.Reporter;
 const Precedence = @import("./precedence.zig").Precedence;
-const Lexer = @import("../lexer.zig").Lexer;
+const Lexer = @import("../lexer/lexer.zig").Lexer;
 const import_parser = @import("import_parser.zig");
 
 const TokenStyle = enum {

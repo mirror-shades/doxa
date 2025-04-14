@@ -1,12 +1,12 @@
 const std = @import("std");
-const Lexer = @import("lexer.zig").Lexer;
+const Lexer = @import("./lexer/lexer.zig").Lexer;
 const Parser = @import("./parser/parser_types.zig").Parser;
-const Reporter = @import("reporting.zig").Reporter;
-const MemoryManager = @import("memory.zig").MemoryManager;
-const Token = @import("lexer.zig").Token;
-const TokenLiteral = @import("lexer.zig").TokenLiteral;
-const instructions = @import("instructions.zig");
-const Interpreter = @import("interpreter.zig").Interpreter;
+const Reporting = @import("./utils/reporting.zig");
+const Reporter = Reporting.Reporter;
+const MemoryManager = @import("./utils/memory.zig").MemoryManager;
+const Token = @import("./lexer/token.zig").Token;
+const TokenLiteral = @import("./lexer/token.zig").TokenLiteral;
+const Interpreter = @import("./interpreter/interpreter.zig").Interpreter;
 
 ///==========================================================================
 /// Constants
@@ -110,25 +110,20 @@ pub fn run(memory: *MemoryManager, interpreter: *Interpreter, source: []const u8
             }
         }
 
-        if (compile) {
-            //TODO: Compile to bytecode
-            return null;
-        } else {
-            if (memory.debug_enabled) {
-                std.debug.print("\n=== Starting interpretation ===\n", .{});
-            }
-
-            // Transfer entry point information from parser to interpreter
-            if (parser_instance.has_entry_point) {
-                interpreter.entry_point_name = parser_instance.entry_point_name;
-            }
-
-            // Set the parser reference for imported module handling
-            interpreter.parser = &parser_instance;
-
-            try interpreter.interpret(statements);
-            return interpreter.last_result;
+        if (memory.debug_enabled) {
+            std.debug.print("\n=== Starting interpretation ===\n", .{});
         }
+
+        // Transfer entry point information from parser to interpreter
+        if (parser_instance.has_entry_point) {
+            interpreter.entry_point_name = parser_instance.entry_point_name;
+        }
+
+        // Set the parser reference for imported module handling
+        interpreter.parser = &parser_instance;
+
+        try interpreter.interpret(statements);
+        return interpreter.last_result;
     }
     return null;
 }
@@ -171,14 +166,9 @@ pub fn main() !void {
     var script_path: ?[]const u8 = null;
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
-        if (std.mem.eql(u8, args[i], "--safe-repl")) {
-            is_safe_repl = true;
-        } else if (std.mem.eql(u8, args[i], "--debug")) {
+        if (std.mem.eql(u8, args[i], "--debug")) {
             memory.debug_enabled = true;
-        } else if (std.mem.eql(u8, args[i], "--compile")) {
-            compile = true;
         } else {
-            // Assume it's a script path
             if (script_path != null) {
                 std.debug.print("Usage: doxa [--debug-lexer] [script]\n", .{});
                 std.process.exit(EXIT_CODE_USAGE);
