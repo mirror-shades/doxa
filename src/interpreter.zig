@@ -503,10 +503,34 @@ pub const Interpreter = struct {
             .VarDecl => |decl| {
                 // Handle array type declarations
                 if (decl.type_info.base == .Array) {
-                    // Store the array type for use during array initialization
-                    const element_type = decl.type_info.element_type orelse .Auto;
-                    try self.environment.types.put("current_array_type", .{ .base = element_type });
-                    defer _ = self.environment.types.remove("current_array_type");
+                    if (self.debug_enabled) {
+                        std.debug.print("\nHandling array declaration for {s}\n", .{decl.name.lexeme});
+                        std.debug.print("Raw array type info: {any}\n", .{decl.type_info});
+                    }
+
+                    // For u8 arrays, create a proper type info with element type
+                    var type_info = decl.type_info;
+                    if (decl.type_info.array_type != null) {
+                        // Check if this is a u8 array
+                        if (decl.type_info.array_type.?.base == .U8) {
+                            if (self.debug_enabled) {
+                                std.debug.print("Detected u8 array\n", .{});
+                            }
+                            // Create a new type info with U8 element type
+                            type_info = ast.TypeInfo{
+                                .base = .Array,
+                                .is_dynamic = false,
+                                .is_mutable = true,
+                                .element_type = .U8,
+                                .array_type = decl.type_info.array_type,
+                                .array_size = decl.type_info.array_size,
+                            };
+                        }
+                    }
+
+                    if (self.debug_enabled) {
+                        std.debug.print("Using type info: {any}\n", .{type_info});
+                    }
                 }
 
                 const value = if (decl.initializer) |i| blk: {
@@ -525,6 +549,16 @@ pub const Interpreter = struct {
                                 reporting.reportRuntimeError("Type error: Cannot initialize u8 variable with {s}", .{@tagName(init_value)});
                                 return error.TypeError;
                             }
+
+                            // Convert int to u8 if needed
+                            if (init_value == .int) {
+                                if (init_value.int < 0 or init_value.int > 255) {
+                                    var reporting = Reporter.init();
+                                    reporting.reportRuntimeError("Type error: Integer value {d} out of range for u8", .{init_value.int});
+                                    return error.TypeError;
+                                }
+                                break :blk token.TokenLiteral{ .u8 = @intCast(init_value.int) };
+                            }
                         },
                         .Float => if (init_value != .float and init_value != .int) {
                             var reporting = Reporter.init();
@@ -542,8 +576,39 @@ pub const Interpreter = struct {
                                 reporting.reportRuntimeError("Type error: Cannot initialize array variable with {s}", .{@tagName(init_value)});
                                 return error.TypeError;
                             }
+
                             // Check array element types if element_type is specified
                             if (decl.type_info.element_type) |expected_type| {
+                                // If this is a u8 array, convert int elements to u8
+                                if (expected_type == .U8) {
+                                    var new_array = try self.allocator.alloc(token.TokenLiteral, init_value.array.len);
+                                    for (init_value.array, 0..) |elem, idx| {
+                                        if (elem == .int) {
+                                            if (elem.int < 0 or elem.int > 255) {
+                                                var reporting = Reporter.init();
+                                                reporting.reportRuntimeError("Type error: Integer value {d} at index {d} out of range for u8 array", .{ elem.int, idx });
+                                                self.allocator.free(new_array);
+                                                return error.TypeError;
+                                            }
+                                            new_array[idx] = token.TokenLiteral{ .u8 = @intCast(elem.int) };
+                                        } else if (elem == .u8) {
+                                            new_array[idx] = elem;
+                                        } else {
+                                            var reporting = Reporter.init();
+                                            reporting.reportRuntimeError("Type error: Cannot convert {s} at index {d} to u8", .{ @tagName(elem), idx });
+                                            self.allocator.free(new_array);
+                                            return error.TypeError;
+                                        }
+                                    }
+
+                                    // Free the original array
+                                    self.allocator.free(init_value.array);
+
+                                    // Return the new array with proper u8 elements
+                                    break :blk token.TokenLiteral{ .array = new_array };
+                                }
+
+                                // For other array types, check that elements match
                                 for (init_value.array) |element| {
                                     const matches = switch (expected_type) {
                                         .Int => element == .int,
@@ -610,7 +675,27 @@ pub const Interpreter = struct {
                     else => token.TokenLiteral{ .nothing = {} },
                 };
 
-                try self.environment.define(decl.name.lexeme, value, decl.type_info);
+                // Use the specialized type_info for u8 arrays if available
+                var final_type_info = decl.type_info;
+                if (decl.type_info.base == .Array and
+                    decl.type_info.array_type != null and
+                    decl.type_info.array_type.?.base == .U8)
+                {
+                    if (self.debug_enabled) {
+                        std.debug.print("Using specialized u8 array type info\n", .{});
+                    }
+
+                    final_type_info = ast.TypeInfo{
+                        .base = .Array,
+                        .is_dynamic = false,
+                        .is_mutable = true,
+                        .element_type = .U8,
+                        .array_type = decl.type_info.array_type,
+                        .array_size = decl.type_info.array_size,
+                    };
+                }
+
+                try self.environment.define(decl.name.lexeme, value, final_type_info);
                 return null;
             },
             .Block => |statements| {
@@ -688,8 +773,18 @@ pub const Interpreter = struct {
                 }
                 if (condition.boolean == token.Boolean.false) {
                     var reporter = Reporter.init();
-                    // Use the location from the AST node
-                    reporter.reportCompileError(assert.location, "Assertion failed", .{});
+
+                    // Use custom message if provided
+                    if (assert.message != null) {
+                        const message_value = try self.evaluate(assert.message.?);
+                        if (message_value == .string) {
+                            reporter.reportCompileError(assert.location, "Assertion failed: {s}", .{message_value.string});
+                        } else {
+                            reporter.reportCompileError(assert.location, "Assertion failed", .{});
+                        }
+                    } else {
+                        reporter.reportCompileError(assert.location, "Assertion failed", .{});
+                    }
                     return error.AssertionFailed;
                 }
                 return .{ .nothing = {} };
@@ -1075,7 +1170,6 @@ pub const Interpreter = struct {
                                 reporting.reportRuntimeError("Type error: Cannot assign {s} to u8 variable", .{@tagName(value)});
                                 return error.TypeError;
                             }
-                            try u8BoundsCheck(value);
                         },
                         .Float => {
                             if (value != .float) {
@@ -1132,7 +1226,6 @@ pub const Interpreter = struct {
                         else
                             return error.TypeError,
                         .u8 => switch (rhs_value) {
-                            // Case 1: u8 += u8
                             .u8 => {
                                 const result = @addWithOverflow(current_value.u8, rhs_value.u8);
                                 if (result[1] != 0) { // Check overflow flag
@@ -1142,7 +1235,6 @@ pub const Interpreter = struct {
                                 }
                                 return token.TokenLiteral{ .u8 = result[0] };
                             },
-                            // Case 2: u8 += int
                             .int => {
                                 // Check if the int is representable as u8 for addition operand
                                 if (rhs_value.int < 0 or rhs_value.int > 255) {
@@ -1302,6 +1394,23 @@ pub const Interpreter = struct {
                             reporting.reportRuntimeError("Array index out of bounds: index {d} for array of length {d}", .{ idx, arr.len });
                             return error.IndexOutOfBounds;
                         }
+
+                        // Try to find array type information to preserve element types
+                        if (index.array.* == .Variable) {
+                            const var_name = index.array.Variable.lexeme;
+                            if (self.environment.getTypeInfo(var_name)) |type_info| {
+                                if (type_info.base == .Array and type_info.element_type != null) {
+                                    // If element is an int but array type is u8, convert to u8
+                                    if (type_info.element_type.? == .U8 and arr[idx] == .int) {
+                                        const int_val = arr[idx].int;
+                                        if (int_val >= 0 and int_val <= 255) {
+                                            return token.TokenLiteral{ .u8 = @intCast(int_val) };
+                                        }
+                                    }
+                                }
+                            } else |_| {}
+                        }
+
                         return arr[idx];
                     },
                     .map => |m| {
@@ -2227,7 +2336,41 @@ pub const Interpreter = struct {
                 return token.TokenLiteral{ .nothing = {} };
             },
             .TypeOf => |expr_to_check| {
-                // Check if the expression inside typeof is a simple variable
+                // Special case for array indexing
+                if (expr_to_check.* == .Index and expr_to_check.Index.array.* == .Variable) {
+                    const array_name = expr_to_check.Index.array.Variable.lexeme;
+
+                    // Debug info
+                    if (self.debug_enabled) {
+                        std.debug.print("\nTypeOf on array index: array_name={s}\n", .{array_name});
+                    }
+
+                    const array_type_info = self.environment.getTypeInfo(array_name) catch |err| {
+                        if (self.debug_enabled) {
+                            std.debug.print("Error getting type info: {any}\n", .{err});
+                        }
+                        return error.VariableNotFound;
+                    };
+
+                    // Debug info
+                    if (self.debug_enabled) {
+                        std.debug.print("Array type info: base={any}, element_type={any}\n", .{ array_type_info.base, array_type_info.element_type });
+                    }
+
+                    // If this is a u8 array, return "u8" as the type
+                    if (array_type_info.base == .Array and array_type_info.element_type != null) {
+                        if (array_type_info.element_type.? == .U8) {
+                            if (self.debug_enabled) {
+                                std.debug.print("Found u8 array, returning u8 type\n", .{});
+                            }
+                            return token.TokenLiteral{ .string = "u8" };
+                        }
+                    }
+                } else if (self.debug_enabled and expr_to_check.* == .Index) {
+                    std.debug.print("\nTypeOf on Index but array is not Variable: {any}\n", .{expr_to_check.Index.array.*});
+                }
+
+                // Handle simple variables
                 if (expr_to_check.* == .Variable) {
                     const var_token = expr_to_check.Variable;
                     // Get the DECLARED type info from the environment
@@ -2261,7 +2404,7 @@ pub const Interpreter = struct {
                         },
                     };
                 } else {
-                    // If it's not a simple variable, evaluate it and report the runtime type (original behavior)
+                    // If it's not a simple variable, evaluate it and report the runtime type
                     const value = try self.evaluate(expr_to_check);
                     return token.TokenLiteral{
                         .string = switch (value) {
@@ -2395,8 +2538,18 @@ pub const Interpreter = struct {
                 }
                 if (condition.boolean == token.Boolean.false) {
                     var reporter = Reporter.init();
-                    // Use the location from the AST node
-                    reporter.reportCompileError(assert.location, "Assertion failed", .{});
+
+                    // Use custom message if provided
+                    if (assert.message != null) {
+                        const message_value = try self.evaluate(assert.message.?);
+                        if (message_value == .string) {
+                            reporter.reportCompileError(assert.location, "Assertion failed: {s}", .{message_value.string});
+                        } else {
+                            reporter.reportCompileError(assert.location, "Assertion failed", .{});
+                        }
+                    } else {
+                        reporter.reportCompileError(assert.location, "Assertion failed", .{});
+                    }
                     return error.AssertionFailed;
                 }
                 return .{ .nothing = {} };
@@ -2493,14 +2646,14 @@ pub const Interpreter = struct {
         if (!var_type.is_dynamic) {
             switch (var_type.base) {
                 .Int => {
-                    if (value != .int) {
+                    if (value != .int and value != .u8) {
                         var reporting = Reporter.init();
                         reporting.reportRuntimeError("Type error: Cannot assign {s} to int variable", .{@tagName(value)});
                         return error.TypeError;
                     }
                 },
                 .U8 => {
-                    if (value != .u8) {
+                    if (value != .u8 and value != .int) {
                         var reporting = Reporter.init();
                         reporting.reportRuntimeError("Type error: Cannot assign {s} to u8 variable", .{@tagName(value)});
                         return error.TypeError;
@@ -2527,9 +2680,13 @@ pub const Interpreter = struct {
                         return error.TypeError;
                     }
                 },
-                .Auto => {}, // Allow any assignment for dynamic types
                 .Auto => {}, // Type is already fixed from initialization
-                else => {},
+                else => {
+                    var reporting = Reporter.init();
+                    const location: Reporter.Location = .{ .file = "stdin", .line = assignment.name.line, .column = assignment.name.column };
+                    reporting.reportCompileError(location, "Type error: Cannot assign {s} to variable", .{@tagName(value)});
+                    return error.TypeError;
+                },
             }
         }
 

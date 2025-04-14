@@ -315,13 +315,38 @@ pub fn parseAssertStmt(self: *Parser) ErrorList!ast.Stmt {
 
     self.advance();
 
+    // Expect opening parenthesis
+    if (self.peek().type != .LEFT_PAREN) {
+        return error.ExpectedLeftParen;
+    }
+    self.advance();
+
     const condition = try expression_parser.parseExpression(self);
     if (condition == null) {
         return error.ExpectedExpression;
     }
+
+    // Check for optional message parameter
+    var message: ?*ast.Expr = null;
+    if (self.peek().type == .COMMA) {
+        self.advance(); // consume comma
+
+        message = try expression_parser.parseExpression(self);
+        if (message == null) {
+            return error.ExpectedExpression;
+        }
+    }
+
+    // Expect closing parenthesis
+    if (self.peek().type != .RIGHT_PAREN) {
+        return error.ExpectedRightParen;
+    }
+    self.advance();
+
     return ast.Stmt{ .Assert = .{
         .condition = condition.?,
         .location = location,
+        .message = message,
     } };
 }
 
