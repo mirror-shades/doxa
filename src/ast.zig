@@ -126,6 +126,7 @@ pub const Expr = union(enum) {
     Assert: struct {
         condition: *Expr,
         location: Reporting.Reporter.Location,
+        message: ?*Expr = null,
     },
 
     pub fn deinit(self: *Expr, allocator: std.mem.Allocator) void {
@@ -397,6 +398,10 @@ pub const Expr = union(enum) {
             .Assert => |*a| {
                 a.condition.deinit(allocator);
                 allocator.destroy(a.condition);
+                if (a.message) |msg| {
+                    msg.deinit(allocator);
+                    allocator.destroy(msg);
+                }
             },
         }
     }
@@ -553,6 +558,7 @@ pub const Stmt = union(enum) {
     Assert: struct {
         condition: *Expr,
         location: Reporting.Reporter.Location,
+        message: ?*Expr = null,
     },
     pub fn deinit(self: *Stmt, allocator: std.mem.Allocator) void {
         switch (self.*) {
@@ -612,6 +618,10 @@ pub const Stmt = union(enum) {
             .Assert => |*a| {
                 a.condition.deinit(allocator);
                 allocator.destroy(a.condition);
+                if (a.message) |msg| {
+                    msg.deinit(allocator);
+                    allocator.destroy(msg);
+                }
             },
             .Module => {},
             .Import => {},
