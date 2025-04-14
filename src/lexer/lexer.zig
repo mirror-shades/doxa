@@ -1,5 +1,5 @@
 const std = @import("std");
-const Reporting = @import("reporting.zig");
+const Reporting = @import("../utils/reporting.zig");
 const Reporter = Reporting.Reporter;
 
 const token = @import("token.zig");

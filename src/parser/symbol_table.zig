@@ -1,8 +1,8 @@
 // src/parser/symbol_table.zig
 
 const std = @import("std");
-const ast = @import("../ast.zig");
-const token = @import("../token.zig");
+const ast = @import("../ast/ast.zig");
+const token = @import("../lexer/token.zig");
 
 pub const SymbolState = enum {
     Declared, // Forward declaration

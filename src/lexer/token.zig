@@ -1,6 +1,6 @@
 const std = @import("std");
-const ast = @import("ast.zig");
-const Environment = @import("interpreter.zig").Environment;
+const ast = @import("../ast/ast.zig");
+const Environment = @import("../interpreter/interpreter.zig").Environment;
 const FunctionParam = ast.FunctionParam;
 
 pub const TokenType = enum {

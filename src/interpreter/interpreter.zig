@@ -1,11 +1,12 @@
 const std = @import("std");
-const ast = @import("ast.zig");
-const token = @import("token.zig");
-const Reporting = @import("reporting.zig");
+const ast = @import("../ast/ast.zig");
+const token = @import("../lexer/token.zig");
+const Reporting = @import("../utils/reporting.zig");
 const ErrorList = Reporting.ErrorList;
 const Reporter = Reporting.Reporter;
-const MemoryManager = @import("memory.zig").MemoryManager;
+const MemoryManager = @import("../utils/memory.zig").MemoryManager;
 const TypeInfo = ast.TypeInfo;
+const Parser = @import("../parser/parser_types.zig").Parser;
 
 const StringInterner = struct {
     strings: std.StringHashMap([]const u8),
@@ -70,28 +71,39 @@ pub const Environment = struct {
 
     pub fn define(self: *Environment, key: []const u8, value: token.TokenLiteral, type_info: ast.TypeInfo) !void {
         if (self.debug_enabled) {
-            std.debug.print("Defining variable '{s}' = {any}\n", .{ key, value });
-        }
-
-        // Check if the variable already exists in this scope
-        if (self.values.contains(key)) {
-            // If it exists and is mutable, update it
-            const type_info_result = try self.getTypeInfo(key);
-            if (type_info_result.is_mutable) {
-                try self.values.put(key, value);
-                try self.types.put(key, type_info);
-                return;
-            } else {
-                return error.ImmutableVariable;
+            std.debug.print("\n=== Environment Define ===\n", .{});
+            std.debug.print("Environment: {*}\n", .{self});
+            std.debug.print("Key: '{s}'\n", .{key});
+            std.debug.print("Value type: {s}\n", .{@tagName(value)});
+            std.debug.print("Raw value: {any}\n", .{value});
+            if (value == .array) {
+                std.debug.print("Array contents:\n", .{});
+                for (value.array, 0..) |item, i| {
+                    std.debug.print("  [{d}] Type={s}, Raw={any}\n", .{ i, @tagName(item), item });
+                    if (item == .string) {
+                        std.debug.print("    String content: '{s}'\n", .{item.string});
+                    }
+                }
             }
         }
 
-        // If it doesn't exist, add it
         try self.values.put(key, value);
         try self.types.put(key, type_info);
 
         if (self.debug_enabled) {
-            std.debug.print("Defined variable '{s}' = {any}\n", .{ key, value });
+            std.debug.print("Value stored successfully\n", .{});
+            if (try self.get(key)) |stored| {
+                std.debug.print("Verification - stored value: {any}\n", .{stored});
+                if (stored == .array) {
+                    std.debug.print("Stored array contents:\n", .{});
+                    for (stored.array, 0..) |item, i| {
+                        std.debug.print("  [{d}] Type={s}, Raw={any}\n", .{ i, @tagName(item), item });
+                        if (item == .string) {
+                            std.debug.print("    String content: '{s}'\n", .{item.string});
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -155,7 +167,7 @@ pub const Interpreter = struct {
     had_error: bool = false,
     has_entry_point: bool = false,
     entry_point_location: ?token.Token = null,
-    parser: ?*@import("parser/parser_types.zig").Parser = null,
+    parser: ?*Parser = null,
     has_returned: bool = false,
 
     pub fn init(allocator: std.mem.Allocator, debug_enabled: bool) !Interpreter {
@@ -2777,28 +2789,40 @@ pub const Interpreter = struct {
 
                     if (err == error.ReturnValue) {
                         if (try function_env.get("return")) |return_value| {
-                            // Deep copy the return value to preserve array contents
-                            return switch (return_value) {
-                                .array => |arr| blk: {
-                                    var new_array = try self.allocator.alloc(token.TokenLiteral, arr.len);
-                                    for (arr, 0..) |item, i| {
-                                        new_array[i] = switch (item) {
-                                            .int => |n| token.TokenLiteral{ .int = n },
-                                            .boolean => |b| token.TokenLiteral{ .boolean = b },
-                                            .array => |a| blk2: {
-                                                var inner_array = try self.allocator.alloc(token.TokenLiteral, a.len);
-                                                for (a, 0..) |inner_item, j| {
-                                                    inner_array[j] = inner_item;
-                                                }
-                                                break :blk2 token.TokenLiteral{ .array = inner_array };
-                                            },
-                                            else => item,
-                                        };
+                            if (self.debug_enabled) {
+                                std.debug.print("\n=== Function Return Debug ===\n", .{});
+                                std.debug.print("Raw return value: {any}\n", .{return_value});
+                                if (return_value == .array) {
+                                    std.debug.print("Array contents before processing:\n", .{});
+                                    for (return_value.array, 0..) |item, i| {
+                                        std.debug.print("  [{d}] Type={s}, Raw={any}\n", .{ i, @tagName(item), item });
+                                        if (item == .string) {
+                                            std.debug.print("    String content: '{s}'\n", .{item.string});
+                                        }
                                     }
-                                    break :blk token.TokenLiteral{ .array = new_array };
-                                },
-                                else => return_value,
-                            };
+                                }
+                                std.debug.print("Current environment: {*}\n", .{self.environment});
+                                std.debug.print("Function environment: {*}\n", .{&function_env});
+                            }
+
+                            // Move the return value to the parent environment before function environment is destroyed
+                            const moved_value = try self.moveValueToParentEnv(return_value);
+
+                            if (self.debug_enabled) {
+                                std.debug.print("\nAfter moveValueToParentEnv:\n", .{});
+                                std.debug.print("Moved value: {any}\n", .{moved_value});
+                                if (moved_value == .array) {
+                                    std.debug.print("Array contents after move:\n", .{});
+                                    for (moved_value.array, 0..) |item, i| {
+                                        std.debug.print("  [{d}] Type={s}, Raw={any}\n", .{ i, @tagName(item), item });
+                                        if (item == .string) {
+                                            std.debug.print("    String content: '{s}'\n", .{item.string});
+                                        }
+                                    }
+                                }
+                            }
+
+                            return moved_value;
                         }
                     }
                     return err;
@@ -2812,6 +2836,95 @@ pub const Interpreter = struct {
             },
             else => return error.NotCallable,
         }
+    }
+
+    fn moveValueToParentEnv(self: *Interpreter, value: token.TokenLiteral) !token.TokenLiteral {
+        if (self.debug_enabled) {
+            std.debug.print("\n=== Moving value between environments ===\n", .{});
+            std.debug.print("Input value type: {s}\n", .{@tagName(value)});
+        }
+
+        return switch (value) {
+            .array => |arr| blk: {
+                if (self.debug_enabled) {
+                    std.debug.print("\nMoving array with {d} elements\n", .{arr.len});
+                    std.debug.print("Original array elements:\n", .{});
+                    for (arr, 0..) |item, i| {
+                        std.debug.print("  [{d}] Type={s}, Value={any}\n", .{ i, @tagName(item), item });
+                    }
+                }
+
+                var new_array = try self.allocator.alloc(token.TokenLiteral, arr.len);
+                errdefer self.allocator.free(new_array);
+
+                for (arr, 0..) |item, i| {
+                    if (self.debug_enabled) {
+                        std.debug.print("\nProcessing element {d}:\n", .{i});
+                        std.debug.print("  Original type: {s}\n", .{@tagName(item)});
+                        std.debug.print("  Original value: {any}\n", .{item});
+                    }
+
+                    new_array[i] = switch (item) {
+                        .string => |s| blk2: {
+                            if (self.debug_enabled) {
+                                std.debug.print("  Found string: '{s}'\n", .{s});
+                                std.debug.print("  String length: {d}\n", .{s.len});
+                            }
+
+                            // Get string from interner
+                            const interned = try self.string_interner.intern(s);
+                            if (self.debug_enabled) {
+                                std.debug.print("  Interned string: '{s}'\n", .{interned});
+                                std.debug.print("  Interned length: {d}\n", .{interned.len});
+                            }
+
+                            const result = token.TokenLiteral{ .string = interned };
+                            if (self.debug_enabled) {
+                                std.debug.print("  Created token: {any}\n", .{result});
+                            }
+                            break :blk2 result;
+                        },
+                        .int => |n| token.TokenLiteral{ .int = n },
+                        .u8 => |u| token.TokenLiteral{ .u8 = u },
+                        .float => |fl| token.TokenLiteral{ .float = fl },
+                        .boolean => |b| token.TokenLiteral{ .boolean = b },
+                        .tetra => |t| token.TokenLiteral{ .tetra = t },
+                        .nothing => token.TokenLiteral{ .nothing = {} },
+                        .array => |nested| try self.moveValueToParentEnv(token.TokenLiteral{ .array = nested }),
+                        else => blk2: {
+                            if (self.debug_enabled) {
+                                std.debug.print("  WARNING: Unhandled type: {s}\n", .{@tagName(item)});
+                            }
+                            break :blk2 item;
+                        },
+                    };
+
+                    if (self.debug_enabled) {
+                        std.debug.print("  Final element type: {s}\n", .{@tagName(new_array[i])});
+                        std.debug.print("  Final element value: {any}\n", .{new_array[i]});
+                    }
+                }
+
+                if (self.debug_enabled) {
+                    std.debug.print("\nFinal array contents:\n", .{});
+                    for (new_array, 0..) |item, i| {
+                        std.debug.print("  [{d}] Type={s}, Value={any}\n", .{ i, @tagName(item), item });
+                    }
+                }
+
+                const result = token.TokenLiteral{ .array = new_array };
+                if (self.debug_enabled) {
+                    std.debug.print("\nReturning array token: {any}\n", .{result});
+                }
+                break :blk result;
+            },
+            else => blk: {
+                if (self.debug_enabled) {
+                    std.debug.print("Non-array value, passing through as-is\n", .{});
+                }
+                break :blk value;
+            },
+        };
     }
 
     fn assignField(self: *Interpreter, object: token.TokenLiteral, field: token.Token, value: *ast.Expr) ErrorList!token.TokenLiteral {

@@ -1,11 +1,12 @@
 const std = @import("std");
-const token = @import("../token.zig");
+const token = @import("../lexer/token.zig");
 const Parser = @import("./parser_types.zig").Parser;
-const expr_parser = @import("expression_parser.zig");
-const decl_parser = @import("declaration_parser.zig");
-const quantifer_parser = @import("quantifer_parser.zig");
-const ast = @import("../ast.zig");
-const ErrorList = @import("../reporting.zig").ErrorList;
+const expr_parser = @import("./expression_parser.zig");
+const decl_parser = @import("./declaration_parser.zig");
+const quantifer_parser = @import("./quantifer_parser.zig");
+const ast = @import("../ast/ast.zig");
+const Reporting = @import("../utils/reporting.zig");
+const ErrorList = Reporting.ErrorList;
 
 // Import all the parsing functions used in rules
 const unary = expr_parser.unary;

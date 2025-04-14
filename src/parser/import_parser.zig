@@ -1,9 +1,9 @@
 const std = @import("std");
-const Parser = @import("parser_types.zig").Parser;
-const ast = @import("../ast.zig");
-const token = @import("../token.zig");
-const Reporting = @import("../reporting.zig").Reporting;
-const ErrorList = @import("../reporting.zig").ErrorList;
+const Parser = @import("./parser_types.zig").Parser;
+const ast = @import("../ast/ast.zig");
+const token = @import("../lexer/token.zig");
+const Reporting = @import("../utils/reporting.zig");
+const ErrorList = Reporting.ErrorList;
 
 // Struct to track imported symbols
 pub const ImportedSymbol = struct {

@@ -1,6 +1,6 @@
 const std = @import("std");
-const token = @import("token.zig");
-const Reporting = @import("reporting.zig");
+const token = @import("../lexer/token.zig");
+const Reporting = @import("../utils/reporting.zig");
 
 pub const Binary = struct {
     left: ?*Expr,
