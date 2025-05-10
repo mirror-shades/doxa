@@ -48,6 +48,11 @@ pub const Environment = struct {
     memory_manager: *MemoryManager,
 
     pub fn init(allocator: std.mem.Allocator, enclosing: ?*Environment, debug_enabled: bool, memory_manager: *MemoryManager) Environment {
+        // If we have an enclosing environment, its scope should be the parent of our new scope
+        var parent_scope: ?*Scope = null;
+        if (enclosing != null) {
+            parent_scope = memory_manager.scope_manager.root_scope;
+        }
         return .{
             .values = std.StringHashMap(token.TokenLiteral).init(allocator),
             .types = std.StringHashMap(ast.TypeInfo).init(allocator),
@@ -98,6 +103,9 @@ pub const Environment = struct {
                 .Map => token.TokenType.MAP,
                 .Nothing => token.TokenType.NOTHING,
                 .Auto => token.TokenType.AUTO,
+                .Tuple => token.TokenType.TUPLE,
+                .Custom => token.TokenType.ENUM_TYPE,
+                .Tetra => token.TokenType.TETRA,
                 else => unreachable,
             };
 
@@ -2273,8 +2281,19 @@ pub const Interpreter = struct {
                     if (self.debug_enabled) {
                         std.debug.print("Testing value: {any}\n", .{val});
                     }
+
+                    // Create a new scope for this iteration
+                    const current_scope = self.memory_manager.scope_manager.root_scope;
+                    var iteration_scope = try self.memory_manager.scope_manager.createScope(current_scope);
+                    self.memory_manager.scope_manager.root_scope = iteration_scope;
+
                     try self.environment.define(e.variable.lexeme, val, .{ .base = .Auto });
                     const result = try self.evaluate(e.condition);
+
+                    // Restore the original scope
+                    self.memory_manager.scope_manager.root_scope = current_scope;
+                    iteration_scope.deinit();
+
                     if (self.debug_enabled) {
                         std.debug.print("Condition result: {any}\n", .{result});
                     }
@@ -2305,8 +2324,18 @@ pub const Interpreter = struct {
 
                 // Iterate over the actual array elements
                 for (array_value.array) |val| {
+                    // Create a new scope for this iteration
+                    const current_scope = self.memory_manager.scope_manager.root_scope;
+                    var iteration_scope = try self.memory_manager.scope_manager.createScope(current_scope);
+                    self.memory_manager.scope_manager.root_scope = iteration_scope;
+
                     try self.environment.define(var_name, val, .{ .base = .Auto });
                     const result = try self.evaluate(f.condition);
+
+                    // Restore the original scope
+                    self.memory_manager.scope_manager.root_scope = current_scope;
+                    iteration_scope.deinit();
+
                     if (!(result == .boolean and result.boolean == token.Boolean.true)) {
                         return token.TokenLiteral{ .boolean = token.Boolean.false };
                     }
@@ -2720,6 +2749,19 @@ pub const Interpreter = struct {
                 // Create new environment for function call
                 var function_env = Environment.init(self.allocator, f.closure, self.debug_enabled, self.memory_manager);
                 defer function_env.deinit();
+
+                // Create a new scope for this function call, ensure it's a child of the current scope
+                const current_scope = self.memory_manager.scope_manager.root_scope;
+                var function_scope = try self.memory_manager.scope_manager.createScope(current_scope);
+
+                // Update the memory manager to use the new scope
+                self.memory_manager.scope_manager.root_scope = function_scope;
+
+                // Make sure to restore the original scope when done
+                defer {
+                    self.memory_manager.scope_manager.root_scope = current_scope;
+                    function_scope.deinit();
+                }
 
                 // Check argument count
                 if (arguments.len > f.params.len) {

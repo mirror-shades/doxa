@@ -1,14 +1,14 @@
 const std = @import("std");
 const Token = @import("../lexer/token.zig");
 const TypeInfo = @import("../ast/ast.zig").TypeInfo;
-/// MemoryManager provides a backward-compatible interface to the new memory management system
+
 pub const MemoryManager = struct {
     arena: std.heap.ArenaAllocator,
     debug_enabled: bool,
     scope_manager: *ScopeManager,
 
     pub fn init(allocator: std.mem.Allocator, debug_enabled: bool) !MemoryManager {
-        const scope_manager = try ScopeManager.init(allocator);
+        const scope_manager = try ScopeManager.init(allocator, debug_enabled);
         if (debug_enabled) {
             std.debug.print("Initializing memory manager with debug enabled\n", .{});
         }
@@ -76,13 +76,15 @@ pub const ScopeManager = struct {
     variable_counter: u32 = 0,
     root_scope: ?*Scope = null,
     allocator: std.mem.Allocator,
+    debug_enabled: bool,
 
-    pub fn init(allocator: std.mem.Allocator) !*ScopeManager {
+    pub fn init(allocator: std.mem.Allocator, debug_enabled: bool) !*ScopeManager {
         const self = try allocator.create(ScopeManager);
         self.* = .{
             .variable_map = std.AutoHashMap(u32, *Variable).init(allocator),
             .value_storage = std.AutoHashMap(u32, *ValueStorage).init(allocator),
             .allocator = allocator,
+            .debug_enabled = debug_enabled,
         };
         return self;
     }
@@ -137,6 +139,12 @@ pub const ScopeManager = struct {
             std.debug.print("No value storage\n", .{});
         }
     }
+
+    pub fn createScope(self: *ScopeManager, parent: ?*Scope) !*Scope {
+        const scope_id = self.next_storage_id;
+        self.next_storage_id += 1;
+        return Scope.init(self, scope_id, parent);
+    }
 };
 
 /// Scope represents a lexical scope with its own variables
@@ -147,6 +155,7 @@ pub const Scope = struct {
     name_map: std.StringHashMap(*Variable),
     arena: std.heap.ArenaAllocator,
     manager: *ScopeManager,
+    debug_enabled: bool,
 
     pub fn init(manager: *ScopeManager, scope_id: u32, parent: ?*Scope) !*Scope {
         const self = try manager.allocator.create(Scope);
@@ -157,12 +166,15 @@ pub const Scope = struct {
             .variables = std.AutoHashMap(u32, *Variable).init(self.arena.allocator()),
             .name_map = std.StringHashMap(*Variable).init(self.arena.allocator()),
             .manager = manager,
+            .debug_enabled = manager.debug_enabled,
         };
         return self;
     }
 
     pub fn deinit(self: *Scope) void {
-        std.debug.print("Cleaning up scope {}\n", .{self.id});
+        if (self.manager.debug_enabled) {
+            std.debug.print("Cleaning up scope {}\n", .{self.id});
+        }
 
         // Run sanity check before any cleanup
         self.sanityCheck();
@@ -178,7 +190,9 @@ pub const Scope = struct {
                 display_name = variable.name;
             }
 
-            std.debug.print("  Cleaning up variable {s} (id: {})\n", .{ display_name, variable.id });
+            if (self.manager.debug_enabled) {
+                std.debug.print("  Cleaning up variable {s} (id: {})\n", .{ display_name, variable.id });
+            }
 
             // Remove from global variable map
             _ = self.manager.variable_map.remove(variable.id);
