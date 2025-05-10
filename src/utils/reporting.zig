@@ -6,6 +6,8 @@ pub const ErrorList = error{
     StackUnderflow,
     FrameStackOverflow,
     OutOfMemory,
+    NoRootScope,
+    StorageNotFound,
 
     // Type System & Value Handling
     TypeError,

@@ -73,7 +73,7 @@ pub const Environment = struct {
         self.types.deinit();
     }
 
-    pub fn defineMemory(self: *Environment, key: []const u8, value: token.TokenLiteral, type_info: ast.TypeInfo) !void {
+    pub fn define(self: *Environment, key: []const u8, value: token.TokenLiteral, type_info: ast.TypeInfo) !void {
         if (self.debug_enabled) {
             std.debug.print("Attempting to define '{s}' = {any} in the memory manager\n", .{ key, value });
         }
@@ -90,7 +90,7 @@ pub const Environment = struct {
                 .U8 => token.TokenType.U8,
                 .Float => token.TokenType.FLOAT,
                 .String => token.TokenType.STRING,
-                .Boolean => token.TokenType.BOOLEAN,
+                .Boolean => token.TokenType.BOOL,
                 .Array => token.TokenType.ARRAY,
                 .Function => token.TokenType.FUNCTION,
                 .Struct => token.TokenType.STRUCT,
@@ -108,45 +108,7 @@ pub const Environment = struct {
         return error.NoRootScope;
     }
 
-    pub fn define(self: *Environment, key: []const u8, value: token.TokenLiteral, type_info: ast.TypeInfo) !void {
-        if (self.debug_enabled) {
-            std.debug.print("\n=== Environment Define ===\n", .{});
-            std.debug.print("Environment: {*}\n", .{self});
-            std.debug.print("Key: '{s}'\n", .{key});
-            std.debug.print("Value type: {s}\n", .{@tagName(value)});
-            std.debug.print("Raw value: {any}\n", .{value});
-            if (value == .array) {
-                std.debug.print("Array contents:\n", .{});
-                for (value.array, 0..) |item, i| {
-                    std.debug.print("  [{d}] Type={s}, Raw={any}\n", .{ i, @tagName(item), item });
-                    if (item == .string) {
-                        std.debug.print("    String content: '{s}'\n", .{item.string});
-                    }
-                }
-            }
-        }
-
-        try self.values.put(key, value);
-        try self.types.put(key, type_info);
-
-        if (self.debug_enabled) {
-            std.debug.print("Value stored successfully\n", .{});
-            if (try self.get(key)) |stored| {
-                std.debug.print("Verification - stored value: {any}\n", .{stored});
-                if (stored == .array) {
-                    std.debug.print("Stored array contents:\n", .{});
-                    for (stored.array, 0..) |item, i| {
-                        std.debug.print("  [{d}] Type={s}, Raw={any}\n", .{ i, @tagName(item), item });
-                        if (item == .string) {
-                            std.debug.print("    String content: '{s}'\n", .{item.string});
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    pub fn getMemory(self: *Environment, name: []const u8) ErrorList!?token.TokenLiteral {
+    pub fn get(self: *Environment, name: []const u8) ErrorList!?token.TokenLiteral {
         if (self.memory_manager.scope_manager.root_scope) |root_scope| {
             if (root_scope.lookupVariable(name)) |variable| {
                 if (self.memory_manager.scope_manager.value_storage.get(variable.storage_id)) |storage| {
@@ -157,25 +119,15 @@ pub const Environment = struct {
 
         // If not found in current environment, check enclosing if it exists
         if (self.enclosing) |enclosing| {
-            return enclosing.getMemory(name);
-        }
-
-        return null;
-    }
-
-    pub fn get(self: *Environment, name: []const u8) ErrorList!?token.TokenLiteral {
-        if (self.values.get(name)) |value| {
-            return value;
-        }
-        if (self.enclosing) |enclosing| {
             return enclosing.get(name);
         }
+
         return null;
     }
 
-    pub fn assignMemory(self: *Environment, name: []const u8, value: token.TokenLiteral) !void {
+    pub fn assign(self: *Environment, name: []const u8, value: token.TokenLiteral) !void {
         if (self.debug_enabled) {
-            std.debug.print("Attempting to assign '{s}' = {any} to the memory manager\n", .{ name, value });
+            std.debug.print("Attempting to assign '{s}' = {any}\n", .{ name, value });
         }
 
         // Look up variable from root scope
@@ -189,8 +141,19 @@ pub const Environment = struct {
                         return error.CannotAssignToConstant;
                     }
 
+                    // Debug: show old value
+                    if (self.debug_enabled) {
+                        std.debug.print("Updating variable '{s}' from {any} to {any}\n", .{ name, storage.value, value });
+                    }
+
                     // Update the value in storage
                     storage.value = value;
+
+                    // Verify update
+                    if (self.debug_enabled) {
+                        std.debug.print("After update, storage value is: {any}\n", .{storage.value});
+                    }
+
                     return;
                 } else {
                     return error.StorageNotFound;
@@ -201,50 +164,13 @@ pub const Environment = struct {
         return error.UndefinedVariable;
     }
 
-    pub fn assign(self: *Environment, name: []const u8, value: token.TokenLiteral) !void {
-        if (self.debug_enabled) {
-            std.debug.print("Attempting to assign '{s}' = {any}\n", .{ name, value });
-        }
-
-        // First check if the variable exists in current scope
-        if (self.values.contains(name)) {
-            // Free any existing array value before overwriting
-            if (self.values.get(name)) |old_value| {
-                if (old_value == .array) {
-                    self.allocator.free(old_value.array);
-                }
-            }
-            try self.values.put(name, value);
-            return;
-        }
-
-        // If not in current scope but we have an enclosing scope, try there
-        if (self.enclosing) |enclosing| {
-            try enclosing.assign(name, value);
-            return;
-        }
-
-        // If we get here, the variable doesn't exist in any scope
-        return error.UndefinedVariable;
-    }
-
-    pub fn getTypeInfoMemory(self: *Environment, name: []const u8) ErrorList!TypeInfo {
+    pub fn getTypeInfo(self: *Environment, name: []const u8) ErrorList!TypeInfo {
         if (self.memory_manager.scope_manager.root_scope) |root_scope| {
             if (root_scope.lookupVariable(name)) |variable| {
                 if (self.memory_manager.scope_manager.value_storage.get(variable.storage_id)) |storage| {
                     return storage.type_info;
                 }
             }
-        }
-        if (self.enclosing) |enclosing| {
-            return enclosing.getTypeInfoMemory(name);
-        }
-        return error.UndefinedVariable;
-    }
-
-    pub fn getTypeInfo(self: *Environment, name: []const u8) ErrorList!TypeInfo {
-        if (self.types.get(name)) |type_info| {
-            return type_info;
         }
         if (self.enclosing) |enclosing| {
             return enclosing.getTypeInfo(name);
@@ -335,7 +261,7 @@ pub const Interpreter = struct {
             std.debug.print("Number of statements: {}\n", .{statements.len});
         }
 
-        // First pass - Process all struct and enum declarations
+        // First pass - Only process structs, enums, and functions (type declarations)
         for (0..statements.len) |i| {
             const stmt = &statements[i];
             if (self.debug_enabled) {
@@ -374,19 +300,7 @@ pub const Interpreter = struct {
                     std.debug.print("Processing enum declaration: {s}\n", .{stmt.EnumDecl.name.lexeme});
                 }
                 _ = try self.executeStatement(stmt, self.debug_enabled);
-            }
-        }
-
-        // Second pass - Process all function declarations
-        for (statements, 0..) |*stmt, i| {
-            if (self.debug_enabled and stmt.* == .Function) {
-                std.debug.print("\nChecking statement {d}: {s}\n", .{ i, @tagName(stmt.*) });
-                std.debug.print("Raw statement: {any}\n", .{stmt.*});
-                const f = stmt.Function;
-                std.debug.print("Found function: {s}\n", .{f.name.lexeme});
-            }
-
-            if (stmt.* == .Function) {
+            } else if (stmt.* == .Function) {
                 const f = stmt.Function;
                 if (self.debug_enabled) {
                     std.debug.print("\nCreating forward declaration for: {s}\n", .{f.name.lexeme});
@@ -416,77 +330,45 @@ pub const Interpreter = struct {
             }
         }
 
-        // Third pass - Process all variable declarations
-        var var_declarations = std.ArrayList(*ast.Stmt).init(self.allocator);
-        defer var_declarations.deinit();
-
-        for (0..statements.len) |i| {
-            const stmt = &statements[i];
-            if (self.debug_enabled) {
-                std.debug.print("\nScanning for variables - statement {d}: {s}\n", .{ i, @tagName(stmt.*) });
-            }
-
-            if (stmt.* == .VarDecl) {
-                if (self.debug_enabled) {
-                    std.debug.print("Found variable declaration: {s}\n", .{stmt.VarDecl.name.lexeme});
-                }
-                try var_declarations.append(stmt);
-            }
-        }
-
-        // Process variable declarations in order of appearance
-        if (self.debug_enabled) {
-            std.debug.print("\nProcessing {d} variable declarations\n", .{var_declarations.items.len});
-        }
-
-        for (var_declarations.items) |stmt| {
-            if (self.debug_enabled) {
-                std.debug.print("Processing variable declaration: {s}\n", .{stmt.VarDecl.name.lexeme});
-            }
-            _ = try self.executeStatement(stmt, self.debug_enabled);
-        }
-
-        // --- Final Execution Pass ---
+        // Second pass - Execute all statements in order of appearance
         if (self.entry_point_name == null) {
-            // Script mode - execute all remaining statements
+            // Script mode - execute all remaining statements in order
             if (self.debug_enabled) {
-                std.debug.print("\n=== Running in script mode (final execution) ===\n", .{});
+                std.debug.print("\n=== Running in script mode ===\n", .{});
             }
             for (statements) |*stmt| {
-                // Skip declarations handled in previous passes
-                if (stmt.* == .Function or stmt.* == .VarDecl or stmt.* == .EnumDecl or
+                // Skip declarations that were handled in the first pass
+                if (stmt.* == .Function or stmt.* == .EnumDecl or
                     (stmt.* == .Expression and stmt.Expression != null and stmt.Expression.?.* == .StructDecl))
                 {
                     continue;
                 }
+
+                // Execute all other statements in order (including variable declarations and assignments)
                 self.last_result = try self.executeStatement(stmt, self.debug_enabled);
             }
         } else {
             // Program mode with entry point
             if (self.debug_enabled) {
-                std.debug.print("\n=== Running in program mode (executing entry point) ===\n", .{});
+                std.debug.print("\n=== Running in program mode ===\n", .{});
             }
 
-            // Entry point execution (declarations already handled)
+            // Entry point execution
             if (self.entry_point_name) |main_fn| {
                 const main_value = (try self.environment.get(main_fn)) orelse return error.InvalidEntryPoint;
                 if (main_value != .function) {
                     return error.InvalidEntryPoint;
                 }
 
-                var empty_args = [_]*ast.Expr{}; // Create empty slice of ast.Expr pointers
+                var empty_args = [_]*ast.Expr{};
                 self.last_result = try self.callFunction(main_value, &empty_args);
             } else {
-                // This case should technically not be reachable if entry_point_name is set
-                // but included for completeness
                 if (self.debug_enabled) {
                     std.debug.print("Warning: Program mode set but no entry point name found.\n", .{});
                 }
+                unreachable;
             }
         }
-
-        // // Handle entry point execution (removed from here, handled in program mode logic)
-        // if (self.entry_point_name) |main_fn| { ... }
 
         if (self.debug_enabled) {
             std.debug.print("\n=== Interpretation complete ===\n", .{});
@@ -949,6 +831,11 @@ pub const Interpreter = struct {
             .Binary => |binary| {
                 const left = try self.evaluate(binary.left orelse return error.InvalidExpression);
                 const right = try self.evaluate(binary.right orelse return error.InvalidExpression);
+
+                if (self.debug_enabled) {
+                    std.debug.print("Left operand: {any}\n", .{left});
+                    std.debug.print("Right operand: {any}\n", .{right});
+                }
 
                 return switch (binary.operator.type) {
                     .EQUALITY => switch (left) {
