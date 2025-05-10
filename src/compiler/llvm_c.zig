@@ -20,6 +20,10 @@ pub const c = struct {
     // Type definitions
     pub const LLVMBool = c_int;
 
+    pub fn toBool(value: bool) LLVMBool {
+        return if (value) 1 else 0;
+    }
+
     // Type kinds
     pub const LLVMTypeKind = c_uint;
     pub const LLVMVoidTypeKind: LLVMTypeKind = 0;
@@ -124,6 +128,11 @@ pub const c = struct {
     pub extern fn LLVMCreateBuilderInContext(C: *LLVMContext) *LLVMBuilder;
     pub extern fn LLVMDisposeBuilder(Builder: *LLVMBuilder) void;
     pub extern fn LLVMPositionBuilderAtEnd(Builder: *LLVMBuilder, Block: *LLVMBasicBlock) void;
+    pub extern fn LLVMPositionBuilderBefore(Builder: *LLVMBuilder, Instr: *LLVMValue) void;
+    pub extern fn LLVMGetInsertBlock(Builder: *LLVMBuilder) *LLVMBasicBlock;
+    pub extern fn LLVMGetBasicBlockParent(BB: *LLVMBasicBlock) *LLVMValue;
+    pub extern fn LLVMGetEntryBasicBlock(Fn: *LLVMValue) *LLVMBasicBlock;
+    pub extern fn LLVMGetFirstInstruction(BB: *LLVMBasicBlock) ?*LLVMValue;
     pub extern fn LLVMBuildGlobalStringPtr(B: *LLVMBuilder, Str: [*:0]const u8, Name: [*:0]const u8) *LLVMValue;
     pub extern fn LLVMBuildRet(B: *LLVMBuilder, V: *LLVMValue) *LLVMValue;
     pub extern fn LLVMBuildRetVoid(B: *LLVMBuilder) *LLVMValue;
@@ -135,6 +144,7 @@ pub const c = struct {
     pub extern fn LLVMBuildFSub(B: *LLVMBuilder, LHS: *LLVMValue, RHS: *LLVMValue, Name: [*:0]const u8) *LLVMValue;
     pub extern fn LLVMBuildFMul(B: *LLVMBuilder, LHS: *LLVMValue, RHS: *LLVMValue, Name: [*:0]const u8) *LLVMValue;
     pub extern fn LLVMBuildFDiv(B: *LLVMBuilder, LHS: *LLVMValue, RHS: *LLVMValue, Name: [*:0]const u8) *LLVMValue;
+    pub extern fn LLVMBuildFNeg(B: *LLVMBuilder, V: *LLVMValue, Name: [*:0]const u8) *LLVMValue;
     pub extern fn LLVMBuildICmp(B: *LLVMBuilder, Op: LLVMIntPredicate, LHS: *LLVMValue, RHS: *LLVMValue, Name: [*:0]const u8) *LLVMValue;
     pub extern fn LLVMBuildFCmp(B: *LLVMBuilder, Op: LLVMRealPredicate, LHS: *LLVMValue, RHS: *LLVMValue, Name: [*:0]const u8) *LLVMValue;
     pub extern fn LLVMBuildCondBr(B: *LLVMBuilder, If: *LLVMValue, Then: *LLVMBasicBlock, Else: *LLVMBasicBlock) *LLVMValue;
@@ -143,6 +153,8 @@ pub const c = struct {
     pub extern fn LLVMBuildAlloca(B: *LLVMBuilder, Ty: *LLVMType, Name: [*:0]const u8) *LLVMValue;
     pub extern fn LLVMBuildStore(B: *LLVMBuilder, Val: *LLVMValue, Ptr: *LLVMValue) *LLVMValue;
     pub extern fn LLVMBuildLoad2(B: *LLVMBuilder, Ty: *LLVMType, PointerVal: *LLVMValue, Name: [*:0]const u8) *LLVMValue;
+    pub extern fn LLVMBuildPhi(B: *LLVMBuilder, Ty: *LLVMType, Name: [*:0]const u8) *LLVMValue;
+    pub extern fn LLVMAddIncoming(PhiNode: *LLVMValue, IncomingValues: [*]*LLVMValue, IncomingBlocks: [*]*LLVMBasicBlock, Count: c_uint) void;
 
     // Type API
     pub extern fn LLVMVoidTypeInContext(C: *LLVMContext) *LLVMType;
@@ -159,6 +171,8 @@ pub const c = struct {
     pub extern fn LLVMGetTypeKind(Ty: *LLVMType) LLVMTypeKind;
     pub extern fn LLVMTypeOf(Val: *LLVMValue) *LLVMType;
     pub extern fn LLVMIntTypeInContext(C: *LLVMContext, NumBits: c_uint) *LLVMType;
+    pub extern fn LLVMGetIntTypeWidth(IntegerTy: *LLVMType) c_uint;
+    pub extern fn LLVMGetElementType(Ty: *LLVMType) *LLVMType;
 
     // Value API
     pub extern fn LLVMConstInt(IntTy: *LLVMType, N: c_ulonglong, SignExtend: LLVMBool) *LLVMValue;
@@ -193,4 +207,7 @@ pub const c = struct {
     pub extern fn LLVMCreateTargetMachine(T: *LLVMTarget, Triple: [*:0]const u8, CPU: [*:0]const u8, Features: [*:0]const u8, Level: LLVMCodeGenOptLevel, Reloc: LLVMRelocMode, CodeModel: LLVMCodeModel) *LLVMTargetMachine;
     pub extern fn LLVMDisposeTargetMachine(T: *LLVMTargetMachine) void;
     pub extern fn LLVMTargetMachineEmitToFile(T: *LLVMTargetMachine, M: *LLVMModule, Filename: [*:0]const u8, codegen: LLVMCodeGenFileType, ErrorMessage: *[*:0]u8) c_int;
+
+    // Verification API
+    pub extern fn LLVMVerifyFunction(Fn: *LLVMValue, Action: LLVMVerifierFailureAction, OutMessage: *[*:0]u8) LLVMBool;
 };

@@ -85,7 +85,7 @@ pub const TokenType = enum {
     OR_LOGICAL, // ∨
     FUNCTION, // fn
     WHERE, // where
-    EQUALITY, // equals
+    EQUALITY, // ==
     ASSIGN, // is
 
     // logical operators
