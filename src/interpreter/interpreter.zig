@@ -1,11 +1,13 @@
 const std = @import("std");
 const ast = @import("../ast/ast.zig");
+const TypeInfo = ast.TypeInfo;
 const token = @import("../lexer/token.zig");
 const Reporting = @import("../utils/reporting.zig");
 const ErrorList = Reporting.ErrorList;
 const Reporter = Reporting.Reporter;
-const MemoryManager = @import("../utils/memory.zig").MemoryManager;
-const TypeInfo = ast.TypeInfo;
+const Memory = @import("../utils/memory.zig");
+const Scope = Memory.Scope;
+const MemoryManager = Memory.MemoryManager;
 const Parser = @import("../parser/parser_types.zig").Parser;
 
 const StringInterner = struct {
@@ -156,42 +158,61 @@ pub const Environment = struct {
 };
 
 pub const Interpreter = struct {
-    allocator: std.mem.Allocator,
     environment: *Environment,
-    globals: *Environment,
+    global_environment: *Environment,
+    parser: ?*Parser,
+    allocator: std.mem.Allocator,
+    runtime_errors: std.ArrayList(Reporter.RuntimeError),
     debug_enabled: bool,
     string_interner: StringInterner,
-    stdout_buffer: std.ArrayList(u8),
+    moduleEnvironments: std.StringHashMap(*Environment),
+    memory_manager: *MemoryManager,
+
+    return_value: ?token.TokenLiteral = null,
     entry_point_name: ?[]const u8 = null,
     last_result: ?token.TokenLiteral = null,
     had_error: bool = false,
     has_entry_point: bool = false,
     entry_point_location: ?token.Token = null,
-    parser: ?*Parser = null,
     has_returned: bool = false,
 
-    pub fn init(allocator: std.mem.Allocator, debug_enabled: bool) !Interpreter {
-        const globals = try allocator.create(Environment);
-        globals.* = Environment.init(allocator, null, debug_enabled);
+    pub fn init(allocator: std.mem.Allocator, environment: *Environment, parser: ?*Parser, debug_enabled: bool, memory_manager: *MemoryManager) Interpreter {
+        // Initialize scope_manager with a root scope
+        if (memory_manager.scope_manager.root_scope == null) {
+            memory_manager.scope_manager.root_scope = Scope.init(memory_manager.scope_manager, memory_manager.scope_manager.next_storage_id, null) catch unreachable;
+            memory_manager.scope_manager.next_storage_id += 1;
+        }
 
-        const interpreter = Interpreter{
+        return .{
+            .environment = environment,
+            .global_environment = environment,
+            .parser = parser,
             .allocator = allocator,
-            .environment = globals,
-            .globals = globals,
+            .runtime_errors = std.ArrayList(Reporter.RuntimeError).init(allocator),
             .debug_enabled = debug_enabled,
-            .string_interner = StringInterner.init(allocator),
-            .stdout_buffer = std.ArrayList(u8).init(allocator),
+            .has_returned = false,
             .entry_point_name = null,
-            .had_error = false,
+            .string_interner = StringInterner.init(allocator),
+            .moduleEnvironments = std.StringHashMap(*Environment).init(allocator),
+            .memory_manager = memory_manager,
         };
-
-        return interpreter;
     }
 
     pub fn deinit(self: *Interpreter) void {
-        self.environment.deinit();
+        self.runtime_errors.deinit();
         self.string_interner.deinit();
-        self.stdout_buffer.deinit();
+
+        // Free up all module environments
+        var it = self.moduleEnvironments.iterator();
+        while (it.next()) |entry| {
+            entry.value_ptr.*.deinit();
+            self.allocator.destroy(entry.value_ptr.*);
+        }
+        self.moduleEnvironments.deinit();
+
+        // memory_manager will handle scope cleanup
+        // reset our root_scope pointer to guard against double-free
+        self.memory_manager.scope_manager.root_scope = null;
     }
 
     fn u8BoundsCheck(value: token.TokenLiteral) ErrorList!void {

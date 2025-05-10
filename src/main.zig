@@ -7,6 +7,7 @@ const MemoryManager = @import("./utils/memory.zig").MemoryManager;
 const Token = @import("./lexer/token.zig").Token;
 const TokenLiteral = @import("./lexer/token.zig").TokenLiteral;
 const Interpreter = @import("./interpreter/interpreter.zig").Interpreter;
+const Environment = @import("./interpreter/interpreter.zig").Environment;
 
 ///==========================================================================
 /// Constants
@@ -15,6 +16,7 @@ const EXIT_CODE_USAGE = 64;
 const EXIT_CODE_ERROR = 65;
 const MAX_FILE_SIZE = 1024 * 1024; // 1MB should be plenty for our interpreter
 const DOXA_EXTENSION = ".doxa";
+const DEFAULT_OUTPUT_FILE = "output.o";
 
 ///==========================================================================
 /// Variables
@@ -22,6 +24,7 @@ const DOXA_EXTENSION = ".doxa";
 pub var hadError: bool = false;
 var compile: bool = false;
 var is_safe_repl: bool = false;
+var output_file: ?[]const u8 = null;
 ///==========================================================================
 /// Types & Errors
 ///==========================================================================
@@ -63,7 +66,7 @@ pub fn reportError(line: i32, where: []const u8, message: []const u8) void {
 ///==========================================================================
 /// Run
 ///==========================================================================
-pub fn run(memory: *MemoryManager, interpreter: *Interpreter, source: []const u8, file_path: []const u8) !?TokenLiteral {
+pub fn run(memory: *MemoryManager, source: []const u8, file_path: []const u8) !?TokenLiteral {
     if (memory.debug_enabled) {
         std.debug.print("\n=== Starting run ===\n", .{});
     }
@@ -90,42 +93,77 @@ pub fn run(memory: *MemoryManager, interpreter: *Interpreter, source: []const u8
     // second pass processes the imports to resolve any modules that are imported
     // third pass builds the AST for the file and anything exposed by the module
 
-    if (!hadError) {
-        var parser_instance = Parser.init(
-            memory.getAllocator(),
-            token_list.items,
-            file_path,
-            memory.debug_enabled,
-        );
-        defer parser_instance.deinit();
-        const statements = try parser_instance.execute();
-        if (memory.debug_enabled) {
-            std.debug.print("hadError parsing: {}\n", .{hadError});
-            std.debug.print("\n=== Parse complete, statement count: {} ===\n", .{statements.len});
-            for (statements, 0..) |stmt, i| {
-                std.debug.print("Statement {}: {s}\n", .{ i, @tagName(stmt) });
-            }
-            if (parser_instance.has_entry_point) {
-                std.debug.print("Entry point: {s}\n", .{parser_instance.entry_point_name.?});
-            }
-        }
+    var parser_instance = Parser.init(
+        memory.getAllocator(),
+        token_list.items,
+        file_path,
+        memory.debug_enabled,
+    );
+    defer parser_instance.deinit();
 
-        if (memory.debug_enabled) {
-            std.debug.print("\n=== Starting interpretation ===\n", .{});
-        }
-
-        // Transfer entry point information from parser to interpreter
-        if (parser_instance.has_entry_point) {
-            interpreter.entry_point_name = parser_instance.entry_point_name;
-        }
-
-        // Set the parser reference for imported module handling
-        interpreter.parser = &parser_instance;
-
-        try interpreter.interpret(statements);
-        return interpreter.last_result;
+    // Create the global environment
+    var global_env = try memory.getAllocator().create(Environment);
+    global_env.* = Environment.init(memory.getAllocator(), null, memory.debug_enabled);
+    defer {
+        global_env.deinit();
+        memory.getAllocator().destroy(global_env);
     }
-    return null;
+
+    var interpreter = Interpreter.init(
+        memory.getAllocator(),
+        global_env,
+        &parser_instance,
+        memory.debug_enabled,
+        memory,
+    );
+    defer interpreter.deinit();
+
+    const statements = try parser_instance.execute();
+    if (memory.debug_enabled) {
+        std.debug.print("hadError parsing: {}\n", .{hadError});
+        std.debug.print("\n=== Parse complete, statement count: {} ===\n", .{statements.len});
+        for (statements, 0..) |stmt, i| {
+            std.debug.print("Statement {}: {s}\n", .{ i, @tagName(stmt) });
+        }
+        if (parser_instance.has_entry_point) {
+            std.debug.print("Entry point: {s}\n", .{parser_instance.entry_point_name.?});
+        }
+    }
+
+    // if (compile) {
+
+    //     // Set up the reporter for compilation
+    //     var reporter = Reporter.initWithAllocator(memory.getAllocator());
+    //     defer reporter.deinit();
+
+    //     // Create and use the LLVM compiler
+    //     var compiler = try LLVMCompiler.init(memory.getAllocator(), file_path, &reporter);
+    //     defer compiler.deinit();
+
+    //     try compiler.compile(statements);
+
+    //     // Output to file
+    //     const out_file = output_file orelse DEFAULT_OUTPUT_FILE;
+    //     try compiler.outputToFile(out_file);
+
+    //     std.debug.print("Compiled to: {s}\n", .{out_file});
+    //     return null;
+    // }
+
+    if (memory.debug_enabled) {
+        std.debug.print("\n=== Starting interpretation ===\n", .{});
+    }
+
+    // Transfer entry point information from parser to interpreter
+    if (parser_instance.has_entry_point) {
+        interpreter.entry_point_name = parser_instance.entry_point_name;
+    }
+
+    // Set the parser reference for imported module handling
+    interpreter.parser = &parser_instance;
+
+    try interpreter.interpret(statements);
+    return interpreter.last_result;
 }
 
 fn runFile(memory: *MemoryManager, path: []const u8) !void {
@@ -133,19 +171,13 @@ fn runFile(memory: *MemoryManager, path: []const u8) !void {
         std.debug.print("Debug enabled in memory manager\n", .{});
     }
 
-    var interpreter = try Interpreter.init(memory.getAllocator(), memory.debug_enabled);
-    defer interpreter.deinit();
-
     var file = try std.fs.cwd().openFile(path, .{});
     defer file.close();
 
     const source = try file.readToEndAlloc(memory.getAllocator(), MAX_FILE_SIZE);
     defer memory.getAllocator().free(source);
 
-    _ = try run(memory, &interpreter, source, path);
-    if (interpreter.had_error) {
-        std.process.exit(65);
-    }
+    _ = try run(memory, source, path);
 }
 
 ///==========================================================================
@@ -157,7 +189,7 @@ pub fn main() !void {
         const leaked = gpa.deinit();
         if (leaked == .leak) std.debug.print("Warning: Memory leak detected!\n", .{});
     }
-    var memory = MemoryManager.init(gpa.allocator(), false);
+    var memory = try MemoryManager.init(gpa.allocator(), false);
     defer memory.deinit();
 
     const args = try std.process.argsAlloc(memory.getAllocator());
@@ -166,24 +198,49 @@ pub fn main() !void {
     var script_path: ?[]const u8 = null;
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
-        if (std.mem.eql(u8, args[i], "--debug")) {
+        const arg = args[i];
+        if (stringEquals(arg, "--debug")) {
             memory.debug_enabled = true;
-        } else {
-            if (script_path != null) {
-                std.debug.print("Usage: doxa [--debug-lexer] [script]\n", .{});
+        } else if (stringEquals(arg, "--compile")) {
+            compile = true;
+        } else if (stringEquals(arg, "--output") or stringEquals(arg, "-o")) {
+            if (i + 1 >= args.len) {
+                std.debug.print("Error: --output/-o requires a filename\n", .{});
                 std.process.exit(EXIT_CODE_USAGE);
             }
-            script_path = args[i];
+            output_file = args[i + 1];
+            i += 1;
+        } else {
+            if (script_path != null) {
+                std.debug.print("Usage: doxa [--debug] [--compile] [--output/-o file] [script]\n", .{});
+                std.process.exit(EXIT_CODE_USAGE);
+            }
+            script_path = arg;
         }
     }
     if (script_path) |path| {
-        if (!std.mem.endsWith(u8, path, DOXA_EXTENSION)) {
+        if (!stringEndsWith(path, DOXA_EXTENSION)) {
             std.debug.print("Error: {s} is not a doxa file\n", .{path});
             std.process.exit(EXIT_CODE_USAGE);
         }
         try runFile(&memory, path);
     } else {
-        std.debug.print("Usage: doxa [--debug-lexer] [script]\n", .{});
+        std.debug.print("Usage: doxa [--debug] [--compile] [--output/-o file] [script]\n", .{});
         std.process.exit(EXIT_CODE_USAGE);
     }
+}
+
+// Helper functions to avoid comptime issues with string comparisons
+fn stringEquals(a: []const u8, b: []const u8) bool {
+    if (a.len != b.len) return false;
+    for (a, 0..) |char, i| {
+        if (char != b[i]) return false;
+    }
+    return true;
+}
+
+fn stringEndsWith(str: []const u8, suffix: []const u8) bool {
+    if (str.len < suffix.len) return false;
+    const start = str.len - suffix.len;
+    return stringEquals(str[start..], suffix);
 }

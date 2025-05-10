@@ -1,7 +1,7 @@
 pub var ticker :: int is 5;
 
 pub function add(a :: int) returns(int) {
-    return a + 5;
+    return a + ticker;
 }
 
 
