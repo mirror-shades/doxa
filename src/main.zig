@@ -103,7 +103,7 @@ pub fn run(memory: *MemoryManager, source: []const u8, file_path: []const u8) !?
 
     // Create the global environment
     var global_env = try memory.getAllocator().create(Environment);
-    global_env.* = Environment.init(memory.getAllocator(), null, memory.debug_enabled);
+    global_env.* = Environment.init(memory.getAllocator(), null, memory.debug_enabled, memory);
     defer {
         global_env.deinit();
         memory.getAllocator().destroy(global_env);

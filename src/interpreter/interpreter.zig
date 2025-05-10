@@ -45,14 +45,16 @@ pub const Environment = struct {
     enclosing: ?*Environment,
     debug_enabled: bool,
     allocator: std.mem.Allocator,
+    memory_manager: *MemoryManager,
 
-    pub fn init(allocator: std.mem.Allocator, enclosing: ?*Environment, debug_enabled: bool) Environment {
+    pub fn init(allocator: std.mem.Allocator, enclosing: ?*Environment, debug_enabled: bool, memory_manager: *MemoryManager) Environment {
         return .{
             .values = std.StringHashMap(token.TokenLiteral).init(allocator),
             .types = std.StringHashMap(ast.TypeInfo).init(allocator),
             .enclosing = enclosing,
             .debug_enabled = debug_enabled,
             .allocator = allocator,
+            .memory_manager = memory_manager,
         };
     }
 
@@ -69,6 +71,41 @@ pub const Environment = struct {
         }
         self.values.deinit();
         self.types.deinit();
+    }
+
+    pub fn defineMemory(self: *Environment, key: []const u8, value: token.TokenLiteral, type_info: ast.TypeInfo) !void {
+        if (self.debug_enabled) {
+            std.debug.print("Attempting to define '{s}' = {any} in the memory manager\n", .{ key, value });
+        }
+
+        if (self.memory_manager.scope_manager.root_scope) |root_scope| {
+            // Use createValueBinding instead of the undefined defineVariable
+            // We need to supply constant flag - let's assume false initially, could be a parameter
+            const is_constant = false;
+
+            // Convert TypeInfo to TokenType if needed
+            // This is a simplification - you may need to map between your TypeInfo and token.TokenType
+            const token_type = switch (type_info.base) {
+                .Int => token.TokenType.INT,
+                .U8 => token.TokenType.U8,
+                .Float => token.TokenType.FLOAT,
+                .String => token.TokenType.STRING,
+                .Boolean => token.TokenType.BOOLEAN,
+                .Array => token.TokenType.ARRAY,
+                .Function => token.TokenType.FUNCTION,
+                .Struct => token.TokenType.STRUCT,
+                .Enum => token.TokenType.ENUM,
+                .Map => token.TokenType.MAP,
+                .Nothing => token.TokenType.NOTHING,
+                .Auto => token.TokenType.AUTO,
+                else => unreachable,
+            };
+
+            // Create value binding
+            _ = try root_scope.createValueBinding(key, value, token_type, type_info, is_constant);
+            return;
+        }
+        return error.NoRootScope;
     }
 
     pub fn define(self: *Environment, key: []const u8, value: token.TokenLiteral, type_info: ast.TypeInfo) !void {
@@ -109,6 +146,23 @@ pub const Environment = struct {
         }
     }
 
+    pub fn getMemory(self: *Environment, name: []const u8) ErrorList!?token.TokenLiteral {
+        if (self.memory_manager.scope_manager.root_scope) |root_scope| {
+            if (root_scope.lookupVariable(name)) |variable| {
+                if (self.memory_manager.scope_manager.value_storage.get(variable.storage_id)) |storage| {
+                    return storage.value;
+                }
+            }
+        }
+
+        // If not found in current environment, check enclosing if it exists
+        if (self.enclosing) |enclosing| {
+            return enclosing.getMemory(name);
+        }
+
+        return null;
+    }
+
     pub fn get(self: *Environment, name: []const u8) ErrorList!?token.TokenLiteral {
         if (self.values.get(name)) |value| {
             return value;
@@ -117,6 +171,34 @@ pub const Environment = struct {
             return enclosing.get(name);
         }
         return null;
+    }
+
+    pub fn assignMemory(self: *Environment, name: []const u8, value: token.TokenLiteral) !void {
+        if (self.debug_enabled) {
+            std.debug.print("Attempting to assign '{s}' = {any} to the memory manager\n", .{ name, value });
+        }
+
+        // Look up variable from root scope
+        if (self.memory_manager.scope_manager.root_scope) |root_scope| {
+            // Use lookupVariable to find the variable in any accessible scope
+            if (root_scope.lookupVariable(name)) |variable| {
+                // Get the storage location for this variable
+                if (self.memory_manager.scope_manager.value_storage.get(variable.storage_id)) |storage| {
+                    // Check if the variable is constant
+                    if (storage.constant) {
+                        return error.CannotAssignToConstant;
+                    }
+
+                    // Update the value in storage
+                    storage.value = value;
+                    return;
+                } else {
+                    return error.StorageNotFound;
+                }
+            }
+        }
+
+        return error.UndefinedVariable;
     }
 
     pub fn assign(self: *Environment, name: []const u8, value: token.TokenLiteral) !void {
@@ -143,6 +225,20 @@ pub const Environment = struct {
         }
 
         // If we get here, the variable doesn't exist in any scope
+        return error.UndefinedVariable;
+    }
+
+    pub fn getTypeInfoMemory(self: *Environment, name: []const u8) ErrorList!TypeInfo {
+        if (self.memory_manager.scope_manager.root_scope) |root_scope| {
+            if (root_scope.lookupVariable(name)) |variable| {
+                if (self.memory_manager.scope_manager.value_storage.get(variable.storage_id)) |storage| {
+                    return storage.type_info;
+                }
+            }
+        }
+        if (self.enclosing) |enclosing| {
+            return enclosing.getTypeInfoMemory(name);
+        }
         return error.UndefinedVariable;
     }
 
@@ -210,8 +306,12 @@ pub const Interpreter = struct {
         }
         self.moduleEnvironments.deinit();
 
-        // memory_manager will handle scope cleanup
-        // reset our root_scope pointer to guard against double-free
+        // Clean up root scope if it exists
+        if (self.memory_manager.scope_manager.root_scope) |root_scope| {
+            root_scope.deinit();
+            self.memory_manager.scope_manager.root_scope = null;
+        }
+        // Then set to null to guard against double-free
         self.memory_manager.scope_manager.root_scope = null;
     }
 
@@ -732,7 +832,7 @@ pub const Interpreter = struct {
                 return null;
             },
             .Block => |statements| {
-                var block_env = Environment.init(self.allocator, self.environment, self.debug_enabled);
+                var block_env = Environment.init(self.allocator, self.environment, self.debug_enabled, self.memory_manager);
                 defer block_env.deinit();
                 const result = try self.executeBlock(statements, &block_env);
                 if (self.debug_enabled and result != null) {
@@ -775,13 +875,13 @@ pub const Interpreter = struct {
             },
             .Try => |try_stmt| {
                 // Create new environment for try block
-                var try_env = Environment.init(self.allocator, self.environment, self.debug_enabled);
+                var try_env = Environment.init(self.allocator, self.environment, self.debug_enabled, self.memory_manager);
                 defer try_env.deinit();
 
                 // Execute try block
                 const try_result = self.executeBlock(try_stmt.try_body, &try_env) catch |err| {
                     // Create new environment for catch block
-                    var catch_env = Environment.init(self.allocator, self.environment, self.debug_enabled);
+                    var catch_env = Environment.init(self.allocator, self.environment, self.debug_enabled, self.memory_manager);
                     defer catch_env.deinit();
 
                     // If there's an error variable, bind the error to it
@@ -1068,7 +1168,7 @@ pub const Interpreter = struct {
                     if_expr.else_branch orelse return error.InvalidExpression;
 
                 // Create a new environment for the if block
-                var if_env = Environment.init(self.allocator, self.environment, self.debug_enabled);
+                var if_env = Environment.init(self.allocator, self.environment, self.debug_enabled, self.memory_manager);
                 defer if_env.deinit();
 
                 // Allocate the statement array
@@ -1089,7 +1189,7 @@ pub const Interpreter = struct {
                 return result orelse .{ .nothing = {} };
             },
             .Block => |block| {
-                var block_env = Environment.init(self.allocator, self.environment, self.debug_enabled);
+                var block_env = Environment.init(self.allocator, self.environment, self.debug_enabled, self.memory_manager);
                 defer block_env.deinit();
 
                 const result = self.executeBlock(block.statements, &block_env) catch |err| {
@@ -1924,7 +2024,7 @@ pub const Interpreter = struct {
                 }
 
                 // Create a new environment for the loop
-                var iter_env = Environment.init(self.allocator, self.environment, self.debug_enabled);
+                var iter_env = Environment.init(self.allocator, self.environment, self.debug_enabled, self.memory_manager);
                 defer iter_env.deinit();
 
                 // Infer type from array elements or use dynamic if empty
@@ -2278,7 +2378,7 @@ pub const Interpreter = struct {
                 defer self.environment = prev_env;
 
                 // Create a new environment for the quantifier scope
-                var quantifier_env = Environment.init(self.allocator, self.environment, self.debug_enabled);
+                var quantifier_env = Environment.init(self.allocator, self.environment, self.debug_enabled, self.memory_manager);
                 self.environment = &quantifier_env;
 
                 // Iterate over the actual array elements
@@ -2313,7 +2413,7 @@ pub const Interpreter = struct {
                 defer self.environment = prev_env;
 
                 // Create a new environment for the quantifier scope
-                var quantifier_env = Environment.init(self.allocator, self.environment, self.debug_enabled);
+                var quantifier_env = Environment.init(self.allocator, self.environment, self.debug_enabled, self.memory_manager);
                 self.environment = &quantifier_env;
 
                 // Iterate over the actual array elements
@@ -2731,7 +2831,7 @@ pub const Interpreter = struct {
         switch (callee) {
             .function => |f| {
                 // Create new environment for function call
-                var function_env = Environment.init(self.allocator, f.closure, self.debug_enabled);
+                var function_env = Environment.init(self.allocator, f.closure, self.debug_enabled, self.memory_manager);
                 defer function_env.deinit();
 
                 // Check argument count

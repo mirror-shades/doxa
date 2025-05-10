@@ -1,6 +1,6 @@
 const std = @import("std");
 const Token = @import("../lexer/token.zig");
-
+const TypeInfo = @import("../ast/ast.zig").TypeInfo;
 /// MemoryManager provides a backward-compatible interface to the new memory management system
 pub const MemoryManager = struct {
     arena: std.heap.ArenaAllocator,
@@ -57,7 +57,7 @@ pub const MemoryManager = struct {
 };
 
 /// ValueStorage holds a value with alias counting
-const ValueStorage = struct { value: Token.TokenLiteral, type: Token.TokenType, alias_count: u32, constant: bool };
+const ValueStorage = struct { value: Token.TokenLiteral, type: Token.TokenType, type_info: TypeInfo, alias_count: u32, constant: bool };
 
 /// Variable represents a named reference to a storage location
 pub const Variable = struct {
@@ -199,7 +199,7 @@ pub const Scope = struct {
         self.manager.allocator.destroy(self);
     }
 
-    pub fn createValueBinding(self: *Scope, name: []const u8, value: Token.TokenLiteral, vtype: Token.TokenType, constant: bool) !*Variable {
+    pub fn createValueBinding(self: *Scope, name: []const u8, value: Token.TokenLiteral, vtype: Token.TokenType, type_info: TypeInfo, constant: bool) !*Variable {
         // Check for duplicate variable name in current scope
         if (self.name_map.contains(name)) {
             return error.DuplicateVariableName;
@@ -212,7 +212,7 @@ pub const Scope = struct {
 
         // Create storage using manager's allocator
         const storage = try self.manager.allocator.create(ValueStorage);
-        storage.* = .{ .value = value, .type = vtype, .alias_count = 1, .constant = constant };
+        storage.* = .{ .value = value, .type = vtype, .type_info = type_info, .alias_count = 1, .constant = constant };
 
         // Create variable
         const variable = try self.arena.allocator().create(Variable);
