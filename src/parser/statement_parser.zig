@@ -156,7 +156,8 @@ pub fn parseExpressionStmt(self: *Parser) ErrorList!ast.Stmt {
     // Handle question mark operator
     var final_expr = expr;
     if (expr != null and self.peek().type == .QUESTION) {
-        self.advance(); // consume ?
+        const question_token = self.peek(); // Capture the question mark token
+        self.advance(); // consume the question mark
         const print_expr = try self.allocator.create(ast.Expr);
 
         // Get the variable name if this is a variable expression
@@ -171,8 +172,8 @@ pub fn parseExpressionStmt(self: *Parser) ErrorList!ast.Stmt {
                 .expr = expr.?,
                 .location = .{
                     .file = self.current_file,
-                    .line = self.peek().line,
-                    .column = self.peek().column - 1,
+                    .line = question_token.line,
+                    .column = question_token.column,
                 },
                 .variable_name = name_token,
             },
