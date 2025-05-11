@@ -196,7 +196,6 @@ pub const Lexer = struct {
                         self.advance();
                     }
                     if (!self.isAtEnd() and self.peekAt(0) == '\n') {
-                        self.line += 1;
                         self.advance();
                     }
                 } else if (self.match('*')) {
@@ -212,9 +211,6 @@ pub const Lexer = struct {
                             self.advance(); // consume /
                             nesting -= 1;
                         } else {
-                            if (self.peekAt(0) == '\n') {
-                                self.line += 1;
-                            }
                             self.advance();
                         }
                     }
@@ -228,7 +224,6 @@ pub const Lexer = struct {
                     try self.addMinimalToken(.SLASH);
                     // Skip any whitespace after the slash
                     while (!self.isAtEnd() and (self.peekAt(0) == ' ' or self.peekAt(0) == '\r' or self.peekAt(0) == '\t' or self.peekAt(0) == '\n')) {
-                        if (self.peekAt(0) == '\n') self.line += 1;
                         self.advance();
                     }
                 }
@@ -354,7 +349,6 @@ pub const Lexer = struct {
             //whitespace
             ' ', '\r', '\t' => {}, // Skip whitespace without creating tokens
             '\n' => {
-                self.line += 1;
                 self.line_start = self.current + 1; // Set start of next line
                 self.column = 1;
                 // Don't create a token for newlines
@@ -596,7 +590,6 @@ pub const Lexer = struct {
         while (!self.isAtEnd() and self.peekAt(0) != ']') {
             // Skip whitespace
             while (!self.isAtEnd() and (self.peekAt(0) == ' ' or self.peekAt(0) == '\r' or self.peekAt(0) == '\t' or self.peekAt(0) == '\n')) {
-                if (self.peekAt(0) == '\n') self.line += 1;
                 self.advance();
             }
 
@@ -606,7 +599,6 @@ pub const Lexer = struct {
 
             // Skip whitespace after element
             while (!self.isAtEnd() and (self.peekAt(0) == ' ' or self.peekAt(0) == '\r' or self.peekAt(0) == '\t' or self.peekAt(0) == '\n')) {
-                if (self.peekAt(0) == '\n') self.line += 1;
                 self.advance();
             }
 

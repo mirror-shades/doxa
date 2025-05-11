@@ -6,6 +6,8 @@ pub const ErrorList = error{
     StackUnderflow,
     FrameStackOverflow,
     OutOfMemory,
+    NoRootScope,
+    StorageNotFound,
 
     // Type System & Value Handling
     TypeError,
@@ -37,6 +39,7 @@ pub const ErrorList = error{
     MethodNotFound,
     EmptyArray,
     UndeclaredType,
+    NullAssignmentValue,
 
     // Variable Management
     VariableNotFound,
@@ -245,6 +248,29 @@ pub const ErrorList = error{
     NotOpenForReading,
     SocketNotConnected,
     IncompleteRead,
+
+    // LLVM
+    UnsupportedOperator,
+    UnsupportedLiteral,
+    UnsupportedCallType,
+    UnsupportedType,
+    UnsupportedTypeExpr,
+    UnsupportedFunction,
+    UnsupportedDeclaration,
+    UnsupportedExpression,
+    UnsupportedStatement,
+    UnsupportedModule,
+    UnsupportedInitializer,
+    MissingCondition,
+    MissingThenBranch,
+    ModuleVerificationFailed,
+    EmitFailed,
+    FunctionNotDeclared,
+    FunctionVerificationFailed,
+    ReturnOutsideFunction,
+
+    // memory
+    DuplicateVariableName,
 };
 
 /// Reporting provides structured error handling and reporting capabilities
@@ -265,15 +291,25 @@ pub const Reporter = struct {
     /// Output writer for error messages
     writer: std.fs.File.Writer,
 
+    /// Allocator for error lists and other dynamic memory
+    allocator: ?std.mem.Allocator = null,
+
     /// Initialize a new Reporter that writes to stderr
-    pub fn init() Reporter {
+    /// Optionally provide an allocator for dynamic memory operations
+    pub fn initWithAllocator(allocator: ?std.mem.Allocator) Reporter {
         return .{
             .writer = std.io.getStdErr().writer(),
+            .allocator = allocator,
             .error_count = 0,
             .warning_count = 0,
             .had_error = false,
             .had_warning = false,
         };
+    }
+
+    /// Initialize a new Reporter with default settings
+    pub fn init() Reporter {
+        return Reporter.initWithAllocator(null);
     }
 
     pub fn deinit(self: *Reporter) void {
@@ -301,6 +337,15 @@ pub const Reporter = struct {
                 self.column,
             });
         }
+    };
+
+    pub const RuntimeError = struct {
+        message: []const u8,
+        location: struct {
+            file: []const u8,
+            line: usize,
+            column: usize,
+        },
     };
 
     /// Report a fatal error and panic
@@ -335,6 +380,13 @@ pub const Reporter = struct {
         self.had_warning = true;
         self.warning_count += 1;
         self.writer.print("DoxVM: Warning: " ++ fmt ++ "\n", args) catch {};
+    }
+
+    /// Report a generic error - used by compiler and other components
+    pub fn reportError(self: *Reporter, comptime fmt: []const u8, args: anytype) void {
+        self.had_error = true;
+        self.error_count += 1;
+        self.writer.print("DoxVM: Error: " ++ fmt ++ "\n", args) catch {};
     }
 
     pub fn lightMessage(msg: []const u8) void {

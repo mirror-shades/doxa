@@ -85,7 +85,7 @@ pub const TokenType = enum {
     OR_LOGICAL, // ∨
     FUNCTION, // fn
     WHERE, // where
-    EQUALITY, // equals
+    EQUALITY, // ==
     ASSIGN, // is
 
     // logical operators
@@ -201,4 +201,18 @@ pub fn deinit(self: *TokenLiteral, allocator: std.mem.Allocator) void {
         },
         else => {},
     }
+}
+
+// Add a helper function to convert TokenType to TypeInfo
+pub fn convertTokenTypeToTypeInfo(token_type: TokenType) ast.TypeInfo {
+    return switch (token_type) {
+        .INT => ast.TypeInfo{ .base = .Int, .is_mutable = true, .is_dynamic = false },
+        .U8 => ast.TypeInfo{ .base = .U8, .is_mutable = true, .is_dynamic = false },
+        .FLOAT => ast.TypeInfo{ .base = .Float, .is_mutable = true, .is_dynamic = false },
+        .STRING => ast.TypeInfo{ .base = .String, .is_mutable = true, .is_dynamic = false },
+        .BOOLEAN => ast.TypeInfo{ .base = .Boolean, .is_mutable = true, .is_dynamic = false },
+        .ARRAY => ast.TypeInfo{ .base = .Array, .is_mutable = true, .is_dynamic = false },
+        // Add more mappings as needed
+        else => ast.TypeInfo{ .base = .Auto, .is_mutable = true, .is_dynamic = true },
+    };
 }
