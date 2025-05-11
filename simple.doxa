@@ -1,9 +1,0 @@
-import "./safeMath.doxa" is math; 
-
-
-var x :: int is math.add(3); 
-
-x?;
-math.ticker?;
-
-

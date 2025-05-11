@@ -1,1 +1,3 @@
-pub function add(a :: int, b :: int) returns (int) { return a + b; }
+pub function add(a :: int, b :: int) returns (int) { 
+    return a + b; 
+}

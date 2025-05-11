@@ -4,12 +4,14 @@ const ast = @import("../ast/ast.zig");
 const token = @import("../lexer/token.zig");
 const Reporting = @import("../utils/reporting.zig");
 const ErrorList = Reporting.ErrorList;
+const printDebug = std.debug.print;
 
 // Struct to track imported symbols
 pub const ImportedSymbol = struct {
-    kind: enum { Function, Enum, Struct, Variable, Type },
+    kind: enum { Function, Enum, Struct, Variable, Type, Import },
     name: []const u8,
     original_module: []const u8,
+    namespace_alias: ?[]const u8 = null,
 };
 
 pub fn parseImportStmt(self: *Parser) !ast.Stmt {
@@ -29,8 +31,9 @@ pub fn parseImportStmt(self: *Parser) !ast.Stmt {
     self.advance();
 
     // Must have 'is' keyword
-    if (self.peek().type != .ASSIGN) {
-        return error.ExpectedAssignmentOperator;
+    if (self.peek().type != .AS) {
+        printDebug("use the syntax: \n'import \"./file.doxa\" as moduleName;'\n", .{});
+        return error.ImportMustHaveAlias;
     }
     self.advance();
 
@@ -59,6 +62,9 @@ pub fn parseImportStmt(self: *Parser) !ast.Stmt {
         return error.ExpectedSemicolon;
     }
     self.advance();
+
+    // Record that the current file imports this module
+    try self.recordModuleImport(self.current_file, namespace, module_path);
 
     // Important: Load and process the module before continuing with main file parsing
     try self.loadAndRegisterModule(module_path, namespace, specific_symbol);
@@ -172,6 +178,17 @@ fn registerPublicSymbols(self: *Parser, module_ast: *ast.Expr, module_path: []co
                                 .original_module = module_path,
                             });
                         }
+                    },
+                    .Import => |import_info| {
+                        if (self.debug_enabled) {
+                            std.debug.print("Found import: {s} as {?s}\n", .{ import_info.module_path, import_info.namespace_alias });
+                        }
+                        try self.imported_symbols.?.put(import_info.module_path, .{
+                            .kind = .Import,
+                            .name = import_info.module_path,
+                            .original_module = module_path,
+                            .namespace_alias = import_info.namespace_alias,
+                        });
                     },
                     else => {}, // Skip other types of statements
                 }

@@ -868,10 +868,53 @@ pub const TryStmt = struct {
     error_var: ?token.Token,
 };
 
+pub const ModuleSymbol = struct {
+    name: []const u8,
+    kind: enum { Function, Variable, Struct, Enum },
+    is_public: bool,
+    stmt_index: usize, // Index in the module's statements for quick lookup
+};
+
 pub const ModuleInfo = struct {
     name: []const u8,
     imports: []const ImportInfo,
     ast: ?*Expr = null, // Store the module's AST for reference
+    file_path: []const u8, // Store the file path for detecting self-imports
+    symbols: ?std.StringHashMap(ModuleSymbol) = null, // All symbols defined in this module
+
+    // Function to check if a symbol exists and is public
+    pub fn hasPublicSymbol(self: *const ModuleInfo, symbol_name: []const u8) bool {
+        if (self.symbols) |symbols| {
+            if (symbols.get(symbol_name)) |symbol| {
+                return symbol.is_public;
+            }
+        }
+        return false;
+    }
+
+    // Function to check if a symbol exists (regardless of visibility)
+    pub fn hasSymbol(self: *const ModuleInfo, symbol_name: []const u8) bool {
+        if (self.symbols) |symbols| {
+            return symbols.contains(symbol_name);
+        }
+        return false;
+    }
+
+    // Get a symbol by name
+    pub fn getSymbol(self: *const ModuleInfo, symbol_name: []const u8) ?ModuleSymbol {
+        if (self.symbols) |symbols| {
+            return symbols.get(symbol_name);
+        }
+        return null;
+    }
+
+    // Deinit the ModuleInfo
+    pub fn deinit(self: *ModuleInfo, allocator: std.mem.Allocator) void {
+        allocator.free(self.imports);
+        if (self.symbols) |*symbols| {
+            symbols.deinit();
+        }
+    }
 };
 
 pub const CompoundAssignment = struct {

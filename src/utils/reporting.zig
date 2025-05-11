@@ -168,6 +168,7 @@ pub const ErrorList = error{
     MissingReturnType,
     ExpectedStringLiteral,
     ParserDidNotAdvance,
+    ImportMustHaveAlias,
 
     // Miscellaneous
     NotImplemented,

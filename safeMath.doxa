@@ -1,7 +1,12 @@
-pub var ticker :: int is 5;
+import "./math.doxa" as math; 
 
-pub function add(a :: int) returns(int) {
-    return a + ticker;
+pub function safeAdd(a :: int, b :: int) returns(int) {
+    if(a > 255 or b > 255) then {
+        "Overflow"?;
+        return -1;
+    } else {
+        return math.add(a, b);
+    }
 }
 
 
