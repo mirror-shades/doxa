@@ -1088,9 +1088,13 @@ pub fn inferType(expr: *ast.Expr) ErrorList!ast.TypeInfo {
             return .{ .base = .Auto, .is_dynamic = true };
         },
         .Call => |call| {
-            if (std.mem.eql(u8, call.callee.Variable.lexeme, "input")) {
-                return .{ .base = .String, .is_dynamic = false };
-            }
+            // Handle variable callees
+            if (call.callee.* == .Variable) {
+                if (std.mem.eql(u8, call.callee.Variable.lexeme, "input")) {
+                    return .{ .base = .String, .is_dynamic = false };
+                }
+            } //else if (call.callee.* == .FieldAccess) {} if we need to add special cases for known functions
+
             return .{ .base = .Auto, .is_dynamic = true };
         },
         .StructLiteral => |struct_literal| {

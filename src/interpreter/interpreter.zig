@@ -1616,6 +1616,101 @@ pub const Interpreter = struct {
                         if (self.debug_enabled) {
                             std.debug.print("Found namespace access in Call, evaluating field access for function\n", .{});
                         }
+
+                        // Check if this is a direct namespace or a nested module reference
+                        if (field_access.object.* == .Variable) {
+                            const namespace = field_access.object.Variable.lexeme;
+
+                            // Look for the function in the imported symbols
+                            if (self.parser) |p| {
+                                // First try the straightforward lookup - exact namespace.function
+                                const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ namespace, field_access.field.lexeme });
+                                defer self.allocator.free(full_name);
+
+                                // Check in imported symbols first
+                                if (p.imported_symbols) |symbols| {
+                                    if (symbols.get(full_name)) |symbol| {
+                                        if (self.debug_enabled) {
+                                            std.debug.print("Found function in direct imported symbol: {s}\n", .{full_name});
+                                        }
+
+                                        // Continue with existing code to get the function
+                                        if (symbol.kind == .Function) {
+                                            // Get the module that contains this function
+                                            const module_info = p.module_namespaces.get(namespace).?;
+
+                                            // Find the function in this module
+                                            if (module_info.ast) |module_ast| {
+                                                if (module_ast.* == .Block) {
+                                                    for (module_ast.Block.statements) |stmt| {
+                                                        if (stmt == .Function and
+                                                            std.mem.eql(u8, stmt.Function.name.lexeme, field_access.field.lexeme))
+                                                        {
+                                                            // Create function value and call it
+                                                            const function = token.TokenLiteral{
+                                                                .function = .{
+                                                                    .params = stmt.Function.params,
+                                                                    .body = stmt.Function.body,
+                                                                    .closure = self.environment,
+                                                                },
+                                                            };
+                                                            return self.callFunction(function, call.arguments);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // If not found in direct imports, look for qualified names (e.g., math.add)
+                                    // This handles the case when safeMath imports "math" and tries to use "math.add"
+                                    var it = symbols.iterator();
+                                    while (it.next()) |entry| {
+                                        const symbol_name = entry.key_ptr.*;
+
+                                        // Look for symbols in the format "namespace.field_name"
+                                        if (std.mem.startsWith(u8, symbol_name, namespace) and
+                                            symbol_name.len > namespace.len + 1 and
+                                            symbol_name[namespace.len] == '.' and
+                                            std.mem.eql(u8, symbol_name[namespace.len + 1 ..], field_access.field.lexeme))
+                                        {
+                                            if (self.debug_enabled) {
+                                                std.debug.print("Found function in qualified symbol: {s}\n", .{symbol_name});
+                                            }
+
+                                            // Get the original module that defines this function
+                                            const symbol = entry.value_ptr.*;
+
+                                            // Create function value and call it
+                                            if (symbol.kind == .Function) {
+                                                // Find the actual function definition
+                                                const original_module = p.module_namespaces.get(namespace).?;
+                                                if (original_module.ast) |module_ast| {
+                                                    if (module_ast.* == .Block) {
+                                                        for (module_ast.Block.statements) |stmt| {
+                                                            if (stmt == .Function and
+                                                                std.mem.eql(u8, stmt.Function.name.lexeme, field_access.field.lexeme))
+                                                            {
+                                                                const function = token.TokenLiteral{
+                                                                    .function = .{
+                                                                        .params = stmt.Function.params,
+                                                                        .body = stmt.Function.body,
+                                                                        .closure = self.environment,
+                                                                    },
+                                                                };
+                                                                return self.callFunction(function, call.arguments);
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // If we get here, fall back to the original approach
                         // Create a temporary copy of the field access expression
                         const field_access_expr = try self.allocator.create(ast.Expr);
                         field_access_expr.* = .{ .FieldAccess = field_access };
@@ -1881,7 +1976,18 @@ pub const Interpreter = struct {
                     }
                     if (condition_result.boolean == token.Boolean.false) break;
 
+                    // Create a new scope for this iteration
+                    const current_scope = self.memory_manager.scope_manager.root_scope;
+                    var iteration_scope = try self.memory_manager.scope_manager.createScope(current_scope);
+                    // Update the root scope to our new iteration scope
+                    self.memory_manager.scope_manager.root_scope = iteration_scope;
+
+                    // Execute the loop body with the new scope
                     _ = try self.evaluate(while_expr.body);
+
+                    // Restore the original scope
+                    self.memory_manager.scope_manager.root_scope = current_scope;
+                    iteration_scope.deinit();
                 }
                 return token.TokenLiteral{ .nothing = {} };
             },
@@ -1902,6 +2008,11 @@ pub const Interpreter = struct {
                         if (condition_result.boolean == token.Boolean.false) break;
                     }
 
+                    // Create a new scope for this iteration
+                    const current_scope = self.memory_manager.scope_manager.root_scope;
+                    var iteration_scope = try self.memory_manager.scope_manager.createScope(current_scope);
+                    self.memory_manager.scope_manager.root_scope = iteration_scope;
+
                     // Execute body
                     _ = try self.evaluate(for_expr.body);
 
@@ -1909,6 +2020,10 @@ pub const Interpreter = struct {
                     if (for_expr.increment) |incr| {
                         _ = try self.evaluate(incr);
                     }
+
+                    // Restore the original scope
+                    self.memory_manager.scope_manager.root_scope = current_scope;
+                    iteration_scope.deinit();
                 }
                 return token.TokenLiteral{ .nothing = {} };
             },
