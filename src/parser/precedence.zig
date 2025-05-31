@@ -56,22 +56,23 @@ pub const Associativity = enum {
 
 pub const Precedence = enum(u8) {
     NONE = 0,
-    TRY = 1,
-    ASSIGNMENT = 2, // =
-    OR = 3, // or
-    AND = 4, // and
-    XOR = 5, // xor
-    NAND = 6, // ↑
-    NOR = 7, // ↓
-    IFF = 8, // iff
-    EQUALITY = 9, // == !=
-    COMPARISON = 10, // < > <= >=
-    QUANTIFIER = 11, // ∃ ∀
-    TERM = 12, // + -
-    FACTOR = 13, // * /
-    UNARY = 14, // ! -
-    CALL = 15, // . () []
-    PRIMARY = 16,
+    TRY = 2,
+    ASSIGNMENT = 4, // =
+    OR = 6, // or
+    AND = 8, // and
+    XOR = 10, // xor
+    NAND = 12, // ↑
+    NOR = 14, // ↓
+    IFF = 16, // iff
+    IMPLIES = 18, // →
+    EQUALITY = 20, // == !=
+    COMPARISON = 22, // < > <= >=
+    QUANTIFIER = 24, // ∃ ∀
+    TERM = 26, // + -
+    FACTOR = 28, // * /
+    UNARY = 30, // ! -
+    CALL = 32, // . () []
+    PRIMARY = 34,
 };
 
 pub const ParseRule = struct {
@@ -121,6 +122,7 @@ pub const rules = blk: {
     r.set(.NOT_LOGICAL, .{ .prefix = unary, .precedence = .UNARY });
     r.set(.NOT_KEYWORD, .{ .prefix = unary, .precedence = .UNARY });
     r.set(.NOT_TRANCENDENTAL, .{ .prefix = unary, .precedence = .UNARY });
+    r.set(.IMPLIES, .{ .infix = logical, .precedence = .IMPLIES });
 
     // Literals
     r.set(.INT, .{ .prefix = literal });
