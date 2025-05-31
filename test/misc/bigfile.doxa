@@ -183,7 +183,7 @@ con?; // 1
 (true ∨ false)?; // true
 (true ↑ false)?; // true
 (true ↓ false)?; // false
-// → implies
+(true → false)?; // false
 
 // trancendental logic notation
 // always returns a tetra value, preserves contradiction in values
