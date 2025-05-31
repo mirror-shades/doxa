@@ -153,7 +153,7 @@ pub const rules = blk: {
     r.set(.FUNCTION, .{ .prefix = functionExpr });
 
     // Add rule for the ? operator with lower precedence
-    r.set(.QUESTION, .{ .infix = print, .precedence = .UNARY });
+    r.set(.INSPECT, .{ .infix = print, .precedence = .UNARY });
 
     // Add loop support
     r.set(.WHILE, .{ .prefix = whileExpr });
