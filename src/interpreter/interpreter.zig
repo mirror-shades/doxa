@@ -1780,6 +1780,14 @@ pub const Interpreter = struct {
                             .neither => .neither,
                         };
                     },
+                    .IMPLIES => {
+                        result_tetra = switch (left_val.tetra) {
+                            .true => right_val.tetra,
+                            .false => .true,
+                            .both => .both,
+                            .neither => .neither,
+                        };
+                    },
                     .IFF => {
                         result_tetra = switch (left_val.tetra) {
                             .true => right_val.tetra,
@@ -1830,17 +1838,17 @@ pub const Interpreter = struct {
                 .body = f.body,
                 .closure = self.environment,
             } },
-            .Print => |print| {
-                const value = try self.evaluate(print.expr);
+            .Inspect => |inspect| {
+                const value = try self.evaluate(inspect.expr);
                 var buffer = std.ArrayList(u8).init(self.allocator);
                 defer buffer.deinit();
 
                 // Format the location information
                 try buffer.writer().print("[{s}:{d}:{d}] {s} = ", .{
-                    print.location.file,
-                    print.location.line,
-                    print.location.column,
-                    print.variable_name orelse "value",
+                    inspect.location.file,
+                    inspect.location.line,
+                    inspect.location.column,
+                    inspect.variable_name orelse "value",
                 });
 
                 // Then format the value
