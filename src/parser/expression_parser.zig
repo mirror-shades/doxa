@@ -9,7 +9,7 @@ const declaration_parser = @import("./declaration_parser.zig");
 const Reporting = @import("../utils/reporting.zig");
 const Reporter = Reporting.Reporter;
 const ErrorList = Reporting.ErrorList;
-
+const printTemp = std.debug.print;
 pub fn parseExpression(self: *Parser) ErrorList!?*ast.Expr {
     if (self.debug_enabled) {
         std.debug.print("\nParsing expression...\n", .{});
@@ -675,7 +675,7 @@ pub fn parseIfExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
     };
 
     // Check for semicolon after then branch if it's a print expression
-    if (then_expr.* == .Print) {
+    if (then_expr.* == .Inspect) {
         if (self.peek().type != .SEMICOLON) {
             condition.deinit(self.allocator);
             self.allocator.destroy(condition);
@@ -694,6 +694,14 @@ pub fn parseIfExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
         self.advance(); // consume semicolon
     }
 
+
+    if (self.peek().type == .SEMICOLON) {
+        // Only consume the semicolon if the next token is NOT else
+        if (self.peekAhead(1).type != .ELSE) {
+            self.advance();
+        }
+    }
+
     // Handle else branch
     var else_expr: ?*ast.Expr = null;
     if (self.peek().type == .ELSE) {
@@ -708,8 +716,8 @@ pub fn parseIfExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
         } else {
             else_expr = try precedence.parsePrecedence(self, .NONE);
 
-            // Check for semicolon after else branch if it's a print expression
-            if (else_expr != null and else_expr.?.* == .Print) {
+            // Check for semicolon after else branch if it's a inspect expression
+            if (else_expr != null and else_expr.?.* == .Inspect) {
                 if (self.peek().type != .SEMICOLON) {
                     condition.deinit(self.allocator);
                     self.allocator.destroy(condition);

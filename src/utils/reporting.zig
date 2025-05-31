@@ -318,6 +318,7 @@ pub const Reporter = struct {
         //self.writer.flush() catch {};
     }
 
+    // TODO: location in AST too, why?
     /// Location information for error reporting
     pub const Location = struct {
         line: i32,

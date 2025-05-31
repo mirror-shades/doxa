@@ -28,7 +28,7 @@ pub const Expr = union(enum) {
     Literal: token.TokenLiteral,
     Binary: Binary,
     Unary: Unary,
-    Print: PrintExpr,
+    Inspect: InspectExpr,
     Input: struct {
         prompt: token.Token,
     },
@@ -245,9 +245,9 @@ pub const Expr = union(enum) {
                 }
                 allocator.free(f.body);
             },
-            .Print => |p| {
-                p.expr.deinit(allocator);
-                allocator.destroy(p.expr);
+            .Inspect => |i| {
+                i.expr.deinit(allocator);
+                allocator.destroy(i.expr);
             },
             .While => |*w| {
                 w.condition.deinit(allocator);
@@ -754,13 +754,14 @@ pub const ForEachExpr = struct {
     body: []Stmt,
 };
 
+// TODO: location in Reporting too, why?
 pub const Location = struct {
     file: []const u8,
     line: i32,
     column: usize,
 };
 
-pub const PrintExpr = struct {
+pub const InspectExpr = struct {
     expr: *Expr,
     location: Location,
     variable_name: ?[]const u8,
