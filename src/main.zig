@@ -1,6 +1,7 @@
 const std = @import("std");
 const Lexer = @import("./lexer/lexer.zig").Lexer;
 const Parser = @import("./parser/parser_types.zig").Parser;
+const Transpiler = @import("./transpiler/transpiler.zig").Transpiler;
 const Reporting = @import("./utils/reporting.zig");
 const Reporter = Reporting.Reporter;
 const MemoryManager = @import("./utils/memory.zig").MemoryManager;
@@ -130,25 +131,13 @@ pub fn run(memory: *MemoryManager, source: []const u8, file_path: []const u8) !?
         }
     }
 
-    // if (compile) {
+    // var transpiler = Transpiler.init(memory.getAllocator(), &parser_instance, memory.debug_enabled);
+    // defer transpiler.deinit();
 
-    //     // Set up the reporter for compilation
-    //     var reporter = Reporter.initWithAllocator(memory.getAllocator());
-    //     defer reporter.deinit();
+    // const transpiled_code = try transpiler.transpile(statements);
+    // std.debug.print("Transpiled code:\n {s}\n", .{transpiled_code});
 
-    //     // Create and use the LLVM compiler
-    //     var compiler = try LLVMCompiler.init(memory.getAllocator(), file_path, &reporter);
-    //     defer compiler.deinit();
-
-    //     try compiler.compile(statements);
-
-    //     // Output to file
-    //     const out_file = output_file orelse DEFAULT_OUTPUT_FILE;
-    //     try compiler.outputToFile(out_file);
-
-    //     std.debug.print("Compiled to: {s}\n", .{out_file});
-    //     return null;
-    // }
+    // try writeTo(transpiled_code, "output.zig");
 
     if (memory.debug_enabled) {
         std.debug.print("\n=== Starting interpretation ===\n", .{});
@@ -164,6 +153,12 @@ pub fn run(memory: *MemoryManager, source: []const u8, file_path: []const u8) !?
 
     try interpreter.interpret(statements);
     return interpreter.last_result;
+}
+
+fn writeTo(text: []const u8, path: []const u8) !void {
+    const file = try std.fs.cwd().createFile(path, .{ .read = true });
+    defer file.close();
+    try file.writeAll(text);
 }
 
 fn runFile(memory: *MemoryManager, path: []const u8) !void {

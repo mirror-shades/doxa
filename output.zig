@@ -1,0 +1,25 @@
+const std = @import("std");
+const allocator = std.heap.page_allocator;
+
+const b: void = undefined;
+const g: void = undefined;
+var result = undefined;
+var mike: void = undefined;
+var firstFold: void = true;
+var secondFold: void = false;
+var thirdFold: void = undefined;
+var fourthFold: void = undefined;
+var arr: void = undefined;
+var ex = undefined;
+var uni = undefined;
+var condition = undefined;
+var point: void = undefined;
+var point2: void = undefined;
+var Map: void = undefined;
+const con: i32 = 1;
+var _int: i32 = 5;
+var byte: void = 255;
+var _float: f64 = 5.5;
+var _string: []const u8 = hello;
+var _boolean: bool = true;
+var _tetra: void = undefined;
