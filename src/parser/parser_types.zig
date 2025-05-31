@@ -915,9 +915,9 @@ pub const Parser = struct {
             name_token = left.?.Variable;
         }
 
-        const print_expr = try self.allocator.create(ast.Expr);
-        print_expr.* = .{
-            .Print = .{
+        const inspect_expr = try self.allocator.create(ast.Expr);
+        inspect_expr.* = .{
+            .Inspect = .{
                 .expr = left.?,
                 .location = .{
                     .file = self.current_file,
@@ -928,7 +928,7 @@ pub const Parser = struct {
             },
         };
 
-        return print_expr;
+        return inspect_expr;
     }
 
     pub fn enumMember(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {

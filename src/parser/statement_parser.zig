@@ -141,11 +141,11 @@ pub fn parseExpressionStmt(self: *Parser) ErrorList!ast.Stmt {
     // Check if we need a semicolon
     const needs_semicolon = if (expr) |e| switch (e.*) {
         .Block => false,
-        .If => false,
+        .If => false, // If expressions don't need semicolons
         .While => false,
         .For => false,
         .ForEach => false,
-        .Print => true,
+        .Inspect => true,
         .Match => false,
         .Index => true,
         .Assignment => true,
@@ -155,10 +155,10 @@ pub fn parseExpressionStmt(self: *Parser) ErrorList!ast.Stmt {
 
     // Handle question mark operator
     var final_expr = expr;
-    if (expr != null and self.peek().type == .QUESTION) {
+    if (expr != null and self.peek().type == .INSPECT) {
         const question_token = self.peek(); // Capture the question mark token
         self.advance(); // consume the question mark
-        const print_expr = try self.allocator.create(ast.Expr);
+        const inspect_expr = try self.allocator.create(ast.Expr);
 
         // Get the variable name if this is a variable expression
         var name_token: ?[]const u8 = null;
@@ -167,8 +167,8 @@ pub fn parseExpressionStmt(self: *Parser) ErrorList!ast.Stmt {
         }
 
         // Create a location that won't interfere with string formatting
-        print_expr.* = .{
-            .Print = .{
+        inspect_expr.* = .{
+            .Inspect = .{
                 .expr = expr.?,
                 .location = .{
                     .file = self.current_file,
@@ -178,10 +178,11 @@ pub fn parseExpressionStmt(self: *Parser) ErrorList!ast.Stmt {
                 .variable_name = name_token,
             },
         };
-        final_expr = print_expr;
+        final_expr = inspect_expr;
     }
 
-    if (needs_semicolon or (final_expr != null and final_expr.?.* == .Print)) {
+    // Only check for semicolon if we need one
+    if (needs_semicolon) {
         if (self.peek().type != .SEMICOLON) {
             if (self.debug_enabled) {
                 std.debug.print("Expected semicolon but found: {s} at position {}\n", .{
