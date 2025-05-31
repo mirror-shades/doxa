@@ -29,9 +29,12 @@ fn runDoxaCommand(allocator: std.mem.Allocator, path: []const u8) ![]const u8 {
 
     try child.spawn();
     const stdout = try child.stdout.?.reader().readAllAlloc(child_allocator, std.math.maxInt(usize));
+    const stderr = try child.stderr.?.reader().readAllAlloc(child_allocator, std.math.maxInt(usize));
     const term = try child.wait();
 
     if (term.Exited != 0) {
+        std.debug.print("Command failed with exit code {}:\n", .{term.Exited});
+        std.debug.print("stderr: {s}\n", .{stderr});
         return error.CommandFailed;
     }
 
@@ -131,23 +134,29 @@ test "big file" {
             72 => "true",
             73 => "true",
             74 => "false",
-            75 => "true",
-            76 => "\"int\"",
-            77 => "\"u8\"",
-            78 => "\"float\"",
-            79 => "\"string\"",
-            80 => "\"boolean\"",
-            81 => "\"tetra\"",
-            82 => "\"array\"",
-            83 => "\"struct\"",
-            84 => "\"Employee\"",
-            85 => "\"enum\"",
-            86 => "\"enum_variant\"",
-            87 => "\"tuple\"",
-            88 => "\"map\"",
+            75 => "false",
+            76 => "true",
+            77 => "\"int\"",
+            78 => "\"u8\"",
+            79 => "\"float\"",
+            80 => "\"string\"",
+            81 => "\"boolean\"",
+            82 => "\"tetra\"",
+            83 => "\"array\"",
+            84 => "\"struct\"",
+            85 => "\"Employee\"",
+            86 => "\"enum\"",
+            87 => "\"enum_variant\"",
+            88 => "\"tuple\"",
+            89 => "\"map\"",
             else => unreachable,
         };
-        try testing.expectEqualStrings(item.value, expected);
+        if (!std.mem.eql(u8, item.value, expected)) {
+            std.debug.print("Test case {} failed at line {s}:\n", .{ i, item.line });
+            std.debug.print("  Expected: {s}\n", .{expected});
+            std.debug.print("  Got:      {s}\n", .{item.value});
+            try testing.expectEqualStrings(item.value, expected);
+        }
     }
 
     std.debug.print("=== Big file test completed successfully ===\n\n", .{});

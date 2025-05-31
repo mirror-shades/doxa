@@ -1780,6 +1780,14 @@ pub const Interpreter = struct {
                             .neither => .neither,
                         };
                     },
+                    .IMPLIES => {
+                        result_tetra = switch (left_val.tetra) {
+                            .true => right_val.tetra,
+                            .false => .true,
+                            .both => .both,
+                            .neither => .neither,
+                        };
+                    },
                     .IFF => {
                         result_tetra = switch (left_val.tetra) {
                             .true => right_val.tetra,
@@ -1852,7 +1860,7 @@ pub const Interpreter = struct {
                     .float => |f| try buffer.writer().print("{d}", .{f}),
                     .boolean => |b| try buffer.writer().print("{s}", .{@tagName(b)}),
                     .nothing => try buffer.writer().print("nothing", .{}),
-                    .array => |arr| {   
+                    .array => |arr| {
                         // Regular array printing logic
                         try buffer.writer().print("[", .{});
                         for (arr, 0..) |item, i| {
