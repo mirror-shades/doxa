@@ -29,9 +29,12 @@ fn runDoxaCommand(allocator: std.mem.Allocator, path: []const u8) ![]const u8 {
 
     try child.spawn();
     const stdout = try child.stdout.?.reader().readAllAlloc(child_allocator, std.math.maxInt(usize));
+    const stderr = try child.stderr.?.reader().readAllAlloc(child_allocator, std.math.maxInt(usize));
     const term = try child.wait();
 
     if (term.Exited != 0) {
+        std.debug.print("Command failed with exit code {}:\n", .{term.Exited});
+        std.debug.print("stderr: {s}\n", .{stderr});
         return error.CommandFailed;
     }
 
@@ -147,7 +150,12 @@ test "big file" {
             88 => "\"map\"",
             else => unreachable,
         };
-        try testing.expectEqualStrings(item.value, expected);
+        if (!std.mem.eql(u8, item.value, expected)) {
+            std.debug.print("Test case {} failed at line {s}:\n", .{ i, item.line });
+            std.debug.print("  Expected: {s}\n", .{expected});
+            std.debug.print("  Got:      {s}\n", .{item.value});
+            try testing.expectEqualStrings(item.value, expected);
+        }
     }
 
     std.debug.print("=== Big file test completed successfully ===\n\n", .{});
