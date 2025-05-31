@@ -5,8 +5,6 @@ const FunctionParam = ast.FunctionParam;
 
 pub const TokenType = enum {
     // single-character tokens
-    LEFT_PAREN, // (
-    RIGHT_PAREN, // )
     LEFT_BRACE, // {
     RIGHT_BRACE, // }
     LEFT_BRACKET, // [
@@ -43,6 +41,10 @@ pub const TokenType = enum {
     LESS, // <
     LESS_EQUAL, // <=
     TYPE_SYMBOL, // ::
+    LEFT_PAREN, // (
+    RIGHT_PAREN, // )
+    LEFT_TUPLE, // (:
+    RIGHT_TUPLE, // :)
 
     // keywords
     VAR, // var

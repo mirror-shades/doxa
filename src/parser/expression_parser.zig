@@ -694,7 +694,6 @@ pub fn parseIfExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
         self.advance(); // consume semicolon
     }
 
-
     if (self.peek().type == .SEMICOLON) {
         // Only consume the semicolon if the next token is NOT else
         if (self.peekAhead(1).type != .ELSE) {

@@ -229,7 +229,13 @@ pub const Lexer = struct {
                 }
             },
 
-            '(' => try self.parenthesis(),
+            '(' => {
+                if (self.peekAt(0) == ':') {
+                    try self.addMinimalToken(.LEFT_TUPLE);
+                } else {
+                    try self.parenthesis();
+                }
+            },
             ')' => try self.addMinimalToken(.RIGHT_PAREN),
             '{' => try self.addMinimalToken(.LEFT_BRACE),
             '}' => try self.addMinimalToken(.RIGHT_BRACE),
@@ -259,6 +265,8 @@ pub const Lexer = struct {
             ':' => {
                 if (self.match(':')) {
                     try self.addMinimalToken(.TYPE_SYMBOL);
+                } else if (self.match(')')) {
+                    try self.addMinimalToken(.RIGHT_TUPLE);
                 } else {
                     try self.addMinimalToken(.WHERE);
                 }
