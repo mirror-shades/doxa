@@ -11,18 +11,22 @@ function getInput() returns(u8) {
 }
 
 function startLoop() {
-    if loopSpot.length equals loops then {loopSpot.push(ip);}
-    else {loopSpot[loops] is ip;};
-    loops += 1;
+    if loopSpot.length equals loops 
+        then {
+            loopSpot.push(ip);
+        } else {
+            loopSpot[loops] is ip;
+        }
+        loops += 1;
 }
 
 function endLoop() {
-    if loops equals 0 then {nothing;}
-    else {
-        if tape[tp] equals 0 then {
+    if loops >= 0 
+    then {
+        if tape[tp] equals 0 
+        then {
             loops -= 1;
-        }
-        else {
+        } else {
             const loopPointer is loops - 1;
             ip is loopSpot[loopPointer];
             // cancels the ip += 1 from the main loop
@@ -35,8 +39,8 @@ function checkClosingBracket(scan :: string) returns(bool) {
     var pointer :: int is 0;
     var openBrackets :: int is 0;
     while(pointer < scan.length) {
-        if(scan[pointer] equals "[") then {openBrackets += 1;}
-        if(scan[pointer] equals "]") then {openBrackets -= 1;}
+        if(scan[pointer] equals "[") then openBrackets += 1;
+        if(scan[pointer] equals "]") then openBrackets -= 1;
         pointer += 1;
     }
     return(openBrackets equals 0);
@@ -51,22 +55,23 @@ function interpret(scan :: string) {
     var tp :: int is 0;
     var ip :: int is 0;
     var loops :: int is 0;
-    var loopSpot :: int[] is [];
+    var loopSpot :: int[];
     const scanLength is scan.length;
 
+    // do a pass to check if the brackets are matched
     var closedBrackets :: bool is checkClosingBracket(scan);
     assert(closedBrackets, "Unmatched brackets");
 
     while(ip < scanLength) {
         var currentInstruction is scan[ip];
-        if(currentInstruction equals ">") then {tp += 1;}
-        if(currentInstruction equals "<") then {tp -= 1;}
-        if(currentInstruction equals "+") then {tape[tp] += 1;}
-        if(currentInstruction equals "-") then {tape[tp] -= 1;}
-        if(currentInstruction equals ".") then {tape[tp]?;}
-        if(currentInstruction equals ",") then {tape[tp] is getInput();}
-        if(currentInstruction equals "[") then {startLoop();}
-        if(currentInstruction equals "]") then {endLoop();}
+        if(currentInstruction equals ">") then tp += 1;
+        if(currentInstruction equals "<") then tp -= 1;
+        if(currentInstruction equals "+") then tape[tp] += 1;
+        if(currentInstruction equals "-") then tape[tp] -= 1;
+        if(currentInstruction equals ".") then tape[tp]?;
+        if(currentInstruction equals ",") then tape[tp] is getInput();
+        if(currentInstruction equals "[") then startLoop();
+        if(currentInstruction equals "]") then endLoop();
 
         ip += 1;
     }

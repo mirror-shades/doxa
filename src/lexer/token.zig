@@ -16,7 +16,7 @@ pub const TokenType = enum {
     MODULO, // %
     HASH, // #
     TILDE, // ~
-    QUESTION, // ?
+    INSPECT, // ?
 
     //one or two character tokens
     DOT, // .

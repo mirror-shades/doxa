@@ -1830,17 +1830,17 @@ pub const Interpreter = struct {
                 .body = f.body,
                 .closure = self.environment,
             } },
-            .Print => |print| {
-                const value = try self.evaluate(print.expr);
+            .Inspect => |inspect| {
+                const value = try self.evaluate(inspect.expr);
                 var buffer = std.ArrayList(u8).init(self.allocator);
                 defer buffer.deinit();
 
                 // Format the location information
                 try buffer.writer().print("[{s}:{d}:{d}] {s} = ", .{
-                    print.location.file,
-                    print.location.line,
-                    print.location.column,
-                    print.variable_name orelse "value",
+                    inspect.location.file,
+                    inspect.location.line,
+                    inspect.location.column,
+                    inspect.variable_name orelse "value",
                 });
 
                 // Then format the value
@@ -1852,7 +1852,7 @@ pub const Interpreter = struct {
                     .float => |f| try buffer.writer().print("{d}", .{f}),
                     .boolean => |b| try buffer.writer().print("{s}", .{@tagName(b)}),
                     .nothing => try buffer.writer().print("nothing", .{}),
-                    .array => |arr| {
+                    .array => |arr| {   
                         // Regular array printing logic
                         try buffer.writer().print("[", .{});
                         for (arr, 0..) |item, i| {
