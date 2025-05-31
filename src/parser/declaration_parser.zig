@@ -306,7 +306,7 @@ pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
 pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
     const is_public = (self.peek().type == .PUBLIC) or
         (self.previous().type == .PUBLIC and
-        (self.peek().type == .VAR or self.peek().type == .CONST));
+            (self.peek().type == .VAR or self.peek().type == .CONST));
     if (is_public) {
         if (self.debug_enabled) {
             std.debug.print("Parsing public variable declaration\n", .{});
