@@ -71,6 +71,7 @@ pub const TokenType = enum {
     AS, // as
     NOT_KEYWORD, // not
     NOT_LOGICAL, // ¬
+    IMPLIES, // →
     ASYNC, // async
     AWAIT, // await
     TYPEOF, // typeof

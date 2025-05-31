@@ -137,7 +137,7 @@ pub const Lexer = struct {
         try self.keywords.put("∨", .OR_LOGICAL);
         try self.keywords.put("↑", .NAND);
         try self.keywords.put("↓", .NOR);
-        //try self.keywords.put("→", .IMPLIES);
+        try self.keywords.put("→", .IMPLIES);
         //try self.keywords.put("⊞", .AND_TRANCENDENTAL); // let you add true and false to get both
         try self.keywords.put("⊟", .NOT_TRANCENDENTAL);
     }
@@ -754,7 +754,7 @@ pub const Lexer = struct {
         // Handle special bases (hex, binary, octal)
         if (self.current < self.source.len - 1 and
             ((has_sign and self.source[self.current] == '0') or
-            self.source[self.current - 1] == '0'))
+                self.source[self.current - 1] == '0'))
         {
             const next_char = if (has_sign) self.peekAt(1) else self.peekAt(0);
             switch (next_char) {
