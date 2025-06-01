@@ -71,8 +71,7 @@ pub const TokenType = enum {
     FROM, // from
     IN, // in
     AS, // as
-    NOT_KEYWORD, // not
-    NOT_LOGICAL, // ¬
+    NOT, // not ¬
     IMPLIES, // →
     ASYNC, // async
     AWAIT, // await
@@ -82,10 +81,8 @@ pub const TokenType = enum {
     NORMAL, // normal
 
     // keywords with alternate tokens
-    AND_KEYWORD, // and
-    AND_LOGICAL, // ∧
-    OR_KEYWORD, // or
-    OR_LOGICAL, // ∨
+    AND, // and ∧
+    OR, // or ∨
     FUNCTION, // fn
     WHERE, // where
     EQUALITY, // ==
