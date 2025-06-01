@@ -1,16 +1,5 @@
 # Doxa Language Reference
 
-## Modes of Operation
-
-Doxa supports three operational modes:
-
-- **Normal Mode** (default): Dynamic typing with flexible syntax
-- **Safe Mode**: Enabled via `#safe` at file start, enforces static typing
-- **Warn Mode**: Compiles in normal mode but warns about safe convention violations
-
-!!! note
-Safe files can only import other safe files, while normal files can import both.
-
 ## Core Language Features
 
 ### Type System
@@ -32,17 +21,19 @@ struct Dog {
     breed: string,
 
     fn bark(self) {
-        print("${self.animal.name} says woof!");
+        print(animal.name + " says woof!");
     }
 }
 
 var dog is Dog {
-    animal: Animal { name: "Spot" },
+    animal: Animal {
+        name: "Spot"
+        },
     breed: "Labrador"
 };
 ```
 
-### Modules
+<!-- ### Modules
 
 ```doxa
 // math.doxa
@@ -54,7 +45,7 @@ export fn add(a :: int, b :: int) -> int {
 // main.doxa
 import { add } from "./math.doxa";
 var sum is add(1, 2);
-```
+``` -->
 
 ## Data Types
 
@@ -65,22 +56,11 @@ Standard types include:
 - `int`: Integer numbers
 - `float`: Floating point numbers
 - `string`: Text strings
-- `bool`: Boolean true/false
 - `tetra`: Four-valued logic system
 
-The `tetra` type represents a four-valued logic system with these possible values:
+The `tetra` type represents a four cornered value with the possible states: `true`, `false`, `both`, and `neither`. For additional information see the tetra page.
 
-- `true`: Logical truth
-- `false`: Logical false
-- `both`: Both true and false
-- `neither`: Neither true nor false
-
-Example:
-
-```doxa
-var logic :: tetra is both;
-var uncertain :: tetra is neither;
-```
+````
 
 ### Arrays
 
@@ -93,15 +73,15 @@ var strs is ["a", "b"];            // Inferred as string[]
 // Invalid operations
 var mixed is [1, "two", true];     // Error: mixed types
 nums.push("four");                // Error: type mismatch
-```
+````
 
 ### Tuples
 
-Fixed-size collections supporting different types:
+Fixed-size collections supporting heterogenus types:
 
 ```doxa
-var point is (10, 20, 30);         // Simple tuple
-var nested is ((1, 2), (3, 4));    // Nested tuple
+var point is (: 10, "hello", true :);         // Simple tuple
+var nested is (: (: 1, "hello" :), (: 3, true :) :);    // Nested tuple
 
 point[0];                         // Access first element
 nested[1][0];                     // Access nested element
@@ -159,8 +139,8 @@ x?;                              // Prints value with location
 
 ```doxa
 typeof(42);                      // "int"
-typeof("hello");                // "string"
-typeof([1,2,3]);               // "array"
+typeof("hello");                 // "string"
+typeof([1,2,3]);                 // "array"
 ```
 
 ### Collection Quantifiers
@@ -170,45 +150,6 @@ typeof([1,2,3]);               // "array"
 (exists x in numbers where x > 10) // English prose
 (∀x ∈ numbers : x > 0) // Logical notation
 (forall x in numbers where x > 0) // English prose
-```
-
-## Type System Details
-
-### Normal Mode
-
-Variables are dynamically typed by default:
-
-```doxa
-var x is 1;                      // int
-x is true;                       // bool (allowed)
-
-var y: auto is 3.14;            // float
-y is "pi";                      // string (allowed)
-```
-
-### Safe Mode
-
-Variables require explicit typing:
-
-```doxa
-var x :: int;                   // Valid declaration
-var x is "two";                  // Error: needs type
-var x :: auto is 3.14;          // Type locked to float
-x is "five";                    // Error: type mismatch
-```
-
-Explicit return type declarations are required:
-
-```doxa
-// Safe Mode - Valid
-fn greet(name :: string) -> string {
-    return "Hello ${name}!";
-}
-
-// Safe Mode - Error: missing return type
-fn greet(name :: string) {
-    return "Hello ${name}!";
-}
 ```
 
 ## Conditional Expressions
@@ -257,20 +198,20 @@ fn add(a, b) {
 
 ### First-Order Logic Notation
 
-Doxa supports traditional first-order logic notation alongside standard programming syntax:
+Doxa supports traditional first-order logic notation alongside English keywords:
 
-| Symbol | Meaning     | Description                              |
-| ------ | ----------- | ---------------------------------------- |
-| `∃`    | Exists      | At least one element satisfies condition |
-| `∀`    | For all     | All elements satisfy condition           |
-| `¬`    | Not         | Logical negation                         |
-| `∧`    | And         | Logical AND                              |
-| `∨`    | Or          | Logical OR                               |
-| `↔`    | Equivalence | Logical equivalence (if and only if)     |
-| `⊕`    | XOR         | Exclusive OR                             |
-| `↑`    | NAND        | Not AND                                  |
-| `↓`    | NOR         | Not OR                                   |
-| `→`    | Implies     | Logical implication                      |
+| Symbol | Keyword | Description                              |
+| ------ | ------- | ---------------------------------------- |
+| `∃`    | exists  | At least one element satisfies condition |
+| `∀`    | forall  | All elements satisfy condition           |
+| `¬`    | not     | Logical negation                         |
+| `∧`    | and     | Logical AND                              |
+| `∨`    | or      | Logical OR                               |
+| `↔`    | iff     | Logical equivalence (if and only if)     |
+| `⊕`    | xor     | Exclusive OR                             |
+| `↑`    | nand    | Not AND                                  |
+| `↓`    | nor     | Not OR                                   |
+| `→`    | implies | Logical implication                      |
 
 Examples:
 
@@ -288,3 +229,14 @@ const arr :: int[] is [1, 2, 3, 4, 5];
 (true ∨ false)?;        // true
 (true → false)?;        // false
 ```
+
+## Modes of Operation (not yet implemented)
+
+Doxa supports three operational modes:
+
+- **Normal Mode** (default): Dynamic typing with flexible syntax
+- **Safe Mode**: Enabled via `#safe` at file start, enforces static typing
+- **Warn Mode**: Compiles in normal mode but warns about safe convention violations
+
+!!! note
+Safe files can only import other safe files, while normal files can import both.
