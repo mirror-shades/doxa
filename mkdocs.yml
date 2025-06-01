@@ -43,3 +43,4 @@ plugins:
 nav:
   - Home: index.md
   - Syntax: syntax.md
+  - Tetras: tetras.md
