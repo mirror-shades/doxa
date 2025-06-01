@@ -231,6 +231,7 @@ pub const Lexer = struct {
 
             '(' => {
                 if (self.peekAt(0) == ':') {
+                    self.advance();
                     try self.addMinimalToken(.LEFT_TUPLE);
                 } else {
                     try self.parenthesis();

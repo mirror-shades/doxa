@@ -27,11 +27,9 @@ pub fn parse(self: *Parser) ErrorList![]ast.Stmt {
 
     // First pass to find and store all function declarations
     while (self.peek().type != .EOF) {
-        if (self.peek().type == .FN_KEYWORD or
-            self.peek().type == .FUNCTION_KEYWORD)
-        {
+        if (self.peek().type == .FUNCTION) {
             // Don't advance here - let parseFunctionDecl handle it
-            const fn_stmt = try self.parseFunctionDecl();
+            const fn_stmt = try declaration_parser.parseFunctionDecl(self);
             const fn_ptr = try self.allocator.create(ast.Stmt);
             fn_ptr.* = fn_stmt;
 
@@ -39,8 +37,9 @@ pub fn parse(self: *Parser) ErrorList![]ast.Stmt {
             if (fn_stmt == .Function) {
                 try function_table.put(fn_stmt.Function.name.lexeme, fn_ptr);
             }
+        } else {
+            self.advance();
         }
-        self.advance();
     }
 
     // Reset position for main parse
@@ -77,23 +76,44 @@ pub fn parse(self: *Parser) ErrorList![]ast.Stmt {
                 else
                     ast.Stmt{ .Expression = null };
                 break :blk block_stmt;
-            } else if (self.peek().type == .FN_KEYWORD or
-                self.peek().type == .FUNCTION_KEYWORD or
-                self.peek().type == .MAIN)
-            {
-                // Skip the entire function declaration
-                var brace_count: usize = 0;
-                while (self.peek().type != .EOF) {
-                    if (self.peek().type == .LEFT_BRACE) {
-                        brace_count += 1;
-                    } else if (self.peek().type == .RIGHT_BRACE) {
-                        brace_count -= 1;
-                        if (brace_count == 0) {
-                            self.advance(); // consume the final }
-                            break;
+            } else if (self.peek().type == .FUNCTION) {
+                // Skip the entire function declaration since we already processed it
+                self.advance(); // consume 'function'
+                if (self.peek().type == .IDENTIFIER) {
+                    self.advance(); // consume function name
+                }
+                if (self.peek().type == .LEFT_PAREN) {
+                    self.advance(); // consume '('
+                    // Skip parameters
+                    var paren_count: usize = 1;
+                    while (paren_count > 0 and self.peek().type != .EOF) {
+                        if (self.peek().type == .LEFT_PAREN) paren_count += 1;
+                        if (self.peek().type == .RIGHT_PAREN) paren_count -= 1;
+                        self.advance();
+                    }
+                }
+                // Skip return type if present
+                if (self.peek().type == .RETURNS) {
+                    self.advance(); // consume 'returns'
+                    if (self.peek().type == .LEFT_TUPLE) {
+                        self.advance(); // consume '('
+                        var tuple_count: usize = 1;
+                        while (tuple_count > 0 and self.peek().type != .EOF) {
+                            if (self.peek().type == .LEFT_TUPLE) tuple_count += 1;
+                            if (self.peek().type == .RIGHT_TUPLE) tuple_count -= 1;
+                            self.advance();
                         }
                     }
-                    self.advance();
+                }
+                // Skip function body
+                if (self.peek().type == .LEFT_BRACE) {
+                    self.advance(); // consume '{'
+                    var brace_count: usize = 1;
+                    while (brace_count > 0 and self.peek().type != .EOF) {
+                        if (self.peek().type == .LEFT_BRACE) brace_count += 1;
+                        if (self.peek().type == .RIGHT_BRACE) brace_count -= 1;
+                        self.advance();
+                    }
                 }
                 break :blk ast.Stmt{ .Expression = null };
             } else if (self.peek().type == .STRUCT_TYPE) {

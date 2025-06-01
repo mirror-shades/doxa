@@ -173,131 +173,121 @@ pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
         self.advance(); // consume ->
     }
 
-    // Expect fn or function keyword
+    // Expect function keyword (both 'fn' and 'function' map to FUNCTION token)
     if (self.peek().type != .FUNCTION) {
         return error.ExpectedFunction;
     }
-    self.advance(); // consume fn/function keyword
+    self.advance(); // consume function keyword
 
+    // Parse function name
     if (self.peek().type != .IDENTIFIER) {
         return error.ExpectedIdentifier;
     }
-
-    // Store the name after parsing the IDENTIFIER token
     const function_name = self.peek();
+    self.advance(); // consume function name
 
     // If this is an entry point, store the function name
     if (is_entry) {
         self.entry_point_name = function_name.lexeme;
     }
 
-    self.advance();
-
     // Parse parameter list
     if (self.peek().type != .LEFT_PAREN) {
         return error.ExpectedLeftParen;
     }
-    self.advance();
+    self.advance(); // consume '('
 
+    // Parse parameters
     var params = std.ArrayList(ast.FunctionParam).init(self.allocator);
-    errdefer {
-        for (params.items) |*param| {
-            param.deinit(self.allocator);
-        }
-        params.deinit();
-    }
+    errdefer params.deinit();
 
     if (self.peek().type != .RIGHT_PAREN) {
-        try Parser.parseParameters(self, &params);
-    }
-
-    if (self.peek().type != .RIGHT_PAREN) {
-        return error.ExpectedRightParen;
-    }
-    self.advance();
-
-    // Parse return type
-    var return_type = ast.TypeInfo{ .base = .Nothing }; // Default to nothing
-    var has_return_type = false;
-
-    if (self.peek().type == .RETURNS) {
-        has_return_type = true;
-        self.advance();
-        if (self.peek().type == .LEFT_PAREN) {
-            self.advance(); // consume (
-
-            // Use parseTypeExpr instead of direct type parsing
-            const type_expr = try expression_parser.parseTypeExpr(self) orelse return error.InvalidType;
-
-            // Convert TypeExpr to TypeInfo
-            return_type = switch (type_expr.*) {
-                .Basic => |basic| ast.TypeInfo{ .base = switch (basic) {
-                    .Integer => ast.Type.Int,
-                    .U8 => ast.Type.U8,
-                    .Float => ast.Type.Float,
-                    .String => ast.Type.String,
-                    .Boolean => ast.Type.Boolean,
-                    .Auto => ast.Type.Auto,
-                    .Tetra => ast.Type.Tetra,
-                } },
-                .Array => |array| blk: {
-                    const element_type = try self.allocator.create(ast.TypeInfo);
-                    element_type.* = .{ .base = switch (array.element_type.*) {
-                        .Basic => |basic| switch (basic) {
-                            .Integer => ast.Type.Int,
-                            .U8 => ast.Type.U8,
-                            .Float => ast.Type.Float,
-                            .String => ast.Type.String,
-                            .Boolean => ast.Type.Boolean,
-                            .Auto => ast.Type.Auto,
-                            .Tetra => ast.Type.Tetra,
-                        },
-                        else => return error.InvalidType,
-                    } };
-                    break :blk ast.TypeInfo{
-                        .base = ast.Type.Array,
-                        .array_type = element_type,
-                    };
-                },
-                else => return error.InvalidType,
-            };
-
-            if (self.peek().type != .RIGHT_PAREN) {
-                return error.ExpectedRightParen;
+        while (true) {
+            if (self.peek().type != .IDENTIFIER) {
+                return error.ExpectedIdentifier;
             }
-            self.advance();
-        } else {
+            const param_name = self.peek();
+            self.advance(); // consume parameter name
+
+            // Parse type annotation
+            if (self.peek().type != .TYPE_SYMBOL) {
+                return error.ExpectedTypeAnnotation;
+            }
+            self.advance(); // consume ::
+
+            const type_expr = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
+
+            // Parse default value if present
+            var default_value: ?*ast.Expr = null;
+            if (self.peek().type == .ASSIGN) {
+                self.advance(); // consume 'is'
+                default_value = try expression_parser.parseExpression(self);
+            }
+
+            try params.append(.{
+                .name = param_name,
+                .type_expr = type_expr,
+                .default_value = default_value,
+            });
+
+            if (self.peek().type == .RIGHT_PAREN) break;
+            if (self.peek().type != .COMMA) {
+                return error.ExpectedCommaOrParen;
+            }
+            self.advance(); // consume comma
+        }
+    }
+    self.advance(); // consume ')'
+
+    // Parse return type if present
+    var return_type = ast.TypeInfo{ .base = .Nothing }; // Default to Nothing type
+    if (self.peek().type == .RETURNS) {
+        self.advance(); // consume 'returns'
+        if (self.peek().type != .LEFT_PAREN) {
             return error.ExpectedLeftParen;
         }
+        self.advance(); // consume '('
+
+        const type_expr = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
+        const type_info_ptr = try ast.typeInfoFromExpr(self.allocator, type_expr);
+        return_type = type_info_ptr.*;
+        self.allocator.destroy(type_info_ptr); // Free the pointer since we copied the struct
+
+        if (self.peek().type != .RIGHT_PAREN) {
+            return error.ExpectedRightParen;
+        }
+        self.advance(); // consume ')'
     }
-
-    // unsure if I want to enforce parameter types
-    // for (params.items) |param| {
-    //     if (param.type_expr == null) {
-    //         var reporter = Reporter.init();
-    //         const location: Reporter.Location = .{ .file = self.current_file, .line = param.name.line, .column = param.name.column };
-    //         reporter.reportCompileError(location, "Missing parameter type", .{});
-    //         return error.MissingParameterType;
-    //     }
-    // }
-
-    // 2. If function has any return statements with values, must use returns(type)
-    // if ((try Parser.hasReturnWithValue(self)) and !has_return_type) {
-    //     return error.MissingReturnType;
-    // }
 
     // Parse function body
     if (self.peek().type != .LEFT_BRACE) {
         return error.ExpectedLeftBrace;
     }
+    self.advance(); // consume '{'
 
-    const body = try statement_parser.parseBlockStmt(self);
+    var body_statements = std.ArrayList(ast.Stmt).init(self.allocator);
+    errdefer {
+        for (body_statements.items) |*stmt| {
+            stmt.deinit(self.allocator);
+        }
+        body_statements.deinit();
+    }
+
+    while (self.peek().type != .RIGHT_BRACE and self.peek().type != .EOF) {
+        const stmt = try statement_parser.parseStatement(self);
+        try body_statements.append(stmt);
+    }
+
+    if (self.peek().type != .RIGHT_BRACE) {
+        return error.ExpectedRightBrace;
+    }
+    self.advance(); // consume '}'
 
     return ast.Stmt{ .Function = .{
         .name = function_name,
         .params = try params.toOwnedSlice(),
         .return_type_info = return_type,
-        .body = body,
+        .body = try body_statements.toOwnedSlice(),
         .is_entry = is_entry,
         .is_public = is_public,
     } };

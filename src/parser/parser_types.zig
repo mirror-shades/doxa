@@ -1008,7 +1008,7 @@ pub const Parser = struct {
             std.debug.print("\nParsing tuple...\n", .{});
         }
 
-        self.advance(); // consume '('
+        self.advance(); // consume '(:'
 
         var elements = std.ArrayList(*ast.Expr).init(self.allocator);
         errdefer {
@@ -1059,45 +1059,28 @@ pub const Parser = struct {
 
         try elements.append(first);
 
-        // If there's a comma, this is a tuple. Otherwise, it's just a grouped expression
-        if (self.peek().type == .COMMA) {
-            // Parse remaining elements
-            while (true) {
-                if (self.peek().type == .COMMA) {
-                    self.advance(); // consume comma
+        // Parse remaining elements
+        while (true) {
+            if (self.peek().type == .COMMA) {
+                self.advance(); // consume comma
 
-                    // Allow trailing comma
-                    if (self.peek().type == .RIGHT_PAREN) break;
+                // Allow trailing comma
+                if (self.peek().type == .RIGHT_TUPLE) break;
 
-                    const element = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
-                    try elements.append(element);
-                } else if (self.peek().type == .RIGHT_PAREN) {
-                    break;
-                } else {
-                    return error.ExpectedCommaOrParen;
-                }
+                const element = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
+                try elements.append(element);
+            } else if (self.peek().type == .RIGHT_TUPLE) {
+                break;
+            } else {
+                return error.ExpectedCommaOrParen;
             }
-
-            self.advance(); // consume ')'
-
-            const tuple_expr = try self.allocator.create(ast.Expr);
-            tuple_expr.* = .{ .Tuple = try elements.toOwnedSlice() };
-            return tuple_expr;
-        } else {
-            // Not a tuple, just a grouped expression
-            elements.deinit();
-
-            if (self.peek().type != .RIGHT_PAREN) {
-                first.deinit(self.allocator);
-                self.allocator.destroy(first);
-                return error.ExpectedRightParen;
-            }
-            self.advance(); // consume ')'
-
-            const grouping_expr = try self.allocator.create(ast.Expr);
-            grouping_expr.* = .{ .Grouping = first };
-            return grouping_expr;
         }
+
+        self.advance(); // consume ':)'
+
+        const tuple_expr = try self.allocator.create(ast.Expr);
+        tuple_expr.* = .{ .Tuple = try elements.toOwnedSlice() };
+        return tuple_expr;
     }
 
     pub fn parseMap(self: *Parser) ErrorList!?*ast.Expr {

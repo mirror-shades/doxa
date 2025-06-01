@@ -40,6 +40,7 @@ pub const ErrorList = error{
     EmptyArray,
     UndeclaredType,
     NullAssignmentValue,
+    ExpectedClosedTuple,
 
     // Variable Management
     VariableNotFound,
