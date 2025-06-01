@@ -932,6 +932,7 @@ pub fn grouping(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
     const expr = try parseExpression(self) orelse return error.ExpectedExpression;
 
     if (self.peek().type != .RIGHT_PAREN) {
+        std.debug.print("Expected right parenthesis, got {s}\n", .{@tagName(self.peek().type)});
         return error.ExpectedRightParen;
     }
     self.advance(); // consume )

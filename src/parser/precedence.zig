@@ -134,6 +134,7 @@ pub const rules = blk: {
     // Grouping
     r.set(.LEFT_PAREN, .{ .prefix = grouping, .infix = call, .precedence = .CALL });
     r.set(.LEFT_BRACKET, .{ .prefix = parseArrayLiteral, .infix = index, .precedence = .CALL });
+    r.set(.LEFT_TUPLE, .{ .prefix = parseTuple, .precedence = .CALL });
 
     // Variables and assignment
     r.set(.VAR, .{ .prefix = variable });
@@ -152,7 +153,7 @@ pub const rules = blk: {
     });
 
     // Add function declaration support
-    r.set(.FUNCTION, .{ .prefix = functionExpr });
+    r.set(.FUNCTION, .{ .prefix = null }); // Function declarations are handled as statements, not expressions
 
     // Add rule for the ? operator with lower precedence
     r.set(.INSPECT, .{ .infix = print, .precedence = .UNARY });
@@ -199,9 +200,6 @@ pub const rules = blk: {
 
     // Add input support
     r.set(.INPUT, .{ .prefix = Parser.input, .precedence = .PRIMARY });
-
-    // Add tuple support
-    r.set(.LEFT_PAREN, .{ .prefix = parseTuple, .infix = call, .precedence = .CALL });
 
     break :blk r;
 };
