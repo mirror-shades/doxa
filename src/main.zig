@@ -1,7 +1,6 @@
 const std = @import("std");
 const Lexer = @import("./lexer/lexer.zig").Lexer;
 const Parser = @import("./parser/parser_types.zig").Parser;
-const Transpiler = @import("./transpiler/transpiler.zig").Transpiler;
 const Reporting = @import("./utils/reporting.zig");
 const Reporter = Reporting.Reporter;
 const MemoryManager = @import("./utils/memory.zig").MemoryManager;
@@ -130,14 +129,6 @@ pub fn run(memory: *MemoryManager, source: []const u8, file_path: []const u8) !?
             std.debug.print("Entry point: {s}\n", .{parser_instance.entry_point_name.?});
         }
     }
-
-    // var transpiler = Transpiler.init(memory.getAllocator(), &parser_instance, memory.debug_enabled);
-    // defer transpiler.deinit();
-
-    // const transpiled_code = try transpiler.transpile(statements);
-    // std.debug.print("Transpiled code:\n {s}\n", .{transpiled_code});
-
-    // try writeTo(transpiled_code, "output.zig");
 
     if (memory.debug_enabled) {
         std.debug.print("\n=== Starting interpretation ===\n", .{});

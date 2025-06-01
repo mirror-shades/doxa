@@ -455,7 +455,6 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
         if (std.mem.eql(u8, type_name, "u8")) break :blk ast.BasicType.U8;
         if (std.mem.eql(u8, type_name, "float")) break :blk ast.BasicType.Float;
         if (std.mem.eql(u8, type_name, "string")) break :blk ast.BasicType.String;
-        if (std.mem.eql(u8, type_name, "bool")) break :blk ast.BasicType.Boolean;
         if (std.mem.eql(u8, type_name, "tetra")) break :blk ast.BasicType.Tetra;
         if (std.mem.eql(u8, type_name, "auto") or std.mem.eql(u8, type_name, "")) break :blk ast.BasicType.Auto;
         // Not a basic type keyword
@@ -841,7 +840,9 @@ pub fn functionExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast
                 .INT_TYPE => .Int,
                 .FLOAT_TYPE => .Float,
                 .STRING_TYPE => .String,
-                .BOOLEAN_TYPE => .Boolean,
+                .TETRA_TYPE => .Tetra,
+                .ARRAY_TYPE => .Array,
+                .TUPLE_TYPE => .Tuple,
                 else => return error.InvalidType,
             };
 
@@ -1079,7 +1080,6 @@ pub fn inferType(expr: *ast.Expr) ErrorList!ast.TypeInfo {
                 .u8 => .{ .base = .U8, .is_dynamic = false },
                 .float => .{ .base = .Float, .is_dynamic = false },
                 .string => .{ .base = .String, .is_dynamic = false },
-                .boolean => .{ .base = .Boolean, .is_dynamic = false },
                 .tetra => .{ .base = .Tetra, .is_dynamic = false },
                 .nothing => .{ .base = .Nothing, .is_dynamic = false },
                 .array => blk: {

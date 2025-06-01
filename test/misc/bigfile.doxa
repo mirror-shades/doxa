@@ -107,12 +107,10 @@ secondFold?;
 thirdFold?;
 fourthFold?;    
 
-//both is both true and false, tests against bools and tetras and returns true
-(thirdFold equals true and thirdFold equals false)?; 
-(thirdFold equals firstFold and thirdFold equals secondFold)?; 
-//neither is neither true or false, tests against bools and tetras and returns false
-(fourthFold equals true or fourthFold equals false)?; 
-(fourthFold equals firstFold or fourthFold equals secondFold)?;
+//both is both true and false
+(both equals true and both equals false)?; 
+//neither is neither true or false
+(neither equals true or neither equals false)?;
 
 
 // arrays
@@ -173,7 +171,6 @@ try {
 con?; // 1
 
 // formal logical notation
-// first order logic, always returns a boolean value
 (∃x ∈ arr : x > 3)?; // true
 (∀x ∈ arr : x > 3)?; // false
 (¬∀x ∈ arr : x > 3)?; // true
@@ -187,9 +184,14 @@ con?; // 1
 
 // trancendental logic notation
 // always returns a tetra value, preserves contradiction in values
+
+
+// werid formatting
 (
     
-    true)?; // neither
+    true) 
+    ?
+; // true
 
 
 // typeof
@@ -205,8 +207,6 @@ typeof(_float)?; // float
 var _string is "hello";
 typeof(_string)?; // string
 
-var _boolean is true;
-typeof(_boolean)?; // boolean
 
 var _tetra is both;
 typeof(_tetra)?; // tetra

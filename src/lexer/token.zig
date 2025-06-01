@@ -104,7 +104,6 @@ pub const TokenType = enum {
     FLOAT, // float
     STRING, // string
     ARRAY, // array
-    BOOL, // boolean
     TETRA, // tetra
     LOGIC, // logic
     STRUCT, // struct
@@ -118,7 +117,6 @@ pub const TokenType = enum {
     U8_TYPE, // 8-bit unsigned integer type declaration
     FLOAT_TYPE, // float type declaration
     STRING_TYPE, // string type declaration
-    BOOLEAN_TYPE, // bool type declaration
     TETRA_TYPE, // tetra type declaration
     ARRAY_TYPE, // array type declaration
     STRUCT_TYPE, // struct type declaration
@@ -143,17 +141,11 @@ pub const Tetra = enum {
     neither,
 };
 
-pub const Boolean = enum {
-    true,
-    false,
-};
-
 pub const TokenLiteral = union(enum) {
     int: i32,
     u8: u8,
     float: f64,
     string: []const u8,
-    boolean: Boolean,
     tetra: Tetra,
     nothing: void,
     array: []TokenLiteral,
@@ -210,7 +202,7 @@ pub fn convertTokenTypeToTypeInfo(token_type: TokenType) ast.TypeInfo {
         .U8 => ast.TypeInfo{ .base = .U8, .is_mutable = true, .is_dynamic = false },
         .FLOAT => ast.TypeInfo{ .base = .Float, .is_mutable = true, .is_dynamic = false },
         .STRING => ast.TypeInfo{ .base = .String, .is_mutable = true, .is_dynamic = false },
-        .BOOLEAN => ast.TypeInfo{ .base = .Boolean, .is_mutable = true, .is_dynamic = false },
+        .TETRA => ast.TypeInfo{ .base = .Tetra, .is_mutable = true, .is_dynamic = false },
         .ARRAY => ast.TypeInfo{ .base = .Array, .is_mutable = true, .is_dynamic = false },
         // Add more mappings as needed
         else => ast.TypeInfo{ .base = .Auto, .is_mutable = true, .is_dynamic = true },
