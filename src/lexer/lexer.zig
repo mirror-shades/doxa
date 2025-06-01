@@ -114,7 +114,6 @@ pub const Lexer = struct {
         try self.keywords.put("u8", .U8_TYPE);
         try self.keywords.put("float", .FLOAT_TYPE);
         try self.keywords.put("string", .STRING_TYPE);
-        try self.keywords.put("bool", .BOOLEAN_TYPE);
         try self.keywords.put("tetra", .TETRA_TYPE);
         try self.keywords.put("array", .ARRAY_TYPE);
         try self.keywords.put("struct", .STRUCT_TYPE);
@@ -570,10 +569,10 @@ pub const Lexer = struct {
                     // Convert logic keywords to their appropriate literal values
                     if (std.mem.eql(u8, text, "true") or std.mem.eql(u8, text, "false")) {
                         const value = if (std.mem.eql(u8, text, "true"))
-                            token.Boolean.true
+                            token.Tetra.true
                         else
-                            token.Boolean.false;
-                        try self.addToken(.LOGIC, .{ .boolean = value });
+                            token.Tetra.false;
+                        try self.addToken(.LOGIC, .{ .tetra = value });
                     } else if (std.mem.eql(u8, text, "both") or std.mem.eql(u8, text, "neither")) {
                         const value: token.Tetra = if (std.mem.eql(u8, text, "both"))
                             .both
@@ -589,8 +588,8 @@ pub const Lexer = struct {
         }
     }
 
-    fn boolean(self: *Lexer) !void {
-        try self.addToken(.BOOLEAN, .{ .boolean = self.source[self.start..self.current] });
+    fn tetra(self: *Lexer) !void {
+        try self.addToken(.TETRA, .{ .tetra = self.source[self.start..self.current] });
     }
 
     fn parenthesis(self: *Lexer) !void {

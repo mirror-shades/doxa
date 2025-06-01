@@ -417,7 +417,6 @@ pub const Type = enum {
     U8,
     Float,
     String,
-    Boolean,
     Tetra,
     Array,
     Tuple,
@@ -482,7 +481,6 @@ pub const TypeInfo = struct {
             .u8 => .U8,
             .float => .Float,
             .string => .String,
-            .boolean => .Boolean,
             .tetra => .Tetra,
             .nothing => .Nothing,
             .array => .Array,
@@ -666,7 +664,6 @@ pub const BasicType = enum {
     U8,
     Float,
     String,
-    Boolean,
     Tetra,
     Auto,
 };
@@ -794,7 +791,6 @@ pub fn typeInfoFromExpr(allocator: std.mem.Allocator, type_expr: ?*TypeExpr) !*T
             .U8 => TypeInfo{ .base = .U8 },
             .Float => TypeInfo{ .base = .Float },
             .String => TypeInfo{ .base = .String },
-            .Boolean => TypeInfo{ .base = .Boolean },
             .Tetra => TypeInfo{ .base = .Tetra },
             // should never happen, auto is only used for type inference
             .Auto => TypeInfo{ .base = .Auto },
