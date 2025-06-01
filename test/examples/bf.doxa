@@ -35,7 +35,7 @@ function endLoop() {
     }
 }
 
-function checkClosingBracket(scan :: string) returns(bool) {
+function checkClosingBracket(scan :: string) returns(tetra) {
     var pointer :: int is 0;
     var openBrackets :: int is 0;
     while(pointer < scan.length) {
@@ -59,7 +59,7 @@ function interpret(scan :: string) {
     const scanLength is scan.length;
 
     // do a pass to check if the brackets are matched
-    var closedBrackets :: bool is checkClosingBracket(scan);
+    var closedBrackets :: tetra is checkClosingBracket(scan);
     assert(closedBrackets, "Unmatched brackets");
 
     while(ip < scanLength) {
