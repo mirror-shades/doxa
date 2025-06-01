@@ -1043,7 +1043,7 @@ pub const Interpreter = struct {
                         }
                         return error.TypeError;
                     },
-                    .OR_KEYWORD, .OR_LOGICAL => {
+                    .OR => {
                         if (left != .boolean and left != .tetra) return error.TypeError;
                         if (right != .boolean and right != .tetra) return error.TypeError;
                         return try orLogical(left, right);
@@ -1113,7 +1113,7 @@ pub const Interpreter = struct {
                         }
                         return error.TypeError;
                     },
-                    .NOT_LOGICAL, .NOT_KEYWORD => {
+                    .NOT => {
                         if (operand == .boolean or operand == .tetra) {
                             return negateLogical(operand);
                         }
@@ -1751,7 +1751,7 @@ pub const Interpreter = struct {
                 // Store the tetra result in a comptime-known variable
                 var result_tetra: token.Tetra = undefined;
                 switch (logical.operator.type) {
-                    .AND_KEYWORD, .AND_LOGICAL => {
+                    .AND => {
                         result_tetra = switch (left_val.tetra) {
                             .true => right_val.tetra,
                             .false => .false,
@@ -1759,7 +1759,7 @@ pub const Interpreter = struct {
                             .neither => .neither,
                         };
                     },
-                    .OR_KEYWORD, .OR_LOGICAL => {
+                    .OR => {
                         result_tetra = switch (left_val.tetra) {
                             .true => .true,
                             .false => right_val.tetra,
@@ -3150,7 +3150,7 @@ pub const Interpreter = struct {
                 if (b != .map) return false;
                 if (m.count() != b.map.count()) return false;
 
-                // Check that all key-value pairs match
+                // Check that all key-value pairs pr
                 var iter = m.iterator();
                 while (iter.next()) |entry| {
                     if (b.map.get(entry.key_ptr.*)) |other_value| {

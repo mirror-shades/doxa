@@ -111,16 +111,13 @@ pub const rules = blk: {
     r.set(.GREATER_EQUAL, .{ .infix = binary, .precedence = .COMPARISON });
 
     // Logical operators
-    r.set(.AND_KEYWORD, .{ .infix = logical, .precedence = .AND });
-    r.set(.AND_LOGICAL, .{ .infix = logical, .precedence = .AND });
-    r.set(.OR_KEYWORD, .{ .infix = logical, .precedence = .OR });
-    r.set(.OR_LOGICAL, .{ .infix = logical, .precedence = .OR });
+    r.set(.AND, .{ .infix = logical, .precedence = .AND });
+    r.set(.OR, .{ .infix = logical, .precedence = .OR });
     r.set(.NAND, .{ .infix = logical, .precedence = .NAND });
     r.set(.NOR, .{ .infix = logical, .precedence = .NOR });
     r.set(.XOR, .{ .infix = logical, .precedence = .XOR });
     r.set(.IFF, .{ .infix = logical, .precedence = .IFF });
-    r.set(.NOT_LOGICAL, .{ .prefix = unary, .precedence = .UNARY });
-    r.set(.NOT_KEYWORD, .{ .prefix = unary, .precedence = .UNARY });
+    r.set(.NOT, .{ .prefix = unary, .precedence = .UNARY });
     r.set(.NOT_TRANCENDENTAL, .{ .prefix = unary, .precedence = .UNARY });
     r.set(.IMPLIES, .{ .infix = logical, .precedence = .IMPLIES });
 

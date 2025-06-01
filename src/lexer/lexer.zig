@@ -67,6 +67,12 @@ pub const Lexer = struct {
     }
 
     pub fn initKeywords(self: *Lexer) !void {
+        try self.keywords.put("safe", .SAFE);
+        try self.keywords.put("normal", .NORMAL);
+        try self.keywords.put("guide", .GUIDE);
+        try self.keywords.put("input", .INPUT);
+        try self.keywords.put("pub", .PUBLIC);
+        try self.keywords.put("public", .PUBLIC);
         try self.keywords.put("true", .LOGIC);
         try self.keywords.put("false", .LOGIC);
         try self.keywords.put("both", .LOGIC);
@@ -77,7 +83,6 @@ pub const Lexer = struct {
         try self.keywords.put("while", .WHILE);
         try self.keywords.put("for", .FOR);
         try self.keywords.put("foreach", .FOREACH);
-        try self.keywords.put("in", .IN);
         try self.keywords.put("fn", .FUNCTION);
         try self.keywords.put("function", .FUNCTION);
         try self.keywords.put("return", .RETURN);
@@ -90,8 +95,8 @@ pub const Lexer = struct {
         try self.keywords.put("throw", .THROW);
         try self.keywords.put("try", .TRY);
         try self.keywords.put("catch", .CATCH);
-        try self.keywords.put("and", .AND_KEYWORD);
-        try self.keywords.put("or", .OR_KEYWORD);
+        try self.keywords.put("and", .AND);
+        try self.keywords.put("or", .OR);
         try self.keywords.put("nothing", .NOTHING);
         try self.keywords.put("import", .IMPORT);
         try self.keywords.put("assert", .ASSERT);
@@ -114,27 +119,26 @@ pub const Lexer = struct {
         try self.keywords.put("array", .ARRAY_TYPE);
         try self.keywords.put("struct", .STRUCT_TYPE);
         try self.keywords.put("enum", .ENUM_TYPE);
+        try self.keywords.put("tuple", .TUPLE_TYPE);
+        try self.keywords.put("map", .MAP_TYPE);
         try self.keywords.put("xor", .XOR);
         try self.keywords.put("exists", .EXISTS);
         try self.keywords.put("forall", .FORALL);
         try self.keywords.put("where", .WHERE);
-        try self.keywords.put("tuple", .TUPLE_TYPE);
-        try self.keywords.put("map", .MAP_TYPE);
-        try self.keywords.put("safe", .SAFE);
-        try self.keywords.put("normal", .NORMAL);
-        try self.keywords.put("guide", .GUIDE);
-        try self.keywords.put("not", .NOT_KEYWORD);
-        try self.keywords.put("input", .INPUT);
-        try self.keywords.put("pub", .PUBLIC);
-        try self.keywords.put("public", .PUBLIC);
+        try self.keywords.put("iff", .IFF);
+        try self.keywords.put("implies", .IMPLIES);
+        try self.keywords.put("nand", .NAND);
+        try self.keywords.put("nor", .NOR);
+        try self.keywords.put("not", .NOT);
+        try self.keywords.put("in", .IN);
         try self.keywords.put("∃", .EXISTS);
         try self.keywords.put("∀", .FORALL);
         try self.keywords.put("∈", .IN);
-        try self.keywords.put("¬", .NOT_LOGICAL);
+        try self.keywords.put("¬", .NOT);
         try self.keywords.put("⊕", .XOR);
         try self.keywords.put("↔", .IFF);
-        try self.keywords.put("∧", .AND_LOGICAL);
-        try self.keywords.put("∨", .OR_LOGICAL);
+        try self.keywords.put("∧", .AND);
+        try self.keywords.put("∨", .OR);
         try self.keywords.put("↑", .NAND);
         try self.keywords.put("↓", .NOR);
         try self.keywords.put("→", .IMPLIES);
