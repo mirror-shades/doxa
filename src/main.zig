@@ -3,11 +3,15 @@ const Lexer = @import("./lexer/lexer.zig").Lexer;
 const Parser = @import("./parser/parser_types.zig").Parser;
 const Reporting = @import("./utils/reporting.zig");
 const Reporter = Reporting.Reporter;
-const MemoryManager = @import("./utils/memory.zig").MemoryManager;
+const MemoryImport = @import("./utils/memory.zig");
+const MemoryManager = MemoryImport.MemoryManager;
 const Token = @import("./lexer/token.zig").Token;
-const TokenLiteral = @import("./lexer/token.zig").TokenLiteral;
-const Interpreter = @import("./interpreter/interpreter.zig").Interpreter;
-const Environment = @import("./interpreter/interpreter.zig").Environment;
+const TokenLiteral = @import("./types/types.zig").TokenLiteral;
+const InterpreterImport = @import("./interpreter/interpreter.zig");
+const Interpreter = InterpreterImport.Interpreter;
+const Environment = @import("./types/types.zig").Environment;
+const astReader = @import("./utils/astReader.zig");
+const environment = @import("./interpreter/environment.zig");
 
 ///==========================================================================
 /// Constants
@@ -66,19 +70,19 @@ pub fn reportError(line: i32, where: []const u8, message: []const u8) void {
 ///==========================================================================
 /// Run
 ///==========================================================================
-pub fn run(memory: *MemoryManager, source: []const u8, file_path: []const u8) !?TokenLiteral {
-    if (memory.debug_enabled) {
+pub fn run(memoryManager: *MemoryManager, source: []const u8, file_path: []const u8) !?TokenLiteral {
+    if (memoryManager.debug_enabled) {
         std.debug.print("\n=== Starting run ===\n", .{});
     }
 
     // Now use the unified source for lexing
-    var lexer = Lexer.init(memory.getAllocator(), source, file_path);
+    var lexer = Lexer.init(memoryManager.getAllocator(), source, file_path);
     defer lexer.deinit();
 
     try lexer.initKeywords();
     const token_list = try lexer.lexTokens();
 
-    if (memory.debug_enabled) {
+    if (memoryManager.debug_enabled) {
         for (token_list.items) |token| {
             std.debug.print("Token: {s} ({s})\n", .{ @tagName(token.type), token.lexeme });
         }
@@ -94,32 +98,32 @@ pub fn run(memory: *MemoryManager, source: []const u8, file_path: []const u8) !?
     // third pass builds the AST for the file and anything exposed by the module
 
     var parser_instance = Parser.init(
-        memory.getAllocator(),
+        memoryManager.getAllocator(),
         token_list.items,
         file_path,
-        memory.debug_enabled,
+        memoryManager.debug_enabled,
     );
     defer parser_instance.deinit();
 
     // Create the global environment
-    var global_env = try memory.getAllocator().create(Environment);
-    global_env.* = Environment.init(memory.getAllocator(), null, memory.debug_enabled, memory);
+    var global_env = try memoryManager.getAllocator().create(Environment);
+    global_env.* = environment.init(memoryManager.getAllocator(), null, memoryManager.debug_enabled, memoryManager);
     defer {
         global_env.deinit();
-        memory.getAllocator().destroy(global_env);
+        memoryManager.getAllocator().destroy(global_env);
     }
 
     var interpreter = Interpreter.init(
-        memory.getAllocator(),
+        memoryManager.getAllocator(),
         global_env,
         &parser_instance,
-        memory.debug_enabled,
-        memory,
+        memoryManager.debug_enabled,
+        memoryManager,
     );
     defer interpreter.deinit();
 
     const statements = try parser_instance.execute();
-    if (memory.debug_enabled) {
+    if (memoryManager.debug_enabled) {
         std.debug.print("hadError parsing: {}\n", .{hadError});
         std.debug.print("\n=== Parse complete, statement count: {} ===\n", .{statements.len});
         for (statements, 0..) |stmt, i| {
@@ -130,7 +134,17 @@ pub fn run(memory: *MemoryManager, source: []const u8, file_path: []const u8) !?
         }
     }
 
-    if (memory.debug_enabled) {
+    // Add AST output here
+    if (memoryManager.debug_enabled) {
+        std.debug.print("\n=== AST Output ===\n", .{});
+        for (statements, 0..) |stmt, i| {
+            std.debug.print("\nStatement {}:\n", .{i});
+            astReader.printStatement(stmt, 1);
+        }
+        std.debug.print("\n=== End AST Output ===\n", .{});
+    }
+
+    if (memoryManager.debug_enabled) {
         std.debug.print("\n=== Starting interpretation ===\n", .{});
     }
 
@@ -152,18 +166,18 @@ fn writeTo(text: []const u8, path: []const u8) !void {
     try file.writeAll(text);
 }
 
-fn runFile(memory: *MemoryManager, path: []const u8) !void {
-    if (memory.debug_enabled) {
+fn runFile(memoryManager: *MemoryManager, path: []const u8) !void {
+    if (memoryManager.debug_enabled) {
         std.debug.print("Debug enabled in memory manager\n", .{});
     }
 
     var file = try std.fs.cwd().openFile(path, .{});
     defer file.close();
 
-    const source = try file.readToEndAlloc(memory.getAllocator(), MAX_FILE_SIZE);
-    defer memory.getAllocator().free(source);
+    const source = try file.readToEndAlloc(memoryManager.getAllocator(), MAX_FILE_SIZE);
+    defer memoryManager.getAllocator().free(source);
 
-    _ = try run(memory, source, path);
+    _ = try run(memoryManager, source, path);
 }
 
 ///==========================================================================
@@ -175,18 +189,18 @@ pub fn main() !void {
         const leaked = gpa.deinit();
         if (leaked == .leak) std.debug.print("Warning: Memory leak detected!\n", .{});
     }
-    var memory = try MemoryManager.init(gpa.allocator(), false);
-    defer memory.deinit();
+    var memoryManager = try MemoryManager.init(gpa.allocator(), false);
+    defer memoryManager.deinit();
 
-    const args = try std.process.argsAlloc(memory.getAllocator());
-    defer std.process.argsFree(memory.getAllocator(), args);
+    const args = try std.process.argsAlloc(memoryManager.getAllocator());
+    defer std.process.argsFree(memoryManager.getAllocator(), args);
     // Skip the executable name
     var script_path: ?[]const u8 = null;
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
         if (stringEquals(arg, "--debug")) {
-            memory.debug_enabled = true;
+            memoryManager.debug_enabled = true;
         } else if (stringEquals(arg, "--compile")) {
             compile = true;
         } else if (stringEquals(arg, "--output") or stringEquals(arg, "-o")) {
@@ -209,7 +223,7 @@ pub fn main() !void {
             std.debug.print("Error: {s} is not a doxa file\n", .{path});
             std.process.exit(EXIT_CODE_USAGE);
         }
-        try runFile(&memory, path);
+        try runFile(&memoryManager, path);
     } else {
         std.debug.print("Usage: doxa [--debug] [--compile] [--output/-o file] [script]\n", .{});
         std.process.exit(EXIT_CODE_USAGE);

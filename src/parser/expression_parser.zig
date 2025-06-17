@@ -934,6 +934,7 @@ pub fn grouping(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
 
     if (self.peek().type != .RIGHT_PAREN) {
         std.debug.print("Expected right parenthesis, got {s}\n", .{@tagName(self.peek().type)});
+        std.debug.print("If this was a tuple, remember the explicit smiley face syntax (: 1, \"2\", true :)\n", .{});
         return error.ExpectedRightParen;
     }
     self.advance(); // consume )

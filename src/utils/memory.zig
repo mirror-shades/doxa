@@ -1,6 +1,9 @@
 const std = @import("std");
-const Token = @import("../lexer/token.zig");
+const TokenImport = @import("../lexer/token.zig");
+const TokenType = TokenImport.TokenType;
 const TypeInfo = @import("../ast/ast.zig").TypeInfo;
+const TypesImport = @import("../types/types.zig");
+const TokenLiteral = TypesImport.TokenLiteral;
 
 pub const MemoryManager = struct {
     arena: std.heap.ArenaAllocator,
@@ -57,12 +60,12 @@ pub const MemoryManager = struct {
 };
 
 /// ValueStorage holds a value with alias counting
-const ValueStorage = struct { value: Token.TokenLiteral, type: Token.TokenType, type_info: TypeInfo, alias_count: u32, constant: bool };
+const ValueStorage = struct { value: TokenLiteral, type: TokenType, type_info: TypeInfo, alias_count: u32, constant: bool };
 
 /// Variable represents a named reference to a storage location
 pub const Variable = struct {
     name: []const u8,
-    type: Token.TokenType,
+    type: TokenType,
     storage_id: u32, // ID of the storage location
     id: u32, // Unique variable ID
     is_alias: bool,
@@ -213,7 +216,7 @@ pub const Scope = struct {
         self.manager.allocator.destroy(self);
     }
 
-    pub fn createValueBinding(self: *Scope, name: []const u8, value: Token.TokenLiteral, vtype: Token.TokenType, type_info: TypeInfo, constant: bool) !*Variable {
+    pub fn createValueBinding(self: *Scope, name: []const u8, value: TokenLiteral, vtype: TokenType, type_info: TypeInfo, constant: bool) !*Variable {
         // Check for duplicate variable name in current scope
         if (self.name_map.contains(name)) {
             return error.DuplicateVariableName;

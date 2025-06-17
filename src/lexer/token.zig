@@ -1,7 +1,6 @@
 const std = @import("std");
 const ast = @import("../ast/ast.zig");
-const Environment = @import("../interpreter/interpreter.zig").Environment;
-const FunctionParam = ast.FunctionParam;
+const TokenLiteral = @import("../types/types.zig").TokenLiteral;
 
 pub const TokenType = enum {
     // single-character tokens
@@ -127,40 +126,6 @@ pub const TokenType = enum {
     NOTHING, // nothing
 
     EOF, // end of file
-};
-
-pub const StructField = struct {
-    name: []const u8,
-    value: TokenLiteral,
-};
-
-pub const Tetra = enum {
-    true,
-    false,
-    both,
-    neither,
-};
-
-pub const TokenLiteral = union(enum) {
-    int: i32,
-    u8: u8,
-    float: f64,
-    string: []const u8,
-    tetra: Tetra,
-    nothing: void,
-    array: []TokenLiteral,
-    tuple: []TokenLiteral,
-    struct_value: struct {
-        type_name: []const u8,
-        fields: []StructField,
-    },
-    function: struct {
-        params: []FunctionParam,
-        body: []ast.Stmt,
-        closure: *Environment, // Capture the environment where the function was defined
-    },
-    enum_variant: []const u8,
-    map: std.StringHashMap(TokenLiteral),
 };
 
 pub const Token = struct {
