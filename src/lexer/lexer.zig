@@ -2,10 +2,11 @@ const std = @import("std");
 const Reporting = @import("../utils/reporting.zig");
 const Reporter = Reporting.Reporter;
 
-const token = @import("token.zig");
-pub const TokenType = token.TokenType;
-pub const Token = token.Token;
-pub const TokenLiteral = token.TokenLiteral;
+const Token = @import("token.zig").Token;
+const TokenType = @import("token.zig").TokenType;
+const TypesImport = @import("../types/types.zig");
+const Tetra = TypesImport.Tetra;
+const TokenLiteral = TypesImport.TokenLiteral;
 
 pub const Lexer = struct {
     //======================================================================
@@ -569,12 +570,12 @@ pub const Lexer = struct {
                     // Convert logic keywords to their appropriate literal values
                     if (std.mem.eql(u8, text, "true") or std.mem.eql(u8, text, "false")) {
                         const value = if (std.mem.eql(u8, text, "true"))
-                            token.Tetra.true
+                            Tetra.true
                         else
-                            token.Tetra.false;
+                            Tetra.false;
                         try self.addToken(.LOGIC, .{ .tetra = value });
                     } else if (std.mem.eql(u8, text, "both") or std.mem.eql(u8, text, "neither")) {
-                        const value: token.Tetra = if (std.mem.eql(u8, text, "both"))
+                        const value: Tetra = if (std.mem.eql(u8, text, "both"))
                             .both
                         else
                             .neither;

@@ -1,15 +1,16 @@
 const std = @import("std");
-const token = @import("../lexer/token.zig");
+const Token = @import("../lexer/token.zig").Token;
+const TokenLiteral = @import("../types/types.zig").TokenLiteral;
 const Reporting = @import("../utils/reporting.zig");
 
 pub const Binary = struct {
     left: ?*Expr,
-    operator: token.Token,
+    operator: Token,
     right: ?*Expr,
 };
 
 pub const Unary = struct {
-    operator: token.Token,
+    operator: Token,
     right: ?*Expr,
 };
 
@@ -25,14 +26,14 @@ pub const MapEntry = struct {
 };
 
 pub const Expr = union(enum) {
-    Literal: token.TokenLiteral,
+    Literal: TokenLiteral,
     Binary: Binary,
     Unary: Unary,
     Inspect: InspectExpr,
     Input: struct {
-        prompt: token.Token,
+        prompt: Token,
     },
-    Variable: token.Token,
+    Variable: Token,
     Assignment: Assignment,
     Grouping: ?*Expr,
     If: If,
@@ -55,7 +56,7 @@ pub const Expr = union(enum) {
     },
     Logical: Logical,
     Function: struct {
-        name: token.Token,
+        name: Token,
         params: []FunctionParam,
         return_type_info: TypeInfo,
         body: []Stmt,
@@ -68,21 +69,21 @@ pub const Expr = union(enum) {
     FieldAccess: FieldAccess,
     StructDecl: StructDecl,
     StructLiteral: struct {
-        name: token.Token,
+        name: Token,
         fields: []const *StructInstanceField,
     },
     FieldAssignment: struct {
         object: *Expr,
-        field: token.Token,
+        field: Token,
         value: *Expr,
     },
     Exists: struct {
-        variable: token.Token,
+        variable: Token,
         array: *Expr,
         condition: *Expr,
     },
     ForAll: struct {
-        variable: token.Token,
+        variable: Token,
         array: *Expr,
         condition: *Expr,
     },
@@ -92,17 +93,17 @@ pub const Expr = union(enum) {
     },
     Match: MatchExpr,
     EnumDecl: struct {
-        name: token.Token,
-        variants: []token.Token,
+        name: Token,
+        variants: []Token,
         is_public: bool = false,
     },
-    EnumMember: token.Token,
+    EnumMember: Token,
     DefaultArgPlaceholder: void,
     TypeOf: *Expr,
     Map: []MapEntry,
     MethodCall: struct {
         receiver: *Expr,
-        method: token.Token,
+        method: Token,
         arguments: []const *Expr,
     },
     ArrayPush: struct {
@@ -408,7 +409,7 @@ pub const Expr = union(enum) {
 };
 
 pub const Assignment = struct {
-    name: token.Token,
+    name: Token,
     value: ?*Expr,
 };
 
@@ -473,7 +474,7 @@ pub const TypeInfo = struct {
         }
     }
 
-    pub fn inferFrom(self: *TypeInfo, value: token.TokenLiteral) void {
+    pub fn inferFrom(self: *TypeInfo, value: TokenLiteral) void {
         if (self.base != .Auto) return;
 
         self.base = switch (value) {
@@ -503,15 +504,15 @@ pub const FunctionType = struct {
 };
 
 pub const VarDecl = struct {
-    name: token.Token,
+    name: Token,
     initializer: ?*Expr,
     type_info: TypeInfo,
     is_public: bool = false,
 };
 
 pub const EnumDecl = struct {
-    name: token.Token,
-    variants: []const token.Token,
+    name: Token,
+    variants: []const Token,
     is_public: bool = false,
 };
 
@@ -524,14 +525,14 @@ pub const ImportInfo = struct {
 pub const Stmt = union(enum) {
     Expression: ?*Expr,
     VarDecl: struct {
-        name: token.Token,
+        name: Token,
         type_info: TypeInfo,
         initializer: ?*Expr,
         is_public: bool = false,
     },
     Block: []Stmt,
     Function: struct {
-        name: token.Token,
+        name: Token,
         params: []FunctionParam,
         return_type_info: TypeInfo,
         body: []Stmt,
@@ -546,7 +547,7 @@ pub const Stmt = union(enum) {
     Map: []MapEntry,
     Try: TryStmt,
     Module: struct {
-        name: token.Token,
+        name: Token,
         imports: []const ImportInfo,
     },
     Import: ImportInfo,
@@ -632,7 +633,7 @@ pub const Stmt = union(enum) {
 
 pub const TypeExpr = union(enum) {
     Basic: BasicType,
-    Custom: token.Token,
+    Custom: Token,
     Array: ArrayType,
     Struct: []*StructField,
     Enum: []const []const u8,
@@ -674,7 +675,7 @@ pub const ArrayType = struct {
 };
 
 pub const StructField = struct {
-    name: token.Token,
+    name: Token,
     type_expr: *TypeExpr,
 
     pub fn deinit(self: *StructField, allocator: std.mem.Allocator) void {
@@ -684,7 +685,7 @@ pub const StructField = struct {
 };
 
 pub const StructLiteralField = struct {
-    name: token.Token,
+    name: Token,
     value: *Expr,
 
     pub fn deinit(self: *StructLiteralField, allocator: std.mem.Allocator) void {
@@ -699,7 +700,7 @@ pub const Index = struct {
 };
 
 pub const FunctionParam = struct {
-    name: token.Token,
+    name: Token,
     type_expr: ?*TypeExpr,
     default_value: ?*Expr = null,
 
@@ -717,12 +718,12 @@ pub const FunctionParam = struct {
 
 pub const Logical = struct {
     left: *Expr,
-    operator: token.Token,
+    operator: Token,
     right: *Expr,
 };
 
 pub const Parameter = struct {
-    name: token.Token,
+    name: Token,
     type_expr: ?*TypeExpr,
 
     pub fn deinit(self: *Parameter, allocator: std.mem.Allocator) void {
@@ -746,7 +747,7 @@ pub const ForExpr = struct {
 };
 
 pub const ForEachExpr = struct {
-    item_name: token.Token,
+    item_name: Token,
     array: *Expr,
     body: []Stmt,
 };
@@ -766,11 +767,11 @@ pub const InspectExpr = struct {
 
 pub const FieldAccess = struct {
     object: *Expr,
-    field: token.Token,
+    field: Token,
 };
 
 pub const StructDecl = struct {
-    name: token.Token,
+    name: Token,
     fields: []*StructField,
     is_public: bool = false,
 };
@@ -840,7 +841,7 @@ pub fn typeInfoFromExpr(allocator: std.mem.Allocator, type_expr: ?*TypeExpr) !*T
 
 // Add a new struct for struct instance fields
 pub const StructInstanceField = struct {
-    name: token.Token,
+    name: Token,
     value: *Expr,
 
     pub fn deinit(self: *StructInstanceField, allocator: std.mem.Allocator) void {
@@ -855,14 +856,14 @@ pub const MatchExpr = struct {
 };
 
 pub const MatchCase = struct {
-    pattern: token.Token,
+    pattern: Token,
     body: *Expr,
 };
 
 pub const TryStmt = struct {
     try_body: []Stmt,
     catch_body: []Stmt,
-    error_var: ?token.Token,
+    error_var: ?Token,
 };
 
 pub const ModuleSymbol = struct {
@@ -915,7 +916,7 @@ pub const ModuleInfo = struct {
 };
 
 pub const CompoundAssignment = struct {
-    name: token.Token,
-    operator: token.Token, // The compound operator (e.g., MINUS_EQUALS)
+    name: Token,
+    operator: Token, // The compound operator (e.g., MINUS_EQUALS)
     value: ?*Expr,
 };

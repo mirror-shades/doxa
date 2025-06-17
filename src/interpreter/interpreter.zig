@@ -1,7 +1,11 @@
 const std = @import("std");
 const ast = @import("../ast/ast.zig");
 const TypeInfo = ast.TypeInfo;
-const token = @import("../lexer/token.zig");
+const TokenImport = @import("../lexer/token.zig");
+const Token = TokenImport.Token;
+const StructField = TypesImport.StructField;
+const StructLiteralField = ast.StructLiteralField;
+const StructInstanceField = ast.StructInstanceField;
 const Reporting = @import("../utils/reporting.zig");
 const ErrorList = Reporting.ErrorList;
 const Reporter = Reporting.Reporter;
@@ -9,6 +13,12 @@ const Memory = @import("../utils/memory.zig");
 const Scope = Memory.Scope;
 const MemoryManager = Memory.MemoryManager;
 const Parser = @import("../parser/parser_types.zig").Parser;
+const Environment = @import("../types/types.zig").Environment;
+const env_module = @import("environment.zig");
+const TypesImport = @import("../types/types.zig");
+const TokenLiteral = TypesImport.TokenLiteral;
+const Tetra = TypesImport.Tetra;
+const Expr = ast.Expr;
 
 const StringInterner = struct {
     strings: std.StringHashMap([]const u8),
@@ -39,153 +49,6 @@ const StringInterner = struct {
     }
 };
 
-pub const Environment = struct {
-    values: std.StringHashMap(token.TokenLiteral),
-    types: std.StringHashMap(ast.TypeInfo),
-    enclosing: ?*Environment,
-    debug_enabled: bool,
-    allocator: std.mem.Allocator,
-    memory_manager: *MemoryManager,
-
-    pub fn init(allocator: std.mem.Allocator, enclosing: ?*Environment, debug_enabled: bool, memory_manager: *MemoryManager) Environment {
-        // If we have an enclosing environment, its scope should be the parent of our new scope
-        var parent_scope: ?*Scope = null;
-        if (enclosing != null) {
-            parent_scope = memory_manager.scope_manager.root_scope;
-        }
-        return .{
-            .values = std.StringHashMap(token.TokenLiteral).init(allocator),
-            .types = std.StringHashMap(ast.TypeInfo).init(allocator),
-            .enclosing = enclosing,
-            .debug_enabled = debug_enabled,
-            .allocator = allocator,
-            .memory_manager = memory_manager,
-        };
-    }
-
-    pub fn deinit(self: *Environment) void {
-        var it = self.values.iterator();
-        while (it.next()) |entry| {
-            switch (entry.value_ptr.*) {
-                .array => |arr| self.allocator.free(arr),
-                .function => |f| {
-                    self.allocator.free(f.params);
-                },
-                else => {},
-            }
-        }
-        self.values.deinit();
-        self.types.deinit();
-    }
-
-    pub fn define(self: *Environment, key: []const u8, value: token.TokenLiteral, type_info: ast.TypeInfo) !void {
-        if (self.debug_enabled) {
-            std.debug.print("Attempting to define '{s}' = {any} in the memory manager\n", .{ key, value });
-        }
-
-        if (self.memory_manager.scope_manager.root_scope) |root_scope| {
-            // Use createValueBinding instead of the undefined defineVariable
-            // We need to supply constant flag - let's assume false initially, could be a parameter
-            const is_constant = false;
-
-            // Convert TypeInfo to TokenType if needed
-            // This is a simplification - you may need to map between your TypeInfo and token.TokenType
-            const token_type = switch (type_info.base) {
-                .Int => token.TokenType.INT,
-                .U8 => token.TokenType.U8,
-                .Float => token.TokenType.FLOAT,
-                .String => token.TokenType.STRING,
-                .Array => token.TokenType.ARRAY,
-                .Function => token.TokenType.FUNCTION,
-                .Struct => token.TokenType.STRUCT,
-                .Enum => token.TokenType.ENUM,
-                .Map => token.TokenType.MAP,
-                .Nothing => token.TokenType.NOTHING,
-                .Auto => token.TokenType.AUTO,
-                .Tuple => token.TokenType.TUPLE,
-                .Custom => token.TokenType.ENUM_TYPE,
-                .Tetra => token.TokenType.TETRA,
-                else => unreachable,
-            };
-
-            // Create value binding
-            _ = try root_scope.createValueBinding(key, value, token_type, type_info, is_constant);
-            return;
-        }
-        return error.NoRootScope;
-    }
-
-    pub fn get(self: *Environment, name: []const u8) ErrorList!?token.TokenLiteral {
-        if (self.memory_manager.scope_manager.root_scope) |root_scope| {
-            if (root_scope.lookupVariable(name)) |variable| {
-                if (self.memory_manager.scope_manager.value_storage.get(variable.storage_id)) |storage| {
-                    return storage.value;
-                }
-            }
-        }
-
-        // If not found in current environment, check enclosing if it exists
-        if (self.enclosing) |enclosing| {
-            return enclosing.get(name);
-        }
-
-        return null;
-    }
-
-    pub fn assign(self: *Environment, name: []const u8, value: token.TokenLiteral) !void {
-        if (self.debug_enabled) {
-            std.debug.print("Attempting to assign '{s}' = {any}\n", .{ name, value });
-        }
-
-        // Look up variable from root scope
-        if (self.memory_manager.scope_manager.root_scope) |root_scope| {
-            // Use lookupVariable to find the variable in any accessible scope
-            if (root_scope.lookupVariable(name)) |variable| {
-                // Get the storage location for this variable
-                if (self.memory_manager.scope_manager.value_storage.get(variable.storage_id)) |storage| {
-                    // Check if the variable is constant
-                    if (storage.constant) {
-                        return error.CannotAssignToConstant;
-                    }
-
-                    // Debug: show old value
-                    if (self.debug_enabled) {
-                        std.debug.print("Updating variable '{s}' from {any} to {any}\n", .{ name, storage.value, value });
-                    }
-
-                    // Update the value in storage
-                    storage.value = value;
-
-                    // Verify update
-                    if (self.debug_enabled) {
-                        std.debug.print("After update, storage value is: {any}\n", .{storage.value});
-                    }
-
-                    return;
-                } else {
-                    return error.StorageNotFound;
-                }
-            }
-        }
-
-        return error.UndefinedVariable;
-    }
-
-    pub fn getTypeInfo(self: *Environment, name: []const u8) ErrorList!TypeInfo {
-        if (self.memory_manager.scope_manager.root_scope) |root_scope| {
-            if (root_scope.lookupVariable(name)) |variable| {
-                if (self.memory_manager.scope_manager.value_storage.get(variable.storage_id)) |storage| {
-                    return storage.type_info;
-                }
-            }
-        }
-        if (self.enclosing) |enclosing| {
-            return enclosing.getTypeInfo(name);
-        }
-        return error.UndefinedVariable;
-    }
-};
-
 pub const Interpreter = struct {
     environment: *Environment,
     global_environment: *Environment,
@@ -197,12 +60,12 @@ pub const Interpreter = struct {
     moduleEnvironments: std.StringHashMap(*Environment),
     memory_manager: *MemoryManager,
 
-    return_value: ?token.TokenLiteral = null,
+    return_value: ?TokenLiteral = null,
     entry_point_name: ?[]const u8 = null,
-    last_result: ?token.TokenLiteral = null,
+    last_result: ?TokenLiteral = null,
     had_error: bool = false,
     has_entry_point: bool = false,
-    entry_point_location: ?token.Token = null,
+    entry_point_location: ?Token = null,
     has_returned: bool = false,
 
     pub fn init(allocator: std.mem.Allocator, environment: *Environment, parser: ?*Parser, debug_enabled: bool, memory_manager: *MemoryManager) Interpreter {
@@ -248,7 +111,7 @@ pub const Interpreter = struct {
         self.memory_manager.scope_manager.root_scope = null;
     }
 
-    fn u8BoundsCheck(value: token.TokenLiteral) ErrorList!void {
+    fn u8BoundsCheck(value: TokenLiteral) ErrorList!void {
         if (value.int < 0) {
             var reporting = Reporter.init();
             reporting.reportRuntimeError("Underflow: u8 cannot be negative", .{});
@@ -313,7 +176,7 @@ pub const Interpreter = struct {
                     std.debug.print("\nCreating forward declaration for: {s}\n", .{f.name.lexeme});
                 }
 
-                const function = token.TokenLiteral{
+                const function = TokenLiteral{
                     .function = .{
                         .params = f.params,
                         .body = f.body,
@@ -382,7 +245,7 @@ pub const Interpreter = struct {
         }
     }
 
-    pub fn executeBlock(self: *Interpreter, statements: []ast.Stmt, environment: *Environment) ErrorList!?token.TokenLiteral {
+    pub fn executeBlock(self: *Interpreter, statements: []ast.Stmt, environment: *Environment) ErrorList!?TokenLiteral {
         const previous = self.environment;
         self.environment = environment;
         defer self.environment = previous;
@@ -392,7 +255,7 @@ pub const Interpreter = struct {
             return null;
         }
 
-        var result: ?token.TokenLiteral = null;
+        var result: ?TokenLiteral = null;
 
         // Reset return flag at start of block (unless we're in a nested call)
         const previous_return_state = self.has_returned;
@@ -446,7 +309,7 @@ pub const Interpreter = struct {
         return 0;
     }
 
-    pub fn executeStatement(self: *Interpreter, stmt: *const ast.Stmt, debug_enabled: bool) ErrorList!?token.TokenLiteral {
+    pub fn executeStatement(self: *Interpreter, stmt: *const ast.Stmt, debug_enabled: bool) ErrorList!?TokenLiteral {
         if (debug_enabled) {
             std.debug.print("Executing statement: {any}\n", .{stmt.*});
         }
@@ -457,7 +320,7 @@ pub const Interpreter = struct {
                     std.debug.print("Executing function declaration: {s}\n", .{f.name.lexeme});
                 }
 
-                const function = token.TokenLiteral{
+                const function = TokenLiteral{
                     .function = .{
                         .params = f.params,
                         .body = f.body,
@@ -565,7 +428,7 @@ pub const Interpreter = struct {
                                     reporting.reportRuntimeError("Type error: Integer value {d} out of range for u8", .{init_value.int});
                                     return error.TypeError;
                                 }
-                                break :blk token.TokenLiteral{ .u8 = @intCast(init_value.int) };
+                                break :blk TokenLiteral{ .u8 = @intCast(init_value.int) };
                             }
                         },
                         .Float => if (init_value != .float and init_value != .int) {
@@ -584,7 +447,7 @@ pub const Interpreter = struct {
                             if (decl.type_info.element_type) |expected_type| {
                                 // If this is a u8 array, convert int elements to u8
                                 if (expected_type == .U8) {
-                                    var new_array = try self.allocator.alloc(token.TokenLiteral, init_value.array.len);
+                                    var new_array = try self.allocator.alloc(TokenLiteral, init_value.array.len);
                                     for (init_value.array, 0..) |elem, idx| {
                                         if (elem == .int) {
                                             if (elem.int < 0 or elem.int > 255) {
@@ -593,7 +456,7 @@ pub const Interpreter = struct {
                                                 self.allocator.free(new_array);
                                                 return error.TypeError;
                                             }
-                                            new_array[idx] = token.TokenLiteral{ .u8 = @intCast(elem.int) };
+                                            new_array[idx] = TokenLiteral{ .u8 = @intCast(elem.int) };
                                         } else if (elem == .u8) {
                                             new_array[idx] = elem;
                                         } else {
@@ -608,7 +471,7 @@ pub const Interpreter = struct {
                                     self.allocator.free(init_value.array);
 
                                     // Return the new array with proper u8 elements
-                                    break :blk token.TokenLiteral{ .array = new_array };
+                                    break :blk TokenLiteral{ .array = new_array };
                                 }
 
                                 // For other array types, check that elements match
@@ -639,43 +502,43 @@ pub const Interpreter = struct {
                     }
                     break :blk init_value;
                 } else switch (decl.type_info.base) {
-                    .Int => token.TokenLiteral{ .int = 0 },
-                    .U8 => token.TokenLiteral{ .u8 = 0 },
-                    .Float => token.TokenLiteral{ .float = 0.0 },
-                    .String => token.TokenLiteral{ .string = try self.string_interner.intern("") },
-                    .Map => token.TokenLiteral{ .map = std.StringHashMap(token.TokenLiteral).init(self.allocator) },
-                    .Tetra => token.TokenLiteral{ .tetra = token.Tetra.false },
+                    .Int => TokenLiteral{ .int = 0 },
+                    .U8 => TokenLiteral{ .u8 = 0 },
+                    .Float => TokenLiteral{ .float = 0.0 },
+                    .String => TokenLiteral{ .string = try self.string_interner.intern("") },
+                    .Map => TokenLiteral{ .map = std.StringHashMap(TokenLiteral).init(self.allocator) },
+                    .Tetra => TokenLiteral{ .tetra = Tetra.false },
                     .Array => blk: {
                         // Check if we have a size from the type declaration
                         if (decl.type_info.array_size) |size| {
                             // Create an array of the specified size
-                            const array_elements = try self.allocator.alloc(token.TokenLiteral, size);
+                            const array_elements = try self.allocator.alloc(TokenLiteral, size);
 
                             // Initialize with default values (0 for u8)
                             for (array_elements) |*elem| {
                                 // Set default value based on element type
                                 if (decl.type_info.element_type) |elem_type| {
                                     elem.* = switch (elem_type) {
-                                        .Int => token.TokenLiteral{ .int = 0 },
-                                        .U8 => token.TokenLiteral{ .u8 = 0 },
-                                        .Float => token.TokenLiteral{ .float = 0.0 },
-                                        .String => token.TokenLiteral{ .string = try self.string_interner.intern("") },
-                                        .Tetra => token.TokenLiteral{ .tetra = token.Tetra.false },
-                                        else => token.TokenLiteral{ .nothing = {} },
+                                        .Int => TokenLiteral{ .int = 0 },
+                                        .U8 => TokenLiteral{ .u8 = 0 },
+                                        .Float => TokenLiteral{ .float = 0.0 },
+                                        .String => TokenLiteral{ .string = try self.string_interner.intern("") },
+                                        .Tetra => TokenLiteral{ .tetra = Tetra.false },
+                                        else => TokenLiteral{ .nothing = {} },
                                     };
                                 } else {
                                     // Default to u8 if no element type specified
-                                    elem.* = token.TokenLiteral{ .u8 = 0 };
+                                    elem.* = TokenLiteral{ .u8 = 0 };
                                 }
                             }
 
-                            break :blk token.TokenLiteral{ .array = array_elements };
+                            break :blk TokenLiteral{ .array = array_elements };
                         }
 
                         // If no size specified, use empty array (current behavior)
-                        break :blk token.TokenLiteral{ .array = &[_]token.TokenLiteral{} };
+                        break :blk TokenLiteral{ .array = &[_]TokenLiteral{} };
                     },
-                    else => token.TokenLiteral{ .nothing = {} },
+                    else => TokenLiteral{ .nothing = {} },
                 };
 
                 // Use the specialized type_info for u8 arrays if available
@@ -702,7 +565,7 @@ pub const Interpreter = struct {
                 return null;
             },
             .Block => |statements| {
-                var block_env = Environment.init(self.allocator, self.environment, self.debug_enabled, self.memory_manager);
+                var block_env = env_module.init(self.allocator, self.environment, self.debug_enabled, self.memory_manager);
                 defer block_env.deinit();
                 const result = try self.executeBlock(statements, &block_env);
                 if (self.debug_enabled and result != null) {
@@ -726,7 +589,7 @@ pub const Interpreter = struct {
                 return .{ .nothing = {} };
             },
             .Map => |entries| {
-                var map = std.StringHashMap(token.TokenLiteral).init(self.allocator);
+                var map = std.StringHashMap(TokenLiteral).init(self.allocator);
                 errdefer map.deinit();
 
                 for (entries) |entry| {
@@ -741,17 +604,17 @@ pub const Interpreter = struct {
                     try map.put(key.string, value);
                 }
 
-                return token.TokenLiteral{ .map = map };
+                return TokenLiteral{ .map = map };
             },
             .Try => |try_stmt| {
                 // Create new environment for try block
-                var try_env = Environment.init(self.allocator, self.environment, self.debug_enabled, self.memory_manager);
+                var try_env = env_module.init(self.allocator, self.environment, self.debug_enabled, self.memory_manager);
                 defer try_env.deinit();
 
                 // Execute try block
                 const try_result = self.executeBlock(try_stmt.try_body, &try_env) catch |err| {
                     // Create new environment for catch block
-                    var catch_env = Environment.init(self.allocator, self.environment, self.debug_enabled, self.memory_manager);
+                    var catch_env = env_module.init(self.allocator, self.environment, self.debug_enabled, self.memory_manager);
                     defer catch_env.deinit();
 
                     // If there's an error variable, bind the error to it
@@ -774,7 +637,7 @@ pub const Interpreter = struct {
                     reporter.reportRuntimeError("Assertion failed: {s} is not a tetra", .{@tagName(condition)});
                     return error.TypeError;
                 }
-                if (condition.tetra == token.Tetra.false) {
+                if (condition.tetra == Tetra.false) {
                     var reporter = Reporter.init();
 
                     // Use custom message if provided
@@ -811,7 +674,7 @@ pub const Interpreter = struct {
         };
     }
 
-    pub fn evaluate(self: *Interpreter, expr: *const ast.Expr) ErrorList!token.TokenLiteral {
+    pub fn evaluate(self: *Interpreter, expr: *const ast.Expr) ErrorList!TokenLiteral {
         return switch (expr.*) {
             .Literal => |lit| {
                 return lit;
@@ -828,22 +691,22 @@ pub const Interpreter = struct {
                 return switch (binary.operator.type) {
                     .EQUALITY => switch (left) {
                         .int => |i| switch (right) {
-                            .int => |j| token.TokenLiteral{ .tetra = if (i == j) .true else .false },
-                            .u8 => |j| token.TokenLiteral{ .tetra = if (i == j) .true else .false },
-                            else => token.TokenLiteral{ .tetra = .false },
+                            .int => |j| TokenLiteral{ .tetra = if (i == j) .true else .false },
+                            .u8 => |j| TokenLiteral{ .tetra = if (i == j) .true else .false },
+                            else => TokenLiteral{ .tetra = .false },
                         },
                         .u8 => |i| switch (right) {
-                            .int => |j| token.TokenLiteral{ .tetra = if (i == j) .true else .false },
-                            .u8 => |j| token.TokenLiteral{ .tetra = if (i == j) .true else .false },
-                            else => token.TokenLiteral{ .tetra = .false },
+                            .int => |j| TokenLiteral{ .tetra = if (i == j) .true else .false },
+                            .u8 => |j| TokenLiteral{ .tetra = if (i == j) .true else .false },
+                            else => TokenLiteral{ .tetra = .false },
                         },
                         .float => {
                             if (right != .int and right != .float) return error.TypeError;
 
                             if (Interpreter.compare(left.int, right.int) == 0) {
-                                return token.TokenLiteral{ .tetra = .true };
+                                return TokenLiteral{ .tetra = .true };
                             } else {
-                                return token.TokenLiteral{ .tetra = .false };
+                                return TokenLiteral{ .tetra = .false };
                             }
                         },
                         .tetra => {
@@ -852,114 +715,114 @@ pub const Interpreter = struct {
                         },
                         .string => {
                             if (std.mem.eql(u8, left.string, right.string)) {
-                                return token.TokenLiteral{ .tetra = .true };
+                                return TokenLiteral{ .tetra = .true };
                             } else {
-                                return token.TokenLiteral{ .tetra = .false };
+                                return TokenLiteral{ .tetra = .false };
                             }
                         },
                         .nothing => {
                             if (right == .nothing) {
-                                return token.TokenLiteral{ .tetra = .true };
+                                return TokenLiteral{ .tetra = .true };
                             } else {
-                                return token.TokenLiteral{ .tetra = .false };
+                                return TokenLiteral{ .tetra = .false };
                             }
                         },
                         .array => if (right == .array) blk: {
-                            if (left.array.len != right.array.len) break :blk token.TokenLiteral{ .tetra = .false };
+                            if (left.array.len != right.array.len) break :blk TokenLiteral{ .tetra = .false };
                             for (left.array, right.array) |l, r| {
-                                if (!std.meta.eql(l, r)) break :blk token.TokenLiteral{ .tetra = .false };
+                                if (!std.meta.eql(l, r)) break :blk TokenLiteral{ .tetra = .false };
                             }
-                            break :blk token.TokenLiteral{ .tetra = .true };
-                        } else token.TokenLiteral{ .tetra = .false },
+                            break :blk TokenLiteral{ .tetra = .true };
+                        } else TokenLiteral{ .tetra = .false },
                         .struct_value => if (right == .struct_value) blk: {
-                            if (left.struct_value.fields.len != right.struct_value.fields.len) break :blk token.TokenLiteral{ .tetra = .false };
+                            if (left.struct_value.fields.len != right.struct_value.fields.len) break :blk TokenLiteral{ .tetra = .false };
                             for (left.struct_value.fields, right.struct_value.fields) |l, r| {
-                                if (!std.mem.eql(u8, l.name, r.name)) break :blk token.TokenLiteral{ .tetra = .false };
+                                if (!std.mem.eql(u8, l.name, r.name)) break :blk TokenLiteral{ .tetra = .false };
                                 const values_equal = try self.valuesEqual(l.value, r.value);
-                                if (!values_equal) break :blk token.TokenLiteral{ .tetra = .false };
+                                if (!values_equal) break :blk TokenLiteral{ .tetra = .false };
                             }
-                            break :blk token.TokenLiteral{ .tetra = .true };
-                        } else token.TokenLiteral{ .tetra = .false },
-                        .function => token.TokenLiteral{ .tetra = .false }, // Functions are never equal
+                            break :blk TokenLiteral{ .tetra = .true };
+                        } else TokenLiteral{ .tetra = .false },
+                        .function => TokenLiteral{ .tetra = .false }, // Functions are never equal
                         .enum_variant => {
                             if (std.mem.eql(u8, left.enum_variant, right.enum_variant)) {
-                                return token.TokenLiteral{ .tetra = .true };
+                                return TokenLiteral{ .tetra = .true };
                             } else {
-                                return token.TokenLiteral{ .tetra = .false };
+                                return TokenLiteral{ .tetra = .false };
                             }
                         },
                         .tuple => |l| switch (right) {
                             .tuple => |r| {
-                                if (l.len != r.len) return token.TokenLiteral{ .tetra = .false };
+                                if (l.len != r.len) return TokenLiteral{ .tetra = .false };
                                 // Compare each element
                                 for (l, 0..) |item, i| {
                                     const values_equal = try self.valuesEqual(item, r[i]);
                                     if (!values_equal) {
-                                        return token.TokenLiteral{ .tetra = .false };
+                                        return TokenLiteral{ .tetra = .false };
                                     }
                                 }
-                                return token.TokenLiteral{ .tetra = .true };
+                                return TokenLiteral{ .tetra = .true };
                             },
-                            else => token.TokenLiteral{ .tetra = .false },
+                            else => TokenLiteral{ .tetra = .false },
                         },
-                        .map => token.TokenLiteral{ .tetra = .false },
+                        .map => TokenLiteral{ .tetra = .false },
                     },
                     .PLUS => {
                         if (left == .string and right == .string) {
                             const result = try std.mem.concat(self.allocator, u8, &.{ left.string, right.string });
-                            return token.TokenLiteral{ .string = result };
+                            return TokenLiteral{ .string = result };
                         }
                         if (left == .int and right == .int) {
-                            return token.TokenLiteral{ .int = left.int + right.int };
+                            return TokenLiteral{ .int = left.int + right.int };
                         }
                         return error.TypeError;
                     },
                     .MINUS => {
                         if (left == .int and right == .int) {
-                            return token.TokenLiteral{ .int = left.int - right.int };
+                            return TokenLiteral{ .int = left.int - right.int };
                         }
                         return error.TypeError;
                     },
                     .ASTERISK => {
                         if (left == .int and right == .int) {
-                            return token.TokenLiteral{ .int = left.int * right.int };
+                            return TokenLiteral{ .int = left.int * right.int };
                         }
                         return error.TypeError;
                     },
                     .SLASH => {
                         if (left == .int and right == .int) {
                             if (right.int == 0) return error.DivisionByZero;
-                            return token.TokenLiteral{ .int = @divTrunc(left.int, right.int) };
+                            return TokenLiteral{ .int = @divTrunc(left.int, right.int) };
                         }
                         return error.TypeError;
                     },
                     .GREATER => {
                         if (left == .int and right == .int) {
                             if (Interpreter.compare(left.int, right.int) > 0) {
-                                return token.TokenLiteral{ .tetra = .true };
+                                return TokenLiteral{ .tetra = .true };
                             } else {
-                                return token.TokenLiteral{ .tetra = .false };
+                                return TokenLiteral{ .tetra = .false };
                             }
                         }
                         if (left == .float and right == .int) {
                             if (left.float > @as(f64, @floatFromInt(right.int))) {
-                                return token.TokenLiteral{ .tetra = .true };
+                                return TokenLiteral{ .tetra = .true };
                             } else {
-                                return token.TokenLiteral{ .tetra = .false };
+                                return TokenLiteral{ .tetra = .false };
                             }
                         }
                         if (left == .int and right == .float) {
                             if (@as(f64, @floatFromInt(left.int)) > right.float) {
-                                return token.TokenLiteral{ .tetra = .true };
+                                return TokenLiteral{ .tetra = .true };
                             } else {
-                                return token.TokenLiteral{ .tetra = .false };
+                                return TokenLiteral{ .tetra = .false };
                             }
                         }
                         if (left == .float and right == .float) {
                             if (left.float > right.float) {
-                                return token.TokenLiteral{ .tetra = .true };
+                                return TokenLiteral{ .tetra = .true };
                             } else {
-                                return token.TokenLiteral{ .tetra = .false };
+                                return TokenLiteral{ .tetra = .false };
                             }
                         }
                         return error.TypeError;
@@ -967,9 +830,9 @@ pub const Interpreter = struct {
                     .GREATER_EQUAL => {
                         if (left == .int and right == .int) {
                             if (Interpreter.compare(left.int, right.int) >= 0) {
-                                return token.TokenLiteral{ .tetra = .true };
+                                return TokenLiteral{ .tetra = .true };
                             } else {
-                                return token.TokenLiteral{ .tetra = .false };
+                                return TokenLiteral{ .tetra = .false };
                             }
                         }
                         return error.TypeError;
@@ -977,9 +840,9 @@ pub const Interpreter = struct {
                     .LESS => {
                         if (left == .int and right == .int) {
                             if (Interpreter.compare(left.int, right.int) < 0) {
-                                return token.TokenLiteral{ .tetra = .true };
+                                return TokenLiteral{ .tetra = .true };
                             } else {
-                                return token.TokenLiteral{ .tetra = .false };
+                                return TokenLiteral{ .tetra = .false };
                             }
                         }
                         return error.TypeError;
@@ -987,9 +850,9 @@ pub const Interpreter = struct {
                     .LESS_EQUAL => {
                         if (left == .int and right == .int) {
                             if (Interpreter.compare(left.int, right.int) <= 0) {
-                                return token.TokenLiteral{ .tetra = .true };
+                                return TokenLiteral{ .tetra = .true };
                             } else {
-                                return token.TokenLiteral{ .tetra = .false };
+                                return TokenLiteral{ .tetra = .false };
                             }
                         }
                         return error.TypeError;
@@ -997,16 +860,16 @@ pub const Interpreter = struct {
                     .BANG_EQUAL => {
                         if (left == .string and right == .string) {
                             if (!std.mem.eql(u8, left.string, right.string)) {
-                                return token.TokenLiteral{ .tetra = .true };
+                                return TokenLiteral{ .tetra = .true };
                             } else {
-                                return token.TokenLiteral{ .tetra = .false };
+                                return TokenLiteral{ .tetra = .false };
                             }
                         }
                         if (left == .int and right == .int) {
                             if (Interpreter.compare(left.int, right.int) != 0) {
-                                return token.TokenLiteral{ .tetra = .true };
+                                return TokenLiteral{ .tetra = .true };
                             } else {
-                                return token.TokenLiteral{ .tetra = .false };
+                                return TokenLiteral{ .tetra = .false };
                             }
                         }
                         var reporter = Reporter.init();
@@ -1017,7 +880,7 @@ pub const Interpreter = struct {
                     .MODULO => {
                         if (left == .int and right == .int) {
                             if (right.int == 0) return error.DivisionByZero;
-                            return token.TokenLiteral{ .int = @mod(left.int, right.int) };
+                            return TokenLiteral{ .int = @mod(left.int, right.int) };
                         }
                         return error.TypeError;
                     },
@@ -1040,7 +903,7 @@ pub const Interpreter = struct {
                     if_expr.else_branch orelse return error.InvalidExpression;
 
                 // Create a new environment for the if block
-                var if_env = Environment.init(self.allocator, self.environment, self.debug_enabled, self.memory_manager);
+                var if_env = env_module.init(self.allocator, self.environment, self.debug_enabled, self.memory_manager);
                 defer if_env.deinit();
 
                 // Allocate the statement array
@@ -1061,7 +924,7 @@ pub const Interpreter = struct {
                 return result orelse .{ .nothing = {} };
             },
             .Block => |block| {
-                var block_env = Environment.init(self.allocator, self.environment, self.debug_enabled, self.memory_manager);
+                var block_env = env_module.init(self.allocator, self.environment, self.debug_enabled, self.memory_manager);
                 defer block_env.deinit();
 
                 const result = self.executeBlock(block.statements, &block_env) catch |err| {
@@ -1080,13 +943,13 @@ pub const Interpreter = struct {
                 switch (un.operator.type) {
                     .MINUS => {
                         if (operand == .int) {
-                            return token.TokenLiteral{ .int = -operand.int };
+                            return TokenLiteral{ .int = -operand.int };
                         }
                         return error.TypeError;
                     },
                     .NOT_TRANCENDENTAL => {
                         if (operand == .tetra) {
-                            return token.TokenLiteral{ .tetra = token.Tetra.neither };
+                            return TokenLiteral{ .tetra = Tetra.neither };
                         }
                         return error.TypeError;
                     },
@@ -1098,10 +961,10 @@ pub const Interpreter = struct {
                     },
                     .PLUS => {
                         if (operand == .int) {
-                            return token.TokenLiteral{ .int = operand.int };
+                            return TokenLiteral{ .int = operand.int };
                         }
                         if (operand == .float) {
-                            return token.TokenLiteral{ .float = operand.float };
+                            return TokenLiteral{ .float = operand.float };
                         }
                         return error.InvalidOperator;
                     },
@@ -1134,7 +997,7 @@ pub const Interpreter = struct {
 
                             // Return a special value to indicate this is a namespace
                             // The caller should check for namespace when accessing fields
-                            return token.TokenLiteral{ .nothing = {} };
+                            return TokenLiteral{ .nothing = {} };
                         }
                     }
                 }
@@ -1227,7 +1090,7 @@ pub const Interpreter = struct {
                 const result = switch (compound.operator.type) {
                     .PLUS_EQUAL => switch (current_value) {
                         .int => if (rhs_value == .int)
-                            token.TokenLiteral{ .int = current_value.int + rhs_value.int }
+                            TokenLiteral{ .int = current_value.int + rhs_value.int }
                         else
                             return error.TypeError,
                         .u8 => switch (rhs_value) {
@@ -1238,7 +1101,7 @@ pub const Interpreter = struct {
                                     reporting.reportRuntimeError("Overflow during u8 addition", .{});
                                     return error.Overflow;
                                 }
-                                return token.TokenLiteral{ .u8 = result[0] };
+                                return TokenLiteral{ .u8 = result[0] };
                             },
                             .int => {
                                 // Check if the int is representable as u8 for addition operand
@@ -1254,7 +1117,7 @@ pub const Interpreter = struct {
                                     reporting.reportRuntimeError("Overflow during u8 addition", .{});
                                     return error.Overflow;
                                 }
-                                return token.TokenLiteral{ .u8 = result[0] };
+                                return TokenLiteral{ .u8 = result[0] };
                             },
                             else => return error.TypeError,
                         },
@@ -1263,7 +1126,7 @@ pub const Interpreter = struct {
                     .MINUS_EQUAL => switch (current_value) {
                         .int => if (rhs_value == .int)
                             // TODO: Add i32 overflow check?
-                            token.TokenLiteral{ .int = current_value.int - rhs_value.int }
+                            TokenLiteral{ .int = current_value.int - rhs_value.int }
                         else
                             return error.TypeError,
                         .u8 => switch (rhs_value) {
@@ -1274,7 +1137,7 @@ pub const Interpreter = struct {
                                     reporting.reportRuntimeError("Underflow during u8 subtraction", .{});
                                     return error.Overflow; // Using Overflow for underflow too
                                 }
-                                return token.TokenLiteral{ .u8 = result[0] };
+                                return TokenLiteral{ .u8 = result[0] };
                             },
                             .int => {
                                 // Check if the int is representable as u8 for subtraction operand
@@ -1290,7 +1153,7 @@ pub const Interpreter = struct {
                                     reporting.reportRuntimeError("Underflow during u8 subtraction", .{});
                                     return error.Overflow; // Using Overflow for underflow too
                                 }
-                                return token.TokenLiteral{ .u8 = result[0] };
+                                return TokenLiteral{ .u8 = result[0] };
                             },
                             else => return error.TypeError,
                         },
@@ -1307,19 +1170,19 @@ pub const Interpreter = struct {
                 return try self.evaluate(group orelse return error.InvalidExpression);
             },
             .Array => |elements| {
-                var array_values = std.ArrayList(token.TokenLiteral).init(self.allocator);
+                var array_values = std.ArrayList(TokenLiteral).init(self.allocator);
                 errdefer array_values.deinit();
 
                 // Evaluate first element to establish type
                 if (elements.len > 0) {
                     const first = try self.evaluate(elements[0]);
                     try array_values.append(first);
-                    const first_type = @as(std.meta.Tag(token.TokenLiteral), first);
+                    const first_type = @as(std.meta.Tag(TokenLiteral), first);
 
                     // Check remaining elements match the first element's type
                     for (elements[1..]) |element| {
                         const value = try self.evaluate(element);
-                        const value_type = @as(std.meta.Tag(token.TokenLiteral), value);
+                        const value_type = @as(std.meta.Tag(TokenLiteral), value);
 
                         if (value_type != first_type) {
                             array_values.deinit();
@@ -1334,20 +1197,21 @@ pub const Interpreter = struct {
                 const owned_slice = try array_values.toOwnedSlice();
                 errdefer self.allocator.free(owned_slice);
 
-                return token.TokenLiteral{ .array = owned_slice };
+                return TokenLiteral{ .array = owned_slice };
             },
             .Struct => |fields| {
-                var struct_fields = std.ArrayList(token.StructField).init(self.allocator);
+                var struct_fields = std.ArrayList(TypesImport.StructField).init(self.allocator);
                 errdefer struct_fields.deinit();
 
                 for (fields) |field| {
                     const value = try self.evaluate(field.value);
-                    try struct_fields.append(token.StructField{
+                    try struct_fields.append(.{
                         .name = field.name.lexeme,
                         .value = value,
                     });
                 }
-                return token.TokenLiteral{ .struct_value = .{
+
+                return TokenLiteral{ .struct_value = .{
                     .type_name = expr.StructLiteral.name.lexeme,
                     .fields = try struct_fields.toOwnedSlice(),
                 } };
@@ -1375,7 +1239,7 @@ pub const Interpreter = struct {
                         // Create a new string containing just the character at the index
                         var char_str = try self.allocator.alloc(u8, 1);
                         char_str[0] = str[idx];
-                        return token.TokenLiteral{ .string = char_str };
+                        return TokenLiteral{ .string = char_str };
                     },
                     .array => |arr| {
                         if (index_value != .int) {
@@ -1384,7 +1248,7 @@ pub const Interpreter = struct {
                                 index.index.Literal == .string and
                                 std.mem.eql(u8, "length", index.index.Literal.string))
                             {
-                                return token.TokenLiteral{ .int = @intCast(arr.len) };
+                                return TokenLiteral{ .int = @intCast(arr.len) };
                             }
                             return error.TypeError;
                         }
@@ -1409,7 +1273,7 @@ pub const Interpreter = struct {
                                     if (type_info.element_type.? == .U8 and arr[idx] == .int) {
                                         const int_val = arr[idx].int;
                                         if (int_val >= 0 and int_val <= 255) {
-                                            return token.TokenLiteral{ .u8 = @intCast(int_val) };
+                                            return TokenLiteral{ .u8 = @intCast(int_val) };
                                         }
                                     }
                                 }
@@ -1465,7 +1329,7 @@ pub const Interpreter = struct {
                     const result = switch (compound.operator.type) {
                         .PLUS_EQUAL => switch (current_value) {
                             .int => if (rhs_value == .int)
-                                token.TokenLiteral{ .int = current_value.int + rhs_value.int }
+                                TokenLiteral{ .int = current_value.int + rhs_value.int }
                             else
                                 return error.TypeError,
                             .u8 => switch (rhs_value) {
@@ -1474,12 +1338,12 @@ pub const Interpreter = struct {
                                     const val: u8 = @intCast(rhs_value.int);
                                     const sum = current_value.u8 + val;
                                     if (sum > 255) return error.Overflow;
-                                    return token.TokenLiteral{ .u8 = sum };
+                                    return TokenLiteral{ .u8 = sum };
                                 },
                                 .u8 => {
                                     const sum = current_value.u8 + rhs_value.u8;
                                     if (sum > 255) return error.Overflow;
-                                    return token.TokenLiteral{ .u8 = sum };
+                                    return TokenLiteral{ .u8 = sum };
                                 },
                                 else => return error.TypeError,
                             },
@@ -1487,14 +1351,14 @@ pub const Interpreter = struct {
                         },
                         .MINUS_EQUAL => switch (current_value) {
                             .int => if (rhs_value == .int)
-                                token.TokenLiteral{ .int = current_value.int - rhs_value.int }
+                                TokenLiteral{ .int = current_value.int - rhs_value.int }
                             else
                                 return error.TypeError,
                             .u8 => switch (rhs_value) {
                                 .u8 => {
                                     const result = @subWithOverflow(current_value.u8, rhs_value.u8);
                                     if (result[1] != 0) return error.Overflow;
-                                    return token.TokenLiteral{ .u8 = result[0] };
+                                    return TokenLiteral{ .u8 = result[0] };
                                 },
                                 .int => {
                                     if (rhs_value.int < 0 or rhs_value.int > 255)
@@ -1502,7 +1366,7 @@ pub const Interpreter = struct {
                                     const val: u8 = @intCast(rhs_value.int);
                                     const result = @subWithOverflow(current_value.u8, val);
                                     if (result[1] != 0) return error.Overflow;
-                                    return token.TokenLiteral{ .u8 = result[0] };
+                                    return TokenLiteral{ .u8 = result[0] };
                                 },
                                 else => return error.TypeError,
                             },
@@ -1559,7 +1423,7 @@ pub const Interpreter = struct {
                             const current_array = object.array;
 
                             // Create new array with one more element
-                            var new_array = try self.allocator.alloc(token.TokenLiteral, current_array.len + 1);
+                            var new_array = try self.allocator.alloc(TokenLiteral, current_array.len + 1);
                             errdefer self.allocator.free(new_array);
 
                             // Copy existing elements
@@ -1572,7 +1436,7 @@ pub const Interpreter = struct {
                             self.allocator.free(current_array);
 
                             // Create new token literal with the new array
-                            const new_value = token.TokenLiteral{ .array = new_array };
+                            const new_value = TokenLiteral{ .array = new_array };
 
                             // Update the variable in the environment
                             if (field_access.object.* == .Variable) {
@@ -1624,7 +1488,7 @@ pub const Interpreter = struct {
                                                             std.mem.eql(u8, stmt.Function.name.lexeme, field_access.field.lexeme))
                                                         {
                                                             // Create function value and call it
-                                                            const function = token.TokenLiteral{
+                                                            const function = TokenLiteral{
                                                                 .function = .{
                                                                     .params = stmt.Function.params,
                                                                     .body = stmt.Function.body,
@@ -1668,7 +1532,7 @@ pub const Interpreter = struct {
                                                             if (stmt == .Function and
                                                                 std.mem.eql(u8, stmt.Function.name.lexeme, field_access.field.lexeme))
                                                             {
-                                                                const function = token.TokenLiteral{
+                                                                const function = TokenLiteral{
                                                                     .function = .{
                                                                         .params = stmt.Function.params,
                                                                         .body = stmt.Function.body,
@@ -1722,11 +1586,11 @@ pub const Interpreter = struct {
                 // Only allow tetra inputs
                 if (left != .tetra or right != .tetra) return error.TypeError;
 
-                const left_val = token.TokenLiteral{ .tetra = left.tetra };
-                const right_val = token.TokenLiteral{ .tetra = right.tetra };
+                const left_val = TokenLiteral{ .tetra = left.tetra };
+                const right_val = TokenLiteral{ .tetra = right.tetra };
 
                 // Store the tetra result in a comptime-known variable
-                var result_tetra: token.Tetra = undefined;
+                var result_tetra: Tetra = undefined;
                 switch (logical.operator.type) {
                     .AND => {
                         result_tetra = switch (left_val.tetra) {
@@ -1808,144 +1672,28 @@ pub const Interpreter = struct {
                 }
 
                 const is_true = result_tetra == .true;
-                return token.TokenLiteral{ .tetra = if (is_true) .true else .false };
+                return TokenLiteral{ .tetra = if (is_true) .true else .false };
             },
-            .Function => |f| token.TokenLiteral{ .function = .{
+            .Function => |f| TokenLiteral{ .function = .{
                 .params = f.params,
                 .body = f.body,
                 .closure = self.environment,
             } },
-            .Inspect => |inspect| {
-                const value = try self.evaluate(inspect.expr);
+            .Inspect => |insp| {
+                const value = try self.evaluate(insp.expr);
                 var buffer = std.ArrayList(u8).init(self.allocator);
                 defer buffer.deinit();
 
                 // Format the location information
                 try buffer.writer().print("[{s}:{d}:{d}] {s} = ", .{
-                    inspect.location.file,
-                    inspect.location.line,
-                    inspect.location.column,
-                    inspect.variable_name orelse "value",
+                    insp.location.file,
+                    insp.location.line,
+                    insp.location.column,
+                    insp.variable_name orelse "value",
                 });
 
-                // Then format the value
-                switch (value) {
-                    .tetra => |t| try buffer.writer().print("{s}", .{@tagName(t)}),
-                    .string => |s| try buffer.writer().print("\"{s}\"", .{s}),
-                    .int => |i| try buffer.writer().print("{d}", .{i}),
-                    .u8 => |u| try buffer.writer().print("{d}", .{u}),
-                    .float => |f| try buffer.writer().print("{d}", .{f}),
-                    .nothing => try buffer.writer().print("nothing", .{}),
-                    .array => |arr| {
-                        // Regular array printing logic
-                        try buffer.writer().print("[", .{});
-                        for (arr, 0..) |item, i| {
-                            if (i > 0) try buffer.writer().print(", ", .{});
-                            switch (item) {
-                                .int => |n| try buffer.writer().print("{d}", .{n}),
-                                .u8 => |u| try buffer.writer().print("{d}", .{u}),
-                                .float => |f| try buffer.writer().print("{d}", .{f}),
-                                .string => |s| try buffer.writer().print("\"{s}\"", .{s}),
-                                .tetra => |t| try buffer.writer().print("{s}", .{@tagName(t)}),
-                                .array => |nested| {
-                                    try buffer.writer().print("[", .{});
-                                    for (nested, 0..) |nested_item, j| {
-                                        if (j > 0) try buffer.writer().print(", ", .{});
-                                        switch (nested_item) {
-                                            .int => |n| try buffer.writer().print("{d}", .{n}),
-                                            else => try buffer.writer().print("{any}", .{nested_item}),
-                                        }
-                                    }
-                                    try buffer.writer().print("]", .{});
-                                },
-                                else => try buffer.writer().print("{any}", .{item}),
-                            }
-                        }
-                        try buffer.writer().print("]", .{});
-                    },
-                    .function => try buffer.writer().print("function", .{}),
-                    .struct_value => |sv| try buffer.writer().print("{any}", .{sv}),
-                    .enum_variant => |variant| try buffer.writer().print("{s}", .{variant}),
-                    .tuple => |tup| {
-                        try buffer.writer().print("(", .{});
-                        for (tup, 0..) |item, i| {
-                            if (i > 0) try buffer.writer().print(", ", .{});
-                            switch (item) {
-                                .string => |s| try buffer.writer().print("\"{s}\"", .{s}),
-                                else => try buffer.writer().print("{any}", .{item}),
-                            }
-                        }
-                        try buffer.writer().print(")", .{});
-                    },
-                    .map => |m| {
-                        try buffer.writer().print("{{", .{}); // Double braces for escaping
-                        var iter = m.iterator();
-                        var first = true;
-                        while (iter.next()) |entry| {
-                            if (!first) {
-                                try buffer.writer().print(", ", .{});
-                            }
-                            first = false;
-                            try buffer.writer().print("{s}: ", .{entry.key_ptr.*});
-
-                            switch (entry.value_ptr.*) {
-                                .string => |s| try buffer.writer().print("\"{s}\"", .{s}),
-                                .int => |i| try buffer.writer().print("{d}", .{i}),
-                                .u8 => |u| try buffer.writer().print("{d}", .{u}),
-                                .float => |f| try buffer.writer().print("{d}", .{f}),
-                                .tetra => |t| {
-                                    const name = @tagName(t);
-                                    var lower_buffer: [16]u8 = undefined; // Adjust size as needed
-                                    for (name, 0..) |c, i| {
-                                        lower_buffer[i] = std.ascii.toLower(c);
-                                    }
-                                    try buffer.writer().print("{s}", .{lower_buffer[0..name.len]});
-                                },
-                                .nothing => try buffer.writer().print("nothing", .{}),
-                                .array => |arr| {
-                                    try buffer.writer().print("[", .{});
-                                    for (arr, 0..) |item, i| {
-                                        if (i > 0) try buffer.writer().print(", ", .{});
-                                        switch (item) {
-                                            .string => |s| try buffer.writer().print("\"{s}\"", .{s}),
-                                            .u8 => |u| try buffer.writer().print("{d}", .{u}),
-                                            .int => |n| try buffer.writer().print("{d}", .{n}),
-                                            .float => |f| try buffer.writer().print("{d}", .{f}),
-                                            .tetra => |t| try buffer.writer().print("{s}", .{@tagName(t)}),
-                                            .array => |nested| {
-                                                try buffer.writer().print("[", .{});
-                                                for (nested, 0..) |nested_item, j| {
-                                                    if (j > 0) try buffer.writer().print(", ", .{});
-                                                    try buffer.writer().print("{any}", .{nested_item});
-                                                }
-                                                try buffer.writer().print("]", .{});
-                                            },
-                                            else => try buffer.writer().print("{any}", .{item}),
-                                        }
-                                    }
-                                    try buffer.writer().print("]", .{});
-                                },
-                                .map => try buffer.writer().print("nested-map", .{}),
-                                .function => try buffer.writer().print("function", .{}),
-                                .struct_value => |sv| try buffer.writer().print("{any}", .{sv}),
-                                .enum_variant => |variant| try buffer.writer().print(".{s}", .{variant}),
-                                .tuple => |tup| {
-                                    try buffer.writer().print("(", .{});
-                                    for (tup, 0..) |item, i| {
-                                        if (i > 0) try buffer.writer().print(", ", .{});
-                                        switch (item) {
-                                            .string => |s| try buffer.writer().print("\"{s}\"", .{s}),
-                                            else => try buffer.writer().print("{any}", .{item}),
-                                        }
-                                    }
-                                    try buffer.writer().print(")", .{});
-                                },
-                            }
-                        }
-                        try buffer.writer().print("}}", .{}); // Double braces for escaping
-                    },
-                }
-
+                // Create a helper function to format values recursively
+                try formatValue(buffer.writer(), value);
                 try buffer.writer().print("\n", .{});
                 try std.io.getStdOut().writeAll(buffer.items);
 
@@ -1972,7 +1720,7 @@ pub const Interpreter = struct {
                     self.memory_manager.scope_manager.root_scope = current_scope;
                     iteration_scope.deinit();
                 }
-                return token.TokenLiteral{ .nothing = {} };
+                return TokenLiteral{ .nothing = {} };
             },
             .For => |for_expr| {
                 // Execute initializer if present
@@ -2008,7 +1756,7 @@ pub const Interpreter = struct {
                     self.memory_manager.scope_manager.root_scope = current_scope;
                     iteration_scope.deinit();
                 }
-                return token.TokenLiteral{ .nothing = {} };
+                return TokenLiteral{ .nothing = {} };
             },
             .ForEach => |foreach| {
                 const array_value = try self.evaluate(foreach.array);
@@ -2017,7 +1765,7 @@ pub const Interpreter = struct {
                 }
 
                 // Create a new environment for the loop
-                var iter_env = Environment.init(self.allocator, self.environment, self.debug_enabled, self.memory_manager);
+                var iter_env = env_module.init(self.allocator, self.environment, self.debug_enabled, self.memory_manager);
                 defer iter_env.deinit();
 
                 // Infer type from array elements or use dynamic if empty
@@ -2044,7 +1792,7 @@ pub const Interpreter = struct {
                     _ = try self.executeBlock(foreach.body, &iter_env);
                 }
 
-                return token.TokenLiteral{ .nothing = {} };
+                return TokenLiteral{ .nothing = {} };
             },
             .FieldAccess => |field| {
                 const object = try self.evaluate(field.object);
@@ -2052,15 +1800,15 @@ pub const Interpreter = struct {
                 // Handle string length property
                 if (object == .string) {
                     if (std.mem.eql(u8, field.field.lexeme, "length")) {
-                        return token.TokenLiteral{ .int = @intCast(object.string.len) };
+                        return TokenLiteral{ .int = @intCast(object.string.len) };
                     }
                     // Add bytes field access
                     if (std.mem.eql(u8, field.field.lexeme, "bytes")) {
-                        var bytes = try self.allocator.alloc(token.TokenLiteral, object.string.len);
+                        var bytes = try self.allocator.alloc(TokenLiteral, object.string.len);
                         for (object.string, 0..) |byte, i| {
-                            bytes[i] = token.TokenLiteral{ .u8 = byte };
+                            bytes[i] = TokenLiteral{ .u8 = byte };
                         }
-                        const array_value = token.TokenLiteral{ .array = bytes };
+                        const array_value = TokenLiteral{ .array = bytes };
                         try self.environment.define(field.field.lexeme, array_value, .{ .base = .Array, .element_type = .U8, .is_mutable = true });
                         return array_value;
                     }
@@ -2069,7 +1817,7 @@ pub const Interpreter = struct {
                 // Handle array properties first
                 if (object == .array) {
                     if (std.mem.eql(u8, field.field.lexeme, "length")) {
-                        return token.TokenLiteral{ .int = @intCast(object.array.len) };
+                        return TokenLiteral{ .int = @intCast(object.array.len) };
                     }
                     return error.UnknownMethod;
                 }
@@ -2122,7 +1870,7 @@ pub const Interpreter = struct {
                                                             }
 
                                                             // Create a function value
-                                                            return token.TokenLiteral{
+                                                            return TokenLiteral{
                                                                 .function = .{
                                                                     .params = stmt.Function.params,
                                                                     .body = stmt.Function.body,
@@ -2168,7 +1916,7 @@ pub const Interpreter = struct {
                                                                 return self.evaluate(init_expr);
                                                             } else {
                                                                 // If no initializer, return a default value based on type
-                                                                return token.TokenLiteral{ .nothing = {} };
+                                                                return TokenLiteral{ .nothing = {} };
                                                             }
                                                         }
                                                     }
@@ -2181,7 +1929,7 @@ pub const Interpreter = struct {
                                         }
 
                                         // For other types, we might need different handling
-                                        return token.TokenLiteral{ .nothing = {} };
+                                        return TokenLiteral{ .nothing = {} };
                                     } else if (self.debug_enabled) {
                                         std.debug.print("Symbol {s} not found in imported symbols\n", .{full_name});
                                     }
@@ -2206,7 +1954,7 @@ pub const Interpreter = struct {
                                                 }
 
                                                 // Create a function value
-                                                return token.TokenLiteral{
+                                                return TokenLiteral{
                                                     .function = .{
                                                         .params = stmt.Function.params,
                                                         .body = stmt.Function.body,
@@ -2232,7 +1980,7 @@ pub const Interpreter = struct {
                         };
                         if (type_info.base == .Enum) {
                             // This is an enum member access
-                            return token.TokenLiteral{ .enum_variant = field.field.lexeme };
+                            return TokenLiteral{ .enum_variant = field.field.lexeme };
                         }
                     }
 
@@ -2272,7 +2020,7 @@ pub const Interpreter = struct {
                 return .{ .nothing = {} };
             },
             .StructLiteral => |literal| {
-                var struct_fields = std.ArrayList(token.StructField).init(self.allocator);
+                var struct_fields = std.ArrayList(TypesImport.StructField).init(self.allocator);
                 errdefer struct_fields.deinit();
 
                 // Get the struct's type info from the environment
@@ -2314,7 +2062,7 @@ pub const Interpreter = struct {
                     });
                 }
 
-                return token.TokenLiteral{ .struct_value = .{
+                return TokenLiteral{ .struct_value = .{
                     .type_name = literal.name.lexeme,
                     .fields = try struct_fields.toOwnedSlice(),
                 } };
@@ -2371,7 +2119,7 @@ pub const Interpreter = struct {
                 defer self.environment = prev_env;
 
                 // Create a new environment for the quantifier scope
-                var quantifier_env = Environment.init(self.allocator, self.environment, self.debug_enabled, self.memory_manager);
+                var quantifier_env = env_module.init(self.allocator, self.environment, self.debug_enabled, self.memory_manager);
                 self.environment = &quantifier_env;
 
                 // Iterate over the actual array elements
@@ -2396,11 +2144,11 @@ pub const Interpreter = struct {
                         std.debug.print("Condition result: {any}\n", .{result});
                     }
                     if (result == .tetra and result.tetra == .true) {
-                        return token.TokenLiteral{ .tetra = .true };
+                        return TokenLiteral{ .tetra = .true };
                     }
                 }
 
-                return token.TokenLiteral{ .tetra = .false };
+                return TokenLiteral{ .tetra = .false };
             },
             .ForAll => |f| {
                 // Get the variable name
@@ -2417,7 +2165,7 @@ pub const Interpreter = struct {
                 defer self.environment = prev_env;
 
                 // Create a new environment for the quantifier scope
-                var quantifier_env = Environment.init(self.allocator, self.environment, self.debug_enabled, self.memory_manager);
+                var quantifier_env = env_module.init(self.allocator, self.environment, self.debug_enabled, self.memory_manager);
                 self.environment = &quantifier_env;
 
                 // Iterate over the actual array elements
@@ -2435,14 +2183,14 @@ pub const Interpreter = struct {
                     iteration_scope.deinit();
 
                     if (!(result == .tetra and result.tetra == .true)) {
-                        return token.TokenLiteral{ .tetra = .false };
+                        return TokenLiteral{ .tetra = .false };
                     }
                 }
 
-                return token.TokenLiteral{ .tetra = .true };
+                return TokenLiteral{ .tetra = .true };
             },
             .ArrayType => {
-                return token.TokenLiteral{ .nothing = {} };
+                return TokenLiteral{ .nothing = {} };
             },
             .Match => |match_expr| {
                 const value = try self.evaluate(match_expr.value);
@@ -2477,10 +2225,10 @@ pub const Interpreter = struct {
             },
             .EnumMember => |member| {
                 // Return the enum variant as a string
-                return token.TokenLiteral{ .enum_variant = member.lexeme };
+                return TokenLiteral{ .enum_variant = member.lexeme };
             },
             .DefaultArgPlaceholder => {
-                return token.TokenLiteral{ .nothing = {} };
+                return TokenLiteral{ .nothing = {} };
             },
             .TypeOf => |expr_to_check| {
                 // Special case for array indexing
@@ -2510,7 +2258,7 @@ pub const Interpreter = struct {
                             if (self.debug_enabled) {
                                 std.debug.print("Found u8 array, returning u8 type\n", .{});
                             }
-                            return token.TokenLiteral{ .string = "u8" };
+                            return TokenLiteral{ .string = "u8" };
                         }
                     }
                 } else if (self.debug_enabled and expr_to_check.* == .Index) {
@@ -2530,7 +2278,7 @@ pub const Interpreter = struct {
                     };
 
                     // Return the string based on the DECLARED type_info.base
-                    return token.TokenLiteral{
+                    return TokenLiteral{
                         .string = switch (type_info.base) {
                             .Int => "int",
                             .U8 => "u8",
@@ -2552,7 +2300,7 @@ pub const Interpreter = struct {
                 } else {
                     // If it's not a simple variable, evaluate it and report the runtime type
                     const value = try self.evaluate(expr_to_check);
-                    return token.TokenLiteral{
+                    return TokenLiteral{
                         .string = switch (value) {
                             .int => "int",
                             .u8 => "u8",
@@ -2571,7 +2319,7 @@ pub const Interpreter = struct {
                 }
             },
             .Tuple => |elements| {
-                var tuple_values = std.ArrayList(token.TokenLiteral).init(self.allocator);
+                var tuple_values = std.ArrayList(TokenLiteral).init(self.allocator);
                 errdefer tuple_values.deinit();
 
                 // Evaluate each element in the tuple
@@ -2583,10 +2331,10 @@ pub const Interpreter = struct {
                 const owned_slice = try tuple_values.toOwnedSlice();
                 errdefer self.allocator.free(owned_slice);
 
-                return token.TokenLiteral{ .tuple = owned_slice };
+                return TokenLiteral{ .tuple = owned_slice };
             },
             .Map => |entries| {
-                var map = std.StringHashMap(token.TokenLiteral).init(self.allocator);
+                var map = std.StringHashMap(TokenLiteral).init(self.allocator);
                 errdefer map.deinit();
 
                 for (entries) |entry| {
@@ -2601,7 +2349,7 @@ pub const Interpreter = struct {
                     try map.put(key.string, value);
                 }
 
-                return token.TokenLiteral{ .map = map };
+                return TokenLiteral{ .map = map };
             },
             .MethodCall => |method_call| {
                 if (std.mem.eql(u8, method_call.method.lexeme, "length")) {
@@ -2609,7 +2357,7 @@ pub const Interpreter = struct {
                     if (receiver_value != .array) {
                         return error.TypeError;
                     }
-                    return token.TokenLiteral{ .int = @intCast(receiver_value.array.len) };
+                    return TokenLiteral{ .int = @intCast(receiver_value.array.len) };
                 }
                 return try self.callMethod(.{
                     .receiver = method_call.receiver,
@@ -2625,7 +2373,7 @@ pub const Interpreter = struct {
                 if (array_value != .array) {
                     return error.TypeError;
                 }
-                return token.TokenLiteral{ .int = @intCast(array_value.array.len) };
+                return TokenLiteral{ .int = @intCast(array_value.array.len) };
             },
             .ArrayPop => |ap| {
                 return try self.arrayPop(ap.array);
@@ -2672,7 +2420,7 @@ pub const Interpreter = struct {
                 }
 
                 const input_str = try buffer.toOwnedSlice();
-                return token.TokenLiteral{ .string = input_str };
+                return TokenLiteral{ .string = input_str };
             },
             .Assert => |assert| {
                 const condition = try self.evaluate(assert.condition);
@@ -2702,49 +2450,49 @@ pub const Interpreter = struct {
         };
     }
 
-    fn makeNothing(self: *Interpreter) token.TokenLiteral {
+    fn makeNothing(self: *Interpreter) TokenLiteral {
         _ = self;
         return .{ .nothing = {} };
     }
 
-    fn negateLogical(value: token.Tetra) ErrorList!token.TokenLiteral {
+    fn negateLogical(value: Tetra) ErrorList!TokenLiteral {
         return switch (value) {
-            .neither => token.TokenLiteral{ .tetra = .both },
-            .both => token.TokenLiteral{ .tetra = .neither },
-            .true => token.TokenLiteral{ .tetra = .false },
-            .false => token.TokenLiteral{ .tetra = .true },
+            .neither => TokenLiteral{ .tetra = .both },
+            .both => TokenLiteral{ .tetra = .neither },
+            .true => TokenLiteral{ .tetra = .false },
+            .false => TokenLiteral{ .tetra = .true },
         };
     }
 
-    fn orLogical(left: token.Tetra, right: token.Tetra) !token.TokenLiteral {
+    fn orLogical(left: Tetra, right: Tetra) !TokenLiteral {
         // neither overrides true
         if (left == .neither or right == .neither) {
-            return token.TokenLiteral{ .tetra = .false };
+            return TokenLiteral{ .tetra = .false };
         }
         // both overrides false
         if ((left == .both or left == .true) and (right == .both or right == .true)) {
-            return token.TokenLiteral{ .tetra = .true };
+            return TokenLiteral{ .tetra = .true };
         }
         if (left == .false and right == .false) {
-            return token.TokenLiteral{ .tetra = .false };
+            return TokenLiteral{ .tetra = .false };
         }
         unreachable;
     }
 
-    fn compareLogical(left: token.Tetra, right: token.Tetra) !token.TokenLiteral {
+    fn compareLogical(left: Tetra, right: Tetra) !TokenLiteral {
         if (left == .neither or right == .neither) {
-            return token.TokenLiteral{ .tetra = .false };
+            return TokenLiteral{ .tetra = .false };
         }
         if (left == .false or right == .false) {
-            return token.TokenLiteral{ .tetra = .false };
+            return TokenLiteral{ .tetra = .false };
         }
         if ((left == .true or left == .both) and (right == .true or right == .both)) {
-            return token.TokenLiteral{ .tetra = .true };
+            return TokenLiteral{ .tetra = .true };
         }
         unreachable;
     }
 
-    fn executeAssignment(self: *Interpreter, expr: *const ast.Expr) ErrorList!token.TokenLiteral {
+    fn executeAssignment(self: *Interpreter, expr: *const ast.Expr) ErrorList!TokenLiteral {
         const assignment = expr.Assignment;
         const value = try self.evaluate(assignment.value);
 
@@ -2808,11 +2556,11 @@ pub const Interpreter = struct {
         return value;
     }
 
-    pub fn callFunction(self: *Interpreter, callee: token.TokenLiteral, arguments: []const *ast.Expr) ErrorList!token.TokenLiteral {
+    pub fn callFunction(self: *Interpreter, callee: TokenLiteral, arguments: []const *ast.Expr) ErrorList!TokenLiteral {
         switch (callee) {
             .function => |f| {
                 // Create new environment for function call
-                var function_env = Environment.init(self.allocator, f.closure, self.debug_enabled, self.memory_manager);
+                var function_env = env_module.init(self.allocator, f.closure, self.debug_enabled, self.memory_manager);
                 defer function_env.deinit();
 
                 // Create a new scope for this function call, ensure it's a child of the current scope
@@ -2835,7 +2583,7 @@ pub const Interpreter = struct {
 
                 // Evaluate and bind arguments to parameters
                 for (f.params, 0..) |param, i| {
-                    var value: token.TokenLiteral = undefined;
+                    var value: TokenLiteral = undefined;
 
                     if (i < arguments.len) {
                         const arg = arguments[i];
@@ -2953,7 +2701,7 @@ pub const Interpreter = struct {
         }
     }
 
-    fn moveValueToParentEnv(self: *Interpreter, value: token.TokenLiteral) !token.TokenLiteral {
+    fn moveValueToParentEnv(self: *Interpreter, value: TokenLiteral) !TokenLiteral {
         if (self.debug_enabled) {
             std.debug.print("\n=== Moving value between environments ===\n", .{});
             std.debug.print("Input value type: {s}\n", .{@tagName(value)});
@@ -2969,7 +2717,7 @@ pub const Interpreter = struct {
                     }
                 }
 
-                var new_array = try self.allocator.alloc(token.TokenLiteral, arr.len);
+                var new_array = try self.allocator.alloc(TokenLiteral, arr.len);
                 errdefer self.allocator.free(new_array);
 
                 for (arr, 0..) |item, i| {
@@ -2993,18 +2741,18 @@ pub const Interpreter = struct {
                                 std.debug.print("  Interned length: {d}\n", .{interned.len});
                             }
 
-                            const result = token.TokenLiteral{ .string = interned };
+                            const result = TokenLiteral{ .string = interned };
                             if (self.debug_enabled) {
                                 std.debug.print("  Created token: {any}\n", .{result});
                             }
                             break :blk2 result;
                         },
-                        .int => |n| token.TokenLiteral{ .int = n },
-                        .u8 => |u| token.TokenLiteral{ .u8 = u },
-                        .float => |fl| token.TokenLiteral{ .float = fl },
-                        .tetra => |t| token.TokenLiteral{ .tetra = t },
-                        .nothing => token.TokenLiteral{ .nothing = {} },
-                        .array => |nested| try self.moveValueToParentEnv(token.TokenLiteral{ .array = nested }),
+                        .int => |n| TokenLiteral{ .int = n },
+                        .u8 => |u| TokenLiteral{ .u8 = u },
+                        .float => |fl| TokenLiteral{ .float = fl },
+                        .tetra => |t| TokenLiteral{ .tetra = t },
+                        .nothing => TokenLiteral{ .nothing = {} },
+                        .array => |nested| try self.moveValueToParentEnv(TokenLiteral{ .array = nested }),
                         else => blk2: {
                             if (self.debug_enabled) {
                                 std.debug.print("  WARNING: Unhandled type: {s}\n", .{@tagName(item)});
@@ -3026,7 +2774,7 @@ pub const Interpreter = struct {
                     }
                 }
 
-                const result = token.TokenLiteral{ .array = new_array };
+                const result = TokenLiteral{ .array = new_array };
                 if (self.debug_enabled) {
                     std.debug.print("\nReturning array token: {any}\n", .{result});
                 }
@@ -3041,7 +2789,7 @@ pub const Interpreter = struct {
         };
     }
 
-    fn assignField(self: *Interpreter, object: token.TokenLiteral, field: token.Token, value: *ast.Expr) ErrorList!token.TokenLiteral {
+    fn assignField(self: *Interpreter, object: TokenLiteral, field: Token, value: *ast.Expr) ErrorList!TokenLiteral {
         if (object != .struct_value) {
             return error.NotAStruct;
         }
@@ -3061,15 +2809,15 @@ pub const Interpreter = struct {
         return error.FieldNotFound;
     }
 
-    fn compareLiteralValues(a: anytype, b: @TypeOf(a)) token.TokenLiteral {
+    fn compareLiteralValues(a: anytype, b: @TypeOf(a)) TokenLiteral {
         if (a == b) {
-            return token.TokenLiteral{ .tetra = .true };
+            return TokenLiteral{ .tetra = .true };
         } else {
-            return token.TokenLiteral{ .tetra = .false };
+            return TokenLiteral{ .tetra = .false };
         }
     }
 
-    fn valuesEqual(self: *Interpreter, a: token.TokenLiteral, b: token.TokenLiteral) ErrorList!bool {
+    fn valuesEqual(self: *Interpreter, a: TokenLiteral, b: TokenLiteral) ErrorList!bool {
         return switch (a) {
             .int => |val| b == .int and val == b.int,
             .u8 => |val| b == .u8 and val == b.u8,
@@ -3111,11 +2859,11 @@ pub const Interpreter = struct {
 
     const MethodCallExpr = struct {
         receiver: *ast.Expr,
-        method: token.Token,
+        method: Token,
         arguments: []const *ast.Expr,
     };
 
-    fn callMethod(self: *Interpreter, method_call: MethodCallExpr) ErrorList!token.TokenLiteral {
+    fn callMethod(self: *Interpreter, method_call: MethodCallExpr) ErrorList!TokenLiteral {
         // First evaluate the receiver to get the actual array
         const receiver_value = try self.evaluate(method_call.receiver);
 
@@ -3134,7 +2882,7 @@ pub const Interpreter = struct {
                 const current_array = receiver_value.array;
 
                 // Create new array with one more element
-                var new_array = try self.allocator.alloc(token.TokenLiteral, current_array.len + 1);
+                var new_array = try self.allocator.alloc(TokenLiteral, current_array.len + 1);
                 errdefer self.allocator.free(new_array);
 
                 // Copy existing elements
@@ -3147,7 +2895,7 @@ pub const Interpreter = struct {
                 self.allocator.free(current_array);
 
                 // Create new token literal with the new array
-                const new_value = token.TokenLiteral{ .array = new_array };
+                const new_value = TokenLiteral{ .array = new_array };
 
                 // Update the variable in the environment
                 if (method_call.receiver.* == .Variable) {
@@ -3166,7 +2914,7 @@ pub const Interpreter = struct {
         // Handle string methods
         if (receiver_value == .string) {
             if (std.mem.eql(u8, method_call.method.lexeme, "length")) {
-                return token.TokenLiteral{ .int = @intCast(receiver_value.string.len) };
+                return TokenLiteral{ .int = @intCast(receiver_value.string.len) };
             }
         }
 
@@ -3174,15 +2922,15 @@ pub const Interpreter = struct {
         return error.MethodNotFound;
     }
 
-    fn arrayIsEmpty(self: *Interpreter, array_expr: *const ast.Expr) ErrorList!token.TokenLiteral {
+    fn arrayIsEmpty(self: *Interpreter, array_expr: *const ast.Expr) ErrorList!TokenLiteral {
         const array_value = try self.evaluate(array_expr);
-        return token.TokenLiteral{ .tetra = if (array_value.array.len == 0)
+        return TokenLiteral{ .tetra = if (array_value.array.len == 0)
             .true
         else
             .false };
     }
 
-    fn arrayPop(self: *Interpreter, array_expr: *const ast.Expr) ErrorList!token.TokenLiteral {
+    fn arrayPop(self: *Interpreter, array_expr: *const ast.Expr) ErrorList!TokenLiteral {
         const array_value = try self.evaluate(array_expr);
         if (array_value != .array) {
             return error.TypeError;
@@ -3197,7 +2945,7 @@ pub const Interpreter = struct {
         const popped_value = current_array[current_array.len - 1];
 
         // Create new array with one less element
-        var new_array = try self.allocator.alloc(token.TokenLiteral, current_array.len - 1);
+        var new_array = try self.allocator.alloc(TokenLiteral, current_array.len - 1);
         errdefer self.allocator.free(new_array);
 
         // Copy all elements except the last one
@@ -3215,20 +2963,20 @@ pub const Interpreter = struct {
         return popped_value;
     }
 
-    fn arrayLength(self: *Interpreter, array_expr: *const ast.Expr) ErrorList!token.TokenLiteral {
+    fn arrayLength(self: *Interpreter, array_expr: *const ast.Expr) ErrorList!TokenLiteral {
         const array_value = try self.evaluate(array_expr);
         if (array_value != .array) {
             return error.TypeError;
         }
-        return token.TokenLiteral{ .int = @intCast(array_value.array.len) };
+        return TokenLiteral{ .int = @intCast(array_value.array.len) };
     }
 
-    fn arrayConcat(self: *Interpreter, array: *ast.Expr, array2: *ast.Expr) ErrorList!token.TokenLiteral {
+    fn arrayConcat(self: *Interpreter, array: *ast.Expr, array2: *ast.Expr) ErrorList!TokenLiteral {
         const array_value = try self.evaluate(array);
         const array2_value = try self.evaluate(array2);
 
         // Create new array with combined length
-        var new_array = try self.allocator.alloc(token.TokenLiteral, array_value.array.len + array2_value.array.len);
+        var new_array = try self.allocator.alloc(TokenLiteral, array_value.array.len + array2_value.array.len);
         errdefer self.allocator.free(new_array);
 
         // Copy first array
@@ -3237,10 +2985,10 @@ pub const Interpreter = struct {
         // Copy second array
         @memcpy(new_array[array_value.array.len..], array2_value.array);
 
-        return token.TokenLiteral{ .array = new_array };
+        return TokenLiteral{ .array = new_array };
     }
 
-    fn arrayPush(self: *Interpreter, array: *ast.Expr, element: *ast.Expr) ErrorList!token.TokenLiteral {
+    fn arrayPush(self: *Interpreter, array: *ast.Expr, element: *ast.Expr) ErrorList!TokenLiteral {
         // Create a method call expression using the PUSH token
         const method_call = MethodCallExpr{
             .receiver = array,
@@ -3258,3 +3006,54 @@ pub const Interpreter = struct {
         return try self.callMethod(method_call);
     }
 };
+
+// Add this helper function outside the switch statement
+fn formatValue(writer: anytype, value: TokenLiteral) !void {
+    switch (value) {
+        .tetra => |t| try writer.print("{s}", .{@tagName(t)}),
+        .string => |s| try writer.print("\"{s}\"", .{s}),
+        .int => |i| try writer.print("{d}", .{i}),
+        .u8 => |u| try writer.print("{d}", .{u}),
+        .float => |f| try writer.print("{d}", .{f}),
+        .nothing => try writer.print("nothing", .{}),
+        .function => try writer.print("function", .{}),
+        .array => |arr| {
+            try writer.print("[", .{});
+            for (arr, 0..) |item, i| {
+                if (i > 0) try writer.print(", ", .{});
+                try formatValue(writer, item);
+            }
+            try writer.print("]", .{});
+        },
+        .struct_value => |sv| {
+            try writer.print("{s} {{", .{sv.type_name});
+            for (sv.fields, 0..) |field, i| {
+                if (i > 0) try writer.print(", ", .{});
+                try writer.print("{s}: ", .{field.name});
+                try formatValue(writer, field.value);
+            }
+            try writer.print("}}", .{});
+        },
+        .enum_variant => |variant| try writer.print(".{s}", .{variant}),
+        .tuple => |tup| {
+            try writer.print("(", .{});
+            for (tup, 0..) |item, i| {
+                if (i > 0) try writer.print(", ", .{});
+                try formatValue(writer, item);
+            }
+            try writer.print(")", .{});
+        },
+        .map => |m| {
+            try writer.print("{{", .{});
+            var iter = m.iterator();
+            var first = true;
+            while (iter.next()) |entry| {
+                if (!first) try writer.print(", ", .{});
+                first = false;
+                try writer.print("{s}: ", .{entry.key_ptr.*});
+                try formatValue(writer, entry.value_ptr.*);
+            }
+            try writer.print("}}", .{});
+        },
+    }
+}

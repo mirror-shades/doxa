@@ -304,6 +304,8 @@ pub fn parseStatement(self: *Parser) ErrorList!ast.Stmt {
         .VAR, .CONST => declaration_parser.parseVarDecl(self),
         .FUNCTION => declaration_parser.parseFunctionDecl(self),
         .RETURN => parseReturnStmt(self),
+        .CONTINUE => parseContinueStmt(self),
+        .BREAK => parseBreakStmt(self),
         .LEFT_BRACE => blk: {
             const block_expr = if (try Parser.block(self, null, .NONE)) |expr|
                 ast.Stmt{ .Expression = expr }
