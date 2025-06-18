@@ -408,3 +408,133 @@ pub fn printExpression(expr: *ast.Expr, indent: usize) void {
         },
     }
 }
+
+pub fn writeASTToFile(statements: []const ast.Stmt, file_path: []const u8) !void {
+    var file = try std.fs.cwd().createFile(file_path, .{});
+    defer file.close();
+
+    const writer = file.writer();
+    try writeStatements(statements, writer);
+}
+
+fn writeStatements(statements: []const ast.Stmt, writer: anytype) std.fs.File.WriteError!void {
+    // Write number of statements
+    try writer.print("{d}\n", .{statements.len});
+
+    // Write each statement
+    for (statements) |stmt| {
+        try writeStatement(stmt, writer);
+    }
+}
+
+fn writeStatement(stmt: ast.Stmt, writer: anytype) std.fs.File.WriteError!void {
+    // Write statement type
+    try writer.print("{s}\n", .{@tagName(stmt)});
+
+    switch (stmt) {
+        .VarDecl => |v| {
+            try writer.print("name:{s}\n", .{v.name.lexeme});
+            try writer.print("type:{s}\n", .{@tagName(v.type_info.base)});
+            try writer.print("is_public:{}\n", .{v.is_public});
+            if (v.initializer) |init| {
+                try writer.print("has_initializer:true\n", .{});
+                try writeExpression(init, writer);
+            } else {
+                try writer.print("has_initializer:false\n", .{});
+            }
+        },
+        .Function => |f| {
+            try writer.print("name:{s}\n", .{f.name.lexeme});
+            try writer.print("is_entry:{}\n", .{f.is_entry});
+            try writer.print("is_public:{}\n", .{f.is_public});
+            try writer.print("return_type:{s}\n", .{@tagName(f.return_type_info.base)});
+            try writer.print("params_count:{d}\n", .{f.params.len});
+            for (f.params) |param| {
+                try writer.print("param_name:{s}\n", .{param.name.lexeme});
+            }
+            try writeStatements(f.body, writer);
+        },
+        .Expression => |expr| {
+            if (expr) |e| {
+                try writer.print("has_expr:true\n", .{});
+                try writeExpression(e, writer);
+            } else {
+                try writer.print("has_expr:false\n", .{});
+            }
+        },
+        .Block => |block| {
+            try writeStatements(block, writer);
+        },
+        .Return => |ret| {
+            try writer.print("type:{s}\n", .{@tagName(ret.type_info.base)});
+            if (ret.value) |value| {
+                try writer.print("has_value:true\n", .{});
+                try writeExpression(value, writer);
+            } else {
+                try writer.print("has_value:false\n", .{});
+            }
+        },
+        .EnumDecl => |e| {
+            try writer.print("name:{s}\n", .{e.name.lexeme});
+            try writer.print("is_public:{}\n", .{e.is_public});
+            try writer.print("variants_count:{d}\n", .{e.variants.len});
+            for (e.variants) |variant| {
+                try writer.print("variant:{s}\n", .{variant.lexeme});
+            }
+        },
+        else => {
+            // For other statement types, just write their tag name
+            // Add more specific serialization as needed
+        },
+    }
+}
+
+fn writeExpression(expr: *const ast.Expr, writer: anytype) std.fs.File.WriteError!void {
+    try writer.print("expr_type:{s}\n", .{@tagName(expr.*)});
+
+    switch (expr.*) {
+        .Literal => |lit| {
+            switch (lit) {
+                .int => |i| try writer.print("value:int:{d}\n", .{i}),
+                .float => |f| try writer.print("value:float:{d}\n", .{f}),
+                .string => |s| try writer.print("value:string:{s}\n", .{s}),
+                .u8 => |b| try writer.print("value:u8:{d}\n", .{b}),
+                else => try writer.print("value:other\n", .{}),
+            }
+        },
+        .Binary => |bin| {
+            try writer.print("operator:{s}\n", .{bin.operator.lexeme});
+            if (bin.left) |left| {
+                try writer.print("has_left:true\n", .{});
+                try writeExpression(left, writer);
+            }
+            if (bin.right) |right| {
+                try writer.print("has_right:true\n", .{});
+                try writeExpression(right, writer);
+            }
+        },
+        .Variable => |var_token| {
+            try writer.print("name:{s}\n", .{var_token.lexeme});
+        },
+        .Call => |call| {
+            try writer.print("args_count:{d}\n", .{call.arguments.len});
+            try writeExpression(call.callee, writer);
+            for (call.arguments) |arg| {
+                try writeExpression(arg, writer);
+            }
+        },
+        .Function => |func| {
+            try writer.print("name:{s}\n", .{func.name.lexeme});
+            try writer.print("is_entry:{}\n", .{func.is_entry});
+            try writer.print("params_count:{d}\n", .{func.params.len});
+            for (func.params) |param| {
+                try writer.print("param_name:{s}\n", .{param.name.lexeme});
+            }
+            try writeStatements(func.body, writer);
+        },
+        else => {
+            // For other expression types, just write their tag name
+            // Add more specific serialization as needed
+        },
+    }
+}
