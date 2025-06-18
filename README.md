@@ -1,4 +1,4 @@
-# Doxa Programming Language
+# Doxa Programming Language [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/mirror-shades/doxa)
 
 Doxa is a simple programming language with an interpreter and compiler implementation in Zig.
 
