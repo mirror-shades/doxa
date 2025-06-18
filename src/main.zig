@@ -10,7 +10,7 @@ const TokenLiteral = @import("./types/types.zig").TokenLiteral;
 const InterpreterImport = @import("./interpreter/interpreter.zig");
 const Interpreter = InterpreterImport.Interpreter;
 const Environment = @import("./types/types.zig").Environment;
-const astReader = @import("./utils/astReader.zig");
+const astWriter = @import("./utils/ast_writer.zig");
 const environment = @import("./interpreter/environment.zig");
 
 ///==========================================================================
@@ -29,6 +29,7 @@ pub var hadError: bool = false;
 var compile: bool = false;
 var is_safe_repl: bool = false;
 var output_file: ?[]const u8 = null;
+
 ///==========================================================================
 /// Types & Errors
 ///==========================================================================
@@ -70,13 +71,18 @@ pub fn reportError(line: i32, where: []const u8, message: []const u8) void {
 ///==========================================================================
 /// Run
 ///==========================================================================
-pub fn run(memoryManager: *MemoryManager, source: []const u8, file_path: []const u8) !?TokenLiteral {
+fn runFile(memoryManager: *MemoryManager, path: []const u8) !void {
     if (memoryManager.debug_enabled) {
-        std.debug.print("\n=== Starting run ===\n", .{});
+        std.debug.print("Debug enabled in memory manager\n", .{});
     }
 
-    // Now use the unified source for lexing
-    var lexer = Lexer.init(memoryManager.getAllocator(), source, file_path);
+    var file = try std.fs.cwd().openFile(path, .{});
+    defer file.close();
+
+    const source = try file.readToEndAlloc(memoryManager.getAllocator(), MAX_FILE_SIZE);
+    defer memoryManager.getAllocator().free(source);
+
+    var lexer = Lexer.init(memoryManager.getAllocator(), source, path);
     defer lexer.deinit();
 
     try lexer.initKeywords();
@@ -88,19 +94,10 @@ pub fn run(memoryManager: *MemoryManager, source: []const u8, file_path: []const
         }
     }
 
-    // finish logical operators
-    // async/await
-    // generics
-
-    // the file has been lexed, now we need to parse it
-    // first pass goes over the file and creates forward declaration for all function
-    // second pass processes the imports to resolve any modules that are imported
-    // third pass builds the AST for the file and anything exposed by the module
-
     var parser_instance = Parser.init(
         memoryManager.getAllocator(),
         token_list.items,
-        file_path,
+        path,
         memoryManager.debug_enabled,
     );
     defer parser_instance.deinit();
@@ -134,12 +131,17 @@ pub fn run(memoryManager: *MemoryManager, source: []const u8, file_path: []const
         }
     }
 
-    // Add AST output here
+    // Always write AST to file as an artifact
+    const ast_path = try generateArtifactPath(path, ".ast");
+    try astWriter.writeASTToFile(statements, ast_path);
+    std.debug.print("AST artifact written to {s}\n", .{ast_path});
+
+    // Add AST debug output if debug is enabled
     if (memoryManager.debug_enabled) {
         std.debug.print("\n=== AST Output ===\n", .{});
         for (statements, 0..) |stmt, i| {
             std.debug.print("\nStatement {}:\n", .{i});
-            astReader.printStatement(stmt, 1);
+            astWriter.printStatement(stmt, 1);
         }
         std.debug.print("\n=== End AST Output ===\n", .{});
     }
@@ -157,32 +159,32 @@ pub fn run(memoryManager: *MemoryManager, source: []const u8, file_path: []const
     interpreter.parser = &parser_instance;
 
     try interpreter.interpret(statements);
-    return interpreter.last_result;
+    _ = interpreter.last_result;
 }
 
-fn writeTo(text: []const u8, path: []const u8) !void {
-    const file = try std.fs.cwd().createFile(path, .{ .read = true });
-    defer file.close();
-    try file.writeAll(text);
-}
-
-fn runFile(memoryManager: *MemoryManager, path: []const u8) !void {
-    if (memoryManager.debug_enabled) {
-        std.debug.print("Debug enabled in memory manager\n", .{});
+/// Generate a path for an artifact file based on the source file path
+fn generateArtifactPath(source_path: []const u8, extension: []const u8) ![]u8 {
+    // Find the last dot in the path
+    var last_dot: ?usize = null;
+    for (source_path, 0..) |c, i| {
+        if (c == '.') last_dot = i;
     }
 
-    var file = try std.fs.cwd().openFile(path, .{});
-    defer file.close();
-
-    const source = try file.readToEndAlloc(memoryManager.getAllocator(), MAX_FILE_SIZE);
-    defer memoryManager.getAllocator().free(source);
-
-    _ = try run(memoryManager, source, path);
+    if (last_dot) |dot| {
+        // Allocate space for the new path
+        const new_path = try std.heap.page_allocator.alloc(u8, dot + extension.len);
+        @memcpy(new_path[0..dot], source_path[0..dot]);
+        @memcpy(new_path[dot..], extension);
+        return new_path;
+    } else {
+        // If no dot found, append extension
+        const new_path = try std.heap.page_allocator.alloc(u8, source_path.len + extension.len);
+        @memcpy(new_path[0..source_path.len], source_path);
+        @memcpy(new_path[source_path.len..], extension);
+        return new_path;
+    }
 }
 
-///==========================================================================
-/// Main
-///==========================================================================
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer {
