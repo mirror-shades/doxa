@@ -18,7 +18,11 @@ Currently Doxa runs on an AST walking interpreter so it is pretty slow. The curr
 - **Parser**: Builds an AST from tokens
 - **Soxa** A stack based HIR for type infrence and other high level optimization
 - **VM**: Stack based, operates from Soxa code
-- **LLVM IR** Code generator to turn Soxa into LLVM IR for low level optimizations and native compilation 
+- **LLVM IR** Code generator to turn Soxa into LLVM IR for low level optimizations and native compilation
+
+## Memory management
+
+Doxa uses an automated refence counter much like Swift but with some unique changes which leverage the power of the Zig language allocation system. Without getting overly technical, each scope is allocated as an arena which is cleaned up when that scope is exited. Combined with traditional refrence counting this provides an extremely robust and *predictable* form of automatic memory management which avoids many of the pitfalls of garbage collection while remaining .
 
 ## Usage
 
