@@ -269,7 +269,7 @@ fn compound_assignment(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList
     if (left == null) return error.InvalidAssignmentTarget;
 
     // Verify left side is a valid assignment target
-    const is_valid_target = switch (left.?.*) {
+    const is_valid_target = switch (left.?.data) {
         .Variable => true,
         .Index => true,
         else => false,
@@ -295,7 +295,7 @@ fn compound_assignment(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList
         },
     };
 
-    compound_expr.* = switch (left.?.*) {
+    compound_expr.* = switch (left.?.data) {
         .Variable => |v| .{ .CompoundAssign = .{
             .name = v,
             .operator = operator,
@@ -320,10 +320,18 @@ fn logical(self: *Parser, left: ?*ast.Expr, precedence: Precedence) ErrorList!?*
     const operator = self.tokens[self.current - 1]; // Get the operator token (AND/OR)
     const right = try parsePrecedence(self, precedence) orelse return error.ExpectedExpression;
     const logical_expr = try self.allocator.create(ast.Expr);
-    logical_expr.* = .{ .Logical = .{
-        .left = left.?,
-        .operator = operator,
-        .right = right,
-    } };
+    logical_expr.* = .{
+        .base = .{
+            .id = ast.generateNodeId(),
+            .span = ast.SourceSpan.fromToken(token),
+        },
+        .data = .{
+            .Logical = .{
+                .left = left.?,
+                .operator = operator,
+                .right = right,
+            },
+        },
+    };
     return logical_expr;
 }

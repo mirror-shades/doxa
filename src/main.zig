@@ -150,9 +150,9 @@ fn processFile(memoryManager: *MemoryManager, path: []const u8, should_compile: 
         // Write AST
         const ast_path = try generateArtifactPath(path, ".ast");
         try ASTWriter.writeASTToFile(statements, ast_path);
-        try compile(memoryManager.getAllocator(), ast_path);
+        //try compile(memoryManager.getAllocator(), ast_path);
     } else {
-        try interpret(memoryManager, &parser, statements);
+        //try interpret(memoryManager, &parser, statements);
     }
 }
 
