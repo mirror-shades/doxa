@@ -159,7 +159,7 @@ pub fn parseExpressionStmt(self: *Parser) ErrorList!ast.Stmt {
     const expr = try expression_parser.parseExpression(self);
 
     // Check if we need a semicolon
-    const needs_semicolon = if (expr) |e| switch (e.*) {
+    const needs_semicolon = if (expr) |e| switch (e.data) {
         .Block => false,
         .If => false, // If expressions don't need semicolons
         .While => false,
@@ -182,8 +182,8 @@ pub fn parseExpressionStmt(self: *Parser) ErrorList!ast.Stmt {
 
         // Get the variable name if this is a variable expression
         var name_token: ?[]const u8 = null;
-        if (expr.?.* == .Variable) {
-            name_token = expr.?.Variable.lexeme;
+        if (expr.?.data == .Variable) {
+            name_token = expr.?.data.Variable.lexeme;
         }
 
         // Create a location that won't interfere with string formatting
@@ -229,7 +229,15 @@ pub fn parseExpressionStmt(self: *Parser) ErrorList!ast.Stmt {
         self.advance(); // Consume the semicolon
     }
 
-    return ast.Stmt{ .Expression = final_expr };
+    return ast.Stmt{
+        .base = .{
+            .id = ast.generateNodeId(),
+            .span = ast.SourceSpan.fromToken(self.peek()),
+        },
+        .data = .{
+            .Expression = final_expr,
+        },
+    };
 }
 
 pub fn parseBlockStmt(self: *Parser) ErrorList![]ast.Stmt {
@@ -289,10 +297,18 @@ pub fn parseReturnStmt(self: *Parser) ErrorList!ast.Stmt {
     }
     self.advance();
 
-    return ast.Stmt{ .Return = .{
-        .value = value,
-        .type_info = type_info,
-    } };
+    return ast.Stmt{
+        .base = .{
+            .id = ast.generateNodeId(),
+            .span = ast.SourceSpan.fromToken(self.peek()),
+        },
+        .data = .{
+            .Return = .{
+                .value = value,
+                .type_info = type_info,
+            },
+        },
+    };
 }
 
 pub fn parseStatement(self: *Parser) ErrorList!ast.Stmt {
@@ -308,9 +324,15 @@ pub fn parseStatement(self: *Parser) ErrorList!ast.Stmt {
         .BREAK => parseBreakStmt(self),
         .LEFT_BRACE => blk: {
             const block_expr = if (try Parser.block(self, null, .NONE)) |expr|
-                ast.Stmt{ .Expression = expr }
+                ast.Stmt{ .base = .{
+                    .id = ast.generateNodeId(),
+                    .span = ast.SourceSpan.fromToken(self.peek()),
+                }, .data = .{ .Expression = expr } }
             else
-                ast.Stmt{ .Expression = null };
+                ast.Stmt{ .base = .{
+                    .id = ast.generateNodeId(),
+                    .span = ast.SourceSpan.fromToken(self.peek()),
+                }, .data = .{ .Expression = null } };
             break :blk block_expr;
         },
         .STRUCT_TYPE => if (self.peekAhead(1).type == .LEFT_BRACE)
@@ -470,7 +492,15 @@ pub fn parseContinueStmt(self: *Parser) ErrorList!ast.Stmt {
     }
     self.advance(); // consume ';'
 
-    return ast.Stmt{ .Continue = {} };
+    return ast.Stmt{
+        .base = .{
+            .id = ast.generateNodeId(),
+            .span = ast.SourceSpan.fromToken(self.peek()),
+        },
+        .data = .{
+            .Continue = {},
+        },
+    };
 }
 
 pub fn parseBreakStmt(self: *Parser) ErrorList!ast.Stmt {
@@ -488,5 +518,13 @@ pub fn parseBreakStmt(self: *Parser) ErrorList!ast.Stmt {
     }
     self.advance(); // consume ';'
 
-    return ast.Stmt{ .Break = {} };
+    return ast.Stmt{
+        .base = .{
+            .id = ast.generateNodeId(),
+            .span = ast.SourceSpan.fromToken(self.peek()),
+        },
+        .data = .{
+            .Break = {},
+        },
+    };
 }

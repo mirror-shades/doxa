@@ -133,7 +133,8 @@ pub const Token = struct {
     lexeme: []const u8,
     literal: TokenLiteral,
     line: i32,
-    column: usize, // array index is usize by default
+    column: usize,
+    file: []const u8, // Add file path for better error reporting
 
     pub fn init(token_type: TokenType, lexeme: []const u8, literal: TokenLiteral, line: i32, column: usize) Token {
         return Token{
@@ -141,7 +142,19 @@ pub const Token = struct {
             .lexeme = lexeme,
             .literal = literal,
             .line = line,
-            .column = column, // array index is usize by default
+            .column = column,
+            .file = "", // Default to empty string, will be set by lexer
+        };
+    }
+
+    pub fn initWithFile(token_type: TokenType, lexeme: []const u8, literal: TokenLiteral, line: i32, column: usize, file: []const u8) Token {
+        return Token{
+            .type = token_type,
+            .lexeme = lexeme,
+            .literal = literal,
+            .line = line,
+            .column = column,
+            .file = file,
         };
     }
 };

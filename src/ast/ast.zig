@@ -3,6 +3,309 @@ const Token = @import("../lexer/token.zig").Token;
 const TokenLiteral = @import("../types/types.zig").TokenLiteral;
 const Reporting = @import("../utils/reporting.zig");
 
+/// Counter for generating unique node IDs
+var next_node_id: NodeId = 0;
+
+/// Unique identifier for AST nodes to help with HIR mapping and error tracking
+pub const NodeId = u32;
+
+/// Generate a new unique node ID
+pub fn generateNodeId() NodeId {
+    defer next_node_id += 1;
+    return next_node_id;
+}
+
+/// Tracks the exact source code location of an AST node
+pub const SourceSpan = struct {
+    start: Reporting.Reporter.Location,
+    end: Reporting.Reporter.Location,
+
+    pub fn fromToken(token: Token) SourceSpan {
+        return .{
+            .start = .{
+                .file = "", // Default to empty string since Token doesn't have file info
+                .line = token.line,
+                .column = token.column,
+            },
+            .end = .{
+                .file = "", // Default to empty string since Token doesn't have file info
+                .line = token.line,
+                .column = token.column + token.lexeme.len,
+            },
+        };
+    }
+
+    pub fn merge(start: SourceSpan, end: SourceSpan) SourceSpan {
+        return .{
+            .start = start.start,
+            .end = end.end,
+        };
+    }
+};
+
+//======================================================================
+// Core Types
+//======================================================================
+
+// TODO: location in Reporting too, why?
+pub const Location = struct {
+    file: []const u8,
+    line: i32,
+    column: usize,
+};
+
+//======================================================================
+// Struct Types
+//======================================================================
+
+pub const StructField = struct {
+    name: Token,
+    type_expr: *TypeExpr,
+
+    pub fn deinit(self: *StructField, allocator: std.mem.Allocator) void {
+        self.type_expr.deinit(allocator);
+        allocator.destroy(self.type_expr);
+    }
+};
+
+pub const StructLiteralField = struct {
+    name: Token,
+    value: *Expr,
+
+    pub fn deinit(self: *StructLiteralField, allocator: std.mem.Allocator) void {
+        self.value.deinit(allocator);
+        allocator.destroy(self.value);
+    }
+};
+
+pub const StructInstanceField = struct {
+    name: Token,
+    value: *Expr,
+
+    pub fn deinit(self: *StructInstanceField, allocator: std.mem.Allocator) void {
+        self.value.deinit(allocator);
+        allocator.destroy(self.value);
+    }
+};
+
+pub const StructDecl = struct {
+    name: Token,
+    fields: []*StructField,
+    is_public: bool = false,
+};
+
+//======================================================================
+// Function Types
+//======================================================================
+
+pub const FunctionParam = struct {
+    name: Token,
+    type_expr: ?*TypeExpr,
+    default_value: ?*Expr = null,
+
+    pub fn deinit(self: *FunctionParam, allocator: std.mem.Allocator) void {
+        if (self.type_expr) |te| {
+            te.deinit(allocator);
+            allocator.destroy(te);
+        }
+        if (self.default_value) |dv| {
+            dv.deinit(allocator);
+            allocator.destroy(dv);
+        }
+    }
+};
+
+pub const Parameter = struct {
+    name: Token,
+    type_expr: ?*TypeExpr,
+
+    pub fn deinit(self: *Parameter, allocator: std.mem.Allocator) void {
+        if (self.type_expr) |type_expr| {
+            type_expr.deinit(allocator);
+            allocator.destroy(type_expr);
+        }
+    }
+};
+
+pub const FunctionType = struct {
+    params: []TypeInfo,
+    return_type: *TypeInfo,
+};
+
+//======================================================================
+// Visitor Pattern
+//======================================================================
+
+/// Base interface for AST visitors
+pub const ASTVisitor = struct {
+    /// Visit an expression node
+    visitExpr: fn (self: *ASTVisitor, expr: *Expr) anyerror!void,
+    /// Visit a statement node
+    visitStmt: fn (self: *ASTVisitor, stmt: *Stmt) anyerror!void,
+    /// Visit a type expression
+    visitTypeExpr: fn (self: *ASTVisitor, type_expr: *TypeExpr) anyerror!void,
+
+    /// Optional hooks for enter/exit of compound nodes
+    enterScope: ?fn (self: *ASTVisitor) anyerror!void = null,
+    exitScope: ?fn (self: *ASTVisitor) anyerror!void = null,
+};
+
+/// Common base for all AST nodes
+pub const Base = struct {
+    id: NodeId,
+    span: SourceSpan,
+};
+
+//======================================================================
+// Statement Types
+//======================================================================
+
+pub const TryStmt = struct {
+    try_body: []Stmt,
+    catch_body: []Stmt,
+    error_var: ?Token,
+};
+
+pub const VarDecl = struct {
+    name: Token,
+    initializer: ?*Expr,
+    type_info: TypeInfo,
+    is_public: bool = false,
+};
+
+pub const EnumDecl = struct {
+    name: Token,
+    variants: []const Token,
+    is_public: bool = false,
+};
+
+pub const Stmt = struct {
+    base: Base,
+    data: Data,
+
+    pub const Data = union(enum) {
+        Expression: ?*Expr,
+        VarDecl: struct {
+            name: Token,
+            type_info: TypeInfo,
+            initializer: ?*Expr,
+            is_public: bool = false,
+        },
+        Block: []Stmt,
+        Function: struct {
+            name: Token,
+            params: []FunctionParam,
+            return_type_info: TypeInfo,
+            body: []Stmt,
+            is_entry: bool = false,
+            is_public: bool = false,
+        },
+        Return: struct {
+            value: ?*Expr,
+            type_info: TypeInfo,
+        },
+        EnumDecl: EnumDecl,
+        Map: []MapEntry,
+        Try: TryStmt,
+        Module: struct {
+            name: Token,
+            imports: []const ImportInfo,
+        },
+        Import: ImportInfo,
+        Path: []const u8,
+        Continue: void,
+        Break: void,
+        Assert: struct {
+            condition: *Expr,
+            location: Reporting.Reporter.Location,
+            message: ?*Expr = null,
+        },
+    };
+
+    pub fn getBase(self: *Stmt) *Base {
+        return &self.base;
+    }
+
+    pub fn accept(self: *Stmt, visitor: *ASTVisitor) anyerror!void {
+        try visitor.visitStmt(self);
+    }
+
+    pub fn deinit(self: *Stmt, allocator: std.mem.Allocator) void {
+        switch (self.data) {
+            .Expression => |maybe_expr| {
+                if (maybe_expr) |expr| {
+                    expr.deinit(allocator);
+                    allocator.destroy(expr);
+                }
+            },
+            .VarDecl => |*v| {
+                if (v.initializer) |init| {
+                    init.deinit(allocator);
+                    allocator.destroy(init);
+                }
+            },
+            .Block => |statements| {
+                for (statements) |*stmt| {
+                    stmt.deinit(allocator);
+                }
+                allocator.free(statements);
+            },
+            .Return => |*r| {
+                if (r.value) |value| {
+                    value.deinit(allocator);
+                    allocator.destroy(value);
+                }
+            },
+            .Function => |*f| {
+                allocator.free(f.params);
+                for (f.body) |*stmt| {
+                    stmt.deinit(allocator);
+                }
+                allocator.free(f.body);
+            },
+            .EnumDecl => |decl| {
+                allocator.free(decl.variants);
+            },
+            .Map => |entries| {
+                for (entries) |entry| {
+                    entry.key.deinit(allocator);
+                    allocator.destroy(entry.key);
+                    entry.value.deinit(allocator);
+                    allocator.destroy(entry.value);
+                }
+                allocator.free(entries);
+            },
+            .Try => |*t| {
+                for (t.try_body) |*stmt| {
+                    stmt.deinit(allocator);
+                }
+                allocator.free(t.try_body);
+                for (t.catch_body) |*stmt| {
+                    stmt.deinit(allocator);
+                }
+                allocator.free(t.catch_body);
+            },
+            .Assert => |*a| {
+                a.condition.deinit(allocator);
+                allocator.destroy(a.condition);
+                if (a.message) |msg| {
+                    msg.deinit(allocator);
+                    allocator.destroy(msg);
+                }
+            },
+            .Module => {},
+            .Import => {},
+            .Path => {},
+            .Continue => {},
+            .Break => {},
+        }
+    }
+};
+
+//======================================================================
+// Expression Types
+//======================================================================
+
 pub const Binary = struct {
     left: ?*Expr,
     operator: Token,
@@ -20,118 +323,192 @@ pub const If = struct {
     else_branch: ?*Expr,
 };
 
+pub const Assignment = struct {
+    name: Token,
+    value: ?*Expr,
+};
+
+pub const CompoundAssignment = struct {
+    name: Token,
+    operator: Token,
+    value: ?*Expr,
+};
+
 pub const MapEntry = struct {
     key: *Expr,
     value: *Expr,
 };
 
-pub const Expr = union(enum) {
-    Literal: TokenLiteral,
-    Binary: Binary,
-    Unary: Unary,
-    Inspect: InspectExpr,
-    Input: struct {
-        prompt: Token,
-    },
-    Variable: Token,
-    Assignment: Assignment,
-    Grouping: ?*Expr,
-    If: If,
-    Block: struct {
-        statements: []Stmt,
-        value: ?*Expr,
-    },
-    Array: []const *Expr,
-    Tuple: []const *Expr,
-    Struct: []*StructLiteralField,
-    Index: Index,
-    IndexAssign: struct {
-        array: *Expr,
-        index: *Expr,
-        value: *Expr,
-    },
-    Call: struct {
-        callee: *Expr,
-        arguments: []const *Expr,
-    },
-    Logical: Logical,
-    Function: struct {
-        name: Token,
-        params: []FunctionParam,
-        return_type_info: TypeInfo,
-        body: []Stmt,
-        is_entry: bool = false,
-        is_public: bool = false,
-    },
-    While: WhileExpr,
-    For: ForExpr,
-    ForEach: ForEachExpr,
-    FieldAccess: FieldAccess,
-    StructDecl: StructDecl,
-    StructLiteral: struct {
-        name: Token,
-        fields: []const *StructInstanceField,
-    },
-    FieldAssignment: struct {
-        object: *Expr,
-        field: Token,
-        value: *Expr,
-    },
-    Exists: struct {
-        variable: Token,
-        array: *Expr,
-        condition: *Expr,
-    },
-    ForAll: struct {
-        variable: Token,
-        array: *Expr,
-        condition: *Expr,
-    },
-    ArrayType: struct {
-        element_type: *TypeExpr,
-        size: ?*Expr = null,
-    },
-    Match: MatchExpr,
-    EnumDecl: struct {
-        name: Token,
-        variants: []Token,
-        is_public: bool = false,
-    },
-    EnumMember: Token,
-    DefaultArgPlaceholder: void,
-    TypeOf: *Expr,
-    Map: []MapEntry,
-    MethodCall: struct {
-        receiver: *Expr,
-        method: Token,
-        arguments: []const *Expr,
-    },
-    ArrayPush: struct {
-        array: *Expr,
-        element: *Expr,
-    },
-    ArrayLength: struct {
-        array: *Expr,
-    },
-    ArrayPop: struct {
-        array: *Expr,
-    },
-    ArrayIsEmpty: struct {
-        array: *Expr,
-    },
-    ArrayConcat: struct {
-        array: *Expr,
-        array2: *Expr,
-    },
-    CompoundAssign: CompoundAssignment,
-    Assert: struct {
-        condition: *Expr,
-        location: Reporting.Reporter.Location,
-        message: ?*Expr = null,
-    },
+pub const Index = struct {
+    array: *Expr,
+    index: *Expr,
+};
+
+pub const Logical = struct {
+    left: *Expr,
+    operator: Token,
+    right: *Expr,
+};
+
+pub const WhileExpr = struct {
+    condition: *Expr,
+    body: *Expr,
+};
+
+pub const ForExpr = struct {
+    initializer: ?*Stmt,
+    condition: ?*Expr,
+    increment: ?*Expr,
+    body: *Expr,
+};
+
+pub const ForEachExpr = struct {
+    item_name: Token,
+    array: *Expr,
+    body: []Stmt,
+};
+
+pub const InspectExpr = struct {
+    expr: *Expr,
+    location: Reporting.Reporter.Location,
+    variable_name: ?[]const u8,
+};
+
+pub const FieldAccess = struct {
+    object: *Expr,
+    field: Token,
+};
+
+pub const MatchExpr = struct {
+    value: *Expr,
+    cases: []MatchCase,
+};
+
+pub const MatchCase = struct {
+    pattern: Token,
+    body: *Expr,
+};
+
+pub const Expr = struct {
+    base: Base,
+    data: Data,
+
+    pub const Data = union(enum) {
+        Literal: TokenLiteral,
+        Binary: Binary,
+        Unary: Unary,
+        Inspect: InspectExpr,
+        Input: struct {
+            prompt: Token,
+        },
+        Variable: Token,
+        Assignment: Assignment,
+        Grouping: ?*Expr,
+        If: If,
+        Block: struct {
+            statements: []Stmt,
+            value: ?*Expr,
+        },
+        Array: []const *Expr,
+        Tuple: []const *Expr,
+        Struct: []*StructLiteralField,
+        Index: Index,
+        IndexAssign: struct {
+            array: *Expr,
+            index: *Expr,
+            value: *Expr,
+        },
+        Call: struct {
+            callee: *Expr,
+            arguments: []const *Expr,
+        },
+        Logical: Logical,
+        Function: struct {
+            name: Token,
+            params: []FunctionParam,
+            return_type_info: TypeInfo,
+            body: []Stmt,
+            is_entry: bool = false,
+            is_public: bool = false,
+        },
+        While: WhileExpr,
+        For: ForExpr,
+        ForEach: ForEachExpr,
+        FieldAccess: FieldAccess,
+        StructDecl: StructDecl,
+        StructLiteral: struct {
+            name: Token,
+            fields: []const *StructInstanceField,
+        },
+        FieldAssignment: struct {
+            object: *Expr,
+            field: Token,
+            value: *Expr,
+        },
+        Exists: struct {
+            variable: Token,
+            array: *Expr,
+            condition: *Expr,
+        },
+        ForAll: struct {
+            variable: Token,
+            array: *Expr,
+            condition: *Expr,
+        },
+        ArrayType: struct {
+            element_type: *TypeExpr,
+            size: ?*Expr = null,
+        },
+        Match: MatchExpr,
+        EnumDecl: struct {
+            name: Token,
+            variants: []Token,
+            is_public: bool = false,
+        },
+        EnumMember: Token,
+        DefaultArgPlaceholder: void,
+        TypeOf: *Expr,
+        Map: []MapEntry,
+        MethodCall: struct {
+            receiver: *Expr,
+            method: Token,
+            arguments: []const *Expr,
+        },
+        ArrayPush: struct {
+            array: *Expr,
+            element: *Expr,
+        },
+        ArrayLength: struct {
+            array: *Expr,
+        },
+        ArrayPop: struct {
+            array: *Expr,
+        },
+        ArrayIsEmpty: struct {
+            array: *Expr,
+        },
+        ArrayConcat: struct {
+            array: *Expr,
+            array2: *Expr,
+        },
+        CompoundAssign: CompoundAssignment,
+        Assert: struct {
+            condition: *Expr,
+            location: Reporting.Reporter.Location,
+            message: ?*Expr = null,
+        },
+    };
+
+    pub fn getBase(self: *Expr) *Base {
+        return &self.base;
+    }
+
+    pub fn accept(self: *Expr, visitor: *ASTVisitor) anyerror!void {
+        try visitor.visitExpr(self);
+    }
 
     pub fn deinit(self: *Expr, allocator: std.mem.Allocator) void {
-        switch (self.*) {
+        switch (self.data) {
             .Binary => |*b| {
                 if (b.left) |left| {
                     left.deinit(allocator);
@@ -408,10 +785,9 @@ pub const Expr = union(enum) {
     }
 };
 
-pub const Assignment = struct {
-    name: Token,
-    value: ?*Expr,
-};
+//======================================================================
+// Type System
+//======================================================================
 
 pub const Type = enum {
     Int,
@@ -498,148 +874,42 @@ pub const StructFieldType = struct {
     type_info: *TypeInfo,
 };
 
-pub const FunctionType = struct {
-    params: []TypeInfo,
-    return_type: *TypeInfo,
+pub const BasicType = enum {
+    Integer,
+    U8,
+    Float,
+    String,
+    Tetra,
+    Auto,
 };
 
-pub const VarDecl = struct {
-    name: Token,
-    initializer: ?*Expr,
-    type_info: TypeInfo,
-    is_public: bool = false,
+pub const ArrayType = struct {
+    element_type: *TypeExpr,
+    size: ?*Expr = null,
 };
 
-pub const EnumDecl = struct {
-    name: Token,
-    variants: []const Token,
-    is_public: bool = false,
-};
+pub const TypeExpr = struct {
+    base: Base,
+    data: Data,
 
-pub const ImportInfo = struct {
-    module_path: []const u8,
-    namespace_alias: ?[]const u8 = null,
-    specific_symbol: ?[]const u8 = null,
-};
+    pub const Data = union(enum) {
+        Basic: BasicType,
+        Custom: Token,
+        Array: ArrayType,
+        Struct: []*StructField,
+        Enum: []const []const u8,
+    };
 
-pub const Stmt = union(enum) {
-    Expression: ?*Expr,
-    VarDecl: struct {
-        name: Token,
-        type_info: TypeInfo,
-        initializer: ?*Expr,
-        is_public: bool = false,
-    },
-    Block: []Stmt,
-    Function: struct {
-        name: Token,
-        params: []FunctionParam,
-        return_type_info: TypeInfo,
-        body: []Stmt,
-        is_entry: bool = false,
-        is_public: bool = false,
-    },
-    Return: struct {
-        value: ?*Expr,
-        type_info: TypeInfo,
-    },
-    EnumDecl: EnumDecl,
-    Map: []MapEntry,
-    Try: TryStmt,
-    Module: struct {
-        name: Token,
-        imports: []const ImportInfo,
-    },
-    Import: ImportInfo,
-    Path: []const u8,
-    Continue: void,
-    Break: void,
-    Assert: struct {
-        condition: *Expr,
-        location: Reporting.Reporter.Location,
-        message: ?*Expr = null,
-    },
-    pub fn deinit(self: *Stmt, allocator: std.mem.Allocator) void {
-        switch (self.*) {
-            .Expression => |maybe_expr| {
-                if (maybe_expr) |expr| {
-                    expr.deinit(allocator);
-                    allocator.destroy(expr);
-                }
-            },
-            .VarDecl => |*v| {
-                if (v.initializer) |init| {
-                    init.deinit(allocator);
-                    allocator.destroy(init);
-                }
-            },
-            .Block => |statements| {
-                for (statements) |*stmt| {
-                    stmt.deinit(allocator);
-                }
-                allocator.free(statements);
-            },
-            .Return => |*r| {
-                if (r.value) |value| {
-                    value.deinit(allocator);
-                    allocator.destroy(value);
-                }
-            },
-            .Function => |*f| {
-                allocator.free(f.params);
-                for (f.body) |*stmt| {
-                    stmt.deinit(allocator);
-                }
-                allocator.free(f.body);
-            },
-            .EnumDecl => |decl| {
-                allocator.free(decl.variants);
-            },
-            .Map => |entries| {
-                for (entries) |entry| {
-                    entry.key.deinit(allocator);
-                    allocator.destroy(entry.key);
-                    entry.value.deinit(allocator);
-                    allocator.destroy(entry.value);
-                }
-                allocator.free(entries);
-            },
-            .Try => |*t| {
-                for (t.try_body) |*stmt| {
-                    stmt.deinit(allocator);
-                }
-                allocator.free(t.try_body);
-                for (t.catch_body) |*stmt| {
-                    stmt.deinit(allocator);
-                }
-                allocator.free(t.catch_body);
-            },
-            .Assert => |*a| {
-                a.condition.deinit(allocator);
-                allocator.destroy(a.condition);
-                if (a.message) |msg| {
-                    msg.deinit(allocator);
-                    allocator.destroy(msg);
-                }
-            },
-            .Module => {},
-            .Import => {},
-            .Path => {},
-            .Continue => {},
-            .Break => {},
-        }
+    pub fn getBase(self: *TypeExpr) *Base {
+        return &self.base;
     }
-};
 
-pub const TypeExpr = union(enum) {
-    Basic: BasicType,
-    Custom: Token,
-    Array: ArrayType,
-    Struct: []*StructField,
-    Enum: []const []const u8,
+    pub fn accept(self: *TypeExpr, visitor: *ASTVisitor) anyerror!void {
+        try visitor.visitTypeExpr(self);
+    }
 
     pub fn deinit(self: *TypeExpr, allocator: std.mem.Allocator) void {
-        switch (self.*) {
+        switch (self.data) {
             .Array => |*array| {
                 array.element_type.deinit(allocator);
                 allocator.destroy(array.element_type);
@@ -660,210 +930,14 @@ pub const TypeExpr = union(enum) {
     }
 };
 
-pub const BasicType = enum {
-    Integer,
-    U8,
-    Float,
-    String,
-    Tetra,
-    Auto,
-};
+//======================================================================
+// Module System
+//======================================================================
 
-pub const ArrayType = struct {
-    element_type: *TypeExpr,
-    size: ?*Expr = null,
-};
-
-pub const StructField = struct {
-    name: Token,
-    type_expr: *TypeExpr,
-
-    pub fn deinit(self: *StructField, allocator: std.mem.Allocator) void {
-        self.type_expr.deinit(allocator);
-        allocator.destroy(self.type_expr);
-    }
-};
-
-pub const StructLiteralField = struct {
-    name: Token,
-    value: *Expr,
-
-    pub fn deinit(self: *StructLiteralField, allocator: std.mem.Allocator) void {
-        self.value.deinit(allocator);
-        allocator.destroy(self.value);
-    }
-};
-
-pub const Index = struct {
-    array: *Expr,
-    index: *Expr,
-};
-
-pub const FunctionParam = struct {
-    name: Token,
-    type_expr: ?*TypeExpr,
-    default_value: ?*Expr = null,
-
-    pub fn deinit(self: *FunctionParam, allocator: std.mem.Allocator) void {
-        if (self.type_expr) |te| {
-            te.deinit(allocator);
-            allocator.destroy(te);
-        }
-        if (self.default_value) |dv| {
-            dv.deinit(allocator);
-            allocator.destroy(dv);
-        }
-    }
-};
-
-pub const Logical = struct {
-    left: *Expr,
-    operator: Token,
-    right: *Expr,
-};
-
-pub const Parameter = struct {
-    name: Token,
-    type_expr: ?*TypeExpr,
-
-    pub fn deinit(self: *Parameter, allocator: std.mem.Allocator) void {
-        if (self.type_expr) |type_expr| {
-            type_expr.deinit(allocator);
-            allocator.destroy(type_expr);
-        }
-    }
-};
-
-pub const WhileExpr = struct {
-    condition: *Expr,
-    body: *Expr,
-};
-
-pub const ForExpr = struct {
-    initializer: ?*Stmt,
-    condition: ?*Expr,
-    increment: ?*Expr,
-    body: *Expr,
-};
-
-pub const ForEachExpr = struct {
-    item_name: Token,
-    array: *Expr,
-    body: []Stmt,
-};
-
-// TODO: location in Reporting too, why?
-pub const Location = struct {
-    file: []const u8,
-    line: i32,
-    column: usize,
-};
-
-pub const InspectExpr = struct {
-    expr: *Expr,
-    location: Location,
-    variable_name: ?[]const u8,
-};
-
-pub const FieldAccess = struct {
-    object: *Expr,
-    field: Token,
-};
-
-pub const StructDecl = struct {
-    name: Token,
-    fields: []*StructField,
-    is_public: bool = false,
-};
-
-// Helper function to create TypeInfo from type expression
-pub fn typeInfoFromExpr(allocator: std.mem.Allocator, type_expr: ?*TypeExpr) !*TypeInfo {
-    const type_info = try allocator.create(TypeInfo);
-    errdefer allocator.destroy(type_info);
-
-    if (type_expr == null) {
-        type_info.* = TypeInfo{ .base = .Auto };
-        return type_info;
-    }
-
-    type_info.* = switch (type_expr.?.*) {
-        .Basic => |basic| switch (basic) {
-            .Integer => TypeInfo{ .base = .Int },
-            .U8 => TypeInfo{ .base = .U8 },
-            .Float => TypeInfo{ .base = .Float },
-            .String => TypeInfo{ .base = .String },
-            .Tetra => TypeInfo{ .base = .Tetra },
-            // should never happen, auto is only used for type inference
-            .Auto => TypeInfo{ .base = .Auto },
-        },
-        .Array => |array| blk: {
-            const element_type = try typeInfoFromExpr(allocator, array.element_type);
-
-            // Extract array size if present
-            var array_size: ?usize = null;
-            if (array.size) |size_expr| {
-                if (size_expr.* == .Literal) {
-                    switch (size_expr.Literal) {
-                        .int => |i| array_size = @intCast(i),
-                        else => {}, // Only integer literals are supported for array sizes
-                    }
-                }
-            }
-
-            break :blk TypeInfo{
-                .base = .Array,
-                .array_type = element_type,
-                .array_size = array_size,
-            };
-        },
-        .Struct => |fields| blk: {
-            var struct_fields = try allocator.alloc(StructFieldType, fields.len);
-            errdefer allocator.free(struct_fields);
-
-            for (fields, 0..) |field, i| {
-                const field_type = try typeInfoFromExpr(allocator, field.type_expr);
-                struct_fields[i] = .{
-                    .name = field.name.lexeme,
-                    .type_info = field_type,
-                };
-            }
-            break :blk TypeInfo{
-                .base = .Struct,
-                .struct_fields = struct_fields,
-            };
-        },
-        .Custom => TypeInfo{ .base = .Custom },
-        .Enum => TypeInfo{ .base = .Auto },
-    };
-
-    return type_info;
-}
-
-// Add a new struct for struct instance fields
-pub const StructInstanceField = struct {
-    name: Token,
-    value: *Expr,
-
-    pub fn deinit(self: *StructInstanceField, allocator: std.mem.Allocator) void {
-        self.value.deinit(allocator);
-        allocator.destroy(self.value);
-    }
-};
-
-pub const MatchExpr = struct {
-    value: *Expr,
-    cases: []MatchCase,
-};
-
-pub const MatchCase = struct {
-    pattern: Token,
-    body: *Expr,
-};
-
-pub const TryStmt = struct {
-    try_body: []Stmt,
-    catch_body: []Stmt,
-    error_var: ?Token,
+pub const ImportInfo = struct {
+    module_path: []const u8,
+    namespace_alias: ?[]const u8 = null,
+    specific_symbol: ?[]const u8 = null,
 };
 
 pub const ModuleSymbol = struct {
@@ -915,8 +989,85 @@ pub const ModuleInfo = struct {
     }
 };
 
-pub const CompoundAssignment = struct {
-    name: Token,
-    operator: Token, // The compound operator (e.g., MINUS_EQUALS)
-    value: ?*Expr,
-};
+//======================================================================
+// Node Creation Utilities
+//======================================================================
+
+pub fn createExpr(allocator: std.mem.Allocator, data: Expr.Data, span: SourceSpan) !*Expr {
+    const expr = try allocator.create(Expr);
+    expr.* = .{
+        .base = .{
+            .id = generateNodeId(),
+            .span = span,
+        },
+        .data = data,
+    };
+    return expr;
+}
+
+//======================================================================
+// Type System Utilities
+//======================================================================
+
+// Helper function to create TypeInfo from type expression
+pub fn typeInfoFromExpr(allocator: std.mem.Allocator, type_expr: ?*TypeExpr) !*TypeInfo {
+    const type_info = try allocator.create(TypeInfo);
+    errdefer allocator.destroy(type_info);
+
+    if (type_expr == null) {
+        type_info.* = TypeInfo{ .base = .Auto };
+        return type_info;
+    }
+
+    type_info.* = switch (type_expr.?.data) {
+        .Basic => |basic| switch (basic) {
+            .Integer => TypeInfo{ .base = .Int },
+            .U8 => TypeInfo{ .base = .U8 },
+            .Float => TypeInfo{ .base = .Float },
+            .String => TypeInfo{ .base = .String },
+            .Tetra => TypeInfo{ .base = .Tetra },
+            // should never happen, auto is only used for type inference
+            .Auto => TypeInfo{ .base = .Auto },
+        },
+        .Array => |array| blk: {
+            const element_type = try typeInfoFromExpr(allocator, array.element_type);
+
+            // Extract array size if present
+            var array_size: ?usize = null;
+            if (array.size) |size_expr| {
+                if (size_expr.data == .Literal) {
+                    switch (size_expr.data.Literal) {
+                        .int => |i| array_size = @intCast(i),
+                        else => {}, // Only integer literals are supported for array sizes
+                    }
+                }
+            }
+
+            break :blk TypeInfo{
+                .base = .Array,
+                .array_type = element_type,
+                .array_size = array_size,
+            };
+        },
+        .Struct => |fields| blk: {
+            var struct_fields = try allocator.alloc(StructFieldType, fields.len);
+            errdefer allocator.free(struct_fields);
+
+            for (fields, 0..) |field, i| {
+                const field_type = try typeInfoFromExpr(allocator, field.type_expr);
+                struct_fields[i] = .{
+                    .name = field.name.lexeme,
+                    .type_info = field_type,
+                };
+            }
+            break :blk TypeInfo{
+                .base = .Struct,
+                .struct_fields = struct_fields,
+            };
+        },
+        .Custom => TypeInfo{ .base = .Custom },
+        .Enum => TypeInfo{ .base = .Auto },
+    };
+
+    return type_info;
+}

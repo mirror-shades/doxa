@@ -21,13 +21,15 @@ pub fn parseExpression(self: *Parser) ErrorList!?*ast.Expr {
 
         // Create array variable expression
         const array_expr = try self.allocator.create(ast.Expr);
-        array_expr.* = .{ .Variable = .{
-            .type = .IDENTIFIER,
-            .lexeme = "array",
-            .literal = .{ .nothing = {} },
-            .line = 0,
-            .column = 0,
-        } };
+        array_expr.* = .{
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(self.peek()),
+            },
+            .data = .{
+                .Variable = self.peek(),
+            },
+        };
 
         // Check if this is an array indexing operation
         if (self.peek().type == .LEFT_BRACKET) {
@@ -48,11 +50,19 @@ pub fn binary(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Ex
     const right = try precedence.parsePrecedence(self, .UNARY) orelse return error.ExpectedRightOperand;
 
     const binary_expr = try self.allocator.create(ast.Expr);
-    binary_expr.* = .{ .Binary = .{
-        .left = left,
-        .operator = operator,
-        .right = right,
-    } };
+    binary_expr.* = .{
+        .base = .{
+            .id = ast.generateNodeId(),
+            .span = ast.SourceSpan.fromToken(operator),
+        },
+        .data = .{
+            .Binary = .{
+                .left = left,
+                .operator = operator,
+                .right = right,
+            },
+        },
+    };
     return binary_expr;
 }
 
@@ -84,7 +94,7 @@ pub fn braceExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Ex
         try statements.append(stmt);
 
         // Break after return statement
-        if (stmt == .Return) break;
+        if (stmt.data == .Return) break;
     }
 
     if (self.peek().type != .RIGHT_BRACE) {
@@ -93,10 +103,16 @@ pub fn braceExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Ex
     self.advance();
 
     const block_expr = try self.allocator.create(ast.Expr);
-    block_expr.* = .{ .Block = .{
-        .statements = try statements.toOwnedSlice(),
-        .value = null,
-    } };
+    block_expr.* = .{
+        .base = .{
+            .id = ast.generateNodeId(),
+            .span = ast.SourceSpan.fromToken(self.peek()),
+        },
+        .data = .{ .Block = .{
+            .statements = statements,
+            .value = null,
+        } },
+    };
 
     return block_expr;
 }
@@ -127,7 +143,15 @@ pub fn typeofExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.E
     self.advance();
 
     const typeof_expr = try self.allocator.create(ast.Expr);
-    typeof_expr.* = .{ .TypeOf = expr };
+    typeof_expr.* = .{
+        .base = .{
+            .id = ast.generateNodeId(),
+            .span = ast.SourceSpan.fromToken(self.peek()),
+        },
+        .data = .{
+            .TypeOf = expr,
+        },
+    };
     return typeof_expr;
 }
 
@@ -168,13 +192,7 @@ pub fn parseMatchExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*a
             const body = try parseExpression(self) orelse return error.ExpectedExpression;
 
             try cases.append(.{
-                .pattern = token.Token{
-                    .type = .ELSE,
-                    .lexeme = "else",
-                    .literal = .{ .nothing = {} },
-                    .line = 0,
-                    .column = 0,
-                },
+                .pattern = token.Token.initWithFile(.ELSE, "else", .{ .nothing = {} }, self.peek().line, self.peek().column, self.current_file),
                 .body = body,
             });
 
@@ -223,7 +241,7 @@ pub fn parseMatchExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*a
     // If there's no else case, we need to verify that all variants are covered
     if (!has_else_case) {
         // Get the enum type from the value expression
-        const enum_type = switch (value.*) {
+        const enum_type = switch (value.data) {
             .Variable => |v| v.lexeme,
             .EnumMember => |m| m.lexeme,
             else => return error.ExpectedEnumValue,
@@ -244,10 +262,18 @@ pub fn parseMatchExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*a
     }
 
     const match_expr = try self.allocator.create(ast.Expr);
-    match_expr.* = .{ .Match = .{
-        .value = value,
-        .cases = try cases.toOwnedSlice(),
-    } };
+    match_expr.* = .{
+        .base = .{
+            .id = ast.generateNodeId(),
+            .span = ast.SourceSpan.fromToken(self.previous()),
+        },
+        .data = .{
+            .Match = .{
+                .value = value,
+                .cases = try cases.toOwnedSlice(),
+            },
+        },
+    };
     return match_expr;
 }
 
@@ -281,9 +307,15 @@ pub fn whileExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Ex
         const block_stmts = try statement_parser.parseBlockStmt(self);
         const block_expr = try self.allocator.create(ast.Expr);
         block_expr.* = .{
-            .Block = .{
-                .statements = block_stmts,
-                .value = null, // No final expression value for the block
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(self.previous()),
+            },
+            .data = .{
+                .Block = .{
+                    .statements = block_stmts,
+                    .value = null, // No final expression value for the block
+                },
             },
         };
         body = block_expr;
@@ -296,11 +328,18 @@ pub fn whileExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Ex
     }
 
     const while_expr = try self.allocator.create(ast.Expr);
-    while_expr.* = .{ .While = .{
-        .condition = condition,
-        .body = body,
-    } };
-
+    while_expr.* = .{
+        .base = .{
+            .id = ast.generateNodeId(),
+            .span = ast.SourceSpan.fromToken(self.previous()),
+        },
+        .data = .{
+            .While = .{
+                .condition = condition,
+                .body = body,
+            },
+        },
+    };
     return while_expr;
 }
 
@@ -354,20 +393,44 @@ pub fn forExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr
                 self.advance(); // consume '++'
                 // Create assignment expression: i = i + 1
                 const one = try self.allocator.create(ast.Expr);
-                one.* = .{ .Literal = .{ .int = 1 } };
+                one.* = .{
+                    .base = .{
+                        .id = ast.generateNodeId(),
+                        .span = ast.SourceSpan.fromToken(self.peek()),
+                    },
+                    .data = .{
+                        .Literal = .{ .int = 1 },
+                    },
+                };
 
                 const add = try self.allocator.create(ast.Expr);
-                add.* = .{ .Binary = .{
-                    .left = var_expr,
-                    .operator = .{ .type = .PLUS, .lexeme = "+", .line = self.peek().line, .column = self.peek().column, .literal = .nothing },
-                    .right = one,
-                } };
+                add.* = .{
+                    .base = .{
+                        .id = ast.generateNodeId(),
+                        .span = ast.SourceSpan.fromToken(self.peek()),
+                    },
+                    .data = .{
+                        .Binary = .{
+                            .left = var_expr,
+                            .operator = token.Token.initWithFile(.PLUS, "+", .{ .nothing = {} }, self.peek().line, self.peek().column, self.current_file),
+                            .right = one,
+                        },
+                    },
+                };
 
                 const new_increment = try self.allocator.create(ast.Expr);
-                new_increment.* = .{ .Assignment = .{
-                    .name = var_expr.Variable,
-                    .value = add,
-                } };
+                new_increment.* = .{
+                    .base = .{
+                        .id = ast.generateNodeId(),
+                        .span = ast.SourceSpan.fromToken(self.peek()),
+                    },
+                    .data = .{
+                        .Assignment = .{
+                            .name = var_expr.data.Variable,
+                            .value = add,
+                        },
+                    },
+                };
                 increment = new_increment;
             }
         } else if (self.peek().type == .MINUS_MINUS) {
@@ -375,20 +438,44 @@ pub fn forExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr
                 self.advance(); // consume '--'
                 // Create assignment expression: i = i - 1
                 const one = try self.allocator.create(ast.Expr);
-                one.* = .{ .Literal = .{ .int = 1 } };
+                one.* = .{
+                    .base = .{
+                        .id = ast.generateNodeId(),
+                        .span = ast.SourceSpan.fromToken(self.peek()),
+                    },
+                    .data = .{
+                        .Literal = .{ .int = 1 },
+                    },
+                };
 
                 const sub = try self.allocator.create(ast.Expr);
-                sub.* = .{ .Binary = .{
-                    .left = var_expr,
-                    .operator = .{ .type = .MINUS, .lexeme = "-", .line = self.peek().line, .column = self.peek().column, .literal = .nothing },
-                    .right = one,
-                } };
+                sub.* = .{
+                    .base = .{
+                        .id = ast.generateNodeId(),
+                        .span = ast.SourceSpan.fromToken(self.peek()),
+                    },
+                    .data = .{
+                        .Binary = .{
+                            .left = var_expr,
+                            .operator = token.Token.initWithFile(.MINUS, "-", .{ .nothing = {} }, self.peek().line, self.peek().column, self.current_file),
+                            .right = one,
+                        },
+                    },
+                };
 
                 const new_increment = try self.allocator.create(ast.Expr);
-                new_increment.* = .{ .Assignment = .{
-                    .name = var_expr.Variable,
-                    .value = sub,
-                } };
+                new_increment.* = .{
+                    .base = .{
+                        .id = ast.generateNodeId(),
+                        .span = ast.SourceSpan.fromToken(self.peek()),
+                    },
+                    .data = .{
+                        .Assignment = .{
+                            .name = var_expr.data.Variable,
+                            .value = sub,
+                        },
+                    },
+                };
                 increment = new_increment;
             }
         }
@@ -469,7 +556,15 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
         self.advance(); // Consume the basic type keyword token
         consumed_token = true;
         base_type_expr = try self.allocator.create(ast.TypeExpr);
-        base_type_expr.?.* = .{ .Basic = basic };
+        base_type_expr.?.* = .{
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(self.peek()),
+            },
+            .data = .{
+                .Basic = basic,
+            },
+        };
     } else if (type_token.type == .STRUCT_TYPE) {
         // 2. Check for Struct Type Syntax
         if (self.debug_enabled) {
@@ -517,7 +612,15 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
         self.advance(); // consume }
 
         base_type_expr = try self.allocator.create(ast.TypeExpr);
-        base_type_expr.?.* = .{ .Struct = try fields.toOwnedSlice() };
+        base_type_expr.?.* = .{
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(self.peek()),
+            },
+            .data = .{
+                .Struct = try fields.toOwnedSlice(),
+            },
+        };
     } else if (type_token.type == .IDENTIFIER) {
         // 3. Check for Declared or Imported Custom Types
         var is_known_custom = false;
@@ -546,7 +649,15 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
             self.advance(); // Consume the identifier token
             consumed_token = true;
             base_type_expr = try self.allocator.create(ast.TypeExpr);
-            base_type_expr.?.* = .{ .Custom = type_token };
+            base_type_expr.?.* = .{
+                .base = .{
+                    .id = ast.generateNodeId(),
+                    .span = ast.SourceSpan.fromToken(type_token),
+                },
+                .data = .{
+                    .Custom = type_token,
+                },
+            };
         } else {
             // 4. Unknown Identifier -> Error
             if (self.debug_enabled) {
@@ -584,7 +695,15 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
         var size: ?*ast.Expr = null;
         if (self.peek().type == .INT) {
             const size_expr = try self.allocator.create(ast.Expr);
-            size_expr.* = .{ .Literal = self.peek().literal };
+            size_expr.* = .{
+                .base = .{
+                    .id = ast.generateNodeId(),
+                    .span = ast.SourceSpan.fromToken(self.peek()),
+                },
+                .data = .{
+                    .Literal = self.peek().literal,
+                },
+            };
             size = size_expr;
             self.advance(); // consume the integer
         }
@@ -604,9 +723,15 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
 
         const array_type_expr = try self.allocator.create(ast.TypeExpr);
         array_type_expr.* = .{
-            .Array = .{
-                .element_type = base_type_expr.?, // We know it's non-null here
-                .size = size,
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(self.peek()),
+            },
+            .data = .{
+                .Array = .{
+                    .element_type = base_type_expr.?, // We know it's non-null here
+                    .size = size,
+                },
             },
         };
         if (self.debug_enabled) {
@@ -674,7 +799,7 @@ pub fn parseIfExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
     };
 
     // Check for semicolon after then branch if it's a print expression
-    if (then_expr.* == .Inspect) {
+    if (then_expr.*.data == .Inspect) {
         if (self.peek().type != .SEMICOLON) {
             condition.deinit(self.allocator);
             self.allocator.destroy(condition);
@@ -715,7 +840,7 @@ pub fn parseIfExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
             else_expr = try precedence.parsePrecedence(self, .NONE);
 
             // Check for semicolon after else branch if it's a inspect expression
-            if (else_expr != null and else_expr.?.* == .Inspect) {
+            if (else_expr != null and else_expr.?.data == .Inspect) {
                 if (self.peek().type != .SEMICOLON) {
                     condition.deinit(self.allocator);
                     self.allocator.destroy(condition);
@@ -747,20 +872,31 @@ pub fn parseIfExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
     } else {
         // Create implicit nothing for else branch
         else_expr = try self.allocator.create(ast.Expr);
-        else_expr.?.* = .{ .Literal = .{ .nothing = {} } };
+        else_expr.?.* = .{
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(self.peek()),
+            },
+            .data = .{
+                .Literal = .{ .nothing = {} },
+            },
+        };
     }
 
     const if_expr = try self.allocator.create(ast.Expr);
-    if_expr.* = .{ .If = .{
-        .condition = condition,
-        .then_branch = then_expr,
-        .else_branch = else_expr,
-    } };
-
-    if (self.debug_enabled) {
-        std.debug.print("Successfully parsed if expression\n", .{});
-    }
-
+    if_expr.* = .{
+        .base = .{
+            .id = ast.generateNodeId(),
+            .span = ast.SourceSpan.fromToken(self.peek()),
+        },
+        .data = .{
+            .If = .{
+                .condition = condition,
+                .then_branch = then_expr,
+                .else_branch = else_expr,
+            },
+        },
+    };
     return if_expr;
 }
 
@@ -874,13 +1010,22 @@ pub fn functionExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast
     const body = try statement_parser.parseBlockStmt(self);
 
     const function = try self.allocator.create(ast.Expr);
-    function.* = .{ .Function = .{
-        .name = name,
-        .params = try params.toOwnedSlice(),
-        .return_type_info = return_type,
-        .body = body,
-        .is_entry = is_entry,
-    } };
+    function.* = .{
+        .base = .{
+            .id = ast.generateNodeId(),
+            .span = ast.SourceSpan.fromToken(self.peek()),
+        },
+        .data = .{
+            .Function = .{
+                .name = name,
+                .params = try params.toOwnedSlice(),
+                .return_type_info = return_type,
+                .body = body,
+                .is_entry = is_entry,
+                .is_public = false,
+            },
+        },
+    };
     return function;
 }
 
@@ -894,7 +1039,15 @@ pub fn literal(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr
     const expr = switch (current.type) {
         .INT, .FLOAT, .LOGIC, .NOTHING, .TETRA => blk: {
             const new_expr = try self.allocator.create(ast.Expr);
-            new_expr.* = .{ .Literal = current.literal };
+            new_expr.* = .{
+                .base = .{
+                    .id = ast.generateNodeId(),
+                    .span = ast.SourceSpan.fromToken(current),
+                },
+                .data = .{
+                    .Literal = current.literal,
+                },
+            };
             self.advance();
             break :blk new_expr;
         },
@@ -902,7 +1055,15 @@ pub fn literal(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr
             // Make a copy of the string data
             const string_copy = try self.allocator.dupe(u8, current.literal.string);
             const new_expr = try self.allocator.create(ast.Expr);
-            new_expr.* = .{ .Literal = .{ .string = string_copy } };
+            new_expr.* = .{
+                .base = .{
+                    .id = ast.generateNodeId(),
+                    .span = ast.SourceSpan.fromToken(current),
+                },
+                .data = .{
+                    .Literal = .{ .string = string_copy },
+                },
+            };
             self.advance();
             break :blk new_expr;
         },
@@ -940,7 +1101,15 @@ pub fn grouping(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
     self.advance(); // consume )
 
     const grouping_expr = try self.allocator.create(ast.Expr);
-    grouping_expr.* = .{ .Grouping = expr };
+    grouping_expr.* = .{
+        .base = .{
+            .id = ast.generateNodeId(),
+            .span = ast.SourceSpan.fromToken(self.peek()),
+        },
+        .data = .{
+            .Grouping = expr,
+        },
+    };
     return grouping_expr;
 }
 
@@ -957,10 +1126,18 @@ pub fn unary(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     const right = try precedence.parsePrecedence(self, .UNARY) orelse return error.ExpectedExpression;
 
     const unary_expr = try self.allocator.create(ast.Expr);
-    unary_expr.* = .{ .Unary = .{
-        .operator = operator,
-        .right = right,
-    } };
+    unary_expr.* = .{
+        .base = .{
+            .id = ast.generateNodeId(),
+            .span = ast.SourceSpan.fromToken(operator),
+        },
+        .data = .{
+            .Unary = .{
+                .operator = operator,
+                .right = right,
+            },
+        },
+    };
     return unary_expr;
 }
 
@@ -988,14 +1165,30 @@ pub fn variable(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Exp
 
             // Create a namespace object as variable
             const namespace_var = try self.allocator.create(ast.Expr);
-            namespace_var.* = .{ .Variable = name };
+            namespace_var.* = .{
+                .base = .{
+                    .id = ast.generateNodeId(),
+                    .span = ast.SourceSpan.fromToken(name),
+                },
+                .data = .{
+                    .Variable = name,
+                },
+            };
 
             // Create a FieldAccess expression instead of just Variable
             const field_access = try self.allocator.create(ast.Expr);
-            field_access.* = .{ .FieldAccess = .{
-                .object = namespace_var,
-                .field = symbol_name,
-            } };
+            field_access.* = .{
+                .base = .{
+                    .id = ast.generateNodeId(),
+                    .span = ast.SourceSpan.fromToken(symbol_name),
+                },
+                .data = .{
+                    .FieldAccess = .{
+                        .object = namespace_var,
+                        .field = symbol_name,
+                    },
+                },
+            };
 
             // Check for indexing operation
             if (self.peek().type == .LEFT_BRACKET) {
@@ -1009,7 +1202,15 @@ pub fn variable(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Exp
 
     // Create variable expression
     const var_expr = try self.allocator.create(ast.Expr);
-    var_expr.* = .{ .Variable = name };
+    var_expr.* = .{
+        .base = .{
+            .id = ast.generateNodeId(),
+            .span = ast.SourceSpan.fromToken(name),
+        },
+        .data = .{
+            .Variable = name,
+        },
+    };
 
     // Check for indexing operation
     if (self.peek().type == .LEFT_BRACKET) {
@@ -1023,12 +1224,28 @@ pub fn variable(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Exp
 pub fn arrayType(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     // Create a basic type expression for the element type
     const element_type = try self.allocator.create(ast.TypeExpr);
-    element_type.* = .{ .Basic = .Auto }; // Default to auto type
+    element_type.* = .{
+        .base = .{
+            .id = ast.generateNodeId(),
+            .span = ast.SourceSpan.fromToken(self.peek()),
+        },
+        .data = .{
+            .Basic = .Auto,
+        },
+    };
 
     const array_expr = try self.allocator.create(ast.Expr);
-    array_expr.* = .{ .ArrayType = .{
-        .element_type = element_type,
-    } };
+    array_expr.* = .{
+        .base = .{
+            .id = ast.generateNodeId(),
+            .span = ast.SourceSpan.fromToken(self.peek()),
+        },
+        .data = .{
+            .ArrayType = .{
+                .element_type = element_type,
+            },
+        },
+    };
     return array_expr;
 }
 
@@ -1069,57 +1286,41 @@ pub fn parseArrayLiteral(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!
     self.advance(); // consume ']'
 
     const array_expr = try self.allocator.create(ast.Expr);
-    array_expr.* = .{ .Array = try elements.toOwnedSlice() };
+    array_expr.* = .{
+        .base = .{
+            .id = ast.generateNodeId(),
+            .span = ast.SourceSpan.fromToken(self.peek()),
+        },
+        .data = .{
+            .Array = try elements.toOwnedSlice(),
+        },
+    };
     return array_expr;
 }
 
-pub fn inferType(expr: *ast.Expr) ErrorList!ast.TypeInfo {
-    switch (expr.*) {
-        .Literal => |lit| {
-            return switch (lit) {
-                .int => .{ .base = .Int, .is_dynamic = false },
-                .u8 => .{ .base = .U8, .is_dynamic = false },
-                .float => .{ .base = .Float, .is_dynamic = false },
-                .string => .{ .base = .String, .is_dynamic = false },
-                .tetra => .{ .base = .Tetra, .is_dynamic = false },
-                .nothing => .{ .base = .Nothing, .is_dynamic = false },
-                .array => blk: {
-                    if (lit.array.len == 0) {
-                        break :blk .{ .base = .Array, .element_type = .Auto, .is_dynamic = false };
-                    }
+fn parseBasicType(self: *Parser) ErrorList!?*ast.TypeExpr {
+    const type_token = self.peek();
+    const basic_type = switch (type_token.type) {
+        .INT_TYPE => ast.BasicType.Integer,
+        .U8_TYPE => ast.BasicType.U8,
+        .FLOAT_TYPE => ast.BasicType.Float,
+        .STRING_TYPE => ast.BasicType.String,
+        .TETRA_TYPE => ast.BasicType.Tetra,
+        .AUTO_TYPE => ast.BasicType.Auto,
+        else => return null,
+    };
 
-                    break :blk .{ .base = .Array, .element_type = .Auto, .is_dynamic = false };
-                },
-                else => .{ .base = .Auto, .is_dynamic = true },
-            };
-        },
-        .Variable => {
-            return .{ .base = .Auto, .is_dynamic = true };
-        },
-        .Call => |call| {
-            // Handle variable callees
-            if (call.callee.* == .Variable) {
-                if (std.mem.eql(u8, call.callee.Variable.lexeme, "input")) {
-                    return .{ .base = .String, .is_dynamic = false };
-                }
-            } //else if (call.callee.* == .FieldAccess) {} if we need to add special cases for known functions
+    self.advance(); // consume type token
 
-            return .{ .base = .Auto, .is_dynamic = true };
+    const type_expr = try self.allocator.create(ast.TypeExpr);
+    type_expr.* = .{
+        .base = .{
+            .id = ast.generateNodeId(),
+            .span = ast.SourceSpan.fromToken(type_token),
         },
-        .StructLiteral => |struct_literal| {
-            return .{ .base = .Struct, .custom_type = struct_literal.name.lexeme, .is_dynamic = false };
+        .data = .{
+            .Basic = basic_type,
         },
-        .Array => {
-            return .{ .base = .Array, .element_type = .Auto, .is_dynamic = false };
-        },
-        .Map => {
-            return .{ .base = .Map, .is_dynamic = false };
-        },
-        .Tuple => {
-            return .{ .base = .Tuple, .is_dynamic = false };
-        },
-        else => {
-            return .{ .base = .Auto, .is_dynamic = true };
-        },
-    }
+    };
+    return type_expr;
 }

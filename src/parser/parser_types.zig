@@ -111,7 +111,7 @@ pub const Parser = struct {
             try statements.append(stmt);
 
             // Break after return statement
-            if (stmt == .Return) break;
+            if (stmt.data == .Return) break;
 
             // Don't break on semicolon before right brace
             if (self.peek().type == .RIGHT_BRACE) {
@@ -125,10 +125,18 @@ pub const Parser = struct {
         self.advance();
 
         const block_expr = try self.allocator.create(ast.Expr);
-        block_expr.* = .{ .Block = .{
-            .statements = try statements.toOwnedSlice(),
-            .value = last_expr,
-        } };
+        block_expr.* = .{
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(self.peek()),
+            },
+            .data = .{
+                .Block = .{
+                    .statements = try statements.toOwnedSlice(),
+                    .value = last_expr,
+                },
+            },
+        };
 
         return block_expr;
     }
@@ -206,13 +214,13 @@ pub const Parser = struct {
                 },
                 .FUNCTION => {
                     var func = try declaration_parser.parseFunctionDecl(self);
-                    func.Function.is_public = is_public; // Apply modifiers
-                    func.Function.is_entry = is_entry;
+                    func.data.Function.is_public = is_public; // Apply modifiers
+                    func.data.Function.is_entry = is_entry;
                     if (is_entry) {
                         // Store entry point name if this function is the entry point
                         // Check if location was already set by '->' token earlier
                         if (self.entry_point_location != null) {
-                            self.entry_point_name = func.Function.name.lexeme;
+                            self.entry_point_name = func.data.Function.name.lexeme;
                         } else {
                             // This case means func keyword without preceding '->', shouldn't happen if logic is correct
                             {
@@ -366,7 +374,15 @@ pub const Parser = struct {
                 self.advance(); // consume =
                 const value_expr = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
                 const default_literal = try self.allocator.create(ast.Expr);
-                default_literal.* = .{ .Literal = value_expr.Literal };
+                default_literal.* = .{
+                    .base = .{
+                        .id = ast.generateNodeId(),
+                        .span = ast.SourceSpan.fromToken(self.peek()),
+                    },
+                    .data = .{
+                        .Literal = value_expr.data.Literal,
+                    },
+                };
                 default_value = default_literal;
             }
 
@@ -467,10 +483,18 @@ pub const Parser = struct {
         if (self.peek().type == .RIGHT_PAREN) {
             self.advance(); // consume )
             const call_expr = try self.allocator.create(ast.Expr);
-            call_expr.* = .{ .Call = .{
-                .callee = callee.?,
-                .arguments = try arguments.toOwnedSlice(),
-            } };
+            call_expr.* = .{
+                .base = .{
+                    .id = ast.generateNodeId(),
+                    .span = ast.SourceSpan.fromToken(self.peek()),
+                },
+                .data = .{
+                    .Call = .{
+                        .callee = callee,
+                        .arguments = try arguments.toOwnedSlice(),
+                    },
+                },
+            };
             return call_expr;
         }
 
@@ -508,10 +532,18 @@ pub const Parser = struct {
 
         // Create call expression
         const call_expr = try self.allocator.create(ast.Expr);
-        call_expr.* = .{ .Call = .{
-            .callee = callee.?,
-            .arguments = try arguments.toOwnedSlice(),
-        } };
+        call_expr.* = .{
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(self.peek()),
+            },
+            .data = .{
+                .Call = .{
+                    .callee = callee,
+                    .arguments = try arguments.toOwnedSlice(),
+                },
+            },
+        };
 
         return call_expr;
     }
@@ -605,10 +637,18 @@ pub const Parser = struct {
 
                 // Create struct literal
                 const struct_init = try self.allocator.create(ast.Expr);
-                struct_init.* = .{ .StructLiteral = .{
-                    .name = type_name,
-                    .fields = try fields.toOwnedSlice(),
-                } };
+                struct_init.* = .{
+                    .base = .{
+                        .id = ast.generateNodeId(),
+                        .span = ast.SourceSpan.fromToken(self.peek()),
+                    },
+                    .data = .{
+                        .StructLiteral = .{
+                            .name = type_name,
+                            .fields = try fields.toOwnedSlice(),
+                        },
+                    },
+                };
                 return struct_init;
             }
         }
@@ -705,10 +745,18 @@ pub const Parser = struct {
         }
 
         const struct_init = try self.allocator.create(ast.Expr);
-        struct_init.* = .{ .StructLiteral = .{
-            .name = struct_name,
-            .fields = try fields.toOwnedSlice(),
-        } };
+        struct_init.* = .{
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(self.peek()),
+            },
+            .data = .{
+                .StructLiteral = .{
+                    .name = struct_name,
+                    .fields = try fields.toOwnedSlice(),
+                },
+            },
+        };
         return struct_init;
     }
 
@@ -734,19 +782,35 @@ pub const Parser = struct {
             const value = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
 
             const expr = try self.allocator.create(ast.Expr);
-            expr.* = .{ .IndexAssign = .{
-                .array = array_expr.?,
-                .index = index_expr,
-                .value = value,
-            } };
+            expr.* = .{
+                .base = .{
+                    .id = ast.generateNodeId(),
+                    .span = ast.SourceSpan.fromToken(self.peek()),
+                },
+                .data = .{
+                    .IndexAssign = .{
+                        .array = array_expr.?,
+                        .index = index_expr,
+                        .value = value,
+                    },
+                },
+            };
             return expr;
         }
 
         const expr = try self.allocator.create(ast.Expr);
-        expr.* = .{ .Index = .{
-            .array = array_expr.?,
-            .index = index_expr,
-        } };
+        expr.* = .{
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(self.peek()),
+            },
+            .data = .{
+                .Index = .{
+                    .array = array_expr.?,
+                    .index = index_expr,
+                },
+            },
+        };
 
         // Check for another index operation (for nested access)
         if (self.peek().type == .LEFT_BRACKET) {
@@ -780,28 +844,52 @@ pub const Parser = struct {
         switch (left.?.*) {
             .Variable => |name| {
                 const assign = try self.allocator.create(ast.Expr);
-                assign.* = .{ .Assignment = .{
-                    .name = name,
-                    .value = value,
-                } };
+                assign.* = .{
+                    .base = .{
+                        .id = ast.generateNodeId(),
+                        .span = ast.SourceSpan.fromToken(self.peek()),
+                    },
+                    .data = .{
+                        .Assignment = .{
+                            .name = name,
+                            .value = value,
+                        },
+                    },
+                };
                 return assign;
             },
             .FieldAccess => |field_access| {
                 const assign = try self.allocator.create(ast.Expr);
-                assign.* = .{ .FieldAssignment = .{
-                    .object = field_access.object,
-                    .field = field_access.field,
-                    .value = value,
-                } };
+                assign.* = .{
+                    .base = .{
+                        .id = ast.generateNodeId(),
+                        .span = ast.SourceSpan.fromToken(self.peek()),
+                    },
+                    .data = .{
+                        .FieldAssignment = .{
+                            .object = field_access.object,
+                            .field = field_access.field,
+                            .value = value,
+                        },
+                    },
+                };
                 return assign;
             },
             .Index => |index_expr| {
                 const assign = try self.allocator.create(ast.Expr);
-                assign.* = .{ .IndexAssign = .{
-                    .array = index_expr.array,
-                    .index = index_expr.index,
-                    .value = value,
-                } };
+                assign.* = .{
+                    .base = .{
+                        .id = ast.generateNodeId(),
+                        .span = ast.SourceSpan.fromToken(self.peek()),
+                    },
+                    .data = .{
+                        .IndexAssign = .{
+                            .array = index_expr.array,
+                            .index = index_expr.index,
+                            .value = value,
+                        },
+                    },
+                };
                 return assign;
             },
             else => return error.InvalidAssignmentTarget,
@@ -832,9 +920,15 @@ pub const Parser = struct {
 
             const field_access = try self.allocator.create(ast.Expr);
             field_access.* = .{
-                .FieldAccess = .{
-                    .object = left.?,
-                    .field = current_token,
+                .base = .{
+                    .id = ast.generateNodeId(),
+                    .span = ast.SourceSpan.fromToken(self.peek()),
+                },
+                .data = .{
+                    .FieldAccess = .{
+                        .object = left.?,
+                        .field = current_token,
+                    },
                 },
             };
             return field_access;
@@ -847,9 +941,15 @@ pub const Parser = struct {
             // Create a field access expression
             const field_access = try self.allocator.create(ast.Expr);
             field_access.* = .{
-                .FieldAccess = .{
-                    .object = left.?,
-                    .field = current_token,
+                .base = .{
+                    .id = ast.generateNodeId(),
+                    .span = ast.SourceSpan.fromToken(self.peek()),
+                },
+                .data = .{
+                    .FieldAccess = .{
+                        .object = left.?,
+                        .field = current_token,
+                    },
                 },
             };
 
@@ -866,9 +966,15 @@ pub const Parser = struct {
                 // Create an Index expression wrapping the field access
                 const index_expr = try self.allocator.create(ast.Expr);
                 index_expr.* = .{
-                    .Index = .{
-                        .array = field_access,
-                        .index = idx_expr,
+                    .base = .{
+                        .id = ast.generateNodeId(),
+                        .span = ast.SourceSpan.fromToken(self.peek()),
+                    },
+                    .data = .{
+                        .Index = .{
+                            .array = field_access,
+                            .index = idx_expr,
+                        },
                     },
                 };
                 return index_expr;
@@ -883,9 +989,15 @@ pub const Parser = struct {
 
             const field_access = try self.allocator.create(ast.Expr);
             field_access.* = .{
-                .FieldAccess = .{
-                    .object = left.?,
-                    .field = current_token,
+                .base = .{
+                    .id = ast.generateNodeId(),
+                    .span = ast.SourceSpan.fromToken(self.peek()),
+                },
+                .data = .{
+                    .FieldAccess = .{
+                        .object = left.?,
+                        .field = current_token,
+                    },
                 },
             };
 
@@ -917,14 +1029,20 @@ pub const Parser = struct {
 
         const inspect_expr = try self.allocator.create(ast.Expr);
         inspect_expr.* = .{
-            .Inspect = .{
-                .expr = left.?,
-                .location = .{
-                    .file = self.current_file,
-                    .line = self.peek().line,
-                    .column = self.peek().column - 1,
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(self.peek()),
+            },
+            .data = .{
+                .Inspect = .{
+                    .expr = left.?,
+                    .location = .{
+                        .file = self.current_file,
+                        .line = self.peek().line,
+                        .column = self.peek().column - 1,
+                    },
+                    .variable_name = if (name_token) |token_name| token_name.lexeme else null,
                 },
-                .variable_name = if (name_token) |token_name| token_name.lexeme else null,
             },
         };
 
@@ -999,7 +1117,15 @@ pub const Parser = struct {
         }
 
         const enum_member = try self.allocator.create(ast.Expr);
-        enum_member.* = .{ .EnumMember = member };
+        enum_member.* = .{
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(self.peek()),
+            },
+            .data = .{
+                .EnumMember = member,
+            },
+        };
         return enum_member;
     }
 
@@ -1079,7 +1205,15 @@ pub const Parser = struct {
         self.advance(); // consume ':)'
 
         const tuple_expr = try self.allocator.create(ast.Expr);
-        tuple_expr.* = .{ .Tuple = try elements.toOwnedSlice() };
+        tuple_expr.* = .{
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(self.peek()),
+            },
+            .data = .{
+                .Tuple = try elements.toOwnedSlice(),
+            },
+        };
         return tuple_expr;
     }
 
@@ -1133,7 +1267,15 @@ pub const Parser = struct {
         self.advance();
 
         const map_expr = try self.allocator.create(ast.Expr);
-        map_expr.* = .{ .Map = try entries.toOwnedSlice() };
+        map_expr.* = .{
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(self.peek()),
+            },
+            .data = .{
+                .Map = try entries.toOwnedSlice(),
+            },
+        };
         return map_expr;
     }
 
@@ -1163,9 +1305,15 @@ pub const Parser = struct {
 
         const block_expr = try self.allocator.create(ast.Expr);
         block_expr.* = .{
-            .Block = .{
-                .statements = try statements.toOwnedSlice(),
-                .value = null, // Last expression value
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(self.peek()),
+            },
+            .data = .{
+                .Block = .{
+                    .statements = try statements.toOwnedSlice(),
+                    .value = null, // Last expression value
+                },
             },
         };
 
@@ -1210,10 +1358,18 @@ pub const Parser = struct {
 
         // Create a block expression to hold the module statements
         const module_block = try self.allocator.create(ast.Expr);
-        module_block.* = .{ .Block = .{
-            .statements = module_statements,
-            .value = null,
-        } };
+        module_block.* = .{
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(self.peek()),
+            },
+            .data = .{
+                .Block = .{
+                    .statements = module_statements,
+                    .value = null,
+                },
+            },
+        };
 
         // Extract module info and cache it
         const info = try self.extractModuleInfo(module_block, module_name, null);
@@ -1403,10 +1559,18 @@ pub const Parser = struct {
 
         // Create the array push expression
         const push_expr = try self.allocator.create(ast.Expr);
-        push_expr.* = .{ .ArrayPush = .{
-            .array = array.?,
-            .element = element,
-        } };
+        push_expr.* = .{
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(self.peek()),
+            },
+            .data = .{
+                .ArrayPush = .{
+                    .array = array.?,
+                    .element = element,
+                },
+            },
+        };
 
         return push_expr;
     }
@@ -1415,7 +1579,15 @@ pub const Parser = struct {
         if (array == null) return error.ExpectedExpression;
 
         const empty_expr = try self.allocator.create(ast.Expr);
-        empty_expr.* = .{ .ArrayIsEmpty = .{ .array = array.? } };
+        empty_expr.* = .{
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(self.peek()),
+            },
+            .data = .{
+                .ArrayIsEmpty = .{ .array = array.? },
+            },
+        };
         return empty_expr;
     }
 
@@ -1424,9 +1596,9 @@ pub const Parser = struct {
             std.debug.print("\n=== Starting module info extraction ===\n", .{});
             std.debug.print("Module path: {s}\n", .{module_path});
             std.debug.print("Specific symbol: {?s}\n", .{specific_symbol});
-            std.debug.print("Module AST type: {s}\n", .{@tagName(module_ast.*)});
-            if (module_ast.* == .Block) {
-                std.debug.print("Block has {d} statements\n", .{module_ast.Block.statements.len});
+            std.debug.print("Module AST type: {s}\n", .{@tagName(module_ast.data)});
+            if (module_ast.data == .Block) {
+                std.debug.print("Block has {d} statements\n", .{module_ast.data.Block.statements.len});
             }
         }
 
@@ -1459,8 +1631,8 @@ pub const Parser = struct {
         }
 
         // If the module AST is a block, process its statements
-        if (module_ast.* == .Block) {
-            const statements = module_ast.Block.statements;
+        if (module_ast.data == .Block) {
+            const statements = module_ast.data.Block.statements;
             if (self.debug_enabled) {
                 std.debug.print("Processing {d} statements\n", .{statements.len});
             }
@@ -1739,9 +1911,17 @@ pub const Parser = struct {
 
         // Create the array pop expression
         const pop_expr = try self.allocator.create(ast.Expr);
-        pop_expr.* = .{ .ArrayPop = .{
-            .array = array.?,
-        } };
+        pop_expr.* = .{
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(self.peek()),
+            },
+            .data = .{
+                .ArrayPop = .{
+                    .array = array.?,
+                },
+            },
+        };
 
         return pop_expr;
     }
@@ -1754,10 +1934,18 @@ pub const Parser = struct {
 
         // Don't consume the right paren here - let fieldAccess handle it
         const concat_expr = try self.allocator.create(ast.Expr);
-        concat_expr.* = .{ .ArrayConcat = .{
-            .array = array.?,
-            .array2 = array2,
-        } };
+        concat_expr.* = .{
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(self.peek()),
+            },
+            .data = .{
+                .ArrayConcat = .{
+                    .array = array.?,
+                    .array2 = array2,
+                },
+            },
+        };
         return concat_expr;
     }
 
@@ -1766,9 +1954,17 @@ pub const Parser = struct {
 
         // Create the array length expression
         const length_expr = try self.allocator.create(ast.Expr);
-        length_expr.* = .{ .ArrayLength = .{
-            .array = array.?,
-        } };
+        length_expr.* = .{
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(self.peek()),
+            },
+            .data = .{
+                .ArrayLength = .{
+                    .array = array.?,
+                },
+            },
+        };
 
         return length_expr;
     }
@@ -1781,7 +1977,14 @@ pub const Parser = struct {
         self.advance(); // consume 'input' token
 
         // Check if there's a prompt string
-        var prompt: token.Token = undefined;
+        var prompt: token.Token = token.Token{
+            .type = .IDENTIFIER,
+            .lexeme = "prompt",
+            .literal = .{ .string = "Enter a value: " },
+            .line = 0,
+            .column = 0,
+            .file = "",
+        };
         if (self.peek().type == .STRING) {
             prompt = self.peek();
             if (self.debug_enabled) {
@@ -1801,9 +2004,17 @@ pub const Parser = struct {
 
         // Create the input expression
         const input_expr = try self.allocator.create(ast.Expr);
-        input_expr.* = .{ .Input = .{
-            .prompt = prompt,
-        } };
+        input_expr.* = .{
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(self.peek()),
+            },
+            .data = .{
+                .Input = .{
+                    .prompt = prompt,
+                },
+            },
+        };
 
         return input_expr;
     }
@@ -1908,12 +2119,12 @@ pub const Parser = struct {
             std.debug.print("Module path: {s}\n", .{module_path});
             std.debug.print("Namespace: {s}\n", .{namespace});
             std.debug.print("Specific symbol: {?s}\n", .{specific_symbol});
-            std.debug.print("Module AST type: {s}\n", .{@tagName(module_ast.*)});
+            std.debug.print("Module AST type: {s}\n", .{@tagName(module_ast.data)});
         }
 
         // If this is a block, process its statements
-        if (module_ast.* == .Block) {
-            const statements = module_ast.Block.statements;
+        if (module_ast.data == .Block) {
+            const statements = module_ast.data.Block.statements;
             if (self.debug_enabled) {
                 std.debug.print("Processing {d} statements\n", .{statements.len});
             }
