@@ -70,12 +70,12 @@ function getInput() returns(u8) {
 
 function startLoop() {
     if loopSpot.length equals loops 
-        then {
-            loopSpot.push(ip);
-        } else {
-            loopSpot[loops] is ip;
-        }
-        loops += 1;
+    then {
+        loopSpot.push(ip);
+    } else {
+        loopSpot[loops] is ip;
+    }
+    loops += 1;
 }
 
 function endLoop() {
