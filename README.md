@@ -54,7 +54,7 @@ zig build
 
 ## Example
 
-``` javascript
+``` solidity
 // a brainfuck interpreter implemented in doxa
 // mirror-shades
 
