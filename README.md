@@ -37,20 +37,16 @@ zig build
 
 ### Value Types
 
-- Numbers (integers and floats)
-- Strings
-- Tetras
-- Arrays
-- Maps
-- Structs
-- Functions
-
-### Control Flow
-
-- If/else statements
-- While loops
-- For loops
-- Try/catch for error handling
+- int (32 bit integer)
+- float (64 bit float)
+- u8 (8 bit unsigned integer)
+- string
+- tetra
+- array (homogenous)
+- tuple (heterogenus)
+- map
+- struct
+- enum
 
 ## Example
 
