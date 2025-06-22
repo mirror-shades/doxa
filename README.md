@@ -1,98 +1,142 @@
-# Doxa Programming Language
+# Doxa Programming Language [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/mirror-shades/doxa)  
 
-Doxa is a simple programming language with an interpreter and compiler implementation in Zig.
+Doxa is inspired by Nagaarjuna's four cornered logic, known as Catuṣkoṭi. Doxa does not use bools but instead tetras. A tetra (short for tetralemma) is a logical value with four possible states or corners:  
+
+```
+P (true)
+¬ P (false)
+P ∧ ¬ P (both)
+¬ ( P ∨ ¬ P ) (neither)
+```
+See documentation for a more detailed explaination of how this works.  
 
 ## Components
 
+Currently Doxa runs on an AST walking interpreter so it is pretty slow. The current goal is to modularize the front end and back end of the language. This would involve stack based interpretation as well as true portable compilation into LLVM IR. Below is the planned implementation:
+
 - **Lexer**: Tokenizes source code
 - **Parser**: Builds an AST from tokens
-- **Interpreter**: Directly executes AST nodes (mature implementation)
-- **Compiler**: Compiles AST to bytecode (work in progress)
-- **VM**: Executes bytecode (work in progress)
+- **Soxa** A stack based HIR for type infrence and other high level optimization
+- **VM**: Stack based, operates from Soxa code
+- **LLVM IR** Code generator to turn Soxa into LLVM IR for low level optimizations and native compilation
+
+## Memory management
+
+Doxa uses an automated refence counter much like Swift but with some unique changes which leverage the power of the Zig language allocation system. Without getting overly technical, each scope is allocated as an arena which is cleaned up when that scope is exited. Combined with traditional refrence counting this provides an extremely robust and *predictable* form of automatic memory management which avoids many of the pitfalls of garbage collection while remaining .
 
 ## Usage
 
-### Running a Doxa Program (Interpreted Mode)
-
 ```bash
-zig build run -- program.doxa
-```
-
-Or with debug output:
-
-```bash
-zig build run -- --debug program.doxa
-```
-
-### Compiling a Doxa Program (Compilation Mode - WIP)
-
-The compilation mode is still under development.
-
-```bash
-zig build run -- --compile program.doxa
+zig build
+./zig-out/bin/doxa [--debug] ./path/to/file.doxa
 ```
 
 ## Development Status
 
-- ✅ **Interpreter**: Fully functional, supports all language features
-- 🚧 **Compiler**: Basic implementation, some features missing
-- 🚧 **VM**: Basic implementation, needs integration with compiler
+- ✅ **AST Interpreter**: Fully functional, supports all language features
+- 🚧 **Soxa VM**: currently implementing AST to HIR compilation before reimplementing the old stack based VM
+- 🚧 **LLVM IR**: Minimal prototyping, many features missing
 
 ## Core Concepts
 
 ### Value Types
 
-- Numbers (integers and floats)
-- Strings
-- Booleans
-- Arrays
-- Maps (dictionaries)
-- Structs
-- Functions
-
-### Control Flow
-
-- If/else statements
-- While loops
-- For loops
-- Try/catch for error handling
+- int (32 bit integer)
+- float (64 bit float)
+- u8 (8 bit unsigned integer)
+- string
+- tetra
+- array (homogenous)
+- tuple (heterogenus)
+- map
+- struct
+- enum
 
 ## Example
 
+``` solidity
+// a brainfuck interpreter implemented in doxa
+// mirror-shades
+
+const symbols is [ ">", "<", "+", "-", ".", ",", "[", "]" ];
+
+// input is read as a string and converted to
+// an array of u8 using the bytes method
+function getInput() returns(u8) {
+    var userInput :: string is input;
+    var newByte :: u8 is userInput.bytes[0];
+    return newByte;
+}
+
+function startLoop() {
+    if loopSpot.length equals loops 
+    then {
+        loopSpot.push(ip);
+    } else {
+        loopSpot[loops] is ip;
+    }
+    loops += 1;
+}
+
+function endLoop() {
+    if loops >= 0 
+    then {
+        if tape[tp] equals 0 
+        then {
+            loops -= 1;
+        } else {
+            const loopPointer is loops - 1;
+            ip is loopSpot[loopPointer];
+            // cancels the ip += 1 from the main loop
+            ip -= 1;
+        }
+    }
+}
+
+function checkClosingBracket(scan :: string) returns(tetra) {
+    var pointer :: int is 0;
+    var openBrackets :: int is 0;
+    while(pointer < scan.length) {
+        if(scan[pointer] equals "[") then openBrackets += 1;
+        if(scan[pointer] equals "]") then openBrackets -= 1;
+        pointer += 1;
+    }
+    return(openBrackets equals 0);
+}
+
+
+function interpret(scan :: string) {
+    // tape is a list of u8 values to represent bytes on the tape
+    // tape is initialized with 30000 cells
+    // this can be increased to allow for more memory
+    var tape :: u8[30000];
+    var tp :: int is 0;
+    var ip :: int is 0;
+    var loops :: int is 0;
+    var loopSpot :: int[];
+    const scanLength is scan.length;
+
+    // do a pass to check if the brackets are matched
+    var closedBrackets :: tetra is checkClosingBracket(scan);
+    assert(closedBrackets, "Unmatched brackets");
+
+    while(ip < scanLength) {
+        var currentInstruction is scan[ip];
+        if(currentInstruction equals ">") then tp += 1;
+        if(currentInstruction equals "<") then tp -= 1;
+        if(currentInstruction equals "+") then tape[tp] += 1;
+        if(currentInstruction equals "-") then tape[tp] -= 1;
+        if(currentInstruction equals ".") then tape[tp]?;
+        if(currentInstruction equals ",") then tape[tp] is getInput();
+        if(currentInstruction equals "[") then startLoop();
+        if(currentInstruction equals "]") then endLoop();
+
+        ip += 1;
+    }
+}
+
+-> function main() {
+    interpret(",+.");
+}
 ```
-// Variable declaration
-var x is 5;
-const PI is 3.14159;
 
-// Function definition
-function add(a, b) {
-    return a + b;
-}
-
-// Using control flow
-if (x > 3) then {
-    ("x is greater than 3")?;
-} else {
-    ("x is not greater than 3")?;
-}
-
-// Loops
-while (x > 0) {
-    (x)?;
-    x -= 1;
-}
-
-// Arrays
-var arr is [1, 2, 3, 4, 5];
-print(arr[0]);  // Prints: 1
-```
-
-## Architecture
-
-The Doxa implementation consists of:
-
-1. **Tokenizer**: Converts source code to tokens
-2. **Parser**: Converts tokens to an AST
-3. **Compiler**: Converts AST to bytecode (optional)
-4. **VM**: Executes bytecode (when in compiled mode)
-5. **Interpreter**: Directly executes AST (when in interpreted mode)
