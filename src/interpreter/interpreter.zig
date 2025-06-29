@@ -160,7 +160,6 @@ pub const Interpreter = struct {
                         try self.environment.define(expr.data.StructDecl.name.lexeme, .{ .nothing = {} }, .{
                             .base = .Struct,
                             .is_mutable = true,
-                            .is_dynamic = false,
                             .struct_fields = try fields.toOwnedSlice(),
                         });
                     }
@@ -190,7 +189,6 @@ pub const Interpreter = struct {
                     .{ // Use default TypeInfo for function, actual types checked during call
                         .base = .Function,
                         .is_mutable = false,
-                        .is_dynamic = false,
                     },
                 );
 
@@ -390,7 +388,6 @@ pub const Interpreter = struct {
                             // Create a new type info with U8 element type
                             type_info = ast.TypeInfo{
                                 .base = .Array,
-                                .is_dynamic = false,
                                 .is_mutable = true,
                                 .element_type = .U8,
                                 .array_type = decl.type_info.array_type,
@@ -553,7 +550,6 @@ pub const Interpreter = struct {
 
                     final_type_info = ast.TypeInfo{
                         .base = .Array,
-                        .is_dynamic = false,
                         .is_mutable = true,
                         .element_type = .U8,
                         .array_type = decl.type_info.array_type,
@@ -1041,52 +1037,50 @@ pub const Interpreter = struct {
                     return error.ConstAssignment;
                 }
 
-                // Type checking
-                if (!var_type.is_dynamic) {
-                    switch (var_type.base) {
-                        .Int => {
-                            if (value != .int and value != .u8) {
-                                var reporting = Reporter.init();
-                                reporting.reportRuntimeError("Type error: Cannot assign {s} to int variable", .{@tagName(value)});
-                                return error.TypeError;
-                            }
-                        },
-                        .U8 => {
-                            if (value != .u8 and value != .int) {
-                                var reporting = Reporter.init();
-                                reporting.reportRuntimeError("Type error: Cannot assign {s} to u8 variable", .{@tagName(value)});
-                                return error.TypeError;
-                            }
-                        },
-                        .Float => {
-                            if (value != .float) {
-                                var reporting = Reporter.init();
-                                reporting.reportRuntimeError("Type error: Cannot assign {s} to float variable", .{@tagName(value)});
-                                return error.TypeError;
-                            }
-                        },
-                        .String => {
-                            if (value != .string) {
-                                var reporting = Reporter.init();
-                                reporting.reportRuntimeError("Type error: Cannot assign {s} to string variable", .{@tagName(value)});
-                                return error.TypeError;
-                            }
-                        },
-                        .Tetra => {
-                            if (value != .tetra) {
-                                var reporting = Reporter.init();
-                                reporting.reportRuntimeError("Type error: Cannot assign {s} to tetra variable", .{@tagName(value)});
-                                return error.TypeError;
-                            }
-                        },
-                        .Auto => {}, // Type is already fixed from initialization
-                        else => {
+                // Type checking (always enabled in statically typed mode)
+                switch (var_type.base) {
+                    .Int => {
+                        if (value != .int and value != .u8) {
                             var reporting = Reporter.init();
-                            const location: Reporter.Location = .{ .file = "stdin", .line = assign.name.line, .column = assign.name.column };
-                            reporting.reportCompileError(location, "Type error: Cannot assign {s} to variable", .{@tagName(value)});
+                            reporting.reportRuntimeError("Type error: Cannot assign {s} to int variable", .{@tagName(value)});
                             return error.TypeError;
-                        },
-                    }
+                        }
+                    },
+                    .U8 => {
+                        if (value != .u8 and value != .int) {
+                            var reporting = Reporter.init();
+                            reporting.reportRuntimeError("Type error: Cannot assign {s} to u8 variable", .{@tagName(value)});
+                            return error.TypeError;
+                        }
+                    },
+                    .Float => {
+                        if (value != .float) {
+                            var reporting = Reporter.init();
+                            reporting.reportRuntimeError("Type error: Cannot assign {s} to float variable", .{@tagName(value)});
+                            return error.TypeError;
+                        }
+                    },
+                    .String => {
+                        if (value != .string) {
+                            var reporting = Reporter.init();
+                            reporting.reportRuntimeError("Type error: Cannot assign {s} to string variable", .{@tagName(value)});
+                            return error.TypeError;
+                        }
+                    },
+                    .Tetra => {
+                        if (value != .tetra) {
+                            var reporting = Reporter.init();
+                            reporting.reportRuntimeError("Type error: Cannot assign {s} to tetra variable", .{@tagName(value)});
+                            return error.TypeError;
+                        }
+                    },
+                    .Auto => {}, // Type is already fixed from initialization
+                    else => {
+                        var reporting = Reporter.init();
+                        const location: Reporter.Location = .{ .file = "stdin", .line = assign.name.line, .column = assign.name.column };
+                        reporting.reportCompileError(location, "Type error: Cannot assign {s} to variable", .{@tagName(value)});
+                        return error.TypeError;
+                    },
                 }
 
                 try self.environment.assign(assign.name.lexeme, value);
@@ -2530,52 +2524,50 @@ pub const Interpreter = struct {
             return error.ConstAssignment;
         }
 
-        // Type checking
-        if (!var_type.is_dynamic) {
-            switch (var_type.base) {
-                .Int => {
-                    if (value != .int and value != .u8) {
-                        var reporting = Reporter.init();
-                        reporting.reportRuntimeError("Type error: Cannot assign {s} to int variable", .{@tagName(value)});
-                        return error.TypeError;
-                    }
-                },
-                .U8 => {
-                    if (value != .u8 and value != .int) {
-                        var reporting = Reporter.init();
-                        reporting.reportRuntimeError("Type error: Cannot assign {s} to u8 variable", .{@tagName(value)});
-                        return error.TypeError;
-                    }
-                },
-                .Float => {
-                    if (value != .float) {
-                        var reporting = Reporter.init();
-                        reporting.reportRuntimeError("Type error: Cannot assign {s} to float variable", .{@tagName(value)});
-                        return error.TypeError;
-                    }
-                },
-                .String => {
-                    if (value != .string) {
-                        var reporting = Reporter.init();
-                        reporting.reportRuntimeError("Type error: Cannot assign {s} to string variable", .{@tagName(value)});
-                        return error.TypeError;
-                    }
-                },
-                .Tetra => {
-                    if (value != .tetra) {
-                        var reporting = Reporter.init();
-                        reporting.reportRuntimeError("Type error: Cannot assign {s} to tetra variable", .{@tagName(value)});
-                        return error.TypeError;
-                    }
-                },
-                .Auto => {}, // Type is already fixed from initialization
-                else => {
+        // Type checking (always enabled in statically typed mode)
+        switch (var_type.base) {
+            .Int => {
+                if (value != .int and value != .u8) {
                     var reporting = Reporter.init();
-                    const location: Reporter.Location = .{ .file = "stdin", .line = assignment.name.line, .column = assignment.name.column };
-                    reporting.reportCompileError(location, "Type error: Cannot assign {s} to variable", .{@tagName(value)});
+                    reporting.reportRuntimeError("Type error: Cannot assign {s} to int variable", .{@tagName(value)});
                     return error.TypeError;
-                },
-            }
+                }
+            },
+            .U8 => {
+                if (value != .u8 and value != .int) {
+                    var reporting = Reporter.init();
+                    reporting.reportRuntimeError("Type error: Cannot assign {s} to u8 variable", .{@tagName(value)});
+                    return error.TypeError;
+                }
+            },
+            .Float => {
+                if (value != .float) {
+                    var reporting = Reporter.init();
+                    reporting.reportRuntimeError("Type error: Cannot assign {s} to float variable", .{@tagName(value)});
+                    return error.TypeError;
+                }
+            },
+            .String => {
+                if (value != .string) {
+                    var reporting = Reporter.init();
+                    reporting.reportRuntimeError("Type error: Cannot assign {s} to string variable", .{@tagName(value)});
+                    return error.TypeError;
+                }
+            },
+            .Tetra => {
+                if (value != .tetra) {
+                    var reporting = Reporter.init();
+                    reporting.reportRuntimeError("Type error: Cannot assign {s} to tetra variable", .{@tagName(value)});
+                    return error.TypeError;
+                }
+            },
+            .Auto => {}, // Type is already fixed from initialization
+            else => {
+                var reporting = Reporter.init();
+                const location: Reporter.Location = .{ .file = "stdin", .line = assignment.name.line, .column = assignment.name.column };
+                reporting.reportCompileError(location, "Type error: Cannot assign {s} to variable", .{@tagName(value)});
+                return error.TypeError;
+            },
         }
 
         try self.environment.assign(assignment.name.lexeme, value);
@@ -2654,7 +2646,7 @@ pub const Interpreter = struct {
                             std.debug.print("Parameter '{s}' type: {any}\n", .{ param.name.lexeme, type_info });
                         }
                     } else {
-                        type_info = .{ .base = .Auto, .is_dynamic = true, .is_mutable = true };
+                        type_info = .{ .base = .Auto, .is_mutable = true };
                     }
 
                     // Define parameter only in function environment

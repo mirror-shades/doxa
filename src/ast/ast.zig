@@ -810,7 +810,6 @@ pub const Type = enum {
 pub const TypeInfo = struct {
     base: Type,
     custom_type: ?[]const u8 = null,
-    is_dynamic: bool = false,
     is_mutable: bool = true,
     array_type: ?*TypeInfo = null,
     struct_fields: ?[]StructFieldType = null,
