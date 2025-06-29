@@ -1,0 +1,7 @@
+.zig-cache
+zig-out
+venv
+.github
+site
+test.doxa
+instructions.md

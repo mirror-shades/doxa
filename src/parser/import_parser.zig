@@ -70,10 +70,16 @@ pub fn parseImportStmt(self: *Parser) !ast.Stmt {
     try self.loadAndRegisterModule(module_path, namespace, specific_symbol);
 
     return ast.Stmt{
-        .Import = .{
-            .module_path = module_path,
-            .namespace_alias = namespace,
-            .specific_symbol = specific_symbol,
+        .base = .{
+            .id = ast.generateNodeId(),
+            .span = ast.SourceSpan.fromToken(self.peek()),
+        },
+        .data = .{
+            .Import = .{
+                .module_path = module_path,
+                .namespace_alias = namespace,
+                .specific_symbol = specific_symbol,
+            },
         },
     };
 }
@@ -106,7 +112,7 @@ fn registerPublicSymbols(self: *Parser, module_ast: *ast.Expr, module_path: []co
         .Block => {
             const statements = module_ast.Block.statements;
             for (statements) |stmt| {
-                switch (stmt) {
+                switch (stmt.data) {
                     // Handle enum declarations
                     .EnumDecl => |enum_decl| {
                         const is_public = enum_decl.is_public;
@@ -150,7 +156,7 @@ fn registerPublicSymbols(self: *Parser, module_ast: *ast.Expr, module_path: []co
                     },
                     // Handle struct declarations
                     .Expression => |expr| {
-                        if (expr.* == .StructDecl) {
+                        if (expr.data == .StructDecl) {
                             const struct_decl = expr.StructDecl;
                             const is_public = struct_decl.is_public;
                             if (is_public) {

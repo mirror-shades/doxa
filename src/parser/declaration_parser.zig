@@ -19,7 +19,8 @@ pub fn parseEnumDecl(self: *Parser) ErrorList!ast.Stmt {
         self.advance(); // consume 'public'
     }
 
-    self.advance(); // consume 'enum' keyword
+    // Consume 'enum' keyword
+    self.advance();
 
     // Parse enum name
     if (self.peek().type != .IDENTIFIER) {
@@ -27,12 +28,12 @@ pub fn parseEnumDecl(self: *Parser) ErrorList!ast.Stmt {
     }
     const name = self.peek();
 
-    // Register the enum type before advancing
+    // Register the enum type name before advancing
     try self.declared_types.put(name.lexeme, {});
 
-    self.advance(); // Now advance past the identifier
+    self.advance();
 
-    // Parse opening brace
+    // Expect opening brace
     if (self.peek().type != .LEFT_BRACE) {
         return error.ExpectedLeftBrace;
     }
@@ -55,11 +56,33 @@ pub fn parseEnumDecl(self: *Parser) ErrorList!ast.Stmt {
     }
     self.advance(); // consume right brace
 
-    return ast.Stmt{ .EnumDecl = .{
-        .name = name,
-        .variants = try variants.toOwnedSlice(),
-        .is_public = is_public,
-    } };
+    // Create source span from name token to closing brace
+    const span = ast.SourceSpan{
+        .start = .{
+            .file = name.file,
+            .line = name.line,
+            .column = name.column,
+        },
+        .end = .{
+            .file = self.previous().file,
+            .line = self.previous().line,
+            .column = self.previous().column + self.previous().lexeme.len,
+        },
+    };
+
+    return ast.Stmt{
+        .base = .{
+            .id = ast.generateNodeId(),
+            .span = span,
+        },
+        .data = .{
+            .EnumDecl = .{
+                .name = name,
+                .variants = try variants.toOwnedSlice(),
+                .is_public = is_public,
+            },
+        },
+    };
 }
 
 pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
@@ -139,12 +162,34 @@ pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*
 
     self.advance(); // consume right brace
 
+    // Create source span from name token to closing brace
+    const span = ast.SourceSpan{
+        .start = .{
+            .file = name.file,
+            .line = name.line,
+            .column = name.column,
+        },
+        .end = .{
+            .file = self.previous().file,
+            .line = self.previous().line,
+            .column = self.previous().column + self.previous().lexeme.len,
+        },
+    };
+
     const struct_expr = try self.allocator.create(ast.Expr);
-    struct_expr.* = .{ .StructDecl = .{
-        .name = name,
-        .fields = try fields.toOwnedSlice(),
-        .is_public = is_public,
-    } };
+    struct_expr.* = .{
+        .base = .{
+            .id = ast.generateNodeId(),
+            .span = span,
+        },
+        .data = .{
+            .StructDecl = ast.StructDecl{
+                .name = name,
+                .fields = try fields.toOwnedSlice(),
+                .is_public = is_public,
+            },
+        },
+    };
 
     return struct_expr;
 }
@@ -283,14 +328,22 @@ pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
     }
     self.advance(); // consume '}'
 
-    return ast.Stmt{ .Function = .{
-        .name = function_name,
-        .params = try params.toOwnedSlice(),
-        .return_type_info = return_type,
-        .body = try body_statements.toOwnedSlice(),
-        .is_entry = is_entry,
-        .is_public = is_public,
-    } };
+    return ast.Stmt{
+        .base = .{
+            .id = ast.generateNodeId(),
+            .span = ast.SourceSpan.fromToken(function_name),
+        },
+        .data = .{
+            .FunctionDecl = .{
+                .name = function_name,
+                .params = try params.toOwnedSlice(),
+                .return_type_info = return_type,
+                .body = try body_statements.toOwnedSlice(),
+                .is_entry = is_entry,
+                .is_public = is_public,
+            },
+        },
+    };
 }
 
 pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
@@ -329,13 +382,7 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
         self.advance(); // consume 'array'
 
         // Create implicit name for array
-        const name = token.Token{
-            .type = .IDENTIFIER,
-            .lexeme = "array",
-            .literal = .{ .nothing = {} },
-            .line = 0,
-            .column = 0,
-        };
+        const name = token.Token.initWithFile(.IDENTIFIER, "array", .{ .nothing = {} }, 0, 0, self.current_file);
 
         var initializer: ?*ast.Expr = null;
         if (self.peek().type == .ASSIGN) {
@@ -375,12 +422,20 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
         }
         self.advance();
 
-        return ast.Stmt{ .VarDecl = .{
-            .name = name,
-            .type_info = type_info,
-            .initializer = initializer,
-            .is_public = is_public,
-        } };
+        return ast.Stmt{
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(name),
+            },
+            .data = .{
+                .VarDecl = .{
+                    .name = name,
+                    .type_info = type_info,
+                    .initializer = initializer,
+                    .is_public = is_public,
+                },
+            },
+        };
     }
 
     // Original variable declaration parsing logic
@@ -525,15 +580,26 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
     if (type_info.base == .Auto and initializer != null) {
         // infer type from initializer
         const inferred_type = try expression_parser.inferType(initializer.?);
+        // Preserve mutability from the original declaration (var vs const)
+        const original_mutability = type_info.is_mutable;
         type_info = inferred_type;
+        type_info.is_mutable = original_mutability;
     }
 
-    return ast.Stmt{ .VarDecl = .{
-        .name = name,
-        .type_info = type_info,
-        .initializer = initializer,
-        .is_public = is_public,
-    } };
+    return ast.Stmt{
+        .base = .{
+            .id = ast.generateNodeId(),
+            .span = ast.SourceSpan.fromToken(name),
+        },
+        .data = .{
+            .VarDecl = .{
+                .name = name,
+                .type_info = type_info,
+                .initializer = initializer,
+                .is_public = is_public,
+            },
+        },
+    };
 }
 
 pub fn enumDeclPrefix(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
@@ -541,12 +607,19 @@ pub fn enumDeclPrefix(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*a
     const expr = try self.allocator.create(ast.Expr);
 
     // Create a mutable copy of the variants array
-    const variants = try self.allocator.alloc(token.Token, enum_stmt.EnumDecl.variants.len);
-    @memcpy(variants, enum_stmt.EnumDecl.variants);
+    const variants = try self.allocator.alloc(token.Token, enum_stmt.data.EnumDecl.variants.len);
+    @memcpy(variants, enum_stmt.data.EnumDecl.variants);
 
-    expr.* = .{ .EnumDecl = .{
-        .name = enum_stmt.EnumDecl.name,
-        .variants = variants,
-    } };
+    expr.* = .{
+        .base = .{
+            .id = ast.generateNodeId(),
+            .span = ast.SourceSpan.fromToken(enum_stmt.data.EnumDecl.name),
+        },
+        .data = .{ .EnumDecl = .{
+            .name = enum_stmt.data.EnumDecl.name,
+            .variants = variants,
+            .is_public = enum_stmt.data.EnumDecl.is_public,
+        } },
+    };
     return expr;
 }

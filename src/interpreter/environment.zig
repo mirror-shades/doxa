@@ -51,8 +51,12 @@ pub fn define(self: *Environment, key: []const u8, value: TokenLiteral, type_inf
 
     if (self.memory_manager.scope_manager.root_scope) |root_scope| {
         // Use createValueBinding instead of the undefined defineVariable
-        // We need to supply constant flag - let's assume false initially, could be a parameter
-        const is_constant = false;
+        // Use the mutability information from type_info to determine if this is constant
+        const is_constant = !type_info.is_mutable;
+
+        if (self.debug_enabled) {
+            std.debug.print("DEBUG: Defining variable '{s}': is_mutable={}, is_constant={}\n", .{ key, type_info.is_mutable, is_constant });
+        }
 
         // Convert TypeInfo to TokenType if needed
         // This is a simplification - you may need to map between your TypeInfo and TokenType

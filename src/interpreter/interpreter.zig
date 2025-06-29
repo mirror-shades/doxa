@@ -135,21 +135,21 @@ pub const Interpreter = struct {
         for (0..statements.len) |i| {
             const stmt = &statements[i];
             if (self.debug_enabled) {
-                std.debug.print("\nScanning for types - statement {d}: {s}\n", .{ i, @tagName(stmt.*) });
+                std.debug.print("\nScanning for types - statement {d}: {s}\n", .{ i, @tagName(stmt.data) });
             }
 
-            if (stmt.* == .Expression) {
+            if (stmt.data == .Expression) {
                 // Check for struct declarations in expressions
-                if (stmt.Expression) |expr| {
-                    if (expr.* == .StructDecl) {
+                if (stmt.data.Expression) |expr| {
+                    if (expr.data == .StructDecl) {
                         if (self.debug_enabled) {
-                            std.debug.print("Processing struct declaration: {s}\n", .{expr.StructDecl.name.lexeme});
+                            std.debug.print("Processing struct declaration: {s}\n", .{expr.data.StructDecl.name.lexeme});
                         }
                         // Define the struct type in the environment
                         var fields = std.ArrayList(ast.StructFieldType).init(self.allocator);
                         defer fields.deinit();
 
-                        for (expr.StructDecl.fields) |field| {
+                        for (expr.data.StructDecl.fields) |field| {
                             const type_info = try ast.typeInfoFromExpr(self.allocator, field.type_expr);
                             try fields.append(.{
                                 .name = field.name.lexeme,
@@ -157,7 +157,7 @@ pub const Interpreter = struct {
                             });
                         }
 
-                        try self.environment.define(expr.StructDecl.name.lexeme, .{ .nothing = {} }, .{
+                        try self.environment.define(expr.data.StructDecl.name.lexeme, .{ .nothing = {} }, .{
                             .base = .Struct,
                             .is_mutable = true,
                             .is_dynamic = false,
@@ -165,13 +165,13 @@ pub const Interpreter = struct {
                         });
                     }
                 }
-            } else if (stmt.* == .EnumDecl) {
+            } else if (stmt.data == .EnumDecl) {
                 if (self.debug_enabled) {
-                    std.debug.print("Processing enum declaration: {s}\n", .{stmt.EnumDecl.name.lexeme});
+                    std.debug.print("Processing enum declaration: {s}\n", .{stmt.data.EnumDecl.name.lexeme});
                 }
                 _ = try self.executeStatement(stmt, self.debug_enabled);
-            } else if (stmt.* == .Function) {
-                const f = stmt.Function;
+            } else if (stmt.data == .FunctionDecl) {
+                const f = stmt.data.FunctionDecl;
                 if (self.debug_enabled) {
                     std.debug.print("\nCreating forward declaration for: {s}\n", .{f.name.lexeme});
                 }
@@ -208,8 +208,8 @@ pub const Interpreter = struct {
             }
             for (statements) |*stmt| {
                 // Skip declarations that were handled in the first pass
-                if (stmt.* == .Function or stmt.* == .EnumDecl or
-                    (stmt.* == .Expression and stmt.Expression != null and stmt.Expression.?.* == .StructDecl))
+                if (stmt.data == .FunctionDecl or stmt.data == .EnumDecl or
+                    (stmt.data == .Expression and stmt.data.Expression != null and stmt.data.Expression.?.data == .StructDecl))
                 {
                     continue;
                 }
@@ -314,8 +314,8 @@ pub const Interpreter = struct {
             std.debug.print("Executing statement: {any}\n", .{stmt.*});
         }
 
-        return switch (stmt.*) {
-            .Function => |f| {
+        return switch (stmt.data) {
+            .FunctionDecl => |f| {
                 if (self.debug_enabled) {
                     std.debug.print("Executing function declaration: {s}\n", .{f.name.lexeme});
                 }
@@ -561,6 +561,11 @@ pub const Interpreter = struct {
                     };
                 }
 
+                // Capture struct type name from struct instances
+                if (value == .struct_value and final_type_info.base == .Struct) {
+                    final_type_info.custom_type = value.struct_value.type_name;
+                }
+
                 try self.environment.define(decl.name.lexeme, value, final_type_info);
                 return null;
             },
@@ -675,7 +680,7 @@ pub const Interpreter = struct {
     }
 
     pub fn evaluate(self: *Interpreter, expr: *const ast.Expr) ErrorList!TokenLiteral {
-        return switch (expr.*) {
+        return switch (expr.data) {
             .Literal => |lit| {
                 return lit;
             },
@@ -909,7 +914,16 @@ pub const Interpreter = struct {
                 // Allocate the statement array
                 var statements = try self.allocator.alloc(ast.Stmt, 1);
                 defer self.allocator.free(statements);
-                statements[0] = .{ .Expression = branch };
+                statements[0] = .{
+                    .base = .{
+                        .id = 0, // Temporary ID for dynamic statements
+                        .span = .{
+                            .start = .{ .file = "", .line = 0, .column = 0 },
+                            .end = .{ .file = "", .line = 0, .column = 0 },
+                        },
+                    },
+                    .data = .{ .Expression = branch },
+                };
 
                 // Execute the chosen branch in the new environment
                 const result = self.executeBlock(statements, &if_env) catch |err| {
@@ -1016,6 +1030,11 @@ pub const Interpreter = struct {
 
                 // Get variable's type info
                 const var_type = try self.environment.getTypeInfo(assign.name.lexeme);
+
+                // Debug: print the type info
+                if (self.debug_enabled) {
+                    std.debug.print("DEBUG: Assignment to '{s}': type_info.is_mutable={}, type_info.base={s}\n", .{ assign.name.lexeme, var_type.is_mutable, @tagName(var_type.base) });
+                }
 
                 // Check mutability
                 if (!var_type.is_mutable) {
@@ -1211,8 +1230,9 @@ pub const Interpreter = struct {
                     });
                 }
 
+                // For basic struct creation without a specific type name, use a generic name
                 return TokenLiteral{ .struct_value = .{
-                    .type_name = expr.StructLiteral.name.lexeme,
+                    .type_name = "struct",
                     .fields = try struct_fields.toOwnedSlice(),
                 } };
             },
@@ -1244,9 +1264,9 @@ pub const Interpreter = struct {
                     .array => |arr| {
                         if (index_value != .int) {
                             // Special case: check if this is a length access
-                            if (index.index.* == .Literal and
-                                index.index.Literal == .string and
-                                std.mem.eql(u8, "length", index.index.Literal.string))
+                            if (index.index.data == .Literal and
+                                index.index.data.Literal == .string and
+                                std.mem.eql(u8, "length", index.index.data.Literal.string))
                             {
                                 return TokenLiteral{ .int = @intCast(arr.len) };
                             }
@@ -1265,8 +1285,8 @@ pub const Interpreter = struct {
                         }
 
                         // Try to find array type information to preserve element types
-                        if (index.array.* == .Variable) {
-                            const var_name = index.array.Variable.lexeme;
+                        if (index.array.data == .Variable) {
+                            const var_name = index.array.data.Variable.lexeme;
                             if (self.environment.getTypeInfo(var_name)) |type_info| {
                                 if (type_info.base == .Array and type_info.element_type != null) {
                                     // If element is an int but array type is u8, convert to u8
@@ -1312,7 +1332,7 @@ pub const Interpreter = struct {
                 const index = try self.evaluate(idx_assign.index);
 
                 // Check if this is a compound assignment
-                if (idx_assign.value.* == .CompoundAssign) {
+                if (idx_assign.value.data == .CompoundAssign) {
                     // Get the current value at the index
                     const usize_index = @as(usize, @intCast(index.int));
                     if (usize_index >= array_val.array.len) {
@@ -1322,7 +1342,7 @@ pub const Interpreter = struct {
                     const current_value = array_val.array[usize_index];
 
                     // Evaluate the compound assignment
-                    const compound = idx_assign.value.CompoundAssign;
+                    const compound = idx_assign.value.data.CompoundAssign;
                     const rhs_value = try self.evaluate(compound.value orelse return error.InvalidExpression);
 
                     // Perform the compound operation
@@ -1406,8 +1426,8 @@ pub const Interpreter = struct {
             },
             .Call => |call| {
                 // Check if this is a method call (callee is a field access)
-                if (call.callee.* == .FieldAccess) {
-                    const field_access = call.callee.FieldAccess;
+                if (call.callee.data == .FieldAccess) {
+                    const field_access = call.callee.data.FieldAccess;
                     const object = try self.evaluate(field_access.object);
 
                     // Handle array methods
@@ -1439,8 +1459,8 @@ pub const Interpreter = struct {
                             const new_value = TokenLiteral{ .array = new_array };
 
                             // Update the variable in the environment
-                            if (field_access.object.* == .Variable) {
-                                try self.environment.assign(field_access.object.Variable.lexeme, new_value);
+                            if (field_access.object.data == .Variable) {
+                                try self.environment.assign(field_access.object.data.Variable.lexeme, new_value);
                             }
 
                             return new_value;
@@ -1459,8 +1479,8 @@ pub const Interpreter = struct {
                         }
 
                         // Check if this is a direct namespace or a nested module reference
-                        if (field_access.object.* == .Variable) {
-                            const namespace = field_access.object.Variable.lexeme;
+                        if (field_access.object.data == .Variable) {
+                            const namespace = field_access.object.data.Variable.lexeme;
 
                             // Look for the function in the imported symbols
                             if (self.parser) |p| {
@@ -1482,16 +1502,16 @@ pub const Interpreter = struct {
 
                                             // Find the function in this module
                                             if (module_info.ast) |module_ast| {
-                                                if (module_ast.* == .Block) {
-                                                    for (module_ast.Block.statements) |stmt| {
-                                                        if (stmt == .Function and
-                                                            std.mem.eql(u8, stmt.Function.name.lexeme, field_access.field.lexeme))
+                                                if (module_ast.data == .Block) {
+                                                    for (module_ast.data.Block.statements) |module_stmt| {
+                                                        if (module_stmt.data == .FunctionDecl and
+                                                            std.mem.eql(u8, module_stmt.data.FunctionDecl.name.lexeme, field_access.field.lexeme))
                                                         {
                                                             // Create function value and call it
                                                             const function = TokenLiteral{
                                                                 .function = .{
-                                                                    .params = stmt.Function.params,
-                                                                    .body = stmt.Function.body,
+                                                                    .params = module_stmt.data.FunctionDecl.params,
+                                                                    .body = module_stmt.data.FunctionDecl.body,
                                                                     .closure = self.environment,
                                                                 },
                                                             };
@@ -1527,15 +1547,15 @@ pub const Interpreter = struct {
                                                 // Find the actual function definition
                                                 const original_module = p.module_namespaces.get(namespace).?;
                                                 if (original_module.ast) |module_ast| {
-                                                    if (module_ast.* == .Block) {
-                                                        for (module_ast.Block.statements) |stmt| {
-                                                            if (stmt == .Function and
-                                                                std.mem.eql(u8, stmt.Function.name.lexeme, field_access.field.lexeme))
+                                                    if (module_ast.data == .Block) {
+                                                        for (module_ast.data.Block.statements) |module_stmt2| {
+                                                            if (module_stmt2.data == .FunctionDecl and
+                                                                std.mem.eql(u8, module_stmt2.data.FunctionDecl.name.lexeme, field_access.field.lexeme))
                                                             {
                                                                 const function = TokenLiteral{
                                                                     .function = .{
-                                                                        .params = stmt.Function.params,
-                                                                        .body = stmt.Function.body,
+                                                                        .params = module_stmt2.data.FunctionDecl.params,
+                                                                        .body = module_stmt2.data.FunctionDecl.body,
                                                                         .closure = self.environment,
                                                                     },
                                                                 };
@@ -1554,7 +1574,13 @@ pub const Interpreter = struct {
                         // If we get here, fall back to the original approach
                         // Create a temporary copy of the field access expression
                         const field_access_expr = try self.allocator.create(ast.Expr);
-                        field_access_expr.* = .{ .FieldAccess = field_access };
+                        field_access_expr.* = .{
+                            .base = .{
+                                .id = ast.generateNodeId(),
+                                .span = ast.SourceSpan.fromToken(field_access.field),
+                            },
+                            .data = .{ .FieldAccess = field_access },
+                        };
 
                         // Evaluate the field access to get the function
                         const callee_fn = try self.evaluate(field_access_expr);
@@ -1674,7 +1700,7 @@ pub const Interpreter = struct {
                 const is_true = result_tetra == .true;
                 return TokenLiteral{ .tetra = if (is_true) .true else .false };
             },
-            .Function => |f| TokenLiteral{ .function = .{
+            .FunctionExpr => |f| TokenLiteral{ .function = .{
                 .params = f.params,
                 .body = f.body,
                 .closure = self.environment,
@@ -1825,9 +1851,9 @@ pub const Interpreter = struct {
                 // First check if this is an enum type access
                 if (object == .nothing) {
                     // Try to get type info for the object
-                    if (field.object.* == .Variable) {
+                    if (field.object.data == .Variable) {
                         // Check if this is a module namespace
-                        const var_name = field.object.Variable.lexeme;
+                        const var_name = field.object.data.Variable.lexeme;
                         if (self.parser) |p| {
                             if (p.module_namespaces.contains(var_name)) {
                                 // This is a module namespace, check for the field in imported symbols
@@ -1860,10 +1886,10 @@ pub const Interpreter = struct {
 
                                             // Find the function in the module's statements
                                             if (module_info.ast) |module_ast| {
-                                                if (module_ast.* == .Block) {
-                                                    for (module_ast.Block.statements) |stmt| {
-                                                        if (stmt == .Function and
-                                                            std.mem.eql(u8, stmt.Function.name.lexeme, field.field.lexeme))
+                                                if (module_ast.data == .Block) {
+                                                    for (module_ast.data.Block.statements) |module_stmt3| {
+                                                        if (module_stmt3.data == .FunctionDecl and
+                                                            std.mem.eql(u8, module_stmt3.data.FunctionDecl.name.lexeme, field.field.lexeme))
                                                         {
                                                             if (self.debug_enabled) {
                                                                 std.debug.print("Found function: {s} in module {s}\n", .{ field.field.lexeme, var_name });
@@ -1872,8 +1898,8 @@ pub const Interpreter = struct {
                                                             // Create a function value
                                                             return TokenLiteral{
                                                                 .function = .{
-                                                                    .params = stmt.Function.params,
-                                                                    .body = stmt.Function.body,
+                                                                    .params = module_stmt3.data.FunctionDecl.params,
+                                                                    .body = module_stmt3.data.FunctionDecl.body,
                                                                     .closure = self.environment,
                                                                 },
                                                             };
@@ -1884,9 +1910,9 @@ pub const Interpreter = struct {
                                                         std.debug.print("Could not find function {s} in module statements\n", .{field.field.lexeme});
                                                         // Print all available functions in the module
                                                         std.debug.print("Available functions in module:\n", .{});
-                                                        for (module_ast.Block.statements) |stmt| {
-                                                            if (stmt == .Function) {
-                                                                std.debug.print("  {s}\n", .{stmt.Function.name.lexeme});
+                                                        for (module_ast.data.Block.statements) |module_stmt4| {
+                                                            if (module_stmt4.data == .FunctionDecl) {
+                                                                std.debug.print("  {s}\n", .{module_stmt4.data.FunctionDecl.name.lexeme});
                                                             }
                                                         }
                                                     }
@@ -1902,17 +1928,17 @@ pub const Interpreter = struct {
 
                                             // Find the variable in the module's statements
                                             if (module_info.ast) |module_ast| {
-                                                if (module_ast.* == .Block) {
-                                                    for (module_ast.Block.statements) |stmt| {
-                                                        if (stmt == .VarDecl and
-                                                            std.mem.eql(u8, stmt.VarDecl.name.lexeme, field.field.lexeme))
+                                                if (module_ast.data == .Block) {
+                                                    for (module_ast.data.Block.statements) |module_stmt5| {
+                                                        if (module_stmt5.data == .VarDecl and
+                                                            std.mem.eql(u8, module_stmt5.data.VarDecl.name.lexeme, field.field.lexeme))
                                                         {
                                                             if (self.debug_enabled) {
                                                                 std.debug.print("Found variable declaration: {s}\n", .{field.field.lexeme});
                                                             }
 
                                                             // Evaluate the variable's initializer expression
-                                                            if (stmt.VarDecl.initializer) |init_expr| {
+                                                            if (module_stmt5.data.VarDecl.initializer) |init_expr| {
                                                                 return self.evaluate(init_expr);
                                                             } else {
                                                                 // If no initializer, return a default value based on type
@@ -1944,10 +1970,10 @@ pub const Interpreter = struct {
                                 // Try to find the function directly in the module
                                 const module_info = p.module_namespaces.get(var_name).?;
                                 if (module_info.ast) |module_ast| {
-                                    if (module_ast.* == .Block) {
-                                        for (module_ast.Block.statements) |stmt| {
-                                            if (stmt == .Function and
-                                                std.mem.eql(u8, stmt.Function.name.lexeme, field.field.lexeme))
+                                    if (module_ast.data == .Block) {
+                                        for (module_ast.data.Block.statements) |module_stmt6| {
+                                            if (module_stmt6.data == .FunctionDecl and
+                                                std.mem.eql(u8, module_stmt6.data.FunctionDecl.name.lexeme, field.field.lexeme))
                                             {
                                                 if (self.debug_enabled) {
                                                     std.debug.print("Found function by direct lookup: {s}\n", .{field.field.lexeme});
@@ -1956,8 +1982,8 @@ pub const Interpreter = struct {
                                                 // Create a function value
                                                 return TokenLiteral{
                                                     .function = .{
-                                                        .params = stmt.Function.params,
-                                                        .body = stmt.Function.body,
+                                                        .params = module_stmt6.data.FunctionDecl.params,
+                                                        .body = module_stmt6.data.FunctionDecl.body,
                                                         .closure = self.environment,
                                                     },
                                                 };
@@ -1972,7 +1998,7 @@ pub const Interpreter = struct {
                         }
 
                         // Continue with regular type info check
-                        const type_info = self.environment.getTypeInfo(field.object.Variable.lexeme) catch |err| {
+                        const type_info = self.environment.getTypeInfo(field.object.data.Variable.lexeme) catch |err| {
                             if (self.debug_enabled) {
                                 std.debug.print("Error getting type info: {}\n", .{err});
                             }
@@ -2232,8 +2258,8 @@ pub const Interpreter = struct {
             },
             .TypeOf => |expr_to_check| {
                 // Special case for array indexing
-                if (expr_to_check.* == .Index and expr_to_check.Index.array.* == .Variable) {
-                    const array_name = expr_to_check.Index.array.Variable.lexeme;
+                if (expr_to_check.data == .Index and expr_to_check.data.Index.array.data == .Variable) {
+                    const array_name = expr_to_check.data.Index.array.data.Variable.lexeme;
 
                     // Debug info
                     if (self.debug_enabled) {
@@ -2261,13 +2287,13 @@ pub const Interpreter = struct {
                             return TokenLiteral{ .string = "u8" };
                         }
                     }
-                } else if (self.debug_enabled and expr_to_check.* == .Index) {
-                    std.debug.print("\nTypeOf on Index but array is not Variable: {any}\n", .{expr_to_check.Index.array.*});
+                } else if (self.debug_enabled and expr_to_check.data == .Index) {
+                    std.debug.print("\nTypeOf on Index but array is not Variable: {any}\n", .{expr_to_check.data.Index.array.data});
                 }
 
                 // Handle simple variables
-                if (expr_to_check.* == .Variable) {
-                    const var_token = expr_to_check.Variable;
+                if (expr_to_check.data == .Variable) {
+                    const var_token = expr_to_check.data.Variable;
                     // Get the DECLARED type info from the environment
                     const type_info = self.environment.getTypeInfo(var_token.lexeme) catch {
                         // Handle cases where the variable might not be found (shouldn't happen if code is valid)
@@ -2587,7 +2613,7 @@ pub const Interpreter = struct {
 
                     if (i < arguments.len) {
                         const arg = arguments[i];
-                        if (arg.* == .DefaultArgPlaceholder) {
+                        if (arg.data == .DefaultArgPlaceholder) {
                             if (param.default_value) |default| {
                                 if (self.debug_enabled) {
                                     std.debug.print("Using default value for parameter '{s}'\n", .{param.name.lexeme});
@@ -2898,8 +2924,8 @@ pub const Interpreter = struct {
                 const new_value = TokenLiteral{ .array = new_array };
 
                 // Update the variable in the environment
-                if (method_call.receiver.* == .Variable) {
-                    try self.environment.assign(method_call.receiver.Variable.lexeme, new_value);
+                if (method_call.receiver.data == .Variable) {
+                    try self.environment.assign(method_call.receiver.data.Variable.lexeme, new_value);
                 }
 
                 return new_value;
@@ -2952,8 +2978,8 @@ pub const Interpreter = struct {
         @memcpy(new_array[0..(current_array.len - 1)], current_array[0..(current_array.len - 1)]);
 
         // Update the array in the environment if it's a variable
-        if (array_expr.* == .Variable) {
-            try self.environment.assign(array_expr.Variable.lexeme, .{ .array = new_array });
+        if (array_expr.data == .Variable) {
+            try self.environment.assign(array_expr.data.Variable.lexeme, .{ .array = new_array });
         }
 
         // Free old array
@@ -2998,6 +3024,7 @@ pub const Interpreter = struct {
                 .literal = .{ .nothing = {} }, // Use .nothing instead of null
                 .line = 0, // Since this is synthetic, we use 0
                 .column = 0, // Since this is synthetic, we use 0
+                .file = "", // Since this is synthetic, we use empty string
             },
             .arguments = &[_]*ast.Expr{element},
         };
