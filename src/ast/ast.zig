@@ -192,7 +192,7 @@ pub const Stmt = struct {
             is_public: bool = false,
         },
         Block: []Stmt,
-        Function: struct {
+        FunctionDecl: struct {
             name: Token,
             params: []FunctionParam,
             return_type_info: TypeInfo,
@@ -256,7 +256,7 @@ pub const Stmt = struct {
                     allocator.destroy(value);
                 }
             },
-            .Function => |*f| {
+            .FunctionDecl => |*f| {
                 allocator.free(f.params);
                 for (f.body) |*stmt| {
                     stmt.deinit(allocator);
@@ -423,7 +423,7 @@ pub const Expr = struct {
             arguments: []const *Expr,
         },
         Logical: Logical,
-        Function: struct {
+        FunctionExpr: struct {
             name: Token,
             params: []FunctionParam,
             return_type_info: TypeInfo,
@@ -613,7 +613,7 @@ pub const Expr = struct {
                 l.right.deinit(allocator);
                 allocator.destroy(l.right);
             },
-            .Function => |*f| {
+            .FunctionExpr => |*f| {
                 for (f.params) |*param| {
                     param.deinit(allocator);
                 }

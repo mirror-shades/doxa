@@ -109,7 +109,7 @@ pub fn braceExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Ex
             .span = ast.SourceSpan.fromToken(self.peek()),
         },
         .data = .{ .Block = .{
-            .statements = statements,
+            .statements = try statements.toOwnedSlice(),
             .value = null,
         } },
     };
@@ -507,18 +507,30 @@ pub fn forExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr
 
     // Create block expression for body
     const block_expr = try self.allocator.create(ast.Expr);
-    block_expr.* = .{ .Block = .{
-        .statements = try body.toOwnedSlice(),
-        .value = null,
-    } };
+    block_expr.* = .{
+        .base = .{
+            .id = ast.generateNodeId(),
+            .span = ast.SourceSpan.fromToken(self.previous()),
+        },
+        .data = .{ .Block = .{
+            .statements = try body.toOwnedSlice(),
+            .value = null,
+        } },
+    };
 
     const for_expr = try self.allocator.create(ast.Expr);
     for_expr.* = .{
-        .For = .{
-            .initializer = initializer,
-            .condition = condition,
-            .increment = increment,
-            .body = block_expr,
+        .base = .{
+            .id = ast.generateNodeId(),
+            .span = ast.SourceSpan.fromToken(self.previous()),
+        },
+        .data = .{
+            .For = .{
+                .initializer = initializer,
+                .condition = condition,
+                .increment = increment,
+                .body = block_expr,
+            },
         },
     };
 
@@ -1016,7 +1028,7 @@ pub fn functionExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast
             .span = ast.SourceSpan.fromToken(self.peek()),
         },
         .data = .{
-            .Function = .{
+            .FunctionExpr = .{
                 .name = name,
                 .params = try params.toOwnedSlice(),
                 .return_type_info = return_type,
@@ -1323,4 +1335,35 @@ fn parseBasicType(self: *Parser) ErrorList!?*ast.TypeExpr {
         },
     };
     return type_expr;
+}
+
+pub fn inferType(expr: *ast.Expr) !ast.TypeInfo {
+    switch (expr.data) {
+        .Literal => |lit| {
+            switch (lit) {
+                .int => return .{ .base = .Int, .is_mutable = false, .is_dynamic = false },
+                .u8 => return .{ .base = .U8, .is_mutable = false, .is_dynamic = false },
+                .float => return .{ .base = .Float, .is_mutable = false, .is_dynamic = false },
+                .string => return .{ .base = .String, .is_mutable = false, .is_dynamic = false },
+                .tetra => return .{ .base = .Tetra, .is_mutable = false, .is_dynamic = false },
+                .nothing => return .{ .base = .Nothing, .is_mutable = false, .is_dynamic = false },
+                .array => return .{ .base = .Array, .is_mutable = false, .is_dynamic = false },
+                .tuple => return .{ .base = .Tuple, .is_mutable = false, .is_dynamic = false },
+                .map => return .{ .base = .Map, .is_mutable = false, .is_dynamic = false },
+                .enum_variant => return .{ .base = .Enum, .is_mutable = false, .is_dynamic = false },
+                .struct_value => return .{ .base = .Struct, .is_mutable = false, .is_dynamic = false },
+                .function => return .{ .base = .Function, .is_mutable = false, .is_dynamic = false },
+            }
+        },
+        .Array => return .{ .base = .Array, .is_mutable = false, .is_dynamic = false },
+        .Tuple => return .{ .base = .Tuple, .is_mutable = false, .is_dynamic = false },
+        .Map => return .{ .base = .Map, .is_mutable = false, .is_dynamic = false },
+        .StructLiteral => return .{ .base = .Struct, .is_mutable = false, .is_dynamic = false },
+        .Call => return .{ .base = .Auto, .is_mutable = false, .is_dynamic = true }, // Function calls need runtime evaluation
+        .If => return .{ .base = .Auto, .is_mutable = false, .is_dynamic = true }, // Conditional expressions need runtime evaluation
+        .Variable => return .{ .base = .Auto, .is_mutable = false, .is_dynamic = true }, // Variables need runtime lookup
+        .Binary => return .{ .base = .Auto, .is_mutable = false, .is_dynamic = true }, // Binary expressions need evaluation
+        .Unary => return .{ .base = .Auto, .is_mutable = false, .is_dynamic = true }, // Unary expressions need evaluation
+        else => return .{ .base = .Auto, .is_mutable = false, .is_dynamic = true },
+    }
 }

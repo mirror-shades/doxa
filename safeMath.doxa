@@ -1,0 +1,18 @@
+import "./math.doxa" as math; 
+
+pub function safeAdd(a :: int, b :: int) returns(int) {
+    if(a > 255 or b > 255) then {
+        "Overflow"?;
+        return -1;
+    } 
+    
+    if(a < 0 or b < 0) then {
+        "Underflow"?;
+        return -1;
+    }
+
+    return math.add(a, b);
+}
+
+
+

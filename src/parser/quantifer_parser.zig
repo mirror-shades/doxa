@@ -81,7 +81,7 @@ pub fn existentialQuantifier(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorL
             .data = .{
                 .Exists = .{
                     .variable = bound_variable,
-                    .domain = array_expr,
+                    .array = array_expr,
                     .condition = condition,
                 },
             },
@@ -119,7 +119,7 @@ pub fn existentialQuantifier(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorL
             .data = .{
                 .Exists = .{
                     .variable = bound_variable,
-                    .domain = array_expr,
+                    .array = array_expr,
                     .condition = condition,
                 },
             },
@@ -201,7 +201,7 @@ pub fn universalQuantifier(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorLis
             .data = .{
                 .ForAll = .{
                     .variable = bound_variable,
-                    .domain = array_expr,
+                    .array = array_expr,
                     .condition = condition,
                 },
             },
@@ -239,7 +239,7 @@ pub fn universalQuantifier(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorLis
             .data = .{
                 .ForAll = .{
                     .variable = bound_variable,
-                    .domain = array_expr,
+                    .array = array_expr,
                     .condition = condition,
                 },
             },
@@ -290,12 +290,12 @@ pub fn inOperator(self: *Parser, left: ?*ast.Expr, prec: Precedence) ErrorList!?
         exists_expr.* = .{
             .base = .{
                 .id = ast.generateNodeId(),
-                .span = ast.SourceSpan.fromToken(left.?.Variable),
+                .span = ast.SourceSpan.fromToken(left.?.data.Variable),
             },
             .data = .{
                 .Exists = .{
-                    .variable = left.?.Variable, // We know left is a Variable
-                    .domain = array_expr,
+                    .variable = left.?.data.Variable, // We know left is a Variable
+                    .array = array_expr,
                     .condition = condition,
                 },
             },
@@ -305,10 +305,18 @@ pub fn inOperator(self: *Parser, left: ?*ast.Expr, prec: Precedence) ErrorList!?
 
     // If no 'where' keyword, create regular in expression
     const in_expr = try self.allocator.create(ast.Expr);
-    in_expr.* = .{ .Binary = .{
-        .left = left,
-        .operator = self.tokens[self.current - 1],
-        .right = array_expr,
-    } };
+    in_expr.* = .{
+        .base = .{
+            .id = ast.generateNodeId(),
+            .span = ast.SourceSpan.fromToken(left.?.data.Variable),
+        },
+        .data = .{
+            .Binary = .{
+                .left = left,
+                .operator = self.tokens[self.current - 1],
+                .right = array_expr,
+            },
+        },
+    };
     return in_expr;
 }

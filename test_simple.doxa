@@ -1,0 +1,3 @@
+var test_var is "hello";
+test_var is "world";
+test_var?; 

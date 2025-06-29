@@ -285,27 +285,29 @@ fn compound_assignment(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList
     // Create compound assignment expression
     const compound_expr = try self.allocator.create(ast.Expr);
 
-    // Create the compound assignment value
-    const compound_value = try self.allocator.create(ast.Expr);
-    compound_value.* = .{
-        .CompoundAssign = .{
-            .name = self.tokens[self.current - 2], // Use the token before the operator
-            .operator = operator,
-            .value = value,
-        },
-    };
-
     compound_expr.* = switch (left.?.data) {
-        .Variable => |v| .{ .CompoundAssign = .{
-            .name = v,
-            .operator = operator,
-            .value = value,
-        } },
-        .Index => |idx| .{ .IndexAssign = .{
-            .array = idx.array,
-            .index = idx.index,
-            .value = compound_value,
-        } },
+        .Variable => |v| .{
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(operator),
+            },
+            .data = .{ .CompoundAssign = .{
+                .name = v,
+                .operator = operator,
+                .value = value,
+            } },
+        },
+        .Index => |idx| .{
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(operator),
+            },
+            .data = .{ .IndexAssign = .{
+                .array = idx.array,
+                .index = idx.index,
+                .value = value,
+            } },
+        },
         else => unreachable,
     };
 
@@ -323,7 +325,7 @@ fn logical(self: *Parser, left: ?*ast.Expr, precedence: Precedence) ErrorList!?*
     logical_expr.* = .{
         .base = .{
             .id = ast.generateNodeId(),
-            .span = ast.SourceSpan.fromToken(token),
+            .span = ast.SourceSpan.fromToken(operator),
         },
         .data = .{
             .Logical = .{

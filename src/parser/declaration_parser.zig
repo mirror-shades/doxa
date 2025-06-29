@@ -27,6 +27,10 @@ pub fn parseEnumDecl(self: *Parser) ErrorList!ast.Stmt {
         return error.ExpectedIdentifier;
     }
     const name = self.peek();
+
+    // Register the enum type name before advancing
+    try self.declared_types.put(name.lexeme, {});
+
     self.advance();
 
     // Expect opening brace
@@ -330,7 +334,7 @@ pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
             .span = ast.SourceSpan.fromToken(function_name),
         },
         .data = .{
-            .Function = .{
+            .FunctionDecl = .{
                 .name = function_name,
                 .params = try params.toOwnedSlice(),
                 .return_type_info = return_type,
@@ -418,12 +422,20 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
         }
         self.advance();
 
-        return ast.Stmt{ .VarDecl = .{
-            .name = name,
-            .type_info = type_info,
-            .initializer = initializer,
-            .is_public = is_public,
-        } };
+        return ast.Stmt{
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(name),
+            },
+            .data = .{
+                .VarDecl = .{
+                    .name = name,
+                    .type_info = type_info,
+                    .initializer = initializer,
+                    .is_public = is_public,
+                },
+            },
+        };
     }
 
     // Original variable declaration parsing logic
@@ -568,7 +580,10 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
     if (type_info.base == .Auto and initializer != null) {
         // infer type from initializer
         const inferred_type = try expression_parser.inferType(initializer.?);
+        // Preserve mutability from the original declaration (var vs const)
+        const original_mutability = type_info.is_mutable;
         type_info = inferred_type;
+        type_info.is_mutable = original_mutability;
     }
 
     return ast.Stmt{

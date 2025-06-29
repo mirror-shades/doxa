@@ -72,9 +72,25 @@ pub fn parse(self: *Parser) ErrorList![]ast.Stmt {
                 break :blk try self.parseVarDecl()
             else if (self.peek().type == .LEFT_BRACE) {
                 const block_stmt = if (try self.block(null, .NONE)) |expr|
-                    ast.Stmt{ .Expression = expr }
+                    ast.Stmt{
+                        .base = .{
+                            .id = ast.generateNodeId(),
+                            .span = ast.SourceSpan.fromToken(self.previous()),
+                        },
+                        .data = .{
+                            .Expression = expr,
+                        },
+                    }
                 else
-                    ast.Stmt{ .Expression = null };
+                    ast.Stmt{
+                        .base = .{
+                            .id = ast.generateNodeId(),
+                            .span = ast.SourceSpan.fromToken(self.previous()),
+                        },
+                        .data = .{
+                            .Expression = null,
+                        },
+                    };
                 break :blk block_stmt;
             } else if (self.peek().type == .FUNCTION) {
                 // Skip the entire function declaration since we already processed it
@@ -115,7 +131,15 @@ pub fn parse(self: *Parser) ErrorList![]ast.Stmt {
                         self.advance();
                     }
                 }
-                break :blk ast.Stmt{ .Expression = null };
+                break :blk ast.Stmt{
+                    .base = .{
+                        .id = ast.generateNodeId(),
+                        .span = ast.SourceSpan.fromToken(self.previous()),
+                    },
+                    .data = .{
+                        .Expression = null,
+                    },
+                };
             } else if (self.peek().type == .STRUCT_TYPE) {
                 break :blk try self.parseStructDeclStmt();
             } else if (self.peek().type == .ENUM_TYPE) {
@@ -128,7 +152,7 @@ pub fn parse(self: *Parser) ErrorList![]ast.Stmt {
         };
 
         // Only append non-null expression statements
-        switch (stmt) {
+        switch (stmt.data) {
             .Expression => |expr| {
                 if (expr != null) {
                     try statements.append(stmt);
@@ -188,14 +212,20 @@ pub fn parseExpressionStmt(self: *Parser) ErrorList!ast.Stmt {
 
         // Create a location that won't interfere with string formatting
         inspect_expr.* = .{
-            .Inspect = .{
-                .expr = expr.?,
-                .location = .{
-                    .file = self.current_file,
-                    .line = question_token.line,
-                    .column = question_token.column,
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(question_token),
+            },
+            .data = .{
+                .Inspect = .{
+                    .expr = expr.?,
+                    .location = .{
+                        .file = self.current_file,
+                        .line = question_token.line,
+                        .column = question_token.column,
+                    },
+                    .variable_name = name_token,
                 },
-                .variable_name = name_token,
             },
         };
         final_expr = inspect_expr;
@@ -210,7 +240,7 @@ pub fn parseExpressionStmt(self: *Parser) ErrorList!ast.Stmt {
                     self.current,
                 });
                 if (final_expr != null) {
-                    std.debug.print("Expression type: {s}\n", .{@tagName(@as(std.meta.Tag(ast.Expr), final_expr.?.*))});
+                    std.debug.print("Expression type: {s}\n", .{@tagName(final_expr.?.data)});
                 }
             }
             if (final_expr) |e| {
@@ -232,7 +262,7 @@ pub fn parseExpressionStmt(self: *Parser) ErrorList!ast.Stmt {
     return ast.Stmt{
         .base = .{
             .id = ast.generateNodeId(),
-            .span = ast.SourceSpan.fromToken(self.peek()),
+            .span = ast.SourceSpan.fromToken(self.previous()),
         },
         .data = .{
             .Expression = final_expr,
@@ -389,11 +419,19 @@ pub fn parseAssertStmt(self: *Parser) ErrorList!ast.Stmt {
     }
     self.advance();
 
-    return ast.Stmt{ .Assert = .{
-        .condition = condition.?,
-        .location = location,
-        .message = message,
-    } };
+    return ast.Stmt{
+        .base = .{
+            .id = ast.generateNodeId(),
+            .span = ast.SourceSpan.fromToken(assert_token),
+        },
+        .data = .{
+            .Assert = .{
+                .condition = condition.?,
+                .location = location,
+                .message = message,
+            },
+        },
+    };
 }
 
 pub fn parseTryStmt(self: *Parser) ErrorList!ast.Stmt {
@@ -465,16 +503,32 @@ pub fn parseTryStmt(self: *Parser) ErrorList!ast.Stmt {
     }
     self.advance(); // consume }
 
-    return ast.Stmt{ .Try = .{
-        .try_body = try try_statements.toOwnedSlice(),
-        .catch_body = try catch_statements.toOwnedSlice(),
-        .error_var = error_var,
-    } };
+    return ast.Stmt{
+        .base = .{
+            .id = ast.generateNodeId(),
+            .span = ast.SourceSpan.fromToken(self.previous()),
+        },
+        .data = .{
+            .Try = .{
+                .try_body = try try_statements.toOwnedSlice(),
+                .catch_body = try catch_statements.toOwnedSlice(),
+                .error_var = null,
+            },
+        },
+    };
 }
 
 pub fn parseStructDeclStmt(self: *Parser) ErrorList!ast.Stmt {
     const expr = try declaration_parser.parseStructDecl(self, null, .NONE) orelse return error.InvalidExpression;
-    return ast.Stmt{ .Expression = expr };
+    return ast.Stmt{
+        .base = .{
+            .id = ast.generateNodeId(),
+            .span = ast.SourceSpan.fromToken(self.previous()),
+        },
+        .data = .{
+            .Expression = expr,
+        },
+    };
 }
 
 pub fn parseContinueStmt(self: *Parser) ErrorList!ast.Stmt {

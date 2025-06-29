@@ -205,7 +205,7 @@ pub const Parser = struct {
             switch (stmt_token_type) {
                 .VAR, .CONST => {
                     var decl = try declaration_parser.parseVarDecl(self);
-                    decl.VarDecl.is_public = is_public; // Apply modifier
+                    decl.data.VarDecl.is_public = is_public; // Apply modifier
                     // Cannot be entry point
                     if (is_entry) {
                         return error.InvalidEntryPoint;
@@ -214,13 +214,13 @@ pub const Parser = struct {
                 },
                 .FUNCTION => {
                     var func = try declaration_parser.parseFunctionDecl(self);
-                    func.data.Function.is_public = is_public; // Apply modifiers
-                    func.data.Function.is_entry = is_entry;
+                    func.data.FunctionDecl.is_public = is_public; // Apply modifiers
+                    func.data.FunctionDecl.is_entry = is_entry;
                     if (is_entry) {
                         // Store entry point name if this function is the entry point
                         // Check if location was already set by '->' token earlier
                         if (self.entry_point_location != null) {
-                            self.entry_point_name = func.data.Function.name.lexeme;
+                            self.entry_point_name = func.data.FunctionDecl.name.lexeme;
                         } else {
                             // This case means func keyword without preceding '->', shouldn't happen if logic is correct
                             {
@@ -234,8 +234,11 @@ pub const Parser = struct {
                     const expr = try declaration_parser.parseStructDecl(self, null, .NONE);
                     // Apply is_public to struct decl in AST
                     if (expr) |non_null_expr| {
-                        if (non_null_expr.* == .StructDecl) {
-                            non_null_expr.StructDecl.is_public = is_public;
+                        switch (non_null_expr.data) {
+                            .StructDecl => |*struct_decl| {
+                                struct_decl.is_public = is_public;
+                            },
+                            else => {},
                         }
                     }
                     // Cannot be entry point
@@ -244,12 +247,18 @@ pub const Parser = struct {
                     }
                     // Append only if expr is not null
                     if (expr) |e| {
-                        try statements.append(.{ .Expression = e });
+                        try statements.append(.{
+                            .base = .{
+                                .id = ast.generateNodeId(),
+                                .span = ast.SourceSpan.fromToken(self.peek()),
+                            },
+                            .data = .{ .Expression = e },
+                        });
                     }
                 },
                 .ENUM_TYPE => {
                     var enum_decl = try declaration_parser.parseEnumDecl(self);
-                    enum_decl.EnumDecl.is_public = is_public; // Apply modifier
+                    enum_decl.data.EnumDecl.is_public = is_public; // Apply modifier
                     // Cannot be entry point
                     if (is_entry) {
                         return error.InvalidEntryPoint;
@@ -267,7 +276,7 @@ pub const Parser = struct {
                     }
                     const parsed_stmt = try statement_parser.parseStatement(self);
                     // Only append if it's not a null expression (e.g. from empty block)
-                    if (!(parsed_stmt == .Expression and parsed_stmt.Expression == null)) {
+                    if (!(parsed_stmt.data == .Expression and parsed_stmt.data.Expression == null)) {
                         try statements.append(parsed_stmt);
                     }
                 },
@@ -279,7 +288,7 @@ pub const Parser = struct {
                         return error.MisplacedPublicModifier;
                     }
                     const parsed_stmt = try statement_parser.parseStatement(self);
-                    if (!(parsed_stmt == .Expression and parsed_stmt.Expression == null)) {
+                    if (!(parsed_stmt.data == .Expression and parsed_stmt.data.Expression == null)) {
                         try statements.append(parsed_stmt);
                     }
                 },
@@ -295,7 +304,7 @@ pub const Parser = struct {
                     }
                     const expr_stmt = try statement_parser.parseExpressionStmt(self);
                     // Only append if it's not a null expression
-                    if (!(expr_stmt == .Expression and expr_stmt.Expression == null)) {
+                    if (!(expr_stmt.data == .Expression and expr_stmt.data.Expression == null)) {
                         try statements.append(expr_stmt);
                     }
                 },
@@ -325,7 +334,7 @@ pub const Parser = struct {
         if (self.debug_enabled) {
             std.debug.print("\n=== Parse complete, statement count: {} ===\n", .{statements.items.len});
             for (statements.items, 0..) |st, i| {
-                std.debug.print("Statement {}: {s}\n", .{ i, @tagName(st) });
+                std.debug.print("Statement {}: {s}\n", .{ i, @tagName(st.data) });
             }
         }
 
@@ -490,7 +499,7 @@ pub const Parser = struct {
                 },
                 .data = .{
                     .Call = .{
-                        .callee = callee,
+                        .callee = callee.?,
                         .arguments = try arguments.toOwnedSlice(),
                     },
                 },
@@ -505,7 +514,13 @@ pub const Parser = struct {
                 // Handle default argument placeholder
                 self.advance(); // consume ~
                 const placeholder = try self.allocator.create(ast.Expr);
-                placeholder.* = .DefaultArgPlaceholder; // Added semicolon here
+                placeholder.* = .{
+                    .base = .{
+                        .id = ast.generateNodeId(),
+                        .span = ast.SourceSpan.fromToken(self.peek()),
+                    },
+                    .data = .DefaultArgPlaceholder,
+                };
                 arg = placeholder;
             } else {
                 arg = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
@@ -539,7 +554,7 @@ pub const Parser = struct {
             },
             .data = .{
                 .Call = .{
-                    .callee = callee,
+                    .callee = callee.?,
                     .arguments = try arguments.toOwnedSlice(),
                 },
             },
@@ -841,7 +856,7 @@ pub const Parser = struct {
         const value = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
 
         // Check if left side is a valid assignment target
-        switch (left.?.*) {
+        switch (left.?.data) {
             .Variable => |name| {
                 const assign = try self.allocator.create(ast.Expr);
                 assign.* = .{
@@ -1023,8 +1038,8 @@ pub const Parser = struct {
         if (left == null) return error.ExpectedExpression;
 
         var name_token: ?token.Token = null;
-        if (left.?.* == .Variable) {
-            name_token = left.?.Variable;
+        if (left.?.data == .Variable) {
+            name_token = left.?.data.Variable;
         }
 
         const inspect_expr = try self.allocator.create(ast.Expr);
@@ -1146,7 +1161,7 @@ pub const Parser = struct {
                 for (elements.items) |element| {
                     if (self.debug_enabled) {
                         std.debug.print("About to clean up element of type {s}\n", .{
-                            @tagName(element.*),
+                            @tagName(element.data),
                         });
                     }
                     element.deinit(self.allocator);
@@ -1639,17 +1654,17 @@ pub const Parser = struct {
 
             for (statements, 0..) |stmt, i| {
                 if (self.debug_enabled) {
-                    std.debug.print("\nProcessing statement {d}: {s}\n", .{ i, @tagName(stmt) });
-                    switch (stmt) {
+                    std.debug.print("\nProcessing statement {d}: {s}\n", .{ i, @tagName(stmt.data) });
+                    switch (stmt.data) {
                         .VarDecl => |v| std.debug.print("  Variable: {s} (public: {any})\n", .{ v.name.lexeme, v.is_public }),
-                        .Function => |f| std.debug.print("  Function: {s} (public: {any})\n", .{ f.name.lexeme, f.is_public }),
+                        .FunctionDecl => |f| std.debug.print("  Function: {s} (public: {any})\n", .{ f.name.lexeme, f.is_public }),
                         .Module => |m| std.debug.print("  Module: {s}\n", .{m.name.lexeme}),
                         .Import => |imp| std.debug.print("  Import: {s} as {?s}\n", .{ imp.module_path, imp.namespace_alias }),
                         else => std.debug.print("  Other statement type\n", .{}),
                     }
                 }
 
-                switch (stmt) {
+                switch (stmt.data) {
                     .Module => |module| {
                         // If we find a module declaration, use its name instead
                         name = module.name.lexeme;
@@ -1712,7 +1727,7 @@ pub const Parser = struct {
                             }
                         }
                     },
-                    .Function => |func| {
+                    .FunctionDecl => |func| {
                         const is_public = func.is_public;
                         const symbol_name = func.name.lexeme;
 
@@ -1754,8 +1769,8 @@ pub const Parser = struct {
                     },
                     .Expression => |expr_opt| {
                         if (expr_opt) |expr| {
-                            if (expr.* == .StructDecl) {
-                                const struct_decl = expr.StructDecl;
+                            if (expr.data == .StructDecl) {
+                                const struct_decl = expr.data.StructDecl;
                                 const is_public = struct_decl.is_public;
                                 const symbol_name = struct_decl.name.lexeme;
 
@@ -1794,8 +1809,8 @@ pub const Parser = struct {
                                         std.debug.print("Skipping struct registration - doesn't match specific symbol\n", .{});
                                     }
                                 }
-                            } else if (expr.* == .EnumDecl) {
-                                const enum_decl = expr.EnumDecl;
+                            } else if (expr.data == .EnumDecl) {
+                                const enum_decl = expr.data.EnumDecl;
                                 const is_public = enum_decl.is_public;
                                 const symbol_name = enum_decl.name.lexeme;
 
@@ -1994,6 +2009,7 @@ pub const Parser = struct {
         } else {
             // Create an empty prompt if none provided
             prompt = token.Token{
+                .file = self.current_file,
                 .type = .STRING,
                 .lexeme = "",
                 .literal = .{ .string = "" },
@@ -2131,8 +2147,8 @@ pub const Parser = struct {
 
             for (statements, 0..) |stmt, i| {
                 if (self.debug_enabled) {
-                    std.debug.print("\nProcessing statement {d}: {s}\n", .{ i, @tagName(stmt) });
-                    switch (stmt) {
+                    std.debug.print("\nProcessing statement {d}: {s}\n", .{ i, @tagName(stmt.data) });
+                    switch (stmt.data) {
                         .VarDecl => |v| std.debug.print("  Variable: {s} (public: {any})\n", .{ v.name.lexeme, v.is_public }),
                         .Function => |f| std.debug.print("  Function: {s} (public: {any})\n", .{ f.name.lexeme, f.is_public }),
                         .Module => |m| std.debug.print("  Module: {s}\n", .{m.name.lexeme}),
@@ -2141,7 +2157,7 @@ pub const Parser = struct {
                     }
                 }
 
-                switch (stmt) {
+                switch (stmt.data) {
                     // Handle enum declarations
                     .EnumDecl => |enum_decl| {
                         const is_public = enum_decl.is_public;
@@ -2241,8 +2257,8 @@ pub const Parser = struct {
                     // Handle struct declarations
                     .Expression => |expr_opt| {
                         if (expr_opt) |expr| {
-                            if (expr.* == .StructDecl) {
-                                const struct_decl = expr.StructDecl;
+                            if (expr.data == .StructDecl) {
+                                const struct_decl = expr.data.StructDecl;
                                 const is_public = struct_decl.is_public;
                                 if (self.debug_enabled) {
                                     std.debug.print("Found struct declaration: {s} (public: {any})\n", .{ struct_decl.name.lexeme, is_public });
