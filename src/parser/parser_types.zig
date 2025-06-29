@@ -1387,7 +1387,8 @@ pub const Parser = struct {
         };
 
         // Extract module info and cache it
-        const info = try self.extractModuleInfo(module_block, module_name, null);
+        // Pass the module parser so we can access its import information
+        const info = try self.extractModuleInfoWithParser(module_block, module_name, null, &new_parser);
         try self.module_cache.put(module_name, info);
 
         return info;
@@ -1884,6 +1885,308 @@ pub const Parser = struct {
                                 } else if (self.debug_enabled) {
                                     std.debug.print("Skipping enum registration - doesn't match specific symbol\n", .{});
                                 }
+                            }
+                        }
+                    },
+                    else => {}, // Skip other types of statements
+                }
+            }
+        }
+
+        if (self.debug_enabled) {
+            std.debug.print("\n=== Module info extraction complete ===\n", .{});
+            std.debug.print("Module name: {s}\n", .{name});
+            std.debug.print("Number of imports: {d}\n", .{imports.items.len});
+            std.debug.print("Module symbols count: {d}\n", .{module_symbols.count()});
+            std.debug.print("Current module symbols:\n", .{});
+            var it = module_symbols.iterator();
+            while (it.next()) |entry| {
+                std.debug.print("  {s} (public: {any}, kind: {s})\n", .{ entry.key_ptr.*, entry.value_ptr.is_public, @tagName(entry.value_ptr.kind) });
+            }
+        }
+
+        return ast.ModuleInfo{
+            .name = name,
+            .imports = try imports.toOwnedSlice(),
+            .ast = module_ast, // Store the full module AST for later reference
+            .file_path = module_path, // Store the file path for detecting self-imports
+            .symbols = module_symbols, // Store all symbols (public and private)
+        };
+    }
+
+    /// Extract module info with access to the module parser's import tracking
+    pub fn extractModuleInfoWithParser(self: *Parser, module_ast: *ast.Expr, module_path: []const u8, specific_symbol: ?[]const u8, module_parser: *Parser) !ast.ModuleInfo {
+        if (self.debug_enabled) {
+            std.debug.print("\n=== Starting module info extraction with parser ===\n", .{});
+            std.debug.print("Module path: {s}\n", .{module_path});
+            std.debug.print("Specific symbol: {?s}\n", .{specific_symbol});
+            std.debug.print("Module AST type: {s}\n", .{@tagName(module_ast.data)});
+            if (module_ast.data == .Block) {
+                std.debug.print("Block has {d} statements\n", .{module_ast.data.Block.statements.len});
+            }
+        }
+
+        var imports = std.ArrayList(ast.ImportInfo).init(self.allocator);
+        var name: []const u8 = "";
+
+        // Extract module name from path
+        var path_iter = std.mem.splitSequence(u8, module_path, "/");
+        var last_part: []const u8 = "";
+        while (path_iter.next()) |part| {
+            last_part = part;
+        }
+
+        if (std.mem.endsWith(u8, last_part, ".doxa")) {
+            name = last_part[0 .. last_part.len - 5];
+        } else {
+            name = last_part;
+        }
+
+        if (self.debug_enabled) {
+            std.debug.print("Using module name from path: {s}\n", .{name});
+        }
+
+        // Extract imports from the module parser's tracking data
+        if (module_parser.module_imports.get(module_path)) |module_import_map| {
+            var import_it = module_import_map.iterator();
+            while (import_it.next()) |entry| {
+                const alias = entry.key_ptr.*;
+                const imported_module_path = entry.value_ptr.*;
+
+                if (self.debug_enabled) {
+                    std.debug.print("Found tracked import: {s} -> {s}\n", .{ alias, imported_module_path });
+                }
+
+                try imports.append(ast.ImportInfo{
+                    .module_path = imported_module_path,
+                    .namespace_alias = alias,
+                    .specific_symbol = null,
+                });
+            }
+        }
+
+        // Initialize symbol table for all module symbols (both public and private)
+        var module_symbols = std.StringHashMap(ast.ModuleSymbol).init(self.allocator);
+
+        // Initialize symbol table for this module if needed
+        if (self.imported_symbols == null) {
+            self.imported_symbols = std.StringHashMap(import_parser.ImportedSymbol).init(self.allocator);
+        }
+
+        // If the module AST is a block, process its statements
+        if (module_ast.data == .Block) {
+            const statements = module_ast.data.Block.statements;
+            if (self.debug_enabled) {
+                std.debug.print("Processing {d} statements\n", .{statements.len});
+            }
+
+            for (statements, 0..) |stmt, i| {
+                if (self.debug_enabled) {
+                    std.debug.print("\nProcessing statement {d}: {s}\n", .{ i, @tagName(stmt.data) });
+                    switch (stmt.data) {
+                        .VarDecl => |v| std.debug.print("  Variable: {s} (public: {any})\n", .{ v.name.lexeme, v.is_public }),
+                        .FunctionDecl => |f| std.debug.print("  Function: {s} (public: {any})\n", .{ f.name.lexeme, f.is_public }),
+                        .Module => |m| std.debug.print("  Module: {s}\n", .{m.name.lexeme}),
+                        .Import => |imp| std.debug.print("  Import: {s} as {?s}\n", .{ imp.module_path, imp.namespace_alias }),
+                        else => std.debug.print("  Other statement type\n", .{}),
+                    }
+                }
+
+                switch (stmt.data) {
+                    .Module => |module| {
+                        // If we find a module declaration, use its name instead
+                        name = module.name.lexeme;
+                        if (self.debug_enabled) {
+                            std.debug.print("Found module declaration, using name: {s}\n", .{name});
+                        }
+                        for (module.imports) |import| {
+                            try imports.append(import);
+                        }
+                    },
+                    .Import => |import_info| {
+                        if (self.debug_enabled) {
+                            std.debug.print("Found import: {s} as {?s}\n", .{ import_info.module_path, import_info.namespace_alias });
+                        }
+                        // Add import to the imports list
+                        try imports.append(import_info);
+                    },
+                    .VarDecl => |var_decl| {
+                        const is_public = var_decl.is_public;
+                        const symbol_name = var_decl.name.lexeme;
+
+                        // Add this symbol to the module's symbol table (public or private)
+                        try module_symbols.put(symbol_name, .{
+                            .name = symbol_name,
+                            .kind = .Variable,
+                            .is_public = is_public,
+                            .stmt_index = i,
+                        });
+
+                        if (self.debug_enabled) {
+                            std.debug.print("Added variable to module symbols: {s} (public: {any})\n", .{ symbol_name, is_public });
+                        }
+
+                        // Also register in the imported symbols if it's public
+                        if (is_public) {
+                            const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ name, symbol_name });
+
+                            if (self.debug_enabled) {
+                                std.debug.print("Registering public variable: {s}\n", .{full_name});
+                                std.debug.print("Checking specific_symbol condition: specific={?s}, name={s}\n", .{ specific_symbol, symbol_name });
+                            }
+
+                            // Only register if we want all symbols or this specific one
+                            if (specific_symbol == null or std.mem.eql(u8, specific_symbol.?, symbol_name)) {
+                                if (self.debug_enabled) {
+                                    std.debug.print("Adding variable to imported symbols\n", .{});
+                                }
+
+                                try self.imported_symbols.?.put(full_name, .{
+                                    .kind = .Variable,
+                                    .name = symbol_name,
+                                    .original_module = module_path,
+                                });
+
+                                if (self.debug_enabled) {
+                                    std.debug.print("Successfully registered variable {s}\n", .{full_name});
+                                }
+                            } else if (self.debug_enabled) {
+                                std.debug.print("Skipping variable registration - doesn't match specific symbol\n", .{});
+                            }
+                        }
+                    },
+                    .FunctionDecl => |func| {
+                        const is_public = func.is_public;
+                        const symbol_name = func.name.lexeme;
+
+                        // Add this function to the module's symbol table (public or private)
+                        try module_symbols.put(symbol_name, .{
+                            .name = symbol_name,
+                            .kind = .Function,
+                            .is_public = is_public,
+                            .stmt_index = i,
+                        });
+
+                        if (self.debug_enabled) {
+                            std.debug.print("Added function to module symbols: {s} (public: {any})\n", .{ symbol_name, is_public });
+                        }
+
+                        // Also register in the imported symbols if it's public
+                        if (is_public) {
+                            const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ name, symbol_name });
+
+                            if (self.debug_enabled) {
+                                std.debug.print("Registering public function: {s}\n", .{full_name});
+                                std.debug.print("Checking specific_symbol condition: specific={?s}, name={s}\n", .{ specific_symbol, symbol_name });
+                            }
+
+                            if (specific_symbol == null or std.mem.eql(u8, specific_symbol.?, symbol_name)) {
+                                try self.imported_symbols.?.put(full_name, .{
+                                    .kind = .Function,
+                                    .name = symbol_name,
+                                    .original_module = module_path,
+                                });
+
+                                if (self.debug_enabled) {
+                                    std.debug.print("Successfully registered function {s}\n", .{full_name});
+                                }
+                            } else if (self.debug_enabled) {
+                                std.debug.print("Skipping function registration - doesn't match specific symbol\n", .{});
+                            }
+                        }
+                    },
+                    .Expression => |expr_opt| {
+                        if (expr_opt) |expr| {
+                            if (expr.data == .StructDecl) {
+                                const struct_decl = expr.data.StructDecl;
+                                const is_public = struct_decl.is_public;
+                                const symbol_name = struct_decl.name.lexeme;
+
+                                // Add this struct to the module's symbol table (public or private)
+                                try module_symbols.put(symbol_name, .{
+                                    .name = symbol_name,
+                                    .kind = .Struct,
+                                    .is_public = is_public,
+                                    .stmt_index = i,
+                                });
+
+                                if (self.debug_enabled) {
+                                    std.debug.print("Added struct to module symbols: {s} (public: {any})\n", .{ symbol_name, is_public });
+                                }
+
+                                // Also register in the imported symbols if it's public
+                                if (is_public) {
+                                    const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ name, symbol_name });
+
+                                    if (self.debug_enabled) {
+                                        std.debug.print("Registering public struct: {s}\n", .{full_name});
+                                        std.debug.print("Checking specific_symbol condition: specific={?s}, name={s}\n", .{ specific_symbol, symbol_name });
+                                    }
+
+                                    if (specific_symbol == null or std.mem.eql(u8, specific_symbol.?, symbol_name)) {
+                                        try self.imported_symbols.?.put(full_name, .{
+                                            .kind = .Struct,
+                                            .name = symbol_name,
+                                            .original_module = module_path,
+                                        });
+
+                                        if (self.debug_enabled) {
+                                            std.debug.print("Successfully registered struct {s}\n", .{full_name});
+                                        }
+                                    } else if (self.debug_enabled) {
+                                        std.debug.print("Skipping struct registration - doesn't match specific symbol\n", .{});
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    .EnumDecl => |enum_decl| {
+                        const is_public = enum_decl.is_public;
+                        const symbol_name = enum_decl.name.lexeme;
+
+                        // Add this enum to the module's symbol table (public or private)
+                        try module_symbols.put(symbol_name, .{
+                            .name = symbol_name,
+                            .kind = .Enum,
+                            .is_public = is_public,
+                            .stmt_index = i,
+                        });
+
+                        if (self.debug_enabled) {
+                            std.debug.print("Added enum to module symbols: {s} (public: {any})\n", .{ symbol_name, is_public });
+                        }
+
+                        // Also register in the imported symbols if it's public
+                        if (is_public) {
+                            const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ name, symbol_name });
+
+                            if (self.debug_enabled) {
+                                std.debug.print("Registering public enum: {s}\n", .{full_name});
+                                std.debug.print("Checking specific_symbol condition: specific={?s}, name={s}\n", .{ specific_symbol, symbol_name });
+                            }
+
+                            if (specific_symbol == null or std.mem.eql(u8, specific_symbol.?, symbol_name)) {
+                                try self.imported_symbols.?.put(full_name, .{
+                                    .kind = .Enum,
+                                    .name = symbol_name,
+                                    .original_module = module_path,
+                                });
+
+                                // Also register each enum variant for easy access
+                                for (enum_decl.variants) |variant| {
+                                    const variant_full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ full_name, variant.lexeme });
+                                    try self.imported_symbols.?.put(variant_full_name, .{
+                                        .kind = .Enum,
+                                        .name = variant.lexeme,
+                                        .original_module = module_path,
+                                    });
+                                }
+
+                                if (self.debug_enabled) {
+                                    std.debug.print("Successfully registered enum {s}\n", .{full_name});
+                                }
+                            } else if (self.debug_enabled) {
+                                std.debug.print("Skipping enum registration - doesn't match specific symbol\n", .{});
                             }
                         }
                     },

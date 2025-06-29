@@ -371,14 +371,12 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
 
     var type_info: ast.TypeInfo = .{
         .base = .Auto,
-        .is_dynamic = true, // Start as dynamic
         .is_mutable = !is_const, // const variables can't change value
     };
 
     // Special handling for array type declarations
     if (self.peek().type == .ARRAY_TYPE) {
         type_info.base = .Array;
-        type_info.is_dynamic = false;
         self.advance(); // consume 'array'
 
         // Create implicit name for array
@@ -487,7 +485,6 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
     // Handle type annotation
     if (self.peek().type == .TYPE_SYMBOL) {
         self.advance(); // consume ::
-        type_info.is_dynamic = false; // Explicitly typed variables are not dynamic
         const type_expr = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
 
         // Use the typeInfoFromExpr function to properly convert TypeExpr to TypeInfo

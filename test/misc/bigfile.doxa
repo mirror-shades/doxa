@@ -1,3 +1,15 @@
+import "./safeMath.doxa" as safeMath;
+
+// complex import statement
+var import1 is safeMath.safeAdd(1, 2);
+
+import1?;
+
+// complex import statement
+var import2 is safeMath.safeAdd(1000, 2);
+
+import2?;
+
 // Enums
 enum Color {
     Red,
@@ -171,16 +183,16 @@ try {
 con?; // 1
 
 // formal logical notation
-(∃x ∈ arr : x > 3)?; // true
-(∀x ∈ arr : x > 3)?; // false
-(¬∀x ∈ arr : x > 3)?; // true
-(false ↔ false)?; // true
-(true ⊕ true)?; // false
-(true ∧ false)?; // false
-(true ∨ false)?; // true
-(true ↑ false)?; // true
-(true ↓ false)?; // false
-(true → false)?; // false
+(∃x ∈ arr : x > 3)?; // true  67
+(∀x ∈ arr : x > 3)?; // false  68
+(¬∀x ∈ arr : x > 3)?; // true  69
+(false ↔ false)?; // true  70
+(true ⊕ true)?; // false  71
+(true ∧ false)?; // false  72
+(true ∨ false)?; // true  73
+(true ↑ false)?; // true  74
+(true ↓ false)?; // false  75
+(true → false)?; // false  76
 
 // trancendental logic notation
 // always returns a tetra value, preserves contradiction in values

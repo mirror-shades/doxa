@@ -9,6 +9,46 @@ const Scope = MemoryImport.Scope;
 const Reporting = @import("../utils/reporting.zig");
 const ErrorList = Reporting.ErrorList;
 
+// Forward declaration for circular reference
+pub const ModuleEnvironment = struct {
+    module_name: []const u8,
+    environment: *Environment,
+    imports: std.StringHashMap([]const u8), // alias -> module_path
+
+    pub fn init(allocator: std.mem.Allocator, module_name: []const u8, memory_manager: *MemoryManager, debug_enabled: bool) !*ModuleEnvironment {
+        const self = try allocator.create(ModuleEnvironment);
+        const env = try allocator.create(Environment);
+        env.* = .{
+            .values = std.StringHashMap(TokenLiteral).init(allocator),
+            .types = std.StringHashMap(ast.TypeInfo).init(allocator),
+            .enclosing = null, // Module environments don't have enclosing by default
+            .debug_enabled = debug_enabled,
+            .allocator = allocator,
+            .memory_manager = memory_manager,
+            .module = self, // Circular reference
+        };
+
+        self.* = .{
+            .module_name = module_name,
+            .environment = env,
+            .imports = std.StringHashMap([]const u8).init(allocator),
+        };
+
+        return self;
+    }
+
+    pub fn deinit(self: *ModuleEnvironment, allocator: std.mem.Allocator) void {
+        self.environment.deinit();
+        allocator.destroy(self.environment);
+        self.imports.deinit();
+        allocator.destroy(self);
+    }
+
+    pub fn addImport(self: *ModuleEnvironment, alias: []const u8, module_path: []const u8) !void {
+        try self.imports.put(alias, module_path);
+    }
+};
+
 pub const Environment = struct {
     values: std.StringHashMap(TokenLiteral),
     types: std.StringHashMap(ast.TypeInfo),
@@ -16,6 +56,7 @@ pub const Environment = struct {
     debug_enabled: bool,
     allocator: std.mem.Allocator,
     memory_manager: *MemoryManager,
+    module: ?*ModuleEnvironment = null, // Reference to owning module if this is a module environment
 
     pub fn deinit(self: *Environment) void {
         var it = self.values.iterator();
@@ -38,12 +79,10 @@ pub const Environment = struct {
         }
 
         if (self.memory_manager.scope_manager.root_scope) |root_scope| {
-            // Use createValueBinding instead of the undefined defineVariable
             // Use the mutability information from type_info to determine if this is constant
             const is_constant = !type_info.is_mutable;
 
             // Convert TypeInfo to TokenType if needed
-            // This is a simplification - you may need to map between your TypeInfo and TokenType
             const token_type = switch (type_info.base) {
                 .Int => TokenType.INT,
                 .U8 => TokenType.U8,
@@ -169,6 +208,7 @@ pub const TokenLiteral = union(enum) {
         params: []FunctionParam,
         body: []ast.Stmt,
         closure: *Environment,
+        defining_module: ?*ModuleEnvironment, // NEW: Reference to the module where this function was defined
     },
     enum_variant: []const u8,
     map: std.StringHashMap(TokenLiteral),
