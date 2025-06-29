@@ -636,7 +636,7 @@ pub const HIRGenerator = struct {
 
     /// Pass 1: Collect function signatures for forward declarations
     fn collectFunctionSignatures(self: *HIRGenerator, statements: []ast.Stmt) !void {
-        std.debug.print("🔍 Pass 1: Collecting function signatures\n", .{});
+        std.debug.print(">> Pass 1: Collecting function signatures\n", .{});
 
         for (statements, 0..) |stmt, i| {
             switch (stmt.data) {
@@ -1628,13 +1628,13 @@ pub fn readSoxaFile(file_path: []const u8, allocator: std.mem.Allocator) !HIRPro
     // Read and validate header
     const magic = try reader.readInt(u32, .little);
     if (magic != SOXA_MAGIC) {
-        std.debug.print("❌ Invalid SOXA file: bad magic number\n", .{});
+        std.debug.print("!! Invalid SOXA file: bad magic number\n", .{});
         return reporting.ErrorList.InvalidArgument;
     }
 
     const version = try reader.readInt(u16, .little);
     if (version != SOXA_VERSION) {
-        std.debug.print("❌ Unsupported SOXA version: {}\n", .{version});
+        std.debug.print("!! Unsupported SOXA version: {}\n", .{version});
         return reporting.ErrorList.InvalidArgument;
     }
 
@@ -1821,7 +1821,7 @@ fn readHIRValue(reader: anytype, allocator: std.mem.Allocator) !HIRValue {
             return HIRValue.nothing; // TODO: Implement proper enum deserialization
         },
         else => {
-            std.debug.print("❌ Unknown HIR value type tag: {}\n", .{type_tag});
+            std.debug.print("!! Unknown HIR value type tag: {}\n", .{type_tag});
             return reporting.ErrorList.InvalidArgument;
         },
     };
@@ -2083,7 +2083,7 @@ fn readHIRInstruction(reader: anytype, allocator: std.mem.Allocator) !HIRInstruc
         },
 
         else => {
-            std.debug.print("❌ Unknown HIR instruction tag: {}\n", .{instruction_tag});
+            std.debug.print("!! Unknown HIR instruction tag: {}\n", .{instruction_tag});
             return reporting.ErrorList.UnsupportedStatement;
         },
     };

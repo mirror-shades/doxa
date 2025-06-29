@@ -1013,7 +1013,7 @@ pub const HIRVM = struct {
             .Return => |ret| {
                 // Handle function return
                 if (self.memory_manager.debug_enabled) {
-                    std.debug.print("📤 Function return (has_value: {})\n", .{ret.has_value});
+                    std.debug.print(">> Function return (has_value: {})\n", .{ret.has_value});
                 }
 
                 if (ret.has_value) {

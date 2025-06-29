@@ -198,7 +198,7 @@ fn processSoxaPipeline(memoryManager: *MemoryManager, source_path: []const u8, c
 
         .deprecated_interpreter => {
             // Temporary testing path - will be removed
-            std.debug.print("🐛 AST Debug Mode (testing only)\n", .{});
+            std.debug.print(">> AST Debug Mode (testing only)\n", .{});
             try runDeprecatedInterpreter(memoryManager, source_path);
         },
     }
