@@ -1,4 +1,4 @@
-# Doxa Programming Language [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/mirror-shades/doxa)  
+# Doxa Programming Language [[Docs]](https://mirror-shades.github.io/doxa/)[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/mirror-shades/doxa)  
 
 Doxa is inspired by Nagarjuna's four cornered logic, known as Catuṣkoṭi. Doxa does not use bools but instead tetras. A tetra (short for tetralemma) is a logical value with four possible states or corners:  
 
@@ -22,7 +22,7 @@ Currently Doxa runs on an AST walking interpreter so it is pretty slow. The curr
 
 ## Memory management
 
-Doxa uses an automated refence counter much like Swift but with some unique changes which leverage the power of the Zig language allocation system. Without getting overly technical, each scope is allocated as an arena which is cleaned up when that scope is exited. Combined with traditional refrence counting this provides an extremely robust and *predictable* form of automatic memory management which avoids many of the pitfalls of garbage collection while remaining .
+Memory is managed but not via garbage collection. Doxa uses an automated refence counter much like Swift but with some unique changes which leverage the power of the Zig language allocation system. Without getting overly technical, each scope is allocated as an arena which is cleaned up when that scope is exited. Combined with traditional refrence counting this provides an extremely robust and *predictable* form of automatic memory management which avoids many of the pitfalls of garbage collection while remaining totally automatic.
 
 ## Usage
 
