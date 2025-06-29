@@ -18,6 +18,7 @@ const env_module = @import("environment.zig");
 const TypesImport = @import("../types/types.zig");
 const TokenLiteral = TypesImport.TokenLiteral;
 const Tetra = TypesImport.Tetra;
+const ModuleEnvironment = TypesImport.ModuleEnvironment;
 const Expr = ast.Expr;
 
 const StringInterner = struct {
@@ -58,6 +59,7 @@ pub const Interpreter = struct {
     debug_enabled: bool,
     string_interner: StringInterner,
     moduleEnvironments: std.StringHashMap(*Environment),
+    module_contexts: std.StringHashMap(*ModuleEnvironment), // NEW: Track module environments
     memory_manager: *MemoryManager,
 
     return_value: ?TokenLiteral = null,
@@ -86,6 +88,7 @@ pub const Interpreter = struct {
             .entry_point_name = null,
             .string_interner = StringInterner.init(allocator),
             .moduleEnvironments = std.StringHashMap(*Environment).init(allocator),
+            .module_contexts = std.StringHashMap(*ModuleEnvironment).init(allocator),
             .memory_manager = memory_manager,
         };
     }
@@ -102,6 +105,13 @@ pub const Interpreter = struct {
         }
         self.moduleEnvironments.deinit();
 
+        // Free up all module contexts
+        var module_it = self.module_contexts.iterator();
+        while (module_it.next()) |entry| {
+            entry.value_ptr.*.deinit(self.allocator);
+        }
+        self.module_contexts.deinit();
+
         // Clean up root scope if it exists
         if (self.memory_manager.scope_manager.root_scope) |root_scope| {
             root_scope.deinit();
@@ -109,6 +119,114 @@ pub const Interpreter = struct {
         }
         // Then set to null to guard against double-free
         self.memory_manager.scope_manager.root_scope = null;
+    }
+
+    /// Get or create a ModuleEnvironment for the given module
+    fn getOrCreateModuleEnvironment(self: *Interpreter, module_name: []const u8) !*ModuleEnvironment {
+        // Check if we already have this module environment
+        if (self.module_contexts.get(module_name)) |existing| {
+            return existing;
+        }
+
+        if (self.debug_enabled) {
+            std.debug.print("Creating new ModuleEnvironment for: {s}\n", .{module_name});
+        }
+
+        // Create new ModuleEnvironment
+        const module_env = try ModuleEnvironment.init(self.allocator, module_name, self.memory_manager, self.debug_enabled);
+
+        // Get the module info from the parser
+        if (self.parser) |p| {
+            if (p.module_namespaces.get(module_name)) |module_info| {
+                if (self.debug_enabled) {
+                    std.debug.print("Populating ModuleEnvironment with module symbols\n", .{});
+                }
+
+                // Populate the module environment with the module's variables and functions
+                try self.populateModuleEnvironment(module_env, module_info);
+
+                // Add the module's imports to the module environment
+                try self.populateModuleImports(module_env, module_info);
+            }
+        }
+
+        // Store the module environment
+        try self.module_contexts.put(module_name, module_env);
+
+        return module_env;
+    }
+
+    /// Populate a ModuleEnvironment with variables and functions from ModuleInfo
+    fn populateModuleEnvironment(self: *Interpreter, module_env: *ModuleEnvironment, module_info: ast.ModuleInfo) !void {
+        if (module_info.ast) |module_ast| {
+            if (module_ast.data == .Block) {
+                const statements = module_ast.data.Block.statements;
+
+                if (self.debug_enabled) {
+                    std.debug.print("Processing {d} statements in module {s}\n", .{ statements.len, module_info.name });
+                }
+
+                for (statements) |stmt| {
+                    switch (stmt.data) {
+                        .VarDecl => |var_decl| {
+                            // Evaluate the variable's initializer and add it to the module environment
+                            if (var_decl.initializer) |init_expr| {
+                                const value = try self.evaluate(init_expr);
+                                try module_env.environment.define(var_decl.name.lexeme, value, var_decl.type_info);
+
+                                if (self.debug_enabled) {
+                                    std.debug.print("Added variable to module environment: {s} = {any}\n", .{ var_decl.name.lexeme, value });
+                                }
+                            } else {
+                                // Default value based on type
+                                const default_value = switch (var_decl.type_info.base) {
+                                    .Int => TokenLiteral{ .int = 0 },
+                                    .U8 => TokenLiteral{ .u8 = 0 },
+                                    .Float => TokenLiteral{ .float = 0.0 },
+                                    .String => TokenLiteral{ .string = try self.string_interner.intern("") },
+                                    .Tetra => TokenLiteral{ .tetra = .false },
+                                    else => TokenLiteral{ .nothing = {} },
+                                };
+                                try module_env.environment.define(var_decl.name.lexeme, default_value, var_decl.type_info);
+                            }
+                        },
+                        .FunctionDecl => |func_decl| {
+                            // Create function with reference to this module environment
+                            const function = TokenLiteral{
+                                .function = .{
+                                    .params = func_decl.params,
+                                    .body = func_decl.body,
+                                    .closure = module_env.environment,
+                                    .defining_module = module_env,
+                                },
+                            };
+                            try module_env.environment.define(func_decl.name.lexeme, function, .{
+                                .base = .Function,
+                                .is_mutable = false,
+                            });
+
+                            if (self.debug_enabled) {
+                                std.debug.print("Added function to module environment: {s}\n", .{func_decl.name.lexeme});
+                            }
+                        },
+                        else => {}, // Skip other statement types for now
+                    }
+                }
+            }
+        }
+    }
+
+    /// Populate a ModuleEnvironment with its imports
+    fn populateModuleImports(self: *Interpreter, module_env: *ModuleEnvironment, module_info: ast.ModuleInfo) !void {
+        for (module_info.imports) |import_info| {
+            if (import_info.namespace_alias) |alias| {
+                try module_env.addImport(alias, import_info.module_path);
+
+                if (self.debug_enabled) {
+                    std.debug.print("Added import to module {s}: {s} -> {s}\n", .{ module_env.module_name, alias, import_info.module_path });
+                }
+            }
+        }
     }
 
     fn u8BoundsCheck(value: TokenLiteral) ErrorList!void {
@@ -180,6 +298,7 @@ pub const Interpreter = struct {
                         .params = f.params,
                         .body = f.body,
                         .closure = self.environment,
+                        .defining_module = null, // TODO: Set this to the actual module when available
                     },
                 };
 
@@ -323,6 +442,7 @@ pub const Interpreter = struct {
                         .params = f.params,
                         .body = f.body,
                         .closure = self.environment,
+                        .defining_module = null, // TODO: Set this to the actual module when available
                     },
                 };
 
@@ -983,17 +1103,67 @@ pub const Interpreter = struct {
             },
             .Variable => |var_token| {
                 if (self.debug_enabled) {
+                    std.debug.print("\n=== Variable Lookup Debug ===\n", .{});
                     std.debug.print("Looking up variable: '{s}' (len: {})\n", .{ var_token.lexeme, var_token.lexeme.len });
+                    std.debug.print("Current environment: {*}\n", .{self.environment});
+                    std.debug.print("Environment has enclosing: {any}\n", .{self.environment.enclosing != null});
                 }
 
-                // Check if variable exists
+                // Check if variable exists in current environment
                 if (try self.environment.get(var_token.lexeme)) |value| {
+                    if (self.debug_enabled) {
+                        std.debug.print("Found variable in current environment: {any}\n", .{value});
+                    }
                     return value;
+                }
+
+                if (self.debug_enabled) {
+                    std.debug.print("Variable not found in current environment\n", .{});
+                }
+
+                // If not found locally, check if we're in a function with a defining module
+                // and look for the variable in the module's environment
+                if (self.environment.module) |current_module| {
+                    if (self.debug_enabled) {
+                        std.debug.print("Checking variable in defining module: {s}\n", .{current_module.module_name});
+                    }
+
+                    if (try current_module.environment.get(var_token.lexeme)) |module_value| {
+                        if (self.debug_enabled) {
+                            std.debug.print("Found variable in module environment: {any}\n", .{module_value});
+                        }
+                        return module_value;
+                    }
+
+                    // Also check if this is an import in the module
+                    if (current_module.imports.get(var_token.lexeme)) |import_path| {
+                        if (self.debug_enabled) {
+                            std.debug.print("Found import in module: {s} -> {s}\n", .{ var_token.lexeme, import_path });
+                        }
+
+                        // Extract module name from import path
+                        var path_iter = std.mem.splitSequence(u8, import_path, "/");
+                        var import_module_name: []const u8 = "";
+                        while (path_iter.next()) |part| {
+                            import_module_name = part;
+                        }
+                        if (std.mem.endsWith(u8, import_module_name, ".doxa")) {
+                            import_module_name = import_module_name[0 .. import_module_name.len - 5];
+                        }
+
+                        // Return namespace access marker
+                        return TokenLiteral{ .nothing = {} };
+                    }
                 }
 
                 // Check if this is a namespace (imported module)
                 // Check for imports registered by the parser
                 if (self.parser) |p| {
+                    if (self.debug_enabled) {
+                        std.debug.print("Checking parser for imports...\n", .{});
+                        std.debug.print("Parser module namespaces count: {d}\n", .{p.module_namespaces.count()});
+                    }
+
                     if (p.imported_symbols) |_| {
                         if (self.debug_enabled) {
                             std.debug.print("Checking for imported symbols with name: {s}\n", .{var_token.lexeme});
@@ -1008,8 +1178,19 @@ pub const Interpreter = struct {
                             // Return a special value to indicate this is a namespace
                             // The caller should check for namespace when accessing fields
                             return TokenLiteral{ .nothing = {} };
+                        } else if (self.debug_enabled) {
+                            std.debug.print("Variable '{s}' not found in module namespaces\n", .{var_token.lexeme});
+                            std.debug.print("Available namespaces:\n", .{});
+                            var namespace_it = p.module_namespaces.iterator();
+                            while (namespace_it.next()) |entry| {
+                                std.debug.print("  - {s}\n", .{entry.key_ptr.*});
+                            }
                         }
+                    } else if (self.debug_enabled) {
+                        std.debug.print("Parser has no imported symbols\n", .{});
                     }
+                } else if (self.debug_enabled) {
+                    std.debug.print("No parser available\n", .{});
                 }
 
                 // If we get here, variable wasn't found
@@ -1422,6 +1603,63 @@ pub const Interpreter = struct {
                 // Check if this is a method call (callee is a field access)
                 if (call.callee.data == .FieldAccess) {
                     const field_access = call.callee.data.FieldAccess;
+
+                    // FIRST: Check if this is a namespace access before evaluating the object as a variable
+                    if (field_access.object.data == .Variable) {
+                        const namespace = field_access.object.data.Variable.lexeme;
+
+                        // Check if this is a known namespace in the parser
+                        if (self.parser) |p| {
+                            if (p.module_namespaces.contains(namespace)) {
+                                if (self.debug_enabled) {
+                                    std.debug.print("Detected namespace access pattern: {s}.{s}\n", .{ namespace, field_access.field.lexeme });
+                                }
+
+                                // Handle namespace access directly
+                                const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ namespace, field_access.field.lexeme });
+                                defer self.allocator.free(full_name);
+
+                                // Check in imported symbols
+                                if (p.imported_symbols) |symbols| {
+                                    if (symbols.get(full_name)) |symbol| {
+                                        if (self.debug_enabled) {
+                                            std.debug.print("Found function in namespace: {s}\n", .{full_name});
+                                        }
+
+                                        if (symbol.kind == .Function) {
+                                            // Get the module that contains this function
+                                            const module_info = p.module_namespaces.get(namespace).?;
+
+                                            // Find the function in this module
+                                            if (module_info.ast) |module_ast| {
+                                                if (module_ast.data == .Block) {
+                                                    for (module_ast.data.Block.statements) |module_stmt| {
+                                                        if (module_stmt.data == .FunctionDecl and
+                                                            std.mem.eql(u8, module_stmt.data.FunctionDecl.name.lexeme, field_access.field.lexeme))
+                                                        {
+                                                            // Create function value and call it
+                                                            const module_env = try self.getOrCreateModuleEnvironment(namespace);
+                                                            const function = TokenLiteral{
+                                                                .function = .{
+                                                                    .params = module_stmt.data.FunctionDecl.params,
+                                                                    .body = module_stmt.data.FunctionDecl.body,
+                                                                    .closure = module_env.environment,
+                                                                    .defining_module = module_env,
+                                                                },
+                                                            };
+                                                            return self.callFunction(function, call.arguments);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // SECOND: If not a namespace access, evaluate as a regular object
                     const object = try self.evaluate(field_access.object);
 
                     // Handle array methods
@@ -1502,11 +1740,13 @@ pub const Interpreter = struct {
                                                             std.mem.eql(u8, module_stmt.data.FunctionDecl.name.lexeme, field_access.field.lexeme))
                                                         {
                                                             // Create function value and call it
+                                                            const module_env = try self.getOrCreateModuleEnvironment(namespace);
                                                             const function = TokenLiteral{
                                                                 .function = .{
                                                                     .params = module_stmt.data.FunctionDecl.params,
                                                                     .body = module_stmt.data.FunctionDecl.body,
-                                                                    .closure = self.environment,
+                                                                    .closure = module_env.environment,
+                                                                    .defining_module = module_env,
                                                                 },
                                                             };
                                                             return self.callFunction(function, call.arguments);
@@ -1546,11 +1786,13 @@ pub const Interpreter = struct {
                                                             if (module_stmt2.data == .FunctionDecl and
                                                                 std.mem.eql(u8, module_stmt2.data.FunctionDecl.name.lexeme, field_access.field.lexeme))
                                                             {
+                                                                const module_env = try self.getOrCreateModuleEnvironment(namespace);
                                                                 const function = TokenLiteral{
                                                                     .function = .{
                                                                         .params = module_stmt2.data.FunctionDecl.params,
                                                                         .body = module_stmt2.data.FunctionDecl.body,
-                                                                        .closure = self.environment,
+                                                                        .closure = module_env.environment,
+                                                                        .defining_module = module_env,
                                                                     },
                                                                 };
                                                                 return self.callFunction(function, call.arguments);
@@ -1694,11 +1936,14 @@ pub const Interpreter = struct {
                 const is_true = result_tetra == .true;
                 return TokenLiteral{ .tetra = if (is_true) .true else .false };
             },
-            .FunctionExpr => |f| TokenLiteral{ .function = .{
-                .params = f.params,
-                .body = f.body,
-                .closure = self.environment,
-            } },
+            .FunctionExpr => |f| TokenLiteral{
+                .function = .{
+                    .params = f.params,
+                    .body = f.body,
+                    .closure = self.environment,
+                    .defining_module = null, // TODO: Set this to the actual module when available
+                },
+            },
             .Inspect => |insp| {
                 const value = try self.evaluate(insp.expr);
                 var buffer = std.ArrayList(u8).init(self.allocator);
@@ -1890,11 +2135,13 @@ pub const Interpreter = struct {
                                                             }
 
                                                             // Create a function value
+                                                            const module_env = try self.getOrCreateModuleEnvironment(var_name);
                                                             return TokenLiteral{
                                                                 .function = .{
                                                                     .params = module_stmt3.data.FunctionDecl.params,
                                                                     .body = module_stmt3.data.FunctionDecl.body,
-                                                                    .closure = self.environment,
+                                                                    .closure = module_env.environment,
+                                                                    .defining_module = module_env,
                                                                 },
                                                             };
                                                         }
@@ -1974,11 +2221,13 @@ pub const Interpreter = struct {
                                                 }
 
                                                 // Create a function value
+                                                const module_env = try self.getOrCreateModuleEnvironment(var_name);
                                                 return TokenLiteral{
                                                     .function = .{
                                                         .params = module_stmt6.data.FunctionDecl.params,
                                                         .body = module_stmt6.data.FunctionDecl.body,
-                                                        .closure = self.environment,
+                                                        .closure = module_env.environment,
+                                                        .defining_module = module_env,
                                                     },
                                                 };
                                             }
@@ -2577,9 +2826,55 @@ pub const Interpreter = struct {
     pub fn callFunction(self: *Interpreter, callee: TokenLiteral, arguments: []const *ast.Expr) ErrorList!TokenLiteral {
         switch (callee) {
             .function => |f| {
+                // Determine the base environment for the function call
+                var base_environment = f.closure;
+
+                // If this function has a defining module, use the module's environment as the base
+                if (f.defining_module) |module_env| {
+                    base_environment = module_env.environment;
+                    if (self.debug_enabled) {
+                        std.debug.print("Using module environment for function: {s}\n", .{module_env.module_name});
+                    }
+                } else if (self.debug_enabled) {
+                    std.debug.print("Function has no defining module, using closure environment\n", .{});
+                }
+
                 // Create new environment for function call
-                var function_env = env_module.init(self.allocator, f.closure, self.debug_enabled, self.memory_manager);
+                var function_env = env_module.init(self.allocator, base_environment, self.debug_enabled, self.memory_manager);
                 defer function_env.deinit();
+
+                // If this function has a defining module, set the module reference in the function environment
+                if (f.defining_module) |module_env| {
+                    function_env.module = module_env;
+                    if (self.debug_enabled) {
+                        std.debug.print("Set function environment module reference to: {s}\n", .{module_env.module_name});
+                    }
+                }
+
+                if (self.debug_enabled) {
+                    std.debug.print("\n=== Function Call Environment Debug ===\n", .{});
+                    std.debug.print("Function closure environment: {*}\n", .{f.closure});
+                    std.debug.print("Current interpreter environment: {*}\n", .{self.environment});
+                    std.debug.print("New function environment: {*}\n", .{&function_env});
+
+                    // Check if parser has module namespaces available
+                    if (self.parser) |p| {
+                        std.debug.print("Parser module namespaces count: {d}\n", .{p.module_namespaces.count()});
+                        var namespace_it = p.module_namespaces.iterator();
+                        while (namespace_it.next()) |entry| {
+                            std.debug.print("  Available namespace: {s}\n", .{entry.key_ptr.*});
+                        }
+
+                        if (p.imported_symbols) |symbols| {
+                            std.debug.print("Parser imported symbols count: {d}\n", .{symbols.count()});
+                            var symbol_it = symbols.iterator();
+                            while (symbol_it.next()) |sym_entry| {
+                                std.debug.print("  Available imported symbol: {s}\n", .{sym_entry.key_ptr.*});
+                            }
+                        }
+                    }
+                    std.debug.print("=====================================\n", .{});
+                }
 
                 // Create a new scope for this function call, ensure it's a child of the current scope
                 const current_scope = self.memory_manager.scope_manager.root_scope;
