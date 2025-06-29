@@ -39,8 +39,8 @@ pub const Environment = struct {
 
         if (self.memory_manager.scope_manager.root_scope) |root_scope| {
             // Use createValueBinding instead of the undefined defineVariable
-            // We need to supply constant flag - let's assume false initially, could be a parameter
-            const is_constant = false;
+            // Use the mutability information from type_info to determine if this is constant
+            const is_constant = !type_info.is_mutable;
 
             // Convert TypeInfo to TokenType if needed
             // This is a simplification - you may need to map between your TypeInfo and TokenType
