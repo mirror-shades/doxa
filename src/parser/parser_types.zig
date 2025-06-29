@@ -1358,15 +1358,15 @@ pub const Parser = struct {
             return info;
         }
 
-        // Load and parse module file
-        const module_source = try self.loadModuleSource(module_name);
-        var module_lexer = Lexer.init(self.allocator, module_source, module_name);
+        // Load and parse module file - get both source and resolved path
+        const module_data = try self.loadModuleSourceWithPath(module_name);
+        var module_lexer = Lexer.init(self.allocator, module_data.source, module_name);
         defer module_lexer.deinit();
 
         try module_lexer.initKeywords();
         const tokens = try module_lexer.lexTokens();
 
-        var new_parser = Parser.init(self.allocator, tokens.items, module_name, self.debug_enabled);
+        var new_parser = Parser.init(self.allocator, tokens.items, module_data.resolved_path, self.debug_enabled);
 
         // Parse the module file
         const module_statements = try new_parser.execute();
@@ -1394,7 +1394,12 @@ pub const Parser = struct {
         return info;
     }
 
-    pub fn loadModuleSource(self: *Parser, module_name: []const u8) ErrorList![]const u8 {
+    const ModuleData = struct {
+        source: []const u8,
+        resolved_path: []const u8,
+    };
+
+    pub fn loadModuleSourceWithPath(self: *Parser, module_name: []const u8) ErrorList!ModuleData {
         if (self.debug_enabled) {
             std.debug.print("Loading module: {s}\n", .{module_name});
         }
@@ -1426,9 +1431,9 @@ pub const Parser = struct {
         // Capture debug flag for the inner function
         const debug_enabled = self.debug_enabled;
 
-        // We'll use this function to read a file
-        const readFileContents = struct {
-            fn read(alloc: std.mem.Allocator, file_path: []const u8, debug: bool) ![]u8 {
+        // We'll use this function to read a file and return both content and path
+        const readFileContentsWithPath = struct {
+            fn read(alloc: std.mem.Allocator, file_path: []const u8, debug: bool) !ModuleData {
                 if (debug) {
                     std.debug.print("Attempting to read: {s}\n", .{file_path});
                 }
@@ -1446,7 +1451,13 @@ pub const Parser = struct {
                     return error.IncompleteRead;
                 }
 
-                return buffer;
+                // Create a copy of the path for the resolved_path
+                const path_copy = try alloc.dupe(u8, file_path);
+
+                return ModuleData{
+                    .source = buffer,
+                    .resolved_path = path_copy,
+                };
             }
         }.read;
 
@@ -1459,8 +1470,8 @@ pub const Parser = struct {
             defer direct_path.deinit();
             try direct_path.appendSlice(clean_name);
 
-            if (readFileContents(self.allocator, direct_path.items, debug_enabled)) |buffer| {
-                return buffer;
+            if (readFileContentsWithPath(self.allocator, direct_path.items, debug_enabled)) |data| {
+                return data;
             } else |e| {
                 err = e;
                 if (self.debug_enabled) {
@@ -1475,8 +1486,8 @@ pub const Parser = struct {
         try cwd_doxa_path.appendSlice(clean_name);
         if (!has_extension) try cwd_doxa_path.appendSlice(".doxa");
 
-        if (readFileContents(self.allocator, cwd_doxa_path.items, debug_enabled)) |buffer| {
-            return buffer;
+        if (readFileContentsWithPath(self.allocator, cwd_doxa_path.items, debug_enabled)) |data| {
+            return data;
         } else |e| {
             err = e;
             if (self.debug_enabled) {
@@ -1492,8 +1503,8 @@ pub const Parser = struct {
             try same_dir_exact_path.appendSlice("/");
             try same_dir_exact_path.appendSlice(clean_name);
 
-            if (readFileContents(self.allocator, same_dir_exact_path.items, debug_enabled)) |buffer| {
-                return buffer;
+            if (readFileContentsWithPath(self.allocator, same_dir_exact_path.items, debug_enabled)) |data| {
+                return data;
             } else |e| {
                 err = e;
                 if (self.debug_enabled) {
@@ -1514,8 +1525,8 @@ pub const Parser = struct {
             std.debug.print("Trying: {s}\n", .{same_dir_path.items});
         }
 
-        if (readFileContents(self.allocator, same_dir_path.items, debug_enabled)) |buffer| {
-            return buffer;
+        if (readFileContentsWithPath(self.allocator, same_dir_path.items, debug_enabled)) |data| {
+            return data;
         } else |e| {
             err = e;
             if (self.debug_enabled) {
@@ -1531,8 +1542,8 @@ pub const Parser = struct {
             try modules_exact_path.appendSlice("/modules/");
             try modules_exact_path.appendSlice(clean_name);
 
-            if (readFileContents(self.allocator, modules_exact_path.items, debug_enabled)) |buffer| {
-                return buffer;
+            if (readFileContentsWithPath(self.allocator, modules_exact_path.items, debug_enabled)) |data| {
+                return data;
             } else |e| {
                 err = e;
                 if (self.debug_enabled) {
@@ -1549,8 +1560,8 @@ pub const Parser = struct {
         try modules_path.appendSlice(clean_name);
         if (!has_extension) try modules_path.appendSlice(".doxa");
 
-        if (readFileContents(self.allocator, modules_path.items, debug_enabled)) |buffer| {
-            return buffer;
+        if (readFileContentsWithPath(self.allocator, modules_path.items, debug_enabled)) |data| {
+            return data;
         } else |e| {
             err = e;
             if (self.debug_enabled) {
@@ -1565,6 +1576,11 @@ pub const Parser = struct {
         }
 
         return error.ModuleNotFound;
+    }
+
+    pub fn loadModuleSource(self: *Parser, module_name: []const u8) ErrorList![]const u8 {
+        const data = try self.loadModuleSourceWithPath(module_name);
+        return data.source;
     }
 
     pub fn arrayPush(self: *Parser, array: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
@@ -1947,6 +1963,10 @@ pub const Parser = struct {
         }
 
         // Extract imports from the module parser's tracking data
+        // Try multiple keys since the imports might be recorded under different paths
+        var found_imports = false;
+
+        // First try with the exact module path
         if (module_parser.module_imports.get(module_path)) |module_import_map| {
             var import_it = module_import_map.iterator();
             while (import_it.next()) |entry| {
@@ -1954,7 +1974,7 @@ pub const Parser = struct {
                 const imported_module_path = entry.value_ptr.*;
 
                 if (self.debug_enabled) {
-                    std.debug.print("Found tracked import: {s} -> {s}\n", .{ alias, imported_module_path });
+                    std.debug.print("Found tracked import (by module_path): {s} -> {s}\n", .{ alias, imported_module_path });
                 }
 
                 try imports.append(ast.ImportInfo{
@@ -1963,6 +1983,34 @@ pub const Parser = struct {
                     .specific_symbol = null,
                 });
             }
+            found_imports = true;
+        }
+
+        // If not found, try with the module parser's current_file path
+        if (!found_imports) {
+            if (module_parser.module_imports.get(module_parser.current_file)) |module_import_map| {
+                var import_it = module_import_map.iterator();
+                while (import_it.next()) |entry| {
+                    const alias = entry.key_ptr.*;
+                    const imported_module_path = entry.value_ptr.*;
+
+                    if (self.debug_enabled) {
+                        std.debug.print("Found tracked import (by current_file): {s} -> {s}\n", .{ alias, imported_module_path });
+                    }
+
+                    try imports.append(ast.ImportInfo{
+                        .module_path = imported_module_path,
+                        .namespace_alias = alias,
+                        .specific_symbol = null,
+                    });
+                }
+                found_imports = true;
+            }
+        }
+
+        if (self.debug_enabled) {
+            std.debug.print("Import lookup attempted with keys: module_path='{s}', current_file='{s}'\n", .{ module_path, module_parser.current_file });
+            std.debug.print("Found imports: {}\n", .{found_imports});
         }
 
         // Initialize symbol table for all module symbols (both public and private)
@@ -2361,8 +2409,18 @@ pub const Parser = struct {
                     const qualified_alias = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ namespace, alias });
                     defer self.allocator.free(qualified_alias);
 
-                    // Load the imported module
-                    try self.loadAndRegisterModule(import.module_path, alias, import.specific_symbol);
+                    // Load the imported module only if not already loaded
+                    if (!self.module_namespaces.contains(alias)) {
+                        // Check if the module is already in the cache
+                        if (self.module_cache.contains(import.module_path)) {
+                            // Get it from cache and add to namespaces
+                            const cached_module = self.module_cache.get(import.module_path).?;
+                            try self.module_namespaces.put(alias, cached_module);
+                        } else {
+                            // Only try to load if not in cache either
+                            try self.loadAndRegisterModule(import.module_path, alias, import.specific_symbol);
+                        }
+                    }
 
                     // Record that this module has access to this import under this alias
                     // This information will be used during symbol resolution
