@@ -301,7 +301,7 @@ pub const Lexer = struct {
                     try self.addMinimalToken(.EQUALITY);
                 } else if (self.match('>')) {
                     try self.addMinimalToken(.ARROW);
-                } else if (self.match(' ')) {
+                } else {
                     var reporter = Reporter.init();
                     const location = Reporter.Location{
                         .file = self.file_path,
@@ -414,7 +414,7 @@ pub const Lexer = struct {
         const token_line = self.line;
         const token_column = self.start - self.line_start + 1;
 
-        try self.tokens.append(Token.init(token_type, tracked_lexeme, tracked_literal, token_line, token_column));
+        try self.tokens.append(Token.initWithFile(token_type, tracked_lexeme, tracked_literal, token_line, token_column, self.file_path));
     }
 
     //======================================================================

@@ -36,13 +36,22 @@ pub fn existentialQuantifier(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorL
         // Create array type expression
         self.advance(); // consume ARRAY_TYPE
         const array_expr = try self.allocator.create(ast.Expr);
-        array_expr.* = .{ .Variable = .{
-            .lexeme = "array",
-            .type = .IDENTIFIER,
-            .literal = .{ .nothing = {} },
-            .line = 0,
-            .column = 0,
-        } };
+        array_expr.* = .{
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(bound_variable),
+            },
+            .data = .{
+                .Variable = token.Token{
+                    .type = .IDENTIFIER,
+                    .lexeme = "array",
+                    .literal = .{ .nothing = {} },
+                    .line = 0,
+                    .column = 0,
+                    .file = "",
+                },
+            },
+        };
 
         if (self.debug_enabled) {
             std.debug.print("After array type, expecting WHERE, found: {s}\n", .{@tagName(self.peek().type)});
@@ -64,11 +73,19 @@ pub fn existentialQuantifier(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorL
         };
 
         const exists_expr = try self.allocator.create(ast.Expr);
-        exists_expr.* = .{ .Exists = .{
-            .variable = bound_variable,
-            .array = array_expr,
-            .condition = condition,
-        } };
+        exists_expr.* = .{
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(bound_variable),
+            },
+            .data = .{
+                .Exists = .{
+                    .variable = bound_variable,
+                    .array = array_expr,
+                    .condition = condition,
+                },
+            },
+        };
         return exists_expr;
     } else {
         // Parse regular expression for array
@@ -94,11 +111,19 @@ pub fn existentialQuantifier(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorL
         };
 
         const exists_expr = try self.allocator.create(ast.Expr);
-        exists_expr.* = .{ .Exists = .{
-            .variable = bound_variable,
-            .array = array_expr,
-            .condition = condition,
-        } };
+        exists_expr.* = .{
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(bound_variable),
+            },
+            .data = .{
+                .Exists = .{
+                    .variable = bound_variable,
+                    .array = array_expr,
+                    .condition = condition,
+                },
+            },
+        };
         return exists_expr;
     }
 }
@@ -131,13 +156,22 @@ pub fn universalQuantifier(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorLis
         // Create array type expression
         self.advance(); // consume ARRAY_TYPE
         const array_expr = try self.allocator.create(ast.Expr);
-        array_expr.* = .{ .Variable = .{
-            .lexeme = "array",
-            .type = .IDENTIFIER,
-            .literal = .{ .nothing = {} },
-            .line = 0,
-            .column = 0,
-        } };
+        array_expr.* = .{
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(bound_variable),
+            },
+            .data = .{
+                .Variable = token.Token{
+                    .type = .IDENTIFIER,
+                    .lexeme = "array",
+                    .literal = .{ .nothing = {} },
+                    .line = 0,
+                    .column = 0,
+                    .file = "",
+                },
+            },
+        };
 
         if (self.debug_enabled) {
             std.debug.print("After array type, expecting WHERE, found: {s}\n", .{@tagName(self.peek().type)});
@@ -159,11 +193,19 @@ pub fn universalQuantifier(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorLis
         };
 
         const forall_expr = try self.allocator.create(ast.Expr);
-        forall_expr.* = .{ .ForAll = .{
-            .variable = bound_variable,
-            .array = array_expr,
-            .condition = condition,
-        } };
+        forall_expr.* = .{
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(bound_variable),
+            },
+            .data = .{
+                .ForAll = .{
+                    .variable = bound_variable,
+                    .array = array_expr,
+                    .condition = condition,
+                },
+            },
+        };
         return forall_expr;
     } else {
         // Parse regular expression for array
@@ -189,11 +231,19 @@ pub fn universalQuantifier(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorLis
         };
 
         const forall_expr = try self.allocator.create(ast.Expr);
-        forall_expr.* = .{ .ForAll = .{
-            .variable = bound_variable,
-            .array = array_expr,
-            .condition = condition,
-        } };
+        forall_expr.* = .{
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(bound_variable),
+            },
+            .data = .{
+                .ForAll = .{
+                    .variable = bound_variable,
+                    .array = array_expr,
+                    .condition = condition,
+                },
+            },
+        };
         return forall_expr;
     }
 }
@@ -238,10 +288,16 @@ pub fn inOperator(self: *Parser, left: ?*ast.Expr, prec: Precedence) ErrorList!?
         // Create exists expression
         const exists_expr = try self.allocator.create(ast.Expr);
         exists_expr.* = .{
-            .Exists = .{
-                .variable = left.?.Variable, // We know left is a Variable
-                .array = array_expr,
-                .condition = condition,
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(left.?.data.Variable),
+            },
+            .data = .{
+                .Exists = .{
+                    .variable = left.?.data.Variable, // We know left is a Variable
+                    .array = array_expr,
+                    .condition = condition,
+                },
             },
         };
         return exists_expr;
@@ -249,10 +305,18 @@ pub fn inOperator(self: *Parser, left: ?*ast.Expr, prec: Precedence) ErrorList!?
 
     // If no 'where' keyword, create regular in expression
     const in_expr = try self.allocator.create(ast.Expr);
-    in_expr.* = .{ .Binary = .{
-        .left = left,
-        .operator = self.tokens[self.current - 1],
-        .right = array_expr,
-    } };
+    in_expr.* = .{
+        .base = .{
+            .id = ast.generateNodeId(),
+            .span = ast.SourceSpan.fromToken(left.?.data.Variable),
+        },
+        .data = .{
+            .Binary = .{
+                .left = left,
+                .operator = self.tokens[self.current - 1],
+                .right = array_expr,
+            },
+        },
+    };
     return in_expr;
 }

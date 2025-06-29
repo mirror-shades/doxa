@@ -9,7 +9,7 @@ pub fn printStatement(stmt: ast.Stmt, indent: usize) void {
         indent_str = "  ";
     }
 
-    switch (stmt) {
+    switch (stmt.data) {
         .VarDecl => |v| {
             std.debug.print("{s}VarDecl: {s}\n", .{ indent_str, v.name.lexeme });
             if (v.initializer) |init| {
@@ -102,7 +102,7 @@ pub fn printExpression(expr: *ast.Expr, indent: usize) void {
         indent_str = "  ";
     }
 
-    switch (expr.*) {
+    switch (expr.data) {
         .Literal => |lit| {
             std.debug.print("{s}Literal: {any}\n", .{ indent_str, lit });
         },
@@ -429,9 +429,9 @@ fn writeStatements(statements: []const ast.Stmt, writer: anytype) std.fs.File.Wr
 
 fn writeStatement(stmt: ast.Stmt, writer: anytype) std.fs.File.WriteError!void {
     // Write statement type
-    try writer.print("{s}\n", .{@tagName(stmt)});
+    try writer.print("{s}\n", .{@tagName(stmt.data)});
 
-    switch (stmt) {
+    switch (stmt.data) {
         .VarDecl => |v| {
             try writer.print("name:{s}\n", .{v.name.lexeme});
             try writer.print("type:{s}\n", .{@tagName(v.type_info.base)});
@@ -443,7 +443,7 @@ fn writeStatement(stmt: ast.Stmt, writer: anytype) std.fs.File.WriteError!void {
                 try writer.print("has_initializer:false\n", .{});
             }
         },
-        .Function => |f| {
+        .FunctionDecl => |f| {
             try writer.print("name:{s}\n", .{f.name.lexeme});
             try writer.print("is_entry:{}\n", .{f.is_entry});
             try writer.print("is_public:{}\n", .{f.is_public});
@@ -490,9 +490,9 @@ fn writeStatement(stmt: ast.Stmt, writer: anytype) std.fs.File.WriteError!void {
 }
 
 fn writeExpression(expr: *const ast.Expr, writer: anytype) std.fs.File.WriteError!void {
-    try writer.print("expr_type:{s}\n", .{@tagName(expr.*)});
+    try writer.print("expr_type:{s}\n", .{@tagName(expr.data)});
 
-    switch (expr.*) {
+    switch (expr.data) {
         .Literal => |lit| {
             switch (lit) {
                 .int => |i| try writer.print("value:int:{d}\n", .{i}),
@@ -523,7 +523,7 @@ fn writeExpression(expr: *const ast.Expr, writer: anytype) std.fs.File.WriteErro
                 try writeExpression(arg, writer);
             }
         },
-        .Function => |func| {
+        .FunctionExpr => |func| {
             try writer.print("name:{s}\n", .{func.name.lexeme});
             try writer.print("is_entry:{}\n", .{func.is_entry});
             try writer.print("params_count:{d}\n", .{func.params.len});

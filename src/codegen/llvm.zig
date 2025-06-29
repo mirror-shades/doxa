@@ -224,7 +224,7 @@ pub const LLVMGenerator = struct {
 
     fn generateExpr(self: *LLVMGenerator, expr: *const ast.Expr) LLVMGenError!LLVMTypes.LLVMValueRef {
         std.debug.print("Generating expression\n", .{});
-        switch (expr.*) {
+        switch (expr.data) {
             .Literal => |lit| {
                 std.debug.print("Generating literal\n", .{});
                 return switch (lit) {
