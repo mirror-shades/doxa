@@ -1,8 +1,0 @@
-import "./test_simple.doxa" as simple;
-
-// Try to call a function that references a global variable from the imported module
-var result1 is simple.simple();
-result1?;
-
-var result2 is simple.getGlobal();
-result2?; 

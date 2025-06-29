@@ -199,6 +199,7 @@ pub const Stmt = struct {
             body: []Stmt,
             is_entry: bool = false,
             is_public: bool = false,
+            defining_module: ?[]const u8 = null,
         },
         Return: struct {
             value: ?*Expr,
@@ -326,6 +327,7 @@ pub const If = struct {
 pub const Assignment = struct {
     name: Token,
     value: ?*Expr,
+    target_context: ?VariableRef = null,
 };
 
 pub const CompoundAssignment = struct {
@@ -421,6 +423,7 @@ pub const Expr = struct {
         Call: struct {
             callee: *Expr,
             arguments: []const *Expr,
+            call_context: ?FunctionCallRef = null,
         },
         Logical: Logical,
         FunctionExpr: struct {
@@ -430,6 +433,7 @@ pub const Expr = struct {
             body: []Stmt,
             is_entry: bool = false,
             is_public: bool = false,
+            defining_module: ?[]const u8 = null,
         },
         While: WhileExpr,
         For: ForExpr,
@@ -1070,3 +1074,152 @@ pub fn typeInfoFromExpr(allocator: std.mem.Allocator, type_expr: ?*TypeExpr) !*T
 
     return type_info;
 }
+
+//======================================================================
+// Semantic Context Structures (for HIR generation)
+//======================================================================
+
+/// Represents the resolution context of a variable reference
+pub const VariableRef = struct {
+    token: Token, // Original token (for error reporting)
+    module_context: ?[]const u8 = null, // Which module this variable belongs to ("math", "utils", etc.)
+    scope_depth: u32 = 0, // Local scope depth (0 = global, 1 = function, 2 = nested block)
+    resolution_kind: ResolutionKind,
+
+    pub const ResolutionKind = enum {
+        Local, // Local variable in current function
+        ModuleGlobal, // Global variable in current module
+        ImportedModule, // Imported module namespace (e.g., "math" in "math.add()")
+        ImportedSymbol, // Imported symbol from another module
+        Unresolved, // Not yet resolved (will be resolved in semantic analysis)
+    };
+};
+
+/// Represents the resolution context of a function call
+pub const FunctionCallRef = struct {
+    name: []const u8,
+    call_kind: CallKind,
+    target_module: ?[]const u8 = null, // For cross-module calls
+
+    pub const CallKind = enum {
+        LocalFunction, // Function in current module
+        ModuleFunction, // Function in imported module (namespace.func)
+        BuiltinFunction, // Built-in function (print, length, etc.)
+        Unresolved, // Not yet resolved
+    };
+};
+
+//======================================================================
+// AST Node Creation Helpers (for backwards compatibility)
+//======================================================================
+
+/// Create a variable reference with basic token (defaults to Unresolved)
+pub fn createVariableRef(token: Token) VariableRef {
+    return VariableRef{
+        .token = token,
+        .resolution_kind = .Unresolved,
+    };
+}
+
+/// Create a resolved variable reference with full context
+pub fn createResolvedVariableRef(token: Token, module_context: ?[]const u8, scope_depth: u32, kind: VariableRef.ResolutionKind) VariableRef {
+    return VariableRef{
+        .token = token,
+        .module_context = module_context,
+        .scope_depth = scope_depth,
+        .resolution_kind = kind,
+    };
+}
+
+/// Create a function call context
+pub fn createFunctionCallRef(name: []const u8, kind: FunctionCallRef.CallKind, target_module: ?[]const u8) FunctionCallRef {
+    return FunctionCallRef{
+        .name = name,
+        .call_kind = kind,
+        .target_module = target_module,
+    };
+}
+
+//======================================================================
+// Stack-based HIR Instructions (for reference)
+//======================================================================
+
+/// HIR Instruction set for stack-based virtual machine
+/// This shows how the enhanced AST structures map to HIR instructions
+///
+/// Example HIR generation mapping:
+///
+/// AST: Variable{.token = "x", .resolution_kind = .Local, .scope_depth = 1}
+/// HIR: LoadLocal(stack_offset)
+///
+/// AST: Variable{.token = "math", .resolution_kind = .ImportedModule}
+/// HIR: (namespace marker - resolved during field access)
+///
+/// AST: Call{.callee = FieldAccess{.object = "math", .field = "add"}, .call_context = .ModuleFunction}
+/// HIR: CallModule{.module = "math", .function = "add", .arg_count = 2}
+pub const HIRInstruction = union(enum) {
+    // Stack operations
+    Push: TokenLiteral, // Push literal value
+    Pop, // Pop top value
+
+    // Variable operations
+    LoadLocal: u32, // Load local variable by stack offset
+    StoreLocal: u32, // Store to local variable by stack offset
+    LoadGlobal: []const u8, // Load module global by name
+    StoreGlobal: []const u8, // Store to module global by name
+    LoadModule: struct { // Load from imported module
+        module: []const u8,
+        symbol: []const u8,
+    },
+
+    // Arithmetic operations
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod, // Binary arithmetic
+    Neg,
+    Not, // Unary operations
+
+    // Comparison operations
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge, // Comparisons
+
+    // Control flow
+    Jmp: []const u8, // Unconditional jump to label
+    JmpTrue: []const u8, // Jump if top of stack is true
+    JmpFalse: []const u8, // Jump if top of stack is false
+    Label: []const u8, // Label for jumps
+
+    // Function operations
+    CallLocal: struct { // Call function in current module
+        name: []const u8,
+        arg_count: u32,
+    },
+    CallModule: struct { // Call function in imported module
+        module: []const u8,
+        function: []const u8,
+        arg_count: u32,
+    },
+    CallBuiltin: struct { // Call built-in function
+        name: []const u8,
+        arg_count: u32,
+    },
+    Return, // Return from function
+
+    // Debug operations
+    Inspect: ?[]const u8, // Print value with optional name
+
+    // Array operations
+    MakeArray: u32, // Create array from top N stack values
+    IndexLoad, // Load array[index]
+    IndexStore, // Store to array[index]
+
+    // Block operations
+    EnterScope, // Enter new scope
+    ExitScope, // Exit scope
+};

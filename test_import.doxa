@@ -1,0 +1,4 @@
+import "./test/misc/safeMath.doxa" as safeMath;
+
+var result is safeMath.safeAdd(1, 2);
+result?; 
