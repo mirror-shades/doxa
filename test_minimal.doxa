@@ -1,4 +1,0 @@
-import "./math.doxa" as math;
-
-var result is math.add(1, 2);
-result?; 
