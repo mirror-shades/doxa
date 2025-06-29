@@ -1,4 +1,0 @@
-﻿var x is 42; 
-var y is 17; 
-var result is x + y; 
-result?;

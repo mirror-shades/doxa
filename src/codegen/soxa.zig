@@ -502,7 +502,7 @@ pub const HIRProgram = struct {
     string_pool: [][]const u8, // Shared string literals
     function_table: []HIRProgram.HIRFunction, // VM: Function metadata
     module_map: std.StringHashMap(ModuleInfo), // LLVM: Module context
-    allocator: std.mem.Allocator, // 🆕 NEW: Keep allocator for cleanup
+    allocator: std.mem.Allocator, // NEW: Keep allocator for cleanup
 
     pub fn deinit(self: *HIRProgram) void {
         self.allocator.free(self.instructions);
@@ -550,7 +550,31 @@ pub const HIRGenerator = struct {
     variables: std.StringHashMap(u32), // name -> index mapping
     variable_count: u32,
     label_count: u32,
-    reporter: *reporting.Reporter, // 🔧 NEW: Proper error reporting
+    reporter: *reporting.Reporter, // NEW: Proper error reporting
+
+    // NEW: Multi-pass support for functions
+    function_signatures: std.StringHashMap(FunctionInfo),
+    function_bodies: std.ArrayList(FunctionBody),
+    current_function: ?[]const u8,
+
+    pub const FunctionInfo = struct {
+        name: []const u8,
+        arity: u32,
+        return_type: HIRType,
+        start_label: []const u8,
+        local_var_count: u32,
+        is_entry: bool,
+    };
+
+    pub const FunctionBody = struct {
+        function_info: FunctionInfo,
+        statements: []ast.Stmt,
+        start_instruction_index: u32,
+        // Store original function declaration components needed for parameter setup
+        function_name: []const u8,
+        function_params: []ast.FunctionParam,
+        return_type_info: ast.TypeInfo,
+    };
 
     pub fn init(allocator: std.mem.Allocator, reporter: *reporting.Reporter) HIRGenerator {
         return HIRGenerator{
@@ -563,6 +587,9 @@ pub const HIRGenerator = struct {
             .variable_count = 0,
             .label_count = 0,
             .reporter = reporter,
+            .function_signatures = std.StringHashMap(FunctionInfo).init(allocator),
+            .function_bodies = std.ArrayList(FunctionBody).init(allocator),
+            .current_function = null,
         };
     }
 
@@ -572,33 +599,224 @@ pub const HIRGenerator = struct {
         self.string_pool.deinit();
         self.constant_map.deinit();
         self.variables.deinit();
+        self.function_signatures.deinit();
+        self.function_bodies.deinit();
     }
 
-    /// Main entry point - converts AST statements to HIR program
+    /// Main entry point - converts AST statements to HIR program using multi-pass approach
     pub fn generateProgram(self: *HIRGenerator, statements: []ast.Stmt) !HIRProgram {
-        std.debug.print("🚀 Starting HIR generation for {} statements\n", .{statements.len});
+        std.debug.print(">> Starting multi-pass HIR generation for {} statements\n", .{statements.len});
 
-        // Generate HIR instructions for all statements
-        for (statements) |stmt| {
-            try self.generateStatement(stmt);
-        }
+        // Pass 1: Collect function signatures (forward declarations)
+        try self.collectFunctionSignatures(statements);
+
+        // Pass 2: Generate main program FIRST (so execution starts here)
+        try self.generateMainProgram(statements);
+
+        // Pass 3: Generate function bodies AFTER main program
+        try self.generateFunctionBodies();
 
         // Add final halt
         try self.instructions.append(.Halt);
 
-        std.debug.print("✅ Generated {} HIR instructions\n", .{self.instructions.items.len});
+        // Pass 4: Build function table
+        const function_table = try self.buildFunctionTable();
+
+        std.debug.print(">> Generated {} HIR instructions with {} functions\n", .{ self.instructions.items.len, function_table.len });
 
         return HIRProgram{
             .instructions = try self.instructions.toOwnedSlice(),
             .constant_pool = try self.constant_pool.toOwnedSlice(),
             .string_pool = try self.string_pool.toOwnedSlice(),
-            .function_table = &[_]HIRProgram.HIRFunction{}, // TODO: populate functions
+            .function_table = function_table,
             .module_map = std.StringHashMap(HIRProgram.ModuleInfo).init(self.allocator),
             .allocator = self.allocator,
         };
     }
 
-    fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) !void {
+    /// Pass 1: Collect function signatures for forward declarations
+    fn collectFunctionSignatures(self: *HIRGenerator, statements: []ast.Stmt) !void {
+        std.debug.print("🔍 Pass 1: Collecting function signatures\n", .{});
+
+        for (statements, 0..) |stmt, i| {
+            switch (stmt.data) {
+                .FunctionDecl => |func| {
+                    std.debug.print("  >> Found function: {s} with {} params\n", .{ func.name.lexeme, func.params.len });
+
+                    const return_type = self.convertTypeInfo(func.return_type_info);
+                    const start_label = try self.generateLabel(try std.fmt.allocPrint(self.allocator, "func_{s}", .{func.name.lexeme}));
+
+                    const function_info = FunctionInfo{
+                        .name = func.name.lexeme,
+                        .arity = @intCast(func.params.len),
+                        .return_type = return_type,
+                        .start_label = start_label,
+                        .local_var_count = 0, // Will be calculated during body generation
+                        .is_entry = func.is_entry,
+                    };
+
+                    try self.function_signatures.put(func.name.lexeme, function_info);
+
+                    // Store function body for later generation
+                    try self.function_bodies.append(FunctionBody{
+                        .function_info = function_info,
+                        .statements = func.body,
+                        .start_instruction_index = 0, // Will be set during generation
+                        // Store original declaration components for parameter access
+                        .function_name = func.name.lexeme,
+                        .function_params = func.params,
+                        .return_type_info = func.return_type_info,
+                    });
+                },
+                else => {
+                    // Skip non-function statements in this pass
+                    std.debug.print("  >> Skipping statement {}: {s}\n", .{ i, @tagName(stmt.data) });
+                },
+            }
+        }
+
+        std.debug.print(">> Pass 1 complete: {} functions collected\n", .{self.function_signatures.count()});
+    }
+
+    /// Pass 3: Generate function bodies AFTER main program
+    fn generateFunctionBodies(self: *HIRGenerator) !void {
+        std.debug.print(">> Pass 3: Generating function bodies AFTER main\n", .{});
+
+        for (self.function_bodies.items) |*function_body| {
+            std.debug.print("  >> Generating body for: {s}\n", .{function_body.function_info.name});
+
+            // Set current function context
+            self.current_function = function_body.function_info.name;
+
+            // Mark start of function
+            function_body.start_instruction_index = @intCast(self.instructions.items.len);
+            try self.instructions.append(.{ .Label = .{ .name = function_body.function_info.start_label, .vm_address = 0 } });
+
+            // Enter function scope
+            try self.instructions.append(.{ .EnterScope = .{ .scope_id = self.label_count + 1000, .var_count = 0 } });
+
+            // Generate parameter setup - copy arguments from stack to local variables
+            const params = function_body.function_params;
+            std.debug.print("  >> Setting up {} parameters\n", .{params.len});
+
+            // Parameters are pushed in order, so we pop them in reverse order
+            var param_index = params.len;
+            while (param_index > 0) {
+                param_index -= 1;
+                const param = params[param_index];
+
+                // Create variable for parameter and store the stack value
+                const var_idx = try self.getOrCreateVariable(param.name.lexeme);
+                try self.instructions.append(.{ .StoreVar = .{
+                    .var_index = var_idx,
+                    .var_name = param.name.lexeme,
+                    .scope_kind = .Local,
+                    .module_context = null,
+                } });
+
+                std.debug.print("  >> Parameter {}: {s} -> var[{}]\n", .{ param_index, param.name.lexeme, var_idx });
+            }
+
+            // Generate function body statements
+            for (function_body.statements) |body_stmt| {
+                try self.generateStatement(body_stmt);
+            }
+
+            // Exit function scope
+            try self.instructions.append(.{ .ExitScope = .{ .scope_id = self.label_count + 1000 } });
+
+            // Add implicit return if no explicit return
+            try self.instructions.append(.{ .Return = .{ .has_value = false, .return_type = .Nothing } });
+
+            // Clear current function context
+            self.current_function = null;
+        }
+
+        std.debug.print(">> Pass 3 complete: {} function bodies generated\n", .{self.function_bodies.items.len});
+    }
+
+    /// Pass 2: Generate main program (non-function statements) - FIRST so execution starts here
+    fn generateMainProgram(self: *HIRGenerator, statements: []ast.Stmt) !void {
+        std.debug.print(">> Pass 2: Generating main program FIRST\n", .{});
+
+        for (statements) |stmt| {
+            switch (stmt.data) {
+                .FunctionDecl => {
+                    // Skip - already handled in previous passes
+                    continue;
+                },
+                else => {
+                    try self.generateStatement(stmt);
+                },
+            }
+        }
+
+        std.debug.print(">> Pass 2 complete: Main program generated\n", .{});
+    }
+
+    /// Pass 4: Build function table from collected signatures
+    fn buildFunctionTable(self: *HIRGenerator) ![]HIRProgram.HIRFunction {
+        std.debug.print(">> Pass 4: Building function table\n", .{});
+
+        var function_table = std.ArrayList(HIRProgram.HIRFunction).init(self.allocator);
+
+        var function_iterator = self.function_signatures.iterator();
+        while (function_iterator.next()) |entry| {
+            const function_info = entry.value_ptr.*;
+
+            try function_table.append(HIRProgram.HIRFunction{
+                .name = function_info.name,
+                .qualified_name = function_info.name, // For now, no modules
+                .arity = function_info.arity,
+                .return_type = function_info.return_type,
+                .start_label = function_info.start_label,
+                .local_var_count = function_info.local_var_count,
+                .is_entry = function_info.is_entry,
+            });
+        }
+
+        std.debug.print(">> Pass 4 complete: {} functions in table\n", .{function_table.items.len});
+        return try function_table.toOwnedSlice();
+    }
+
+    /// Get function index for call generation
+    fn getFunctionIndex(self: *HIRGenerator, function_name: []const u8) !u32 {
+        var function_iterator = self.function_signatures.iterator();
+        var index: u32 = 0;
+        while (function_iterator.next()) |entry| {
+            if (std.mem.eql(u8, entry.key_ptr.*, function_name)) {
+                return index;
+            }
+            index += 1;
+        }
+        return error.FunctionNotFound;
+    }
+
+    /// Convert TypeInfo to HIRType
+    fn convertTypeInfo(self: *HIRGenerator, type_info: ast.TypeInfo) HIRType {
+        _ = self;
+        return switch (type_info.base) {
+            .Int => .Int,
+            .Float => .Float,
+            .String => .String,
+            .Tetra => .Boolean,
+            .U8 => .U8,
+            .Auto => .Auto,
+            else => .Auto,
+        };
+    }
+
+    /// Find function body by name (helper method)
+    fn findFunctionBody(self: *HIRGenerator, function_name: []const u8) ?*FunctionBody {
+        for (self.function_bodies.items) |*function_body| {
+            if (std.mem.eql(u8, function_body.function_info.name, function_name)) {
+                return function_body;
+            }
+        }
+        return null;
+    }
+
+    fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator.Error || reporting.ErrorList)!void {
         switch (stmt.data) {
             .Expression => |expr| {
                 if (expr) |e| {
@@ -608,7 +826,7 @@ pub const HIRGenerator = struct {
                 }
             },
             .VarDecl => |decl| {
-                std.debug.print("🔧 Generating variable: {s}\n", .{decl.name.lexeme});
+                std.debug.print(">> Generating variable: {s}\n", .{decl.name.lexeme});
 
                 // Generate the initializer expression
                 if (decl.initializer) |init_expr| {
@@ -635,13 +853,9 @@ pub const HIRGenerator = struct {
                     .module_context = null,
                 } });
             },
-            .FunctionDecl => |func| {
-                std.debug.print("🔧 Generating function: {s}\n", .{func.name.lexeme});
-
-                // For now, generate function body inline (TODO: proper function handling)
-                for (func.body) |body_stmt| {
-                    try self.generateStatement(body_stmt);
-                }
+            .FunctionDecl => {
+                // Skip - function declarations are handled in multi-pass approach
+                std.debug.print(">> Skipping function declaration (handled in Pass 1-2)\n", .{});
             },
             .Return => |ret| {
                 if (ret.value) |value| {
@@ -652,14 +866,14 @@ pub const HIRGenerator = struct {
                 }
             },
             else => {
-                std.debug.print("⚠️  Unhandled statement type: {}\n", .{stmt.data});
+                std.debug.print("!! Unhandled statement type: {}\n", .{stmt.data});
             },
         }
     }
 
-    /// 🔥 THE KEY FUNCTION - converts recursive AST evaluation to linear stack operations
+    /// THE KEY FUNCTION - converts recursive AST evaluation to linear stack operations
     /// This is where we get the 10-50x speedup!
-    fn generateExpression(self: *HIRGenerator, expr: *ast.Expr) !void {
+    fn generateExpression(self: *HIRGenerator, expr: *ast.Expr) (std.mem.Allocator.Error || reporting.ErrorList)!void {
         switch (expr.data) {
             .Literal => |lit| {
                 const hir_value = switch (lit) {
@@ -688,7 +902,7 @@ pub const HIRGenerator = struct {
             },
 
             .Binary => |bin| {
-                std.debug.print("🔧 Generating binary op: {}\n", .{bin.operator.type});
+                std.debug.print(">> Generating binary op: {}\n", .{bin.operator.type});
 
                 // Generate left operand (pushes to stack)
                 try self.generateExpression(bin.left.?);
@@ -702,7 +916,7 @@ pub const HIRGenerator = struct {
                     .MINUS => try self.instructions.append(.{ .IntArith = .{ .op = .Sub, .overflow_behavior = .Wrap } }),
                     .ASTERISK => try self.instructions.append(.{ .IntArith = .{ .op = .Mul, .overflow_behavior = .Wrap } }),
                     .SLASH => try self.instructions.append(.{ .IntArith = .{ .op = .Div, .overflow_behavior = .Trap } }),
-                    .MODULO => try self.instructions.append(.{ .IntArith = .{ .op = .Mod, .overflow_behavior = .Wrap } }), // 🔥 This was super slow in AST walker!
+                    .MODULO => try self.instructions.append(.{ .IntArith = .{ .op = .Mod, .overflow_behavior = .Wrap } }), // This was super slow in AST walker!
                     .EQUALITY => try self.instructions.append(.{ .Compare = .{ .op = .Eq, .operand_type = .Int } }),
                     .BANG_EQUAL => try self.instructions.append(.{ .Compare = .{ .op = .Ne, .operand_type = .Int } }),
                     .LESS => try self.instructions.append(.{ .Compare = .{ .op = .Lt, .operand_type = .Int } }),
@@ -717,7 +931,7 @@ pub const HIRGenerator = struct {
             },
 
             .Logical => |log| {
-                std.debug.print("🔧 Generating logical op: {}\n", .{log.operator.type});
+                std.debug.print(">> Generating logical op: {}\n", .{log.operator.type});
 
                 // For AND/OR, we need short-circuit evaluation
                 if (log.operator.type == .AND) {
@@ -756,7 +970,7 @@ pub const HIRGenerator = struct {
             },
 
             .If => |if_expr| {
-                std.debug.print("🔧 Generating if expression\n", .{});
+                std.debug.print(">> Generating if expression\n", .{});
 
                 // Generate condition
                 try self.generateExpression(if_expr.condition.?);
@@ -766,14 +980,18 @@ pub const HIRGenerator = struct {
                 const end_label = try self.generateLabel("end_if");
 
                 // Jump to else if condition is false
+                const then_label = try self.generateLabel("then");
                 try self.instructions.append(.{
                     .JumpCond = .{
-                        .label_true = else_label,
-                        .label_false = else_label,
+                        .label_true = then_label, // If TRUE: jump to then branch
+                        .label_false = else_label, // If FALSE: jump to else branch
                         .vm_offset = 0, // Will be patched during VM bytecode generation
                         .condition_type = .Boolean,
                     },
                 });
+
+                // Then label
+                try self.instructions.append(.{ .Label = .{ .name = then_label, .vm_address = 0 } });
 
                 // Generate then branch
                 try self.generateExpression(if_expr.then_branch.?);
@@ -797,9 +1015,10 @@ pub const HIRGenerator = struct {
             },
 
             .While => |while_expr| {
-                std.debug.print("🔧 Generating while loop\n", .{});
+                std.debug.print(">> Generating while loop\n", .{});
 
                 const loop_start_label = try self.generateLabel("while_start");
+                const loop_body_label = try self.generateLabel("while_body");
                 const loop_end_label = try self.generateLabel("while_end");
 
                 // Loop start
@@ -808,15 +1027,18 @@ pub const HIRGenerator = struct {
                 // Generate condition
                 try self.generateExpression(while_expr.condition);
 
-                // Jump to end if condition is false
+                // Jump based on condition: TRUE=continue to body, FALSE=exit loop
                 try self.instructions.append(.{
                     .JumpCond = .{
-                        .label_true = loop_end_label,
-                        .label_false = loop_end_label,
+                        .label_true = loop_body_label, // Continue to loop body when TRUE
+                        .label_false = loop_end_label, // Exit loop when FALSE
                         .vm_offset = 0, // Will be patched
                         .condition_type = .Boolean,
                     },
                 });
+
+                // Loop body label (where TRUE condition jumps to)
+                try self.instructions.append(.{ .Label = .{ .name = loop_body_label, .vm_address = 0 } });
 
                 // Generate body
                 try self.generateExpression(while_expr.body);
@@ -834,7 +1056,46 @@ pub const HIRGenerator = struct {
             },
 
             .Call => |call| {
-                std.debug.print("🔧 Generating function call\n", .{});
+                std.debug.print(">> Generating function call\n", .{});
+
+                // Extract function name and determine call type
+                var function_name: []const u8 = "unknown";
+                var call_kind: CallKind = .LocalFunction;
+                var function_index: u32 = 0;
+
+                // Check if this is a method call (callee is FieldAccess) or regular function call
+                switch (call.callee.data) {
+                    .FieldAccess => |field_access| {
+                        // This is a method call like arr.length()
+                        function_name = field_access.field.lexeme;
+                        call_kind = .BuiltinFunction;
+
+                        // Generate the object expression (arr)
+                        try self.generateExpression(field_access.object);
+
+                        std.debug.print(">> Method call: {s}\n", .{function_name});
+                    },
+                    .Variable => |var_token| {
+                        // This is a regular function call like fizzbuzz(1)
+                        function_name = var_token.lexeme;
+
+                        // Try to resolve as user-defined function
+                        if (self.getFunctionIndex(function_name)) |index| {
+                            function_index = index;
+                            call_kind = .LocalFunction;
+                            std.debug.print(">> User function call: {s} (index: {})\n", .{ function_name, index });
+                        } else |_| {
+                            // Fall back to built-in
+                            call_kind = .BuiltinFunction;
+                            std.debug.print(">> Built-in function call: {s}\n", .{function_name});
+                        }
+                    },
+                    else => {
+                        // Complex callee - for now, treat as unknown
+                        self.reporter.reportError("Unsupported function call type", .{});
+                        return;
+                    },
+                }
 
                 // Generate arguments (in order) - these will be on stack for VM
                 for (call.arguments) |arg| {
@@ -844,10 +1105,10 @@ pub const HIRGenerator = struct {
                 // Generate function call
                 try self.instructions.append(.{
                     .Call = .{
-                        .function_index = 0, // TODO: resolve actual function index
-                        .qualified_name = "unknown", // TODO: resolve function name
+                        .function_index = function_index,
+                        .qualified_name = function_name,
                         .arg_count = @as(u32, @intCast(call.arguments.len)),
-                        .call_kind = .LocalFunction,
+                        .call_kind = call_kind,
                         .target_module = null,
                         .return_type = .Auto,
                     },
@@ -855,7 +1116,7 @@ pub const HIRGenerator = struct {
             },
 
             .Inspect => |inspect| {
-                std.debug.print("🔧 Generating inspect\n", .{});
+                std.debug.print(">> Generating inspect\n", .{});
 
                 // Generate the expression to inspect
                 try self.generateExpression(inspect.expr);
@@ -868,7 +1129,7 @@ pub const HIRGenerator = struct {
             },
 
             .Assignment => |assign| {
-                std.debug.print("🔧 Generating assignment: {s}\n", .{assign.name.lexeme});
+                std.debug.print(">> Generating assignment: {s}\n", .{assign.name.lexeme});
 
                 // Generate the value expression
                 try self.generateExpression(assign.value.?);
@@ -889,7 +1150,7 @@ pub const HIRGenerator = struct {
             },
 
             .Array => |elements| {
-                std.debug.print("🔧 Generating array with {} elements\n", .{elements.len});
+                std.debug.print(">> Generating array with {} elements\n", .{elements.len});
 
                 // Determine array element type from first element (for now)
                 const element_type: HIRType = if (elements.len > 0) blk: {
@@ -913,26 +1174,26 @@ pub const HIRGenerator = struct {
                     .size = @intCast(elements.len),
                 } });
 
-                // Generate each element and ArrayPush
+                // Generate each element and ArraySet
                 for (elements, 0..) |element, i| {
                     // Duplicate array reference (needed for ArraySet)
                     try self.instructions.append(.Dup);
 
-                    // Generate the element value
-                    try self.generateExpression(element);
-
-                    // Push index
+                    // Push index first
                     const index_value = HIRValue{ .int = @intCast(i) };
                     const index_const = try self.addConstant(index_value);
                     try self.instructions.append(.{ .Const = .{ .value = index_value, .constant_id = index_const } });
 
-                    // Set array element
+                    // Generate the element value
+                    try self.generateExpression(element);
+
+                    // Set array element (stack: array, index, value)
                     try self.instructions.append(.{ .ArraySet = .{ .bounds_check = false } }); // No bounds check for initialization
                 }
             },
 
             .Index => |index| {
-                std.debug.print("🔧 Generating array index access\n", .{});
+                std.debug.print(">> Generating array index access\n", .{});
 
                 // Generate array expression
                 try self.generateExpression(index.array);
@@ -945,7 +1206,7 @@ pub const HIRGenerator = struct {
             },
 
             .IndexAssign => |assign| {
-                std.debug.print("🔧 Generating array index assignment\n", .{});
+                std.debug.print(">> Generating array index assignment\n", .{});
 
                 // Generate array expression
                 try self.generateExpression(assign.array);
@@ -961,7 +1222,7 @@ pub const HIRGenerator = struct {
             },
 
             .Tuple => |elements| {
-                std.debug.print("🔧 Generating tuple with {} elements\n", .{elements.len});
+                std.debug.print(">> Generating tuple with {} elements\n", .{elements.len});
 
                 // Generate TupleNew instruction
                 try self.instructions.append(.{ .TupleNew = .{ .element_count = @intCast(elements.len) } });
@@ -973,7 +1234,7 @@ pub const HIRGenerator = struct {
             },
 
             .StructLiteral => |struct_lit| {
-                std.debug.print("🔧 Generating struct literal: {s}\n", .{struct_lit.name.lexeme});
+                std.debug.print(">> Generating struct literal: {s}\n", .{struct_lit.name.lexeme});
 
                 // Generate StructNew instruction
                 try self.instructions.append(.{
@@ -1001,7 +1262,7 @@ pub const HIRGenerator = struct {
             },
 
             .EnumMember => |member| {
-                std.debug.print("🔧 Generating enum member: {s}\n", .{member.lexeme});
+                std.debug.print(">> Generating enum member: {s}\n", .{member.lexeme});
 
                 // Generate EnumNew instruction
                 try self.instructions.append(.{
@@ -1024,8 +1285,69 @@ pub const HIRGenerator = struct {
                 }
             },
 
+            .Block => |block| {
+                std.debug.print(">> Generating block with {} statements\n", .{block.statements.len});
+
+                // Generate all block statements without creating scopes for simple blocks
+                for (block.statements) |stmt| {
+                    try self.generateStatement(stmt);
+                }
+
+                // Generate final value if present
+                if (block.value) |value_expr| {
+                    // Block with a final value expression
+                    try self.generateExpression(value_expr);
+                } else {
+                    // Block without value - push nothing
+                    const nothing_idx = try self.addConstant(HIRValue.nothing);
+                    try self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } });
+                }
+            },
+
+            .CompoundAssign => |compound| {
+                std.debug.print(">> Generating compound assignment: {s} {s}\n", .{ compound.name.lexeme, compound.operator.lexeme });
+
+                // Load current variable value
+                const var_idx = try self.getOrCreateVariable(compound.name.lexeme);
+                try self.instructions.append(.{
+                    .LoadVar = .{
+                        .var_index = var_idx,
+                        .var_name = compound.name.lexeme,
+                        .scope_kind = .Local,
+                        .module_context = null,
+                    },
+                });
+
+                // Generate the value expression (e.g., the "1" in "current += 1")
+                try self.generateExpression(compound.value.?);
+
+                // Generate the compound operation based on operator
+                switch (compound.operator.type) {
+                    .PLUS_EQUAL => try self.instructions.append(.{ .IntArith = .{ .op = .Add, .overflow_behavior = .Wrap } }),
+                    .MINUS_EQUAL => try self.instructions.append(.{ .IntArith = .{ .op = .Sub, .overflow_behavior = .Wrap } }),
+                    .ASTERISK_EQUAL => try self.instructions.append(.{ .IntArith = .{ .op = .Mul, .overflow_behavior = .Wrap } }),
+                    .SLASH_EQUAL => try self.instructions.append(.{ .IntArith = .{ .op = .Div, .overflow_behavior = .Trap } }),
+                    .POWER_EQUAL => try self.instructions.append(.{ .IntArith = .{ .op = .Mul, .overflow_behavior = .Wrap } }), // TODO: Implement power operation
+                    else => {
+                        self.reporter.reportError("Unsupported compound assignment operator: {}", .{compound.operator.type});
+                        return reporting.ErrorList.UnsupportedOperator;
+                    },
+                }
+
+                // Duplicate the result to leave it on stack as the expression result
+                try self.instructions.append(.Dup);
+
+                // Store the result back to the variable
+                try self.instructions.append(.{ .StoreVar = .{
+                    .var_index = var_idx,
+                    .var_name = compound.name.lexeme,
+                    .scope_kind = .Local,
+                    .module_context = null,
+                } });
+            },
+
             else => {
-                std.debug.print("⚠️  Unhandled expression type: {}\n", .{expr.data});
+                std.debug.print("!! Unhandled expression type: {}\n", .{expr.data});
                 // Push nothing as fallback
                 const nothing_idx = try self.addConstant(HIRValue.nothing);
                 try self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } });
@@ -1033,7 +1355,7 @@ pub const HIRGenerator = struct {
         }
     }
 
-    fn addConstant(self: *HIRGenerator, value: HIRValue) !u32 {
+    fn addConstant(self: *HIRGenerator, value: HIRValue) std.mem.Allocator.Error!u32 {
         // TODO: Add deduplication for identical constants
         const index = @as(u32, @intCast(self.constant_pool.items.len));
         try self.constant_pool.append(value);
@@ -1048,7 +1370,7 @@ pub const HIRGenerator = struct {
         const idx = self.variable_count;
         try self.variables.put(name, idx);
         self.variable_count += 1;
-        std.debug.print("📝 Created variable slot {} for '{s}'\n", .{ idx, name });
+        std.debug.print(">> Created variable slot {} for '{s}'\n", .{ idx, name });
         return idx;
     }
 
@@ -1068,7 +1390,7 @@ pub fn translateToVMBytecode(program: *HIRProgram, allocator: std.mem.Allocator,
     var bytecode = std.ArrayList(u8).init(allocator);
     defer bytecode.deinit();
 
-    std.debug.print("🔧 Translating {} HIR instructions to VM bytecode\n", .{program.instructions.len});
+    std.debug.print(">> Translating {} HIR instructions to VM bytecode\n", .{program.instructions.len});
 
     // First pass: resolve labels to addresses
     var label_addresses = std.StringHashMap(u32).init(allocator);
@@ -1176,7 +1498,7 @@ pub fn translateToVMBytecode(program: *HIRProgram, allocator: std.mem.Allocator,
     }
 
     const result = try bytecode.toOwnedSlice();
-    std.debug.print("✅ Generated {} bytes of VM bytecode\n", .{result.len});
+    std.debug.print(">> Generated {} bytes of VM bytecode\n", .{result.len});
     return result;
 }
 
@@ -1252,7 +1574,7 @@ pub fn writeSoxaFile(program: *HIRProgram, file_path: []const u8, allocator: std
     try writer.writeInt(u32, header.string_count, .little);
     try writer.writeAll(&header.reserved);
 
-    reporting.Reporter.lightMessage("🔧 Writing SOXA file with constants and instructions");
+    reporting.Reporter.lightMessage(">> Writing SOXA file with constants and instructions");
 
     // Write string pool
     for (program.string_pool) |str| {
@@ -1265,12 +1587,31 @@ pub fn writeSoxaFile(program: *HIRProgram, file_path: []const u8, allocator: std
         try writeHIRValue(writer, constant);
     }
 
+    // Write function table
+    try writer.writeInt(u32, @as(u32, @intCast(program.function_table.len)), .little);
+    for (program.function_table) |func| {
+        // Write function name
+        try writer.writeInt(u32, @as(u32, @intCast(func.name.len)), .little);
+        try writer.writeAll(func.name);
+
+        // Write function metadata
+        try writer.writeInt(u32, func.arity, .little);
+        try writer.writeByte(@intFromEnum(func.return_type));
+
+        // Write start label
+        try writer.writeInt(u32, @as(u32, @intCast(func.start_label.len)), .little);
+        try writer.writeAll(func.start_label);
+
+        try writer.writeInt(u32, func.local_var_count, .little);
+        try writer.writeByte(if (func.is_entry) 1 else 0);
+    }
+
     // Write instructions
     for (program.instructions) |instruction| {
         try writeHIRInstruction(writer, instruction, allocator);
     }
 
-    std.debug.print("✅ SOXA file written: {s} ({} instructions, {} constants)\n", .{ file_path, program.instructions.len, program.constant_pool.len });
+    std.debug.print(">> SOXA file written: {s} ({} instructions, {} constants, {} functions)\n", .{ file_path, program.instructions.len, program.constant_pool.len, program.function_table.len });
 }
 
 /// Reads a HIR program from a .soxa file
@@ -1305,7 +1646,7 @@ pub fn readSoxaFile(file_path: []const u8, allocator: std.mem.Allocator) !HIRPro
     var reserved: [6]u8 = undefined;
     _ = try reader.readAll(&reserved);
 
-    reporting.Reporter.lightMessage("🔧 Reading SOXA file with constants and instructions");
+    reporting.Reporter.lightMessage(">> Reading SOXA file with constants and instructions");
 
     // Read string pool
     var strings = std.ArrayList([]const u8).init(allocator);
@@ -1323,6 +1664,40 @@ pub fn readSoxaFile(file_path: []const u8, allocator: std.mem.Allocator) !HIRPro
         try constants.append(constant);
     }
 
+    // Read function table
+    const function_count = try reader.readInt(u32, .little);
+    var function_table = std.ArrayList(HIRProgram.HIRFunction).init(allocator);
+
+    for (0..function_count) |_| {
+        // Read function name
+        const name_len = try reader.readInt(u32, .little);
+        const name_data = try allocator.alloc(u8, name_len);
+        _ = try reader.readAll(name_data);
+
+        // Read function metadata
+        const arity = try reader.readInt(u32, .little);
+        const return_type_byte = try reader.readByte();
+        const return_type = @as(HIRType, @enumFromInt(return_type_byte));
+
+        // Read start label
+        const label_len = try reader.readInt(u32, .little);
+        const label_data = try allocator.alloc(u8, label_len);
+        _ = try reader.readAll(label_data);
+
+        const local_var_count = try reader.readInt(u32, .little);
+        const is_entry = (try reader.readByte()) != 0;
+
+        try function_table.append(HIRProgram.HIRFunction{
+            .name = name_data,
+            .qualified_name = name_data, // Same as name for now
+            .arity = arity,
+            .return_type = return_type,
+            .start_label = label_data,
+            .local_var_count = local_var_count,
+            .is_entry = is_entry,
+        });
+    }
+
     // Read instructions
     var instruction_list = std.ArrayList(HIRInstruction).init(allocator);
     for (0..instruction_count) |_| {
@@ -1330,13 +1705,13 @@ pub fn readSoxaFile(file_path: []const u8, allocator: std.mem.Allocator) !HIRPro
         try instruction_list.append(instruction);
     }
 
-    std.debug.print("✅ SOXA file loaded: {s} ({} instructions, {} constants)\n", .{ file_path, instruction_list.items.len, constants.items.len });
+    std.debug.print(">> SOXA file loaded: {s} ({} instructions, {} constants, {} functions)\n", .{ file_path, instruction_list.items.len, constants.items.len, function_table.items.len });
 
     return HIRProgram{
         .instructions = try instruction_list.toOwnedSlice(),
         .constant_pool = try constants.toOwnedSlice(),
         .string_pool = try strings.toOwnedSlice(),
-        .function_table = &[_]HIRProgram.HIRFunction{}, // TODO: populate functions
+        .function_table = try function_table.toOwnedSlice(),
         .module_map = std.StringHashMap(HIRProgram.ModuleInfo).init(allocator),
         .allocator = allocator,
     };
@@ -1497,6 +1872,9 @@ fn writeHIRInstruction(writer: anytype, instruction: HIRInstruction, allocator: 
             try writer.writeByte(7); // Instruction tag
             try writer.writeInt(u32, c.function_index, .little);
             try writer.writeInt(u32, c.arg_count, .little);
+            // Serialize qualified_name
+            try writer.writeInt(u32, @as(u32, @intCast(c.qualified_name.len)), .little);
+            try writer.writeAll(c.qualified_name);
         },
         .Return => |r| {
             try writer.writeByte(8); // Instruction tag
@@ -1528,8 +1906,48 @@ fn writeHIRInstruction(writer: anytype, instruction: HIRInstruction, allocator: 
             }
             try writer.writeByte(@intFromEnum(i.value_type));
         },
+
+        // Array operations (Phase 1)
+        .ArrayNew => |a| {
+            try writer.writeByte(14); // Instruction tag
+            try writer.writeByte(@intFromEnum(a.element_type));
+            try writer.writeInt(u32, a.size, .little);
+        },
+        .ArrayGet => |a| {
+            try writer.writeByte(15); // Instruction tag
+            try writer.writeByte(if (a.bounds_check) 1 else 0);
+        },
+        .ArraySet => |a| {
+            try writer.writeByte(16); // Instruction tag
+            try writer.writeByte(if (a.bounds_check) 1 else 0);
+        },
+        .ArrayPush => |a| {
+            try writer.writeByte(17); // Instruction tag
+            try writer.writeByte(@intFromEnum(a.resize_behavior));
+        },
+        .ArrayPop => {
+            try writer.writeByte(18); // Instruction tag
+        },
+        .ArrayLen => {
+            try writer.writeByte(19); // Instruction tag
+        },
+        .ArrayConcat => {
+            try writer.writeByte(20); // Instruction tag
+        },
+
+        // Scope management
+        .EnterScope => |s| {
+            try writer.writeByte(21); // Instruction tag
+            try writer.writeInt(u32, s.scope_id, .little);
+            try writer.writeInt(u32, s.var_count, .little);
+        },
+        .ExitScope => |s| {
+            try writer.writeByte(22); // Instruction tag
+            try writer.writeInt(u32, s.scope_id, .little);
+        },
+
         else => {
-            std.debug.print("⚠️  Unhandled HIR instruction for SOXA serialization: {}\n", .{instruction});
+            std.debug.print("!! Unhandled HIR instruction for SOXA serialization: {}\n", .{instruction});
             return reporting.ErrorList.UnsupportedStatement;
         },
     }
@@ -1588,9 +2006,13 @@ fn readHIRInstruction(reader: anytype, allocator: std.mem.Allocator) !HIRInstruc
         7 => { // Call
             const function_index = try reader.readInt(u32, .little);
             const arg_count = try reader.readInt(u32, .little);
+            // Deserialize qualified_name
+            const name_len = try reader.readInt(u32, .little);
+            const qualified_name = try allocator.alloc(u8, name_len);
+            _ = try reader.readAll(qualified_name);
             return HIRInstruction{ .Call = .{
                 .function_index = function_index,
-                .qualified_name = "unknown",
+                .qualified_name = qualified_name,
                 .arg_count = arg_count,
                 .call_kind = .LocalFunction,
                 .target_module = null,
@@ -1624,6 +2046,42 @@ fn readHIRInstruction(reader: anytype, allocator: std.mem.Allocator) !HIRInstruc
 
             return HIRInstruction{ .Inspect = .{ .name = name, .value_type = value_type } };
         },
+
+        // Array operations (Phase 1)
+        14 => { // ArrayNew
+            const element_type_byte = try reader.readByte();
+            const element_type = @as(HIRType, @enumFromInt(element_type_byte));
+            const size = try reader.readInt(u32, .little);
+            return HIRInstruction{ .ArrayNew = .{ .element_type = element_type, .size = size } };
+        },
+        15 => { // ArrayGet
+            const bounds_check = (try reader.readByte()) != 0;
+            return HIRInstruction{ .ArrayGet = .{ .bounds_check = bounds_check } };
+        },
+        16 => { // ArraySet
+            const bounds_check = (try reader.readByte()) != 0;
+            return HIRInstruction{ .ArraySet = .{ .bounds_check = bounds_check } };
+        },
+        17 => { // ArrayPush
+            const resize_behavior_byte = try reader.readByte();
+            const resize_behavior = @as(ResizeBehavior, @enumFromInt(resize_behavior_byte));
+            return HIRInstruction{ .ArrayPush = .{ .resize_behavior = resize_behavior } };
+        },
+        18 => HIRInstruction.ArrayPop,
+        19 => HIRInstruction.ArrayLen,
+        20 => HIRInstruction.ArrayConcat,
+
+        // Scope management
+        21 => { // EnterScope
+            const scope_id = try reader.readInt(u32, .little);
+            const var_count = try reader.readInt(u32, .little);
+            return HIRInstruction{ .EnterScope = .{ .scope_id = scope_id, .var_count = var_count } };
+        },
+        22 => { // ExitScope
+            const scope_id = try reader.readInt(u32, .little);
+            return HIRInstruction{ .ExitScope = .{ .scope_id = scope_id } };
+        },
+
         else => {
             std.debug.print("❌ Unknown HIR instruction tag: {}\n", .{instruction_tag});
             return reporting.ErrorList.UnsupportedStatement;

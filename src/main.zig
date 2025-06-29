@@ -110,23 +110,40 @@ fn interpreter_deprecated(memoryManager: *MemoryManager, parser: *Parser, statem
 
 /// Generate a path for an artifact file based on the source file path
 fn generateArtifactPath(source_path: []const u8, extension: []const u8) ![]u8 {
-    // Find the last dot in the path
-    var last_dot: ?usize = null;
+    // Extract filename from path
+    var filename_start: usize = 0;
     for (source_path, 0..) |c, i| {
+        if (c == '/' or c == '\\') filename_start = i + 1;
+    }
+
+    const filename = source_path[filename_start..];
+
+    // Find the last dot in the filename
+    var last_dot: ?usize = null;
+    for (filename, 0..) |c, i| {
         if (c == '.') last_dot = i;
     }
 
+    // Create output directory if it doesn't exist
+    std.fs.cwd().makeDir("out") catch |err| switch (err) {
+        error.PathAlreadyExists => {}, // Directory already exists, that's fine
+        else => return err, // Other errors should be propagated
+    };
+
     if (last_dot) |dot| {
-        // Allocate space for the new path
-        const new_path = try std.heap.page_allocator.alloc(u8, dot + extension.len);
-        @memcpy(new_path[0..dot], source_path[0..dot]);
-        @memcpy(new_path[dot..], extension);
+        // Build path: out/filename_without_extension + extension
+        const basename = filename[0..dot];
+        const new_path = try std.heap.page_allocator.alloc(u8, "out/".len + basename.len + extension.len);
+        @memcpy(new_path[0.."out/".len], "out/");
+        @memcpy(new_path["out/".len..("out/".len + basename.len)], basename);
+        @memcpy(new_path[("out/".len + basename.len)..], extension);
         return new_path;
     } else {
-        // If no dot found, append extension
-        const new_path = try std.heap.page_allocator.alloc(u8, source_path.len + extension.len);
-        @memcpy(new_path[0..source_path.len], source_path);
-        @memcpy(new_path[source_path.len..], extension);
+        // If no dot found, append extension to full filename
+        const new_path = try std.heap.page_allocator.alloc(u8, "out/".len + filename.len + extension.len);
+        @memcpy(new_path[0.."out/".len], "out/");
+        @memcpy(new_path["out/".len..("out/".len + filename.len)], filename);
+        @memcpy(new_path[("out/".len + filename.len)..], extension);
         return new_path;
     }
 }
@@ -141,20 +158,38 @@ fn processSoxaPipeline(memoryManager: *MemoryManager, source_path: []const u8, c
     const needs_recompile = try needsRecompilation(source_path, soxa_path);
 
     if (needs_recompile) {
+        if (memoryManager.debug_enabled) {
+            std.debug.print(">> Recompiling {s} -> {s}\n", .{ source_path, soxa_path });
+        }
         try compileDoxaToSoxa(memoryManager, source_path, soxa_path);
-    } else if (memoryManager.debug_enabled) {
-        std.debug.print("📚 Using cached SOXA: {s}\n", .{soxa_path});
+    } else {
+        if (memoryManager.debug_enabled) {
+            std.debug.print(">> Using cached SOXA: {s}\n", .{soxa_path});
+        }
     }
 
     // Execute based on command
     switch (cli_options.command) {
         .run => {
-            std.debug.print("🚀 Executing with HIR VM\n", .{});
-            try runSoxaFile(memoryManager, soxa_path);
+            std.debug.print(">> Executing with HIR VM\n", .{});
+            // Try to run SOXA file, but recompile if it's incompatible
+            runSoxaFile(memoryManager, soxa_path) catch |err| {
+                if (err == error.EndOfStream or err == error.InvalidFormat) {
+                    std.debug.print("!! SOXA file incompatible, regenerating...\n", .{});
+                    // Delete the incompatible SOXA file
+                    std.fs.cwd().deleteFile(soxa_path) catch {};
+                    // Recompile
+                    try compileDoxaToSoxa(memoryManager, source_path, soxa_path);
+                    // Try again
+                    try runSoxaFile(memoryManager, soxa_path);
+                } else {
+                    return err;
+                }
+            };
         },
 
         .compile => {
-            std.debug.print("🔥 Compiling to native binary\n", .{});
+            std.debug.print(">> Compiling to native binary\n", .{});
             const output_path = cli_options.output orelse try generateArtifactPath(source_path, "");
             defer if (cli_options.output == null) std.heap.page_allocator.free(output_path);
 
@@ -171,10 +206,12 @@ fn processSoxaPipeline(memoryManager: *MemoryManager, source_path: []const u8, c
     // Cleanup intermediate files unless requested to keep them
     if (!cli_options.keep_intermediate and !memoryManager.debug_enabled) {
         std.fs.cwd().deleteFile(soxa_path) catch |err| {
-            if (err != error.FileNotFound and memoryManager.debug_enabled) {
-                std.debug.print("⚠️  Could not cleanup {s}: {}\n", .{ soxa_path, err });
+            if (err != error.FileNotFound) {
+                std.debug.print("!! Could not cleanup {s}: {}\n", .{ soxa_path, err });
             }
         };
+    } else if (memoryManager.debug_enabled) {
+        std.debug.print(">> Keeping artifacts in debug mode: {s}\n", .{soxa_path});
     }
 }
 
@@ -192,8 +229,8 @@ fn compileToNative(memoryManager: *MemoryManager, soxa_path: []const u8, output_
     _ = memoryManager;
 
     // TODO: Implement LLVM pipeline
-    std.debug.print("⚠️  LLVM compilation not implemented yet\n", .{});
-    std.debug.print("📝 Would compile {s} → {s}\n", .{ soxa_path, output_path });
+    std.debug.print("!! LLVM compilation not implemented yet\n", .{});
+    std.debug.print(">> Would compile {s} -> {s}\n", .{ soxa_path, output_path });
 }
 
 /// Temporary: AST debugging for testing (will be removed)
@@ -265,16 +302,26 @@ fn compileDoxaToSoxa(memoryManager: *MemoryManager, source_path: []const u8, sox
     var hir_program = try hir_generator.generateProgram(statements);
     defer hir_program.deinit();
 
+    // Delete existing .soxa file if it exists
+    std.fs.cwd().deleteFile(soxa_path) catch |err| {
+        // It's fine if the file doesn't exist
+        if (err != error.FileNotFound) {
+            if (memoryManager.debug_enabled) {
+                std.debug.print("!! Warning: Could not delete existing SOXA file {s}: {}\n", .{ soxa_path, err });
+            }
+        }
+    };
+
     // Write the HIR program to .soxa file
     try SoxaCompiler.writeSoxaFile(&hir_program, soxa_path, memoryManager.getAllocator());
 
     if (memoryManager.debug_enabled) {
-        std.debug.print("✅ Compiled {s} → {s} ({} HIR instructions)\n", .{ source_path, soxa_path, hir_program.instructions.len });
+        std.debug.print(">> Compiled {s} -> {s} ({} HIR instructions)\n", .{ source_path, soxa_path, hir_program.instructions.len });
     }
 }
 
 ///==========================================================================
-/// Run SOXA file directly with HIR VM (for testing/comparison)
+/// Run SOXA file directly with HIR VM (optimized)
 ///==========================================================================
 fn runSoxaFile(memoryManager: *MemoryManager, soxa_path: []const u8) !void {
     // Load HIR program from SOXA file
@@ -282,7 +329,7 @@ fn runSoxaFile(memoryManager: *MemoryManager, soxa_path: []const u8) !void {
     defer hir_program.deinit();
 
     if (memoryManager.debug_enabled) {
-        std.debug.print("🚀 Loaded SOXA: {} instructions, {} constants\n", .{ hir_program.instructions.len, hir_program.constant_pool.len });
+        std.debug.print(">> Loaded SOXA: {} instructions, {} constants\n", .{ hir_program.instructions.len, hir_program.constant_pool.len });
     }
 
     // Create a reporter for HIR VM
@@ -292,14 +339,20 @@ fn runSoxaFile(memoryManager: *MemoryManager, soxa_path: []const u8) !void {
     var vm = try DoxaVM.init(memoryManager.getAllocator(), &hir_program, &reporter, memoryManager);
     defer vm.deinit();
 
-    std.debug.print("🚀 Starting HIR VM execution...\n", .{});
+    if (memoryManager.debug_enabled) {
+        std.debug.print(">> Starting HIR VM execution...\n", .{});
+    }
 
     if (try vm.run()) |result| {
-        std.debug.print("🎯 HIR VM Result: ", .{});
-        try vm.printHIRValue(result.value);
-        std.debug.print("\n", .{});
+        if (memoryManager.debug_enabled) {
+            std.debug.print(">> HIR VM Result: ", .{});
+            try vm.printHIRValue(result.value);
+            std.debug.print("\n", .{});
+        }
     } else {
-        std.debug.print("✅ HIR VM completed successfully\n", .{});
+        if (memoryManager.debug_enabled) {
+            std.debug.print(">> HIR VM completed successfully\n", .{});
+        }
     }
 }
 

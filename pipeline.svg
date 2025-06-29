@@ -1,0 +1,91 @@
+<?xml version="1.0" standalone="no"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="645pt" height="155pt" viewBox="0.00 0.00 645.05 155">
+<g id="graph0" class="graph" transform="translate(4,151) scale(1)" data-name="DoxaPipeline">
+
+<polygon fill="white" stroke="none" points="-4,4 -4,-151 641.05,-151 641.05,4 -4,4"/>
+<g id="clust1" class="cluster" data-name="cluster_backends">
+
+<path fill="none" stroke="black" d="M525.06,-8C525.06,-8 617.05,-8 617.05,-8 623.05,-8 629.05,-14 629.05,-20 629.05,-20 629.05,-127 629.05,-127 629.05,-133 623.05,-139 617.05,-139 617.05,-139 525.06,-139 525.06,-139 519.06,-139 513.06,-133 513.06,-127 513.06,-127 513.06,-20 513.06,-20 513.06,-14 519.06,-8 525.06,-8"/>
+<text text-anchor="middle" x="571.06" y="-122.4" font-family="Times,serif" font-size="14.00">Backends</text>
+</g>
+<!-- doxa -->
+<g id="node1" class="node" pointer-events="visible" data-name="doxa">
+
+<path fill="none" stroke="black" d="M76.55,-81.6C76.55,-81.6 12.15,-81.6 12.15,-81.6 6.15,-81.6 0.15,-75.6 0.15,-69.6 0.15,-69.6 0.15,-52.4 0.15,-52.4 0.15,-46.4 6.15,-40.4 12.15,-40.4 12.15,-40.4 76.55,-40.4 76.55,-40.4 82.55,-40.4 88.55,-46.4 88.55,-52.4 88.55,-52.4 88.55,-69.6 88.55,-69.6 88.55,-75.6 82.55,-81.6 76.55,-81.6"/>
+<text text-anchor="middle" x="44.35" y="-65.2" font-family="Times,serif" font-size="14.00">Doxa Source</text>
+<text text-anchor="middle" x="44.35" y="-48.4" font-family="Times,serif" font-size="14.00">(*.doxa)</text>
+</g>
+<!-- tokenizer -->
+<g id="node2" class="node" pointer-events="visible" data-name="tokenizer">
+
+<path fill="none" stroke="black" d="M185.32,-79C185.32,-79 136.83,-79 136.83,-79 130.83,-79 124.83,-73 124.83,-67 124.83,-67 124.83,-55 124.83,-55 124.83,-49 130.83,-43 136.83,-43 136.83,-43 185.32,-43 185.32,-43 191.32,-43 197.32,-49 197.32,-55 197.32,-55 197.32,-67 197.32,-67 197.32,-73 191.32,-79 185.32,-79"/>
+<text text-anchor="middle" x="161.07" y="-56.8" font-family="Times,serif" font-size="14.00">Tokenizer</text>
+</g>
+<!-- doxa&#45;&gt;tokenizer -->
+<g id="edge1" class="edge" data-name="doxa-&gt;tokenizer">
+
+<path fill="none" stroke="black" d="M89.05,-61C96.96,-61 105.24,-61 113.24,-61"/>
+<polygon fill="black" stroke="black" points="113.17,-64.5 123.17,-61 113.17,-57.5 113.17,-64.5"/>
+</g>
+<!-- parser -->
+<g id="node3" class="node" pointer-events="visible" data-name="parser">
+
+<path fill="none" stroke="black" d="M275.45,-79C275.45,-79 245.45,-79 245.45,-79 239.45,-79 233.45,-73 233.45,-67 233.45,-67 233.45,-55 233.45,-55 233.45,-49 239.45,-43 245.45,-43 245.45,-43 275.45,-43 275.45,-43 281.45,-43 287.45,-49 287.45,-55 287.45,-55 287.45,-67 287.45,-67 287.45,-73 281.45,-79 275.45,-79"/>
+<text text-anchor="middle" x="260.45" y="-56.8" font-family="Times,serif" font-size="14.00">Parser</text>
+</g>
+<!-- tokenizer&#45;&gt;parser -->
+<g id="edge2" class="edge" data-name="tokenizer-&gt;parser">
+
+<path fill="none" stroke="black" d="M197.78,-61C205.56,-61 213.83,-61 221.69,-61"/>
+<polygon fill="black" stroke="black" points="221.69,-64.5 231.69,-61 221.69,-57.5 221.69,-64.5"/>
+</g>
+<!-- ast -->
+<g id="node4" class="node" pointer-events="visible" data-name="ast">
+
+<path fill="none" stroke="black" d="M365.45,-79C365.45,-79 335.45,-79 335.45,-79 329.45,-79 323.45,-73 323.45,-67 323.45,-67 323.45,-55 323.45,-55 323.45,-49 329.45,-43 335.45,-43 335.45,-43 365.45,-43 365.45,-43 371.45,-43 377.45,-49 377.45,-55 377.45,-55 377.45,-67 377.45,-67 377.45,-73 371.45,-79 365.45,-79"/>
+<text text-anchor="middle" x="350.45" y="-56.8" font-family="Times,serif" font-size="14.00">AST</text>
+</g>
+<!-- parser&#45;&gt;ast -->
+<g id="edge3" class="edge" data-name="parser-&gt;ast">
+
+<path fill="none" stroke="black" d="M287.85,-61C295.33,-61 303.63,-61 311.64,-61"/>
+<polygon fill="black" stroke="black" points="311.55,-64.5 321.55,-61 311.55,-57.5 311.55,-64.5"/>
+</g>
+<!-- soxa -->
+<g id="node5" class="node" pointer-events="visible" data-name="soxa">
+
+<path fill="none" stroke="black" d="M472.87,-79C472.87,-79 425.64,-79 425.64,-79 419.64,-79 413.64,-73 413.64,-67 413.64,-67 413.64,-55 413.64,-55 413.64,-49 419.64,-43 425.64,-43 425.64,-43 472.87,-43 472.87,-43 478.87,-43 484.87,-49 484.87,-55 484.87,-55 484.87,-67 484.87,-67 484.87,-73 478.87,-79 472.87,-79"/>
+<text text-anchor="middle" x="449.25" y="-56.8" font-family="Times,serif" font-size="14.00">SOXA IR</text>
+</g>
+<!-- ast&#45;&gt;soxa -->
+<g id="edge4" class="edge" data-name="ast-&gt;soxa">
+
+<path fill="none" stroke="black" d="M377.9,-61C385.44,-61 393.89,-61 402.24,-61"/>
+<polygon fill="black" stroke="black" points="401.96,-64.5 411.96,-61 401.96,-57.5 401.96,-64.5"/>
+</g>
+<!-- llvm -->
+<g id="node6" class="node" pointer-events="visible" data-name="llvm">
+
+<path fill="none" stroke="black" d="M609.04,-106C609.04,-106 533.07,-106 533.07,-106 527.07,-106 521.07,-100 521.07,-94 521.07,-94 521.07,-82 521.07,-82 521.07,-76 527.07,-70 533.07,-70 533.07,-70 609.04,-70 609.04,-70 615.04,-70 621.04,-76 621.04,-82 621.04,-82 621.04,-94 621.04,-94 621.04,-100 615.04,-106 609.04,-106"/>
+<text text-anchor="middle" x="571.06" y="-83.8" font-family="Times,serif" font-size="14.00">LLVM IR Gen</text>
+</g>
+<!-- soxa&#45;&gt;llvm -->
+<g id="edge5" class="edge" data-name="soxa-&gt;llvm">
+
+<path fill="none" stroke="black" d="M485.23,-68.88C492.82,-70.59 501.07,-72.45 509.34,-74.32"/>
+<polygon fill="black" stroke="black" points="508.57,-77.73 519.09,-76.51 510.11,-70.9 508.57,-77.73"/>
+</g>
+<!-- vm -->
+<g id="node7" class="node" pointer-events="visible" data-name="vm">
+
+<path fill="none" stroke="black" d="M595.44,-52C595.44,-52 546.67,-52 546.67,-52 540.67,-52 534.67,-46 534.67,-40 534.67,-40 534.67,-28 534.67,-28 534.67,-22 540.67,-16 546.67,-16 546.67,-16 595.44,-16 595.44,-16 601.44,-16 607.44,-22 607.44,-28 607.44,-28 607.44,-40 607.44,-40 607.44,-46 601.44,-52 595.44,-52"/>
+<text text-anchor="middle" x="571.06" y="-29.8" font-family="Times,serif" font-size="14.00">Doxa VM</text>
+</g>
+<!-- soxa&#45;&gt;vm -->
+<g id="edge6" class="edge" data-name="soxa-&gt;vm">
+
+<path fill="none" stroke="black" d="M485.23,-53.12C497.19,-50.42 510.77,-47.36 523.51,-44.49"/>
+<polygon fill="black" stroke="black" points="523.95,-47.98 532.94,-42.37 522.41,-41.15 523.95,-47.98"/>
+</g>
+</g>
+</svg>

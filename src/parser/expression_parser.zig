@@ -830,11 +830,9 @@ pub fn parseIfExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
         self.advance(); // consume semicolon
     }
 
+    // Always consume semicolon after then branch if present
     if (self.peek().type == .SEMICOLON) {
-        // Only consume the semicolon if the next token is NOT else
-        if (self.peekAhead(1).type != .ELSE) {
-            self.advance();
-        }
+        self.advance();
     }
 
     // Handle else branch
@@ -851,25 +849,8 @@ pub fn parseIfExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
         } else {
             else_expr = try precedence.parsePrecedence(self, .NONE);
 
-            // Check for semicolon after else branch if it's a inspect expression
-            if (else_expr != null and else_expr.?.data == .Inspect) {
-                if (self.peek().type != .SEMICOLON) {
-                    condition.deinit(self.allocator);
-                    self.allocator.destroy(condition);
-                    then_expr.deinit(self.allocator);
-                    self.allocator.destroy(then_expr);
-                    else_expr.?.deinit(self.allocator);
-                    self.allocator.destroy(else_expr.?);
-                    var reporter = Reporter.init();
-                    const location = Reporter.Location{
-                        .file = self.current_file,
-                        .line = self.peek().line,
-                        .column = self.peek().column,
-                    };
-                    reporter.reportCompileError(location, "Expected semicolon", .{});
-
-                    return error.ExpectedSemicolon;
-                }
+            // Always consume semicolon after else branch if present
+            if (self.peek().type == .SEMICOLON) {
                 self.advance(); // consume semicolon
             }
         }
