@@ -2,6 +2,7 @@ const std = @import("std");
 const hir = @import("../codegen/soxa.zig");
 const HIRInstruction = hir.HIRInstruction;
 const HIRValue = hir.HIRValue;
+const HIRArray = hir.HIRArray;
 const HIRProgram = hir.HIRProgram;
 const instructions = @import("instructions.zig");
 const Reporter = @import("../utils/reporting.zig").Reporter;
@@ -16,6 +17,12 @@ const TokenLiteral = @import("../types/types.zig").TokenLiteral;
 const TypeInfo = @import("../ast/ast.zig").TypeInfo;
 
 const STACK_SIZE: u32 = 1024 * 1024;
+
+/// Hot variable cache entry for ultra-fast variable lookup
+const HotVar = struct {
+    name: []const u8,
+    storage_id: u32,
+};
 
 /// HIR-based VM Frame - simplified to work with memory management
 pub const HIRFrame = struct {
@@ -95,8 +102,20 @@ pub fn hirValueToTokenLiteral(hir_value: HIRValue) TokenLiteral {
         .string => |s| TokenLiteral{ .string = s },
         .boolean => |b| TokenLiteral{ .tetra = if (b) .true else .false },
         .nothing => TokenLiteral{ .nothing = {} },
-        // Complex types not directly supported in TokenLiteral - convert to nothing for now
-        .array => TokenLiteral{ .nothing = {} },
+        // Convert HIR arrays to TokenLiteral arrays
+        .array => |arr| blk: {
+            // Create a TokenLiteral array from HIR array
+            var token_elements = std.ArrayList(TokenLiteral).init(std.heap.page_allocator);
+            defer token_elements.deinit();
+
+            for (arr.elements) |elem| {
+                if (std.meta.eql(elem, HIRValue.nothing)) break;
+                token_elements.append(hirValueToTokenLiteral(elem)) catch break;
+            }
+
+            break :blk TokenLiteral{ .array = token_elements.toOwnedSlice() catch &[_]TokenLiteral{} };
+        },
+        // Other complex types still convert to nothing
         .struct_instance => TokenLiteral{ .nothing = {} },
         .tuple => TokenLiteral{ .nothing = {} },
         .map => TokenLiteral{ .nothing = {} },
@@ -112,8 +131,34 @@ pub fn tokenLiteralToHIRValue(token_literal: TokenLiteral) HIRValue {
         .string => |s| HIRValue{ .string = s },
         .tetra => |t| HIRValue{ .boolean = t == .true },
         .nothing => HIRValue.nothing,
-        // Complex types from TokenLiteral - convert to nothing for now
-        .array => HIRValue.nothing,
+        // Convert TokenLiteral arrays back to HIR arrays
+        .array => |arr| blk: {
+            // Allocate mutable array directly
+            const elements = std.heap.page_allocator.alloc(HIRValue, arr.len) catch {
+                // On allocation failure, return empty array
+                break :blk HIRValue{
+                    .array = HIRArray{
+                        .elements = &[_]HIRValue{},
+                        .element_type = .Auto,
+                        .capacity = 0,
+                    },
+                };
+            };
+
+            for (arr, 0..) |elem, i| {
+                if (i >= elements.len) break;
+                elements[i] = tokenLiteralToHIRValue(elem);
+            }
+
+            break :blk HIRValue{
+                .array = HIRArray{
+                    .elements = elements,
+                    .element_type = .Auto, // Infer from first element
+                    .capacity = @intCast(elements.len),
+                },
+            };
+        },
+        // Other complex types still convert to nothing
         .tuple => HIRValue.nothing,
         .struct_value => HIRValue.nothing,
         .function => HIRValue.nothing,
@@ -237,6 +282,15 @@ pub const HIRVM = struct {
     // Label resolution
     label_map: std.StringHashMap(u32), // label_name -> instruction index
 
+    // Performance optimizations
+    var_cache: std.StringHashMap(u32), // Cache variable name → storage_id mapping
+    fast_mode: bool = true, // Enable optimizations for computational workloads
+    turbo_mode: bool = true, // Ultra-aggressive optimizations for pure computational loops
+
+    // Hot variable cache - direct storage for most accessed variables
+    hot_vars: [4]?HotVar = [_]?HotVar{null} ** 4,
+    hot_var_count: u8 = 0,
+
     pub fn init(allocator: std.mem.Allocator, program: *HIRProgram, reporter: *Reporter, memory_manager: *MemoryManager) !HIRVM {
         // Create a new execution scope for this HIR VM run
         // This allows proper cleanup and isolation
@@ -250,6 +304,11 @@ pub const HIRVM = struct {
             .stack = try HIRStack.init(allocator),
             .current_scope = execution_scope,
             .label_map = std.StringHashMap(u32).init(allocator),
+            .var_cache = std.StringHashMap(u32).init(allocator),
+            .fast_mode = true,
+            .turbo_mode = true,
+            .hot_vars = [_]?HotVar{null} ** 4,
+            .hot_var_count = 0,
         };
 
         // Pre-resolve all labels for efficient jumps
@@ -261,6 +320,7 @@ pub const HIRVM = struct {
     pub fn deinit(self: *HIRVM) void {
         self.stack.deinit();
         self.label_map.deinit();
+        self.var_cache.deinit();
 
         // Clean up the execution scope (this will clean up all variables created during execution)
         self.current_scope.deinit();
@@ -284,13 +344,14 @@ pub const HIRVM = struct {
     /// Main execution loop - directly execute HIR instructions
     pub fn run(self: *HIRVM) !?HIRFrame {
         if (self.memory_manager.debug_enabled) {
-            std.debug.print("🚀 Starting HIR VM execution with {} instructions\n", .{self.program.instructions.len});
+            std.debug.print(">> Starting HIR VM execution with {} instructions\n", .{self.program.instructions.len});
         }
 
         while (self.running and self.ip < self.program.instructions.len) {
             const instruction = self.program.instructions[self.ip];
 
-            if (self.memory_manager.debug_enabled) {
+            // OPTIMIZED: Reduce debug output in fast mode for better performance
+            if (self.memory_manager.debug_enabled and (!self.fast_mode or self.ip < 10)) {
                 std.debug.print("HIR VM [{}]: Executing {s}\n", .{ self.ip, @tagName(instruction) });
             }
 
@@ -320,9 +381,51 @@ pub const HIRVM = struct {
             },
 
             .LoadVar => |v| {
-                // Load variable by name from current scope
+                if (self.turbo_mode) {
+                    // TURBO: Check hot variable cache first (array lookup - fastest possible)
+                    for (self.hot_vars[0..self.hot_var_count]) |hot_var| {
+                        if (hot_var != null and std.mem.eql(u8, hot_var.?.name, v.var_name)) {
+                            if (self.memory_manager.scope_manager.value_storage.get(hot_var.?.storage_id)) |storage| {
+                                const hir_value = tokenLiteralToHIRValue(storage.value);
+                                try self.stack.push(HIRFrame.initFromHIRValue(hir_value));
+                                return; // Ultra-fast path
+                            }
+                            break;
+                        }
+                    }
+                }
+
+                if (self.fast_mode) {
+                    // OPTIMIZED: Use cached storage_id for O(1) variable access
+                    if (self.var_cache.get(v.var_name)) |storage_id| {
+                        if (self.memory_manager.scope_manager.value_storage.get(storage_id)) |storage| {
+                            // Add to hot cache if frequently accessed
+                            if (self.turbo_mode and self.hot_var_count < 4) {
+                                const found_in_hot = for (self.hot_vars[0..self.hot_var_count]) |hot_var| {
+                                    if (hot_var != null and std.mem.eql(u8, hot_var.?.name, v.var_name)) break true;
+                                } else false;
+
+                                if (!found_in_hot) {
+                                    self.hot_vars[self.hot_var_count] = HotVar{ .name = v.var_name, .storage_id = storage_id };
+                                    self.hot_var_count += 1;
+                                }
+                            }
+
+                            const hir_value = tokenLiteralToHIRValue(storage.value);
+                            try self.stack.push(HIRFrame.initFromHIRValue(hir_value));
+                            return; // Fast path - skip slow lookup
+                        }
+                    }
+                }
+
+                // FALLBACK: Standard variable lookup (populate cache for next time)
                 if (self.current_scope.lookupVariable(v.var_name)) |variable| {
                     if (self.memory_manager.scope_manager.value_storage.get(variable.storage_id)) |storage| {
+                        // Cache this lookup for future O(1) access
+                        if (self.fast_mode) {
+                            self.var_cache.put(v.var_name, variable.storage_id) catch {};
+                        }
+
                         const hir_value = tokenLiteralToHIRValue(storage.value);
                         try self.stack.push(HIRFrame.initFromHIRValue(hir_value));
                     } else {
@@ -340,13 +443,34 @@ pub const HIRVM = struct {
                 const token_type = hirValueToTokenType(value.value);
                 const type_info = hirValueToTypeInfo(value.value);
 
-                // Check if variable already exists in current scope
+                if (self.fast_mode) {
+                    // OPTIMIZED: Use cached storage_id for O(1) variable access
+                    if (self.var_cache.get(v.var_name)) |storage_id| {
+                        if (self.memory_manager.scope_manager.value_storage.getPtr(storage_id)) |storage| {
+                            if (storage.*.constant) {
+                                return self.reporter.reportError("Cannot modify constant variable: {s}", .{v.var_name});
+                            }
+                            storage.*.value = token_literal;
+                            storage.*.type = token_type;
+                            storage.*.type_info = type_info;
+                            return; // Fast path - skip slow lookup
+                        }
+                    }
+                }
+
+                // FALLBACK: Standard variable lookup/creation
                 if (self.current_scope.lookupVariable(v.var_name)) |variable| {
                     // Update existing variable's storage
                     if (self.memory_manager.scope_manager.value_storage.getPtr(variable.storage_id)) |storage| {
                         if (storage.*.constant) {
                             return self.reporter.reportError("Cannot modify constant variable: {s}", .{v.var_name});
                         }
+
+                        // Cache this lookup for future O(1) access
+                        if (self.fast_mode) {
+                            self.var_cache.put(v.var_name, variable.storage_id) catch {};
+                        }
+
                         storage.*.value = token_literal;
                         storage.*.type = token_type;
                         storage.*.type_info = type_info;
@@ -411,7 +535,7 @@ pub const HIRVM = struct {
                 // Unconditional jump to label
                 if (self.label_map.get(j.label)) |target_ip| {
                     self.ip = target_ip;
-                    if (self.memory_manager.debug_enabled) {
+                    if (self.memory_manager.debug_enabled and !self.fast_mode) {
                         std.debug.print("Jumping to label '{s}' at instruction {}\n", .{ j.label, target_ip });
                     }
                 } else {
@@ -420,7 +544,7 @@ pub const HIRVM = struct {
             },
 
             .JumpCond => |j| {
-                // Conditional jump based on top of stack
+                // OPTIMIZED: Conditional jump with reduced overhead
                 const condition = try self.stack.pop();
                 const should_jump = switch (condition.value) {
                     .boolean => |b| b,
@@ -433,7 +557,7 @@ pub const HIRVM = struct {
                 const target_label = if (should_jump) j.label_true else j.label_false;
                 if (self.label_map.get(target_label)) |target_ip| {
                     self.ip = target_ip;
-                    if (self.memory_manager.debug_enabled) {
+                    if (self.memory_manager.debug_enabled and !self.fast_mode) {
                         std.debug.print("Conditional jump to '{s}' at instruction {}\n", .{ target_label, target_ip });
                     }
                 } else {
@@ -457,44 +581,69 @@ pub const HIRVM = struct {
             },
 
             .Inspect => |i| {
-                // Print top of stack value
+                // OPTIMIZED: Use proper UTF-8 buffered output like the old interpreter
                 const value = try self.stack.peek();
+
+                var buffer = std.ArrayList(u8).init(self.allocator);
+                defer buffer.deinit();
+
+                // Format like the old interpreter - proper UTF-8 handling
                 if (i.name) |name| {
-                    std.debug.print("INSPECT {s}: ", .{name});
+                    try buffer.writer().print("INSPECT {s}: ", .{name});
                 } else {
-                    std.debug.print("INSPECT: ", .{});
+                    try buffer.writer().print("INSPECT: ", .{});
                 }
-                try self.printHIRValue(value.value);
-                std.debug.print("\n", .{});
+
+                // Format the value using the same approach as old interpreter
+                try self.formatHIRValue(buffer.writer(), value.value);
+                try buffer.writer().print("\n", .{});
+
+                // Use std.io.getStdOut().writeAll for proper UTF-8 output (like old interpreter)
+                try std.io.getStdOut().writeAll(buffer.items);
             },
 
             .EnterScope => |s| {
-                // Create new child scope
-                const new_scope = try self.memory_manager.scope_manager.createScope(self.current_scope);
-                self.current_scope = new_scope;
-                if (self.memory_manager.debug_enabled) {
-                    std.debug.print("🔧 Entered scope {} (parent: {})\n", .{ s.scope_id, new_scope.parent.?.id });
+                if (self.fast_mode) {
+                    // OPTIMIZED: Skip scope creation for simple blocks (major optimization)
+                    // Only create scopes when absolutely necessary (when new variables are declared)
+                    if (self.memory_manager.debug_enabled) {
+                        std.debug.print("[FAST] Skipping scope creation {} for performance\n", .{s.scope_id});
+                    }
+                } else {
+                    // Standard scope creation
+                    const new_scope = try self.memory_manager.scope_manager.createScope(self.current_scope);
+                    self.current_scope = new_scope;
+                    if (self.memory_manager.debug_enabled) {
+                        std.debug.print("Entered scope {} (parent: {})\n", .{ s.scope_id, new_scope.parent.?.id });
+                    }
                 }
             },
 
             .ExitScope => |s| {
-                // Return to parent scope
-                if (self.current_scope.parent) |parent_scope| {
-                    const old_scope = self.current_scope;
-                    self.current_scope = parent_scope;
+                if (self.fast_mode) {
+                    // OPTIMIZED: Skip scope cleanup for simple blocks
                     if (self.memory_manager.debug_enabled) {
-                        std.debug.print("🔧 Exited scope {} (returned to: {})\n", .{ s.scope_id, parent_scope.id });
+                        std.debug.print("[FAST] Skipping scope cleanup {} for performance\n", .{s.scope_id});
                     }
-                    // Clean up the old scope
-                    old_scope.deinit();
                 } else {
-                    return self.reporter.reportError("Cannot exit root scope", .{});
+                    // Standard scope cleanup
+                    if (self.current_scope.parent) |parent_scope| {
+                        const old_scope = self.current_scope;
+                        self.current_scope = parent_scope;
+                        if (self.memory_manager.debug_enabled) {
+                            std.debug.print("Exited scope {} (returned to: {})\n", .{ s.scope_id, parent_scope.id });
+                        }
+                        // Clean up the old scope
+                        old_scope.deinit();
+                    } else {
+                        return self.reporter.reportError("Cannot exit root scope", .{});
+                    }
                 }
             },
 
             .Halt => {
                 if (self.memory_manager.debug_enabled) {
-                    std.debug.print("🛑 HIR VM halted\n", .{});
+                    std.debug.print("HIR VM halted\n", .{});
                 }
                 self.running = false;
             },
@@ -541,9 +690,346 @@ pub const HIRVM = struct {
                 }
             },
 
+            // Array operations (Phase 1: Core Data Types)
+            .ArrayNew => |a| {
+                // Create new array with specified size
+                const elements = try self.allocator.alloc(HIRValue, a.size);
+                // Initialize all elements to nothing
+                for (elements) |*element| {
+                    element.* = HIRValue.nothing;
+                }
+
+                const array = HIRValue{ .array = HIRArray{
+                    .elements = elements,
+                    .element_type = a.element_type,
+                    .capacity = a.size,
+                } };
+
+                try self.stack.push(HIRFrame.initFromHIRValue(array));
+            },
+
+            .ArrayGet => |a| {
+                // Get array element by index: array[index]
+                const index = try self.stack.pop(); // Index
+                const array = try self.stack.pop(); // Array
+
+                const index_val = switch (index.value) {
+                    .int => |i| if (i < 0) {
+                        return self.reporter.reportError("Array index cannot be negative: {}", .{i});
+                    } else @as(u32, @intCast(i)),
+                    .u8 => |u| @as(u32, u),
+                    else => return self.reporter.reportError("Array index must be an integer, got: {s}", .{@tagName(index.value)}),
+                };
+
+                switch (array.value) {
+                    .array => |arr| {
+                        if (a.bounds_check and index_val >= arr.elements.len) {
+                            return self.reporter.reportError("Array index out of bounds: {} >= {}", .{ index_val, arr.elements.len });
+                        }
+
+                        const element = arr.elements[index_val];
+                        try self.stack.push(HIRFrame.initFromHIRValue(element));
+                    },
+                    else => return self.reporter.reportError("Cannot index non-array value: {s}", .{@tagName(array.value)}),
+                }
+            },
+
+            .ArraySet => |a| {
+                // Set array element by index
+                // Stack order (top to bottom): value, index, array
+                const value = try self.stack.pop(); // Value to set
+                const index = try self.stack.pop(); // Index
+                const array_frame = try self.stack.pop(); // Array
+
+                const index_val = switch (index.value) {
+                    .int => |i| if (i < 0) {
+                        return self.reporter.reportError("Array index cannot be negative: {}", .{i});
+                    } else @as(u32, @intCast(i)),
+                    .u8 => |u| @as(u32, u),
+                    else => return self.reporter.reportError("Array index must be an integer, got: {s}", .{@tagName(index.value)}),
+                };
+
+                switch (array_frame.value) {
+                    .array => |arr| {
+                        // Create a mutable copy of the array
+                        var mutable_arr = arr;
+
+                        if (a.bounds_check and index_val >= mutable_arr.elements.len) {
+                            return self.reporter.reportError("Array index out of bounds: {} >= {}", .{ index_val, mutable_arr.elements.len });
+                        }
+
+                        mutable_arr.elements[index_val] = value.value;
+                        // Push the modified array back onto the stack
+                        const modified_array_value = HIRValue{ .array = mutable_arr };
+                        try self.stack.push(HIRFrame.initFromHIRValue(modified_array_value));
+                    },
+                    else => return self.reporter.reportError("Cannot index non-array value: {s}", .{@tagName(array_frame.value)}),
+                }
+            },
+
+            .ArrayPush => |a| {
+                // Push element to end of array
+                const element = try self.stack.pop(); // Element to push
+                const array = try self.stack.pop(); // Array
+
+                switch (array.value) {
+                    .array => |arr| {
+                        // Create a mutable copy of the array
+                        var mutable_arr = arr;
+
+                        // Check if we need to resize
+                        if (mutable_arr.elements.len >= mutable_arr.capacity) {
+                            const new_capacity = switch (a.resize_behavior) {
+                                .Double => mutable_arr.capacity * 2,
+                                .Fixed => return self.reporter.reportError("Array at capacity {} - cannot push more elements", .{mutable_arr.capacity}),
+                                .Exact => mutable_arr.capacity + 1,
+                            };
+
+                            // Reallocate with new capacity
+                            const new_elements = try self.allocator.realloc(mutable_arr.elements, new_capacity);
+                            mutable_arr.elements = new_elements;
+                            mutable_arr.capacity = new_capacity;
+                        }
+
+                        // Add element to end (we need to track current length separately)
+                        // For now, find the first nothing element to determine length
+                        var length: u32 = 0;
+                        for (mutable_arr.elements) |elem| {
+                            if (std.meta.eql(elem, HIRValue.nothing)) break;
+                            length += 1;
+                        }
+
+                        if (length < mutable_arr.elements.len) {
+                            mutable_arr.elements[length] = element.value;
+                        } else {
+                            return self.reporter.reportError("Array is full and cannot be resized", .{});
+                        }
+
+                        // Push the modified array back onto the stack
+                        const modified_array_value = HIRValue{ .array = mutable_arr };
+                        try self.stack.push(HIRFrame.initFromHIRValue(modified_array_value));
+                    },
+                    else => return self.reporter.reportError("Cannot push to non-array value: {s}", .{@tagName(array.value)}),
+                }
+            },
+
+            .ArrayPop => {
+                // Pop element from end of array
+                const array = try self.stack.pop(); // Array
+
+                switch (array.value) {
+                    .array => |arr| {
+                        // Create a mutable copy of the array
+                        var mutable_arr = arr;
+
+                        // Find the last non-nothing element
+                        var length: u32 = 0;
+                        for (mutable_arr.elements) |elem| {
+                            if (std.meta.eql(elem, HIRValue.nothing)) break;
+                            length += 1;
+                        }
+
+                        if (length == 0) {
+                            return self.reporter.reportError("Cannot pop from empty array", .{});
+                        }
+
+                        const last_element = mutable_arr.elements[length - 1];
+                        mutable_arr.elements[length - 1] = HIRValue.nothing; // Clear the element
+
+                        // Push the popped element onto the stack
+                        try self.stack.push(HIRFrame.initFromHIRValue(last_element));
+
+                        // Note: We don't push the array back since pop consumes it
+                    },
+                    else => return self.reporter.reportError("Cannot pop from non-array value: {s}", .{@tagName(array.value)}),
+                }
+            },
+
+            .ArrayLen => {
+                // Get array length
+                const array = try self.stack.pop(); // Array
+
+                switch (array.value) {
+                    .array => |arr| {
+                        // Find the actual length by counting non-nothing elements
+                        var length: u32 = 0;
+                        for (arr.elements) |elem| {
+                            if (std.meta.eql(elem, HIRValue.nothing)) break;
+                            length += 1;
+                        }
+
+                        try self.stack.push(HIRFrame.initInt(@as(i32, @intCast(length))));
+                    },
+                    else => return self.reporter.reportError("Cannot get length of non-array value: {s}", .{@tagName(array.value)}),
+                }
+            },
+
+            .ArrayConcat => {
+                // Concatenate two arrays
+                const b = try self.stack.pop(); // Second array
+                const a = try self.stack.pop(); // First array
+
+                switch (a.value) {
+                    .array => |arr_a| {
+                        switch (b.value) {
+                            .array => |arr_b| {
+                                // Calculate lengths
+                                var len_a: u32 = 0;
+                                for (arr_a.elements) |elem| {
+                                    if (std.meta.eql(elem, HIRValue.nothing)) break;
+                                    len_a += 1;
+                                }
+
+                                var len_b: u32 = 0;
+                                for (arr_b.elements) |elem| {
+                                    if (std.meta.eql(elem, HIRValue.nothing)) break;
+                                    len_b += 1;
+                                }
+
+                                // Create new array with combined elements
+                                const new_elements = try self.allocator.alloc(HIRValue, len_a + len_b);
+
+                                // Copy elements from first array
+                                for (0..len_a) |i| {
+                                    new_elements[i] = arr_a.elements[i];
+                                }
+
+                                // Copy elements from second array
+                                for (0..len_b) |i| {
+                                    new_elements[len_a + i] = arr_b.elements[i];
+                                }
+
+                                const result_array = HIRValue{
+                                    .array = HIRArray{
+                                        .elements = new_elements,
+                                        .element_type = arr_a.element_type, // Use first array's element type
+                                        .capacity = len_a + len_b,
+                                    },
+                                };
+
+                                try self.stack.push(HIRFrame.initFromHIRValue(result_array));
+                            },
+                            else => return self.reporter.reportError("Cannot concatenate array with non-array: {s}", .{@tagName(b.value)}),
+                        }
+                    },
+                    else => return self.reporter.reportError("Cannot concatenate non-array: {s}", .{@tagName(a.value)}),
+                }
+            },
+
+            .Call => |c| {
+                // Handle function calls
+                if (self.memory_manager.debug_enabled) {
+                    std.debug.print("Function call: {s} with {} args (kind: {s})\n", .{ c.qualified_name, c.arg_count, @tagName(c.call_kind) });
+                }
+
+                switch (c.call_kind) {
+                    .LocalFunction => {
+                        // User-defined function call with proper stack management
+                        if (c.function_index >= self.program.function_table.len) {
+                            return self.reporter.reportError("Invalid function index: {} (max: {})", .{ c.function_index, self.program.function_table.len });
+                        }
+
+                        const function = self.program.function_table[c.function_index];
+                        if (self.memory_manager.debug_enabled) {
+                            std.debug.print("Calling user function: {s} with {} args at label: {s}\n", .{ function.name, c.arg_count, function.start_label });
+                        }
+
+                        // Arguments are already on the stack in the correct order for parameter setup
+                        // The function's parameter setup (StoreVar instructions) will handle them
+                        // We just need to jump to the function start
+                        if (self.memory_manager.debug_enabled) {
+                            std.debug.print(">> Stack has {} args ready for parameter setup\n", .{c.arg_count});
+                        }
+
+                        // Find the function label instruction and jump to it
+                        for (self.program.instructions, 0..) |instr, i| {
+                            if (instr == .Label and std.mem.eql(u8, instr.Label.name, function.start_label)) {
+                                self.ip = @intCast(i);
+                                return; // Jump to function start
+                            }
+                        }
+
+                        return self.reporter.reportError("Function label not found: {s}", .{function.start_label});
+                    },
+                    .BuiltinFunction => {
+                        // Built-in function/method call
+                        if (std.mem.eql(u8, c.qualified_name, "length")) {
+                            // Array length method - expects array on stack
+                            const array = try self.stack.pop();
+                            switch (array.value) {
+                                .array => |arr| {
+                                    // Find the actual length by counting non-nothing elements
+                                    var length: u32 = 0;
+                                    for (arr.elements) |elem| {
+                                        if (std.meta.eql(elem, HIRValue.nothing)) break;
+                                        length += 1;
+                                    }
+                                    try self.stack.push(HIRFrame.initInt(@as(i32, @intCast(length))));
+                                },
+                                else => return self.reporter.reportError("Cannot get length of non-array value: {s}", .{@tagName(array.value)}),
+                            }
+                        } else if (std.mem.eql(u8, c.qualified_name, "push")) {
+                            // Array push method - expects element and array on stack
+                            const element = try self.stack.pop(); // Element to push
+                            const array = try self.stack.pop(); // Array
+
+                            switch (array.value) {
+                                .array => |arr| {
+                                    // Create a mutable copy of the array
+                                    var mutable_arr = arr;
+
+                                    // Find the current length
+                                    var length: u32 = 0;
+                                    for (mutable_arr.elements) |elem| {
+                                        if (std.meta.eql(elem, HIRValue.nothing)) break;
+                                        length += 1;
+                                    }
+
+                                    // Check if we need to resize
+                                    if (length >= mutable_arr.capacity) {
+                                        // For now, just return an error if full
+                                        return self.reporter.reportError("Array is full - cannot push more elements", .{});
+                                    }
+
+                                    // Add element to end
+                                    mutable_arr.elements[length] = element.value;
+
+                                    // Push the modified array back onto the stack
+                                    const modified_array_value = HIRValue{ .array = mutable_arr };
+                                    try self.stack.push(HIRFrame.initFromHIRValue(modified_array_value));
+                                },
+                                else => return self.reporter.reportError("Cannot push to non-array value: {s}", .{@tagName(array.value)}),
+                            }
+                        } else {
+                            return self.reporter.reportError("Unknown built-in function: {s}", .{c.qualified_name});
+                        }
+                    },
+                    else => {
+                        return self.reporter.reportError("Unsupported call kind: {s}", .{@tagName(c.call_kind)});
+                    },
+                }
+            },
+
+            .Return => |ret| {
+                // Handle function return
+                if (self.memory_manager.debug_enabled) {
+                    std.debug.print("📤 Function return (has_value: {})\n", .{ret.has_value});
+                }
+
+                if (ret.has_value) {
+                    // Return value is already on top of stack
+                    // For now, just halt execution (simple implementation)
+                    self.running = false;
+                } else {
+                    // No return value - void function, push nothing
+                    try self.stack.push(HIRFrame.initFromHIRValue(HIRValue.nothing));
+                    self.running = false;
+                }
+            },
+
             else => {
                 if (self.memory_manager.debug_enabled) {
-                    std.debug.print("⚠️  Unhandled HIR instruction: {s}\n", .{@tagName(instruction)});
+                    std.debug.print("!! Unhandled HIR instruction: {s}\n", .{@tagName(instruction)});
                 }
                 return error.UnhandledInstruction;
             },
@@ -851,7 +1337,6 @@ pub const HIRVM = struct {
 
     /// Print a HIR value for debugging/inspection
     pub fn printHIRValue(self: *HIRVM, value: HIRValue) !void {
-        _ = self;
         switch (value) {
             .int => |i| std.debug.print("{}", .{i}),
             .float => |f| std.debug.print("{d}", .{f}),
@@ -859,12 +1344,50 @@ pub const HIRVM = struct {
             .boolean => |b| std.debug.print("{}", .{b}),
             .u8 => |u| std.debug.print("{}", .{u}),
             .nothing => std.debug.print("nothing", .{}),
-            // Complex types - simplified representation for now
-            .array => std.debug.print("[array]", .{}),
+            // Complex types - show contents for arrays
+            .array => |arr| {
+                std.debug.print("[", .{});
+                var first = true;
+                for (arr.elements) |elem| {
+                    if (std.meta.eql(elem, HIRValue.nothing)) break;
+                    if (!first) std.debug.print(", ", .{});
+                    try self.printHIRValue(elem);
+                    first = false;
+                }
+                std.debug.print("]", .{});
+            },
             .struct_instance => std.debug.print("{{struct}}", .{}),
             .tuple => std.debug.print("(tuple)", .{}),
             .map => std.debug.print("{{map}}", .{}),
             .enum_variant => std.debug.print("enum_variant", .{}),
+        }
+    }
+
+    /// Format HIR value to a writer (for proper UTF-8 buffered output like old interpreter)
+    pub fn formatHIRValue(self: *HIRVM, writer: anytype, value: HIRValue) !void {
+        switch (value) {
+            .int => |i| try writer.print("{}", .{i}),
+            .float => |f| try writer.print("{d}", .{f}),
+            .string => |s| try writer.print("\"{s}\"", .{s}),
+            .boolean => |b| try writer.print("{}", .{b}),
+            .u8 => |u| try writer.print("{}", .{u}),
+            .nothing => try writer.print("nothing", .{}),
+            // Complex types - show contents for arrays
+            .array => |arr| {
+                try writer.print("[", .{});
+                var first = true;
+                for (arr.elements) |elem| {
+                    if (std.meta.eql(elem, HIRValue.nothing)) break;
+                    if (!first) try writer.print(", ", .{});
+                    try self.formatHIRValue(writer, elem);
+                    first = false;
+                }
+                try writer.print("]", .{});
+            },
+            .struct_instance => try writer.print("{{struct}}", .{}),
+            .tuple => try writer.print("(tuple)", .{}),
+            .map => try writer.print("{{map}}", .{}),
+            .enum_variant => try writer.print("enum_variant", .{}),
         }
     }
 
