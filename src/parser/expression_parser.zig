@@ -1341,29 +1341,29 @@ pub fn inferType(expr: *ast.Expr) !ast.TypeInfo {
     switch (expr.data) {
         .Literal => |lit| {
             switch (lit) {
-                .int => return .{ .base = .Int, .is_mutable = false, .is_dynamic = false },
-                .u8 => return .{ .base = .U8, .is_mutable = false, .is_dynamic = false },
-                .float => return .{ .base = .Float, .is_mutable = false, .is_dynamic = false },
-                .string => return .{ .base = .String, .is_mutable = false, .is_dynamic = false },
-                .tetra => return .{ .base = .Tetra, .is_mutable = false, .is_dynamic = false },
-                .nothing => return .{ .base = .Nothing, .is_mutable = false, .is_dynamic = false },
-                .array => return .{ .base = .Array, .is_mutable = false, .is_dynamic = false },
-                .tuple => return .{ .base = .Tuple, .is_mutable = false, .is_dynamic = false },
-                .map => return .{ .base = .Map, .is_mutable = false, .is_dynamic = false },
-                .enum_variant => return .{ .base = .Enum, .is_mutable = false, .is_dynamic = false },
-                .struct_value => return .{ .base = .Struct, .is_mutable = false, .is_dynamic = false },
-                .function => return .{ .base = .Function, .is_mutable = false, .is_dynamic = false },
+                .int => return .{ .base = .Int, .is_mutable = false },
+                .u8 => return .{ .base = .U8, .is_mutable = false },
+                .float => return .{ .base = .Float, .is_mutable = false },
+                .string => return .{ .base = .String, .is_mutable = false },
+                .tetra => return .{ .base = .Tetra, .is_mutable = false },
+                .nothing => return .{ .base = .Nothing, .is_mutable = false },
+                .array => return .{ .base = .Array, .is_mutable = false },
+                .tuple => return .{ .base = .Tuple, .is_mutable = false },
+                .map => return .{ .base = .Map, .is_mutable = false },
+                .enum_variant => return .{ .base = .Enum, .is_mutable = false },
+                .struct_value => return .{ .base = .Struct, .is_mutable = false },
+                .function => return .{ .base = .Function, .is_mutable = false },
             }
         },
-        .Array => return .{ .base = .Array, .is_mutable = false, .is_dynamic = false },
-        .Tuple => return .{ .base = .Tuple, .is_mutable = false, .is_dynamic = false },
-        .Map => return .{ .base = .Map, .is_mutable = false, .is_dynamic = false },
-        .StructLiteral => return .{ .base = .Struct, .is_mutable = false, .is_dynamic = false },
-        .Call => return .{ .base = .Auto, .is_mutable = false, .is_dynamic = true }, // Function calls need runtime evaluation
-        .If => return .{ .base = .Auto, .is_mutable = false, .is_dynamic = true }, // Conditional expressions need runtime evaluation
-        .Variable => return .{ .base = .Auto, .is_mutable = false, .is_dynamic = true }, // Variables need runtime lookup
-        .Binary => return .{ .base = .Auto, .is_mutable = false, .is_dynamic = true }, // Binary expressions need evaluation
-        .Unary => return .{ .base = .Auto, .is_mutable = false, .is_dynamic = true }, // Unary expressions need evaluation
-        else => return .{ .base = .Auto, .is_mutable = false, .is_dynamic = true },
+        .Array => return .{ .base = .Array, .is_mutable = false },
+        .Tuple => return .{ .base = .Tuple, .is_mutable = false },
+        .Map => return .{ .base = .Map, .is_mutable = false },
+        .StructLiteral => return .{ .base = .Struct, .is_mutable = false },
+        .Call => return .{ .base = .Auto, .is_mutable = false }, // Function calls
+        .If => return .{ .base = .Auto, .is_mutable = false }, // Conditional expressions
+        .Variable => return .{ .base = .Auto, .is_mutable = false }, // Variables
+        .Binary => return .{ .base = .Auto, .is_mutable = false }, // Binary expressions
+        .Unary => return .{ .base = .Auto, .is_mutable = false }, // Unary expressions
+        else => return .{ .base = .Auto, .is_mutable = false },
     }
 }

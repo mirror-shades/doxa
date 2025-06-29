@@ -176,13 +176,13 @@ pub fn deinit(self: *TokenLiteral, allocator: std.mem.Allocator) void {
 // Add a helper function to convert TokenType to TypeInfo
 pub fn convertTokenTypeToTypeInfo(token_type: TokenType) ast.TypeInfo {
     return switch (token_type) {
-        .INT => ast.TypeInfo{ .base = .Int, .is_mutable = true, .is_dynamic = false },
-        .U8 => ast.TypeInfo{ .base = .U8, .is_mutable = true, .is_dynamic = false },
-        .FLOAT => ast.TypeInfo{ .base = .Float, .is_mutable = true, .is_dynamic = false },
-        .STRING => ast.TypeInfo{ .base = .String, .is_mutable = true, .is_dynamic = false },
-        .TETRA => ast.TypeInfo{ .base = .Tetra, .is_mutable = true, .is_dynamic = false },
-        .ARRAY => ast.TypeInfo{ .base = .Array, .is_mutable = true, .is_dynamic = false },
+        .INT => ast.TypeInfo{ .base = .Int, .is_mutable = true },
+        .U8 => ast.TypeInfo{ .base = .U8, .is_mutable = true },
+        .FLOAT => ast.TypeInfo{ .base = .Float, .is_mutable = true },
+        .STRING => ast.TypeInfo{ .base = .String, .is_mutable = true },
+        .TETRA => ast.TypeInfo{ .base = .Tetra, .is_mutable = true },
+        .ARRAY => ast.TypeInfo{ .base = .Array, .is_mutable = true },
         // Add more mappings as needed
-        else => ast.TypeInfo{ .base = .Auto, .is_mutable = true, .is_dynamic = true },
+        else => ast.TypeInfo{ .base = .Auto, .is_mutable = true },
     };
 }
