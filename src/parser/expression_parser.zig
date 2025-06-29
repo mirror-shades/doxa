@@ -810,33 +810,18 @@ pub fn parseIfExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
         return error.ExpectedExpression;
     };
 
-    // Check for semicolon after then branch if it's a print expression
-    if (then_expr.*.data == .Inspect) {
-        if (self.peek().type != .SEMICOLON) {
-            condition.deinit(self.allocator);
-            self.allocator.destroy(condition);
-            then_expr.deinit(self.allocator);
-            self.allocator.destroy(then_expr);
-            var reporter = Reporter.init();
-            const location = Reporter.Location{
-                .file = self.current_file,
-                .line = self.peek().line,
-                .column = self.peek().column,
-            };
-            reporter.reportCompileError(location, "Expected semicolon", .{});
+    // Don't handle semicolons at expression level - they belong to statements
 
-            return error.ExpectedSemicolon;
-        }
-        self.advance(); // consume semicolon
-    }
-
-    // Always consume semicolon after then branch if present
-    if (self.peek().type == .SEMICOLON) {
-        self.advance();
-    }
+    // Don't consume semicolons - they belong to statement level
 
     // Handle else branch
     var else_expr: ?*ast.Expr = null;
+
+    // Check for else after semicolon (if-else-if chain syntax)
+    if (self.peek().type == .SEMICOLON and self.peekAhead(1).type == .ELSE) {
+        self.advance(); // consume semicolon
+    }
+
     if (self.peek().type == .ELSE) {
         self.advance(); // consume 'else'
 
@@ -848,11 +833,6 @@ pub fn parseIfExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
             else_expr = try braceExpr(self, null, .NONE);
         } else {
             else_expr = try precedence.parsePrecedence(self, .NONE);
-
-            // Always consume semicolon after else branch if present
-            if (self.peek().type == .SEMICOLON) {
-                self.advance(); // consume semicolon
-            }
         }
 
         if (else_expr == null) {
