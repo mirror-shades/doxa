@@ -790,7 +790,25 @@ pub fn parseIfExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
         self.advance();
     }
 
-    if (self.peek().type != .THEN) {
+    var then_expr: *ast.Expr = undefined;
+
+    if (self.peek().type == .THEN) {
+        // Traditional if-then-else expression syntax
+        self.advance(); // consume 'then'
+
+        then_expr = (try parseExpression(self)) orelse {
+            condition.deinit(self.allocator);
+            self.allocator.destroy(condition);
+            return error.ExpectedExpression;
+        };
+    } else if (self.peek().type == .LEFT_BRACE) {
+        // Block-style if statement syntax: if condition { statements }
+        then_expr = (try braceExpr(self, null, .NONE)) orelse {
+            condition.deinit(self.allocator);
+            self.allocator.destroy(condition);
+            return error.ExpectedExpression;
+        };
+    } else {
         condition.deinit(self.allocator);
         self.allocator.destroy(condition);
         var reporter = Reporter.init();
@@ -799,16 +817,9 @@ pub fn parseIfExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
             .line = self.peek().line,
             .column = self.peek().column,
         };
-        reporter.reportCompileError(location, "If is an expression and must be followed by a then. (if (condition) then (expr))", .{});
+        reporter.reportCompileError(location, "If must be followed by then (expression) or brace (statement block)", .{});
         return error.ExpectedThen;
     }
-    self.advance();
-
-    const then_expr = (try parseExpression(self)) orelse {
-        condition.deinit(self.allocator);
-        self.allocator.destroy(condition);
-        return error.ExpectedExpression;
-    };
 
     // Don't handle semicolons at expression level - they belong to statements
 
@@ -871,6 +882,39 @@ pub fn parseIfExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
         },
     };
     return if_expr;
+}
+
+pub fn returnExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+    if (self.debug_enabled) {
+        std.debug.print("\\nParsing return expression...\\n", .{});
+    }
+
+    self.advance(); // consume 'return'
+
+    var value: ?*ast.Expr = null;
+
+    // Check if there's a value to return
+    if (self.peek().type != .SEMICOLON and
+        self.peek().type != .ELSE and
+        self.peek().type != .RIGHT_BRACE and
+        self.peek().type != .EOF)
+    {
+        value = try parseExpression(self);
+    }
+
+    const return_expr = try self.allocator.create(ast.Expr);
+    return_expr.* = .{
+        .base = .{
+            .id = ast.generateNodeId(),
+            .span = ast.SourceSpan.fromToken(self.previous()),
+        },
+        .data = .{
+            .ReturnExpr = .{
+                .value = value,
+            },
+        },
+    };
+    return return_expr;
 }
 
 pub fn functionExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {

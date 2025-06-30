@@ -1,0 +1,10 @@
+function simple_call(x :: int) returns(int) {
+    return x;
+}
+
+function test_double_args(n :: int) returns(int) {
+    // Test the exact pattern: simple_call(n - 1) + simple_call(n - 2)
+    return simple_call(n - 1) + simple_call(n - 2);
+}
+
+test_double_args(2)?; // Should be: simple_call(1) + simple_call(0) = 1 + 0 = 1 

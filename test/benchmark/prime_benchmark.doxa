@@ -1,0 +1,47 @@
+// Prime Number Benchmark
+// Tests loops, conditionals, math operations, and array manipulation
+
+function is_prime(n :: int) returns(bool) {
+    if n < 2 then return false;
+    if n equals 2 then return true;
+    if n % 2 equals 0 then return false;
+    
+    var i is 3;
+    while i * i <= n {
+        if n % i equals 0 then return false;
+        i += 2;
+    }
+    
+    return true;
+}
+
+function prime_benchmark() {
+    var primes :: int[] is [];
+    var count is 0;
+    var candidate is 2;
+    const target is 10000;  // Find first 10,000 primes
+    
+    "Finding first 10,000 prime numbers..."?;
+    
+    while count < target {
+        if is_prime(candidate) then {
+            primes.push(candidate);
+            count += 1;
+        }
+        candidate += 1;
+    }
+    
+    // Verify by checking a few known primes
+    var sum is 0;
+    var i is 0;
+    while i < 100 {  // Sum first 100 primes
+        sum += primes[i];
+        i += 1;
+    }
+    
+    "Sum of first 100 primes:"?;
+    sum?;  // Should be 24,133
+    "Prime benchmark completed"?;
+}
+
+prime_benchmark(); 

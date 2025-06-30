@@ -433,6 +433,15 @@ pub const LLVMGenerator = struct {
                 }
             },
 
+            .ReturnExpr => |return_expr| {
+                if (return_expr.value) |value| {
+                    const ret_val = try self.generateExpr(value);
+                    return LLVMCore.LLVMBuildRet(self.builder, ret_val);
+                } else {
+                    return LLVMCore.LLVMBuildRetVoid(self.builder);
+                }
+            },
+
             else => return error.UnsupportedExpressionType,
         }
     }

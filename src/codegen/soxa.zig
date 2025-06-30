@@ -616,9 +616,6 @@ pub const HIRGenerator = struct {
         // Pass 3: Generate function bodies AFTER main program
         try self.generateFunctionBodies();
 
-        // Add final halt
-        try self.instructions.append(.Halt);
-
         // Pass 4: Build function table
         const function_table = try self.buildFunctionTable();
 
@@ -751,6 +748,10 @@ pub const HIRGenerator = struct {
             }
         }
 
+        // Add halt instruction to end main program execution
+        // This prevents execution from falling through to function definitions
+        try self.instructions.append(.Halt);
+
         std.debug.print(">> Pass 2 complete: Main program generated\n", .{});
     }
 
@@ -852,6 +853,7 @@ pub const HIRGenerator = struct {
                     .scope_kind = .Local,
                     .module_context = null,
                 } });
+                std.debug.print(">> Added StoreVar instruction at index {}\n", .{self.instructions.items.len - 1});
             },
             .FunctionDecl => {
                 // Skip - function declarations are handled in multi-pass approach
@@ -902,8 +904,6 @@ pub const HIRGenerator = struct {
             },
 
             .Binary => |bin| {
-                std.debug.print(">> Generating binary op: {}\n", .{bin.operator.type});
-
                 // Generate left operand (pushes to stack)
                 try self.generateExpression(bin.left.?);
 
@@ -911,8 +911,12 @@ pub const HIRGenerator = struct {
                 try self.generateExpression(bin.right.?);
 
                 // Generate operation - THIS REPLACES MASSIVE AST WALKER OVERHEAD!
+                std.debug.print(">> Generating binary op: {}\n", .{bin.operator.type});
                 switch (bin.operator.type) {
-                    .PLUS => try self.instructions.append(.{ .IntArith = .{ .op = .Add, .overflow_behavior = .Wrap } }),
+                    .PLUS => {
+                        try self.instructions.append(.{ .IntArith = .{ .op = .Add, .overflow_behavior = .Wrap } });
+                        std.debug.print(">> Added IntArith.Add instruction at index {}\n", .{self.instructions.items.len - 1});
+                    },
                     .MINUS => try self.instructions.append(.{ .IntArith = .{ .op = .Sub, .overflow_behavior = .Wrap } }),
                     .ASTERISK => try self.instructions.append(.{ .IntArith = .{ .op = .Mul, .overflow_behavior = .Wrap } }),
                     .SLASH => try self.instructions.append(.{ .IntArith = .{ .op = .Div, .overflow_behavior = .Trap } }),
@@ -1344,6 +1348,22 @@ pub const HIRGenerator = struct {
                     .scope_kind = .Local,
                     .module_context = null,
                 } });
+            },
+
+            .ReturnExpr => |return_expr| {
+                std.debug.print(">> Generating return expression\n", .{});
+
+                // Generate the value to return if present
+                if (return_expr.value) |value| {
+                    try self.generateExpression(value);
+                } else {
+                    // No value - push nothing
+                    const nothing_idx = try self.addConstant(HIRValue.nothing);
+                    try self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } });
+                }
+
+                // Generate Return instruction
+                try self.instructions.append(.{ .Return = .{ .has_value = return_expr.value != null, .return_type = .Auto } });
             },
 
             else => {

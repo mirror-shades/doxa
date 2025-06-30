@@ -1,0 +1,9 @@
+function test(n :: int) returns(int) {
+    n?; // Show the parameter value
+    if n <= 0 then return n;
+    var result is test(n - 1);
+    n?; // Show parameter after recursive call - this should still be original n
+    return result;
+}
+
+test(2)?; // Should show: 2, 1, 0, 1, 2, and return 0 

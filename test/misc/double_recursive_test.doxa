@@ -1,0 +1,6 @@
+function double_rec(n :: int) returns(int) {
+    if n <= 1 then return n;
+    return double_rec(n - 1) + double_rec(n - 2);
+}
+
+double_rec(2)?; // Should be: double_rec(1) + double_rec(0) = 1 + 0 = 1 

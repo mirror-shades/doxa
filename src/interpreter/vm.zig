@@ -266,6 +266,53 @@ const HIRStack = struct {
     }
 };
 
+/// Call frame for function call stack management
+const CallFrame = struct {
+    return_ip: u32, // IP to return to after function call
+    function_name: []const u8, // For debugging
+    arg_count: u32 = 0, // Number of arguments to clean up from stack
+};
+
+/// Call stack for proper function return handling
+const CallStack = struct {
+    frames: []CallFrame,
+    sp: u32 = 0,
+    allocator: std.mem.Allocator,
+
+    pub fn init(allocator: std.mem.Allocator) !CallStack {
+        const frames = try allocator.alloc(CallFrame, 1024); // Support 1024 nested calls
+        return CallStack{
+            .frames = frames,
+            .sp = 0,
+            .allocator = allocator,
+        };
+    }
+
+    pub fn deinit(self: *CallStack) void {
+        self.allocator.free(self.frames);
+    }
+
+    pub fn push(self: *CallStack, frame: CallFrame) !void {
+        if (self.sp >= self.frames.len) {
+            return error.CallStackOverflow;
+        }
+        self.frames[self.sp] = frame;
+        self.sp += 1;
+    }
+
+    pub fn pop(self: *CallStack) !CallFrame {
+        if (self.sp == 0) {
+            return error.CallStackUnderflow;
+        }
+        self.sp -= 1;
+        return self.frames[self.sp];
+    }
+
+    pub fn isEmpty(self: CallStack) bool {
+        return self.sp == 0;
+    }
+};
+
 /// HIR-based Virtual Machine - executes HIR instructions directly
 pub const HIRVM = struct {
     program: *HIRProgram,
@@ -276,6 +323,7 @@ pub const HIRVM = struct {
     // Execution state
     ip: u32 = 0, // Instruction pointer (index into instructions array)
     stack: HIRStack,
+    call_stack: CallStack, // Track function calls and returns
     current_scope: *Scope, // Current execution scope
     running: bool = true,
 
@@ -302,6 +350,7 @@ pub const HIRVM = struct {
             .memory_manager = memory_manager,
             .allocator = allocator,
             .stack = try HIRStack.init(allocator),
+            .call_stack = try CallStack.init(allocator),
             .current_scope = execution_scope,
             .label_map = std.StringHashMap(u32).init(allocator),
             .var_cache = std.StringHashMap(u32).init(allocator),
@@ -319,6 +368,7 @@ pub const HIRVM = struct {
 
     pub fn deinit(self: *HIRVM) void {
         self.stack.deinit();
+        self.call_stack.deinit();
         self.label_map.deinit();
         self.var_cache.deinit();
 
@@ -353,6 +403,9 @@ pub const HIRVM = struct {
             // OPTIMIZED: Reduce debug output in fast mode for better performance
             if (self.memory_manager.debug_enabled and (!self.fast_mode or self.ip < 10)) {
                 std.debug.print("HIR VM [{}]: Executing {s}\n", .{ self.ip, @tagName(instruction) });
+                if (self.ip == 6) {
+                    std.debug.print(">> CRITICAL: Instruction at IP 6 is: {any}\n", .{instruction});
+                }
             }
 
             try self.executeInstruction(instruction);
@@ -381,6 +434,10 @@ pub const HIRVM = struct {
             },
 
             .LoadVar => |v| {
+                if (self.memory_manager.debug_enabled) {
+                    std.debug.print(">> LoadVar '{s}' in scope {}\n", .{ v.var_name, self.current_scope.id });
+                }
+
                 if (self.turbo_mode) {
                     // TURBO: Check hot variable cache first (array lookup - fastest possible)
                     for (self.hot_vars[0..self.hot_var_count]) |hot_var| {
@@ -395,43 +452,35 @@ pub const HIRVM = struct {
                     }
                 }
 
-                if (self.fast_mode) {
-                    // OPTIMIZED: Use cached storage_id for O(1) variable access
-                    if (self.var_cache.get(v.var_name)) |storage_id| {
-                        if (self.memory_manager.scope_manager.value_storage.get(storage_id)) |storage| {
-                            // Add to hot cache if frequently accessed
-                            if (self.turbo_mode and self.hot_var_count < 4) {
-                                const found_in_hot = for (self.hot_vars[0..self.hot_var_count]) |hot_var| {
-                                    if (hot_var != null and std.mem.eql(u8, hot_var.?.name, v.var_name)) break true;
-                                } else false;
-
-                                if (!found_in_hot) {
-                                    self.hot_vars[self.hot_var_count] = HotVar{ .name = v.var_name, .storage_id = storage_id };
-                                    self.hot_var_count += 1;
-                                }
-                            }
-
-                            const hir_value = tokenLiteralToHIRValue(storage.value);
-                            try self.stack.push(HIRFrame.initFromHIRValue(hir_value));
-                            return; // Fast path - skip slow lookup
-                        }
-                    }
+                // DISABLED: Fast mode caching to debug recursive call variable corruption
+                // The variable cache might be sharing storage IDs between different scopes
+                // TODO: Re-enable once scope isolation is fully working
+                if (false) {
+                    // ... fast mode code disabled
                 }
 
                 // FALLBACK: Standard variable lookup (populate cache for next time)
                 if (self.current_scope.lookupVariable(v.var_name)) |variable| {
                     if (self.memory_manager.scope_manager.value_storage.get(variable.storage_id)) |storage| {
-                        // Cache this lookup for future O(1) access
-                        if (self.fast_mode) {
-                            self.var_cache.put(v.var_name, variable.storage_id) catch {};
-                        }
+                        // DISABLED: Caching to debug recursive call variable corruption
+                        // if (self.fast_mode) {
+                        //     self.var_cache.put(v.var_name, variable.storage_id) catch {};
+                        // }
 
                         const hir_value = tokenLiteralToHIRValue(storage.value);
+
+                        if (self.memory_manager.debug_enabled) {
+                            std.debug.print(">>   Found '{s}' = {any} (storage_id: {}, scope: {})\n", .{ v.var_name, hir_value, variable.storage_id, self.current_scope.id });
+                        }
+
                         try self.stack.push(HIRFrame.initFromHIRValue(hir_value));
                     } else {
                         return self.reporter.reportError("Variable storage not found for: {s}", .{v.var_name});
                     }
                 } else {
+                    if (self.memory_manager.debug_enabled) {
+                        std.debug.print(">>   Variable '{s}' not found in scope {} (parent: {})\n", .{ v.var_name, self.current_scope.id, if (self.current_scope.parent) |p| p.id else 999 });
+                    }
                     return self.reporter.reportError("Undefined variable: {s}", .{v.var_name});
                 }
             },
@@ -443,32 +492,26 @@ pub const HIRVM = struct {
                 const token_type = hirValueToTokenType(value.value);
                 const type_info = hirValueToTypeInfo(value.value);
 
-                if (self.fast_mode) {
-                    // OPTIMIZED: Use cached storage_id for O(1) variable access
-                    if (self.var_cache.get(v.var_name)) |storage_id| {
-                        if (self.memory_manager.scope_manager.value_storage.getPtr(storage_id)) |storage| {
-                            if (storage.*.constant) {
-                                return self.reporter.reportError("Cannot modify constant variable: {s}", .{v.var_name});
-                            }
-                            storage.*.value = token_literal;
-                            storage.*.type = token_type;
-                            storage.*.type_info = type_info;
-                            return; // Fast path - skip slow lookup
-                        }
-                    }
+                if (self.memory_manager.debug_enabled) {
+                    std.debug.print(">> StoreVar '{s}' = {any} in scope {}\n", .{ v.var_name, value.value, self.current_scope.id });
                 }
 
-                // FALLBACK: Standard variable lookup/creation
-                if (self.current_scope.lookupVariable(v.var_name)) |variable| {
-                    // Update existing variable's storage
+                // DISABLED: Fast mode caching to debug recursive call variable corruption
+                if (false) {
+                    // ... fast mode code disabled
+                }
+
+                // CRITICAL FIX: Check if variable exists in CURRENT scope only
+                // Function parameters must create NEW storage in each scope, never reuse parent storage
+                if (self.current_scope.name_map.get(v.var_name)) |variable| {
+                    // Variable exists in current scope - update its storage
                     if (self.memory_manager.scope_manager.value_storage.getPtr(variable.storage_id)) |storage| {
                         if (storage.*.constant) {
                             return self.reporter.reportError("Cannot modify constant variable: {s}", .{v.var_name});
                         }
 
-                        // Cache this lookup for future O(1) access
-                        if (self.fast_mode) {
-                            self.var_cache.put(v.var_name, variable.storage_id) catch {};
+                        if (self.memory_manager.debug_enabled) {
+                            std.debug.print(">>   Updated existing '{s}' from {any} to {any} (storage_id: {}, scope: {})\n", .{ v.var_name, storage.*.value, token_literal, variable.storage_id, self.current_scope.id });
                         }
 
                         storage.*.value = token_literal;
@@ -478,7 +521,11 @@ pub const HIRVM = struct {
                         return self.reporter.reportError("Variable storage not found for: {s}", .{v.var_name});
                     }
                 } else {
-                    // Create new variable in current scope
+                    // Variable doesn't exist in current scope - create NEW variable with NEW storage
+                    // This ensures function parameters get their own storage in each recursive call
+                    if (self.memory_manager.debug_enabled) {
+                        std.debug.print(">>   Creating new variable '{s}' = {any} in scope {} (may shadow parent)\n", .{ v.var_name, value.value, self.current_scope.id });
+                    }
                     _ = self.current_scope.createValueBinding(v.var_name, token_literal, token_type, type_info, false) catch |err| {
                         return self.reporter.reportError("Failed to create variable {s}: {}", .{ v.var_name, err });
                     };
@@ -486,8 +533,18 @@ pub const HIRVM = struct {
             },
 
             .IntArith => |a| {
+                if (self.memory_manager.debug_enabled) {
+                    std.debug.print(">> IntArith.{s}: Stack size before: {}\n", .{ @tagName(a.op), self.stack.size() });
+                }
+
                 const b = try self.stack.pop();
                 const a_val = try self.stack.pop();
+
+                if (self.memory_manager.debug_enabled) {
+                    const b_int = try b.asInt();
+                    const a_int = try a_val.asInt();
+                    std.debug.print(">> IntArith.{s}: {} {s} {} = ", .{ @tagName(a.op), a_int, @tagName(a.op), b_int });
+                }
 
                 const result = switch (a.op) {
                     .Add => try self.intAdd(try a_val.asInt(), try b.asInt()),
@@ -496,6 +553,10 @@ pub const HIRVM = struct {
                     .Div => try self.intDiv(try a_val.asInt(), try b.asInt()),
                     .Mod => try self.intMod(try a_val.asInt(), try b.asInt()),
                 };
+
+                if (self.memory_manager.debug_enabled) {
+                    std.debug.print("{} [Stack size after: {}]\n", .{ result, self.stack.size() + 1 });
+                }
 
                 try self.stack.push(HIRFrame.initInt(result));
             },
@@ -603,41 +664,36 @@ pub const HIRVM = struct {
             },
 
             .EnterScope => |s| {
-                if (self.fast_mode) {
-                    // OPTIMIZED: Skip scope creation for simple blocks (major optimization)
-                    // Only create scopes when absolutely necessary (when new variables are declared)
-                    if (self.memory_manager.debug_enabled) {
-                        std.debug.print("[FAST] Skipping scope creation {} for performance\n", .{s.scope_id});
-                    }
-                } else {
-                    // Standard scope creation
-                    const new_scope = try self.memory_manager.scope_manager.createScope(self.current_scope);
-                    self.current_scope = new_scope;
-                    if (self.memory_manager.debug_enabled) {
-                        std.debug.print("Entered scope {} (parent: {})\n", .{ s.scope_id, new_scope.parent.?.id });
+                // CRITICAL: Always create scopes for function calls to ensure proper variable isolation
+                // in recursive calls. Function calls must have isolated variable scopes.
+                // Only skip scope creation for simple block scopes (loops, if statements, etc.)
+                // TODO: We need a way to distinguish function scopes from block scopes
+
+                // For now, always create scopes to fix recursive call variable corruption
+                const new_scope = try self.memory_manager.scope_manager.createScope(self.current_scope);
+                self.current_scope = new_scope;
+                if (self.memory_manager.debug_enabled) {
+                    if (new_scope.parent) |parent| {
+                        std.debug.print(">> Entered scope {} (parent: {}) [Call stack: {}]\n", .{ s.scope_id, parent.id, self.call_stack.sp });
+                    } else {
+                        std.debug.print(">> Entered scope {} (no parent) [Call stack: {}]\n", .{ s.scope_id, self.call_stack.sp });
                     }
                 }
             },
 
             .ExitScope => |s| {
-                if (self.fast_mode) {
-                    // OPTIMIZED: Skip scope cleanup for simple blocks
+                // CRITICAL: Always clean up scopes to match the always-create policy above
+                // This ensures proper variable scope isolation for recursive calls
+                if (self.current_scope.parent) |parent_scope| {
+                    const old_scope = self.current_scope;
+                    self.current_scope = parent_scope;
                     if (self.memory_manager.debug_enabled) {
-                        std.debug.print("[FAST] Skipping scope cleanup {} for performance\n", .{s.scope_id});
+                        std.debug.print(">> Exited scope {} (returned to: {}) [Call stack: {}]\n", .{ s.scope_id, parent_scope.id, self.call_stack.sp });
                     }
+                    // Clean up the old scope
+                    old_scope.deinit();
                 } else {
-                    // Standard scope cleanup
-                    if (self.current_scope.parent) |parent_scope| {
-                        const old_scope = self.current_scope;
-                        self.current_scope = parent_scope;
-                        if (self.memory_manager.debug_enabled) {
-                            std.debug.print("Exited scope {} (returned to: {})\n", .{ s.scope_id, parent_scope.id });
-                        }
-                        // Clean up the old scope
-                        old_scope.deinit();
-                    } else {
-                        return self.reporter.reportError("Cannot exit root scope", .{});
-                    }
+                    return self.reporter.reportError("Cannot exit root scope", .{});
                 }
             },
 
@@ -919,7 +975,7 @@ pub const HIRVM = struct {
             .Call => |c| {
                 // Handle function calls
                 if (self.memory_manager.debug_enabled) {
-                    std.debug.print("Function call: {s} with {} args (kind: {s})\n", .{ c.qualified_name, c.arg_count, @tagName(c.call_kind) });
+                    std.debug.print("Function call: {s} with {} args (kind: {s}) [Stack size: {}]\n", .{ c.qualified_name, c.arg_count, @tagName(c.call_kind), self.stack.size() });
                 }
 
                 switch (c.call_kind) {
@@ -936,10 +992,35 @@ pub const HIRVM = struct {
 
                         // Arguments are already on the stack in the correct order for parameter setup
                         // The function's parameter setup (StoreVar instructions) will handle them
-                        // We just need to jump to the function start
                         if (self.memory_manager.debug_enabled) {
                             std.debug.print(">> Stack has {} args ready for parameter setup\n", .{c.arg_count});
+                            std.debug.print(">> Call stack depth: {}\n", .{self.call_stack.sp});
+                            std.debug.print(">> Current scope: {} (parent: {})\n", .{ self.current_scope.id, if (self.current_scope.parent) |p| p.id else 999 });
+
+                            // Debug: Show the actual argument values on stack
+                            if (c.arg_count > 0) {
+                                var i: u32 = 0;
+                                while (i < c.arg_count and i < 3) : (i += 1) { // Show up to 3 args
+                                    const stack_idx = self.stack.sp - 1 - @as(i32, @intCast(i));
+                                    if (stack_idx >= 0) {
+                                        const arg = self.stack.data[@intCast(stack_idx)];
+                                        std.debug.print(">>   Arg[{}]: {any}\n", .{ i, arg.value });
+                                    }
+                                }
+                            }
                         }
+
+                        // Push call frame for proper return handling
+                        const return_ip = self.ip + 1; // Return to instruction after this call
+                        if (self.memory_manager.debug_enabled) {
+                            std.debug.print(">> Setting return IP to {} (current IP: {})\n", .{ return_ip, self.ip });
+                        }
+                        const call_frame = CallFrame{
+                            .return_ip = return_ip,
+                            .function_name = function.name,
+                            .arg_count = c.arg_count, // Store arg count to clean up stack later
+                        };
+                        try self.call_stack.push(call_frame);
 
                         // Find the function label instruction and jump to it
                         for (self.program.instructions, 0..) |instr, i| {
@@ -1013,17 +1094,58 @@ pub const HIRVM = struct {
             .Return => |ret| {
                 // Handle function return
                 if (self.memory_manager.debug_enabled) {
-                    std.debug.print(">> Function return (has_value: {})\n", .{ret.has_value});
+                    const top_value = if (self.stack.size() > 0)
+                        (self.stack.peek() catch HIRFrame.initFromHIRValue(HIRValue.nothing)).value
+                    else
+                        HIRValue.nothing;
+                    std.debug.print(">> Function return (has_value: {}) [Stack size: {}, Top: {s}]\n", .{ ret.has_value, self.stack.size(), @tagName(top_value) });
+
+                    // Debug: Show return value if present
+                    if (ret.has_value and self.stack.size() > 0) {
+                        const return_val = self.stack.peek() catch HIRFrame.initFromHIRValue(HIRValue.nothing);
+                        std.debug.print(">>   Return value: {any}\n", .{return_val.value});
+                    }
                 }
 
-                if (ret.has_value) {
-                    // Return value is already on top of stack
-                    // For now, just halt execution (simple implementation)
+                // Check if we're returning from main program or a function call
+                if (self.call_stack.isEmpty()) {
+                    // Returning from main program - halt execution
+                    if (self.memory_manager.debug_enabled) {
+                        std.debug.print(">> Returning from main program - halting VM\n", .{});
+                    }
                     self.running = false;
                 } else {
-                    // No return value - void function, push nothing
-                    try self.stack.push(HIRFrame.initFromHIRValue(HIRValue.nothing));
-                    self.running = false;
+                    // CRITICAL FIX: Auto-exit current scope before returning to restore caller's scope
+                    if (self.current_scope.parent) |parent_scope| {
+                        const old_scope = self.current_scope;
+                        self.current_scope = parent_scope;
+                        if (self.memory_manager.debug_enabled) {
+                            std.debug.print(">> Auto-exited scope {} on return (restored to: {}) [Call stack: {}]\n", .{ old_scope.id, parent_scope.id, self.call_stack.sp });
+                        }
+                        // Clean up the old scope
+                        old_scope.deinit();
+                    }
+
+                    // Returning from function call - pop call frame and return to caller
+                    const call_frame = try self.call_stack.pop();
+                    if (self.memory_manager.debug_enabled) {
+                        std.debug.print(">> Returning from function '{s}' to IP {} (current IP: {})\n", .{ call_frame.function_name, call_frame.return_ip, self.ip });
+                        std.debug.print(">>   Current scope: {} (parent: {})\n", .{ self.current_scope.id, if (self.current_scope.parent) |p| p.id else 999 });
+                        std.debug.print(">>   Call stack depth after pop: {}\n", .{self.call_stack.sp});
+                    }
+
+                    if (!ret.has_value) {
+                        // No return value - push nothing for void functions
+                        try self.stack.push(HIRFrame.initFromHIRValue(HIRValue.nothing));
+                    }
+                    // Note: Return value is already on stack for functions with return values
+
+                    // Return to caller
+                    self.ip = call_frame.return_ip;
+                    if (self.memory_manager.debug_enabled) {
+                        std.debug.print(">> Set IP to {} after return\n", .{self.ip});
+                    }
+                    return; // Don't auto-increment IP since we just set it
                 }
             },
 
@@ -1041,6 +1163,8 @@ pub const HIRVM = struct {
         _ = self;
         return switch (instruction) {
             .Jump, .JumpCond => true,
+            .Call => |c| c.call_kind == .LocalFunction, // Function calls jump to function start
+            .Return => true, // ALL Return instructions set IP manually, never auto-increment
             else => false,
         };
     }

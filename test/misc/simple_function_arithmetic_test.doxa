@@ -1,0 +1,8 @@
+// Test function calls with arithmetic
+function add(a :: int, b :: int) returns(int) {
+    return a + b;
+}
+
+// Test function calls in arithmetic
+var result is add(2, 1) + add(1, 0);  
+result?;  // Should be 3 + 1 = 4 
