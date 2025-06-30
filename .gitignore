@@ -6,3 +6,4 @@ venv
 site
 test.doxa
 instructions.md
+pipeline.dot
