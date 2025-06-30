@@ -14,13 +14,11 @@ See documentation for a more detailed explaination of how this works.
 
 ![Pipeline](./pipeline.svg)
 
-Currently Doxa runs on an AST walking interpreter so it is pretty slow. The current goal is to modularize the front end and back end of the language. This would involve stack based interpretation as well as true portable compilation into LLVM IR. Below is the planned implementation:
-
 - **Lexer**: Tokenizes source code
 - **Parser**: Builds an AST from tokens
-- **Soxa** A stack based HIR for type infrence and other high level optimization
-- **VM**: Stack based, operates from Soxa code
-- **LLVM IR** Code generator to turn Soxa into LLVM IR for low level optimizations and native compilation
+- **Soxa** A stack based HIR for high level optimization
+- **VM**: Stack based, operates from Soxa IR
+- **LLVM IR** Code generator to turn Soxa into LLVM IR for native compilation
 
 ## Memory management
 
