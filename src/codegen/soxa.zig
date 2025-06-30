@@ -1615,8 +1615,10 @@ pub const SoxaHeader = struct {
     reserved: [6]u8 = [_]u8{0} ** 6, // For future expansion
 };
 
-/// Serializes a HIR program to a .soxa file
+/// Writes a HIR program to a text-based .soxa file
 pub fn writeSoxaFile(program: *HIRProgram, file_path: []const u8, allocator: std.mem.Allocator) !void {
+    _ = allocator; // May be needed for complex formatting
+
     const file = std.fs.cwd().createFile(file_path, .{}) catch |err| switch (err) {
         error.AccessDenied => return reporting.ErrorList.AccessDenied,
         error.FileNotFound => return reporting.ErrorList.FileNotFound,
@@ -1627,60 +1629,43 @@ pub fn writeSoxaFile(program: *HIRProgram, file_path: []const u8, allocator: std
     var writer = file.writer();
 
     // Write header
-    const header = SoxaHeader{
-        .instruction_count = @as(u32, @intCast(program.instructions.len)),
-        .constant_count = @as(u32, @intCast(program.constant_pool.len)),
-        .string_count = @as(u32, @intCast(program.string_pool.len)),
-    };
+    try writer.print("; SOXA HIR v0.1.0\n", .{});
+    try writer.print("; Generated with {} instructions, {} constants, {} functions\n\n", .{ program.instructions.len, program.constant_pool.len, program.function_table.len });
 
-    try writer.writeInt(u32, header.magic, .little);
-    try writer.writeInt(u16, header.version, .little);
-    try writer.writeInt(u32, header.instruction_count, .little);
-    try writer.writeInt(u32, header.constant_count, .little);
-    try writer.writeInt(u32, header.string_count, .little);
-    try writer.writeAll(&header.reserved);
-
-    reporting.Reporter.lightMessage(">> Writing SOXA file with constants and instructions");
-
-    // Write string pool
-    for (program.string_pool) |str| {
-        try writer.writeInt(u32, @as(u32, @intCast(str.len)), .little);
-        try writer.writeAll(str);
+    // Write constants section
+    if (program.constant_pool.len > 0) {
+        try writer.print(".constants\n", .{});
+        for (program.constant_pool, 0..) |constant, i| {
+            try writer.print("    const_{}: ", .{i});
+            try writeHIRValueText(writer, constant);
+            try writer.print("\n", .{});
+        }
+        try writer.print("\n", .{});
     }
 
-    // Write constants
-    for (program.constant_pool) |constant| {
-        try writeHIRValue(writer, constant);
+    // Write functions section
+    if (program.function_table.len > 0) {
+        try writer.print(".functions\n", .{});
+        for (program.function_table) |func| {
+            try writer.print("    {s}({} args) -> {s}\n", .{ func.name, func.arity, @tagName(func.return_type) });
+            try writer.print("        entry: {s}\n", .{func.start_label});
+            if (func.is_entry) {
+                try writer.print("        main: true\n", .{});
+            }
+        }
+        try writer.print("\n", .{});
     }
 
-    // Write function table
-    try writer.writeInt(u32, @as(u32, @intCast(program.function_table.len)), .little);
-    for (program.function_table) |func| {
-        // Write function name
-        try writer.writeInt(u32, @as(u32, @intCast(func.name.len)), .little);
-        try writer.writeAll(func.name);
-
-        // Write function metadata
-        try writer.writeInt(u32, func.arity, .little);
-        try writer.writeByte(@intFromEnum(func.return_type));
-
-        // Write start label
-        try writer.writeInt(u32, @as(u32, @intCast(func.start_label.len)), .little);
-        try writer.writeAll(func.start_label);
-
-        try writer.writeInt(u32, func.local_var_count, .little);
-        try writer.writeByte(if (func.is_entry) 1 else 0);
-    }
-
-    // Write instructions
+    // Write instructions section
+    try writer.print(".code\n", .{});
     for (program.instructions) |instruction| {
-        try writeHIRInstruction(writer, instruction, allocator);
+        try writeHIRInstructionText(writer, instruction);
     }
 
-    std.debug.print(">> SOXA file written: {s} ({} instructions, {} constants, {} functions)\n", .{ file_path, program.instructions.len, program.constant_pool.len, program.function_table.len });
+    std.debug.print(">> SOXA text file written: {s} ({} instructions, {} constants, {} functions)\n", .{ file_path, program.instructions.len, program.constant_pool.len, program.function_table.len });
 }
 
-/// Reads a HIR program from a .soxa file
+/// Reads a HIR program from a text-based .soxa file
 pub fn readSoxaFile(file_path: []const u8, allocator: std.mem.Allocator) !HIRProgram {
     const file = std.fs.cwd().openFile(file_path, .{}) catch |err| switch (err) {
         error.FileNotFound => return reporting.ErrorList.FileNotFound,
@@ -1689,98 +1674,15 @@ pub fn readSoxaFile(file_path: []const u8, allocator: std.mem.Allocator) !HIRPro
     };
     defer file.close();
 
-    var reader = file.reader();
+    const source = try file.readToEndAlloc(allocator, 1024 * 1024); // 1MB max
+    defer allocator.free(source);
 
-    // Read and validate header
-    const magic = try reader.readInt(u32, .little);
-    if (magic != SOXA_MAGIC) {
-        std.debug.print("!! Invalid SOXA file: bad magic number\n", .{});
-        return reporting.ErrorList.InvalidArgument;
-    }
+    var parser = SoxaTextParser.init(allocator, source);
+    const program = try parser.parse();
 
-    const version = try reader.readInt(u16, .little);
-    if (version != SOXA_VERSION) {
-        std.debug.print("!! Unsupported SOXA version: {}\n", .{version});
-        return reporting.ErrorList.InvalidArgument;
-    }
+    std.debug.print(">> SOXA text file loaded: {s} ({} instructions, {} constants, {} functions)\n", .{ file_path, program.instructions.len, program.constant_pool.len, program.function_table.len });
 
-    const instruction_count = try reader.readInt(u32, .little);
-    const constant_count = try reader.readInt(u32, .little);
-    const string_count = try reader.readInt(u32, .little);
-
-    // Skip reserved bytes
-    var reserved: [6]u8 = undefined;
-    _ = try reader.readAll(&reserved);
-
-    reporting.Reporter.lightMessage(">> Reading SOXA file with constants and instructions");
-
-    // Read string pool
-    var strings = std.ArrayList([]const u8).init(allocator);
-    for (0..string_count) |_| {
-        const str_len = try reader.readInt(u32, .little);
-        const str_data = try allocator.alloc(u8, str_len);
-        _ = try reader.readAll(str_data);
-        try strings.append(str_data);
-    }
-
-    // Read constants
-    var constants = std.ArrayList(HIRValue).init(allocator);
-    for (0..constant_count) |_| {
-        const constant = try readHIRValue(reader, allocator);
-        try constants.append(constant);
-    }
-
-    // Read function table
-    const function_count = try reader.readInt(u32, .little);
-    var function_table = std.ArrayList(HIRProgram.HIRFunction).init(allocator);
-
-    for (0..function_count) |_| {
-        // Read function name
-        const name_len = try reader.readInt(u32, .little);
-        const name_data = try allocator.alloc(u8, name_len);
-        _ = try reader.readAll(name_data);
-
-        // Read function metadata
-        const arity = try reader.readInt(u32, .little);
-        const return_type_byte = try reader.readByte();
-        const return_type = @as(HIRType, @enumFromInt(return_type_byte));
-
-        // Read start label
-        const label_len = try reader.readInt(u32, .little);
-        const label_data = try allocator.alloc(u8, label_len);
-        _ = try reader.readAll(label_data);
-
-        const local_var_count = try reader.readInt(u32, .little);
-        const is_entry = (try reader.readByte()) != 0;
-
-        try function_table.append(HIRProgram.HIRFunction{
-            .name = name_data,
-            .qualified_name = name_data, // Same as name for now
-            .arity = arity,
-            .return_type = return_type,
-            .start_label = label_data,
-            .local_var_count = local_var_count,
-            .is_entry = is_entry,
-        });
-    }
-
-    // Read instructions
-    var instruction_list = std.ArrayList(HIRInstruction).init(allocator);
-    for (0..instruction_count) |_| {
-        const instruction = try readHIRInstruction(reader, allocator);
-        try instruction_list.append(instruction);
-    }
-
-    std.debug.print(">> SOXA file loaded: {s} ({} instructions, {} constants, {} functions)\n", .{ file_path, instruction_list.items.len, constants.items.len, function_table.items.len });
-
-    return HIRProgram{
-        .instructions = try instruction_list.toOwnedSlice(),
-        .constant_pool = try constants.toOwnedSlice(),
-        .string_pool = try strings.toOwnedSlice(),
-        .function_table = try function_table.toOwnedSlice(),
-        .module_map = std.StringHashMap(HIRProgram.ModuleInfo).init(allocator),
-        .allocator = allocator,
-    };
+    return program;
 }
 
 /// Serializes a single HIR value to binary format
@@ -2162,3 +2064,307 @@ fn readHIRInstruction(reader: anytype, allocator: std.mem.Allocator) !HIRInstruc
         },
     };
 }
+
+/// Writes a HIR value in text format
+fn writeHIRValueText(writer: anytype, value: HIRValue) !void {
+    switch (value) {
+        .int => |i| try writer.print("int {}", .{i}),
+        .float => |f| try writer.print("float {d}", .{f}),
+        .string => |s| try writer.print("string \"{s}\"", .{s}),
+        .boolean => |b| try writer.print("bool {}", .{b}),
+        .u8 => |u| try writer.print("u8 {}", .{u}),
+        .nothing => try writer.print("nothing", .{}),
+        .array => |arr| try writer.print("array[{s}] capacity:{}", .{ @tagName(arr.element_type), arr.capacity }),
+        .struct_instance => try writer.print("struct", .{}),
+        .tuple => try writer.print("tuple", .{}),
+        .map => try writer.print("map", .{}),
+        .enum_variant => try writer.print("enum", .{}),
+    }
+}
+
+/// Writes a HIR instruction in text format
+fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
+    switch (instruction) {
+        .Const => |c| try writer.print("    Const {}                    ; Push constant\n", .{c.constant_id}),
+
+        .LoadVar => |v| try writer.print("    LoadVar {} \"{s}\"           ; Load variable\n", .{ v.var_index, v.var_name }),
+
+        .StoreVar => |v| try writer.print("    StoreVar {} \"{s}\"          ; Store variable\n", .{ v.var_index, v.var_name }),
+
+        .IntArith => |a| try writer.print("    IntArith {s}                ; Integer arithmetic\n", .{@tagName(a.op)}),
+
+        .Compare => |c| try writer.print("    Compare {s}                 ; Comparison\n", .{@tagName(c.op)}),
+
+        .Jump => |j| try writer.print("    Jump {s}                    ; Unconditional jump\n", .{j.label}),
+
+        .JumpCond => |j| try writer.print("    JumpCond {s} {s}            ; Conditional jump\n", .{ j.label_true, j.label_false }),
+
+        .Call => |c| try writer.print("    Call {} {} \"{s}\" {s}      ; Function call\n", .{ c.function_index, c.arg_count, c.qualified_name, @tagName(c.call_kind) }),
+
+        .Return => |r| try writer.print("    Return {}                   ; Return from function\n", .{r.has_value}),
+
+        .Label => |l| try writer.print("{s}:                            ; Label\n", .{l.name}),
+
+        .Dup => try writer.print("    Dup                         ; Duplicate top value\n", .{}),
+
+        .Pop => try writer.print("    Pop                         ; Remove top value\n", .{}),
+
+        .Inspect => |i| {
+            if (i.name) |name| {
+                try writer.print("    Inspect \"{s}\"               ; Debug print\n", .{name});
+            } else {
+                try writer.print("    Inspect                     ; Debug print\n", .{});
+            }
+        },
+
+        .Halt => try writer.print("    Halt                        ; Program termination\n", .{}),
+
+        // Array operations
+        .ArrayNew => |a| try writer.print("    ArrayNew {s} {}             ; Create array\n", .{ @tagName(a.element_type), a.size }),
+        .ArrayGet => |a| try writer.print("    ArrayGet {}                 ; Get array element\n", .{a.bounds_check}),
+        .ArraySet => |a| try writer.print("    ArraySet {}                 ; Set array element\n", .{a.bounds_check}),
+        .ArrayPush => |a| try writer.print("    ArrayPush {s}               ; Push to array\n", .{@tagName(a.resize_behavior)}),
+        .ArrayPop => try writer.print("    ArrayPop                    ; Pop from array\n", .{}),
+        .ArrayLen => try writer.print("    ArrayLen                    ; Get array length\n", .{}),
+        .ArrayConcat => try writer.print("    ArrayConcat                 ; Concatenate arrays\n", .{}),
+
+        // Scope management
+        .EnterScope => |s| try writer.print("    EnterScope {} {}            ; Enter new scope\n", .{ s.scope_id, s.var_count }),
+        .ExitScope => |s| try writer.print("    ExitScope {}                ; Exit scope\n", .{s.scope_id}),
+
+        else => try writer.print("    ; TODO: {s}\n", .{@tagName(instruction)}),
+    }
+}
+
+/// Simple text parser for SOXA HIR format
+const SoxaTextParser = struct {
+    allocator: std.mem.Allocator,
+    source: []const u8,
+    pos: usize = 0,
+    line: u32 = 1,
+    constants: std.ArrayList(HIRValue),
+    functions: std.ArrayList(HIRProgram.HIRFunction),
+    instructions: std.ArrayList(HIRInstruction),
+
+    fn init(allocator: std.mem.Allocator, source: []const u8) SoxaTextParser {
+        return SoxaTextParser{
+            .allocator = allocator,
+            .source = source,
+            .constants = std.ArrayList(HIRValue).init(allocator),
+            .functions = std.ArrayList(HIRProgram.HIRFunction).init(allocator),
+            .instructions = std.ArrayList(HIRInstruction).init(allocator),
+        };
+    }
+
+    fn parse(self: *SoxaTextParser) !HIRProgram {
+        var lines = std.mem.splitScalar(u8, self.source, '\n');
+
+        while (lines.next()) |line| {
+            self.line += 1;
+            const trimmed = std.mem.trim(u8, line, " \t\r\n");
+
+            // Skip empty lines and comments
+            if (trimmed.len == 0 or trimmed[0] == ';') continue;
+
+            // Handle sections and instructions
+            if (std.mem.startsWith(u8, trimmed, ".constants")) {
+                continue; // Section header
+            } else if (std.mem.startsWith(u8, trimmed, ".functions")) {
+                continue; // Section header
+            } else if (std.mem.startsWith(u8, trimmed, ".code")) {
+                continue; // Section header
+            } else if (std.mem.startsWith(u8, trimmed, "    const_")) {
+                try self.parseConstant(trimmed);
+            } else if (std.mem.startsWith(u8, trimmed, "    ") and !std.mem.startsWith(u8, trimmed, "        ")) {
+                // Function or instruction
+                if (std.mem.indexOf(u8, trimmed, "(") != null and std.mem.indexOf(u8, trimmed, "args)") != null) {
+                    try self.parseFunction(trimmed);
+                } else {
+                    try self.parseInstruction(trimmed);
+                }
+            } else if (std.mem.endsWith(u8, trimmed, ":")) {
+                // Label
+                const label_name = try self.allocator.dupe(u8, trimmed[0 .. trimmed.len - 1]);
+                try self.instructions.append(HIRInstruction{ .Label = .{ .name = label_name, .vm_address = 0 } });
+            }
+        }
+
+        return HIRProgram{
+            .instructions = try self.instructions.toOwnedSlice(),
+            .constant_pool = try self.constants.toOwnedSlice(),
+            .string_pool = &[_][]const u8{}, // Empty for now
+            .function_table = try self.functions.toOwnedSlice(),
+            .module_map = std.StringHashMap(HIRProgram.ModuleInfo).init(self.allocator),
+            .allocator = self.allocator,
+        };
+    }
+
+    fn parseConstant(self: *SoxaTextParser, line: []const u8) !void {
+        // Parse: "    const_0: int 42", "    const_1: string "hello"", etc.
+        if (std.mem.indexOf(u8, line, "int ")) |int_pos| {
+            const value_str = std.mem.trim(u8, line[int_pos + 4 ..], " \t");
+            const value = try std.fmt.parseInt(i32, value_str, 10);
+            try self.constants.append(HIRValue{ .int = value });
+        } else if (std.mem.indexOf(u8, line, "float ")) |float_pos| {
+            const value_str = std.mem.trim(u8, line[float_pos + 6 ..], " \t");
+            const value = try std.fmt.parseFloat(f64, value_str);
+            try self.constants.append(HIRValue{ .float = value });
+        } else if (std.mem.indexOf(u8, line, "string ")) |string_pos| {
+            const quoted_str = std.mem.trim(u8, line[string_pos + 7 ..], " \t");
+            const value = try self.parseQuotedString(quoted_str);
+            try self.constants.append(HIRValue{ .string = value });
+        } else if (std.mem.indexOf(u8, line, "bool ")) |bool_pos| {
+            const value_str = std.mem.trim(u8, line[bool_pos + 5 ..], " \t");
+            const value = std.mem.eql(u8, value_str, "true");
+            try self.constants.append(HIRValue{ .boolean = value });
+        } else if (std.mem.indexOf(u8, line, "u8 ")) |u8_pos| {
+            const value_str = std.mem.trim(u8, line[u8_pos + 3 ..], " \t");
+            const value = try std.fmt.parseInt(u8, value_str, 10);
+            try self.constants.append(HIRValue{ .u8 = value });
+        } else if (std.mem.indexOf(u8, line, "nothing")) |_| {
+            try self.constants.append(HIRValue.nothing);
+        } else {
+            // Default to nothing for unhandled types
+            try self.constants.append(HIRValue.nothing);
+        }
+    }
+
+    fn parseFunction(self: *SoxaTextParser, line: []const u8) !void {
+        // Parse: "    fibonacci(1 args) -> int"
+        // Very basic parsing for now
+        const trimmed = std.mem.trim(u8, line, " \t");
+        if (std.mem.indexOf(u8, trimmed, "(")) |paren_pos| {
+            const name = try self.allocator.dupe(u8, trimmed[0..paren_pos]);
+            try self.functions.append(HIRProgram.HIRFunction{
+                .name = name,
+                .qualified_name = name,
+                .arity = 1, // Default for now
+                .return_type = .Auto,
+                .start_label = try self.allocator.dupe(u8, "unknown"),
+                .local_var_count = 0,
+                .is_entry = false,
+            });
+        }
+    }
+
+    fn parseInstruction(self: *SoxaTextParser, line: []const u8) !void {
+        const trimmed = std.mem.trim(u8, line, " \t");
+        var tokens = std.mem.splitScalar(u8, trimmed, ' ');
+        const op = tokens.next() orelse return;
+
+        if (std.mem.eql(u8, op, "Const")) {
+            const id_str = tokens.next() orelse return;
+            const id = std.fmt.parseInt(u32, id_str, 10) catch return;
+            try self.instructions.append(HIRInstruction{ .Const = .{ .value = HIRValue.nothing, .constant_id = id } });
+        } else if (std.mem.eql(u8, op, "LoadVar")) {
+            const idx_str = tokens.next() orelse return;
+            const var_index = std.fmt.parseInt(u32, idx_str, 10) catch return;
+            const name_quoted = tokens.next() orelse return;
+            const var_name = try self.parseQuotedString(name_quoted);
+            try self.instructions.append(HIRInstruction{ .LoadVar = .{ .var_index = var_index, .var_name = var_name, .scope_kind = .Local, .module_context = null } });
+        } else if (std.mem.eql(u8, op, "StoreVar")) {
+            const idx_str = tokens.next() orelse return;
+            const var_index = std.fmt.parseInt(u32, idx_str, 10) catch return;
+            const name_quoted = tokens.next() orelse return;
+            const var_name = try self.parseQuotedString(name_quoted);
+            try self.instructions.append(HIRInstruction{ .StoreVar = .{ .var_index = var_index, .var_name = var_name, .scope_kind = .Local, .module_context = null } });
+        } else if (std.mem.eql(u8, op, "IntArith")) {
+            const op_str = tokens.next() orelse return;
+            const arith_op = if (std.mem.eql(u8, op_str, "Add")) ArithOp.Add else if (std.mem.eql(u8, op_str, "Sub")) ArithOp.Sub else if (std.mem.eql(u8, op_str, "Mul")) ArithOp.Mul else if (std.mem.eql(u8, op_str, "Div")) ArithOp.Div else if (std.mem.eql(u8, op_str, "Mod")) ArithOp.Mod else ArithOp.Add;
+            try self.instructions.append(HIRInstruction{ .IntArith = .{ .op = arith_op, .overflow_behavior = .Wrap } });
+        } else if (std.mem.eql(u8, op, "Compare")) {
+            const op_str = tokens.next() orelse return;
+            const comp_op = if (std.mem.eql(u8, op_str, "Eq")) CompareOp.Eq else if (std.mem.eql(u8, op_str, "Ne")) CompareOp.Ne else if (std.mem.eql(u8, op_str, "Lt")) CompareOp.Lt else if (std.mem.eql(u8, op_str, "Le")) CompareOp.Le else if (std.mem.eql(u8, op_str, "Gt")) CompareOp.Gt else if (std.mem.eql(u8, op_str, "Ge")) CompareOp.Ge else CompareOp.Eq;
+            try self.instructions.append(HIRInstruction{ .Compare = .{ .op = comp_op, .operand_type = .Int } });
+        } else if (std.mem.eql(u8, op, "Jump")) {
+            const label = tokens.next() orelse return;
+            const label_name = try self.allocator.dupe(u8, label);
+            try self.instructions.append(HIRInstruction{ .Jump = .{ .label = label_name, .vm_offset = 0 } });
+        } else if (std.mem.eql(u8, op, "JumpCond")) {
+            const true_label = tokens.next() orelse return;
+            const false_label = tokens.next() orelse return;
+            const true_name = try self.allocator.dupe(u8, true_label);
+            const false_name = try self.allocator.dupe(u8, false_label);
+            try self.instructions.append(HIRInstruction{ .JumpCond = .{ .label_true = true_name, .label_false = false_name, .vm_offset = 0, .condition_type = .Boolean } });
+        } else if (std.mem.eql(u8, op, "Call")) {
+            const func_idx_str = tokens.next() orelse return;
+            const arg_count_str = tokens.next() orelse return;
+            const name_quoted = tokens.next() orelse return;
+            const kind_str = tokens.next() orelse return;
+
+            const function_index = std.fmt.parseInt(u32, func_idx_str, 10) catch return;
+            const arg_count = std.fmt.parseInt(u32, arg_count_str, 10) catch return;
+            const qualified_name = try self.parseQuotedString(name_quoted);
+            const call_kind = if (std.mem.eql(u8, kind_str, "LocalFunction")) CallKind.LocalFunction else if (std.mem.eql(u8, kind_str, "ModuleFunction")) CallKind.ModuleFunction else if (std.mem.eql(u8, kind_str, "BuiltinFunction")) CallKind.BuiltinFunction else CallKind.LocalFunction;
+
+            try self.instructions.append(HIRInstruction{ .Call = .{
+                .function_index = function_index,
+                .qualified_name = qualified_name,
+                .arg_count = arg_count,
+                .call_kind = call_kind,
+                .target_module = null,
+                .return_type = .Auto,
+            } });
+        } else if (std.mem.eql(u8, op, "Return")) {
+            const has_val_str = tokens.next() orelse return;
+            const has_value = std.mem.eql(u8, has_val_str, "true");
+            try self.instructions.append(HIRInstruction{ .Return = .{ .has_value = has_value, .return_type = .Auto } });
+        } else if (std.mem.eql(u8, op, "Dup")) {
+            try self.instructions.append(HIRInstruction.Dup);
+        } else if (std.mem.eql(u8, op, "Pop")) {
+            try self.instructions.append(HIRInstruction.Pop);
+        } else if (std.mem.eql(u8, op, "Inspect")) {
+            const name_quoted = tokens.next();
+            if (name_quoted) |name| {
+                const var_name = try self.parseQuotedString(name);
+                try self.instructions.append(HIRInstruction{ .Inspect = .{ .name = var_name, .value_type = .Auto } });
+            } else {
+                try self.instructions.append(HIRInstruction{ .Inspect = .{ .name = null, .value_type = .Auto } });
+            }
+        } else if (std.mem.eql(u8, op, "Halt")) {
+            try self.instructions.append(HIRInstruction.Halt);
+        } else if (std.mem.eql(u8, op, "ArrayNew")) {
+            const type_str = tokens.next() orelse return;
+            const size_str = tokens.next() orelse return;
+            const element_type = if (std.mem.eql(u8, type_str, "Int")) HIRType.Int else if (std.mem.eql(u8, type_str, "Float")) HIRType.Float else if (std.mem.eql(u8, type_str, "String")) HIRType.String else if (std.mem.eql(u8, type_str, "Boolean")) HIRType.Boolean else HIRType.Auto;
+            const size = std.fmt.parseInt(u32, size_str, 10) catch return;
+            try self.instructions.append(HIRInstruction{ .ArrayNew = .{ .element_type = element_type, .size = size } });
+        } else if (std.mem.eql(u8, op, "ArrayGet")) {
+            const bounds_str = tokens.next() orelse return;
+            const bounds_check = std.mem.eql(u8, bounds_str, "true");
+            try self.instructions.append(HIRInstruction{ .ArrayGet = .{ .bounds_check = bounds_check } });
+        } else if (std.mem.eql(u8, op, "ArraySet")) {
+            const bounds_str = tokens.next() orelse return;
+            const bounds_check = std.mem.eql(u8, bounds_str, "true");
+            try self.instructions.append(HIRInstruction{ .ArraySet = .{ .bounds_check = bounds_check } });
+        } else if (std.mem.eql(u8, op, "ArrayPush")) {
+            const behavior_str = tokens.next() orelse return;
+            const resize_behavior = if (std.mem.eql(u8, behavior_str, "Double")) ResizeBehavior.Double else if (std.mem.eql(u8, behavior_str, "Fixed")) ResizeBehavior.Fixed else if (std.mem.eql(u8, behavior_str, "Exact")) ResizeBehavior.Exact else ResizeBehavior.Double;
+            try self.instructions.append(HIRInstruction{ .ArrayPush = .{ .resize_behavior = resize_behavior } });
+        } else if (std.mem.eql(u8, op, "ArrayPop")) {
+            try self.instructions.append(HIRInstruction.ArrayPop);
+        } else if (std.mem.eql(u8, op, "ArrayLen")) {
+            try self.instructions.append(HIRInstruction.ArrayLen);
+        } else if (std.mem.eql(u8, op, "ArrayConcat")) {
+            try self.instructions.append(HIRInstruction.ArrayConcat);
+        } else if (std.mem.eql(u8, op, "EnterScope")) {
+            const scope_id_str = tokens.next() orelse return;
+            const var_count_str = tokens.next() orelse return;
+            const scope_id = std.fmt.parseInt(u32, scope_id_str, 10) catch return;
+            const var_count = std.fmt.parseInt(u32, var_count_str, 10) catch return;
+            try self.instructions.append(HIRInstruction{ .EnterScope = .{ .scope_id = scope_id, .var_count = var_count } });
+        } else if (std.mem.eql(u8, op, "ExitScope")) {
+            const scope_id_str = tokens.next() orelse return;
+            const scope_id = std.fmt.parseInt(u32, scope_id_str, 10) catch return;
+            try self.instructions.append(HIRInstruction{ .ExitScope = .{ .scope_id = scope_id } });
+        }
+        // Instructions not implemented yet are silently ignored for now
+    }
+
+    fn parseQuotedString(self: *SoxaTextParser, quoted: []const u8) ![]const u8 {
+        if (quoted.len >= 2 and quoted[0] == '"' and quoted[quoted.len - 1] == '"') {
+            return try self.allocator.dupe(u8, quoted[1 .. quoted.len - 1]);
+        }
+        return try self.allocator.dupe(u8, quoted);
+    }
+};
