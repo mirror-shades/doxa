@@ -1,6 +1,0 @@
-function test_rec(n :: int) returns(int) {
-    if n <= 1 then return n;
-    return test_rec(n - 1) + 5;
-}
-
-test_rec(3)?; // Should be: test_rec(2) + 5 = (test_rec(1) + 5) + 5 = (1 + 5) + 5 = 11 

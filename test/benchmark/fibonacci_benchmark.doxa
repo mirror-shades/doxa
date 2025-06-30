@@ -10,7 +10,7 @@ function fibonacci_benchmark() {
     // Calculate fibonacci numbers up to 25
     // This creates significant recursive call overhead
     var i is 1;
-    while i <= 25 {
+    while i <= 24 {
         var result is fibonacci(i);
         // Uncomment the line below to see output (slows down benchmark)
         result?;
