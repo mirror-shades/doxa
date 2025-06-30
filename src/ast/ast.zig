@@ -501,6 +501,9 @@ pub const Expr = struct {
             location: Reporting.Reporter.Location,
             message: ?*Expr = null,
         },
+        ReturnExpr: struct {
+            value: ?*Expr,
+        },
     };
 
     pub fn getBase(self: *Expr) *Base {
@@ -783,6 +786,12 @@ pub const Expr = struct {
                 if (a.message) |msg| {
                     msg.deinit(allocator);
                     allocator.destroy(msg);
+                }
+            },
+            .ReturnExpr => |*r| {
+                if (r.value) |value| {
+                    value.deinit(allocator);
+                    allocator.destroy(value);
                 }
             },
         }

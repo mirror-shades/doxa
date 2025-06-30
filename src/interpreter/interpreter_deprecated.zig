@@ -2716,6 +2716,18 @@ pub const Interpreter = struct {
                 }
                 return .{ .nothing = {} };
             },
+            .ReturnExpr => |return_expr| {
+                // Evaluate the return value if present
+                const return_value = if (return_expr.value) |value|
+                    try self.evaluate(value)
+                else
+                    TokenLiteral{ .nothing = {} };
+
+                // Store the return value in the environment for the caller to retrieve
+                try self.environment.define("return", return_value, .{ .base = .Nothing });
+                self.has_returned = true;
+                return error.ReturnValue;
+            },
         };
     }
 

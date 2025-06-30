@@ -1,0 +1,5 @@
+function sub_test(n :: int) returns(int) {
+    return n - 1;
+}
+
+sub_test(2)?; // Should print 1, not -1 

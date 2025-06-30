@@ -32,6 +32,7 @@ const parseIfExpr = expr_parser.parseIfExpr;
 const whileExpr = expr_parser.whileExpr;
 const forExpr = expr_parser.forExpr;
 const parseMatchExpr = expr_parser.parseMatchExpr;
+const returnExpr = expr_parser.returnExpr;
 
 const arrayType = expr_parser.arrayType;
 const typeofExpr = expr_parser.typeofExpr;
@@ -142,6 +143,7 @@ pub const rules = blk: {
 
     // Control flow
     r.set(.IF, .{ .prefix = parseIfExpr });
+    r.set(.RETURN, .{ .prefix = returnExpr });
 
     // Blocks
     r.set(.LEFT_BRACE, .{

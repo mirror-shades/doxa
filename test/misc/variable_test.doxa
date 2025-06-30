@@ -1,0 +1,8 @@
+function var_test(n :: int) returns(int) {
+    var temp is n - 2;
+    n?; // Should show original n
+    temp?; // Should show n - 2
+    return temp;
+}
+
+var_test(5)?; // Should show: 5, 3, and return 3 
