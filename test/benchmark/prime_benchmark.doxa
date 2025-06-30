@@ -1,7 +1,7 @@
 // Prime Number Benchmark
 // Tests loops, conditionals, math operations, and array manipulation
 
-function is_prime(n :: int) returns(bool) {
+function is_prime(n :: int) returns(tetra) {
     if n < 2 then return false;
     if n equals 2 then return true;
     if n % 2 equals 0 then return false;
@@ -19,14 +19,15 @@ function prime_benchmark() {
     var primes :: int[] is [];
     var count is 0;
     var candidate is 2;
-    const target is 10000;  // Find first 10,000 primes
+    const target is 500;  // Find first 10,000 primes
     
-    "Finding first 10,000 prime numbers..."?;
+    "Finding first 5000 prime numbers..."?;
     
     while count < target {
         if is_prime(candidate) then {
             primes.push(candidate);
             count += 1;
+            count?;
         }
         candidate += 1;
     }

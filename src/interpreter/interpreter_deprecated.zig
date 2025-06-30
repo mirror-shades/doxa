@@ -374,9 +374,9 @@ pub const Interpreter = struct {
 
         var result: ?TokenLiteral = null;
 
-        // Reset return flag at start of block (unless we're in a nested call)
-        const previous_return_state = self.has_returned;
-        defer self.has_returned = previous_return_state;
+        // CRITICAL FIX: Don't reset has_returned flag - it should persist until function completes
+        // const previous_return_state = self.has_returned;
+        // defer self.has_returned = previous_return_state;
 
         // Execute all statements, respecting return status
         for (statements) |*stmt| {
@@ -385,12 +385,12 @@ pub const Interpreter = struct {
 
             result = self.executeStatement(stmt, self.debug_enabled) catch |err| {
                 if (err == error.ReturnValue) {
-                    // Get the return value from the environment
-                    if (try environment.get("return")) |return_value| {
-                        // Set the return flag
-                        self.has_returned = true;
-                        return return_value;
+                    // Set the return flag but propagate the error to caller
+                    self.has_returned = true;
+                    if (self.debug_enabled) {
+                        std.debug.print("EXECUTE BLOCK: Propagating ReturnValue error to caller\n", .{});
                     }
+                    return err;
                 }
                 return err;
             };
@@ -481,7 +481,16 @@ pub const Interpreter = struct {
                 }
 
                 if (expr) |e| {
-                    const result = try self.evaluate(e);
+                    // CRITICAL FIX: Don't use try - let ReturnValue errors propagate properly
+                    const result = self.evaluate(e) catch |err| {
+                        if (err == error.ReturnValue) {
+                            if (self.debug_enabled) {
+                                std.debug.print("EXPRESSION STATEMENT: Propagating ReturnValue error\n", .{});
+                            }
+                            return err;
+                        }
+                        return err;
+                    };
                     if (self.debug_enabled) {
                         std.debug.print("Expression result: {any}\n", .{result});
                     }
@@ -782,14 +791,23 @@ pub const Interpreter = struct {
             .Continue => return .{ .nothing = {} },
             .Break => return .{ .nothing = {} },
             .Return => |ret| {
+                if (self.debug_enabled) {
+                    std.debug.print("RETURN STATEMENT: Executing return statement\n", .{});
+                }
                 if (ret.value) |value| {
                     const return_value = try self.evaluate(value);
                     try self.environment.define("return", return_value, .{ .base = .Auto });
                     self.has_returned = true; // Set the flag
+                    if (self.debug_enabled) {
+                        std.debug.print("RETURN STATEMENT: Set has_returned=true, returning error.ReturnValue\n", .{});
+                    }
                     return error.ReturnValue;
                 }
                 try self.environment.define("return", .{ .nothing = {} }, .{ .base = .Nothing });
                 self.has_returned = true; // Set the flag
+                if (self.debug_enabled) {
+                    std.debug.print("RETURN STATEMENT: Set has_returned=true, returning error.ReturnValue\n", .{});
+                }
                 return error.ReturnValue;
             },
         };
@@ -1044,9 +1062,24 @@ pub const Interpreter = struct {
                 // Execute the chosen branch in the new environment
                 const result = self.executeBlock(statements, &if_env) catch |err| {
                     if (err == error.ReturnValue) {
-                        if (try if_env.get("return")) |return_value| {
-                            return return_value;
+                        if (self.debug_enabled) {
+                            std.debug.print("IF STATEMENT: Caught ReturnValue error from if block\n", .{});
                         }
+                        // CRITICAL FIX: Save return value in parent environment and propagate error
+                        if (try if_env.get("return")) |return_value| {
+                            if (self.debug_enabled) {
+                                std.debug.print("IF STATEMENT: Found return value {any}, defining in parent environment\n", .{return_value});
+                            }
+                            // Try to assign first, if that fails then define
+                            self.environment.assign("return", return_value) catch {
+                                try self.environment.define("return", return_value, .{ .base = .Auto });
+                            };
+                        }
+                        // Propagate the ReturnValue error instead of consuming it
+                        if (self.debug_enabled) {
+                            std.debug.print("IF STATEMENT: Propagating ReturnValue error to parent\n", .{});
+                        }
+                        return err;
                     }
                     return err;
                 };
@@ -1059,9 +1092,15 @@ pub const Interpreter = struct {
 
                 const result = self.executeBlock(block.statements, &block_env) catch |err| {
                     if (err == error.ReturnValue) {
+                        // CRITICAL FIX: Save return value in parent environment and propagate error
                         if (try block_env.get("return")) |return_value| {
-                            return return_value;
+                            // Try to assign first, if that fails then define
+                            self.environment.assign("return", return_value) catch {
+                                try self.environment.define("return", return_value, .{ .base = .Auto });
+                            };
                         }
+                        // Propagate the ReturnValue error instead of consuming it
+                        return err;
                     }
                     return err;
                 };
@@ -1966,6 +2005,9 @@ pub const Interpreter = struct {
             },
             .While => |while_expr| {
                 while (true) {
+                    // CRITICAL FIX: Check has_returned flag before evaluating condition
+                    if (self.has_returned) break;
+
                     const condition_result = try self.evaluate(while_expr.condition);
                     if (condition_result != .tetra) {
                         return error.TypeError;
@@ -1978,8 +2020,48 @@ pub const Interpreter = struct {
                     // Update the root scope to our new iteration scope
                     self.memory_manager.scope_manager.root_scope = iteration_scope;
 
-                    // Execute the loop body with the new scope
-                    _ = try self.evaluate(while_expr.body);
+                    // CRITICAL FIX: Evaluate body and handle ReturnValue properly
+                    _ = self.evaluate(while_expr.body) catch |err| {
+                        if (err == error.ReturnValue) {
+                            // For ReturnValue, just restore scope - DON'T deinit yet!
+                            // Let the has_returned check handle cleanup
+                            self.memory_manager.scope_manager.root_scope = current_scope;
+                            if (self.debug_enabled) {
+                                std.debug.print("WHILE LOOP: Caught ReturnValue error, checking has_returned flag\n", .{});
+                            }
+                            // Continue execution to check has_returned flag below
+                        } else {
+                            // For other errors, restore scope and propagate immediately
+                            self.memory_manager.scope_manager.root_scope = current_scope;
+                            iteration_scope.deinit();
+                            return err;
+                        }
+                    };
+
+                    // CRITICAL FIX: ALWAYS check has_returned flag after body execution, regardless of errors
+                    if (self.has_returned) {
+                        if (self.debug_enabled) {
+                            std.debug.print("WHILE LOOP: Detected has_returned=true, breaking loop to allow function return\n", .{});
+                        }
+
+                        // CRITICAL: Before cleaning up iteration scope, preserve return value in parent environment
+                        if (iteration_scope.lookupVariable("return")) |return_var| {
+                            if (self.memory_manager.scope_manager.value_storage.get(return_var.storage_id)) |storage| {
+                                const return_value = storage.value;
+                                if (self.debug_enabled) {
+                                    std.debug.print("WHILE LOOP: Preserving return value before scope cleanup: {any}\n", .{return_value});
+                                }
+                                // Store return value in current environment (function environment)
+                                try self.environment.define("return", return_value, .{ .base = .Nothing });
+                            }
+                        }
+
+                        // Restore the original scope before breaking
+                        self.memory_manager.scope_manager.root_scope = current_scope;
+                        iteration_scope.deinit();
+                        // Break the loop and let the function handle the return normally
+                        break;
+                    }
 
                     // Restore the original scope
                     self.memory_manager.scope_manager.root_scope = current_scope;
@@ -1995,6 +2077,9 @@ pub const Interpreter = struct {
 
                 // Main loop
                 while (true) {
+                    // CRITICAL FIX: Check has_returned flag before evaluating condition
+                    if (self.has_returned) break;
+
                     // Check condition if present
                     if (for_expr.condition) |cond| {
                         const condition_result = try self.evaluate(cond);
@@ -2009,8 +2094,35 @@ pub const Interpreter = struct {
                     var iteration_scope = try self.memory_manager.scope_manager.createScope(current_scope);
                     self.memory_manager.scope_manager.root_scope = iteration_scope;
 
-                    // Execute body
-                    _ = try self.evaluate(for_expr.body);
+                    // CRITICAL FIX: Evaluate body and handle ReturnValue properly
+                    _ = self.evaluate(for_expr.body) catch |err| {
+                        if (err == error.ReturnValue) {
+                            // For ReturnValue, just restore scope - DON'T deinit yet!
+                            // Let the has_returned check handle cleanup
+                            self.memory_manager.scope_manager.root_scope = current_scope;
+                            if (self.debug_enabled) {
+                                std.debug.print("FOR LOOP: Caught ReturnValue error, checking has_returned flag\n", .{});
+                            }
+                            // Continue execution to check has_returned flag below
+                        } else {
+                            // For other errors, restore scope and propagate immediately
+                            self.memory_manager.scope_manager.root_scope = current_scope;
+                            iteration_scope.deinit();
+                            return err;
+                        }
+                    };
+
+                    // CRITICAL FIX: Check has_returned flag - if set, return ReturnValue error
+                    if (self.has_returned) {
+                        if (self.debug_enabled) {
+                            std.debug.print("FOR LOOP: Detected has_returned=true, propagating ReturnValue error\n", .{});
+                        }
+                        // Restore the original scope before breaking
+                        self.memory_manager.scope_manager.root_scope = current_scope;
+                        iteration_scope.deinit();
+                        // Return the ReturnValue error so function call can handle it
+                        return error.ReturnValue;
+                    }
 
                     // Execute increment if present
                     if (for_expr.increment) |incr| {
@@ -2717,6 +2829,9 @@ pub const Interpreter = struct {
                 return .{ .nothing = {} };
             },
             .ReturnExpr => |return_expr| {
+                if (self.debug_enabled) {
+                    std.debug.print("RETURN EXPRESSION: Executing return expression\n", .{});
+                }
                 // Evaluate the return value if present
                 const return_value = if (return_expr.value) |value|
                     try self.evaluate(value)
@@ -2726,6 +2841,9 @@ pub const Interpreter = struct {
                 // Store the return value in the environment for the caller to retrieve
                 try self.environment.define("return", return_value, .{ .base = .Nothing });
                 self.has_returned = true;
+                if (self.debug_enabled) {
+                    std.debug.print("RETURN EXPRESSION: Set has_returned=true, returning error.ReturnValue\n", .{});
+                }
                 return error.ReturnValue;
             },
         };

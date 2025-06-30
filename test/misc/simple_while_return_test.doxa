@@ -1,0 +1,13 @@
+// Minimal test case for while loop + return statement
+function simple_test() returns(tetra) {
+    var i is 1;
+    while i < 5 {
+        if i equals 3 then return true; // Should return when i=3
+        i += 1;
+    }
+    return false;
+}
+
+"Testing simple while loop return:"?;
+simple_test()?; // Should print: true
+"Test completed!"?; 

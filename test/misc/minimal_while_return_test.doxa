@@ -1,0 +1,11 @@
+// Minimal while loop return test
+function test() returns(int) {
+    var i is 1;
+    while i < 3 {
+        if i equals 2 then return 42;
+        i += 1;
+    }
+    return 99;
+}
+
+test()?; 
