@@ -76,8 +76,8 @@ def run_benchmark(file_path, benchmark_name):
 def main():
     # Define benchmark files
     benchmarks = [
-        # ("./test/benchmark/fizzbuzz_benchmark.doxa", "FizzBuzz Loop"),
-        # ("./test/benchmark/fibonacci_benchmark.doxa", "Fibonacci Recursive"),
+        ("./test/benchmark/fizzbuzz_benchmark.doxa", "FizzBuzz Loop"),
+        ("./test/benchmark/fibonacci_benchmark.doxa", "Fibonacci Recursive"),
         ("./test/benchmark/prime_benchmark.doxa", "Prime Numbers"),
     ]
     

@@ -133,8 +133,9 @@ pub fn tokenLiteralToHIRValue(token_literal: TokenLiteral) HIRValue {
         .nothing => HIRValue.nothing,
         // Convert TokenLiteral arrays back to HIR arrays
         .array => |arr| blk: {
-            // Allocate mutable array directly
-            const elements = std.heap.page_allocator.alloc(HIRValue, arr.len) catch {
+            // CRITICAL FIX: For empty arrays, allocate minimum capacity for growth
+            const min_capacity = if (arr.len == 0) 8 else arr.len;
+            const elements = std.heap.page_allocator.alloc(HIRValue, min_capacity) catch {
                 // On allocation failure, return empty array
                 break :blk HIRValue{
                     .array = HIRArray{
@@ -145,8 +146,14 @@ pub fn tokenLiteralToHIRValue(token_literal: TokenLiteral) HIRValue {
                 };
             };
 
+            // Initialize all elements to nothing
+            for (elements) |*elem| {
+                elem.* = HIRValue.nothing;
+            }
+
+            // Copy actual elements
             for (arr, 0..) |elem, i| {
-                if (i >= elements.len) break;
+                if (i >= arr.len) break;
                 elements[i] = tokenLiteralToHIRValue(elem);
             }
 
@@ -154,7 +161,7 @@ pub fn tokenLiteralToHIRValue(token_literal: TokenLiteral) HIRValue {
                 .array = HIRArray{
                     .elements = elements,
                     .element_type = .Auto, // Infer from first element
-                    .capacity = @intCast(elements.len),
+                    .capacity = @intCast(min_capacity), // CRITICAL FIX: Use min_capacity, not arr.len
                 },
             };
         },
@@ -749,16 +756,20 @@ pub const HIRVM = struct {
             // Array operations (Phase 1: Core Data Types)
             .ArrayNew => |a| {
                 // Create new array with specified size
-                const elements = try self.allocator.alloc(HIRValue, a.size);
+                // CRITICAL FIX: For empty arrays (size=0), allocate minimum capacity for growth
+                const initial_capacity = if (a.size == 0) 8 else a.size; // Start with capacity 8 for empty arrays
+                const elements = try self.allocator.alloc(HIRValue, initial_capacity);
+
                 // Initialize all elements to nothing
                 for (elements) |*element| {
                     element.* = HIRValue.nothing;
                 }
 
+                // For empty arrays, we use the full capacity but track length separately
                 const array = HIRValue{ .array = HIRArray{
                     .elements = elements,
                     .element_type = a.element_type,
-                    .capacity = a.size,
+                    .capacity = initial_capacity,
                 } };
 
                 try self.stack.push(HIRFrame.initFromHIRValue(array));
@@ -1068,11 +1079,19 @@ pub const HIRVM = struct {
 
                                     // Check if we need to resize
                                     if (length >= mutable_arr.capacity) {
-                                        // For now, just return an error if full
-                                        return self.reporter.reportError("Array is full - cannot push more elements", .{});
+                                        // CRITICAL FIX: Resize the array by doubling capacity
+                                        const new_capacity = mutable_arr.capacity * 2;
+                                        const new_elements = try self.allocator.realloc(mutable_arr.elements, new_capacity);
+                                        mutable_arr.elements = new_elements;
+                                        mutable_arr.capacity = new_capacity;
+
+                                        // Initialize new elements to nothing
+                                        for (new_elements[length..]) |*elem| {
+                                            elem.* = HIRValue.nothing;
+                                        }
                                     }
 
-                                    // Add element to end
+                                    // Add element to end (capacity is guaranteed to be > length)
                                     mutable_arr.elements[length] = element.value;
 
                                     // Push the modified array back onto the stack

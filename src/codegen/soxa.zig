@@ -1068,16 +1068,31 @@ pub const HIRGenerator = struct {
                 var function_index: u32 = 0;
 
                 // Check if this is a method call (callee is FieldAccess) or regular function call
+                var method_target_var: ?[]const u8 = null; // Track if method is called on a variable
                 switch (call.callee.data) {
                     .FieldAccess => |field_access| {
                         // This is a method call like arr.length()
                         function_name = field_access.field.lexeme;
                         call_kind = .BuiltinFunction;
 
-                        // Generate the object expression (arr)
-                        try self.generateExpression(field_access.object);
+                        // Check if the method is called on a variable (for mutating methods)
+                        if (field_access.object.data == .Variable) {
+                            method_target_var = field_access.object.data.Variable.lexeme;
+                        }
 
                         std.debug.print(">> Method call: {s}\n", .{function_name});
+
+                        // CRITICAL FIX: Generate object FIRST, then arguments for correct stack order
+                        // The VM's push method expects: element (top), array (bottom)
+                        // So we need stack order: [array, element] (bottom to top)
+
+                        // Generate the object expression (arr) FIRST
+                        try self.generateExpression(field_access.object);
+
+                        // Generate arguments (in order) AFTER object - these will be on top for VM
+                        for (call.arguments) |arg| {
+                            try self.generateExpression(arg);
+                        }
                     },
                     .Variable => |var_token| {
                         // This is a regular function call like fizzbuzz(1)
@@ -1101,9 +1116,11 @@ pub const HIRGenerator = struct {
                     },
                 }
 
-                // Generate arguments (in order) - these will be on stack for VM
-                for (call.arguments) |arg| {
-                    try self.generateExpression(arg);
+                // Generate arguments for non-method calls (method calls handle arguments differently)
+                if (call.callee.data != .FieldAccess) {
+                    for (call.arguments) |arg| {
+                        try self.generateExpression(arg);
+                    }
                 }
 
                 // Generate function call
@@ -1117,6 +1134,35 @@ pub const HIRGenerator = struct {
                         .return_type = .Auto,
                     },
                 });
+
+                std.debug.print(">> Generated Call instruction: function_name={s}, call_kind={s}, function_index={}\n", .{ function_name, @tagName(call_kind), function_index });
+
+                // CRITICAL FIX: For mutating method calls on variables, store result back to variable
+                if (call.callee.data == .FieldAccess and method_target_var != null) {
+                    const target_var = method_target_var.?;
+
+                    // Check if this is a mutating method that should update the original variable
+                    const is_mutating_method = std.mem.eql(u8, function_name, "push") or
+                        std.mem.eql(u8, function_name, "pop") or
+                        std.mem.eql(u8, function_name, "insert") or
+                        std.mem.eql(u8, function_name, "remove");
+
+                    if (is_mutating_method) {
+                        std.debug.print(">> Storing mutating method result back to variable: {s}\n", .{target_var});
+
+                        // Duplicate the result to leave it on stack as the expression result
+                        try self.instructions.append(.Dup);
+
+                        // Store the result back to the original variable
+                        const var_idx = try self.getOrCreateVariable(target_var);
+                        try self.instructions.append(.{ .StoreVar = .{
+                            .var_index = var_idx,
+                            .var_name = target_var,
+                            .scope_kind = .Local,
+                            .module_context = null,
+                        } });
+                    }
+                }
             },
 
             .Inspect => |inspect| {
@@ -1767,6 +1813,7 @@ fn writeHIRValue(writer: anytype, value: HIRValue) !void {
         .array => |arr| {
             try writer.writeByte(6); // Type tag for array
             try writer.writeInt(u32, @as(u32, @intCast(arr.elements.len)), .little);
+            try writer.writeInt(u32, arr.capacity, .little); // CRITICAL FIX: Save capacity!
             try writer.writeByte(@intFromEnum(arr.element_type)); // Element type
             // For now, we'll serialize basic array structure
             // Full recursive serialization would require more complex handling
@@ -1809,19 +1856,21 @@ fn readHIRValue(reader: anytype, allocator: std.mem.Allocator) !HIRValue {
         6 => {
             // Array deserialization (basic structure)
             const array_len = try reader.readInt(u32, .little);
+            const capacity = try reader.readInt(u32, .little); // CRITICAL FIX: Read capacity!
             const element_type_byte = try reader.readByte();
             const element_type = @as(HIRType, @enumFromInt(element_type_byte));
 
-            // Create empty array with proper type info
-            const elements = try allocator.alloc(HIRValue, array_len);
-            for (elements) |*element| {
+            // Create array with proper capacity (allocate capacity, but slice to actual length)
+            const backing_memory = try allocator.alloc(HIRValue, capacity);
+            for (backing_memory) |*element| {
                 element.* = HIRValue.nothing;
             }
+            const elements = backing_memory[0..array_len]; // Slice to actual length
 
             return HIRValue{ .array = HIRArray{
                 .elements = elements,
                 .element_type = element_type,
-                .capacity = array_len,
+                .capacity = capacity,
             } };
         },
         7 => {
@@ -1895,6 +1944,8 @@ fn writeHIRInstruction(writer: anytype, instruction: HIRInstruction, allocator: 
             // Serialize qualified_name
             try writer.writeInt(u32, @as(u32, @intCast(c.qualified_name.len)), .little);
             try writer.writeAll(c.qualified_name);
+            // CRITICAL FIX: Save call_kind!
+            try writer.writeByte(@intFromEnum(c.call_kind));
         },
         .Return => |r| {
             try writer.writeByte(8); // Instruction tag
@@ -2030,11 +2081,14 @@ fn readHIRInstruction(reader: anytype, allocator: std.mem.Allocator) !HIRInstruc
             const name_len = try reader.readInt(u32, .little);
             const qualified_name = try allocator.alloc(u8, name_len);
             _ = try reader.readAll(qualified_name);
+            // CRITICAL FIX: Read call_kind!
+            const call_kind_byte = try reader.readByte();
+            const call_kind = @as(CallKind, @enumFromInt(call_kind_byte));
             return HIRInstruction{ .Call = .{
                 .function_index = function_index,
                 .qualified_name = qualified_name,
                 .arg_count = arg_count,
-                .call_kind = .LocalFunction,
+                .call_kind = call_kind,
                 .target_module = null,
                 .return_type = .Auto,
             } };
