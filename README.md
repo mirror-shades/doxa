@@ -12,6 +12,8 @@ See documentation for a more detailed explaination of how this works.
 
 ## Components
 
+![Pipeline](./pipeline.svg)
+
 Currently Doxa runs on an AST walking interpreter so it is pretty slow. The current goal is to modularize the front end and back end of the language. This would involve stack based interpretation as well as true portable compilation into LLVM IR. Below is the planned implementation:
 
 - **Lexer**: Tokenizes source code
@@ -33,9 +35,9 @@ zig build
 
 ## Development Status
 
-- ✅ **AST Interpreter**: Fully functional, supports all language features
-- 🚧 **Soxa VM**: currently implementing AST to HIR compilation before reimplementing the old stack based VM
-- 🚧 **LLVM IR**: Minimal prototyping, many features missing
+- ✅ **AST Interpreter**: Fully functional, supports all language features, will be deprecated for VM
+- 🚧 **Soxa VM**: currently implementing stack based HIR and VM
+- ❌ **LLVM IR**: Minimal prototyping, many features missing, future
 
 ## Core Concepts
 
