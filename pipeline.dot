@@ -6,7 +6,7 @@ digraph DoxaPipeline {
     tokenizer [label="Tokenizer"];
     parser [label="Parser"];
     ast [label="AST"];
-    soxa [label="SOXA IR"];
+    soxa [label="Soxa (stack HIR)"];
     
     subgraph cluster_backends {
         label = "Backends";
