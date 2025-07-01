@@ -343,7 +343,7 @@ fn runSoxaFile(memoryManager: *MemoryManager, soxa_path: []const u8) !void {
     var reporter = Reporting.Reporter.init();
 
     // Create and run HIR VM directly
-    var vm = try DoxaVM.init(memoryManager.getAllocator(), &hir_program, &reporter, memoryManager);
+    var vm = try DoxaVM.init(&hir_program, &reporter, memoryManager);
     defer vm.deinit();
 
     if (memoryManager.debug_enabled) {

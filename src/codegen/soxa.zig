@@ -752,9 +752,19 @@ pub const HIRGenerator = struct {
                 std.debug.print("  >> Parameter {}: {s} -> var[{}]\n", .{ param_index, param.name.lexeme, var_idx });
             }
 
-            // Generate function body statements
+            // Generate function body statements with basic dead code elimination
+            var has_returned = false;
             for (function_body.statements) |body_stmt| {
+                // Skip statements after a definitive return (basic dead code elimination)
+                if (has_returned) {
+                    std.debug.print(">> Skipping unreachable statement after return\n", .{});
+                    break;
+                }
+
                 try self.generateStatement(body_stmt);
+
+                // Check if this statement definitely returns (for dead code elimination)
+                has_returned = self.statementAlwaysReturns(body_stmt);
             }
 
             // Exit function scope
@@ -1514,6 +1524,46 @@ pub const HIRGenerator = struct {
         const label = try std.fmt.allocPrint(self.allocator, "{s}_{d}", .{ prefix, self.label_count });
         self.label_count += 1;
         return label;
+    }
+
+    /// Helper function to determine if a statement always returns (for dead code elimination)
+    fn statementAlwaysReturns(self: *HIRGenerator, stmt: ast.Stmt) bool {
+        switch (stmt.data) {
+            .Return => return true,
+            .Expression => |expr| {
+                if (expr) |e| {
+                    return self.expressionAlwaysReturns(e);
+                }
+                return false;
+            },
+            else => return false,
+        }
+    }
+
+    /// Helper function to determine if an expression always returns
+    fn expressionAlwaysReturns(self: *HIRGenerator, expr: *ast.Expr) bool {
+        switch (expr.data) {
+            .If => |if_expr| {
+                // An if-expression always returns if both branches always return
+                const then_returns = if (if_expr.then_branch) |then| self.expressionAlwaysReturns(then) else false;
+                const else_returns = if (if_expr.else_branch) |else_branch| self.expressionAlwaysReturns(else_branch) else false;
+                return then_returns and else_returns;
+            },
+            .Block => |block| {
+                // A block always returns if its final value/statement always returns
+                if (block.value) |value| {
+                    return self.expressionAlwaysReturns(value);
+                }
+                // Check if any statement in the block returns
+                for (block.statements) |stmt| {
+                    if (self.statementAlwaysReturns(stmt)) {
+                        return true;
+                    }
+                }
+                return false;
+            },
+            else => return false,
+        }
     }
 };
 
