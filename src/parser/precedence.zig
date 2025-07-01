@@ -95,10 +95,12 @@ pub const rules = blk: {
     r.set(.ASTERISK, .{ .infix = binary, .precedence = .FACTOR });
     r.set(.SLASH, .{ .infix = binary, .precedence = .FACTOR });
     r.set(.MODULO, .{ .infix = binary, .precedence = .FACTOR });
+    r.set(.POWER, .{ .infix = binary, .precedence = .UNARY, .associativity = .RIGHT }); // Right associative for exponentiation
 
     // Add compound assignment operators
     r.set(.PLUS_EQUAL, .{ .infix = compound_assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
     r.set(.MINUS_EQUAL, .{ .infix = compound_assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
+    r.set(.POWER_EQUAL, .{ .infix = compound_assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
     // r.set(.ASTERISK_EQUAL, .{ .infix = compound_assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
     // r.set(.SLASH_EQUAL, .{ .infix = compound_assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
     // r.set(.MODULO_EQUAL, .{ .infix = compound_assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
