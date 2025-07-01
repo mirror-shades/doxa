@@ -12,6 +12,8 @@
         <link rel="prev" href="../syntax/">
       
       
+        <link rel="next" href="../soxa/">
+      
       
       <link rel="icon" href="../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.14">
@@ -258,6 +260,25 @@
   
 
       
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../soxa/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Soxa
+
+      </a>
+    </li>
+  
+
+      
     </ul>
   </div>
 </nav>
@@ -413,6 +434,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#an-example" class="md-nav__link">
+    <span class="md-ellipsis">
+      An Example
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#first-order-logic" class="md-nav__link">
     <span class="md-ellipsis">
       First order logic
@@ -430,6 +460,28 @@
   
 </nav>
       
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../soxa/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Soxa
+    
+  </span>
+  
+
+      </a>
     </li>
   
 
@@ -458,6 +510,61 @@
 <code>false</code><br />
 <code>both</code> - This is equivilant to both true <em>and</em> false<br />
 <code>neither</code> - This is equivilatnt neither to true <em>or</em> false</p>
+<h3 id="an-example">An Example</h3>
+<p>Let's start with a condition, in this case, 'living'. In traditional boolean logic there would be two states for this condition, true or false. But what about logical conditions outside of true and false? Here is a four cornered representation of the 'living' condition:</p>
+<div class="highlight"><pre><span></span><code>const Bob is true;
+const Shakespere is false;
+const zombie is both;
+const angel is neither;
+</code></pre></div>
+<p>Now let's try running these values through some logic:</p>
+<div class="highlight"><pre><span></span><code>function living(alive :: tetra) {
+    if alive then &quot;I am alive&quot;?;
+    if not alive then &quot;I am dead&quot;?;
+}
+</code></pre></div>
+<p>If you are following along, here is what I called and the output I received:</p>
+<div class="highlight"><pre><span></span><code>&quot;Bob&quot;?;
+living(Bob);
+&quot;Shakespere&quot;?;
+living(Shakespere);
+&quot;zombie&quot;?;
+living(zombie);
+&quot;angel&quot;?;
+living(angel);
+</code></pre></div>
+<div class="highlight"><pre><span></span><code>[C:\dev\zig\doxa\test.doxa:11:6] value = &quot;Bob&quot;
+[C:\dev\zig\doxa\test.doxa:7:31] value = &quot;I am alive&quot;
+[C:\dev\zig\doxa\test.doxa:13:13] value = &quot;Shakespere&quot;
+[C:\dev\zig\doxa\test.doxa:8:34] value = &quot;I am dead&quot;
+[C:\dev\zig\doxa\test.doxa:15:9] value = &quot;zombie&quot;
+[C:\dev\zig\doxa\test.doxa:7:31] value = &quot;I am alive&quot;
+[C:\dev\zig\doxa\test.doxa:8:34] value = &quot;I am dead&quot;
+[C:\dev\zig\doxa\test.doxa:17:8] value = &quot;angel&quot;
+</code></pre></div>
+<p>The output here might seems strange but the logic behind it is very simple. True only triggers conditions which are true. False only triggers conditions which are false. Both will trigger both the condition regardless if it is true or false. Neither will never trigger a condition. This means zombie triggers both the <code>alive</code> condition and its negation <code>not alive</code>. Angel triggers neither and so we see no output.</p>
+<p>Keep in mind, a tetra is a value. It doesn't actually alter the logic flow of your program, it's purpose is simply to follow the logic flow in ways basic true and false cannot.</p>
+<p>Special attention should (not) be paid to the else clause. The else clause is exactly what it sounds like - "if a condition is ment, then do x, OR ELSE, do y". As we now know, both will always trigger a condition, and neither will never trigger a condition. The effect with else blocks is then as you would assume, both with never trigger an else clause, and neither will always trigger an else clause.</p>
+<div class="highlight"><pre><span></span><code>const zombie is both;
+const angel is neither;
+
+function living(alive :: tetra) {
+    if alive then &quot;I am alive&quot;?; else &quot;I am not alive&quot;?;
+    if not alive then &quot;I am dead&quot;?; else &quot;I am not dead&quot;?;
+}
+
+&quot;zombie&quot;?;
+living(zombie);
+&quot;angel&quot;?;
+living(angel);
+</code></pre></div>
+<div class="highlight"><pre><span></span><code>[C:\dev\zig\doxa\test.doxa:9:9] value = &quot;zombie&quot;
+[C:\dev\zig\doxa\test.doxa:5:31] value = &quot;I am alive&quot;
+[C:\dev\zig\doxa\test.doxa:6:34] value = &quot;I am dead&quot;
+[C:\dev\zig\doxa\test.doxa:11:8] value = &quot;angel&quot;
+[C:\dev\zig\doxa\test.doxa:5:55] value = &quot;I am not alive&quot;
+[C:\dev\zig\doxa\test.doxa:6:57] value = &quot;I am not dead&quot;
+</code></pre></div>
 <h3 id="first-order-logic">First order logic</h3>
 <p>Doxa has extensive for traditional first order logics that work as expected with true and false values. These can be represented in formal unicode notation:</p>
 <div class="highlight"><pre><span></span><code>const arr :: int[] = [1, 2, 3, 4, 5]
