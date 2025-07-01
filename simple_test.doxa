@@ -1,0 +1,7 @@
+// Simple test for basic tetra functionality 
+var t is true;
+t?;
+
+if t then {
+    "Success!"?;
+} 

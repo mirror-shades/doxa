@@ -2,12 +2,6 @@
 
 ## Core Language Features
 
-### Type System
-
-- No operator or function overloading
-- No classes, only structs and composition
-- Garbage collected memory management
-
 ### Basic Composition Example
 
 ```doxa
@@ -268,15 +262,15 @@ There are currently two trancendental operators, `and` and `not`. These can be r
 
 | ^     | T   | F   | B   | N   |
 | ----- | --- | --- | --- | --- |
-| **T** | T   | B   | B   | F   |
-| **F** | B   | F   | B   | F   |
+| **F** | F   | B   | B   | F   |
+| **T** | B   | T   | B   | F   |
 | **B** | B   | B   | B   | F   |
 | **N** | F   | F   | F   | F   |
 
 | ~     |     |
 | ----- | --- |
-| **T** | F   |
 | **F** | T   |
+| **T** | F   |
 | **B** | N   |
 | **N** | B   |
 

@@ -1,0 +1,23 @@
+// Performance Test: u8 Tetras vs Boolean Logic
+
+// Test complex logic chains
+var a is true;
+var b is both; 
+var c is false;
+var d is neither;
+
+"=== Complex Logic Chain Test ==="?;
+
+// This would be SLOW with traditional boolean logic (many branches)
+// but FAST with our lookup tables (no branches)
+var result1 is a and b;    // Lookup: [1][2] = instant
+var result2 is result1 and c;  // Lookup: [result1][0] = instant  
+var result3 is not result2;    // Lookup: [result2] = instant
+
+result1?;  // Should be: true AND both = true (1)
+result2?;  // Should be: true AND false = false (0)  
+result3?;  // Should be: NOT false = true (1)
+
+"=== Tetras handle edge cases booleans can't ==="?;
+var edge_case is both and neither;  // Impossible with booleans!
+edge_case?; 
