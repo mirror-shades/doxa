@@ -442,15 +442,6 @@
   
 </li>
         
-          <li class="md-nav__item">
-  <a href="#first-order-logic" class="md-nav__link">
-    <span class="md-ellipsis">
-      First order logic
-    </span>
-  </a>
-  
-</li>
-        
       </ul>
     </nav>
   
@@ -505,25 +496,26 @@
 <h1 id="doxa-language-reference">Doxa Language Reference</h1>
 <h2 id="tetras">Tetras</h2>
 <h3 id="type-overview">Type overview</h3>
-<p>A tetra is a type which represents four cornered logic. You can think of a tetra like an extended boolean type which would represent two cornered logic. The four states which tetras can exist in are:</p>
+<p>A tetra is a type which represents four cornered logic as opposed to Booles binary logic. You can think of a tetra a bit like an extended boolean type. Where bools can only exist in only two states, true or false, tetras can exist in four. The four states which tetras can exist in are:</p>
 <p><code>true</code> - These first two values should be familiar<br />
 <code>false</code><br />
 <code>both</code> - This is equivilant to both true <em>and</em> false<br />
 <code>neither</code> - This is equivilatnt neither to true <em>or</em> false</p>
 <h3 id="an-example">An Example</h3>
-<p>Let's start with a condition, in this case, 'living'. In traditional boolean logic there would be two states for this condition, true or false. But what about logical conditions outside of true and false? Here is a four cornered representation of the 'living' condition:</p>
+<p>Let's start with a condition, in this case, the condition of being alive. In traditional boolean logic there would be only two states for this condition, true or false, or in term of the condition, alive or dead. But a tetra can represent logical conditions outside of this true/false, alive/dead binary.</p>
+<p>Here are four values to represent the four possible states or corners of a tetra:</p>
 <div class="highlight"><pre><span></span><code>const Bob is true;
 const Shakespere is false;
 const zombie is both;
 const angel is neither;
 </code></pre></div>
-<p>Now let's try running these values through some logic:</p>
+<p>Now let's create some conditional logic to understand how a tetra works. Here is a function to discover whether something is alive or not:</p>
 <div class="highlight"><pre><span></span><code>function living(alive :: tetra) {
     if alive then &quot;I am alive&quot;?;
     if not alive then &quot;I am dead&quot;?;
 }
 </code></pre></div>
-<p>If you are following along, here is what I called and the output I received:</p>
+<p>Notice that if this function was in another language and was using a boolean, there would only be two possible branches when executed. If you would like to follow along, here is how I ran the values through the function:</p>
 <div class="highlight"><pre><span></span><code>&quot;Bob&quot;?;
 living(Bob);
 &quot;Shakespere&quot;?;
@@ -533,6 +525,7 @@ living(zombie);
 &quot;angel&quot;?;
 living(angel);
 </code></pre></div>
+<p>And here is the ouput I received:</p>
 <div class="highlight"><pre><span></span><code>[C:\dev\zig\doxa\test.doxa:11:6] value = &quot;Bob&quot;
 [C:\dev\zig\doxa\test.doxa:7:31] value = &quot;I am alive&quot;
 [C:\dev\zig\doxa\test.doxa:13:13] value = &quot;Shakespere&quot;
@@ -542,7 +535,15 @@ living(angel);
 [C:\dev\zig\doxa\test.doxa:8:34] value = &quot;I am dead&quot;
 [C:\dev\zig\doxa\test.doxa:17:8] value = &quot;angel&quot;
 </code></pre></div>
-<p>The output here might seems strange but the logic behind it is very simple. True only triggers conditions which are true. False only triggers conditions which are false. Both will trigger both the condition regardless if it is true or false. Neither will never trigger a condition. This means zombie triggers both the <code>alive</code> condition and its negation <code>not alive</code>. Angel triggers neither and so we see no output.</p>
+<p>The output here might seems strange but the logic behind it is very simple. True only triggers conditions which are true. False only triggers conditions which are false. Both will trigger both the condition regardless if it is true or false. Neither will never trigger a condition.</p>
+<p>This means zombie triggers both the <code>alive</code> condition and its negation <code>not alive</code>.</p>
+<div class="highlight"><pre><span></span><code>[C:\dev\zig\doxa\test.doxa:15:9] value = &quot;zombie&quot;
+[C:\dev\zig\doxa\test.doxa:7:31] value = &quot;I am alive&quot;
+[C:\dev\zig\doxa\test.doxa:8:34] value = &quot;I am dead&quot;
+</code></pre></div>
+<p>Angel triggers neither and so we see no output from either branch.</p>
+<div class="highlight"><pre><span></span><code>[C:\dev\zig\doxa\test.doxa:17:8] value = &quot;angel&quot;
+</code></pre></div>
 <p>Keep in mind, a tetra is a value. It doesn't actually alter the logic flow of your program, it's purpose is simply to follow the logic flow in ways basic true and false cannot.</p>
 <p>Special attention should (not) be paid to the else clause. The else clause is exactly what it sounds like - "if a condition is ment, then do x, OR ELSE, do y". As we now know, both will always trigger a condition, and neither will never trigger a condition. The effect with else blocks is then as you would assume, both with never trigger an else clause, and neither will always trigger an else clause.</p>
 <div class="highlight"><pre><span></span><code>const zombie is both;
@@ -564,60 +565,6 @@ living(angel);
 [C:\dev\zig\doxa\test.doxa:11:8] value = &quot;angel&quot;
 [C:\dev\zig\doxa\test.doxa:5:55] value = &quot;I am not alive&quot;
 [C:\dev\zig\doxa\test.doxa:6:57] value = &quot;I am not dead&quot;
-</code></pre></div>
-<h3 id="first-order-logic">First order logic</h3>
-<p>Doxa has extensive for traditional first order logics that work as expected with true and false values. These can be represented in formal unicode notation:</p>
-<div class="highlight"><pre><span></span><code>const arr :: int[] = [1, 2, 3, 4, 5]
-
-// existential quantifier ∃, element of ∈
-∃x ∈ arr : x &gt; 3; // true
-
-// universal quantifier ∀, where :
-∀x ∈ arr : x &gt; 3; // false
-
-// NOT ¬
-¬false; // true
-
-// biconditional ↔
-false ↔ false; // true
-
-// XOR ⊕
-true ⊕ true; // false
-
-// AND ∧
-true ∧ false; // false
-
-// OR ∨
-true ∨ false; // true
-
-// NAND ↑
-true ↑ false; // true
-
-// NOR ↓
-true ↓ false; // false
-
-// implication →
-true → false; // false
-</code></pre></div>
-<p>This unicode support is paired with plaintext keywords which act in an identical fashion:</p>
-<div class="highlight"><pre><span></span><code>∃ - exists
-∀ - forall
-∈ - in
-: - where
-¬ - not
-↔ - iff
-⊕ - xor
-∧ - and
-∨ - or
-↑ - nand
-↓ - nor
-→ - implies
-</code></pre></div>
-<p>This means formal logical representation can be written in either way:</p>
-<div class="highlight"><pre><span></span><code>const arr :: int[] = [1, 2, 3, 4, 5]
-
-¬(∀x ∈ arr : x &gt; 3); // true
-not (forall x in arr where x &gt; 3); // true
 </code></pre></div>
 
 

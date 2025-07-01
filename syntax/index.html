@@ -534,19 +534,28 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#logical-operators" class="md-nav__link">
+  <a href="#logic" class="md-nav__link">
     <span class="md-ellipsis">
-      Logical Operators
+      Logic
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Logical Operators">
+    <nav class="md-nav" aria-label="Logic">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#first-order-logic-notation" class="md-nav__link">
+  <a href="#first-order-logic" class="md-nav__link">
     <span class="md-ellipsis">
-      First-Order Logic Notation
+      First order logic
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#trancendental-logic" class="md-nav__link">
+    <span class="md-ellipsis">
+      Trancendental logic
     </span>
   </a>
   
@@ -791,84 +800,131 @@ fn add(a, b) {
     return a + b;
 }
 </code></pre></div>
-<h2 id="logical-operators">Logical Operators</h2>
-<h3 id="first-order-logic-notation">First-Order Logic Notation</h3>
-<p>Doxa supports traditional first-order logic notation alongside English keywords:</p>
+<h2 id="logic">Logic</h2>
+<h3 id="first-order-logic">First order logic</h3>
+<p>First order logic always produces a true or false value. For more information on tetras see the tetra page.</p>
+<p>Doxa has extensive for traditional first order logics that work as expected with true and false values. These can be represented in formal unicode notation:</p>
+<div class="highlight"><pre><span></span><code>const arr :: int[] = [1, 2, 3, 4, 5]
+
+// existential quantifier ∃, element of ∈
+∃x ∈ arr : x &gt; 3; // true
+
+// universal quantifier ∀, where :
+∀x ∈ arr : x &gt; 3; // false
+
+// NOT ¬
+¬false; // true
+
+// biconditional ↔
+false ↔ false; // true
+
+// XOR ⊕
+true ⊕ true; // false
+
+// AND ∧
+true ∧ false; // false
+
+// OR ∨
+true ∨ false; // true
+
+// NAND ↑
+true ↑ false; // true
+
+// NOR ↓
+true ↓ false; // false
+
+// implication →
+true → false; // false
+</code></pre></div>
+<p>This unicode support is paired with plaintext keywords which act in an identical fashion:</p>
+<div class="highlight"><pre><span></span><code>∃ - exists
+∀ - forall
+∈ - in
+: - where
+¬ - not
+↔ - iff
+⊕ - xor
+∧ - and
+∨ - or
+↑ - nand
+↓ - nor
+→ - implies
+</code></pre></div>
+<p>This means formal logical representation can be written in either way:</p>
+<div class="highlight"><pre><span></span><code>const arr :: int[] = [1, 2, 3, 4, 5]
+
+¬(∀x ∈ arr : x &gt; 3); // true
+not (forall x in arr where x &gt; 3); // true
+</code></pre></div>
+<h3 id="trancendental-logic">Trancendental logic</h3>
+<p>There are currently two trancendental operators, <code>and</code> and <code>not</code>. These can be represented by the following truth tables:</p>
 <table>
 <thead>
 <tr>
-<th>Symbol</th>
-<th>Keyword</th>
-<th>Description</th>
+<th>^</th>
+<th>T</th>
+<th>F</th>
+<th>B</th>
+<th>N</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>∃</code></td>
-<td>exists</td>
-<td>At least one element satisfies condition</td>
+<td><strong>T</strong></td>
+<td>T</td>
+<td>B</td>
+<td>B</td>
+<td>F</td>
 </tr>
 <tr>
-<td><code>∀</code></td>
-<td>forall</td>
-<td>All elements satisfy condition</td>
+<td><strong>F</strong></td>
+<td>B</td>
+<td>F</td>
+<td>B</td>
+<td>F</td>
 </tr>
 <tr>
-<td><code>¬</code></td>
-<td>not</td>
-<td>Logical negation</td>
+<td><strong>B</strong></td>
+<td>B</td>
+<td>B</td>
+<td>B</td>
+<td>F</td>
 </tr>
 <tr>
-<td><code>∧</code></td>
-<td>and</td>
-<td>Logical AND</td>
-</tr>
-<tr>
-<td><code>∨</code></td>
-<td>or</td>
-<td>Logical OR</td>
-</tr>
-<tr>
-<td><code>↔</code></td>
-<td>iff</td>
-<td>Logical equivalence (if and only if)</td>
-</tr>
-<tr>
-<td><code>⊕</code></td>
-<td>xor</td>
-<td>Exclusive OR</td>
-</tr>
-<tr>
-<td><code>↑</code></td>
-<td>nand</td>
-<td>Not AND</td>
-</tr>
-<tr>
-<td><code>↓</code></td>
-<td>nor</td>
-<td>Not OR</td>
-</tr>
-<tr>
-<td><code>→</code></td>
-<td>implies</td>
-<td>Logical implication</td>
+<td><strong>N</strong></td>
+<td>F</td>
+<td>F</td>
+<td>F</td>
+<td>F</td>
 </tr>
 </tbody>
 </table>
-<p>Examples:</p>
-<div class="highlight"><pre><span></span><code>const arr :: int[] is [1, 2, 3, 4, 5];
-// Quantifiers
-(∃x ∈ arr : x &gt; 3)?;     // true
-(∀x ∈ arr : x &gt; 3)?;     // false
-(¬∀x ∈ arr : x &gt; 3)?;    // true
-
-// Logical operations
-(false ↔ false)?;        // true (equivalent)
-(true ⊕ true)?;         // false (XOR)
-(true ∧ false)?;        // false
-(true ∨ false)?;        // true
-(true → false)?;        // false
-</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>~</th>
+<th></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>T</strong></td>
+<td>F</td>
+</tr>
+<tr>
+<td><strong>F</strong></td>
+<td>T</td>
+</tr>
+<tr>
+<td><strong>B</strong></td>
+<td>N</td>
+</tr>
+<tr>
+<td><strong>N</strong></td>
+<td>B</td>
+</tr>
+</tbody>
+</table>
 <h2 id="modes-of-operation-not-yet-implemented">Modes of Operation (not yet implemented)</h2>
 <p>Doxa supports three operational modes:</p>
 <ul>
