@@ -194,41 +194,91 @@ fn add(a, b) {
 }
 ```
 
-## Logical Operators
+## Logic
 
-### First-Order Logic Notation
+### First order logic
 
-Doxa supports traditional first-order logic notation alongside English keywords:
+First order logic always produces a true or false value. For more information on tetras see the tetra page.
 
-| Symbol | Keyword | Description                              |
-| ------ | ------- | ---------------------------------------- |
-| `∃`    | exists  | At least one element satisfies condition |
-| `∀`    | forall  | All elements satisfy condition           |
-| `¬`    | not     | Logical negation                         |
-| `∧`    | and     | Logical AND                              |
-| `∨`    | or      | Logical OR                               |
-| `↔`    | iff     | Logical equivalence (if and only if)     |
-| `⊕`    | xor     | Exclusive OR                             |
-| `↑`    | nand    | Not AND                                  |
-| `↓`    | nor     | Not OR                                   |
-| `→`    | implies | Logical implication                      |
+Doxa has extensive for traditional first order logics that work as expected with true and false values. These can be represented in formal unicode notation:
 
-Examples:
-
-```doxa
-const arr :: int[] is [1, 2, 3, 4, 5];
-// Quantifiers
-(∃x ∈ arr : x > 3)?;     // true
-(∀x ∈ arr : x > 3)?;     // false
-(¬∀x ∈ arr : x > 3)?;    // true
-
-// Logical operations
-(false ↔ false)?;        // true (equivalent)
-(true ⊕ true)?;         // false (XOR)
-(true ∧ false)?;        // false
-(true ∨ false)?;        // true
-(true → false)?;        // false
 ```
+const arr :: int[] = [1, 2, 3, 4, 5]
+
+// existential quantifier ∃, element of ∈
+∃x ∈ arr : x > 3; // true
+
+// universal quantifier ∀, where :
+∀x ∈ arr : x > 3; // false
+
+// NOT ¬
+¬false; // true
+
+// biconditional ↔
+false ↔ false; // true
+
+// XOR ⊕
+true ⊕ true; // false
+
+// AND ∧
+true ∧ false; // false
+
+// OR ∨
+true ∨ false; // true
+
+// NAND ↑
+true ↑ false; // true
+
+// NOR ↓
+true ↓ false; // false
+
+// implication →
+true → false; // false
+```
+
+This unicode support is paired with plaintext keywords which act in an identical fashion:
+
+```
+∃ - exists
+∀ - forall
+∈ - in
+: - where
+¬ - not
+↔ - iff
+⊕ - xor
+∧ - and
+∨ - or
+↑ - nand
+↓ - nor
+→ - implies
+```
+
+This means formal logical representation can be written in either way:
+
+```
+const arr :: int[] = [1, 2, 3, 4, 5]
+
+¬(∀x ∈ arr : x > 3); // true
+not (forall x in arr where x > 3); // true
+```
+
+### Trancendental logic
+
+There are currently two trancendental operators, `and` and `not`. These can be represented by the following truth tables:
+
+| ^     | T   | F   | B   | N   |
+| ----- | --- | --- | --- | --- |
+| **T** | T   | B   | B   | F   |
+| **F** | B   | F   | B   | F   |
+| **B** | B   | B   | B   | F   |
+| **N** | F   | F   | F   | F   |
+
+| ~     |     |
+| ----- | --- |
+| **T** | F   |
+| **F** | T   |
+| **B** | N   |
+| **N** | B   |
 
 ## Modes of Operation (not yet implemented)
 
