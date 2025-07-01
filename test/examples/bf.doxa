@@ -12,13 +12,15 @@ function getInput() returns(u8) {
 
 function startLoop() {
     if loopSpot.length equals loops 
-        then {
-            loopSpot.push(ip);
-        } else {
-            loopSpot[loops] is ip;
-        }
-        loops += 1;
+    then {
+        loopSpot.push(ip);
+    } else {
+        loopSpot[loops] is ip;
+    }
+    loops += 1;
 }
+
+var number is if level equals 10 then 10 else 5;
 
 function endLoop() {
     if loops >= 0 
