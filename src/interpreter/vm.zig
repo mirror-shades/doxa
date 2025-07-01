@@ -1279,7 +1279,6 @@ pub const HIRVM = struct {
     // LOGICAL OPERATIONS (From old VM - proven implementations)
     // ===============================================================================
 
-    /// ULTRA-FAST Logical AND operation using lookup table - O(1) tetra logic!
     fn logicalAnd(self: *HIRVM, a: HIRFrame, b: HIRFrame) !u8 {
         const a_tetra = switch (a.value) {
             .tetra => |val| if (val <= 3) val else {
@@ -1308,7 +1307,6 @@ pub const HIRVM = struct {
         return soxa.TETRA_AND_LUT[a_tetra][b_tetra];
     }
 
-    /// ULTRA-FAST Logical OR operation using lookup table - O(1) tetra logic!
     fn logicalOr(self: *HIRVM, a: HIRFrame, b: HIRFrame) !u8 {
         const a_tetra = switch (a.value) {
             .tetra => |val| if (val <= 3) val else {
@@ -1337,7 +1335,6 @@ pub const HIRVM = struct {
         return soxa.TETRA_OR_LUT[a_tetra][b_tetra];
     }
 
-    /// ULTRA-FAST Logical NOT operation using lookup table - O(1) tetra logic!
     fn logicalNot(self: *HIRVM, a: HIRFrame) !u8 {
         const a_tetra = switch (a.value) {
             .tetra => |val| if (val <= 3) val else {

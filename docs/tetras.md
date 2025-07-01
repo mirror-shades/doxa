@@ -84,8 +84,8 @@ const zombie is both;
 const angel is neither;
 
 function living(alive :: tetra) {
-    if alive then "I am alive"?; else "I am not alive"?;
-    if not alive then "I am dead"?; else "I am not dead"?;
+    if alive then "I am alive"? else "I am not alive"?;
+    if not alive then "I am dead"? else "I am not dead"?;
 }
 
 "zombie"?;

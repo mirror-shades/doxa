@@ -2247,6 +2247,10 @@ const SoxaTextParser = struct {
                 continue; // Section header
             } else if (std.mem.startsWith(u8, trimmed_right, "    const_")) {
                 try self.parseConstant(trimmed_right);
+            } else if (std.mem.startsWith(u8, trimmed_right, "        entry:")) {
+                // Function metadata - update the last function's entry point
+                try self.updateFunctionEntry(trimmed_right);
+                continue;
             } else if (std.mem.indexOf(u8, trimmed_right, ":")) |colon_pos| {
                 // Label (can be either indented or not) - CHECK BEFORE INSTRUCTIONS!
                 const is_label = blk: {
@@ -2278,10 +2282,6 @@ const SoxaTextParser = struct {
                 } else {
                     try self.parseInstruction(trimmed_right);
                 }
-            } else if (std.mem.startsWith(u8, trimmed_right, "        entry:")) {
-                // Function metadata - update the last function's entry point
-                try self.updateFunctionEntry(trimmed_right);
-                continue;
             }
             // Silently ignore other lines (like function metadata)
         }

@@ -347,18 +347,30 @@ fn runSoxaFile(memoryManager: *MemoryManager, soxa_path: []const u8) !void {
     defer vm.deinit();
 
     if (memoryManager.debug_enabled) {
-        std.debug.print(">> Starting HIR VM execution...\n", .{});
+        std.debug.print(">> Starting REGISTER VM execution...\n", .{});
     }
 
     if (try vm.run()) |result| {
         if (memoryManager.debug_enabled) {
-            std.debug.print(">> HIR VM Result: ", .{});
-            try vm.printHIRValue(result.value);
-            std.debug.print("\n", .{});
+            std.debug.print(">> Register VM Result: ", .{});
+            switch (result.value) {
+                .int => |i| std.debug.print("{}\n", .{i}),
+                .float => |f| std.debug.print("{d}\n", .{f}),
+                .string => |s| std.debug.print("\"{s}\"\n", .{s}),
+                .tetra => |t| std.debug.print("{s}\n", .{switch (t) {
+                    0 => "false",
+                    1 => "true",
+                    2 => "both",
+                    3 => "neither",
+                    else => "invalid",
+                }}),
+                .nothing => std.debug.print("nothing\n", .{}),
+                else => std.debug.print("complex_value\n", .{}),
+            }
         }
     } else {
         if (memoryManager.debug_enabled) {
-            std.debug.print(">> HIR VM completed successfully\n", .{});
+            std.debug.print(">> Register VM completed successfully\n", .{});
         }
     }
 }
