@@ -24,27 +24,8 @@ const HotVar = struct {
     storage_id: u32,
 };
 
-/// Scope-aware variable cache key to prevent corruption between scopes
-const ScopeVarKey = struct {
-    scope_id: u32,
-    var_name: []const u8,
-};
-
-/// Hash context for scope-aware variable cache keys
-const ScopeVarContext = struct {
-    pub fn hash(self: @This(), key: ScopeVarKey) u64 {
-        _ = self;
-        var h = std.hash_map.hashString(key.var_name);
-        h = h +% key.scope_id;
-        return h;
-    }
-
-    pub fn eql(self: @This(), a: ScopeVarKey, b: ScopeVarKey) bool {
-        _ = self;
-        return a.scope_id == b.scope_id and std.mem.eql(u8, a.var_name, b.var_name);
-    }
-};
-
+/// Simple cache that fully trusts and integrates with the memory module
+/// Cache var_name -> storage_id, but invalidate on scope changes to maintain correctness
 /// HIR-based VM Frame - simplified to work with memory management
 pub const HIRFrame = struct {
     value: HIRValue,
@@ -374,7 +355,7 @@ pub const HIRVM = struct {
     label_map: std.StringHashMap(u32), // label_name -> instruction index
 
     // Performance optimizations
-    var_cache: std.HashMap(ScopeVarKey, u32, ScopeVarContext, std.hash_map.default_max_load_percentage), // Cache (scope_id, var_name) → storage_id mapping
+    var_cache: std.StringHashMap(u32), // Cache var_name → storage_id (invalidated on scope changes)
     fast_mode: bool = true, // Enable optimizations for computational workloads
     turbo_mode: bool = true, // Ultra-aggressive optimizations for pure computational loops
 
@@ -398,7 +379,7 @@ pub const HIRVM = struct {
             .call_stack = try CallStack.init(allocator), // Use the passed allocator
             .current_scope = execution_scope,
             .label_map = std.StringHashMap(u32).init(allocator), // Use the passed allocator
-            .var_cache = std.HashMap(ScopeVarKey, u32, ScopeVarContext, std.hash_map.default_max_load_percentage).init(allocator), // Use the passed allocator
+            .var_cache = std.StringHashMap(u32).init(allocator), // Use the passed allocator
             .fast_mode = true,
             .turbo_mode = true,
             .hot_vars = [_]?HotVar{null} ** 4,
@@ -499,24 +480,23 @@ pub const HIRVM = struct {
                     }
                 }
 
-                // PERFORMANCE: Re-enable variable caching for speed
+                // PERFORMANCE: Fast cache that fully integrates with memory module
                 if (self.fast_mode) {
-                    // Check cache first - O(1) lookup for hot variables (scope-aware)
-                    const cache_key = ScopeVarKey{ .scope_id = self.current_scope.id, .var_name = v.var_name };
-                    if (self.var_cache.get(cache_key)) |storage_id| {
-                        if (self.memory_manager.scope_manager.value_storage.get(storage_id)) |storage| {
+                    // Check cache first - trust storage_id if valid
+                    if (self.var_cache.get(v.var_name)) |cached_storage_id| {
+                        if (self.memory_manager.scope_manager.value_storage.get(cached_storage_id)) |storage| {
                             const hir_value = tokenLiteralToHIRValue(storage.value);
                             if (self.memory_manager.debug_enabled) {
-                                std.debug.print(">>   CACHE hit for '{s}' scope {} = {any} (storage_id: {})\n", .{ v.var_name, self.current_scope.id, hir_value, storage_id });
+                                std.debug.print(">>   CACHE hit for '{s}' = {any} (storage_id: {})\n", .{ v.var_name, hir_value, cached_storage_id });
                             }
                             try self.stack.push(HIRFrame.initFromHIRValue(hir_value));
                             return; // Ultra-fast cached path
                         } else {
                             // Cache is stale, remove entry
                             if (self.memory_manager.debug_enabled) {
-                                std.debug.print(">>   CACHE stale for '{s}' scope {} (storage_id: {})\n", .{ v.var_name, self.current_scope.id, storage_id });
+                                std.debug.print(">>   CACHE stale for '{s}' (storage_id: {})\n", .{ v.var_name, cached_storage_id });
                             }
-                            _ = self.var_cache.remove(cache_key);
+                            _ = self.var_cache.remove(v.var_name);
                         }
                     }
                 }
@@ -524,11 +504,10 @@ pub const HIRVM = struct {
                 // FALLBACK: Standard variable lookup (populate cache for next time)
                 if (self.current_scope.lookupVariable(v.var_name)) |variable| {
                     if (self.memory_manager.scope_manager.value_storage.get(variable.storage_id)) |storage| {
-                        // PERFORMANCE: Cache variable for ultra-fast future lookups (scope-aware)
+                        // PERFORMANCE: Cache the storage_id from memory module's authoritative lookup
                         if (self.fast_mode) {
-                            // Using arena allocator - no need to limit cache size
-                            const cache_key = ScopeVarKey{ .scope_id = self.current_scope.id, .var_name = v.var_name };
-                            self.var_cache.put(cache_key, variable.storage_id) catch {};
+                            // Cache the result from the memory module for next time
+                            self.var_cache.put(v.var_name, variable.storage_id) catch {};
                         }
 
                         const hir_value = tokenLiteralToHIRValue(storage.value);
@@ -560,13 +539,11 @@ pub const HIRVM = struct {
                     std.debug.print(">> StoreVar '{s}' = {any} in scope {}\n", .{ v.var_name, value.value, self.current_scope.id });
                 }
 
-                // PERFORMANCE: Fast mode caching for variables in StoreVar (scope-aware)
+                // PERFORMANCE: Update cache after storing to keep it synchronized with memory module
                 if (self.fast_mode) {
-                    // Update cache when storing variables
+                    // Update cache with the current variable's storage_id
                     if (self.current_scope.name_map.get(v.var_name)) |variable| {
-                        // Using arena allocator - no need to limit cache size
-                        const cache_key = ScopeVarKey{ .scope_id = self.current_scope.id, .var_name = v.var_name };
-                        self.var_cache.put(cache_key, variable.storage_id) catch {};
+                        self.var_cache.put(v.var_name, variable.storage_id) catch {};
                     }
                 }
 
@@ -778,17 +755,16 @@ pub const HIRVM = struct {
             },
 
             .EnterScope => |s| {
-                // CRITICAL: Always create scopes for function calls to ensure proper variable isolation
-                // in recursive calls. Function calls must have isolated variable scopes.
-                // Only skip scope creation for simple block scopes (loops, if statements, etc.)
-                // TODO: We need a way to distinguish function scopes from block scopes
-
-                // Note: Variable cache may become stale when entering new scopes,
-                // but with arena allocator this is not a memory concern
-
-                // For now, always create scopes to fix recursive call variable corruption
+                // Create new scope - the memory module handles all the complexity
                 const new_scope = try self.memory_manager.scope_manager.createScope(self.current_scope);
                 self.current_scope = new_scope;
+
+                // PERFORMANCE: Clear cache when entering new scope to prevent stale data
+                // This is fast because we're using arena allocator
+                if (self.fast_mode) {
+                    self.var_cache.clearRetainingCapacity();
+                }
+
                 if (self.memory_manager.debug_enabled) {
                     if (new_scope.parent) |parent| {
                         std.debug.print(">> Entered scope {} (parent: {}) [Call stack: {}]\n", .{ s.scope_id, parent.id, self.call_stack.sp });
@@ -799,15 +775,17 @@ pub const HIRVM = struct {
             },
 
             .ExitScope => |s| {
-                // CRITICAL: Always clean up scopes to match the always-create policy above
-                // This ensures proper variable scope isolation for recursive calls
-
-                // Note: Variables from the exited scope become invalid, but cache cleanup
-                // is handled automatically by the arena allocator
-
+                // Exit scope - let the memory module handle cleanup
                 if (self.current_scope.parent) |parent_scope| {
                     const old_scope = self.current_scope;
                     self.current_scope = parent_scope;
+
+                    // PERFORMANCE: Clear cache when exiting scope to prevent stale data
+                    // This is fast because we're using arena allocator
+                    if (self.fast_mode) {
+                        self.var_cache.clearRetainingCapacity();
+                    }
+
                     if (self.memory_manager.debug_enabled) {
                         std.debug.print(">> Exited scope {} (returned to: {}) [Call stack: {}]\n", .{ s.scope_id, parent_scope.id, self.call_stack.sp });
                     }
@@ -1246,10 +1224,16 @@ pub const HIRVM = struct {
                     }
                     self.running = false;
                 } else {
-                    // CRITICAL FIX: Auto-exit current scope before returning to restore caller's scope
+                    // Auto-exit current scope before returning to restore caller's scope
                     if (self.current_scope.parent) |parent_scope| {
                         const old_scope = self.current_scope;
                         self.current_scope = parent_scope;
+
+                        // PERFORMANCE: Clear cache on scope change for correctness
+                        if (self.fast_mode) {
+                            self.var_cache.clearRetainingCapacity();
+                        }
+
                         if (self.memory_manager.debug_enabled) {
                             std.debug.print(">> Auto-exited scope {} on return (restored to: {}) [Call stack: {}]\n", .{ old_scope.id, parent_scope.id, self.call_stack.sp });
                         }
