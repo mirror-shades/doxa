@@ -2158,35 +2158,43 @@ const SoxaTextParser = struct {
 
     fn parse(self: *SoxaTextParser) !HIRProgram {
         var lines = std.mem.splitScalar(u8, self.source, '\n');
+        var line_count: u32 = 0;
 
         while (lines.next()) |line| {
+            line_count += 1;
             self.line += 1;
-            const trimmed = std.mem.trim(u8, line, " \t\r\n");
+            const trimmed_right = std.mem.trimRight(u8, line, " \t\r\n"); // Only trim right side
 
             // Skip empty lines and comments
-            if (trimmed.len == 0 or trimmed[0] == ';') continue;
+            if (trimmed_right.len == 0 or trimmed_right[0] == ';') continue;
 
-            // Handle sections and instructions
-            if (std.mem.startsWith(u8, trimmed, ".constants")) {
+            // Handle sections and instructions - check for indented content
+            if (std.mem.startsWith(u8, trimmed_right, ".constants")) {
                 continue; // Section header
-            } else if (std.mem.startsWith(u8, trimmed, ".functions")) {
+            } else if (std.mem.startsWith(u8, trimmed_right, ".functions")) {
                 continue; // Section header
-            } else if (std.mem.startsWith(u8, trimmed, ".code")) {
+            } else if (std.mem.startsWith(u8, trimmed_right, ".code")) {
                 continue; // Section header
-            } else if (std.mem.startsWith(u8, trimmed, "    const_")) {
-                try self.parseConstant(trimmed);
-            } else if (std.mem.startsWith(u8, trimmed, "    ") and !std.mem.startsWith(u8, trimmed, "        ")) {
+            } else if (std.mem.startsWith(u8, trimmed_right, "    const_")) {
+                try self.parseConstant(trimmed_right);
+            } else if (std.mem.startsWith(u8, trimmed_right, "    ") and !std.mem.startsWith(u8, trimmed_right, "        ")) {
                 // Function or instruction
-                if (std.mem.indexOf(u8, trimmed, "(") != null and std.mem.indexOf(u8, trimmed, "args)") != null) {
-                    try self.parseFunction(trimmed);
+                if (std.mem.indexOf(u8, trimmed_right, "(") != null and std.mem.indexOf(u8, trimmed_right, "args)") != null) {
+                    try self.parseFunction(trimmed_right);
                 } else {
-                    try self.parseInstruction(trimmed);
+                    try self.parseInstruction(trimmed_right);
                 }
-            } else if (std.mem.endsWith(u8, trimmed, ":")) {
-                // Label
-                const label_name = try self.allocator.dupe(u8, trimmed[0 .. trimmed.len - 1]);
+            } else if (std.mem.endsWith(u8, trimmed_right, ":")) {
+                // Label (can be either indented or not)
+                const label_line = std.mem.trim(u8, trimmed_right, " \t");
+                const label_name = try self.allocator.dupe(u8, label_line[0 .. label_line.len - 1]);
                 try self.instructions.append(HIRInstruction{ .Label = .{ .name = label_name, .vm_address = 0 } });
+            } else if (std.mem.startsWith(u8, trimmed_right, "        entry:")) {
+                // Function metadata - update the last function's entry point
+                try self.updateFunctionEntry(trimmed_right);
+                continue;
             }
+            // Silently ignore other lines (like function metadata)
         }
 
         return HIRProgram{
@@ -2231,19 +2239,45 @@ const SoxaTextParser = struct {
 
     fn parseFunction(self: *SoxaTextParser, line: []const u8) !void {
         // Parse: "    fibonacci(1 args) -> int"
-        // Very basic parsing for now
         const trimmed = std.mem.trim(u8, line, " \t");
         if (std.mem.indexOf(u8, trimmed, "(")) |paren_pos| {
             const name = try self.allocator.dupe(u8, trimmed[0..paren_pos]);
+
+            // Extract arity from "(N args)"
+            var arity: u32 = 0;
+            if (std.mem.indexOf(u8, trimmed, "(") != null and std.mem.indexOf(u8, trimmed, " args)") != null) {
+                const args_start = std.mem.indexOf(u8, trimmed, "(").? + 1;
+                const args_end = std.mem.indexOf(u8, trimmed, " args)").?;
+                if (args_end > args_start) {
+                    const arity_str = trimmed[args_start..args_end];
+                    arity = std.fmt.parseInt(u32, arity_str, 10) catch 0;
+                }
+            }
+
+            // Create function with placeholder start_label - will be updated when we see the entry line
             try self.functions.append(HIRProgram.HIRFunction{
                 .name = name,
                 .qualified_name = name,
-                .arity = 1, // Default for now
+                .arity = arity,
                 .return_type = .Auto,
-                .start_label = try self.allocator.dupe(u8, "unknown"),
+                .start_label = try self.allocator.dupe(u8, "unknown"), // Will be updated
                 .local_var_count = 0,
                 .is_entry = false,
             });
+        }
+    }
+
+    fn updateFunctionEntry(self: *SoxaTextParser, entry_line: []const u8) !void {
+        // Parse: "        entry: func_fibonacci_0"
+        if (std.mem.indexOf(u8, entry_line, "entry:")) |entry_pos| {
+            const label_start = entry_pos + 6; // Skip "entry:"
+            const label = std.mem.trim(u8, entry_line[label_start..], " \t");
+
+            // Update the last function we parsed
+            if (self.functions.items.len > 0) {
+                const last_func_idx = self.functions.items.len - 1;
+                self.functions.items[last_func_idx].start_label = try self.allocator.dupe(u8, label);
+            }
         }
     }
 

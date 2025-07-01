@@ -385,17 +385,17 @@ pub const HIRVM = struct {
 
     /// Pre-resolve all labels to instruction indices for O(1) jump lookup
     fn resolveLabels(self: *HIRVM) !void {
+        std.debug.print(">> Resolving labels from {} instructions\n", .{self.program.instructions.len});
         for (self.program.instructions, 0..) |instruction, i| {
             switch (instruction) {
                 .Label => |label| {
                     try self.label_map.put(label.name, @intCast(i));
-                    if (self.memory_manager.debug_enabled) {
-                        std.debug.print("Resolved label '{s}' to instruction {}\n", .{ label.name, i });
-                    }
+                    std.debug.print(">>   Resolved label '{s}' to instruction {}\n", .{ label.name, i });
                 },
                 else => {},
             }
         }
+        std.debug.print(">> Total labels resolved: {}\n", .{self.label_map.count()});
     }
 
     /// Main execution loop - directly execute HIR instructions
@@ -1033,15 +1033,13 @@ pub const HIRVM = struct {
                         };
                         try self.call_stack.push(call_frame);
 
-                        // Find the function label instruction and jump to it
-                        for (self.program.instructions, 0..) |instr, i| {
-                            if (instr == .Label and std.mem.eql(u8, instr.Label.name, function.start_label)) {
-                                self.ip = @intCast(i);
-                                return; // Jump to function start
-                            }
+                        // Use pre-resolved label map for O(1) lookup
+                        if (self.label_map.get(function.start_label)) |target_ip| {
+                            self.ip = target_ip;
+                            return; // Jump to function start
+                        } else {
+                            return self.reporter.reportError("Function label not found: {s}", .{function.start_label});
                         }
-
-                        return self.reporter.reportError("Function label not found: {s}", .{function.start_label});
                     },
                     .BuiltinFunction => {
                         // Built-in function/method call

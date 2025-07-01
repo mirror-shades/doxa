@@ -150,6 +150,7 @@ fn generateArtifactPath(source_path: []const u8, extension: []const u8) ![]u8 {
 
 /// Core production pipeline: .doxa → .soxa → [HIR VM | LLVM IR]
 fn processSoxaPipeline(memoryManager: *MemoryManager, source_path: []const u8, cli_options: CLI) !void {
+    std.debug.print("=== ENTERING processSoxaPipeline ===\n", .{});
     // Determine output paths
     const soxa_path = try generateArtifactPath(source_path, ".soxa");
     defer std.heap.page_allocator.free(soxa_path);
@@ -205,13 +206,19 @@ fn processSoxaPipeline(memoryManager: *MemoryManager, source_path: []const u8, c
 
     // Cleanup intermediate files unless requested to keep them
     if (!cli_options.keep_intermediate and !memoryManager.debug_enabled) {
+        std.debug.print(">> Cleaning up intermediate file: {s}\n", .{soxa_path});
         std.fs.cwd().deleteFile(soxa_path) catch |err| {
             if (err != error.FileNotFound) {
                 std.debug.print("!! Could not cleanup {s}: {}\n", .{ soxa_path, err });
             }
         };
-    } else if (memoryManager.debug_enabled) {
-        std.debug.print(">> Keeping artifacts in debug mode: {s}\n", .{soxa_path});
+    } else {
+        if (cli_options.keep_intermediate) {
+            std.debug.print(">> Keeping intermediate file (--keep-intermediate): {s}\n", .{soxa_path});
+        }
+        if (memoryManager.debug_enabled) {
+            std.debug.print(">> Keeping artifacts in debug mode: {s}\n", .{soxa_path});
+        }
     }
 }
 
@@ -357,6 +364,7 @@ fn runSoxaFile(memoryManager: *MemoryManager, soxa_path: []const u8) !void {
 }
 
 pub fn main() !void {
+    std.debug.print("=== DOXA MAIN STARTED ===\n", .{});
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer {
         const leaked = gpa.deinit();
@@ -365,6 +373,7 @@ pub fn main() !void {
 
     // Parse args first
     const cli_options = try parseArgs(gpa.allocator());
+    std.debug.print("=== CLI OPTIONS PARSED: command={s}, debug={}, keep_intermediate={} ===\n", .{ @tagName(cli_options.command), cli_options.debug, cli_options.keep_intermediate });
     // Ensure script_path is freed
     defer if (cli_options.script_path) |path| {
         gpa.allocator().free(path);
