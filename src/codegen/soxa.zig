@@ -355,12 +355,49 @@ pub const HIRInstruction = union(enum) {
 // SUPPORTING TYPES
 //==================================================================
 
+// Tetra constants for fast operations
+pub const TETRA_FALSE: u8 = 0; // 00
+pub const TETRA_TRUE: u8 = 1; // 01
+pub const TETRA_BOTH: u8 = 2; // 10
+pub const TETRA_NEITHER: u8 = 3; // 11
+
+// Fast lookup tables for tetra operations
+pub const TETRA_AND_LUT: [4][4]u8 = [4][4]u8{
+    [4]u8{ 0, 0, 0, 0 }, // FALSE AND x = FALSE
+    [4]u8{ 0, 1, 2, 3 }, // TRUE AND x = x
+    [4]u8{ 0, 2, 2, 0 }, // BOTH AND x = special logic
+    [4]u8{ 0, 3, 0, 3 }, // NEITHER AND x = special logic
+};
+
+pub const TETRA_OR_LUT: [4][4]u8 = [4][4]u8{
+    [4]u8{ 0, 1, 2, 3 }, // FALSE OR x = x
+    [4]u8{ 1, 1, 1, 1 }, // TRUE OR x = TRUE
+    [4]u8{ 2, 1, 2, 2 }, // BOTH OR x = special logic
+    [4]u8{ 3, 1, 2, 3 }, // NEITHER OR x = special logic
+};
+
+pub const TETRA_NOT_LUT: [4]u8 = [4]u8{ 1, 0, 3, 2 }; // NOT lookup: false->true, true->false, both->neither, neither->both
+
+// Type-safe tetra constructors
+pub fn tetraFromBool(value: bool) u8 {
+    return if (value) TETRA_TRUE else TETRA_FALSE;
+}
+
+pub fn tetraFromEnum(tetra_enum: anytype) u8 {
+    return switch (tetra_enum) {
+        .false => TETRA_FALSE,
+        .true => TETRA_TRUE,
+        .both => TETRA_BOTH,
+        .neither => TETRA_NEITHER,
+    };
+}
+
 pub const HIRValue = union(enum) {
     int: i32,
     u8: u8,
     float: f64,
     string: []const u8,
-    boolean: bool,
+    tetra: u8, // NEW: Direct u8 storage for tetras
     nothing,
     // Phase 1: Complex data types
     array: HIRArray,
@@ -413,6 +450,7 @@ pub const HIRType = enum {
     Float,
     String,
     Boolean,
+    Tetra, // NEW: Native tetra type for four-valued logic
     Nothing,
     Array,
     Struct,
@@ -800,7 +838,7 @@ pub const HIRGenerator = struct {
             .Int => .Int,
             .Float => .Float,
             .String => .String,
-            .Tetra => .Boolean,
+            .Tetra => .Tetra,
             .U8 => .U8,
             .Auto => .Auto,
             else => .Auto,
@@ -838,7 +876,7 @@ pub const HIRGenerator = struct {
                         .Int => HIRValue{ .int = 0 },
                         .Float => HIRValue{ .float = 0.0 },
                         .String => HIRValue{ .string = "" },
-                        .Tetra => HIRValue{ .boolean = false },
+                        .Tetra => HIRValue{ .tetra = TETRA_FALSE },
                         else => HIRValue.nothing,
                     };
                     const const_idx = try self.addConstant(default_value);
@@ -882,7 +920,7 @@ pub const HIRGenerator = struct {
                     .int => |i| HIRValue{ .int = i },
                     .float => |f| HIRValue{ .float = f },
                     .string => |s| HIRValue{ .string = s },
-                    .tetra => |t| HIRValue{ .boolean = t == .true },
+                    .tetra => |t| HIRValue{ .tetra = tetraFromEnum(t) },
                     .u8 => |b| HIRValue{ .u8 = b },
                     .nothing => HIRValue.nothing,
                     else => HIRValue.nothing,
@@ -1412,6 +1450,38 @@ pub const HIRGenerator = struct {
                 try self.instructions.append(.{ .Return = .{ .has_value = return_expr.value != null, .return_type = .Auto } });
             },
 
+            .Unary => |unary| {
+                std.debug.print(">> Generating unary op: {}\n", .{unary.operator.type});
+
+                // Generate the operand first
+                try self.generateExpression(unary.right.?);
+
+                // Generate the unary operation
+                switch (unary.operator.type) {
+                    .NOT => {
+                        // Generate logical NOT operation using ultra-fast lookup table
+                        try self.instructions.append(.{ .LogicalOp = .{ .op = .Not } });
+                    },
+                    .MINUS => {
+                        // Unary minus: 0 - operand
+                        const zero_idx = try self.addConstant(HIRValue{ .int = 0 });
+                        try self.instructions.append(.{ .Const = .{ .value = HIRValue{ .int = 0 }, .constant_id = zero_idx } });
+
+                        // Swap operands so we have: 0, operand on stack
+                        // Then subtract: 0 - operand = -operand
+                        try self.instructions.append(.{ .IntArith = .{ .op = .Sub, .overflow_behavior = .Wrap } });
+                    },
+                    .PLUS => {
+                        // Unary plus: just return the operand unchanged (no-op)
+                        // The operand is already on the stack
+                    },
+                    else => {
+                        self.reporter.reportError("Unsupported unary operator: {}", .{unary.operator.type});
+                        return reporting.ErrorList.UnsupportedOperator;
+                    },
+                }
+            },
+
             else => {
                 std.debug.print("!! Unhandled expression type: {}\n", .{expr.data});
                 // Push nothing as fallback
@@ -1588,7 +1658,7 @@ pub fn convertHIRConstants(hir_constants: []HIRValue, allocator: std.mem.Allocat
             .int => |i| instructions.Value{ .type = .INT, .nothing = false, .data = .{ .int = i } },
             .float => |f| instructions.Value{ .type = .FLOAT, .nothing = false, .data = .{ .float = f } },
             .string => |s| instructions.Value{ .type = .STRING, .nothing = false, .data = .{ .string = s } },
-            .boolean => |b| instructions.Value{ .type = .BOOL, .nothing = false, .data = .{ .boolean = b } },
+            .tetra => |t| instructions.Value{ .type = .INT, .nothing = false, .data = .{ .int = @as(i32, t) } },
             .u8 => |u| instructions.Value{ .type = .INT, .nothing = false, .data = .{ .int = @as(i32, u) } }, // Convert u8 to int
             .nothing => instructions.Value{ .type = .INT, .nothing = true, .data = .{ .int = 0 } },
         };
@@ -1701,9 +1771,9 @@ fn writeHIRValue(writer: anytype, value: HIRValue) !void {
             try writer.writeInt(u32, @as(u32, @intCast(s.len)), .little);
             try writer.writeAll(s);
         },
-        .boolean => |b| {
+        .tetra => |t| {
             try writer.writeByte(3); // Type tag
-            try writer.writeByte(if (b) 1 else 0);
+            try writer.writeByte(t);
         },
         .u8 => |u| {
             try writer.writeByte(4); // Type tag
@@ -1752,7 +1822,7 @@ fn readHIRValue(reader: anytype, allocator: std.mem.Allocator) !HIRValue {
             _ = try reader.readAll(str_data);
             return HIRValue{ .string = str_data };
         },
-        3 => HIRValue{ .boolean = (try reader.readByte()) != 0 },
+        3 => HIRValue{ .tetra = try reader.readByte() },
         4 => HIRValue{ .u8 = try reader.readByte() },
         5 => HIRValue.nothing,
         6 => {
@@ -2071,7 +2141,7 @@ fn writeHIRValueText(writer: anytype, value: HIRValue) !void {
         .int => |i| try writer.print("int {}", .{i}),
         .float => |f| try writer.print("float {d}", .{f}),
         .string => |s| try writer.print("string \"{s}\"", .{s}),
-        .boolean => |b| try writer.print("bool {}", .{b}),
+        .tetra => |t| try writer.print("tetra {}", .{t}),
         .u8 => |u| try writer.print("u8 {}", .{u}),
         .nothing => try writer.print("nothing", .{}),
         .array => |arr| try writer.print("array[{s}] capacity:{}", .{ @tagName(arr.element_type), arr.capacity }),
@@ -2177,6 +2247,30 @@ const SoxaTextParser = struct {
                 continue; // Section header
             } else if (std.mem.startsWith(u8, trimmed_right, "    const_")) {
                 try self.parseConstant(trimmed_right);
+            } else if (std.mem.indexOf(u8, trimmed_right, ":")) |colon_pos| {
+                // Label (can be either indented or not) - CHECK BEFORE INSTRUCTIONS!
+                const is_label = blk: {
+                    // Check if this is a label by seeing if colon comes before semicolon (or is at end)
+                    if (std.mem.indexOf(u8, trimmed_right, ";")) |semicolon_pos| {
+                        break :blk colon_pos < semicolon_pos;
+                    } else {
+                        break :blk std.mem.endsWith(u8, trimmed_right, ":");
+                    }
+                };
+
+                if (is_label) {
+                    const label_line = std.mem.trim(u8, trimmed_right, " \t");
+                    const label_colon_pos = std.mem.indexOf(u8, label_line, ":").?;
+                    const label_name = try self.allocator.dupe(u8, label_line[0..label_colon_pos]);
+                    try self.instructions.append(HIRInstruction{ .Label = .{ .name = label_name, .vm_address = 0 } });
+                } else {
+                    // Not a label, fall through to instruction parsing
+                    if (std.mem.indexOf(u8, trimmed_right, "(") != null and std.mem.indexOf(u8, trimmed_right, "args)") != null) {
+                        try self.parseFunction(trimmed_right);
+                    } else {
+                        try self.parseInstruction(trimmed_right);
+                    }
+                }
             } else if (std.mem.startsWith(u8, trimmed_right, "    ") and !std.mem.startsWith(u8, trimmed_right, "        ")) {
                 // Function or instruction
                 if (std.mem.indexOf(u8, trimmed_right, "(") != null and std.mem.indexOf(u8, trimmed_right, "args)") != null) {
@@ -2184,11 +2278,6 @@ const SoxaTextParser = struct {
                 } else {
                     try self.parseInstruction(trimmed_right);
                 }
-            } else if (std.mem.endsWith(u8, trimmed_right, ":")) {
-                // Label (can be either indented or not)
-                const label_line = std.mem.trim(u8, trimmed_right, " \t");
-                const label_name = try self.allocator.dupe(u8, label_line[0 .. label_line.len - 1]);
-                try self.instructions.append(HIRInstruction{ .Label = .{ .name = label_name, .vm_address = 0 } });
             } else if (std.mem.startsWith(u8, trimmed_right, "        entry:")) {
                 // Function metadata - update the last function's entry point
                 try self.updateFunctionEntry(trimmed_right);
@@ -2224,7 +2313,11 @@ const SoxaTextParser = struct {
         } else if (std.mem.indexOf(u8, line, "bool ")) |bool_pos| {
             const value_str = std.mem.trim(u8, line[bool_pos + 5 ..], " \t");
             const value = std.mem.eql(u8, value_str, "true");
-            try self.constants.append(HIRValue{ .boolean = value });
+            try self.constants.append(HIRValue{ .tetra = tetraFromBool(value) });
+        } else if (std.mem.indexOf(u8, line, "tetra ")) |tetra_pos| {
+            const value_str = std.mem.trim(u8, line[tetra_pos + 6 ..], " \t");
+            const value = try std.fmt.parseInt(u8, value_str, 10);
+            try self.constants.append(HIRValue{ .tetra = value });
         } else if (std.mem.indexOf(u8, line, "u8 ")) |u8_pos| {
             const value_str = std.mem.trim(u8, line[u8_pos + 3 ..], " \t");
             const value = try std.fmt.parseInt(u8, value_str, 10);

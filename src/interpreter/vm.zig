@@ -41,8 +41,8 @@ pub const HIRFrame = struct {
         return HIRFrame{ .value = HIRValue{ .string = x } };
     }
 
-    pub fn initBoolean(x: bool) HIRFrame {
-        return HIRFrame{ .value = HIRValue{ .boolean = x } };
+    pub fn initTetra(x: u8) HIRFrame {
+        return HIRFrame{ .value = HIRValue{ .tetra = x } };
     }
 
     pub fn initU8(x: u8) HIRFrame {
@@ -71,9 +71,9 @@ pub const HIRFrame = struct {
         };
     }
 
-    pub fn asBoolean(self: HIRFrame) !bool {
+    pub fn asTetra(self: HIRFrame) !u8 {
         return switch (self.value) {
-            .boolean => |b| b,
+            .tetra => |t| t,
             else => error.TypeError,
         };
     }
@@ -100,7 +100,13 @@ pub fn hirValueToTokenLiteral(hir_value: HIRValue) TokenLiteral {
         .u8 => |u| TokenLiteral{ .u8 = u },
         .float => |f| TokenLiteral{ .float = f },
         .string => |s| TokenLiteral{ .string = s },
-        .boolean => |b| TokenLiteral{ .tetra = if (b) .true else .false },
+        .tetra => |t| TokenLiteral{ .tetra = switch (t) {
+            0 => .false,
+            1 => .true,
+            2 => .both,
+            3 => .neither,
+            else => .false,
+        } },
         .nothing => TokenLiteral{ .nothing = {} },
         // Convert HIR arrays to TokenLiteral arrays
         .array => |arr| blk: {
@@ -129,7 +135,12 @@ pub fn tokenLiteralToHIRValue(token_literal: TokenLiteral) HIRValue {
         .u8 => |u| HIRValue{ .u8 = u },
         .float => |f| HIRValue{ .float = f },
         .string => |s| HIRValue{ .string = s },
-        .tetra => |t| HIRValue{ .boolean = t == .true },
+        .tetra => |t| HIRValue{ .tetra = switch (t) {
+            .false => 0,
+            .true => 1,
+            .both => 2,
+            .neither => 3,
+        } },
         .nothing => HIRValue.nothing,
         // Convert TokenLiteral arrays back to HIR arrays
         .array => |arr| blk: {
@@ -180,7 +191,7 @@ pub fn hirValueToTokenType(hir_value: HIRValue) TokenType {
         .u8 => .U8,
         .float => .FLOAT,
         .string => .STRING,
-        .boolean => .TETRA,
+        .tetra => .TETRA,
         .nothing => .NOTHING,
         // Complex types - map to closest TokenType
         .array => .ARRAY,
@@ -197,7 +208,7 @@ pub fn hirValueToTypeInfo(hir_value: HIRValue) TypeInfo {
         .u8 => TypeInfo{ .base = .U8, .is_mutable = true },
         .float => TypeInfo{ .base = .Float, .is_mutable = true },
         .string => TypeInfo{ .base = .String, .is_mutable = true },
-        .boolean => TypeInfo{ .base = .Tetra, .is_mutable = true },
+        .tetra => TypeInfo{ .base = .Tetra, .is_mutable = true },
         .nothing => TypeInfo{ .base = .Nothing, .is_mutable = true },
         // Complex types - map to appropriate TypeInfo
         .array => TypeInfo{ .base = .Array, .is_mutable = true },
@@ -596,7 +607,7 @@ pub const HIRVM = struct {
                     .Ge => (try self.compareGreater(a_val, b)) or (try self.compareEqual(a_val, b)),
                 };
 
-                try self.stack.push(HIRFrame.initBoolean(result));
+                try self.stack.push(HIRFrame.initTetra(if (result) 1 else 0));
             },
 
             .Jump => |j| {
@@ -615,7 +626,13 @@ pub const HIRVM = struct {
                 // OPTIMIZED: Conditional jump with reduced overhead
                 const condition = try self.stack.pop();
                 const should_jump = switch (condition.value) {
-                    .boolean => |b| b,
+                    .tetra => |t| switch (t) {
+                        0 => false, // false -> don't jump
+                        1 => true, // true -> jump
+                        2 => true, // both -> jump (contains true)
+                        3 => false, // neither -> don't jump (contains no truth)
+                        else => false,
+                    },
                     .int => |i| i != 0,
                     .float => |f| f != 0.0,
                     .nothing => false,
@@ -711,7 +728,7 @@ pub const HIRVM = struct {
                 self.running = false;
             },
 
-            // Logical operations (from old VM - proven implementations)
+            // ULTRA-FAST Logical operations using lookup tables!
             .LogicalOp => |l| {
                 const b = try self.stack.pop();
                 const a = try self.stack.pop();
@@ -726,7 +743,7 @@ pub const HIRVM = struct {
                     },
                 };
 
-                try self.stack.push(HIRFrame.initBoolean(result));
+                try self.stack.push(HIRFrame.initTetra(result));
             },
 
             // String operations (from old VM - proven implementations)
@@ -1262,59 +1279,80 @@ pub const HIRVM = struct {
     // LOGICAL OPERATIONS (From old VM - proven implementations)
     // ===============================================================================
 
-    /// Logical AND operation - strict boolean typing from old VM
-    fn logicalAnd(self: *HIRVM, a: HIRFrame, b: HIRFrame) !bool {
-        const a_bool = switch (a.value) {
-            .boolean => |val| val,
+    /// ULTRA-FAST Logical AND operation using lookup table - O(1) tetra logic!
+    fn logicalAnd(self: *HIRVM, a: HIRFrame, b: HIRFrame) !u8 {
+        const a_tetra = switch (a.value) {
+            .tetra => |val| if (val <= 3) val else {
+                self.reporter.reportError("Invalid tetra value: {}", .{val});
+                return error.TypeError;
+            },
             else => {
-                self.reporter.reportError("Cannot perform AND on non-boolean values: {s} AND {s}", .{ @tagName(a.value), @tagName(b.value) });
+                self.reporter.reportError("Cannot perform AND on non-tetra values: {s} AND {s}", .{ @tagName(a.value), @tagName(b.value) });
                 return error.TypeError;
             },
         };
 
-        const b_bool = switch (b.value) {
-            .boolean => |val| val,
+        const b_tetra = switch (b.value) {
+            .tetra => |val| if (val <= 3) val else {
+                self.reporter.reportError("Invalid tetra value: {}", .{val});
+                return error.TypeError;
+            },
             else => {
-                self.reporter.reportError("Cannot perform AND on non-boolean values: {s} AND {s}", .{ @tagName(a.value), @tagName(b.value) });
+                self.reporter.reportError("Cannot perform AND on non-tetra values: {s} AND {s}", .{ @tagName(a.value), @tagName(b.value) });
                 return error.TypeError;
             },
         };
 
-        return a_bool and b_bool;
+        // Import lookup table from soxa.zig
+        const soxa = @import("../codegen/soxa.zig");
+        return soxa.TETRA_AND_LUT[a_tetra][b_tetra];
     }
 
-    /// Logical OR operation - strict boolean typing from old VM
-    fn logicalOr(self: *HIRVM, a: HIRFrame, b: HIRFrame) !bool {
-        const a_bool = switch (a.value) {
-            .boolean => |val| val,
+    /// ULTRA-FAST Logical OR operation using lookup table - O(1) tetra logic!
+    fn logicalOr(self: *HIRVM, a: HIRFrame, b: HIRFrame) !u8 {
+        const a_tetra = switch (a.value) {
+            .tetra => |val| if (val <= 3) val else {
+                self.reporter.reportError("Invalid tetra value: {}", .{val});
+                return error.TypeError;
+            },
             else => {
-                self.reporter.reportError("Cannot perform OR on non-boolean values: {s} OR {s}", .{ @tagName(a.value), @tagName(b.value) });
+                self.reporter.reportError("Cannot perform OR on non-tetra values: {s} OR {s}", .{ @tagName(a.value), @tagName(b.value) });
                 return error.TypeError;
             },
         };
 
-        const b_bool = switch (b.value) {
-            .boolean => |val| val,
+        const b_tetra = switch (b.value) {
+            .tetra => |val| if (val <= 3) val else {
+                self.reporter.reportError("Invalid tetra value: {}", .{val});
+                return error.TypeError;
+            },
             else => {
-                self.reporter.reportError("Cannot perform OR on non-boolean values: {s} OR {s}", .{ @tagName(a.value), @tagName(b.value) });
+                self.reporter.reportError("Cannot perform OR on non-tetra values: {s} OR {s}", .{ @tagName(a.value), @tagName(b.value) });
                 return error.TypeError;
             },
         };
 
-        return a_bool or b_bool;
+        // Import lookup table from soxa.zig
+        const soxa = @import("../codegen/soxa.zig");
+        return soxa.TETRA_OR_LUT[a_tetra][b_tetra];
     }
 
-    /// Logical NOT operation - strict boolean typing from old VM
-    fn logicalNot(self: *HIRVM, a: HIRFrame) !bool {
-        const a_bool = switch (a.value) {
-            .boolean => |val| val,
+    /// ULTRA-FAST Logical NOT operation using lookup table - O(1) tetra logic!
+    fn logicalNot(self: *HIRVM, a: HIRFrame) !u8 {
+        const a_tetra = switch (a.value) {
+            .tetra => |val| if (val <= 3) val else {
+                self.reporter.reportError("Invalid tetra value: {}", .{val});
+                return error.TypeError;
+            },
             else => {
-                self.reporter.reportError("Cannot perform NOT on a non-boolean value: {s}", .{@tagName(a.value)});
+                self.reporter.reportError("Cannot perform NOT on a non-tetra value: {s}", .{@tagName(a.value)});
                 return error.TypeError;
             },
         };
 
-        return !a_bool;
+        // Import lookup table from soxa.zig
+        const soxa = @import("../codegen/soxa.zig");
+        return soxa.TETRA_NOT_LUT[a_tetra];
     }
 
     // ===============================================================================
@@ -1405,8 +1443,8 @@ pub const HIRVM = struct {
                 .int => |b_val| a_val == @as(f64, @floatFromInt(b_val)),
                 else => false,
             },
-            .boolean => |a_val| switch (b.value) {
-                .boolean => |b_val| a_val == b_val,
+            .tetra => |a_val| switch (b.value) {
+                .tetra => |b_val| a_val == b_val,
                 else => false,
             },
             .string => |a_val| switch (b.value) {
@@ -1447,7 +1485,7 @@ pub const HIRVM = struct {
                 else => error.TypeError,
             },
             // Complex types don't support comparison
-            .boolean, .string, .nothing, .array, .struct_instance, .tuple, .map, .enum_variant => error.TypeError,
+            .tetra, .string, .nothing, .array, .struct_instance, .tuple, .map, .enum_variant => error.TypeError,
         };
     }
 
@@ -1472,7 +1510,7 @@ pub const HIRVM = struct {
                 else => error.TypeError,
             },
             // Complex types don't support comparison
-            .boolean, .string, .nothing, .array, .struct_instance, .tuple, .map, .enum_variant => error.TypeError,
+            .tetra, .string, .nothing, .array, .struct_instance, .tuple, .map, .enum_variant => error.TypeError,
         };
     }
 
@@ -1482,7 +1520,7 @@ pub const HIRVM = struct {
             .int => |i| std.debug.print("{}", .{i}),
             .float => |f| std.debug.print("{d}", .{f}),
             .string => |s| std.debug.print("\"{s}\"", .{s}),
-            .boolean => |b| std.debug.print("{}", .{b}),
+            .tetra => |b| std.debug.print("{}", .{b}),
             .u8 => |u| std.debug.print("{}", .{u}),
             .nothing => std.debug.print("nothing", .{}),
             // Complex types - show contents for arrays
@@ -1510,7 +1548,7 @@ pub const HIRVM = struct {
             .int => |i| try writer.print("{}", .{i}),
             .float => |f| try writer.print("{d}", .{f}),
             .string => |s| try writer.print("\"{s}\"", .{s}),
-            .boolean => |b| try writer.print("{}", .{b}),
+            .tetra => |b| try writer.print("{}", .{b}),
             .u8 => |u| try writer.print("{}", .{u}),
             .nothing => try writer.print("nothing", .{}),
             // Complex types - show contents for arrays

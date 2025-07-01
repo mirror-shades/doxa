@@ -1,0 +1,26 @@
+// Ultra-Fast Tetra Operations Demo!
+
+var f is false;
+var t is true; 
+var b is both;
+var n is neither;
+
+"=== Basic Tetra Values ==="?;
+f?;
+t?;
+b?;
+n?;
+
+"=== Tetra Conditional Logic ==="?;
+if t then { "TRUE jumps correctly"?; }
+if b then { "BOTH jumps (contains true)"?; }
+if f then { "FALSE should not jump"?; } else { "FALSE correctly bypassed"?; }
+if n then { "NEITHER should not jump"?; } else { "NEITHER correctly bypassed"?; }
+
+"=== Ultra-Fast Tetra AND Operations ==="?;
+var and_result is t and b;  // true AND both = both (lookup table!)
+and_result?;
+
+"=== Ultra-Fast Tetra NOT Operations ==="?;  
+var not_result is not b;    // NOT both = neither (lookup table!)
+not_result?; 
