@@ -17,6 +17,7 @@ const ASTReader = @import("./utils/ast_reader.zig");
 const AST = @import("./ast/ast.zig");
 const SoxaCompiler = @import("./codegen/soxa.zig");
 const DoxaVM = @import("./interpreter/vm.zig").HIRVM;
+const ConstantFolder = @import("./parser/constant_folder.zig").ConstantFolder;
 
 ///==========================================================================
 /// Constants
@@ -255,7 +256,17 @@ fn runDeprecatedInterpreter(memoryManager: *MemoryManager, path: []const u8) !vo
     // Parsing phase
     var parser = Parser.init(memoryManager.getAllocator(), tokens.items, path, memoryManager.debug_enabled);
     defer parser.deinit();
-    const statements = try parser.execute();
+    var statements = try parser.execute();
+
+    // Constant folding optimization pass
+    var constant_folder = ConstantFolder.init(memoryManager.getAllocator());
+    for (statements, 0..) |*stmt, i| {
+        statements[i] = try constant_folder.foldStmt(stmt);
+    }
+
+    if (memoryManager.debug_enabled) {
+        std.debug.print(">> Constant folding applied: {} optimizations\n", .{constant_folder.getOptimizationCount()});
+    }
 
     // Write AST for debugging
     const ast_path = try generateArtifactPath(path, ".ast");
@@ -297,7 +308,17 @@ fn compileDoxaToSoxa(memoryManager: *MemoryManager, source_path: []const u8, sox
     // Parsing phase
     var parser = Parser.init(memoryManager.getAllocator(), tokens.items, source_path, memoryManager.debug_enabled);
     defer parser.deinit();
-    const statements = try parser.execute();
+    var statements = try parser.execute();
+
+    // Constant folding optimization pass
+    var constant_folder = ConstantFolder.init(memoryManager.getAllocator());
+    for (statements, 0..) |*stmt, i| {
+        statements[i] = try constant_folder.foldStmt(stmt);
+    }
+
+    if (memoryManager.debug_enabled) {
+        std.debug.print(">> Constant folding applied: {} optimizations\n", .{constant_folder.getOptimizationCount()});
+    }
 
     // Generate HIR from AST
     var reporter = Reporting.Reporter.init();

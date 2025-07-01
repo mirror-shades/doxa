@@ -2,6 +2,12 @@ import time
 import subprocess
 import sys
 import os
+import argparse
+import json
+import datetime
+
+# Default filename for benchmark records (in the same directory as this script)
+BENCHMARK_RESULTS_FILE = os.path.join(os.path.dirname(__file__), "benchmark_results.json")
 
 def run_command(cmd, description):
     print(f"Running {description}")
@@ -73,7 +79,166 @@ def run_benchmark(file_path, benchmark_name):
     print("\n")
     return old_success and new_success, old_time, new_time
 
+def save_benchmark_record(results, record_file):
+    """Save benchmark results to a JSON file."""
+    timestamp = datetime.datetime.now().isoformat()
+    
+    # Prepare the record data
+    record = {
+        "timestamp": timestamp,
+        "benchmarks": []
+    }
+    
+    total_old_time = 0
+    total_new_time = 0
+    successful_benchmarks = 0
+    
+    for name, success, old_time, new_time in results:
+        benchmark_record = {
+            "name": name,
+            "success": success,
+            "deprecated_interpreter_time": old_time,
+            "hir_vm_time": new_time
+        }
+        
+        if success:
+            speedup = old_time / new_time if new_time > 0 else float('inf')
+            benchmark_record["speedup"] = speedup
+            total_old_time += old_time
+            total_new_time += new_time
+            successful_benchmarks += 1
+        else:
+            benchmark_record["speedup"] = None
+        
+        record["benchmarks"].append(benchmark_record)
+    
+    # Add summary
+    if successful_benchmarks > 0:
+        overall_speedup = total_old_time / total_new_time if total_new_time > 0 else float('inf')
+        record["summary"] = {
+            "total_deprecated_time": total_old_time,
+            "total_hir_vm_time": total_new_time,
+            "overall_speedup": overall_speedup,
+            "successful_benchmarks": successful_benchmarks,
+            "total_benchmarks": len(results)
+        }
+    else:
+        record["summary"] = {
+            "total_deprecated_time": 0,
+            "total_hir_vm_time": 0,
+            "overall_speedup": None,
+            "successful_benchmarks": 0,
+            "total_benchmarks": len(results)
+        }
+    
+    # Load existing records if file exists, otherwise start with empty list
+    records = []
+    if os.path.exists(record_file):
+        try:
+            with open(record_file, 'r') as f:
+                records = json.load(f)
+        except (json.JSONDecodeError, IOError):
+            # If file is corrupted or unreadable, start fresh
+            records = []
+    
+    # Add new record
+    records.append(record)
+    
+    # Save back to file
+    try:
+        with open(record_file, 'w') as f:
+            json.dump(records, f, indent=2)
+        print(f"📝 Benchmark results saved to {record_file}")
+    except IOError as e:
+        print(f"❌ Failed to save benchmark results: {e}")
+
+def show_benchmark_history(record_file):
+    """Display benchmark history from a JSON file."""
+    if not os.path.exists(record_file):
+        print(f"❌ Record file {record_file} does not exist")
+        return
+    
+    try:
+        with open(record_file, 'r') as f:
+            records = json.load(f)
+    except (json.JSONDecodeError, IOError) as e:
+        print(f"❌ Failed to read record file: {e}")
+        return
+    
+    if not records:
+        print("📊 No benchmark records found")
+        return
+    
+    print(f"📊 BENCHMARK HISTORY ({len(records)} records)")
+    print("=" * 80)
+    print(f"{'Date/Time':<20} {'Overall Speedup':<15} {'Successful':<12} {'Total Time (s)'}")
+    print("-" * 80)
+    
+    for record in records[-10:]:  # Show last 10 records
+        timestamp = record.get('timestamp', 'Unknown')
+        # Format timestamp to be more readable
+        try:
+            dt = datetime.datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+            formatted_time = dt.strftime('%Y-%m-%d %H:%M')
+        except:
+            formatted_time = timestamp[:16]  # Fallback
+        
+        summary = record.get('summary', {})
+        speedup = summary.get('overall_speedup')
+        successful = summary.get('successful_benchmarks', 0)
+        total = summary.get('total_benchmarks', 0)
+        total_time = summary.get('total_hir_vm_time', 0)
+        
+        speedup_str = f"{speedup:.2f}x" if speedup else "N/A"
+        success_str = f"{successful}/{total}"
+        
+        print(f"{formatted_time:<20} {speedup_str:<15} {success_str:<12} {total_time:<.4f}")
+    
+    if len(records) > 10:
+        print(f"... (showing last 10 of {len(records)} records)")
+    
+    # Show latest results in detail
+    if records:
+        latest = records[-1]
+        print(f"\n🔍 LATEST BENCHMARK DETAILS ({latest.get('timestamp', 'Unknown')})")
+        print("-" * 60)
+        for bench in latest.get('benchmarks', []):
+            name = bench.get('name', 'Unknown')
+            success = '✅' if bench.get('success', False) else '❌'
+            speedup = bench.get('speedup')
+            speedup_str = f"{speedup:.2f}x" if speedup else "N/A"
+            print(f"{success} {name:<20} {speedup_str}")
+
 def main():
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(
+        description="Benchmark suite for DOXA interpreters",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python benchmark.py          # Run benchmarks normally
+  python benchmark.py --store  # Run benchmarks and save results
+  python benchmark.py --show   # Show benchmark history
+        """
+    )
+    parser.add_argument(
+        '--store', 
+        action='store_true',
+        help='Save benchmark results to benchmark_results.json'
+    )
+    parser.add_argument(
+        '--show',
+        action='store_true',
+        help='Show benchmark history from benchmark_results.json'
+    )
+    
+    args = parser.parse_args()
+    
+    # Handle --show command
+    if args.show:
+        show_benchmark_history(BENCHMARK_RESULTS_FILE)
+        return
+    
     # Define benchmark files
     benchmarks = [
         ("./test/benchmark/fizzbuzz_benchmark.doxa", "FizzBuzz Loop"),
@@ -98,6 +263,8 @@ def main():
     print("Running comprehensive performance comparison between:")
     print("  • Deprecated Interpreter (old)")
     print("  • HIR VM (new)")
+    if args.store:
+        print(f"📝 Results will be saved to: {BENCHMARK_RESULTS_FILE}")
     print("=" * 60)
     print()
     
@@ -143,6 +310,10 @@ def main():
         print()
         print(f"📊 SUMMARY: HIR VM is {overall_speedup:.2f}x faster overall!")
         print(f"   Successful benchmarks: {successful_benchmarks}/{len(benchmarks)}")
+    
+    # Save results to file if --store flag is provided
+    if args.store:
+        save_benchmark_record(results, BENCHMARK_RESULTS_FILE)
     
     if not all_successful:
         sys.exit(1)

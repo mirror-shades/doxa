@@ -1,0 +1,35 @@
+[
+  {
+    "timestamp": "2025-07-01T15:09:43.085955",
+    "benchmarks": [
+      {
+        "name": "FizzBuzz Loop",
+        "success": true,
+        "deprecated_interpreter_time": 15.208261251449585,
+        "hir_vm_time": 3.7737879753112793,
+        "speedup": 4.0299723648876
+      },
+      {
+        "name": "Fibonacci Recursive",
+        "success": true,
+        "deprecated_interpreter_time": 15.623566627502441,
+        "hir_vm_time": 7.232229709625244,
+        "speedup": 2.1602696892646147
+      },
+      {
+        "name": "Prime Numbers",
+        "success": true,
+        "deprecated_interpreter_time": 15.280506610870361,
+        "hir_vm_time": 8.90590763092041,
+        "speedup": 1.71577196217688
+      }
+    ],
+    "summary": {
+      "total_deprecated_time": 46.11233448982239,
+      "total_hir_vm_time": 19.911925315856934,
+      "overall_speedup": 2.315814958039274,
+      "successful_benchmarks": 3,
+      "total_benchmarks": 3
+    }
+  }
+]
