@@ -1,0 +1,7 @@
+// Simple tail recursion test for debugging
+function countdown(n :: int) returns(int) {
+    if n <= 0 then return 0;
+    return countdown(n - 1);
+}
+
+countdown(3); 

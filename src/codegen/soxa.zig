@@ -169,6 +169,18 @@ pub const HIRInstruction = union(enum) {
         return_type: HIRType, // For stack type management and LLVM return handling
     },
 
+    /// Tail call optimization - function call in tail position
+    /// VM: Reuse current stack frame, jump to function start
+    /// LLVM: Generate as optimized tail call
+    TailCall: struct {
+        function_index: u32, // VM: Direct function table index
+        qualified_name: []const u8, // LLVM: Full function name with module prefix
+        arg_count: u32, // Stack management for both targets
+        call_kind: CallKind, // Resolution context
+        target_module: ?[]const u8, // For cross-module calls
+        return_type: HIRType, // For stack type management and LLVM return handling
+    },
+
     /// Return from function
     /// VM: OP_RETURN
     /// LLVM: LLVMBuildRet or LLVMBuildRetVoid
@@ -562,6 +574,7 @@ pub const HIRProgram = struct {
         arity: u32,
         return_type: HIRType,
         start_label: []const u8,
+        body_label: ?[]const u8 = null, // For tail call optimization - jumps here to skip parameter setup
         local_var_count: u32, // VM: stack frame sizing
         is_entry: bool,
     };
@@ -600,6 +613,7 @@ pub const HIRGenerator = struct {
         arity: u32,
         return_type: HIRType,
         start_label: []const u8,
+        body_label: ?[]const u8 = null, // For tail call optimization - jumps here to skip parameter setup
         local_var_count: u32,
         is_entry: bool,
     };
@@ -752,6 +766,16 @@ pub const HIRGenerator = struct {
                 std.debug.print("  >> Parameter {}: {s} -> var[{}]\n", .{ param_index, param.name.lexeme, var_idx });
             }
 
+            // TAIL CALL FIX: Add a separate label for tail calls to jump to (after parameter setup)
+            const body_label = try self.generateLabel(try std.fmt.allocPrint(self.allocator, "func_{s}_body", .{function_body.function_info.name}));
+            try self.instructions.append(.{ .Label = .{ .name = body_label, .vm_address = 0 } });
+            std.debug.print("  >> Added tail call target label: {s}\n", .{body_label});
+
+            // Store body label in function signature for tail call use
+            if (self.function_signatures.getPtr(function_body.function_info.name)) |func_info| {
+                func_info.body_label = body_label;
+            }
+
             // Generate function body statements with basic dead code elimination
             var has_returned = false;
             for (function_body.statements) |body_stmt| {
@@ -819,6 +843,7 @@ pub const HIRGenerator = struct {
                 .arity = function_info.arity,
                 .return_type = function_info.return_type,
                 .start_label = function_info.start_label,
+                .body_label = function_info.body_label,
                 .local_var_count = function_info.local_var_count,
                 .is_entry = function_info.is_entry,
             });
@@ -909,8 +934,15 @@ pub const HIRGenerator = struct {
             },
             .Return => |ret| {
                 if (ret.value) |value| {
-                    try self.generateExpression(value);
-                    try self.instructions.append(.{ .Return = .{ .has_value = true, .return_type = .Auto } });
+                    // TAIL CALL OPTIMIZATION: Check if return value is a direct function call
+                    if (self.tryGenerateTailCall(value)) {
+                        std.debug.print(">> Generated tail call optimization for Return statement\n", .{});
+                        return; // Tail call replaces both Call and Return
+                    } else {
+                        // Regular return with value
+                        try self.generateExpression(value);
+                        try self.instructions.append(.{ .Return = .{ .has_value = true, .return_type = .Auto } });
+                    }
                 } else {
                     try self.instructions.append(.{ .Return = .{ .has_value = false, .return_type = .Nothing } });
                 }
@@ -1447,16 +1479,22 @@ pub const HIRGenerator = struct {
             .ReturnExpr => |return_expr| {
                 std.debug.print(">> Generating return expression\n", .{});
 
-                // Generate the value to return if present
+                // TAIL CALL OPTIMIZATION: Check if return value is a direct function call
                 if (return_expr.value) |value| {
-                    try self.generateExpression(value);
+                    if (self.tryGenerateTailCall(value)) {
+                        std.debug.print(">> Generated tail call optimization\n", .{});
+                        return; // Tail call replaces both Call and Return
+                    } else {
+                        // Regular return with value
+                        try self.generateExpression(value);
+                    }
                 } else {
                     // No value - push nothing
                     const nothing_idx = try self.addConstant(HIRValue.nothing);
                     try self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } });
                 }
 
-                // Generate Return instruction
+                // Generate Return instruction (only if not tail call)
                 try self.instructions.append(.{ .Return = .{ .has_value = return_expr.value != null, .return_type = .Auto } });
             },
 
@@ -1563,6 +1601,57 @@ pub const HIRGenerator = struct {
                 return false;
             },
             else => return false,
+        }
+    }
+
+    /// Try to generate a tail call if the expression is a direct function call
+    /// Returns true if tail call was generated, false if normal expression should be used
+    fn tryGenerateTailCall(self: *HIRGenerator, expr: *ast.Expr) bool {
+        std.debug.print(">> tryGenerateTailCall: checking expression type: {s}\n", .{@tagName(expr.data)});
+        switch (expr.data) {
+            .Call => |call| {
+                // Check if the callee is a simple variable (function name)
+                switch (call.callee.data) {
+                    .Variable => |var_token| {
+                        const function_name = var_token.lexeme;
+                        std.debug.print(">> Detected tail call opportunity: {s}\n", .{function_name});
+
+                        // Generate arguments in normal order (same as regular call)
+                        for (call.arguments) |arg| {
+                            self.generateExpression(arg) catch return false; // Fallback to regular call on error
+                        }
+
+                        // Check if this is a user-defined function
+                        if (self.getFunctionIndex(function_name)) |function_index| {
+                            // Generate TailCall instruction instead of Call + Return
+                            const tail_call = HIRInstruction{ .TailCall = .{
+                                .function_index = function_index,
+                                .qualified_name = function_name,
+                                .arg_count = @intCast(call.arguments.len),
+                                .call_kind = .LocalFunction,
+                                .target_module = null,
+                                .return_type = .Auto,
+                            } };
+
+                            self.instructions.append(tail_call) catch return false;
+                            std.debug.print(">> Generated TailCall instruction for: {s}\n", .{function_name});
+                            return true; // Tail call generated successfully
+                        } else |_| {
+                            std.debug.print(">> Function not found for tail call: {s}\n", .{function_name});
+                            return false; // Not a known function, use regular call
+                        }
+                    },
+                    else => {
+                        // Complex callee (method call, etc.) - cannot optimize
+                        return false;
+                    },
+                }
+            },
+            else => {
+                // Not a direct function call, cannot optimize
+                std.debug.print(">> tryGenerateTailCall: Expression is not a Call, type: {s}\n", .{@tagName(expr.data)});
+                return false;
+            },
         }
     }
 };
@@ -1691,7 +1780,7 @@ pub fn translateToVMBytecode(program: *HIRProgram, allocator: std.mem.Allocator,
 /// Returns the size in bytes that an HIR instruction will occupy in VM bytecode
 fn getBytecodeSize(instruction: HIRInstruction) u32 {
     return switch (instruction) {
-        .Const, .LoadVar, .StoreVar, .Jump, .JumpCond, .Call => 2, // opcode + operand
+        .Const, .LoadVar, .StoreVar, .Jump, .JumpCond, .Call, .TailCall => 2, // opcode + operand
         .IntArith, .Compare, .Return, .Dup, .Pop, .Inspect, .Halt => 1, // opcode only
         .Label => 0, // No bytecode generated
         else => 1, // Default to 1 byte
@@ -2220,6 +2309,7 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
         .JumpCond => |j| try writer.print("    JumpCond {s} {s}            ; Conditional jump\n", .{ j.label_true, j.label_false }),
 
         .Call => |c| try writer.print("    Call {} {} \"{s}\" {s}      ; Function call\n", .{ c.function_index, c.arg_count, c.qualified_name, @tagName(c.call_kind) }),
+        .TailCall => |c| try writer.print("    TailCall {} {} \"{s}\" {s}      ; Tail call optimization\n", .{ c.function_index, c.arg_count, c.qualified_name, @tagName(c.call_kind) }),
 
         .Return => |r| try writer.print("    Return {}                   ; Return from function\n", .{r.has_value}),
 
@@ -2475,6 +2565,25 @@ const SoxaTextParser = struct {
             const call_kind = if (std.mem.eql(u8, kind_str, "LocalFunction")) CallKind.LocalFunction else if (std.mem.eql(u8, kind_str, "ModuleFunction")) CallKind.ModuleFunction else if (std.mem.eql(u8, kind_str, "BuiltinFunction")) CallKind.BuiltinFunction else CallKind.LocalFunction;
 
             try self.instructions.append(HIRInstruction{ .Call = .{
+                .function_index = function_index,
+                .qualified_name = qualified_name,
+                .arg_count = arg_count,
+                .call_kind = call_kind,
+                .target_module = null,
+                .return_type = .Auto,
+            } });
+        } else if (std.mem.eql(u8, op, "TailCall")) {
+            const func_idx_str = tokens.next() orelse return;
+            const arg_count_str = tokens.next() orelse return;
+            const name_quoted = tokens.next() orelse return;
+            const kind_str = tokens.next() orelse return;
+
+            const function_index = std.fmt.parseInt(u32, func_idx_str, 10) catch return;
+            const arg_count = std.fmt.parseInt(u32, arg_count_str, 10) catch return;
+            const qualified_name = try self.parseQuotedString(name_quoted);
+            const call_kind = if (std.mem.eql(u8, kind_str, "LocalFunction")) CallKind.LocalFunction else if (std.mem.eql(u8, kind_str, "ModuleFunction")) CallKind.ModuleFunction else if (std.mem.eql(u8, kind_str, "BuiltinFunction")) CallKind.BuiltinFunction else CallKind.LocalFunction;
+
+            try self.instructions.append(HIRInstruction{ .TailCall = .{
                 .function_index = function_index,
                 .qualified_name = qualified_name,
                 .arg_count = arg_count,
