@@ -363,6 +363,9 @@ pub const HIRVM = struct {
     hot_vars: [4]?HotVar = [_]?HotVar{null} ** 4,
     hot_var_count: u8 = 0,
 
+    // Tail call optimization: flag to skip scope creation on next EnterScope
+    skip_next_enter_scope: bool = false,
+
     pub fn init(program: *HIRProgram, reporter: *Reporter, memory_manager: *MemoryManager) !HIRVM {
         const allocator = memory_manager.getAllocator();
 
@@ -755,6 +758,15 @@ pub const HIRVM = struct {
             },
 
             .EnterScope => |s| {
+                // TAIL CALL FIX: Skip scope creation if this is a tail call
+                if (self.skip_next_enter_scope) {
+                    self.skip_next_enter_scope = false; // Reset flag
+                    if (self.memory_manager.debug_enabled) {
+                        std.debug.print(">> Skipped EnterScope {} for tail call (reusing current scope {})\n", .{ s.scope_id, self.current_scope.id });
+                    }
+                    return; // Skip scope creation entirely
+                }
+
                 // Create new scope - the memory module handles all the complexity
                 const new_scope = try self.memory_manager.scope_manager.createScope(self.current_scope);
                 self.current_scope = new_scope;
@@ -1075,6 +1087,55 @@ pub const HIRVM = struct {
                 }
             },
 
+            .TailCall => |c| {
+                // TAIL CALL OPTIMIZATION: Reuse current stack frame instead of creating new one
+                if (self.memory_manager.debug_enabled) {
+                    std.debug.print("Tail call: {s} with {} args (kind: {s}) [Stack size: {}]\n", .{ c.qualified_name, c.arg_count, @tagName(c.call_kind), self.stack.size() });
+                }
+
+                switch (c.call_kind) {
+                    .LocalFunction => {
+                        // Tail call optimization for user-defined functions
+                        if (c.function_index >= self.program.function_table.len) {
+                            return self.reporter.reportError("Invalid function index: {} (max: {})", .{ c.function_index, self.program.function_table.len });
+                        }
+
+                        const function = self.program.function_table[c.function_index];
+
+                        // TAIL CALL FIX: Use start_label to include parameter setup, but we need to handle the scope issue
+                        const target_label = function.start_label;
+
+                        if (self.memory_manager.debug_enabled) {
+                            std.debug.print(">> Tail call to: {s} with {} args at label: {s}\n", .{ function.name, c.arg_count, target_label });
+                        }
+
+                        // TAIL CALL FIX: Clear variable cache and set flag to skip scope creation
+                        if (self.fast_mode) {
+                            self.var_cache.clearRetainingCapacity();
+                        }
+                        self.skip_next_enter_scope = true; // Skip scope creation when we jump to function start
+
+                        if (self.memory_manager.debug_enabled) {
+                            std.debug.print(">> Cleared variable cache and set skip_next_enter_scope for tail call\n", .{});
+                        }
+
+                        // Jump to function start (including parameter setup) without call stack modification
+                        if (self.label_map.get(target_label)) |target_ip| {
+                            self.ip = target_ip;
+                            if (self.memory_manager.debug_enabled) {
+                                std.debug.print(">> Tail call jump to '{s}' at instruction {} (call stack unchanged: {})\n", .{ target_label, target_ip, self.call_stack.sp });
+                            }
+                            return; // Jump to function body
+                        } else {
+                            return self.reporter.reportError("Function label not found: {s}", .{target_label});
+                        }
+                    },
+                    else => {
+                        return self.reporter.reportError("Tail call not supported for call kind: {s}", .{@tagName(c.call_kind)});
+                    },
+                }
+            },
+
             .Call => |c| {
                 // Handle function calls
                 if (self.memory_manager.debug_enabled) {
@@ -1279,6 +1340,7 @@ pub const HIRVM = struct {
         return switch (instruction) {
             .Jump, .JumpCond => true,
             .Call => |c| c.call_kind == .LocalFunction, // Function calls jump to function start
+            .TailCall => true, // Tail calls always jump to function start
             .Return => true, // ALL Return instructions set IP manually, never auto-increment
             else => false,
         };
