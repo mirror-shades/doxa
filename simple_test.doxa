@@ -4,4 +4,13 @@ t?;
 
 if t then {
     "Success!"?;
-} 
+}
+
+function test() {
+    var x is 5;
+    var y is 10;
+    if x <= y then "success";
+    else "fail";
+}
+
+test(); 

@@ -19,7 +19,7 @@ function prime_benchmark() {
     var primes :: int[] is [];
     var count is 0;
     var candidate is 2;
-    const target is 5000;  // Find first 5000 primes
+    const target is 7500;  // Find first 7500 primes
     
     while count < target {
         if is_prime(candidate) then {
