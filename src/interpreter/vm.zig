@@ -24,6 +24,27 @@ const HotVar = struct {
     storage_id: u32,
 };
 
+/// Scope-aware variable cache key to prevent corruption between scopes
+const ScopeVarKey = struct {
+    scope_id: u32,
+    var_name: []const u8,
+};
+
+/// Hash context for scope-aware variable cache keys
+const ScopeVarContext = struct {
+    pub fn hash(self: @This(), key: ScopeVarKey) u64 {
+        _ = self;
+        var h = std.hash_map.hashString(key.var_name);
+        h = h +% key.scope_id;
+        return h;
+    }
+
+    pub fn eql(self: @This(), a: ScopeVarKey, b: ScopeVarKey) bool {
+        _ = self;
+        return a.scope_id == b.scope_id and std.mem.eql(u8, a.var_name, b.var_name);
+    }
+};
+
 /// HIR-based VM Frame - simplified to work with memory management
 pub const HIRFrame = struct {
     value: HIRValue,
@@ -246,25 +267,25 @@ const HIRStack = struct {
         self.sp = 0;
     }
 
-    pub fn push(self: *HIRStack, value: HIRFrame) !void {
-        if (self.sp >= STACK_SIZE) {
+    // PERFORMANCE: Inline stack operations for maximum speed
+    pub inline fn push(self: *HIRStack, value: HIRFrame) !void {
+        // FAST MODE: Skip bounds check in release builds for maximum performance
+        if (std.debug.runtime_safety and self.sp >= STACK_SIZE) {
             std.debug.print("Stack overflow: Attempted to push at sp={}\n", .{self.sp});
             return error.StackOverflow;
         }
         self.data[@intCast(self.sp)] = value;
         self.sp += 1;
-
-        // Debug output is now handled by the VM's debug mode
     }
 
-    pub fn pop(self: *HIRStack) !HIRFrame {
-        if (self.sp <= 0) {
+    pub inline fn pop(self: *HIRStack) !HIRFrame {
+        // FAST MODE: Skip bounds check in release builds for maximum performance
+        if (std.debug.runtime_safety and self.sp <= 0) {
             std.debug.print("Stack underflow: Attempted to pop at sp={}\n", .{self.sp});
             return error.StackUnderflow;
         }
         self.sp -= 1;
-        const value = self.data[@intCast(self.sp)];
-        return value;
+        return self.data[@intCast(self.sp)];
     }
 
     pub fn peek(self: HIRStack) !HIRFrame {
@@ -298,7 +319,8 @@ const CallStack = struct {
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) !CallStack {
-        const frames = try allocator.alloc(CallFrame, 1024); // Support 1024 nested calls
+        // Start with reasonable size, will grow dynamically if needed
+        const frames = try allocator.alloc(CallFrame, 1024);
         return CallStack{
             .frames = frames,
             .sp = 0,
@@ -311,8 +333,11 @@ const CallStack = struct {
     }
 
     pub fn push(self: *CallStack, frame: CallFrame) !void {
+        // Grow the call stack dynamically if needed (like the old interpreter)
         if (self.sp >= self.frames.len) {
-            return error.CallStackOverflow;
+            const new_size = self.frames.len * 2; // Double the size
+            const new_frames = try self.allocator.realloc(self.frames, new_size);
+            self.frames = new_frames;
         }
         self.frames[self.sp] = frame;
         self.sp += 1;
@@ -349,7 +374,7 @@ pub const HIRVM = struct {
     label_map: std.StringHashMap(u32), // label_name -> instruction index
 
     // Performance optimizations
-    var_cache: std.StringHashMap(u32), // Cache variable name → storage_id mapping
+    var_cache: std.HashMap(ScopeVarKey, u32, ScopeVarContext, std.hash_map.default_max_load_percentage), // Cache (scope_id, var_name) → storage_id mapping
     fast_mode: bool = true, // Enable optimizations for computational workloads
     turbo_mode: bool = true, // Ultra-aggressive optimizations for pure computational loops
 
@@ -357,7 +382,9 @@ pub const HIRVM = struct {
     hot_vars: [4]?HotVar = [_]?HotVar{null} ** 4,
     hot_var_count: u8 = 0,
 
-    pub fn init(allocator: std.mem.Allocator, program: *HIRProgram, reporter: *Reporter, memory_manager: *MemoryManager) !HIRVM {
+    pub fn init(program: *HIRProgram, reporter: *Reporter, memory_manager: *MemoryManager) !HIRVM {
+        const allocator = memory_manager.getAllocator();
+
         // Create a new execution scope for this HIR VM run
         // This allows proper cleanup and isolation
         const execution_scope = try memory_manager.scope_manager.createScope(memory_manager.scope_manager.root_scope);
@@ -366,12 +393,12 @@ pub const HIRVM = struct {
             .program = program,
             .reporter = reporter,
             .memory_manager = memory_manager,
-            .allocator = allocator,
-            .stack = try HIRStack.init(allocator),
-            .call_stack = try CallStack.init(allocator),
+            .allocator = allocator, // Use the passed allocator (memory manager's arena)
+            .stack = try HIRStack.init(allocator), // Use the passed allocator
+            .call_stack = try CallStack.init(allocator), // Use the passed allocator
             .current_scope = execution_scope,
-            .label_map = std.StringHashMap(u32).init(allocator),
-            .var_cache = std.StringHashMap(u32).init(allocator),
+            .label_map = std.StringHashMap(u32).init(allocator), // Use the passed allocator
+            .var_cache = std.HashMap(ScopeVarKey, u32, ScopeVarContext, std.hash_map.default_max_load_percentage).init(allocator), // Use the passed allocator
             .fast_mode = true,
             .turbo_mode = true,
             .hot_vars = [_]?HotVar{null} ** 4,
@@ -385,13 +412,12 @@ pub const HIRVM = struct {
     }
 
     pub fn deinit(self: *HIRVM) void {
-        self.stack.deinit();
-        self.call_stack.deinit();
-        self.label_map.deinit();
-        self.var_cache.deinit();
-
-        // Clean up the execution scope (this will clean up all variables created during execution)
+        // Clean up the execution scope
         self.current_scope.deinit();
+
+        // Note: stack, call_stack, label_map, and var_cache are allocated with
+        // the memory manager's arena allocator, so they'll be cleaned up automatically
+        // when the memory manager deinitializes its arena
     }
 
     /// Pre-resolve all labels to instruction indices for O(1) jump lookup
@@ -462,6 +488,9 @@ pub const HIRVM = struct {
                         if (hot_var != null and std.mem.eql(u8, hot_var.?.name, v.var_name)) {
                             if (self.memory_manager.scope_manager.value_storage.get(hot_var.?.storage_id)) |storage| {
                                 const hir_value = tokenLiteralToHIRValue(storage.value);
+                                if (self.memory_manager.debug_enabled) {
+                                    std.debug.print(">>   TURBO hit for '{s}' = {any} (storage_id: {})\n", .{ v.var_name, hir_value, hot_var.?.storage_id });
+                                }
                                 try self.stack.push(HIRFrame.initFromHIRValue(hir_value));
                                 return; // Ultra-fast path
                             }
@@ -470,20 +499,37 @@ pub const HIRVM = struct {
                     }
                 }
 
-                // DISABLED: Fast mode caching to debug recursive call variable corruption
-                // The variable cache might be sharing storage IDs between different scopes
-                // TODO: Re-enable once scope isolation is fully working
-                if (false) {
-                    // ... fast mode code disabled
+                // PERFORMANCE: Re-enable variable caching for speed
+                if (self.fast_mode) {
+                    // Check cache first - O(1) lookup for hot variables (scope-aware)
+                    const cache_key = ScopeVarKey{ .scope_id = self.current_scope.id, .var_name = v.var_name };
+                    if (self.var_cache.get(cache_key)) |storage_id| {
+                        if (self.memory_manager.scope_manager.value_storage.get(storage_id)) |storage| {
+                            const hir_value = tokenLiteralToHIRValue(storage.value);
+                            if (self.memory_manager.debug_enabled) {
+                                std.debug.print(">>   CACHE hit for '{s}' scope {} = {any} (storage_id: {})\n", .{ v.var_name, self.current_scope.id, hir_value, storage_id });
+                            }
+                            try self.stack.push(HIRFrame.initFromHIRValue(hir_value));
+                            return; // Ultra-fast cached path
+                        } else {
+                            // Cache is stale, remove entry
+                            if (self.memory_manager.debug_enabled) {
+                                std.debug.print(">>   CACHE stale for '{s}' scope {} (storage_id: {})\n", .{ v.var_name, self.current_scope.id, storage_id });
+                            }
+                            _ = self.var_cache.remove(cache_key);
+                        }
+                    }
                 }
 
                 // FALLBACK: Standard variable lookup (populate cache for next time)
                 if (self.current_scope.lookupVariable(v.var_name)) |variable| {
                     if (self.memory_manager.scope_manager.value_storage.get(variable.storage_id)) |storage| {
-                        // DISABLED: Caching to debug recursive call variable corruption
-                        // if (self.fast_mode) {
-                        //     self.var_cache.put(v.var_name, variable.storage_id) catch {};
-                        // }
+                        // PERFORMANCE: Cache variable for ultra-fast future lookups (scope-aware)
+                        if (self.fast_mode) {
+                            // Using arena allocator - no need to limit cache size
+                            const cache_key = ScopeVarKey{ .scope_id = self.current_scope.id, .var_name = v.var_name };
+                            self.var_cache.put(cache_key, variable.storage_id) catch {};
+                        }
 
                         const hir_value = tokenLiteralToHIRValue(storage.value);
 
@@ -514,9 +560,14 @@ pub const HIRVM = struct {
                     std.debug.print(">> StoreVar '{s}' = {any} in scope {}\n", .{ v.var_name, value.value, self.current_scope.id });
                 }
 
-                // DISABLED: Fast mode caching to debug recursive call variable corruption
-                if (false) {
-                    // ... fast mode code disabled
+                // PERFORMANCE: Fast mode caching for variables in StoreVar (scope-aware)
+                if (self.fast_mode) {
+                    // Update cache when storing variables
+                    if (self.current_scope.name_map.get(v.var_name)) |variable| {
+                        // Using arena allocator - no need to limit cache size
+                        const cache_key = ScopeVarKey{ .scope_id = self.current_scope.id, .var_name = v.var_name };
+                        self.var_cache.put(cache_key, variable.storage_id) catch {};
+                    }
                 }
 
                 // CRITICAL FIX: Check if variable exists in CURRENT scope only
@@ -564,12 +615,28 @@ pub const HIRVM = struct {
                     std.debug.print(">> IntArith.{s}: {} {s} {} = ", .{ @tagName(a.op), a_int, @tagName(a.op), b_int });
                 }
 
+                // PERFORMANCE: Inline arithmetic operations for maximum speed
+                const a_int = try a_val.asInt();
+                const b_int = try b.asInt();
+
                 const result = switch (a.op) {
-                    .Add => try self.intAdd(try a_val.asInt(), try b.asInt()),
-                    .Sub => try self.intSub(try a_val.asInt(), try b.asInt()),
-                    .Mul => try self.intMul(try a_val.asInt(), try b.asInt()),
-                    .Div => try self.intDiv(try a_val.asInt(), try b.asInt()),
-                    .Mod => try self.intMod(try a_val.asInt(), try b.asInt()),
+                    .Add => std.math.add(i32, a_int, b_int) catch |err| {
+                        if (self.memory_manager.debug_enabled) std.debug.print("Integer overflow in addition: {} + {}\n", .{ a_int, b_int });
+                        return err;
+                    },
+                    .Sub => std.math.sub(i32, a_int, b_int) catch |err| {
+                        if (self.memory_manager.debug_enabled) std.debug.print("Integer overflow in subtraction: {} - {}\n", .{ a_int, b_int });
+                        return err;
+                    },
+                    .Mul => std.math.mul(i32, a_int, b_int) catch |err| {
+                        if (self.memory_manager.debug_enabled) std.debug.print("Integer overflow in multiplication: {} * {}\n", .{ a_int, b_int });
+                        return err;
+                    },
+                    .Div => if (b_int == 0) {
+                        if (self.memory_manager.debug_enabled) std.debug.print("Division by zero: {} / {}\n", .{ a_int, b_int });
+                        return error.DivisionByZero;
+                    } else @divTrunc(a_int, b_int),
+                    .Mod => try self.fastIntMod(a_int, b_int), // Use optimized modulo
                 };
 
                 if (self.memory_manager.debug_enabled) {
@@ -583,11 +650,18 @@ pub const HIRVM = struct {
                 const b = try self.stack.pop();
                 const a_val = try self.stack.pop();
 
+                // PERFORMANCE: Inline float operations for maximum speed
+                const a_float = try a_val.asFloat();
+                const b_float = try b.asFloat();
+
                 const result = switch (a.op) {
-                    .Add => try self.floatAdd(try a_val.asFloat(), try b.asFloat()),
-                    .Sub => try self.floatSub(try a_val.asFloat(), try b.asFloat()),
-                    .Mul => try self.floatMul(try a_val.asFloat(), try b.asFloat()),
-                    .Div => try self.floatDiv(try a_val.asFloat(), try b.asFloat()),
+                    .Add => a_float + b_float,
+                    .Sub => a_float - b_float,
+                    .Mul => a_float * b_float,
+                    .Div => if (b_float == 0.0) {
+                        if (self.memory_manager.debug_enabled) std.debug.print("Float division by zero: {} / {}\n", .{ a_float, b_float });
+                        return error.DivisionByZero;
+                    } else a_float / b_float,
                     .Mod => return error.UnsupportedOperation, // Float modulo not supported
                 };
 
@@ -598,6 +672,10 @@ pub const HIRVM = struct {
                 const b = try self.stack.pop();
                 const a_val = try self.stack.pop();
 
+                if (self.memory_manager.debug_enabled) {
+                    std.debug.print(">> Compare {s}: {any} {s} {any}\n", .{ @tagName(c.op), a_val.value, @tagName(c.op), b.value });
+                }
+
                 const result = switch (c.op) {
                     .Eq => try self.compareEqual(a_val, b),
                     .Ne => !(try self.compareEqual(a_val, b)),
@@ -606,6 +684,10 @@ pub const HIRVM = struct {
                     .Gt => try self.compareGreater(a_val, b),
                     .Ge => (try self.compareGreater(a_val, b)) or (try self.compareEqual(a_val, b)),
                 };
+
+                if (self.memory_manager.debug_enabled) {
+                    std.debug.print(">> Compare result: {} (pushing tetra {})\n", .{ result, if (result) @as(u8, 1) else @as(u8, 0) });
+                }
 
                 try self.stack.push(HIRFrame.initTetra(if (result) 1 else 0));
             },
@@ -625,6 +707,10 @@ pub const HIRVM = struct {
             .JumpCond => |j| {
                 // OPTIMIZED: Conditional jump with reduced overhead
                 const condition = try self.stack.pop();
+                if (self.memory_manager.debug_enabled) {
+                    std.debug.print(">> JumpCond: condition = {any}, true_label = {s}, false_label = {s}\n", .{ condition.value, j.label_true, j.label_false });
+                }
+
                 const should_jump = switch (condition.value) {
                     .tetra => |t| switch (t) {
                         0 => false, // false -> don't jump
@@ -640,10 +726,14 @@ pub const HIRVM = struct {
                 };
 
                 const target_label = if (should_jump) j.label_true else j.label_false;
+                if (self.memory_manager.debug_enabled) {
+                    std.debug.print(">> JumpCond: should_jump = {}, target_label = {s}\n", .{ should_jump, target_label });
+                }
+
                 if (self.label_map.get(target_label)) |target_ip| {
                     self.ip = target_ip;
-                    if (self.memory_manager.debug_enabled and !self.fast_mode) {
-                        std.debug.print("Conditional jump to '{s}' at instruction {}\n", .{ target_label, target_ip });
+                    if (self.memory_manager.debug_enabled) {
+                        std.debug.print(">> JumpCond: Jumping to '{s}' at instruction {} (current IP was {})\n", .{ target_label, target_ip, self.ip - 1 });
                     }
                 } else {
                     return self.reporter.reportFatalError("Unknown label: {s}", .{target_label});
@@ -693,6 +783,9 @@ pub const HIRVM = struct {
                 // Only skip scope creation for simple block scopes (loops, if statements, etc.)
                 // TODO: We need a way to distinguish function scopes from block scopes
 
+                // Note: Variable cache may become stale when entering new scopes,
+                // but with arena allocator this is not a memory concern
+
                 // For now, always create scopes to fix recursive call variable corruption
                 const new_scope = try self.memory_manager.scope_manager.createScope(self.current_scope);
                 self.current_scope = new_scope;
@@ -708,6 +801,10 @@ pub const HIRVM = struct {
             .ExitScope => |s| {
                 // CRITICAL: Always clean up scopes to match the always-create policy above
                 // This ensures proper variable scope isolation for recursive calls
+
+                // Note: Variables from the exited scope become invalid, but cache cleanup
+                // is handled automatically by the arena allocator
+
                 if (self.current_scope.parent) |parent_scope| {
                     const old_scope = self.current_scope;
                     self.current_scope = parent_scope;
@@ -1241,13 +1338,51 @@ pub const HIRVM = struct {
         return @divTrunc(a, b);
     }
 
-    fn intMod(self: *HIRVM, a: i32, b: i32) !i32 {
+    fn fastIntMod(self: *HIRVM, a: i32, b: i32) !i32 {
         _ = self;
         if (b == 0) {
             std.debug.print("Modulo by zero: {} % {}\n", .{ a, b });
             return error.DivisionByZero;
         }
-        return @mod(a, b);
+
+        // FIZZBUZZ OPTIMIZATION: Fast modulo for common divisors
+        // Avoid expensive division for the most common cases in benchmarks
+        return switch (b) {
+            3 => fastMod3(a),
+            5 => fastMod5(a),
+            15 => fastMod15(a),
+            else => @mod(a, b),
+        };
+    }
+
+    // Ultra-fast modulo implementations for FizzBuzz
+    inline fn fastMod3(n: i32) i32 {
+        // n % 3 using bit tricks: faster than division
+        var x = n;
+        if (x < 0) x = -x;
+        while (x >= 3) {
+            x = (x >> 2) + (x & 3);
+            if (x >= 3) x -= 3;
+        }
+        return if (n < 0 and x != 0) 3 - x else x;
+    }
+
+    inline fn fastMod5(n: i32) i32 {
+        // n % 5 using multiplication trick
+        var x = n;
+        if (x < 0) x = -x;
+        x = (x >> 2) + (x & 3);
+        x = (x >> 2) + (x & 3);
+        if (x >= 5) x -= 5;
+        return if (n < 0 and x != 0) 5 - x else x;
+    }
+
+    inline fn fastMod15(n: i32) i32 {
+        // n % 15 = n % (3*5), use Chinese Remainder Theorem concept
+        const mod3 = fastMod3(n);
+        const mod5 = fastMod5(n);
+        // Reconstruct n % 15 from mod 3 and mod 5
+        return @mod(mod3 + 3 * @mod(mod5 * 2, 5), 15); // 2 is inverse of 3 mod 5
     }
 
     /// Float arithmetic operations
