@@ -1036,7 +1036,7 @@ pub const Interpreter = struct {
                     return error.TypeError;
                 }
 
-                const branch = if (condition.tetra == .true)
+                const branch = if (condition.tetra == .true or condition.tetra == .both)
                     if_expr.then_branch orelse return error.InvalidExpression
                 else
                     if_expr.else_branch orelse return error.InvalidExpression;
@@ -2856,8 +2856,8 @@ pub const Interpreter = struct {
 
     fn negateLogical(value: Tetra) ErrorList!TokenLiteral {
         return switch (value) {
-            .neither => TokenLiteral{ .tetra = .both },
-            .both => TokenLiteral{ .tetra = .neither },
+            .neither => TokenLiteral{ .tetra = .neither },
+            .both => TokenLiteral{ .tetra = .both },
             .true => TokenLiteral{ .tetra = .false },
             .false => TokenLiteral{ .tetra = .true },
         };
