@@ -18,6 +18,7 @@ const AST = @import("./ast/ast.zig");
 const SoxaCompiler = @import("./codegen/soxa.zig");
 const DoxaVM = @import("./interpreter/vm.zig").HIRVM;
 const ConstantFolder = @import("./parser/constant_folder.zig").ConstantFolder;
+const PeepholeOptimizer = @import("./codegen/peephole.zig").PeepholeOptimizer;
 
 ///==========================================================================
 /// Constants
@@ -156,8 +157,12 @@ fn processSoxaPipeline(memoryManager: *MemoryManager, source_path: []const u8, c
     const soxa_path = try generateArtifactPath(source_path, ".soxa");
     defer std.heap.page_allocator.free(soxa_path);
 
-    // Check if we need to recompile .doxa → .soxa
-    const needs_recompile = try needsRecompilation(source_path, soxa_path);
+    // TESTING: Always delete cached .soxa file to test fixes
+    std.fs.cwd().deleteFile(soxa_path) catch {};
+    std.debug.print(">> Deleted cached .soxa file for testing\n", .{});
+
+    // Check if we need to recompile .doxa → .soxa using cache validation
+    const needs_recompile = try needsRecompilation(source_path, soxa_path, memoryManager.getAllocator());
 
     if (needs_recompile) {
         if (memoryManager.debug_enabled) {
@@ -223,13 +228,10 @@ fn processSoxaPipeline(memoryManager: *MemoryManager, source_path: []const u8, c
     }
 }
 
-/// Check if .soxa file needs to be regenerated
-fn needsRecompilation(source_path: []const u8, soxa_path: []const u8) !bool {
-    const source_stat = std.fs.cwd().statFile(source_path) catch return true;
-    const soxa_stat = std.fs.cwd().statFile(soxa_path) catch return true;
-
-    // Recompile if source is newer than soxa
-    return source_stat.mtime >= soxa_stat.mtime;
+/// Check if .soxa file needs to be regenerated using cache validation
+fn needsRecompilation(source_path: []const u8, soxa_path: []const u8, allocator: std.mem.Allocator) !bool {
+    // Use embedded hash validation for robust cache checking
+    return !(try SoxaCompiler.validateSoxaCache(soxa_path, source_path, allocator));
 }
 
 /// Future: Compile SOXA to native binary via LLVM
@@ -330,6 +332,19 @@ fn compileDoxaToSoxa(memoryManager: *MemoryManager, source_path: []const u8, sox
     var hir_program = try hir_generator.generateProgram(statements);
     defer hir_program.deinit();
 
+    // Apply peephole optimizations to HIR
+    var peephole_optimizer = PeepholeOptimizer.init(memoryManager.getAllocator());
+    const optimized_instructions = try peephole_optimizer.optimize(hir_program.instructions);
+    defer memoryManager.getAllocator().free(optimized_instructions);
+
+    // Replace the instructions in the HIR program
+    memoryManager.getAllocator().free(hir_program.instructions);
+    hir_program.instructions = optimized_instructions;
+
+    if (memoryManager.debug_enabled) {
+        std.debug.print(">> Peephole optimizations applied: {} HIR instruction optimizations\n", .{peephole_optimizer.getTotalOptimizations()});
+    }
+
     // Delete existing .soxa file if it exists
     std.fs.cwd().deleteFile(soxa_path) catch |err| {
         // It's fine if the file doesn't exist
@@ -340,8 +355,8 @@ fn compileDoxaToSoxa(memoryManager: *MemoryManager, source_path: []const u8, sox
         }
     };
 
-    // Write the HIR program to .soxa file
-    try SoxaCompiler.writeSoxaFile(&hir_program, soxa_path, memoryManager.getAllocator());
+    // Write the HIR program to .soxa file with cache validation
+    try SoxaCompiler.writeSoxaFile(&hir_program, soxa_path, source_path, memoryManager.getAllocator());
 
     if (memoryManager.debug_enabled) {
         std.debug.print(">> Compiled {s} -> {s} ({} HIR instructions)\n", .{ source_path, soxa_path, hir_program.instructions.len });
