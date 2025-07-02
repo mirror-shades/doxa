@@ -220,6 +220,11 @@ pub const ConstantFolder = struct {
             // Logical operations
             .AND => self.foldAnd(left, right),
             .OR => self.foldOr(left, right),
+            .XOR => self.foldXor(left, right),
+            .IFF => self.foldIff(left, right),
+            .NAND => self.foldNand(left, right),
+            .NOR => self.foldNor(left, right),
+            .IMPLIES => self.foldImplies(left, right),
 
             else => null,
         };
@@ -539,6 +544,120 @@ pub const ConstantFolder = struct {
                     .neither => switch (r) {
                         .true => .true,
                         .false => .neither,
+                        .both => .both,
+                        .neither => .neither,
+                    },
+                } },
+                else => null,
+            },
+            else => null,
+        };
+    }
+
+    fn foldXor(self: *ConstantFolder, left: TokenLiteral, right: TokenLiteral) ?TokenLiteral {
+        _ = self;
+        return switch (left) {
+            .tetra => |l| switch (right) {
+                .tetra => |r| TokenLiteral{ .tetra = switch (l) {
+                    .true => switch (r) {
+                        .true => .false,
+                        .false => .true,
+                        .both => .both,
+                        .neither => .neither,
+                    },
+                    .false => r,
+                    .both => switch (r) {
+                        .true => .both,
+                        .false => .both,
+                        .both => .both,
+                        .neither => .both,
+                    },
+                    .neither => switch (r) {
+                        .true => .neither,
+                        .false => .neither,
+                        .both => .both,
+                        .neither => .neither,
+                    },
+                } },
+                else => null,
+            },
+            else => null,
+        };
+    }
+
+    fn foldIff(self: *ConstantFolder, left: TokenLiteral, right: TokenLiteral) ?TokenLiteral {
+        _ = self;
+        return switch (left) {
+            .tetra => |l| switch (right) {
+                .tetra => |r| TokenLiteral{ .tetra = switch (l) {
+                    .true => r,
+                    .false => switch (r) {
+                        .true => .false,
+                        .false => .true,
+                        .both => .both,
+                        .neither => .neither,
+                    },
+                    .both => switch (r) {
+                        .true => .both,
+                        .false => .both,
+                        .both => .both,
+                        .neither => .both,
+                    },
+                    .neither => switch (r) {
+                        .true => .neither,
+                        .false => .neither,
+                        .both => .both,
+                        .neither => .neither,
+                    },
+                } },
+                else => null,
+            },
+            else => null,
+        };
+    }
+
+    fn foldNand(self: *ConstantFolder, left: TokenLiteral, right: TokenLiteral) ?TokenLiteral {
+        // NAND is NOT(AND)
+        if (self.foldAnd(left, right)) |and_result| {
+            return switch (and_result.tetra) {
+                .true => TokenLiteral{ .tetra = .false },
+                .false => TokenLiteral{ .tetra = .true },
+                .both => TokenLiteral{ .tetra = .neither },
+                .neither => TokenLiteral{ .tetra = .both },
+            };
+        }
+        return null;
+    }
+
+    fn foldNor(self: *ConstantFolder, left: TokenLiteral, right: TokenLiteral) ?TokenLiteral {
+        // NOR is NOT(OR)
+        if (self.foldOr(left, right)) |or_result| {
+            return switch (or_result.tetra) {
+                .true => TokenLiteral{ .tetra = .false },
+                .false => TokenLiteral{ .tetra = .true },
+                .both => TokenLiteral{ .tetra = .neither },
+                .neither => TokenLiteral{ .tetra = .both },
+            };
+        }
+        return null;
+    }
+
+    fn foldImplies(self: *ConstantFolder, left: TokenLiteral, right: TokenLiteral) ?TokenLiteral {
+        _ = self;
+        return switch (left) {
+            .tetra => |l| switch (right) {
+                .tetra => |r| TokenLiteral{ .tetra = switch (l) {
+                    .true => r,
+                    .false => .true,
+                    .both => switch (r) {
+                        .true => .both,
+                        .false => .both,
+                        .both => .both,
+                        .neither => .both,
+                    },
+                    .neither => switch (r) {
+                        .true => .neither,
+                        .false => .true,
                         .both => .both,
                         .neither => .neither,
                     },

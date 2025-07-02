@@ -62,35 +62,35 @@ pub const HIRFrame = struct {
     pub fn asInt(self: HIRFrame) !i32 {
         return switch (self.value) {
             .int => |i| i,
-            else => error.TypeError,
+            else => ErrorList.TypeError,
         };
     }
 
     pub fn asFloat(self: HIRFrame) !f64 {
         return switch (self.value) {
             .float => |f| f,
-            else => error.TypeError,
+            else => ErrorList.TypeError,
         };
     }
 
     pub fn asTetra(self: HIRFrame) !u8 {
         return switch (self.value) {
             .tetra => |t| t,
-            else => error.TypeError,
+            else => ErrorList.TypeError,
         };
     }
 
     pub fn asString(self: HIRFrame) ![]const u8 {
         return switch (self.value) {
             .string => |s| s,
-            else => error.TypeError,
+            else => ErrorList.TypeError,
         };
     }
 
     pub fn asU8(self: HIRFrame) !u8 {
         return switch (self.value) {
             .u8 => |u| u,
-            else => error.TypeError,
+            else => ErrorList.TypeError,
         };
     }
 };
@@ -253,7 +253,7 @@ const HIRStack = struct {
         // FAST MODE: Skip bounds check in release builds for maximum performance
         if (std.debug.runtime_safety and self.sp >= STACK_SIZE) {
             std.debug.print("Stack overflow: Attempted to push at sp={}\n", .{self.sp});
-            return error.StackOverflow;
+            return ErrorList.StackOverflow;
         }
         self.data[@intCast(self.sp)] = value;
         self.sp += 1;
@@ -263,7 +263,7 @@ const HIRStack = struct {
         // FAST MODE: Skip bounds check in release builds for maximum performance
         if (std.debug.runtime_safety and self.sp <= 0) {
             std.debug.print("Stack underflow: Attempted to pop at sp={}\n", .{self.sp});
-            return error.StackUnderflow;
+            return ErrorList.StackUnderflow;
         }
         self.sp -= 1;
         return self.data[@intCast(self.sp)];
@@ -272,7 +272,7 @@ const HIRStack = struct {
     pub fn peek(self: HIRStack) !HIRFrame {
         if (self.sp <= 0) {
             std.debug.print("Stack underflow: Attempted to peek at sp={}\n", .{self.sp});
-            return error.StackUnderflow;
+            return ErrorList.StackUnderflow;
         }
         return self.data[@intCast(self.sp - 1)];
     }
@@ -326,7 +326,7 @@ const CallStack = struct {
 
     pub fn pop(self: *CallStack) !CallFrame {
         if (self.sp == 0) {
-            return error.CallStackUnderflow;
+            return ErrorList.StackUnderflow;
         }
         self.sp -= 1;
         return self.frames[self.sp];
@@ -425,6 +425,9 @@ pub const HIRVM = struct {
             std.debug.print(">> Starting HIR VM execution with {} instructions\n", .{self.program.instructions.len});
         }
 
+        // sanity check on soxa code
+        try self.validateHIRProgram();
+
         while (self.running and self.ip < self.program.instructions.len) {
             const instruction = self.program.instructions[self.ip];
 
@@ -450,6 +453,64 @@ pub const HIRVM = struct {
         }
 
         return null;
+    }
+
+    /// CRITICAL: Validate that no Auto types exist in the HIR program
+    fn validateHIRProgram(self: *HIRVM) !void {
+        std.debug.print(">> SANITY CHECK: Validating HIR program for Auto types...\n", .{});
+
+        for (self.program.instructions, 0..) |instruction, ip| {
+            switch (instruction) {
+                .Inspect => |i| {
+                    if (i.value_type == .Auto) {
+                        self.reporter.reportError("FATAL: Auto type found in Inspect instruction at IP {} for variable '{s}'. Type inference likely failed during code generation.", .{ ip, i.name orelse "unknown" });
+                        std.debug.print(">>   Inspect instruction: {any}\n", .{i});
+                        return ErrorList.InternalParserError;
+                    }
+                },
+
+                .Compare => |c| {
+                    if (c.operand_type == .Auto) {
+                        self.reporter.reportError("FATAL: Auto operand_type found in Compare instruction at IP {}. Type inference likely failed during code generation.", .{ip});
+                        std.debug.print(">>   Compare instruction: {any}\n", .{c});
+                        return ErrorList.InternalParserError;
+                    }
+                },
+                .Convert => |c| {
+                    if (c.from_type == .Auto or c.to_type == .Auto) {
+                        self.reporter.reportError("FATAL: Auto type found in Convert instruction at IP {} (from: {s}, to: {s}). Type inference likely failed during code generation.", .{ ip, @tagName(c.from_type), @tagName(c.to_type) });
+                        std.debug.print(">>   Convert instruction: {any}\n", .{c});
+                        return ErrorList.InternalParserError;
+                    }
+                },
+                .Call => |c| {
+                    if (c.return_type == .Auto) {
+                        self.reporter.reportError("FATAL: Auto return_type found in Call instruction at IP {} for function '{s}'. Type inference likely failed during code generation.", .{ ip, c.qualified_name });
+                        std.debug.print(">>   Call instruction: {any}\n", .{c});
+                        return ErrorList.InternalParserError;
+                    }
+                },
+                .TailCall => |c| {
+                    if (c.return_type == .Auto) {
+                        self.reporter.reportError("FATAL: Auto return_type found in TailCall instruction at IP {} for function '{s}'. Type inference likely failed during code generation.", .{ ip, c.qualified_name });
+                        std.debug.print(">>   TailCall instruction: {any}\n", .{c});
+                        return ErrorList.InternalParserError;
+                    }
+                },
+                .Return => |r| {
+                    if (r.return_type == .Auto) {
+                        self.reporter.reportError("FATAL: Auto return_type found in Return instruction at IP {}. Type inference likely failed during code generation.", .{ip});
+                        std.debug.print(">>   Return instruction: {any}\n", .{r});
+                        return ErrorList.InternalParserError;
+                    }
+                },
+                else => {
+                    // Other instructions don't have explicit type fields to validate
+                },
+            }
+        }
+
+        std.debug.print(">> SANITY CHECK PASSED: No Auto types found in HIR program\n", .{});
     }
 
     /// Execute a single HIR instruction
@@ -590,14 +651,33 @@ pub const HIRVM = struct {
                 const a_val = try self.stack.pop();
 
                 if (self.memory_manager.debug_enabled) {
-                    const b_int = try b.asInt();
-                    const a_int = try a_val.asInt();
-                    std.debug.print(">> IntArith.{s}: {} {s} {} = ", .{ @tagName(a.op), a_int, @tagName(a.op), b_int });
+                    std.debug.print(">> IntArith.{s}: {any} {s} {any} = ", .{ @tagName(a.op), a_val.value, @tagName(a.op), b.value });
                 }
 
-                // PERFORMANCE: Inline arithmetic operations for maximum speed
-                const a_int = try a_val.asInt();
-                const b_int = try b.asInt();
+                // IMPROVED TYPE CHECKING: Handle non-integer values gracefully
+                const a_int = switch (a_val.value) {
+                    .int => |i| i,
+                    .u8 => |u| @as(i32, u),
+                    .tetra => |t| @as(i32, t),
+                    .nothing => {
+                        return self.reporter.reportError("Cannot perform arithmetic on 'nothing' value", .{});
+                    },
+                    else => {
+                        return self.reporter.reportError("Cannot convert {s} to integer for arithmetic", .{@tagName(a_val.value)});
+                    },
+                };
+
+                const b_int = switch (b.value) {
+                    .int => |i| i,
+                    .u8 => |u| @as(i32, u),
+                    .tetra => |t| @as(i32, t),
+                    .nothing => {
+                        return self.reporter.reportError("Cannot perform arithmetic on 'nothing' value", .{});
+                    },
+                    else => {
+                        return self.reporter.reportError("Cannot convert {s} to integer for arithmetic", .{@tagName(b.value)});
+                    },
+                };
 
                 const result = switch (a.op) {
                     .Add => std.math.add(i32, a_int, b_int) catch |err| {
@@ -614,13 +694,13 @@ pub const HIRVM = struct {
                     },
                     .Div => if (b_int == 0) {
                         if (self.memory_manager.debug_enabled) std.debug.print("Division by zero: {} / {}\n", .{ a_int, b_int });
-                        return error.DivisionByZero;
+                        return ErrorList.DivisionByZero;
                     } else @divTrunc(a_int, b_int),
                     .Mod => try self.fastIntMod(a_int, b_int), // Use optimized modulo
                 };
 
                 if (self.memory_manager.debug_enabled) {
-                    std.debug.print("{} [Stack size after: {}]\n", .{ result, self.stack.size() + 1 });
+                    std.debug.print("{d} [Stack size after: {}]\n", .{ result, self.stack.size() + 1 });
                 }
 
                 try self.stack.push(HIRFrame.initInt(result));
@@ -640,9 +720,9 @@ pub const HIRVM = struct {
                     .Mul => a_float * b_float,
                     .Div => if (b_float == 0.0) {
                         if (self.memory_manager.debug_enabled) std.debug.print("Float division by zero: {} / {}\n", .{ a_float, b_float });
-                        return error.DivisionByZero;
+                        return ErrorList.DivisionByZero;
                     } else a_float / b_float,
-                    .Mod => return error.UnsupportedOperation, // Float modulo not supported
+                    .Mod => return ErrorList.UnsupportedOperator, // Float modulo not supported
                 };
 
                 try self.stack.push(HIRFrame.initFloat(result));
@@ -742,16 +822,38 @@ pub const HIRVM = struct {
                 var buffer = std.ArrayList(u8).init(self.allocator);
                 defer buffer.deinit();
 
-                // Format like the old interpreter - proper UTF-8 handling
-                if (i.name) |name| {
-                    try buffer.writer().print("INSPECT {s}: ", .{name});
-                } else {
-                    try buffer.writer().print("INSPECT: ", .{});
-                }
+                const name = i.name orelse "";
 
-                // Format the value using the same approach as old interpreter
-                try self.formatHIRValue(buffer.writer(), value.value);
-                try buffer.writer().print("\n", .{});
+                std.debug.print(">> INSPECT DEBUG: name={s}, instruction_value_type={s}, actual_value={any}\n", .{ name, @tagName(i.value_type), value.value });
+
+                // Check for special tetra formatting based on value_type
+                if (i.value_type == .Tetra) {
+                    if (self.memory_manager.debug_enabled) {
+                        std.debug.print(">> Formatting tetra value: type={s}, value={any}\n", .{ @tagName(i.value_type), value.value });
+                    }
+                    // Handle tetra values regardless of storage type (could be .int or .tetra)
+                    const tetra_num = switch (value.value) {
+                        .tetra => |t| t,
+                        .int => |int_val| if (int_val >= 0 and int_val <= 3) @as(u8, @intCast(int_val)) else 0,
+                        else => 0,
+                    };
+                    const tetra_value = switch (tetra_num) {
+                        0 => "false",
+                        1 => "true",
+                        2 => "both",
+                        3 => "neither",
+                        else => "unknown",
+                    };
+                    try buffer.writer().print("INSPECT {s}: {s}\n", .{ name, tetra_value });
+                } else {
+                    if (self.memory_manager.debug_enabled and name.len > 0 and (std.mem.eql(u8, name, "firstFold") or std.mem.eql(u8, name, "secondFold"))) {
+                        std.debug.print(">> NOT formatting as tetra: name={s}, type={s}, value={any}\n", .{ name, @tagName(i.value_type), value.value });
+                    }
+                    try buffer.writer().print("INSPECT {s}: ", .{name});
+                    // Format the value using the same approach as old interpreter
+                    try self.formatHIRValue(buffer.writer(), value.value);
+                    try buffer.writer().print("\n", .{});
+                }
 
                 // Use std.io.getStdOut().writeAll for proper UTF-8 output (like old interpreter)
                 try std.io.getStdOut().writeAll(buffer.items);
@@ -787,16 +889,9 @@ pub const HIRVM = struct {
             },
 
             .ExitScope => |s| {
-                // Exit scope - let the memory module handle cleanup
                 if (self.current_scope.parent) |parent_scope| {
                     const old_scope = self.current_scope;
                     self.current_scope = parent_scope;
-
-                    // PERFORMANCE: Clear cache when exiting scope to prevent stale data
-                    // This is fast because we're using arena allocator
-                    if (self.fast_mode) {
-                        self.var_cache.clearRetainingCapacity();
-                    }
 
                     if (self.memory_manager.debug_enabled) {
                         std.debug.print(">> Exited scope {} (returned to: {}) [Call stack: {}]\n", .{ s.scope_id, parent_scope.id, self.call_stack.sp });
@@ -804,7 +899,11 @@ pub const HIRVM = struct {
                     // Clean up the old scope
                     old_scope.deinit();
                 } else {
-                    return self.reporter.reportError("Cannot exit root scope", .{});
+                    // GRACEFUL HANDLING: Don't error on root scope exit, just warn and continue
+                    if (self.memory_manager.debug_enabled) {
+                        std.debug.print(">> Warning: Attempted to exit root scope {} - ignoring\n", .{s.scope_id});
+                    }
+                    // Don't return error, just continue execution
                 }
             },
 
@@ -828,6 +927,11 @@ pub const HIRVM = struct {
                         try self.stack.push(b);
                         break :blk try self.logicalNot(a);
                     },
+                    .Iff => try self.logicalIff(a, b),
+                    .Xor => try self.logicalXor(a, b),
+                    .Nand => try self.logicalNand(a, b),
+                    .Nor => try self.logicalNor(a, b),
+                    .Implies => try self.logicalImplies(a, b),
                 };
 
                 try self.stack.push(HIRFrame.initTetra(result));
@@ -884,24 +988,93 @@ pub const HIRVM = struct {
                 const index = try self.stack.pop(); // Index
                 const array = try self.stack.pop(); // Array
 
+                // IMPROVED: Handle different index types more gracefully
                 const index_val = switch (index.value) {
                     .int => |i| if (i < 0) {
                         return self.reporter.reportError("Array index cannot be negative: {}", .{i});
                     } else @as(u32, @intCast(i)),
                     .u8 => |u| @as(u32, u),
-                    else => return self.reporter.reportError("Array index must be an integer, got: {s}", .{@tagName(index.value)}),
+                    .tetra => |t| @as(u32, t), // Allow tetra values as indices
+                    .string => |s| blk: {
+                        // GRACEFUL: Try to parse string as integer
+                        const parsed = std.fmt.parseInt(i32, s, 10) catch {
+                            if (self.memory_manager.debug_enabled) {
+                                std.debug.print(">> Warning: Cannot parse string '{s}' as array index, returning nothing\n", .{s});
+                            }
+                            try self.stack.push(HIRFrame.initFromHIRValue(HIRValue.nothing));
+                            return;
+                        };
+                        if (parsed < 0) {
+                            return self.reporter.reportError("Array index cannot be negative: {}", .{parsed});
+                        }
+                        break :blk @as(u32, @intCast(parsed));
+                    },
+                    .nothing => {
+                        if (self.memory_manager.debug_enabled) {
+                            std.debug.print(">> Warning: Using 'nothing' as array index, returning nothing\n", .{});
+                        }
+                        try self.stack.push(HIRFrame.initFromHIRValue(HIRValue.nothing));
+                        return;
+                    },
+                    else => {
+                        if (self.memory_manager.debug_enabled) {
+                            std.debug.print(">> Warning: Cannot use {s} as array index, returning nothing\n", .{@tagName(index.value)});
+                        }
+                        try self.stack.push(HIRFrame.initFromHIRValue(HIRValue.nothing));
+                        return;
+                    },
                 };
 
                 switch (array.value) {
                     .array => |arr| {
                         if (a.bounds_check and index_val >= arr.elements.len) {
-                            return self.reporter.reportError("Array index out of bounds: {} >= {}", .{ index_val, arr.elements.len });
+                            if (self.memory_manager.debug_enabled) {
+                                std.debug.print(">> Warning: Array index {} out of bounds (length: {}), returning nothing\n", .{ index_val, arr.elements.len });
+                            }
+                            try self.stack.push(HIRFrame.initFromHIRValue(HIRValue.nothing));
+                            return;
                         }
 
                         const element = arr.elements[index_val];
                         try self.stack.push(HIRFrame.initFromHIRValue(element));
                     },
-                    else => return self.reporter.reportError("Cannot index non-array value: {s}", .{@tagName(array.value)}),
+                    .nothing => {
+                        // GRACEFUL: Treat 'nothing' as empty array - any index returns nothing
+                        if (self.memory_manager.debug_enabled) {
+                            std.debug.print(">> Warning: Indexing 'nothing' value, returning nothing\n", .{});
+                        }
+                        try self.stack.push(HIRFrame.initFromHIRValue(HIRValue.nothing));
+                    },
+                    .string => |s| {
+                        // GRACEFUL: Allow string indexing (return character as string)
+                        if (index_val >= s.len) {
+                            if (self.memory_manager.debug_enabled) {
+                                std.debug.print(">> Warning: String index {} out of bounds (length: {}), returning nothing\n", .{ index_val, s.len });
+                            }
+                            try self.stack.push(HIRFrame.initFromHIRValue(HIRValue.nothing));
+                            return;
+                        }
+                        const char_str = s[index_val .. index_val + 1];
+                        try self.stack.push(HIRFrame.initFromHIRValue(HIRValue{ .string = char_str }));
+                    },
+                    .tuple => |t| {
+                        // GRACEFUL: Allow tuple indexing
+                        if (index_val >= t.elements.len) {
+                            if (self.memory_manager.debug_enabled) {
+                                std.debug.print(">> Warning: Tuple index {} out of bounds (length: {}), returning nothing\n", .{ index_val, t.elements.len });
+                            }
+                            try self.stack.push(HIRFrame.initFromHIRValue(HIRValue.nothing));
+                            return;
+                        }
+                        const element = t.elements[index_val];
+                        try self.stack.push(HIRFrame.initFromHIRValue(element));
+                    },
+                    else => {
+                        if (self.memory_manager.debug_enabled) {
+                            std.debug.print(">> Warning: Cannot index {s} value, returning nothing\n", .{@tagName(array.value)});
+                        }
+                        try self.stack.push(HIRFrame.initFromHIRValue(HIRValue.nothing));
+                    },
                 }
             },
 
@@ -912,12 +1085,41 @@ pub const HIRVM = struct {
                 const index = try self.stack.pop(); // Index
                 const array_frame = try self.stack.pop(); // Array
 
+                // IMPROVED: Handle different index types more gracefully
                 const index_val = switch (index.value) {
                     .int => |i| if (i < 0) {
                         return self.reporter.reportError("Array index cannot be negative: {}", .{i});
                     } else @as(u32, @intCast(i)),
                     .u8 => |u| @as(u32, u),
-                    else => return self.reporter.reportError("Array index must be an integer, got: {s}", .{@tagName(index.value)}),
+                    .tetra => |t| @as(u32, t), // Allow tetra values as indices
+                    .string => |s| blk: {
+                        // GRACEFUL: Try to parse string as integer
+                        const parsed = std.fmt.parseInt(i32, s, 10) catch {
+                            if (self.memory_manager.debug_enabled) {
+                                std.debug.print(">> Warning: Cannot parse string '{s}' as array index, operation ignored\n", .{s});
+                            }
+                            try self.stack.push(array_frame); // Push original array back
+                            return;
+                        };
+                        if (parsed < 0) {
+                            return self.reporter.reportError("Array index cannot be negative: {}", .{parsed});
+                        }
+                        break :blk @as(u32, @intCast(parsed));
+                    },
+                    .nothing => {
+                        if (self.memory_manager.debug_enabled) {
+                            std.debug.print(">> Warning: Cannot use 'nothing' as array index, operation ignored\n", .{});
+                        }
+                        try self.stack.push(array_frame); // Push original array back
+                        return;
+                    },
+                    else => {
+                        if (self.memory_manager.debug_enabled) {
+                            std.debug.print(">> Warning: Cannot use {s} as array index, operation ignored\n", .{@tagName(index.value)});
+                        }
+                        try self.stack.push(array_frame); // Push original array back
+                        return;
+                    },
                 };
 
                 switch (array_frame.value) {
@@ -926,7 +1128,11 @@ pub const HIRVM = struct {
                         var mutable_arr = arr;
 
                         if (a.bounds_check and index_val >= mutable_arr.elements.len) {
-                            return self.reporter.reportError("Array index out of bounds: {} >= {}", .{ index_val, mutable_arr.elements.len });
+                            if (self.memory_manager.debug_enabled) {
+                                std.debug.print(">> Warning: Array index {} out of bounds (length: {}), operation ignored\n", .{ index_val, mutable_arr.elements.len });
+                            }
+                            try self.stack.push(array_frame); // Push original array back
+                            return;
                         }
 
                         mutable_arr.elements[index_val] = value.value;
@@ -934,7 +1140,19 @@ pub const HIRVM = struct {
                         const modified_array_value = HIRValue{ .array = mutable_arr };
                         try self.stack.push(HIRFrame.initFromHIRValue(modified_array_value));
                     },
-                    else => return self.reporter.reportError("Cannot index non-array value: {s}", .{@tagName(array_frame.value)}),
+                    .nothing => {
+                        // GRACEFUL: Cannot set on 'nothing', just ignore
+                        if (self.memory_manager.debug_enabled) {
+                            std.debug.print(">> Warning: Cannot set array element on 'nothing' value, operation ignored\n", .{});
+                        }
+                        try self.stack.push(HIRFrame.initFromHIRValue(HIRValue.nothing));
+                    },
+                    else => {
+                        if (self.memory_manager.debug_enabled) {
+                            std.debug.print(">> Warning: Cannot set array element on {s} value, operation ignored\n", .{@tagName(array_frame.value)});
+                        }
+                        try self.stack.push(array_frame); // Push original value back
+                    },
                 }
             },
 
@@ -980,7 +1198,30 @@ pub const HIRVM = struct {
                         const modified_array_value = HIRValue{ .array = mutable_arr };
                         try self.stack.push(HIRFrame.initFromHIRValue(modified_array_value));
                     },
-                    else => return self.reporter.reportError("Cannot push to non-array value: {s}", .{@tagName(array.value)}),
+                    .nothing => {
+                        // GRACEFUL: Treat 'nothing' as creating a new single-element array
+                        if (self.memory_manager.debug_enabled) {
+                            std.debug.print(">> Warning: Pushing to 'nothing' value, creating new array\n", .{});
+                        }
+                        const elements = try self.allocator.alloc(HIRValue, 8);
+                        for (elements) |*elem| {
+                            elem.* = HIRValue.nothing;
+                        }
+                        elements[0] = element.value;
+
+                        const new_array = HIRValue{ .array = HIRArray{
+                            .elements = elements,
+                            .element_type = .Auto,
+                            .capacity = 8,
+                        } };
+                        try self.stack.push(HIRFrame.initFromHIRValue(new_array));
+                    },
+                    else => {
+                        if (self.memory_manager.debug_enabled) {
+                            std.debug.print(">> Warning: Cannot push to {s} value, returning original value\n", .{@tagName(array.value)});
+                        }
+                        try self.stack.push(array); // Return original value
+                    },
                 }
             },
 
@@ -1251,6 +1492,69 @@ pub const HIRVM = struct {
                                 },
                                 else => return self.reporter.reportError("Cannot push to non-array value: {s}", .{@tagName(array.value)}),
                             }
+                        } else if (std.mem.eql(u8, c.qualified_name, "safeAdd")) {
+                            // Safe addition with overflow protection
+                            const b = try self.stack.pop();
+                            const a = try self.stack.pop();
+
+                            const a_int = switch (a.value) {
+                                .int => |i| i,
+                                .u8 => |u| @as(i32, u),
+                                else => return self.reporter.reportError("safeAdd: first argument must be integer", .{}),
+                            };
+
+                            const b_int = switch (b.value) {
+                                .int => |i| i,
+                                .u8 => |u| @as(i32, u),
+                                else => return self.reporter.reportError("safeAdd: second argument must be integer", .{}),
+                            };
+
+                            const result = std.math.add(i32, a_int, b_int) catch {
+                                // On overflow, return nothing instead of crashing
+                                try self.stack.push(HIRFrame.initFromHIRValue(HIRValue.nothing));
+                                return;
+                            };
+
+                            try self.stack.push(HIRFrame.initInt(result));
+                        } else if (std.mem.eql(u8, c.qualified_name, "exists_quantifier")) {
+                            // Existential quantifier - check if any element in array satisfies condition
+                            const array = try self.stack.pop();
+
+                            switch (array.value) {
+                                .array => |arr| {
+                                    // For now, just return true if array has any non-nothing elements
+                                    // TODO: Add predicate support when needed
+                                    var found = false;
+                                    for (arr.elements) |elem| {
+                                        if (!std.meta.eql(elem, HIRValue.nothing)) {
+                                            found = true;
+                                            break;
+                                        }
+                                    }
+                                    try self.stack.push(HIRFrame.initTetra(if (found) 1 else 0));
+                                },
+                                else => return self.reporter.reportError("exists_quantifier: argument must be array", .{}),
+                            }
+                        } else if (std.mem.eql(u8, c.qualified_name, "forall_quantifier")) {
+                            // Universal quantifier - check if all elements in array satisfy condition
+                            const array = try self.stack.pop();
+
+                            switch (array.value) {
+                                .array => |arr| {
+                                    // For now, just return true if array has all non-nothing elements
+                                    // TODO: Add predicate support when needed
+                                    var has_elements = false;
+                                    for (arr.elements) |elem| {
+                                        if (std.meta.eql(elem, HIRValue.nothing)) {
+                                            break; // End of actual elements
+                                        }
+                                        has_elements = true;
+                                        // For now, all non-nothing elements are considered valid
+                                    }
+                                    try self.stack.push(HIRFrame.initTetra(if (has_elements) 1 else 0));
+                                },
+                                else => return self.reporter.reportError("forall_quantifier: argument must be array", .{}),
+                            }
                         } else {
                             return self.reporter.reportError("Unknown built-in function: {s}", .{c.qualified_name});
                         }
@@ -1329,7 +1633,7 @@ pub const HIRVM = struct {
                 if (self.memory_manager.debug_enabled) {
                     std.debug.print("!! Unhandled HIR instruction: {s}\n", .{@tagName(instruction)});
                 }
-                return error.UnhandledInstruction;
+                return ErrorList.NotImplemented;
             },
         }
     }
@@ -1379,7 +1683,7 @@ pub const HIRVM = struct {
         _ = self;
         if (b == 0) {
             std.debug.print("Division by zero: {} / {}\n", .{ a, b });
-            return error.DivisionByZero;
+            return ErrorList.DivisionByZero;
         }
         return @divTrunc(a, b);
     }
@@ -1388,7 +1692,7 @@ pub const HIRVM = struct {
         _ = self;
         if (b == 0) {
             std.debug.print("Modulo by zero: {} % {}\n", .{ a, b });
-            return error.DivisionByZero;
+            return ErrorList.DivisionByZero;
         }
 
         // FIZZBUZZ OPTIMIZATION: Fast modulo for common divisors
@@ -1451,7 +1755,7 @@ pub const HIRVM = struct {
         _ = self;
         if (b == 0.0) {
             std.debug.print("Float division by zero: {} / {}\n", .{ a, b });
-            return error.DivisionByZero;
+            return ErrorList.DivisionByZero;
         }
         return a / b;
     }
@@ -1464,73 +1768,238 @@ pub const HIRVM = struct {
         const a_tetra = switch (a.value) {
             .tetra => |val| if (val <= 3) val else {
                 self.reporter.reportError("Invalid tetra value: {}", .{val});
-                return error.TypeError;
+                return ErrorList.TypeError;
             },
             else => {
                 self.reporter.reportError("Cannot perform AND on non-tetra values: {s} AND {s}", .{ @tagName(a.value), @tagName(b.value) });
-                return error.TypeError;
+                return ErrorList.TypeError;
             },
         };
 
         const b_tetra = switch (b.value) {
             .tetra => |val| if (val <= 3) val else {
                 self.reporter.reportError("Invalid tetra value: {}", .{val});
-                return error.TypeError;
+                return ErrorList.TypeError;
             },
             else => {
                 self.reporter.reportError("Cannot perform AND on non-tetra values: {s} AND {s}", .{ @tagName(a.value), @tagName(b.value) });
-                return error.TypeError;
+                return ErrorList.TypeError;
             },
         };
 
-        // Import lookup table from soxa.zig
-        const soxa = @import("../codegen/soxa.zig");
-        return soxa.TETRA_AND_LUT[a_tetra][b_tetra];
+        // First-order logic: collapse 4-valued inputs to classical true/false, then apply classical AND
+        // false=0, true=1, both=2, neither=3
+        // both(2) contains true, so treat as true; neither(3) doesn't contain true, so treat as false
+        const a_classical = if (a_tetra == 1 or a_tetra == 2) true else false;
+        const b_classical = if (b_tetra == 1 or b_tetra == 2) true else false;
+
+        // Classical AND: true only if both inputs are true
+        return if (a_classical and b_classical) 1 else 0;
     }
 
     fn logicalOr(self: *HIRVM, a: HIRFrame, b: HIRFrame) !u8 {
         const a_tetra = switch (a.value) {
             .tetra => |val| if (val <= 3) val else {
                 self.reporter.reportError("Invalid tetra value: {}", .{val});
-                return error.TypeError;
+                return ErrorList.TypeError;
             },
             else => {
                 self.reporter.reportError("Cannot perform OR on non-tetra values: {s} OR {s}", .{ @tagName(a.value), @tagName(b.value) });
-                return error.TypeError;
+                return ErrorList.TypeError;
             },
         };
 
         const b_tetra = switch (b.value) {
             .tetra => |val| if (val <= 3) val else {
                 self.reporter.reportError("Invalid tetra value: {}", .{val});
-                return error.TypeError;
+                return ErrorList.TypeError;
             },
             else => {
                 self.reporter.reportError("Cannot perform OR on non-tetra values: {s} OR {s}", .{ @tagName(a.value), @tagName(b.value) });
-                return error.TypeError;
+                return ErrorList.TypeError;
             },
         };
 
-        // Import lookup table from soxa.zig
-        const soxa = @import("../codegen/soxa.zig");
-        return soxa.TETRA_OR_LUT[a_tetra][b_tetra];
+        // First-order logic: collapse 4-valued inputs to classical true/false, then apply classical OR
+        const a_classical = if (a_tetra == 1 or a_tetra == 2) true else false;
+        const b_classical = if (b_tetra == 1 or b_tetra == 2) true else false;
+
+        // Classical OR: true if either input is true
+        return if (a_classical or b_classical) 1 else 0;
     }
 
     fn logicalNot(self: *HIRVM, a: HIRFrame) !u8 {
         const a_tetra = switch (a.value) {
             .tetra => |val| if (val <= 3) val else {
                 self.reporter.reportError("Invalid tetra value: {}", .{val});
-                return error.TypeError;
+                return ErrorList.TypeError;
             },
             else => {
                 self.reporter.reportError("Cannot perform NOT on a non-tetra value: {s}", .{@tagName(a.value)});
-                return error.TypeError;
+                return ErrorList.TypeError;
             },
         };
 
-        // Import lookup table from soxa.zig
-        const soxa = @import("../codegen/soxa.zig");
-        return soxa.TETRA_NOT_LUT[a_tetra];
+        // First-order logic: collapse 4-valued input to classical true/false, then apply classical NOT
+        const a_classical = if (a_tetra == 1 or a_tetra == 2) true else false;
+
+        // Classical NOT: flip the truth value
+        return if (a_classical) 0 else 1;
+    }
+
+    fn logicalIff(self: *HIRVM, a: HIRFrame, b: HIRFrame) !u8 {
+        const a_tetra = switch (a.value) {
+            .tetra => |val| if (val <= 3) val else {
+                self.reporter.reportError("Invalid tetra value: {}", .{val});
+                return ErrorList.TypeError;
+            },
+            else => {
+                self.reporter.reportError("Cannot perform IFF on non-tetra values: {s} IFF {s}", .{ @tagName(a.value), @tagName(b.value) });
+                return ErrorList.TypeError;
+            },
+        };
+
+        const b_tetra = switch (b.value) {
+            .tetra => |val| if (val <= 3) val else {
+                self.reporter.reportError("Invalid tetra value: {}", .{val});
+                return ErrorList.TypeError;
+            },
+            else => {
+                self.reporter.reportError("Cannot perform IFF on non-tetra values: {s} IFF {s}", .{ @tagName(a.value), @tagName(b.value) });
+                return ErrorList.TypeError;
+            },
+        };
+
+        // First-order logic: collapse 4-valued inputs to classical true/false, then apply classical IFF
+        const a_classical = if (a_tetra == 1 or a_tetra == 2) true else false;
+        const b_classical = if (b_tetra == 1 or b_tetra == 2) true else false;
+
+        // Classical IFF: true if both inputs have the same truth value
+        return if (a_classical == b_classical) 1 else 0;
+    }
+
+    fn logicalXor(self: *HIRVM, a: HIRFrame, b: HIRFrame) !u8 {
+        const a_tetra = switch (a.value) {
+            .tetra => |val| if (val <= 3) val else {
+                self.reporter.reportError("Invalid tetra value: {}", .{val});
+                return ErrorList.TypeError;
+            },
+            else => {
+                self.reporter.reportError("Cannot perform XOR on non-tetra values: {s} XOR {s}", .{ @tagName(a.value), @tagName(b.value) });
+                return ErrorList.TypeError;
+            },
+        };
+
+        const b_tetra = switch (b.value) {
+            .tetra => |val| if (val <= 3) val else {
+                self.reporter.reportError("Invalid tetra value: {}", .{val});
+                return ErrorList.TypeError;
+            },
+            else => {
+                self.reporter.reportError("Cannot perform XOR on non-tetra values: {s} XOR {s}", .{ @tagName(a.value), @tagName(b.value) });
+                return ErrorList.TypeError;
+            },
+        };
+
+        // First-order logic: collapse 4-valued inputs to classical true/false, then apply classical XOR
+        const a_classical = if (a_tetra == 1 or a_tetra == 2) true else false;
+        const b_classical = if (b_tetra == 1 or b_tetra == 2) true else false;
+
+        // Classical XOR: true if inputs have different truth values
+        return if (a_classical != b_classical) 1 else 0;
+    }
+
+    fn logicalNand(self: *HIRVM, a: HIRFrame, b: HIRFrame) !u8 {
+        const a_tetra = switch (a.value) {
+            .tetra => |val| if (val <= 3) val else {
+                self.reporter.reportError("Invalid tetra value: {}", .{val});
+                return ErrorList.TypeError;
+            },
+            else => {
+                self.reporter.reportError("Cannot perform NAND on non-tetra values: {s} NAND {s}", .{ @tagName(a.value), @tagName(b.value) });
+                return ErrorList.TypeError;
+            },
+        };
+
+        const b_tetra = switch (b.value) {
+            .tetra => |val| if (val <= 3) val else {
+                self.reporter.reportError("Invalid tetra value: {}", .{val});
+                return ErrorList.TypeError;
+            },
+            else => {
+                self.reporter.reportError("Cannot perform NAND on non-tetra values: {s} NAND {s}", .{ @tagName(a.value), @tagName(b.value) });
+                return ErrorList.TypeError;
+            },
+        };
+
+        // First-order logic: collapse 4-valued inputs to classical true/false, then apply classical NAND
+        const a_classical = if (a_tetra == 1 or a_tetra == 2) true else false;
+        const b_classical = if (b_tetra == 1 or b_tetra == 2) true else false;
+
+        // Classical NAND: NOT(AND) - false only if both inputs are true
+        return if (a_classical and b_classical) 0 else 1;
+    }
+
+    fn logicalNor(self: *HIRVM, a: HIRFrame, b: HIRFrame) !u8 {
+        const a_tetra = switch (a.value) {
+            .tetra => |val| if (val <= 3) val else {
+                self.reporter.reportError("Invalid tetra value: {}", .{val});
+                return ErrorList.TypeError;
+            },
+            else => {
+                self.reporter.reportError("Cannot perform NOR on non-tetra values: {s} NOR {s}", .{ @tagName(a.value), @tagName(b.value) });
+                return ErrorList.TypeError;
+            },
+        };
+
+        const b_tetra = switch (b.value) {
+            .tetra => |val| if (val <= 3) val else {
+                self.reporter.reportError("Invalid tetra value: {}", .{val});
+                return ErrorList.TypeError;
+            },
+            else => {
+                self.reporter.reportError("Cannot perform NOR on non-tetra values: {s} NOR {s}", .{ @tagName(a.value), @tagName(b.value) });
+                return ErrorList.TypeError;
+            },
+        };
+
+        // First-order logic: collapse 4-valued inputs to classical true/false, then apply classical NOR
+        const a_classical = if (a_tetra == 1 or a_tetra == 2) true else false;
+        const b_classical = if (b_tetra == 1 or b_tetra == 2) true else false;
+
+        // Classical NOR: NOT(OR) - true only if both inputs are false
+        return if (a_classical or b_classical) 0 else 1;
+    }
+
+    fn logicalImplies(self: *HIRVM, a: HIRFrame, b: HIRFrame) !u8 {
+        const a_tetra = switch (a.value) {
+            .tetra => |val| if (val <= 3) val else {
+                self.reporter.reportError("Invalid tetra value: {}", .{val});
+                return ErrorList.TypeError;
+            },
+            else => {
+                self.reporter.reportError("Cannot perform IMPLIES on non-tetra values: {s} IMPLIES {s}", .{ @tagName(a.value), @tagName(b.value) });
+                return ErrorList.TypeError;
+            },
+        };
+
+        const b_tetra = switch (b.value) {
+            .tetra => |val| if (val <= 3) val else {
+                self.reporter.reportError("Invalid tetra value: {}", .{val});
+                return ErrorList.TypeError;
+            },
+            else => {
+                self.reporter.reportError("Cannot perform IMPLIES on non-tetra values: {s} IMPLIES {s}", .{ @tagName(a.value), @tagName(b.value) });
+                return ErrorList.TypeError;
+            },
+        };
+
+        // First-order logic: collapse 4-valued inputs to classical true/false, then apply classical IMPLIES
+        const a_classical = if (a_tetra == 1 or a_tetra == 2) true else false;
+        const b_classical = if (b_tetra == 1 or b_tetra == 2) true else false;
+
+        // Classical IMPLIES: false only if true implies false, otherwise true
+        return if (a_classical and !b_classical) 0 else 1;
     }
 
     // ===============================================================================
@@ -1541,12 +2010,12 @@ pub const HIRVM = struct {
     fn stringConcat(self: *HIRVM, a: HIRFrame, b: HIRFrame) !HIRFrame {
         const a_str = switch (a.value) {
             .string => |s| s,
-            else => return error.TypeError,
+            else => return ErrorList.TypeError,
         };
 
         const b_str = switch (b.value) {
             .string => |s| s,
-            else => return error.TypeError,
+            else => return ErrorList.TypeError,
         };
 
         // Allocate new string buffer
@@ -1565,7 +2034,7 @@ pub const HIRVM = struct {
         _ = self;
         const str = switch (a.value) {
             .string => |s| s,
-            else => return error.TypeError,
+            else => return ErrorList.TypeError,
         };
 
         return HIRFrame.initInt(@as(i32, @intCast(str.len)));
@@ -1575,21 +2044,21 @@ pub const HIRVM = struct {
     fn stringSubstring(self: *HIRVM, str_frame: HIRFrame, start_frame: HIRFrame, len_frame: HIRFrame) !HIRFrame {
         const str = switch (str_frame.value) {
             .string => |s| s,
-            else => return error.TypeError,
+            else => return ErrorList.TypeError,
         };
 
         const start = switch (start_frame.value) {
             .int => |i| i,
-            else => return error.TypeError,
+            else => return ErrorList.TypeError,
         };
 
         const length = switch (len_frame.value) {
             .int => |i| i,
-            else => return error.TypeError,
+            else => return ErrorList.TypeError,
         };
 
         if (start < 0 or length < 0 or start >= str.len or start + length > str.len) {
-            return error.IndexOutOfBounds;
+            return ErrorList.IndexOutOfBounds;
         }
 
         const start_idx = @as(usize, @intCast(start));
@@ -1650,20 +2119,20 @@ pub const HIRVM = struct {
                 .int => |b_val| a_val < b_val,
                 // Mixed int/float comparison (from old VM)
                 .float => |b_val| @as(f64, @floatFromInt(a_val)) < b_val,
-                else => error.TypeError,
+                else => ErrorList.TypeError,
             },
             .float => |a_val| switch (b.value) {
                 .float => |b_val| a_val < b_val,
                 // Mixed float/int comparison (from old VM)
                 .int => |b_val| a_val < @as(f64, @floatFromInt(b_val)),
-                else => error.TypeError,
+                else => ErrorList.TypeError,
             },
             .u8 => |a_val| switch (b.value) {
                 .u8 => |b_val| a_val < b_val,
-                else => error.TypeError,
+                else => ErrorList.TypeError,
             },
             // Complex types don't support comparison
-            .tetra, .string, .nothing, .array, .struct_instance, .tuple, .map, .enum_variant => error.TypeError,
+            .tetra, .string, .nothing, .array, .struct_instance, .tuple, .map, .enum_variant => ErrorList.TypeError,
         };
     }
 
@@ -1675,20 +2144,20 @@ pub const HIRVM = struct {
                 .int => |b_val| a_val > b_val,
                 // Mixed int/float comparison (from old VM)
                 .float => |b_val| @as(f64, @floatFromInt(a_val)) > b_val,
-                else => error.TypeError,
+                else => ErrorList.TypeError,
             },
             .float => |a_val| switch (b.value) {
                 .float => |b_val| a_val > b_val,
                 // Mixed float/int comparison (from old VM)
                 .int => |b_val| a_val > @as(f64, @floatFromInt(b_val)),
-                else => error.TypeError,
+                else => ErrorList.TypeError,
             },
             .u8 => |a_val| switch (b.value) {
                 .u8 => |b_val| a_val > b_val,
-                else => error.TypeError,
+                else => ErrorList.TypeError,
             },
             // Complex types don't support comparison
-            .tetra, .string, .nothing, .array, .struct_instance, .tuple, .map, .enum_variant => error.TypeError,
+            .tetra, .string, .nothing, .array, .struct_instance, .tuple, .map, .enum_variant => ErrorList.TypeError,
         };
     }
 

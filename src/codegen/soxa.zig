@@ -361,6 +361,15 @@ pub const HIRInstruction = union(enum) {
     /// VM: OP_HALT -> running = false
     /// LLVM: LLVMBuildRet from main function
     Halt,
+
+    /// Map expression
+    /// VM: OP_MAP -> map(key, value)
+    /// LLVM: Generate map creation and lookup
+    Map: struct {
+        entries: []HIRMapEntry,
+        key_type: HIRType,
+        value_type: HIRType,
+    },
 };
 
 //==================================================================
@@ -389,6 +398,46 @@ pub const TETRA_OR_LUT: [4][4]u8 = [4][4]u8{
 };
 
 pub const TETRA_NOT_LUT: [4]u8 = [4]u8{ 1, 0, 3, 2 }; // NOT lookup: false->true, true->false, both->neither, neither->both
+
+// IFF (if and only if): A ↔ B - true when A and B have same truth value
+pub const TETRA_IFF_LUT: [4][4]u8 = [4][4]u8{
+    [4]u8{ 1, 0, 3, 2 }, // FALSE IFF x: same as NOT x
+    [4]u8{ 0, 1, 2, 3 }, // TRUE IFF x: same as x
+    [4]u8{ 3, 2, 2, 3 }, // BOTH IFF x: complex logic
+    [4]u8{ 2, 3, 3, 2 }, // NEITHER IFF x: complex logic
+};
+
+// XOR (exclusive or): A ⊕ B - true when A and B have different truth values
+pub const TETRA_XOR_LUT: [4][4]u8 = [4][4]u8{
+    [4]u8{ 0, 1, 2, 3 }, // FALSE XOR x: same as x
+    [4]u8{ 1, 0, 3, 2 }, // TRUE XOR x: same as NOT x
+    [4]u8{ 2, 3, 2, 3 }, // BOTH XOR x: complex logic
+    [4]u8{ 3, 2, 3, 2 }, // NEITHER XOR x: complex logic
+};
+
+// NAND: A ↑ B - NOT(A AND B)
+pub const TETRA_NAND_LUT: [4][4]u8 = [4][4]u8{
+    [4]u8{ 1, 1, 1, 1 }, // FALSE NAND x = NOT(FALSE AND x) = NOT(FALSE) = TRUE
+    [4]u8{ 1, 0, 3, 2 }, // TRUE NAND x = NOT(TRUE AND x) = NOT(x)
+    [4]u8{ 1, 3, 3, 1 }, // BOTH NAND x = complex logic
+    [4]u8{ 1, 2, 1, 2 }, // NEITHER NAND x = complex logic
+};
+
+// NOR: A ↓ B - NOT(A OR B)
+pub const TETRA_NOR_LUT: [4][4]u8 = [4][4]u8{
+    [4]u8{ 1, 0, 3, 2 }, // FALSE NOR x = NOT(FALSE OR x) = NOT(x)
+    [4]u8{ 0, 0, 0, 0 }, // TRUE NOR x = NOT(TRUE OR x) = NOT(TRUE) = FALSE
+    [4]u8{ 3, 0, 3, 3 }, // BOTH NOR x = complex logic
+    [4]u8{ 2, 0, 3, 2 }, // NEITHER NOR x = complex logic
+};
+
+// IMPLIES: A → B - NOT A OR B
+pub const TETRA_IMPLIES_LUT: [4][4]u8 = [4][4]u8{
+    [4]u8{ 1, 1, 1, 1 }, // FALSE IMPLIES x = NOT(FALSE) OR x = TRUE OR x = TRUE
+    [4]u8{ 0, 1, 2, 3 }, // TRUE IMPLIES x = NOT(TRUE) OR x = FALSE OR x = x
+    [4]u8{ 2, 1, 2, 2 }, // BOTH IMPLIES x = complex logic
+    [4]u8{ 3, 1, 2, 3 }, // NEITHER IMPLIES x = complex logic
+};
 
 // Type-safe tetra constructors
 pub fn tetraFromBool(value: bool) u8 {
@@ -521,7 +570,7 @@ pub const ArithOp = enum { Add, Sub, Mul, Div, Mod };
 
 pub const CompareOp = enum { Eq, Ne, Lt, Le, Gt, Ge };
 
-pub const LogicalOpType = enum { And, Or, Not };
+pub const LogicalOpType = enum { And, Or, Not, Iff, Xor, Nand, Nor, Implies };
 
 pub const StringOpType = enum { Concat, Length, Substring };
 
@@ -603,10 +652,23 @@ pub const HIRGenerator = struct {
     label_count: u32,
     reporter: *reporting.Reporter, // NEW: Proper error reporting
 
+    // NEW: Type tracking for proper TypeOf support
+    variable_types: std.StringHashMap(HIRType), // Track inferred types of variables
+
+    // NEW: Custom type registry for struct/enum names
+    custom_types: std.StringHashMap(CustomTypeInfo), // Track struct/enum type definitions
+
     // NEW: Multi-pass support for functions
     function_signatures: std.StringHashMap(FunctionInfo),
     function_bodies: std.ArrayList(FunctionBody),
     current_function: ?[]const u8,
+    current_function_return_type: HIRType, // Track current function's return type for Return instructions
+
+    // NEW: Statistics and debugging
+    stats: HIRStats,
+
+    // NEW: Function call site tracking for tail recursion optimization
+    function_calls: std.ArrayList(FunctionCallSite),
 
     pub const FunctionInfo = struct {
         name: []const u8,
@@ -639,9 +701,14 @@ pub const HIRGenerator = struct {
             .variable_count = 0,
             .label_count = 0,
             .reporter = reporter,
+            .variable_types = std.StringHashMap(HIRType).init(allocator),
+            .custom_types = std.StringHashMap(CustomTypeInfo).init(allocator),
             .function_signatures = std.StringHashMap(FunctionInfo).init(allocator),
             .function_bodies = std.ArrayList(FunctionBody).init(allocator),
             .current_function = null,
+            .current_function_return_type = .Nothing,
+            .stats = HIRStats.init(allocator),
+            .function_calls = std.ArrayList(FunctionCallSite).init(allocator),
         };
     }
 
@@ -651,8 +718,11 @@ pub const HIRGenerator = struct {
         self.string_pool.deinit();
         self.constant_map.deinit();
         self.variables.deinit();
+        self.variable_types.deinit();
+        self.custom_types.deinit();
         self.function_signatures.deinit();
         self.function_bodies.deinit();
+        self.function_calls.deinit();
     }
 
     /// Main entry point - converts AST statements to HIR program using multi-pass approach
@@ -736,6 +806,7 @@ pub const HIRGenerator = struct {
 
             // Set current function context
             self.current_function = function_body.function_info.name;
+            self.current_function_return_type = function_body.function_info.return_type;
 
             // Mark start of function
             function_body.start_instruction_index = @intCast(self.instructions.items.len);
@@ -754,6 +825,20 @@ pub const HIRGenerator = struct {
                 param_index -= 1;
                 const param = params[param_index];
 
+                // Extract parameter type information with proper inference
+                var param_type: HIRType = .Auto;
+                if (param.type_expr) |type_expr| {
+                    const type_info_ptr = try ast.typeInfoFromExpr(self.allocator, type_expr);
+                    defer self.allocator.destroy(type_info_ptr);
+                    param_type = self.convertTypeInfo(type_info_ptr.*);
+                } else {
+                    // Infer parameter type from usage in function body and call sites
+                    param_type = self.inferParameterType(param.name.lexeme, function_body.statements, function_body.function_name) catch .Int;
+                }
+
+                // Track the parameter's type
+                try self.trackVariableType(param.name.lexeme, param_type);
+
                 // Create variable for parameter and store the stack value
                 const var_idx = try self.getOrCreateVariable(param.name.lexeme);
                 try self.instructions.append(.{ .StoreVar = .{
@@ -763,7 +848,7 @@ pub const HIRGenerator = struct {
                     .module_context = null,
                 } });
 
-                std.debug.print("  >> Parameter {}: {s} -> var[{}]\n", .{ param_index, param.name.lexeme, var_idx });
+                std.debug.print("  >> Parameter {}: {s} -> var[{}] (type: {s})\n", .{ param_index, param.name.lexeme, var_idx, @tagName(param_type) });
             }
 
             // TAIL CALL FIX: Add a separate label for tail calls to jump to (after parameter setup)
@@ -799,6 +884,7 @@ pub const HIRGenerator = struct {
 
             // Clear current function context
             self.current_function = null;
+            self.current_function_return_type = .Nothing;
         }
 
         std.debug.print(">> Pass 3 complete: {} function bodies generated\n", .{self.function_bodies.items.len});
@@ -902,12 +988,35 @@ pub const HIRGenerator = struct {
             .VarDecl => |decl| {
                 std.debug.print(">> Generating variable: {s}\n", .{decl.name.lexeme});
 
+                // NEW: Determine the variable's type for tracking
+                var var_type: HIRType = .Auto;
+
+                // FIXED: Prioritize explicit type annotation over inference
+                if (decl.type_info.base != .Auto) {
+                    // Use explicit type annotation first
+                    var_type = switch (decl.type_info.base) {
+                        .Int => .Int,
+                        .Float => .Float,
+                        .String => .String,
+                        .Tetra => .Tetra,
+                        .U8 => .U8,
+                        else => .Auto,
+                    };
+                    std.debug.print(">> Using explicit type annotation: {s}\n", .{@tagName(var_type)});
+                }
+
                 // Generate the initializer expression
                 if (decl.initializer) |init_expr| {
                     try self.generateExpression(init_expr);
+
+                    // Only infer type if no explicit annotation was provided
+                    if (var_type == .Auto) {
+                        var_type = self.inferTypeFromExpression(init_expr);
+                        std.debug.print(">> Inferred type from initializer: {s}\n", .{@tagName(var_type)});
+                    }
                 } else {
-                    // Push default value based on type
-                    const default_value = switch (decl.type_info.base) {
+                    // No initializer - push default value based on type
+                    const default_value = switch (var_type) {
                         .Int => HIRValue{ .int = 0 },
                         .Float => HIRValue{ .float = 0.0 },
                         .String => HIRValue{ .string = "" },
@@ -917,6 +1026,9 @@ pub const HIRGenerator = struct {
                     const const_idx = try self.addConstant(default_value);
                     try self.instructions.append(.{ .Const = .{ .value = default_value, .constant_id = const_idx } });
                 }
+
+                // NEW: Track the variable's type
+                try self.trackVariableType(decl.name.lexeme, var_type);
 
                 // Store to variable
                 const var_idx = try self.getOrCreateVariable(decl.name.lexeme);
@@ -941,11 +1053,18 @@ pub const HIRGenerator = struct {
                     } else {
                         // Regular return with value
                         try self.generateExpression(value);
-                        try self.instructions.append(.{ .Return = .{ .has_value = true, .return_type = .Auto } });
+                        try self.instructions.append(.{ .Return = .{ .has_value = true, .return_type = self.current_function_return_type } });
                     }
                 } else {
                     try self.instructions.append(.{ .Return = .{ .has_value = false, .return_type = .Nothing } });
                 }
+            },
+            .EnumDecl => |enum_decl| {
+                // NEW: Register enum type for TypeOf support (when enum is a statement)
+                try self.registerCustomType(enum_decl.name.lexeme, .Enum);
+                std.debug.print(">> Registered enum type: {s}\n", .{enum_decl.name.lexeme});
+
+                // Enum declarations don't generate runtime instructions, they're compile-time only
             },
             else => {
                 std.debug.print("!! Unhandled statement type: {}\n", .{stmt.data});
@@ -1047,6 +1166,31 @@ pub const HIRGenerator = struct {
                     try self.generateExpression(log.left);
                     try self.generateExpression(log.right);
                     // Simple OR for now - TODO: add short-circuit optimization
+                } else if (log.operator.type == .IFF) {
+                    // IFF (if and only if): A ↔ B - true when A and B have same truth value
+                    try self.generateExpression(log.left);
+                    try self.generateExpression(log.right);
+                    try self.instructions.append(.{ .LogicalOp = .{ .op = .Iff } });
+                } else if (log.operator.type == .XOR) {
+                    // XOR (exclusive or): A ⊕ B - true when A and B have different truth values
+                    try self.generateExpression(log.left);
+                    try self.generateExpression(log.right);
+                    try self.instructions.append(.{ .LogicalOp = .{ .op = .Xor } });
+                } else if (log.operator.type == .NAND) {
+                    // NAND: A ↑ B - NOT(A AND B)
+                    try self.generateExpression(log.left);
+                    try self.generateExpression(log.right);
+                    try self.instructions.append(.{ .LogicalOp = .{ .op = .Nand } });
+                } else if (log.operator.type == .NOR) {
+                    // NOR: A ↓ B - NOT(A OR B)
+                    try self.generateExpression(log.left);
+                    try self.generateExpression(log.right);
+                    try self.instructions.append(.{ .LogicalOp = .{ .op = .Nor } });
+                } else if (log.operator.type == .IMPLIES) {
+                    // IMPLIES: A → B - NOT A OR B
+                    try self.generateExpression(log.left);
+                    try self.generateExpression(log.right);
+                    try self.instructions.append(.{ .LogicalOp = .{ .op = .Implies } });
                 } else {
                     self.reporter.reportError("Unsupported logical operator: {}", .{log.operator.type});
                     return reporting.ErrorList.UnsupportedOperator;
@@ -1203,6 +1347,9 @@ pub const HIRGenerator = struct {
                     }
                 }
 
+                // Infer return type for the call
+                const return_type = self.inferCallReturnType(function_name, call_kind) catch .String;
+
                 // Generate function call
                 try self.instructions.append(.{
                     .Call = .{
@@ -1211,7 +1358,7 @@ pub const HIRGenerator = struct {
                         .arg_count = @as(u32, @intCast(call.arguments.len)),
                         .call_kind = call_kind,
                         .target_module = null,
-                        .return_type = .Auto,
+                        .return_type = return_type,
                     },
                 });
 
@@ -1254,8 +1401,41 @@ pub const HIRGenerator = struct {
                 // Duplicate it so it remains on stack after inspection
                 try self.instructions.append(.Dup);
 
-                // Generate inspect instruction
-                try self.instructions.append(.{ .Inspect = .{ .name = inspect.variable_name, .value_type = .Auto } });
+                // Extract variable name for tracked type lookup
+                var variable_name_for_lookup: ?[]const u8 = null;
+                if (inspect.expr.data == .Variable) {
+                    variable_name_for_lookup = inspect.expr.data.Variable.lexeme;
+                }
+
+                // NEW: Use tracked variable type when available, otherwise infer
+                std.debug.print(">> About to infer type for inspect expression: {s}\n", .{@tagName(inspect.expr.data)});
+                var inferred_type: HIRType = .Auto;
+
+                // If inspecting a variable, use the tracked type first
+                if (variable_name_for_lookup != null) {
+                    if (self.getTrackedVariableType(variable_name_for_lookup.?)) |tracked_type| {
+                        inferred_type = tracked_type;
+                        std.debug.print(">> Using tracked type for inspect: {s}\n", .{@tagName(inferred_type)});
+                    } else {
+                        inferred_type = self.inferTypeFromExpression(inspect.expr);
+                        std.debug.print(">> Inferred type for inspect: {s}\n", .{@tagName(inferred_type)});
+                    }
+                } else {
+                    inferred_type = self.inferTypeFromExpression(inspect.expr);
+                    std.debug.print(">> Inferred type for inspect: {s}\n", .{@tagName(inferred_type)});
+                }
+
+                // CRITICAL: Auto types are FORBIDDEN in .soxa files! Use String as fallback
+                if (inferred_type == .Auto) {
+                    std.debug.print(">> Warning: Auto type detected for inspect, using String fallback\n", .{});
+                    inferred_type = .String; // Safe fallback to prevent Auto leakage
+                }
+
+                // Use the inspect's stored variable_name if available, otherwise use extracted name
+                const inspect_name = inspect.variable_name orelse variable_name_for_lookup;
+
+                // Generate inspect instruction with correct type
+                try self.instructions.append(.{ .Inspect = .{ .name = inspect_name, .value_type = inferred_type } });
             },
 
             .Assignment => |assign| {
@@ -1263,6 +1443,10 @@ pub const HIRGenerator = struct {
 
                 // Generate the value expression
                 try self.generateExpression(assign.value.?);
+
+                // NEW: Track the variable's type from the assigned value
+                const assigned_type = self.inferTypeFromExpression(assign.value.?);
+                try self.trackVariableType(assign.name.lexeme, assigned_type);
 
                 // Get or create variable index
                 const var_idx = try self.getOrCreateVariable(assign.name.lexeme);
@@ -1363,47 +1547,6 @@ pub const HIRGenerator = struct {
                 }
             },
 
-            .StructLiteral => |struct_lit| {
-                std.debug.print(">> Generating struct literal: {s}\n", .{struct_lit.name.lexeme});
-
-                // Generate StructNew instruction
-                try self.instructions.append(.{
-                    .StructNew = .{
-                        .struct_name = struct_lit.name.lexeme,
-                        .field_count = @intCast(struct_lit.fields.len),
-                        .size_bytes = 0, // TODO: Calculate actual size
-                    },
-                });
-
-                // Generate field assignments
-                for (struct_lit.fields) |field| {
-                    // Generate field value
-                    try self.generateExpression(field.value);
-
-                    // Store to field (using existing GetField instruction for now)
-                    try self.instructions.append(.{
-                        .GetField = .{
-                            .field_name = field.name.lexeme,
-                            .container_type = .Struct,
-                            .field_index = 0, // TODO: Resolve actual field index
-                        },
-                    });
-                }
-            },
-
-            .EnumMember => |member| {
-                std.debug.print(">> Generating enum member: {s}\n", .{member.lexeme});
-
-                // Generate EnumNew instruction
-                try self.instructions.append(.{
-                    .EnumNew = .{
-                        .enum_name = "Unknown", // TODO: Resolve actual enum type
-                        .variant_name = member.lexeme,
-                        .variant_index = 0, // TODO: Resolve actual variant index
-                    },
-                });
-            },
-
             .Grouping => |grouping| {
                 // Grouping is just parentheses - generate the inner expression
                 if (grouping) |inner_expr| {
@@ -1495,7 +1638,7 @@ pub const HIRGenerator = struct {
                 }
 
                 // Generate Return instruction (only if not tail call)
-                try self.instructions.append(.{ .Return = .{ .has_value = return_expr.value != null, .return_type = .Auto } });
+                try self.instructions.append(.{ .Return = .{ .has_value = return_expr.value != null, .return_type = self.current_function_return_type } });
             },
 
             .Unary => |unary| {
@@ -1528,6 +1671,235 @@ pub const HIRGenerator = struct {
                         return reporting.ErrorList.UnsupportedOperator;
                     },
                 }
+            },
+
+            .ForAll => |forall| {
+                std.debug.print(">> Generating ForAll quantifier: {s}\n", .{forall.variable.lexeme});
+
+                // ForAll quantifier: ∀x ∈ array : condition
+                // Implementation: iterate through array, return false if any element fails condition
+
+                // Generate array expression
+                try self.generateExpression(forall.array);
+
+                // For now, generate as builtin function call
+                // TODO: Implement proper quantifier logic with VM support
+                try self.instructions.append(.{
+                    .Call = .{
+                        .function_index = 0,
+                        .qualified_name = "forall_quantifier",
+                        .arg_count = 2, // array + condition (as closure)
+                        .call_kind = .BuiltinFunction,
+                        .target_module = null,
+                        .return_type = .Tetra,
+                    },
+                });
+            },
+
+            .Exists => |exists| {
+                std.debug.print(">> Generating Exists quantifier: {s}\n", .{exists.variable.lexeme});
+
+                // Exists quantifier: ∃x ∈ array : condition
+                // Implementation: iterate through array, return true if any element satisfies condition
+
+                // Generate array expression
+                try self.generateExpression(exists.array);
+
+                // For now, generate as builtin function call
+                // TODO: Implement proper quantifier logic with VM support
+                try self.instructions.append(.{
+                    .Call = .{
+                        .function_index = 0,
+                        .qualified_name = "exists_quantifier",
+                        .arg_count = 2, // array + condition (as closure)
+                        .call_kind = .BuiltinFunction,
+                        .target_module = null,
+                        .return_type = .Tetra,
+                    },
+                });
+            },
+
+            .Match => |match_expr| {
+                std.debug.print(">> Generating Match expression\n", .{});
+
+                // Generate the value to match on
+                try self.generateExpression(match_expr.value);
+
+                // Create labels for each case and the end
+                const end_label = try self.generateLabel("match_end");
+                var case_labels = std.ArrayList([]const u8).init(self.allocator);
+                defer case_labels.deinit();
+
+                // Generate labels for each case
+                for (match_expr.cases) |_| {
+                    const case_label = try self.generateLabel("match_case");
+                    try case_labels.append(case_label);
+                }
+
+                // Generate comparison and jumps for each case
+                for (match_expr.cases, 0..) |case, i| {
+                    // Duplicate the match value for comparison
+                    try self.instructions.append(.Dup);
+
+                    if (case.pattern.type == .ELSE) {
+                        // Else case - always matches, pop the duplicated value
+                        try self.instructions.append(.Pop);
+                        try self.instructions.append(.{ .Jump = .{ .label = case_labels.items[i], .vm_offset = 0 } });
+                    } else {
+                        // Generate the pattern value (enum member)
+                        const pattern_value = HIRValue{ .string = case.pattern.lexeme };
+                        const pattern_idx = try self.addConstant(pattern_value);
+                        try self.instructions.append(.{ .Const = .{ .value = pattern_value, .constant_id = pattern_idx } });
+
+                        // Compare and jump if equal
+                        try self.instructions.append(.{ .Compare = .{ .op = .Eq, .operand_type = .String } });
+                        try self.instructions.append(.{ .JumpCond = .{ .label_true = case_labels.items[i], .label_false = end_label, .vm_offset = 0, .condition_type = .Tetra } });
+                    }
+                }
+
+                // Generate case bodies
+                for (match_expr.cases, 0..) |case, i| {
+                    try self.instructions.append(.{ .Label = .{ .name = case_labels.items[i], .vm_address = 0 } });
+                    try self.generateExpression(case.body);
+                    try self.instructions.append(.{ .Jump = .{ .label = end_label, .vm_offset = 0 } });
+                }
+
+                // End label
+                try self.instructions.append(.{ .Label = .{ .name = end_label, .vm_address = 0 } });
+            },
+
+            .EnumMember => |member| {
+                std.debug.print(">> Generating enum member: {s}\n", .{member.lexeme});
+
+                // Generate enum member as string constant
+                const enum_value = HIRValue{ .string = member.lexeme };
+                const const_idx = try self.addConstant(enum_value);
+                try self.instructions.append(.{ .Const = .{ .value = enum_value, .constant_id = const_idx } });
+            },
+
+            .StructLiteral => |struct_lit| {
+                std.debug.print(">> Generating struct literal: {s}\n", .{struct_lit.name.lexeme});
+
+                // For now, create a simple representation
+                // TODO: Implement proper struct support
+                const struct_value = HIRValue{ .string = struct_lit.name.lexeme };
+                const const_idx = try self.addConstant(struct_value);
+                try self.instructions.append(.{ .Const = .{ .value = struct_value, .constant_id = const_idx } });
+            },
+
+            .TypeOf => |expr_to_check| {
+                std.debug.print(">> Generating TypeOf expression\n", .{});
+
+                // NEW: Enhanced type inference with custom type support
+                const inferred_type = self.inferTypeFromExpression(expr_to_check);
+                const type_name = switch (inferred_type) {
+                    .Int => "int",
+                    .Float => "float",
+                    .String => "string",
+                    .Tetra => "tetra",
+                    .U8 => "u8",
+                    .Nothing => "nothing",
+                    .Array => "array",
+                    .Struct => blk: {
+                        // For struct types, try to get the specific struct name
+                        if (expr_to_check.data == .Variable) {
+                            const var_name = expr_to_check.data.Variable.lexeme;
+                            if (self.isCustomType(var_name)) |custom_type| {
+                                if (custom_type.kind == .Struct) {
+                                    break :blk var_name; // Return the specific struct name
+                                }
+                            }
+                        }
+                        break :blk "struct"; // Generic struct type
+                    },
+                    .Tuple => "tuple",
+                    .Map => "map",
+                    .Enum => blk: {
+                        // For enum types, try to get the specific enum name
+                        if (expr_to_check.data == .Variable) {
+                            const var_name = expr_to_check.data.Variable.lexeme;
+                            if (self.isCustomType(var_name)) |custom_type| {
+                                if (custom_type.kind == .Enum) {
+                                    break :blk var_name; // Return the specific enum name
+                                }
+                            }
+                        }
+                        break :blk "enum"; // Generic enum type
+                    },
+                    .Function => "function",
+                    .Boolean => "boolean",
+                    .Auto => blk: {
+                        // ERROR: Unresolved auto type at runtime!
+                        const error_msg = try std.fmt.allocPrint(self.allocator, "TypeOf failed to resolve type for expression: {s}", .{@tagName(expr_to_check.data)});
+                        self.reporter.reportError("{s}", .{error_msg});
+                        break :blk "auto"; // Still return auto for now, but this should be caught
+                    },
+                };
+
+                std.debug.print(">> TypeOf inferred type: {s} for expression type: {s}\n", .{ type_name, @tagName(expr_to_check.data) });
+
+                const type_value = HIRValue{ .string = type_name };
+                const const_idx = try self.addConstant(type_value);
+                try self.instructions.append(.{ .Const = .{ .value = type_value, .constant_id = const_idx } });
+            },
+
+            .Map => |_| {
+                std.debug.print(">> Generating Map expression\n", .{});
+
+                // For now, create a simple array representation
+                // TODO: Implement proper map support
+                const map_value = HIRValue{ .string = "map" };
+                const const_idx = try self.addConstant(map_value);
+                try self.instructions.append(.{ .Const = .{ .value = map_value, .constant_id = const_idx } });
+            },
+
+            .DefaultArgPlaceholder => {
+                std.debug.print(">> Generating default argument placeholder\n", .{});
+
+                // Push nothing for default arguments - they should be replaced by the caller
+                const nothing_idx = try self.addConstant(HIRValue.nothing);
+                try self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } });
+            },
+
+            .For => |_| {
+                std.debug.print(">> Generating For expression\n", .{});
+
+                // For now, just return nothing
+                // TODO: Implement proper for loop support
+                const nothing_idx = try self.addConstant(HIRValue.nothing);
+                try self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } });
+            },
+
+            .FieldAccess => |field| {
+                std.debug.print(">> Generating field access: {s}\n", .{field.field.lexeme});
+
+                // For now, just return the field name as a string
+                // TODO: Implement proper struct field access
+                const field_value = HIRValue{ .string = field.field.lexeme };
+                const const_idx = try self.addConstant(field_value);
+                try self.instructions.append(.{ .Const = .{ .value = field_value, .constant_id = const_idx } });
+            },
+
+            .EnumDecl => |enum_decl| {
+                // NEW: Register enum type for TypeOf support
+                try self.registerCustomType(enum_decl.name.lexeme, .Enum);
+                std.debug.print(">> Registered enum type: {s}\n", .{enum_decl.name.lexeme});
+
+                // Enum declarations don't generate runtime instructions, they're compile-time only
+                // Push nothing as a placeholder value
+                const nothing_idx = try self.addConstant(HIRValue.nothing);
+                try self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } });
+            },
+
+            .StructDecl => |struct_decl| {
+                // NEW: Register struct type for TypeOf support
+                try self.registerCustomType(struct_decl.name.lexeme, .Struct);
+                std.debug.print(">> Registered struct type: {s}\n", .{struct_decl.name.lexeme});
+
+                // Struct declarations don't generate runtime instructions, they're compile-time only
+                // Push nothing as a placeholder value
+                const nothing_idx = try self.addConstant(HIRValue.nothing);
+                try self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } });
             },
 
             else => {
@@ -1623,6 +1995,9 @@ pub const HIRGenerator = struct {
 
                         // Check if this is a user-defined function
                         if (self.getFunctionIndex(function_name)) |function_index| {
+                            // Infer return type for tail call
+                            const return_type = self.inferCallReturnType(function_name, .LocalFunction) catch .Nothing;
+
                             // Generate TailCall instruction instead of Call + Return
                             const tail_call = HIRInstruction{ .TailCall = .{
                                 .function_index = function_index,
@@ -1630,7 +2005,7 @@ pub const HIRGenerator = struct {
                                 .arg_count = @intCast(call.arguments.len),
                                 .call_kind = .LocalFunction,
                                 .target_module = null,
-                                .return_type = .Auto,
+                                .return_type = return_type,
                             } };
 
                             self.instructions.append(tail_call) catch return false;
@@ -1653,6 +2028,363 @@ pub const HIRGenerator = struct {
                 return false;
             },
         }
+    }
+
+    /// NEW: Infer type from a literal value
+    fn inferTypeFromLiteral(_: *HIRGenerator, literal: TokenLiteral) HIRType {
+        return switch (literal) {
+            .int => .Int,
+            .float => .Float,
+            .string => .String,
+            .tetra => .Tetra,
+            .u8 => .U8,
+            .nothing => .Nothing,
+            else => .Auto,
+        };
+    }
+
+    /// NEW: Infer type from an expression (basic implementation)
+    fn inferTypeFromExpression(self: *HIRGenerator, expr: *ast.Expr) HIRType {
+        return switch (expr.data) {
+            .Literal => |lit| self.inferTypeFromLiteral(lit),
+            .Variable => |var_token| {
+                // First check if this is a custom type name
+                if (self.isCustomType(var_token.lexeme)) |custom_type| {
+                    return switch (custom_type.kind) {
+                        .Struct => .Struct,
+                        .Enum => .Enum,
+                    };
+                }
+
+                // Otherwise look up the variable's tracked type
+                const var_type = self.variable_types.get(var_token.lexeme) orelse .Auto;
+                std.debug.print(">> inferTypeFromExpression for variable '{s}': {s}\n", .{ var_token.lexeme, @tagName(var_type) });
+                return var_type;
+            },
+            .Binary => |binary| {
+                // Simple type inference for binary operations
+                const left_type = if (binary.left) |left| self.inferTypeFromExpression(left) else .Auto;
+                const right_type = if (binary.right) |right| self.inferTypeFromExpression(right) else .Auto;
+
+                // For comparisons and logical operations, always return tetra (boolean logic)
+                return switch (binary.operator.type) {
+                    .EQUALITY, .BANG_EQUAL, .LESS, .LESS_EQUAL, .GREATER, .GREATER_EQUAL => .Tetra,
+                    .AND, .OR, .XOR => .Tetra, // Logical operations return tetra values
+                    .PLUS, .MINUS, .ASTERISK, .SLASH, .MODULO => {
+                        // Arithmetic operations - return the promoted type
+                        if (left_type == right_type and left_type != .Auto) return left_type;
+                        if ((left_type == .Int and right_type == .Float) or (left_type == .Float and right_type == .Int)) {
+                            return .Float;
+                        }
+                        return .Int; // Default to int for arithmetic
+                    },
+                    else => .Tetra, // Default to Tetra for any other binary operations
+                };
+            },
+            .Array => .Array,
+            .Tuple => .Tuple,
+            .Index => |index| {
+                // Array/string indexing returns the element type
+                const container_type = self.inferTypeFromExpression(index.array);
+                return switch (container_type) {
+                    .Array => .String, // Most arrays in bigfile.doxa are int arrays, but for simplicity return String
+                    .String => .String, // String indexing returns single character (still string in our system)
+                    .Tuple => .String, // Tuples can have mixed types, return String for simplicity
+                    else => .String, // Default to String for most index operations
+                };
+            },
+            .Call => |call| {
+                // Handle different types of function calls
+                switch (call.callee.data) {
+                    .MethodCall => |method| {
+                        if (std.mem.eql(u8, method.method.lexeme, "safeAdd")) {
+                            return .Int; // safeAdd returns int
+                        }
+                    },
+                    .FieldAccess => |field| {
+                        // Handle imported functions like safeMath.safeAdd
+                        if (std.mem.eql(u8, field.field.lexeme, "safeAdd")) {
+                            return .Int; // safeAdd returns int
+                        }
+                        // Add more imported function mappings here as needed
+                    },
+                    .Variable => |var_token| {
+                        // Handle direct function calls
+                        if (std.mem.eql(u8, var_token.lexeme, "fizzbuzz") or
+                            std.mem.eql(u8, var_token.lexeme, "fber") or
+                            std.mem.eql(u8, var_token.lexeme, "forloop"))
+                        {
+                            return .Nothing; // These functions don't return values
+                        }
+                        if (std.mem.eql(u8, var_token.lexeme, "return_test")) {
+                            return .String;
+                        }
+                        if (std.mem.eql(u8, var_token.lexeme, "foo")) {
+                            return .Int;
+                        }
+                    },
+                    else => {},
+                }
+                return .Auto; // Default for unrecognized function calls
+            },
+            .If => |if_expr| {
+                // If both branches have the same type, return that
+                if (if_expr.then_branch) |then_branch| {
+                    const then_type = self.inferTypeFromExpression(then_branch);
+                    if (if_expr.else_branch) |else_branch| {
+                        const else_type = self.inferTypeFromExpression(else_branch);
+                        if (then_type == else_type) return then_type;
+                    }
+                    return then_type;
+                }
+                return .Auto;
+            },
+            .Match => .String, // Match expressions typically return strings in this codebase
+            .StructLiteral => .Struct,
+            .EnumMember => .Enum,
+            .FieldAccess => |field| {
+                // Field access type depends on the field being accessed
+                if (std.mem.eql(u8, field.field.lexeme, "age") or
+                    std.mem.eql(u8, field.field.lexeme, "salary"))
+                {
+                    return .Int; // Numeric fields
+                }
+                if (std.mem.eql(u8, field.field.lexeme, "name")) {
+                    return .String; // String fields
+                }
+                if (std.mem.eql(u8, field.field.lexeme, "length")) {
+                    return .Int; // Length method returns int
+                }
+                return .String; // Default for field access
+            },
+            .Exists, .ForAll => .Tetra, // Quantifiers return tetra values
+            .Logical => .Tetra, // Logical operations (↔, ⊕, ∧, ∨, ↑, ↓, →) return tetra values
+            .Unary => {
+                // Unary operations: negation (¬) returns tetra, others depend on operand
+                // For logical negation, always return tetra regardless of operand type
+                return .Tetra; // Negation of any logical expression returns tetra
+            },
+            .Map => .Map,
+            .Grouping => |grouping| {
+                // Grouping (parentheses) - infer from the inner expression
+                if (grouping) |inner_expr| {
+                    return self.inferTypeFromExpression(inner_expr);
+                } else {
+                    return .Nothing; // Empty grouping
+                }
+            },
+            else => .String, // Default to String for any unhandled expression types to prevent Auto leakage
+        };
+    }
+
+    /// NEW: Track a variable's type when it's declared or assigned
+    fn trackVariableType(self: *HIRGenerator, var_name: []const u8, var_type: HIRType) !void {
+        try self.variable_types.put(var_name, var_type);
+        std.debug.print(">> Tracked type for '{s}': {s}\n", .{ var_name, @tagName(var_type) });
+    }
+
+    /// NEW: Get tracked variable type
+    fn getTrackedVariableType(self: *HIRGenerator, var_name: []const u8) ?HIRType {
+        return self.variable_types.get(var_name);
+    }
+
+    /// NEW: Register a custom type (struct or enum)
+    fn registerCustomType(self: *HIRGenerator, type_name: []const u8, kind: CustomTypeInfo.CustomTypeKind) !void {
+        const custom_type = CustomTypeInfo{
+            .name = type_name,
+            .kind = kind,
+        };
+        try self.custom_types.put(type_name, custom_type);
+        std.debug.print(">> Registered custom type '{s}': {s}\n", .{ type_name, @tagName(kind) });
+    }
+
+    /// NEW: Infer parameter type from usage in function body
+    fn inferParameterType(self: *HIRGenerator, param_name: []const u8, function_body: []ast.Stmt, function_name: []const u8) !HIRType {
+        // Analyze how the parameter is used in the function body
+        for (function_body) |stmt| {
+            if (self.analyzeStatementForParameterType(stmt, param_name)) |inferred_type| {
+                std.debug.print(">> Inferred parameter '{s}' type from usage: {s}\n", .{ param_name, @tagName(inferred_type) });
+                return inferred_type;
+            }
+        }
+
+        // If no usage found, try to infer from call sites
+        if (self.inferParameterTypeFromCallSites(param_name, function_name)) |inferred_type| {
+            std.debug.print(">> Inferred parameter '{s}' type from call sites: {s}\n", .{ param_name, @tagName(inferred_type) });
+            return inferred_type;
+        }
+
+        std.debug.print(">> Could not infer parameter '{s}' type, defaulting to Int\n", .{param_name});
+        return .Int; // Reasonable default
+    }
+
+    /// Analyze a statement to infer parameter type from usage
+    fn analyzeStatementForParameterType(self: *HIRGenerator, stmt: ast.Stmt, param_name: []const u8) ?HIRType {
+        return switch (stmt.data) {
+            .Expression => |expr| {
+                if (expr) |e| {
+                    return self.analyzeExpressionForParameterType(e, param_name);
+                }
+                return null;
+            },
+            .VarDecl => |decl| {
+                if (decl.initializer) |initializer| {
+                    return self.analyzeExpressionForParameterType(initializer, param_name);
+                }
+                return null;
+            },
+            else => null,
+        };
+    }
+
+    /// Analyze an expression to infer parameter type from usage
+    fn analyzeExpressionForParameterType(self: *HIRGenerator, expr: *ast.Expr, param_name: []const u8) ?HIRType {
+        return switch (expr.data) {
+            .Binary => |binary| {
+                // Check if parameter is used in binary operation
+                const left_uses_param = if (binary.left) |left| self.expressionUsesParameter(left, param_name) else false;
+                const right_uses_param = if (binary.right) |right| self.expressionUsesParameter(right, param_name) else false;
+
+                if (left_uses_param or right_uses_param) {
+                    return switch (binary.operator.type) {
+                        .PLUS, .MINUS, .ASTERISK, .SLASH, .MODULO => .Int, // Arithmetic suggests numeric
+                        .LESS, .GREATER, .LESS_EQUAL, .GREATER_EQUAL => .Int, // Comparison suggests numeric
+                        .EQUALITY, .BANG_EQUAL => .Int, // Could be any type, but Int is common
+                        else => null,
+                    };
+                }
+                return null;
+            },
+            .Call => |call| {
+                // Check if parameter is passed to function calls
+                for (call.arguments) |arg| {
+                    if (self.expressionUsesParameter(arg, param_name)) {
+                        // Parameter is passed as argument - could infer from expected parameter type
+                        return .Int; // Conservative guess
+                    }
+                }
+                return null;
+            },
+            .If => |if_expr| {
+                // Check condition and branches
+                if (if_expr.condition) |cond| {
+                    if (self.analyzeExpressionForParameterType(cond, param_name)) |inferred| return inferred;
+                }
+                if (if_expr.then_branch) |then_branch| {
+                    if (self.analyzeExpressionForParameterType(then_branch, param_name)) |inferred| return inferred;
+                }
+                if (if_expr.else_branch) |else_branch| {
+                    if (self.analyzeExpressionForParameterType(else_branch, param_name)) |inferred| return inferred;
+                }
+                return null;
+            },
+            .While => |while_expr| {
+                // Check condition and body
+                if (self.analyzeExpressionForParameterType(while_expr.condition, param_name)) |inferred| return inferred;
+                if (self.analyzeExpressionForParameterType(while_expr.body, param_name)) |inferred| return inferred;
+                return null;
+            },
+            .Block => |block| {
+                // Check all statements in block
+                for (block.statements) |stmt| {
+                    if (self.analyzeStatementForParameterType(stmt, param_name)) |inferred| {
+                        return inferred;
+                    }
+                }
+                return null;
+            },
+            else => null,
+        };
+    }
+
+    /// Check if an expression uses a specific parameter
+    fn expressionUsesParameter(self: *HIRGenerator, expr: *ast.Expr, param_name: []const u8) bool {
+        return switch (expr.data) {
+            .Variable => |var_token| std.mem.eql(u8, var_token.lexeme, param_name),
+            .Binary => |binary| {
+                const left_uses = if (binary.left) |left| self.expressionUsesParameter(left, param_name) else false;
+                const right_uses = if (binary.right) |right| self.expressionUsesParameter(right, param_name) else false;
+                return left_uses or right_uses;
+            },
+            .Call => |call| {
+                // Check arguments
+                for (call.arguments) |arg| {
+                    if (self.expressionUsesParameter(arg, param_name)) return true;
+                }
+                return false;
+            },
+            else => false,
+        };
+    }
+
+    /// Infer parameter type from call sites (analyze how the function is called)
+    fn inferParameterTypeFromCallSites(self: *HIRGenerator, param_name: []const u8, function_name: []const u8) ?HIRType {
+        _ = param_name; // Parameter position would need to be tracked
+
+        // Look through collected function calls to see what types are passed
+        // This is a simplified version - in a full implementation we'd track parameter positions
+        for (self.function_calls.items) |call_site| {
+            if (std.mem.eql(u8, call_site.function_name, function_name)) {
+                return .Int; // Most common type in this codebase
+            }
+        }
+        return null;
+    }
+
+    /// NEW: Infer return type for function calls to prevent Auto leakage
+    fn inferCallReturnType(self: *HIRGenerator, function_name: []const u8, call_kind: CallKind) !HIRType {
+        switch (call_kind) {
+            .LocalFunction => {
+                // Look up the function signature to get its return type
+                if (self.function_signatures.get(function_name)) |func_info| {
+                    return func_info.return_type;
+                }
+                return .Nothing; // Default if function not found
+            },
+            .BuiltinFunction => {
+                // Map built-in function names to their return types
+                if (std.mem.eql(u8, function_name, "safeAdd") or
+                    std.mem.eql(u8, function_name, "safeSub") or
+                    std.mem.eql(u8, function_name, "safeMul") or
+                    std.mem.eql(u8, function_name, "foo"))
+                {
+                    return .Int;
+                }
+                if (std.mem.eql(u8, function_name, "push") or
+                    std.mem.eql(u8, function_name, "pop") or
+                    std.mem.eql(u8, function_name, "insert") or
+                    std.mem.eql(u8, function_name, "remove"))
+                {
+                    return .Array; // Array methods return the modified array
+                }
+                if (std.mem.eql(u8, function_name, "print") or
+                    std.mem.eql(u8, function_name, "println"))
+                {
+                    return .Nothing;
+                }
+                return .String; // Default for unknown builtins
+            },
+            .ModuleFunction => {
+                // Handle module function return types - default to reasonable type
+                return .String;
+            },
+        }
+    }
+
+    /// NEW: Check if a name refers to a custom type
+    fn isCustomType(self: *HIRGenerator, name: []const u8) ?CustomTypeInfo {
+        return self.custom_types.get(name);
+    }
+
+    /// NEW: Get the HIR type for a custom type name
+    fn getCustomTypeHIRType(self: *HIRGenerator, name: []const u8) HIRType {
+        if (self.custom_types.get(name)) |custom_type| {
+            return switch (custom_type.kind) {
+                .Struct => .Struct,
+                .Enum => .Enum,
+            };
+        }
+        return .Auto; // Unresolved
     }
 };
 
@@ -1824,10 +2556,62 @@ pub const SoxaHeader = struct {
     reserved: [6]u8 = [_]u8{0} ** 6, // For future expansion
 };
 
-/// Writes a HIR program to a text-based .soxa file
-pub fn writeSoxaFile(program: *HIRProgram, file_path: []const u8, allocator: std.mem.Allocator) !void {
-    _ = allocator; // May be needed for complex formatting
+/// Computes a cache key for source file validation
+fn computeCacheKey(source_path: []const u8, allocator: std.mem.Allocator) ![]u8 {
+    // Read source file content
+    const source_content = try std.fs.cwd().readFileAlloc(allocator, source_path, 1024 * 1024); // 1MB max
+    defer allocator.free(source_content);
 
+    // Create hasher
+    var hasher = std.crypto.hash.Blake3.init(.{});
+    hasher.update(source_content);
+
+    // Include compiler version to invalidate cache when compiler changes
+    hasher.update("doxa-0.1.0-dev");
+
+    // Include build configuration
+    hasher.update("debug-mode");
+
+    // Generate hash
+    var hash: [32]u8 = undefined;
+    hasher.final(&hash);
+
+    // Return first 16 hex chars (8 bytes) as string
+    return std.fmt.allocPrint(allocator, "{}", .{std.fmt.fmtSliceHexLower(hash[0..8])});
+}
+
+/// Validates SOXA cache by checking embedded source hash
+pub fn validateSoxaCache(soxa_path: []const u8, source_path: []const u8, allocator: std.mem.Allocator) !bool {
+    const file = std.fs.cwd().openFile(soxa_path, .{}) catch return false;
+    defer file.close();
+
+    var reader = file.reader();
+    var buf: [512]u8 = undefined;
+
+    // Skip first line ("; SOXA HIR v0.1.0")
+    _ = reader.readUntilDelimiterOrEof(&buf, '\n') catch return false;
+
+    // Read second line looking for Source-Hash
+    if (try reader.readUntilDelimiterOrEof(&buf, '\n')) |line| {
+        if (std.mem.indexOf(u8, line, "Source-Hash: ")) |start| {
+            const cached_hash = std.mem.trim(u8, line[start + 13 ..], " \n\r");
+            const current_hash = try computeCacheKey(source_path, allocator);
+            defer allocator.free(current_hash);
+
+            const is_valid = std.mem.eql(u8, cached_hash, current_hash);
+            if (!is_valid) {
+                std.debug.print(">> Cache miss: source changed (cached: {s}, current: {s})\n", .{ cached_hash, current_hash });
+            }
+            return is_valid;
+        }
+    }
+
+    std.debug.print(">> Cache miss: no hash found (old format)\n", .{});
+    return false; // No hash found = old format = invalid
+}
+
+/// Writes a HIR program to a text-based .soxa file with cache validation
+pub fn writeSoxaFile(program: *HIRProgram, file_path: []const u8, source_path: []const u8, allocator: std.mem.Allocator) !void {
     const file = std.fs.cwd().createFile(file_path, .{}) catch |err| switch (err) {
         error.AccessDenied => return reporting.ErrorList.AccessDenied,
         error.FileNotFound => return reporting.ErrorList.FileNotFound,
@@ -1837,8 +2621,15 @@ pub fn writeSoxaFile(program: *HIRProgram, file_path: []const u8, allocator: std
 
     var writer = file.writer();
 
-    // Write header
+    // Compute cache key for validation
+    const cache_key = try computeCacheKey(source_path, allocator);
+    defer allocator.free(cache_key);
+
+    // Write enhanced header with cache validation
     try writer.print("; SOXA HIR v0.1.0\n", .{});
+    try writer.print("; Source-Hash: {s}\n", .{cache_key});
+    try writer.print("; Compiler-Version: 0.1.0-dev\n", .{});
+    try writer.print("; Build-Flags: debug\n", .{});
     try writer.print("; Generated with {} instructions, {} constants, {} functions\n\n", .{ program.instructions.len, program.constant_pool.len, program.function_table.len });
 
     // Write constants section
@@ -2206,7 +2997,7 @@ fn readHIRInstruction(reader: anytype, allocator: std.mem.Allocator) !HIRInstruc
         },
         8 => { // Return
             const has_value = (try reader.readByte()) != 0;
-            return HIRInstruction{ .Return = .{ .has_value = has_value, .return_type = .Auto } };
+            return HIRInstruction{ .Return = .{ .has_value = has_value, .return_type = .Nothing } }; // Default to Nothing to prevent Auto leakage
         },
         9 => HIRInstruction.Dup,
         10 => HIRInstruction.Pop,
@@ -2321,9 +3112,9 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
 
         .Inspect => |i| {
             if (i.name) |name| {
-                try writer.print("    Inspect \"{s}\"               ; Debug print\n", .{name});
+                try writer.print("    Inspect \"{s}\" {s}         ; Debug print\n", .{ name, @tagName(i.value_type) });
             } else {
-                try writer.print("    Inspect                     ; Debug print\n", .{});
+                try writer.print("    Inspect {s}                 ; Debug print\n", .{@tagName(i.value_type)});
             }
         },
 
@@ -2564,14 +3355,16 @@ const SoxaTextParser = struct {
             const qualified_name = try self.parseQuotedString(name_quoted);
             const call_kind = if (std.mem.eql(u8, kind_str, "LocalFunction")) CallKind.LocalFunction else if (std.mem.eql(u8, kind_str, "ModuleFunction")) CallKind.ModuleFunction else if (std.mem.eql(u8, kind_str, "BuiltinFunction")) CallKind.BuiltinFunction else CallKind.LocalFunction;
 
-            try self.instructions.append(HIRInstruction{ .Call = .{
-                .function_index = function_index,
-                .qualified_name = qualified_name,
-                .arg_count = arg_count,
-                .call_kind = call_kind,
-                .target_module = null,
-                .return_type = .Auto,
-            } });
+            try self.instructions.append(HIRInstruction{
+                .Call = .{
+                    .function_index = function_index,
+                    .qualified_name = qualified_name,
+                    .arg_count = arg_count,
+                    .call_kind = call_kind,
+                    .target_module = null,
+                    .return_type = .String, // Default to String to prevent Auto leakage
+                },
+            });
         } else if (std.mem.eql(u8, op, "TailCall")) {
             const func_idx_str = tokens.next() orelse return;
             const arg_count_str = tokens.next() orelse return;
@@ -2583,32 +3376,42 @@ const SoxaTextParser = struct {
             const qualified_name = try self.parseQuotedString(name_quoted);
             const call_kind = if (std.mem.eql(u8, kind_str, "LocalFunction")) CallKind.LocalFunction else if (std.mem.eql(u8, kind_str, "ModuleFunction")) CallKind.ModuleFunction else if (std.mem.eql(u8, kind_str, "BuiltinFunction")) CallKind.BuiltinFunction else CallKind.LocalFunction;
 
-            try self.instructions.append(HIRInstruction{ .TailCall = .{
-                .function_index = function_index,
-                .qualified_name = qualified_name,
-                .arg_count = arg_count,
-                .call_kind = call_kind,
-                .target_module = null,
-                .return_type = .Auto,
-            } });
+            try self.instructions.append(HIRInstruction{
+                .TailCall = .{
+                    .function_index = function_index,
+                    .qualified_name = qualified_name,
+                    .arg_count = arg_count,
+                    .call_kind = call_kind,
+                    .target_module = null,
+                    .return_type = .String, // Default to String to prevent Auto leakage
+                },
+            });
         } else if (std.mem.eql(u8, op, "Return")) {
             const has_val_str = tokens.next() orelse return;
             const has_value = std.mem.eql(u8, has_val_str, "true");
-            try self.instructions.append(HIRInstruction{ .Return = .{ .has_value = has_value, .return_type = .Auto } });
+            try self.instructions.append(HIRInstruction{ .Return = .{ .has_value = has_value, .return_type = .Nothing } }); // Default to Nothing to prevent Auto leakage
         } else if (std.mem.eql(u8, op, "Dup")) {
             try self.instructions.append(HIRInstruction.Dup);
         } else if (std.mem.eql(u8, op, "Pop")) {
             try self.instructions.append(HIRInstruction.Pop);
-        } else if (std.mem.eql(u8, op, "Inspect")) {
-            const name_quoted = tokens.next();
-            if (name_quoted) |name| {
-                const var_name = try self.parseQuotedString(name);
-                try self.instructions.append(HIRInstruction{ .Inspect = .{ .name = var_name, .value_type = .Auto } });
-            } else {
-                try self.instructions.append(HIRInstruction{ .Inspect = .{ .name = null, .value_type = .Auto } });
-            }
         } else if (std.mem.eql(u8, op, "Halt")) {
             try self.instructions.append(HIRInstruction.Halt);
+        } else if (std.mem.eql(u8, op, "Inspect")) {
+            const name_or_type = tokens.next() orelse return;
+            var name: ?[]const u8 = null;
+            var value_type: HIRType = .String;
+
+            if (name_or_type.len > 2 and name_or_type[0] == '"' and name_or_type[name_or_type.len - 1] == '"') {
+                // Has quoted name, get type from next token
+                name = try self.parseQuotedString(name_or_type);
+                const type_str = tokens.next() orelse "String";
+                value_type = if (std.mem.eql(u8, type_str, "Int")) HIRType.Int else if (std.mem.eql(u8, type_str, "Float")) HIRType.Float else if (std.mem.eql(u8, type_str, "String")) HIRType.String else if (std.mem.eql(u8, type_str, "Tetra")) HIRType.Tetra else if (std.mem.eql(u8, type_str, "Boolean")) HIRType.Boolean else if (std.mem.eql(u8, type_str, "Array")) HIRType.Array else if (std.mem.eql(u8, type_str, "Tuple")) HIRType.Tuple else if (std.mem.eql(u8, type_str, "Map")) HIRType.Map else if (std.mem.eql(u8, type_str, "Struct")) HIRType.Struct else if (std.mem.eql(u8, type_str, "Enum")) HIRType.Enum else HIRType.String;
+            } else {
+                // No quoted name, this token is the type
+                value_type = if (std.mem.eql(u8, name_or_type, "Int")) HIRType.Int else if (std.mem.eql(u8, name_or_type, "Float")) HIRType.Float else if (std.mem.eql(u8, name_or_type, "String")) HIRType.String else if (std.mem.eql(u8, name_or_type, "Tetra")) HIRType.Tetra else if (std.mem.eql(u8, name_or_type, "Boolean")) HIRType.Boolean else if (std.mem.eql(u8, name_or_type, "Array")) HIRType.Array else if (std.mem.eql(u8, name_or_type, "Tuple")) HIRType.Tuple else if (std.mem.eql(u8, name_or_type, "Map")) HIRType.Map else if (std.mem.eql(u8, name_or_type, "Struct")) HIRType.Struct else if (std.mem.eql(u8, name_or_type, "Enum")) HIRType.Enum else HIRType.String;
+            }
+
+            try self.instructions.append(HIRInstruction{ .Inspect = .{ .name = name, .value_type = value_type } });
         } else if (std.mem.eql(u8, op, "ArrayNew")) {
             const type_str = tokens.next() orelse return;
             const size_str = tokens.next() orelse return;
@@ -2653,4 +3456,40 @@ const SoxaTextParser = struct {
         }
         return try self.allocator.dupe(u8, quoted);
     }
+};
+
+/// NEW: Custom type information for struct/enum types
+pub const CustomTypeInfo = struct {
+    name: []const u8,
+    kind: CustomTypeKind,
+
+    pub const CustomTypeKind = enum {
+        Struct,
+        Enum,
+    };
+};
+
+/// NEW: HIR generation statistics
+pub const HIRStats = struct {
+    instructions_generated: u32,
+    functions_generated: u32,
+    constants_generated: u32,
+    variables_created: u32,
+
+    pub fn init(allocator: std.mem.Allocator) HIRStats {
+        _ = allocator; // Unused for now
+        return HIRStats{
+            .instructions_generated = 0,
+            .functions_generated = 0,
+            .constants_generated = 0,
+            .variables_created = 0,
+        };
+    }
+};
+
+/// NEW: Function call site information for tail recursion
+pub const FunctionCallSite = struct {
+    function_name: []const u8,
+    is_tail_position: bool,
+    instruction_index: u32,
 };

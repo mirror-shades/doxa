@@ -1,0 +1,9 @@
+var a :: tetra is true;
+var b :: tetra is false;
+var c :: tetra is both;
+var d :: tetra is neither;
+ 
+a?;
+b?;
+c?;
+d?; 
