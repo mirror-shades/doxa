@@ -8,15 +8,14 @@ const Reporter = Reporting.Reporter;
 const token = @import("../lexer/token.zig");
 const declaration_parser = @import("./declaration_parser.zig");
 const expression_parser = @import("./expression_parser.zig");
+const HIRType = @import("../codegen/soxa_types.zig").HIRType;
 
-pub fn parse(self: *Parser) ErrorList![]ast.Stmt {
-    if (self.debug_enabled) {
-        std.debug.print("\nToken stream:\n", .{});
-        for (self.tokens, 0..) |t, i| {
-            std.debug.print("{}: {s} ({s})\n", .{ i, @tagName(t.type), t.lexeme });
-        }
-        std.debug.print("\n", .{});
+pub fn parse(self: *Parser, reporter: *Reporter) ErrorList![]ast.Stmt {
+    reporter.debug("Token stream:", .{});
+    for (self.tokens, 0..) |t, i| {
+        reporter.debug("{}: {s} ({s})\n", .{ i, @tagName(t.type), t.lexeme });
     }
+    reporter.debug("", .{});
 
     // First pass: collect all function declarations and create them
     var function_table = std.StringHashMap(*ast.Stmt).init(self.allocator);
@@ -171,16 +170,12 @@ pub fn parse(self: *Parser) ErrorList![]ast.Stmt {
 }
 
 pub fn parseExpressionStmt(self: *Parser) ErrorList!ast.Stmt {
-    if (self.debug_enabled) {
-        std.debug.print("\nParsing expression statement...\n", .{});
-    }
-
     // Special handling for variable declarations
     if (self.peek().type == .VAR) {
         return declaration_parser.parseVarDecl(self); // Handle var declarations separately
     }
 
-    const expr = try expression_parser.parseExpression(self);
+    var expr = try expression_parser.parseExpression(self);
 
     // Check if we need a semicolon
     const needs_semicolon = if (expr) |e| switch (e.data) {
@@ -198,11 +193,9 @@ pub fn parseExpressionStmt(self: *Parser) ErrorList!ast.Stmt {
     } else true;
 
     // Handle question mark operator
-    var final_expr = expr;
     if (expr != null and self.peek().type == .INSPECT) {
         const question_token = self.peek(); // Capture the question mark token
         self.advance(); // consume the question mark
-        const inspect_expr = try self.allocator.create(ast.Expr);
 
         // Get the variable name if this is a variable expression
         var name_token: ?[]const u8 = null;
@@ -210,50 +203,36 @@ pub fn parseExpressionStmt(self: *Parser) ErrorList!ast.Stmt {
             name_token = expr.?.data.Variable.lexeme;
         }
 
-        // Create a location that won't interfere with string formatting
+        // Create the inspection expression
+        const inspect_expr = try self.allocator.create(ast.Expr);
         inspect_expr.* = .{
             .base = .{
                 .id = ast.generateNodeId(),
                 .span = ast.SourceSpan.fromToken(question_token),
             },
             .data = .{
-                .Inspect = .{
+                .InspectStruct = .{
                     .expr = expr.?,
                     .location = .{
-                        .file = self.current_file,
                         .line = question_token.line,
                         .column = question_token.column,
+                        .file = question_token.file,
                     },
                     .variable_name = name_token,
                 },
             },
         };
-        final_expr = inspect_expr;
+
+        expr = inspect_expr;
     }
 
     // Only check for semicolon if we need one
     if (needs_semicolon) {
         if (self.peek().type != .SEMICOLON) {
-            if (self.debug_enabled) {
-                std.debug.print("Expected semicolon but found: {s} at position {}\n", .{
-                    @tagName(self.peek().type),
-                    self.current,
-                });
-                if (final_expr != null) {
-                    std.debug.print("Expression type: {s}\n", .{@tagName(final_expr.?.data)});
-                }
-            }
-            if (final_expr) |e| {
+            if (expr) |e| {
                 e.deinit(self.allocator);
                 self.allocator.destroy(e);
             }
-            var reporter = Reporter.init();
-            const location = Reporter.Location{
-                .file = self.current_file,
-                .line = self.peek().line,
-                .column = self.peek().column,
-            };
-            reporter.reportCompileError(location, "Expected semicolon", .{});
             return error.ExpectedSemicolon;
         }
         self.advance(); // Consume the semicolon
@@ -265,7 +244,7 @@ pub fn parseExpressionStmt(self: *Parser) ErrorList!ast.Stmt {
             .span = ast.SourceSpan.fromToken(self.previous()),
         },
         .data = .{
-            .Expression = final_expr,
+            .Expression = expr,
         },
     };
 }
@@ -298,9 +277,6 @@ pub fn parseBlockStmt(self: *Parser) ErrorList![]ast.Stmt {
 }
 
 pub fn parseReturnStmt(self: *Parser) ErrorList!ast.Stmt {
-    if (self.debug_enabled) {
-        std.debug.print("\nParsing return statement...\n", .{});
-    }
 
     // Consume 'return'
     if (self.peek().type != .RETURN) {
@@ -316,13 +292,12 @@ pub fn parseReturnStmt(self: *Parser) ErrorList!ast.Stmt {
     }
 
     if (self.peek().type != .SEMICOLON) {
-        var reporter = Reporter.init();
         const location = Reporter.Location{
             .file = self.current_file,
             .line = self.peek().line,
             .column = self.peek().column,
         };
-        reporter.reportCompileError(location, "Expected semicolon", .{});
+        self.reporter.reportCompileError(location, "Expected semicolon", .{});
         return error.ExpectedSemicolon;
     }
     self.advance();
@@ -342,10 +317,6 @@ pub fn parseReturnStmt(self: *Parser) ErrorList!ast.Stmt {
 }
 
 pub fn parseStatement(self: *Parser) ErrorList!ast.Stmt {
-    if (self.debug_enabled) {
-        std.debug.print("\nParsing statement, current token: {s}\n", .{@tagName(self.peek().type)});
-    }
-
     return switch (self.peek().type) {
         .VAR, .CONST => declaration_parser.parseVarDecl(self),
         .FUNCTION => declaration_parser.parseFunctionDecl(self),
@@ -435,10 +406,6 @@ pub fn parseAssertStmt(self: *Parser) ErrorList!ast.Stmt {
 }
 
 pub fn parseTryStmt(self: *Parser) ErrorList!ast.Stmt {
-    if (self.debug_enabled) {
-        std.debug.print("\nParsing try statement...\n", .{});
-    }
-
     self.advance(); // consume 'try'
 
     // Parse the try block
@@ -535,13 +502,12 @@ pub fn parseContinueStmt(self: *Parser) ErrorList!ast.Stmt {
     self.advance(); // consume 'continue' keyword
 
     if (self.peek().type != .SEMICOLON) {
-        var reporter = Reporter.init();
         const location = Reporter.Location{
             .file = self.current_file,
             .line = self.peek().line,
             .column = self.peek().column,
         };
-        reporter.reportCompileError(location, "Expected semicolon", .{});
+        self.reporter.reportCompileError(location, "Expected semicolon", .{});
         return error.ExpectedSemicolon;
     }
     self.advance(); // consume ';'
@@ -561,13 +527,12 @@ pub fn parseBreakStmt(self: *Parser) ErrorList!ast.Stmt {
     self.advance(); // consume 'break' keyword
 
     if (self.peek().type != .SEMICOLON) {
-        var reporter = Reporter.init();
         const location = Reporter.Location{
             .file = self.current_file,
             .line = self.peek().line,
             .column = self.peek().column,
         };
-        reporter.reportCompileError(location, "Expected semicolon", .{});
+        self.reporter.reportCompileError(location, "Expected semicolon", .{});
         return error.ExpectedSemicolon;
     }
     self.advance(); // consume ';'

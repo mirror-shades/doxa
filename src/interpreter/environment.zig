@@ -45,18 +45,10 @@ pub fn deinit(self: *Environment) void {
 }
 
 pub fn define(self: *Environment, key: []const u8, value: TokenLiteral, type_info: ast.TypeInfo) !void {
-    if (self.debug_enabled) {
-        std.debug.print("Attempting to define '{s}' = {any} in the memory manager\n", .{ key, value });
-    }
-
     if (self.memory_manager.scope_manager.root_scope) |root_scope| {
         // Use createValueBinding instead of the undefined defineVariable
         // Use the mutability information from type_info to determine if this is constant
         const is_constant = !type_info.is_mutable;
-
-        if (self.debug_enabled) {
-            std.debug.print("DEBUG: Defining variable '{s}': is_mutable={}, is_constant={}\n", .{ key, type_info.is_mutable, is_constant });
-        }
 
         // Convert TypeInfo to TokenType if needed
         // This is a simplification - you may need to map between your TypeInfo and TokenType
@@ -103,9 +95,6 @@ pub fn get(self: *Environment, name: []const u8) ErrorList!?TokenLiteral {
 }
 
 pub fn assign(self: *Environment, name: []const u8, value: TokenLiteral) !void {
-    if (self.debug_enabled) {
-        std.debug.print("Attempting to assign '{s}' = {any}\n", .{ name, value });
-    }
 
     // Look up variable from root scope
     if (self.memory_manager.scope_manager.root_scope) |root_scope| {
@@ -118,18 +107,8 @@ pub fn assign(self: *Environment, name: []const u8, value: TokenLiteral) !void {
                     return error.CannotAssignToConstant;
                 }
 
-                // Debug: show old value
-                if (self.debug_enabled) {
-                    std.debug.print("Updating variable '{s}' from {any} to {any}\n", .{ name, storage.value, value });
-                }
-
                 // Update the value in storage
                 storage.value = value;
-
-                // Verify update
-                if (self.debug_enabled) {
-                    std.debug.print("After update, storage value is: {any}\n", .{storage.value});
-                }
 
                 return;
             } else {

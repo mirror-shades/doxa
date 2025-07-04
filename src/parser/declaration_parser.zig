@@ -350,11 +350,6 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
     const is_public = (self.peek().type == .PUBLIC) or
         (self.previous().type == .PUBLIC and
             (self.peek().type == .VAR or self.peek().type == .CONST));
-    if (is_public) {
-        if (self.debug_enabled) {
-            std.debug.print("Parsing public variable declaration\n", .{});
-        }
-    }
     var is_const = false;
     // Check if this is a var or const declaration
     if (self.peek().type == .VAR or self.peek().type == .CONST) {
@@ -362,11 +357,6 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
         self.advance(); // consume 'var' or 'const'
     } else {
         return error.ExpectedVarOrConst;
-    }
-
-    if (self.debug_enabled) {
-        std.debug.print("\nParsing var declaration\n", .{});
-        std.debug.print("Current token: {s}\n", .{@tagName(self.peek().type)});
     }
 
     var type_info: ast.TypeInfo = .{
@@ -385,37 +375,20 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
         var initializer: ?*ast.Expr = null;
         if (self.peek().type == .ASSIGN) {
             self.advance();
-            if (self.debug_enabled) {
-                std.debug.print("\nParsing array initializer at position {}, token: {s}\n", .{
-                    self.current,
-                    @tagName(self.peek().type),
-                });
-            }
 
             initializer = try expression_parser.parseExpression(self);
             if (initializer == null) {
-                var reporter = Reporter.init();
                 const location = Reporter.Location{
                     .file = self.current_file,
                     .line = self.peek().line,
                     .column = self.peek().column,
                 };
-                reporter.reportCompileError(location, "Expected expression", .{});
+                self.reporter.reportCompileError(location, "Expected expression", .{});
                 return error.ExpectedExpression;
             }
         }
 
         if (self.peek().type != .SEMICOLON) {
-            if (self.debug_enabled) {
-                std.debug.print("Expected semicolon, but found: {s}\n", .{@tagName(self.peek().type)});
-            }
-            var reporter = Reporter.init();
-            const location = Reporter.Location{
-                .file = self.current_file,
-                .line = self.peek().line,
-                .column = self.peek().column,
-            };
-            reporter.reportCompileError(location, "Expected semicolon", .{});
             return error.ExpectedSemicolon;
         }
         self.advance();
@@ -438,23 +411,12 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
 
     // Original variable declaration parsing logic
     const name = if (self.peek().type != .IDENTIFIER) {
-        var reporter = Reporter.init();
-        const location = Reporter.Location{
-            .file = self.current_file,
-            .line = self.peek().line,
-            .column = self.peek().column,
-        };
-        reporter.reportCompileError(location, "Expected identifier, got {s} \n Proper declaration: var name is 5; or, var name :: int is 5;", .{@tagName(self.peek().type)});
         return error.ExpectedIdentifier;
     } else blk: {
         const n = self.peek();
         self.advance();
         break :blk n;
     };
-
-    if (self.debug_enabled) {
-        std.debug.print("After name, current token: {s}\n", .{@tagName(self.peek().type)});
-    }
 
     // still unsure if I should enforce explicit type annotations
     // if (self.peek().type != .TYPE_SYMBOL) {
@@ -463,20 +425,13 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
     //         .line = self.peek().line,
     //         .column = self.peek().column,
     //     };
-    //     var reporter = Reporter.init();
-    //     reporter.reportCompileError(location, "Type must be declared, use auto if needed.", .{});
+    //     self.reporter.reportCompileError(location, "Type must be declared, use auto if needed.", .{});
     //     return error.ExpectedTypeAnnotation;
     // }
 
     // Check specifically for '=' where 'is' or '::' is expected
     if (std.mem.eql(u8, self.peek().lexeme, "=")) {
-        var reporter = Reporter.init();
-        const location = Reporter.Location{
-            .file = self.current_file,
-            .line = self.peek().line,
-            .column = self.peek().column,
-        };
-        reporter.reportCompileError(location, "The equal sign '=' is not used for variable declarations, use 'is' instead", .{});
+        std.debug.print("The equal sign '=' is not used for variable declarations, use 'is' instead", .{});
         // Optionally, you could try to recover by treating '=' as 'is' here,
         // but returning an error is usually better.
         return error.UseIsForAssignment; // You might need to add this error
@@ -537,13 +492,6 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
             initializer = try expression_parser.parseExpression(self);
         }
         if (initializer == null) {
-            var reporter = Reporter.init();
-            const location = Reporter.Location{
-                .file = self.current_file,
-                .line = self.peek().line,
-                .column = self.peek().column,
-            };
-            reporter.reportCompileError(location, "Expected expression", .{});
             return error.ExpectedExpression;
         }
     }
@@ -552,25 +500,11 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
         if (self.debug_enabled) {
             std.debug.print("Expected semicolon, but found: {s}\n", .{@tagName(self.peek().type)});
         }
-        var reporter = Reporter.init();
-        const location = Reporter.Location{
-            .file = self.current_file,
-            .line = self.peek().line,
-            .column = self.peek().column,
-        };
-        reporter.reportCompileError(location, "Expected semicolon", .{});
         return error.ExpectedSemicolon;
     }
     self.advance();
 
     if (type_info.base == .Auto and initializer == null) {
-        var reporter = Reporter.init();
-        const location = Reporter.Location{
-            .file = self.current_file,
-            .line = self.peek().line,
-            .column = self.peek().column,
-        };
-        reporter.reportCompileError(location, "Auto type must have an initializer", .{});
         return error.ExpectedExpression;
     }
 

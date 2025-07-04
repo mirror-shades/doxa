@@ -675,7 +675,7 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
             if (self.debug_enabled) {
                 std.debug.print("Unknown type identifier: {s}\n", .{type_name});
             }
-            var reporter = Reporter.init();
+            var reporter = Reporter.init(false);
             reporter.reportCompileError(.{ .file = self.current_file, .line = type_token.line, .column = type_token.column }, "Unknown type: '{s}'", .{type_name});
             return error.UnknownType;
         }
@@ -684,7 +684,7 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
         if (self.debug_enabled) {
             std.debug.print("Invalid token for type expression: {s}\n", .{@tagName(type_token.type)});
         }
-        var reporter = Reporter.init();
+        var reporter = Reporter.init(false);
         reporter.reportCompileError(.{ .file = self.current_file, .line = type_token.line, .column = type_token.column }, "Expected type identifier, found {s}", .{@tagName(type_token.type)});
         return error.ExpectedType;
     }
@@ -811,13 +811,12 @@ pub fn parseIfExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
     } else {
         condition.deinit(self.allocator);
         self.allocator.destroy(condition);
-        var reporter = Reporter.init();
         const location: Reporter.Location = .{
             .file = self.current_file,
             .line = self.peek().line,
             .column = self.peek().column,
         };
-        reporter.reportCompileError(location, "If must be followed by then (expression) or brace (statement block)", .{});
+        self.reporter.reportCompileError(location, "If must be followed by then (expression) or brace (statement block)", .{});
         return error.ExpectedThen;
     }
 
@@ -968,7 +967,7 @@ pub fn functionExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast
     }
 
     if (self.peek().type != .RIGHT_PAREN) {
-        try self.parseParameters(&params);
+        try self.parseParameters(&params, self.reporter);
     }
 
     if (self.peek().type != .RIGHT_PAREN) {

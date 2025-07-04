@@ -6,9 +6,9 @@ const Token = TokenImport.Token;
 const StructField = TypesImport.StructField;
 const StructLiteralField = ast.StructLiteralField;
 const StructInstanceField = ast.StructInstanceField;
-const Reporting = @import("../utils/reporting.zig");
-const ErrorList = Reporting.ErrorList;
-const Reporter = Reporting.Reporter;
+const reporting = @import("../utils/reporting.zig");
+const ErrorList = reporting.ErrorList;
+const Reporter = reporting.Reporter;
 const Memory = @import("../utils/memory.zig");
 const Scope = Memory.Scope;
 const MemoryManager = Memory.MemoryManager;
@@ -61,6 +61,7 @@ pub const Interpreter = struct {
     moduleEnvironments: std.StringHashMap(*Environment),
     module_contexts: std.StringHashMap(*ModuleEnvironment), // NEW: Track module environments
     memory_manager: *MemoryManager,
+    reporter: *Reporter,
 
     return_value: ?TokenLiteral = null,
     entry_point_name: ?[]const u8 = null,
@@ -70,10 +71,10 @@ pub const Interpreter = struct {
     entry_point_location: ?Token = null,
     has_returned: bool = false,
 
-    pub fn init(allocator: std.mem.Allocator, environment: *Environment, parser: ?*Parser, debug_enabled: bool, memory_manager: *MemoryManager) Interpreter {
+    pub fn init(allocator: std.mem.Allocator, environment: *Environment, parser: ?*Parser, debug_enabled: bool, memory_manager: *MemoryManager, reporter: *Reporter) Interpreter {
         // Initialize scope_manager with a root scope
         if (memory_manager.scope_manager.root_scope == null) {
-            memory_manager.scope_manager.root_scope = Scope.init(memory_manager.scope_manager, memory_manager.scope_manager.next_storage_id, null) catch unreachable;
+            memory_manager.scope_manager.root_scope = Scope.init(memory_manager.scope_manager, memory_manager.scope_manager.next_storage_id, null, debug_enabled) catch unreachable;
             memory_manager.scope_manager.next_storage_id += 1;
         }
 
@@ -90,6 +91,7 @@ pub const Interpreter = struct {
             .moduleEnvironments = std.StringHashMap(*Environment).init(allocator),
             .module_contexts = std.StringHashMap(*ModuleEnvironment).init(allocator),
             .memory_manager = memory_manager,
+            .reporter = reporter,
         };
     }
 
@@ -229,15 +231,13 @@ pub const Interpreter = struct {
         }
     }
 
-    fn u8BoundsCheck(value: TokenLiteral) ErrorList!void {
+    fn u8BoundsCheck(self: *Interpreter, value: TokenLiteral) ErrorList!void {
         if (value.int < 0) {
-            var reporting = Reporter.init();
-            reporting.reportRuntimeError("Underflow: u8 cannot be negative", .{});
+            self.reporter.reportRuntimeError("Underflow: u8 cannot be negative", .{});
             return error.u8Underflow;
         }
         if (value.int > 255) {
-            var reporting = Reporter.init();
-            reporting.reportRuntimeError("Overflow: u8 cannot be greater than 255", .{});
+            self.reporter.reportRuntimeError("Overflow: u8 cannot be greater than 255", .{});
             return error.u8Overflow;
         }
     }
@@ -536,36 +536,31 @@ pub const Interpreter = struct {
                     // Type checking for initialization
                     switch (decl.type_info.base) {
                         .Int => if (init_value != .int and init_value != .u8) {
-                            var reporting = Reporter.init();
-                            reporting.reportRuntimeError("Type error: Cannot initialize int variable with {s}", .{@tagName(init_value)});
+                            self.reporter.reportRuntimeError("Type error: Cannot initialize int variable with {s}", .{@tagName(init_value)});
                             return error.TypeError;
                         },
                         .U8 => {
                             if (init_value != .u8 and init_value != .int) {
-                                var reporting = Reporter.init();
-                                reporting.reportRuntimeError("Type error: Cannot initialize u8 variable with {s}", .{@tagName(init_value)});
+                                self.reporter.reportRuntimeError("Type error: Cannot initialize u8 variable with {s}", .{@tagName(init_value)});
                                 return error.TypeError;
                             }
 
                             // Convert int to u8 if needed
                             if (init_value == .int) {
                                 if (init_value.int < 0 or init_value.int > 255) {
-                                    var reporting = Reporter.init();
-                                    reporting.reportRuntimeError("Type error: Integer value {d} out of range for u8", .{init_value.int});
+                                    self.reporter.reportRuntimeError("Type error: Integer value {d} out of range for u8", .{init_value.int});
                                     return error.TypeError;
                                 }
                                 break :blk TokenLiteral{ .u8 = @intCast(init_value.int) };
                             }
                         },
                         .Float => if (init_value != .float and init_value != .int) {
-                            var reporting = Reporter.init();
-                            reporting.reportRuntimeError("Type error: Cannot initialize float variable with {s}", .{@tagName(init_value)});
+                            self.reporter.reportRuntimeError("Type error: Cannot initialize float variable with {s}", .{@tagName(init_value)});
                             return error.TypeError;
                         },
                         .Array => {
                             if (init_value != .array) {
-                                var reporting = Reporter.init();
-                                reporting.reportRuntimeError("Type error: Cannot initialize array variable with {s}", .{@tagName(init_value)});
+                                self.reporter.reportRuntimeError("Type error: Cannot initialize array variable with {s}", .{@tagName(init_value)});
                                 return error.TypeError;
                             }
 
@@ -577,8 +572,7 @@ pub const Interpreter = struct {
                                     for (init_value.array, 0..) |elem, idx| {
                                         if (elem == .int) {
                                             if (elem.int < 0 or elem.int > 255) {
-                                                var reporting = Reporter.init();
-                                                reporting.reportRuntimeError("Type error: Integer value {d} at index {d} out of range for u8 array", .{ elem.int, idx });
+                                                self.reporter.reportRuntimeError("Type error: Integer value {d} at index {d} out of range for u8 array", .{ elem.int, idx });
                                                 self.allocator.free(new_array);
                                                 return error.TypeError;
                                             }
@@ -586,8 +580,7 @@ pub const Interpreter = struct {
                                         } else if (elem == .u8) {
                                             new_array[idx] = elem;
                                         } else {
-                                            var reporting = Reporter.init();
-                                            reporting.reportRuntimeError("Type error: Cannot convert {s} at index {d} to u8", .{ @tagName(elem), idx });
+                                            self.reporter.reportRuntimeError("Type error: Cannot convert {s} at index {d} to u8", .{ @tagName(elem), idx });
                                             self.allocator.free(new_array);
                                             return error.TypeError;
                                         }
@@ -618,8 +611,7 @@ pub const Interpreter = struct {
                         },
                         .Map => {
                             if (init_value != .map) {
-                                var reporting = Reporter.init();
-                                reporting.reportRuntimeError("Type error: Cannot initialize map variable with {s}", .{@tagName(init_value)});
+                                self.reporter.reportRuntimeError("Type error: Cannot initialize map variable with {s}", .{@tagName(init_value)});
                                 return error.TypeError;
                             }
                         },
@@ -763,23 +755,21 @@ pub const Interpreter = struct {
             .Assert => |assert| {
                 const condition = try self.evaluate(assert.condition);
                 if (condition != .tetra) {
-                    var reporter = Reporter.init();
-                    reporter.reportRuntimeError("Assertion failed: {s} is not a tetra", .{@tagName(condition)});
+                    self.reporter.reportRuntimeError("Assertion failed: {s} is not a tetra", .{@tagName(condition)});
                     return error.TypeError;
                 }
                 if (condition.tetra == Tetra.false) {
-                    var reporter = Reporter.init();
 
                     // Use custom message if provided
                     if (assert.message != null) {
                         const message_value = try self.evaluate(assert.message.?);
                         if (message_value == .string) {
-                            reporter.reportCompileError(assert.location, "Assertion failed: {s}", .{message_value.string});
+                            self.reporter.reportCompileError(assert.location, "Assertion failed: {s}", .{message_value.string});
                         } else {
-                            reporter.reportCompileError(assert.location, "Assertion failed", .{});
+                            self.reporter.reportCompileError(assert.location, "Assertion failed", .{});
                         }
                     } else {
-                        reporter.reportCompileError(assert.location, "Assertion failed", .{});
+                        self.reporter.reportCompileError(assert.location, "Assertion failed", .{});
                     }
                     return error.AssertionFailed;
                 }
@@ -1011,9 +1001,8 @@ pub const Interpreter = struct {
                                 return TokenLiteral{ .tetra = .false };
                             }
                         }
-                        var reporter = Reporter.init();
                         const location: Reporter.Location = .{ .file = "stdin", .line = binary.operator.line, .column = binary.operator.column };
-                        reporter.reportCompileError(location, "Cannot compare {s} and {s}. Both sides must be bools.", .{ @tagName(left), @tagName(right) });
+                        self.reporter.reportCompileError(location, "Cannot compare {s} and {s}. Both sides must be bools.", .{ @tagName(left), @tagName(right) });
                         return error.TypeError;
                     },
                     .MODULO => {
@@ -1236,9 +1225,8 @@ pub const Interpreter = struct {
                 if (self.debug_enabled) {
                     std.debug.print("Variable not found: '{s}'\n", .{var_token.lexeme});
                 }
-                var reporter = Reporter.init();
                 const location: Reporter.Location = .{ .file = "stdin", .line = var_token.line, .column = var_token.column };
-                reporter.reportCompileError(location, "Variable '{s}' not found", .{var_token.lexeme});
+                self.reporter.reportCompileError(location, "Variable '{s}' not found", .{var_token.lexeme});
                 return error.VariableNotFound;
             },
             .Assignment => |assign| {
@@ -1261,44 +1249,38 @@ pub const Interpreter = struct {
                 switch (var_type.base) {
                     .Int => {
                         if (value != .int and value != .u8) {
-                            var reporting = Reporter.init();
-                            reporting.reportRuntimeError("Type error: Cannot assign {s} to int variable", .{@tagName(value)});
+                            self.reporter.reportRuntimeError("Type error: Cannot assign {s} to int variable", .{@tagName(value)});
                             return error.TypeError;
                         }
                     },
                     .U8 => {
                         if (value != .u8 and value != .int) {
-                            var reporting = Reporter.init();
-                            reporting.reportRuntimeError("Type error: Cannot assign {s} to u8 variable", .{@tagName(value)});
+                            self.reporter.reportRuntimeError("Type error: Cannot assign {s} to u8 variable", .{@tagName(value)});
                             return error.TypeError;
                         }
                     },
                     .Float => {
                         if (value != .float) {
-                            var reporting = Reporter.init();
-                            reporting.reportRuntimeError("Type error: Cannot assign {s} to float variable", .{@tagName(value)});
+                            self.reporter.reportRuntimeError("Type error: Cannot assign {s} to float variable", .{@tagName(value)});
                             return error.TypeError;
                         }
                     },
                     .String => {
                         if (value != .string) {
-                            var reporting = Reporter.init();
-                            reporting.reportRuntimeError("Type error: Cannot assign {s} to string variable", .{@tagName(value)});
+                            self.reporter.reportRuntimeError("Type error: Cannot assign {s} to string variable", .{@tagName(value)});
                             return error.TypeError;
                         }
                     },
                     .Tetra => {
                         if (value != .tetra) {
-                            var reporting = Reporter.init();
-                            reporting.reportRuntimeError("Type error: Cannot assign {s} to tetra variable", .{@tagName(value)});
+                            self.reporter.reportRuntimeError("Type error: Cannot assign {s} to tetra variable", .{@tagName(value)});
                             return error.TypeError;
                         }
                     },
                     .Auto => {}, // Type is already fixed from initialization
                     else => {
-                        var reporting = Reporter.init();
                         const location: Reporter.Location = .{ .file = "stdin", .line = assign.name.line, .column = assign.name.column };
-                        reporting.reportCompileError(location, "Type error: Cannot assign {s} to variable", .{@tagName(value)});
+                        self.reporter.reportCompileError(location, "Type error: Cannot assign {s} to variable", .{@tagName(value)});
                         return error.TypeError;
                     },
                 }
@@ -1330,8 +1312,7 @@ pub const Interpreter = struct {
                             .u8 => {
                                 const result = @addWithOverflow(current_value.u8, rhs_value.u8);
                                 if (result[1] != 0) { // Check overflow flag
-                                    var reporting = Reporter.init();
-                                    reporting.reportRuntimeError("Overflow during u8 addition", .{});
+                                    self.reporter.reportRuntimeError("Overflow during u8 addition", .{});
                                     return error.Overflow;
                                 }
                                 return TokenLiteral{ .u8 = result[0] };
@@ -1339,15 +1320,13 @@ pub const Interpreter = struct {
                             .int => {
                                 // Check if the int is representable as u8 for addition operand
                                 if (rhs_value.int < 0 or rhs_value.int > 255) {
-                                    var reporting = Reporter.init();
-                                    reporting.reportRuntimeError("Integer value {d} out of range for u8 addition", .{rhs_value.int});
+                                    self.reporter.reportRuntimeError("Integer value {d} out of range for u8 addition", .{rhs_value.int});
                                     return error.Overflow;
                                 }
                                 const val: u8 = @intCast(rhs_value.int); // Safe cast due to above check
                                 const result = @addWithOverflow(current_value.u8, val);
                                 if (result[1] != 0) { // Check overflow flag
-                                    var reporting = Reporter.init();
-                                    reporting.reportRuntimeError("Overflow during u8 addition", .{});
+                                    self.reporter.reportRuntimeError("Overflow during u8 addition", .{});
                                     return error.Overflow;
                                 }
                                 return TokenLiteral{ .u8 = result[0] };
@@ -1366,8 +1345,7 @@ pub const Interpreter = struct {
                             .u8 => {
                                 const result = @subWithOverflow(current_value.u8, rhs_value.u8);
                                 if (result[1] != 0) { // Check underflow flag
-                                    var reporting = Reporter.init();
-                                    reporting.reportRuntimeError("Underflow during u8 subtraction", .{});
+                                    self.reporter.reportRuntimeError("Underflow during u8 subtraction", .{});
                                     return error.Overflow; // Using Overflow for underflow too
                                 }
                                 return TokenLiteral{ .u8 = result[0] };
@@ -1375,15 +1353,13 @@ pub const Interpreter = struct {
                             .int => {
                                 // Check if the int is representable as u8 for subtraction operand
                                 if (rhs_value.int < 0 or rhs_value.int > 255) {
-                                    var reporting = Reporter.init();
-                                    reporting.reportRuntimeError("Integer value {d} out of range for u8 subtraction", .{rhs_value.int});
+                                    self.reporter.reportRuntimeError("Integer value {d} out of range for u8 subtraction", .{rhs_value.int});
                                     return error.Overflow;
                                 }
                                 const val: u8 = @intCast(rhs_value.int); // Safe cast
                                 const result = @subWithOverflow(current_value.u8, val);
                                 if (result[1] != 0) { // Check underflow flag
-                                    var reporting = Reporter.init();
-                                    reporting.reportRuntimeError("Underflow during u8 subtraction", .{});
+                                    self.reporter.reportRuntimeError("Underflow during u8 subtraction", .{});
                                     return error.Overflow; // Using Overflow for underflow too
                                 }
                                 return TokenLiteral{ .u8 = result[0] };
@@ -1419,8 +1395,7 @@ pub const Interpreter = struct {
 
                         if (value_type != first_type) {
                             array_values.deinit();
-                            var reporting = Reporter.init();
-                            reporting.reportRuntimeError("Heterogeneous array detected: cannot mix {s} and {s}", .{ @tagName(first_type), @tagName(value_type) });
+                            self.reporter.reportRuntimeError("Heterogeneous array detected: cannot mix {s} and {s}", .{ @tagName(first_type), @tagName(value_type) });
                             return error.HeterogeneousArray;
                         }
                         try array_values.append(value);
@@ -1460,14 +1435,12 @@ pub const Interpreter = struct {
                             return error.TypeError;
                         }
                         if (index_value.int < 0) {
-                            var reporting = Reporter.init();
-                            reporting.reportRuntimeError("String index out of bounds: negative index {d}", .{index_value.int});
+                            self.reporter.reportRuntimeError("String index out of bounds: negative index {d}", .{index_value.int});
                             return error.IndexOutOfBounds;
                         }
                         const idx = @as(usize, @intCast(index_value.int));
                         if (idx >= str.len) {
-                            var reporting = Reporter.init();
-                            reporting.reportRuntimeError("String index out of bounds: index {d} for string of length {d}", .{ idx, str.len });
+                            self.reporter.reportRuntimeError("String index out of bounds: index {d} for string of length {d}", .{ idx, str.len });
                             return error.IndexOutOfBounds;
                         }
                         // Create a new string containing just the character at the index
@@ -1487,14 +1460,12 @@ pub const Interpreter = struct {
                             return error.TypeError;
                         }
                         if (index_value.int < 0) {
-                            var reporting = Reporter.init();
-                            reporting.reportRuntimeError("Array index out of bounds: negative index {d}", .{index_value.int});
+                            self.reporter.reportRuntimeError("Array index out of bounds: negative index {d}", .{index_value.int});
                             return error.IndexOutOfBounds;
                         }
                         const idx = @as(usize, @intCast(index_value.int));
                         if (idx >= arr.len) {
-                            var reporting = Reporter.init();
-                            reporting.reportRuntimeError("Array index out of bounds: index {d} for array of length {d}", .{ idx, arr.len });
+                            self.reporter.reportRuntimeError("Array index out of bounds: index {d} for array of length {d}", .{ idx, arr.len });
                             return error.IndexOutOfBounds;
                         }
 
@@ -2002,6 +1973,9 @@ pub const Interpreter = struct {
                 try std.io.getStdOut().writeAll(buffer.items);
 
                 return value;
+            },
+            .InspectStruct => {
+                unreachable;
             },
             .While => |while_expr| {
                 while (true) {
@@ -2652,9 +2626,8 @@ pub const Interpreter = struct {
                     // Get the DECLARED type info from the environment
                     const type_info = self.environment.getTypeInfo(var_token.lexeme) catch {
                         // Handle cases where the variable might not be found (shouldn't happen if code is valid)
-                        var reporter = Reporter.init();
                         const location: Reporter.Location = .{ .file = "stdin", .line = var_token.line, .column = var_token.column };
-                        reporter.reportCompileError(location, "Variable '{s}' not found during typeof", .{var_token.lexeme});
+                        self.reporter.reportCompileError(location, "Variable '{s}' not found during typeof", .{var_token.lexeme});
                         return error.VariableNotFound; // Or return err
                     };
 
@@ -2806,23 +2779,21 @@ pub const Interpreter = struct {
             .Assert => |assert| {
                 const condition = try self.evaluate(assert.condition);
                 if (condition != .tetra) {
-                    var reporter = Reporter.init();
-                    reporter.reportRuntimeError("Assertion failed: {s} is not a tetra", .{@tagName(condition)});
+                    self.reporter.reportRuntimeError("Assertion failed: {s} is not a tetra", .{@tagName(condition)});
                     return error.TypeError;
                 }
                 if (condition.tetra == .false) {
-                    var reporter = Reporter.init();
 
                     // Use custom message if provided
                     if (assert.message != null) {
                         const message_value = try self.evaluate(assert.message.?);
                         if (message_value == .string) {
-                            reporter.reportCompileError(assert.location, "Assertion failed: {s}", .{message_value.string});
+                            self.reporter.reportCompileError(assert.location, "Assertion failed: {s}", .{message_value.string});
                         } else {
-                            reporter.reportCompileError(assert.location, "Assertion failed", .{});
+                            self.reporter.reportCompileError(assert.location, "Assertion failed", .{});
                         }
                     } else {
-                        reporter.reportCompileError(assert.location, "Assertion failed", .{});
+                        self.reporter.reportCompileError(assert.location, "Assertion failed", .{});
                     }
                     return error.AssertionFailed;
                 }
@@ -2907,44 +2878,38 @@ pub const Interpreter = struct {
         switch (var_type.base) {
             .Int => {
                 if (value != .int and value != .u8) {
-                    var reporting = Reporter.init();
-                    reporting.reportRuntimeError("Type error: Cannot assign {s} to int variable", .{@tagName(value)});
+                    self.reporter.reportRuntimeError("Type error: Cannot assign {s} to int variable", .{@tagName(value)});
                     return error.TypeError;
                 }
             },
             .U8 => {
                 if (value != .u8 and value != .int) {
-                    var reporting = Reporter.init();
-                    reporting.reportRuntimeError("Type error: Cannot assign {s} to u8 variable", .{@tagName(value)});
+                    self.reporter.reportRuntimeError("Type error: Cannot assign {s} to u8 variable", .{@tagName(value)});
                     return error.TypeError;
                 }
             },
             .Float => {
                 if (value != .float) {
-                    var reporting = Reporter.init();
-                    reporting.reportRuntimeError("Type error: Cannot assign {s} to float variable", .{@tagName(value)});
+                    self.reporter.reportRuntimeError("Type error: Cannot assign {s} to float variable", .{@tagName(value)});
                     return error.TypeError;
                 }
             },
             .String => {
                 if (value != .string) {
-                    var reporting = Reporter.init();
-                    reporting.reportRuntimeError("Type error: Cannot assign {s} to string variable", .{@tagName(value)});
+                    self.reporter.reportRuntimeError("Type error: Cannot assign {s} to string variable", .{@tagName(value)});
                     return error.TypeError;
                 }
             },
             .Tetra => {
                 if (value != .tetra) {
-                    var reporting = Reporter.init();
-                    reporting.reportRuntimeError("Type error: Cannot assign {s} to tetra variable", .{@tagName(value)});
+                    self.reporter.reportRuntimeError("Type error: Cannot assign {s} to tetra variable", .{@tagName(value)});
                     return error.TypeError;
                 }
             },
             .Auto => {}, // Type is already fixed from initialization
             else => {
-                var reporting = Reporter.init();
                 const location: Reporter.Location = .{ .file = "stdin", .line = assignment.name.line, .column = assignment.name.column };
-                reporting.reportCompileError(location, "Type error: Cannot assign {s} to variable", .{@tagName(value)});
+                self.reporter.reportCompileError(location, "Type error: Cannot assign {s} to variable", .{@tagName(value)});
                 return error.TypeError;
             },
         }

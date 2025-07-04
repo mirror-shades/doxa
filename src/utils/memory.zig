@@ -7,23 +7,20 @@ const TokenLiteral = TypesImport.TokenLiteral;
 
 pub const MemoryManager = struct {
     arena: std.heap.ArenaAllocator,
-    debug_enabled: bool,
     scope_manager: *ScopeManager,
+    is_debug: bool,
 
-    pub fn init(allocator: std.mem.Allocator, debug_enabled: bool) !MemoryManager {
-        const scope_manager = try ScopeManager.init(allocator, debug_enabled);
-        if (debug_enabled) {
-            std.debug.print("Initializing memory manager with debug enabled\n", .{});
-        }
+    pub fn init(allocator: std.mem.Allocator, is_debug: bool) !MemoryManager {
+        const scope_manager = try ScopeManager.init(allocator, is_debug);
         return .{
             .arena = std.heap.ArenaAllocator.init(allocator),
-            .debug_enabled = debug_enabled,
+            .is_debug = is_debug,
             .scope_manager = scope_manager,
         };
     }
 
     pub fn deinit(self: *MemoryManager) void {
-        if (self.debug_enabled) {
+        if (self.is_debug) {
             std.debug.print("Cleaning up memory manager...\n", .{});
         }
 
@@ -42,20 +39,11 @@ pub const MemoryManager = struct {
     }
 
     pub fn reset(self: *MemoryManager) void {
-        if (self.debug_enabled) {
+        if (self.is_debug) {
             std.debug.print("Resetting memory manager...\n", .{});
         }
         self.arena.deinit();
         self.arena = std.heap.ArenaAllocator.init(self.arena.child_allocator);
-    }
-
-    pub fn setDebug(self: *MemoryManager, enabled: bool) void {
-        if (self.debug_enabled != enabled) {
-            self.debug_enabled = enabled;
-            if (enabled) {
-                std.debug.print("Memory manager debug mode enabled\n", .{});
-            }
-        }
     }
 };
 
@@ -79,15 +67,15 @@ pub const ScopeManager = struct {
     variable_counter: u32 = 0,
     root_scope: ?*Scope = null,
     allocator: std.mem.Allocator,
-    debug_enabled: bool,
+    is_debug: bool,
 
-    pub fn init(allocator: std.mem.Allocator, debug_enabled: bool) !*ScopeManager {
+    pub fn init(allocator: std.mem.Allocator, is_debug: bool) !*ScopeManager {
         const self = try allocator.create(ScopeManager);
         self.* = .{
             .variable_map = std.AutoHashMap(u32, *Variable).init(allocator),
             .value_storage = std.AutoHashMap(u32, *ValueStorage).init(allocator),
             .allocator = allocator,
-            .debug_enabled = debug_enabled,
+            .is_debug = is_debug,
         };
         return self;
     }
@@ -146,7 +134,7 @@ pub const ScopeManager = struct {
     pub fn createScope(self: *ScopeManager, parent: ?*Scope) !*Scope {
         const scope_id = self.next_storage_id;
         self.next_storage_id += 1;
-        return Scope.init(self, scope_id, parent);
+        return Scope.init(self, scope_id, parent, self.is_debug);
     }
 };
 
@@ -158,9 +146,9 @@ pub const Scope = struct {
     name_map: std.StringHashMap(*Variable),
     arena: std.heap.ArenaAllocator,
     manager: *ScopeManager,
-    debug_enabled: bool,
+    is_debug: bool,
 
-    pub fn init(manager: *ScopeManager, scope_id: u32, parent: ?*Scope) !*Scope {
+    pub fn init(manager: *ScopeManager, scope_id: u32, parent: ?*Scope, is_debug: bool) !*Scope {
         const self = try manager.allocator.create(Scope);
         self.* = .{
             .id = scope_id,
@@ -169,13 +157,13 @@ pub const Scope = struct {
             .variables = std.AutoHashMap(u32, *Variable).init(self.arena.allocator()),
             .name_map = std.StringHashMap(*Variable).init(self.arena.allocator()),
             .manager = manager,
-            .debug_enabled = manager.debug_enabled,
+            .is_debug = is_debug,
         };
         return self;
     }
 
     pub fn deinit(self: *Scope) void {
-        if (self.manager.debug_enabled) {
+        if (self.is_debug) {
             std.debug.print("Cleaning up scope {}\n", .{self.id});
         }
 
@@ -191,10 +179,6 @@ pub const Scope = struct {
             var display_name: []const u8 = "invalid_name";
             if (std.unicode.utf8ValidateSlice(variable.name)) {
                 display_name = variable.name;
-            }
-
-            if (self.manager.debug_enabled) {
-                std.debug.print("  Cleaning up variable {s} (id: {})\n", .{ display_name, variable.id });
             }
 
             // Remove from global variable map

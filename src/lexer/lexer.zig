@@ -26,12 +26,13 @@ pub const Lexer = struct {
     line_start: usize, // Add this to track start of current line
     file_path: []const u8,
     token_line: i32, // Add this to track line at token start
+    reporter: *Reporter,
 
     //======================================================================
     // Initialization
     //======================================================================
 
-    pub fn init(allocator: std.mem.Allocator, source: []const u8, file_path: []const u8) Lexer {
+    pub fn init(allocator: std.mem.Allocator, source: []const u8, file_path: []const u8, reporter: *Reporter) Lexer {
         return .{
             .source = source,
             .start = 0,
@@ -46,6 +47,7 @@ pub const Lexer = struct {
             .allocated_arrays = std.ArrayList([]const TokenLiteral).init(allocator),
             .file_path = file_path,
             .token_line = 1, // Initialize token_line
+            .reporter = reporter,
         };
     }
 
@@ -302,13 +304,12 @@ pub const Lexer = struct {
                 } else if (self.match('>')) {
                     try self.addMinimalToken(.ARROW);
                 } else {
-                    var reporter = Reporter.init();
                     const location = Reporter.Location{
                         .file = self.file_path,
                         .line = self.line,
                         .column = self.column,
                     };
-                    reporter.reportCompileError(location, "equals sign '=' is not used for variable declarations, use 'is' instead", .{});
+                    self.reporter.reportCompileError(location, "equals sign '=' is not used for variable declarations, use 'is' instead", .{});
                     return error.UseIsForAssignment;
                 }
             },

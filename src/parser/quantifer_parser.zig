@@ -9,17 +9,10 @@ const expression_parser = @import("./expression_parser.zig");
 const precedence = @import("./precedence.zig");
 
 pub fn existentialQuantifier(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-    if (self.debug_enabled) {
-        std.debug.print("\nParsing existential quantifier...\n", .{});
-    }
-
     self.advance(); // consume 'exists'
 
     // Parse the bound variable
     if (self.peek().type != .IDENTIFIER) {
-        if (self.debug_enabled) {
-            std.debug.print("Expected identifier, found: {s}\n", .{@tagName(self.peek().type)});
-        }
         return error.ExpectedIdentifier;
     }
     const bound_variable = self.peek();
@@ -52,10 +45,6 @@ pub fn existentialQuantifier(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorL
                 },
             },
         };
-
-        if (self.debug_enabled) {
-            std.debug.print("After array type, expecting WHERE, found: {s}\n", .{@tagName(self.peek().type)});
-        }
 
         // Parse 'where' keyword
         if (self.peek().type != .WHERE) {
@@ -90,11 +79,6 @@ pub fn existentialQuantifier(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorL
     } else {
         // Parse regular expression for array
         const array_expr = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
-
-        if (self.debug_enabled) {
-            std.debug.print("After array expression, expecting WHERE, found: {s}\n", .{@tagName(self.peek().type)});
-        }
-
         // Parse 'where' keyword
         if (self.peek().type != .WHERE) {
             array_expr.deinit(self.allocator);
@@ -129,17 +113,10 @@ pub fn existentialQuantifier(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorL
 }
 
 pub fn universalQuantifier(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-    if (self.debug_enabled) {
-        std.debug.print("\nParsing universal quantifier...\n", .{});
-    }
-
     self.advance(); // consume 'forall'
 
     // Parse the bound variable
     if (self.peek().type != .IDENTIFIER) {
-        if (self.debug_enabled) {
-            std.debug.print("Expected identifier, found: {s}\n", .{@tagName(self.peek().type)});
-        }
         return error.ExpectedIdentifier;
     }
     const bound_variable = self.peek();
@@ -172,10 +149,6 @@ pub fn universalQuantifier(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorLis
                 },
             },
         };
-
-        if (self.debug_enabled) {
-            std.debug.print("After array type, expecting WHERE, found: {s}\n", .{@tagName(self.peek().type)});
-        }
 
         // Parse 'where' keyword
         if (self.peek().type != .WHERE) {
@@ -210,10 +183,6 @@ pub fn universalQuantifier(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorLis
     } else {
         // Parse regular expression for array
         const array_expr = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
-
-        if (self.debug_enabled) {
-            std.debug.print("After array expression, expecting WHERE, found: {s}\n", .{@tagName(self.peek().type)});
-        }
 
         // Parse 'where' keyword
         if (self.peek().type != .WHERE) {
@@ -251,37 +220,21 @@ pub fn universalQuantifier(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorLis
 pub fn inOperator(self: *Parser, left: ?*ast.Expr, prec: Precedence) ErrorList!?*ast.Expr {
     if (left == null) return error.ExpectedLeftOperand;
 
-    if (self.debug_enabled) {
-        std.debug.print("\nParsing in operator...\n", .{});
-    }
-
     // Parse the array expression
     const array_expr = try precedence.parsePrecedence(self, @enumFromInt(@intFromEnum(prec) + 1)) orelse {
-        if (self.debug_enabled) {
-            std.debug.print("Failed to parse array expression\n", .{});
-        }
         return error.ExpectedArrayExpression;
     };
     errdefer {
-        if (self.debug_enabled) {
-            std.debug.print("Cleaning up array expression in inOperator\n", .{});
-        }
         array_expr.deinit(self.allocator);
         self.allocator.destroy(array_expr);
     }
 
     // Parse 'where' keyword if it exists
     if (self.peek().type == .WHERE) {
-        if (self.debug_enabled) {
-            std.debug.print("Found where keyword\n", .{});
-        }
         self.advance();
 
         // Parse the condition
         const condition = try expression_parser.parseExpression(self) orelse {
-            if (self.debug_enabled) {
-                std.debug.print("Failed to parse condition\n", .{});
-            }
             return error.ExpectedExpression;
         };
 

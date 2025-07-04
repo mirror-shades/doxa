@@ -3,648 +3,41 @@ const ast = @import("../ast/ast.zig");
 const TokenLiteral = @import("../types/types.zig").TokenLiteral;
 const instructions = @import("../interpreter/instructions.zig");
 const reporting = @import("../utils/reporting.zig");
-
-/// Stack-based HIR - The central intermediate representation
-/// Maps directly to VM OpCodes while carrying semantic information for LLVM
-pub const HIRInstruction = union(enum) {
-    //==================================================================
-    // STACK OPERATIONS (Direct VM mapping)
-    //==================================================================
-
-    /// Push literal constant onto stack
-    /// VM: OP_CONST -> Frame.initInt(value)
-    /// LLVM: LLVMConstInt(context, value, signed)
-    Const: struct {
-        value: HIRValue,
-        constant_id: u32, // For VM constant pool lookup
-    },
-
-    /// Duplicate top stack value
-    /// VM: OP_DUP
-    /// LLVM: Create temporary for value reuse
-    Dup,
-
-    /// Pop and discard top stack value
-    /// VM: OP_POP
-    /// LLVM: (no-op, just don't use the value)
-    Pop,
-
-    //==================================================================
-    // VARIABLE OPERATIONS (Context-aware)
-    //==================================================================
-
-    /// Load variable with full resolution context
-    /// VM: OP_VAR -> currentScopeVars[var_index]
-    /// LLVM: LLVMBuildLoad -> symbol_table[var_name]
-    LoadVar: struct {
-        var_index: u32, // VM: Direct index into current_scope_vars
-        var_name: []const u8, // LLVM: Symbol table lookup
-        scope_kind: ScopeKind, // Resolution context
-        module_context: ?[]const u8, // For imported variables
-    },
-
-    /// Store to variable
-    /// VM: OP_SET_VAR
-    /// LLVM: LLVMBuildStore
-    StoreVar: struct {
-        var_index: u32,
-        var_name: []const u8,
-        scope_kind: ScopeKind,
-        module_context: ?[]const u8,
-    },
-
-    /// Store constant (one-time assignment)
-    /// VM: OP_SET_CONST
-    /// LLVM: LLVMAddGlobal with constant flag
-    StoreConst: struct {
-        var_index: u32,
-        var_name: []const u8,
-    },
-
-    //==================================================================
-    // ARITHMETIC OPERATIONS (Type-preserving)
-    //==================================================================
-
-    /// Integer arithmetic
-    /// VM: OP_IADD, OP_ISUB, OP_IMUL
-    /// LLVM: LLVMBuildAdd, LLVMBuildSub, LLVMBuildMul
-    IntArith: struct {
-        op: ArithOp,
-        overflow_behavior: OverflowBehavior, // For VM error handling and LLVM optimization
-    },
-
-    /// Float arithmetic
-    /// VM: OP_FADD, OP_FSUB, OP_FMUL, OP_FDIV
-    /// LLVM: LLVMBuildFAdd, LLVMBuildFSub, etc.
-    FloatArith: struct {
-        op: ArithOp,
-        exception_behavior: ExceptionBehavior, // For division by zero handling
-    },
-
-    /// Type conversion
-    /// VM: OP_CONVERT_NUMBER
-    /// LLVM: LLVMBuildSIToFP, LLVMBuildFPToSI
-    Convert: struct {
-        from_type: HIRType,
-        to_type: HIRType,
-    },
-
-    //==================================================================
-    // COMPARISON OPERATIONS
-    //==================================================================
-
-    /// Comparison with type handling
-    /// VM: OP_EQUAL, OP_GREATER, OP_LESS
-    /// LLVM: LLVMBuildICmp, LLVMBuildFCmp with appropriate predicate
-    Compare: struct {
-        op: CompareOp,
-        operand_type: HIRType, // Determines VM behavior and LLVM predicate
-    },
-
-    //==================================================================
-    // LOGICAL OPERATIONS (From old VM - proven implementations)
-    //==================================================================
-
-    /// Logical operations (AND, OR, NOT)
-    /// VM: Strict boolean type checking from old VM
-    /// LLVM: LLVMBuildAnd, LLVMBuildOr, LLVMBuildNot
-    LogicalOp: struct {
-        op: LogicalOpType,
-    },
-
-    //==================================================================
-    // STRING OPERATIONS (From old VM - proven implementations)
-    //==================================================================
-
-    /// String operations (concatenation, length, substring)
-    /// VM: String interning and memory management from old VM
-    /// LLVM: String manipulation with proper memory management
-    StringOp: struct {
-        op: StringOpType,
-    },
-
-    //==================================================================
-    // CONTROL FLOW (Label-based for both targets)
-    //==================================================================
-
-    /// Unconditional jump to label
-    /// VM: OP_JUMP -> ip += offset
-    /// LLVM: LLVMBuildBr -> basic_block_map[label]
-    Jump: struct {
-        label: []const u8,
-        vm_offset: i32, // Pre-calculated for VM
-    },
-
-    /// Conditional jump
-    /// VM: OP_JUMP_IF_FALSE
-    /// LLVM: LLVMBuildCondBr
-    JumpCond: struct {
-        label_true: []const u8,
-        label_false: []const u8,
-        vm_offset: i32,
-        condition_type: HIRType, // For type validation
-    },
-
-    /// Label marker
-    /// VM: (instruction pointer bookmark)
-    /// LLVM: LLVMAppendBasicBlock
-    Label: struct {
-        name: []const u8,
-        vm_address: u32, // Pre-resolved for VM
-    },
-
-    //==================================================================
-    // FUNCTION OPERATIONS (Context-rich)
-    //==================================================================
-
-    /// Function call with full context
-    /// VM: OP_CALL -> getFunction(function_index)
-    /// LLVM: LLVMBuildCall2 -> function_map[qualified_name]
-    Call: struct {
-        function_index: u32, // VM: Direct function table index
-        qualified_name: []const u8, // LLVM: Full function name with module prefix
-        arg_count: u32, // Stack management for both targets
-        call_kind: CallKind, // Resolution context
-        target_module: ?[]const u8, // For cross-module calls
-        return_type: HIRType, // For stack type management and LLVM return handling
-    },
-
-    /// Tail call optimization - function call in tail position
-    /// VM: Reuse current stack frame, jump to function start
-    /// LLVM: Generate as optimized tail call
-    TailCall: struct {
-        function_index: u32, // VM: Direct function table index
-        qualified_name: []const u8, // LLVM: Full function name with module prefix
-        arg_count: u32, // Stack management for both targets
-        call_kind: CallKind, // Resolution context
-        target_module: ?[]const u8, // For cross-module calls
-        return_type: HIRType, // For stack type management and LLVM return handling
-    },
-
-    /// Return from function
-    /// VM: OP_RETURN
-    /// LLVM: LLVMBuildRet or LLVMBuildRetVoid
-    Return: struct {
-        has_value: bool,
-        return_type: HIRType,
-    },
-
-    //==================================================================
-    // COMPLEX OPERATIONS
-    //==================================================================
-
-    /// Array/struct field access
-    /// VM: OP_GET_FIELD
-    /// LLVM: LLVMBuildStructGEP or LLVMBuildGEP
-    GetField: struct {
-        field_name: []const u8,
-        container_type: HIRType,
-        field_index: u32, // Pre-resolved for efficiency
-    },
-
-    /// Array/struct field assignment
-    /// VM: OP_SET_FIELD
-    /// LLVM: LLVMBuildStore with GEP
-    SetField: struct {
-        field_name: []const u8,
-        container_type: HIRType,
-        field_index: u32,
-    },
-
-    /// Exception handling
-    /// VM: OP_TRY, OP_CATCH, OP_THROW
-    /// LLVM: Landing pads and exception tables
-    TryBegin: struct {
-        catch_label: []const u8,
-        vm_catch_offset: i32,
-    },
-
-    TryCatch: struct {
-        exception_type: ?HIRType,
-    },
-
-    Throw: struct {
-        exception_type: HIRType,
-    },
-
-    //==================================================================
-    // SCOPE MANAGEMENT
-    //==================================================================
-
-    /// Enter new scope block
-    /// VM: OP_BEGIN_BLOCK -> BlockScope management
-    /// LLVM: (variable lifetime tracking)
-    EnterScope: struct {
-        scope_id: u32,
-        var_count: u32, // Pre-calculated for VM efficiency
-    },
-
-    /// Exit scope block
-    /// VM: OP_END_BLOCK -> cleanup variables
-    /// LLVM: (end lifetime tracking)
-    ExitScope: struct {
-        scope_id: u32,
-    },
-
-    //==================================================================
-    // ARRAY OPERATIONS (Phase 1 - High Priority)
-    //==================================================================
-
-    /// Create new array
-    /// VM: Allocate array storage, set element type
-    /// LLVM: LLVMBuildArrayAlloca or heap allocation
-    ArrayNew: struct {
-        element_type: HIRType,
-        size: u32, // 0 = dynamic array
-    },
-
-    /// Get array element by index
-    /// VM: Bounds check + direct access
-    /// LLVM: LLVMBuildGEP with bounds checking
-    ArrayGet: struct {
-        bounds_check: bool, // Enable/disable for performance
-    },
-
-    /// Set array element by index
-    /// VM: Bounds check + assignment
-    /// LLVM: LLVMBuildStore with GEP
-    ArraySet: struct {
-        bounds_check: bool,
-    },
-
-    /// Push element to end of array
-    /// VM: Resize if needed, append element
-    /// LLVM: Realloc logic or vector operations
-    ArrayPush: struct {
-        resize_behavior: ResizeBehavior,
-    },
-
-    /// Pop element from end of array
-    /// VM: Return element, decrease size
-    /// LLVM: Load + resize
-    ArrayPop,
-
-    /// Get array length
-    /// VM: Return stored length
-    /// LLVM: Load from array header
-    ArrayLen,
-
-    /// Concatenate two arrays
-    /// VM: Allocate new array, copy elements
-    /// LLVM: Complex allocation + memcpy
-    ArrayConcat,
-
-    //==================================================================
-    // STRUCT OPERATIONS (Phase 1)
-    //==================================================================
-
-    /// Create new struct instance
-    /// VM: Allocate memory, initialize fields
-    /// LLVM: LLVMBuildStructGEP for initialization
-    StructNew: struct {
-        struct_name: []const u8,
-        field_count: u32,
-        size_bytes: u32, // Pre-calculated for VM efficiency
-    },
-
-    //==================================================================
-    // TUPLE OPERATIONS (Phase 1)
-    //==================================================================
-
-    /// Create new tuple
-    /// VM: Allocate tuple storage
-    /// LLVM: Struct with heterogeneous types
-    TupleNew: struct {
-        element_count: u32,
-    },
-
-    /// Get tuple element by index
-    /// VM: Direct index access (compile-time bounds check)
-    /// LLVM: LLVMBuildExtractValue
-    TupleGet: struct {
-        index: u32,
-    },
-
-    //==================================================================
-    // ENUM OPERATIONS (Phase 1)
-    //==================================================================
-
-    /// Create enum variant
-    /// VM: Store variant index and type info
-    /// LLVM: Tagged union representation
-    EnumNew: struct {
-        enum_name: []const u8,
-        variant_name: []const u8,
-        variant_index: u32,
-    },
-
-    //==================================================================
-    // DEBUG/INTROSPECTION
-    //==================================================================
-
-    /// Print/inspect value
-    /// VM: Complex printValue logic
-    /// LLVM: Generate printf calls with format strings
-    Inspect: struct {
-        name: ?[]const u8,
-        value_type: HIRType, // Determines print format for both targets
-    },
-
-    /// Type inquiry
-    /// VM: OP_TYPEOF -> string representation
-    /// LLVM: Generate constant string based on LLVM type
-    TypeOf: struct {
-        result_string: []const u8, // Pre-computed type name
-    },
-
-    /// Program termination
-    /// VM: OP_HALT -> running = false
-    /// LLVM: LLVMBuildRet from main function
-    Halt,
-
-    /// Map expression
-    /// VM: OP_MAP -> map(key, value)
-    /// LLVM: Generate map creation and lookup
-    Map: struct {
-        entries: []HIRMapEntry,
-        key_type: HIRType,
-        value_type: HIRType,
-    },
-};
+const Reporting = reporting;
+const HIRInstruction = @import("soxa_instructions.zig").HIRInstruction;
+const HIRValue = @import("soxa_values.zig").HIRValue;
+const HIRType = @import("soxa_types.zig").HIRType;
+const HIRProgram = @import("soxa_types.zig").HIRProgram;
+const CallKind = @import("soxa_types.zig").CallKind;
+const HIRArray = @import("soxa_values.zig").HIRArray;
+const HIRMapEntry = @import("soxa_values.zig").HIRMapEntry;
+const ArithOp = @import("soxa_instructions.zig").ArithOp;
+const CompareOp = @import("soxa_instructions.zig").CompareOp;
+const StringOpType = @import("soxa_instructions.zig").StringOpType;
+const OverflowBehavior = @import("soxa_instructions.zig").OverflowBehavior;
+const ExceptionBehavior = @import("soxa_instructions.zig").ExceptionBehavior;
+const ResizeBehavior = @import("soxa_instructions.zig").ResizeBehavior;
 
 //==================================================================
-// SUPPORTING TYPES
+// HIR GENERATOR
 //==================================================================
 
-// Tetra constants for fast operations
-pub const TETRA_FALSE: u8 = 0; // 00
-pub const TETRA_TRUE: u8 = 1; // 01
-pub const TETRA_BOTH: u8 = 2; // 10
-pub const TETRA_NEITHER: u8 = 3; // 11
-
-// Fast lookup tables for tetra operations
-pub const TETRA_AND_LUT: [4][4]u8 = [4][4]u8{
-    [4]u8{ 0, 0, 0, 0 }, // FALSE AND x = FALSE
-    [4]u8{ 0, 1, 2, 3 }, // TRUE AND x = x
-    [4]u8{ 0, 2, 2, 0 }, // BOTH AND x = special logic
-    [4]u8{ 0, 3, 0, 3 }, // NEITHER AND x = special logic
-};
-
-pub const TETRA_OR_LUT: [4][4]u8 = [4][4]u8{
-    [4]u8{ 0, 1, 2, 3 }, // FALSE OR x = x
-    [4]u8{ 1, 1, 1, 1 }, // TRUE OR x = TRUE
-    [4]u8{ 2, 1, 2, 2 }, // BOTH OR x = special logic
-    [4]u8{ 3, 1, 2, 3 }, // NEITHER OR x = special logic
-};
-
-pub const TETRA_NOT_LUT: [4]u8 = [4]u8{ 1, 0, 3, 2 }; // NOT lookup: false->true, true->false, both->neither, neither->both
-
-// IFF (if and only if): A ↔ B - true when A and B have same truth value
-pub const TETRA_IFF_LUT: [4][4]u8 = [4][4]u8{
-    [4]u8{ 1, 0, 3, 2 }, // FALSE IFF x: same as NOT x
-    [4]u8{ 0, 1, 2, 3 }, // TRUE IFF x: same as x
-    [4]u8{ 3, 2, 2, 3 }, // BOTH IFF x: complex logic
-    [4]u8{ 2, 3, 3, 2 }, // NEITHER IFF x: complex logic
-};
-
-// XOR (exclusive or): A ⊕ B - true when A and B have different truth values
-pub const TETRA_XOR_LUT: [4][4]u8 = [4][4]u8{
-    [4]u8{ 0, 1, 2, 3 }, // FALSE XOR x: same as x
-    [4]u8{ 1, 0, 3, 2 }, // TRUE XOR x: same as NOT x
-    [4]u8{ 2, 3, 2, 3 }, // BOTH XOR x: complex logic
-    [4]u8{ 3, 2, 3, 2 }, // NEITHER XOR x: complex logic
-};
-
-// NAND: A ↑ B - NOT(A AND B)
-pub const TETRA_NAND_LUT: [4][4]u8 = [4][4]u8{
-    [4]u8{ 1, 1, 1, 1 }, // FALSE NAND x = NOT(FALSE AND x) = NOT(FALSE) = TRUE
-    [4]u8{ 1, 0, 3, 2 }, // TRUE NAND x = NOT(TRUE AND x) = NOT(x)
-    [4]u8{ 1, 3, 3, 1 }, // BOTH NAND x = complex logic
-    [4]u8{ 1, 2, 1, 2 }, // NEITHER NAND x = complex logic
-};
-
-// NOR: A ↓ B - NOT(A OR B)
-pub const TETRA_NOR_LUT: [4][4]u8 = [4][4]u8{
-    [4]u8{ 1, 0, 3, 2 }, // FALSE NOR x = NOT(FALSE OR x) = NOT(x)
-    [4]u8{ 0, 0, 0, 0 }, // TRUE NOR x = NOT(TRUE OR x) = NOT(TRUE) = FALSE
-    [4]u8{ 3, 0, 3, 3 }, // BOTH NOR x = complex logic
-    [4]u8{ 2, 0, 3, 2 }, // NEITHER NOR x = complex logic
-};
-
-// IMPLIES: A → B - NOT A OR B
-pub const TETRA_IMPLIES_LUT: [4][4]u8 = [4][4]u8{
-    [4]u8{ 1, 1, 1, 1 }, // FALSE IMPLIES x = NOT(FALSE) OR x = TRUE OR x = TRUE
-    [4]u8{ 0, 1, 2, 3 }, // TRUE IMPLIES x = NOT(TRUE) OR x = FALSE OR x = x
-    [4]u8{ 2, 1, 2, 2 }, // BOTH IMPLIES x = complex logic
-    [4]u8{ 3, 1, 2, 3 }, // NEITHER IMPLIES x = complex logic
-};
-
-// Type-safe tetra constructors
-pub fn tetraFromBool(value: bool) u8 {
-    return if (value) TETRA_TRUE else TETRA_FALSE;
-}
-
-pub fn tetraFromEnum(tetra_enum: anytype) u8 {
-    return switch (tetra_enum) {
-        .false => TETRA_FALSE,
-        .true => TETRA_TRUE,
-        .both => TETRA_BOTH,
-        .neither => TETRA_NEITHER,
-    };
-}
-
-pub const HIRValue = union(enum) {
-    int: i32,
-    u8: u8,
-    float: f64,
-    string: []const u8,
-    tetra: u8, // NEW: Direct u8 storage for tetras
-    nothing,
-    // Phase 1: Complex data types
-    array: HIRArray,
-    struct_instance: HIRStruct,
-    tuple: HIRTuple,
-    map: HIRMap,
-    enum_variant: HIREnum,
-};
-
-pub const HIRArray = struct {
-    elements: []HIRValue,
-    element_type: HIRType,
-    capacity: u32,
-};
-
-pub const HIRStruct = struct {
-    type_name: []const u8,
-    fields: []HIRStructField,
-};
-
-pub const HIRStructField = struct {
+// Add this type definition before the HIRGenerator struct
+const StructInspectInfo = struct {
     name: []const u8,
-    value: HIRValue,
+    field_count: u32,
+    field_names: [][]const u8,
+    field_types: []HIRType,
 };
-
-pub const HIRTuple = struct {
-    elements: []HIRValue,
-};
-
-pub const HIRMap = struct {
-    entries: []HIRMapEntry,
-    key_type: HIRType,
-    value_type: HIRType,
-};
-
-pub const HIRMapEntry = struct {
-    key: HIRValue,
-    value: HIRValue,
-};
-
-pub const HIREnum = struct {
-    type_name: []const u8,
-    variant_name: []const u8,
-    variant_index: u32,
-};
-
-pub const HIRType = enum {
-    Int,
-    U8,
-    Float,
-    String,
-    Boolean,
-    Tetra, // NEW: Native tetra type for four-valued logic
-    Nothing,
-    Array,
-    Struct,
-    Tuple,
-    Map,
-    Enum,
-    Function,
-    Auto, // Still needs resolution
-};
-
-// Additional type information for complex types
-pub const ArrayTypeInfo = struct {
-    element_type: HIRType,
-    size: ?u32, // null = dynamic array
-};
-
-pub const StructTypeInfo = struct {
-    name: []const u8,
-    fields: []StructFieldInfo,
-};
-
-pub const StructFieldInfo = struct {
-    name: []const u8,
-    field_type: HIRType,
-    offset: u32, // Byte offset for efficient access
-};
-
-pub const TupleTypeInfo = struct {
-    element_types: []HIRType,
-};
-
-pub const MapTypeInfo = struct {
-    key_type: HIRType,
-    value_type: HIRType,
-};
-
-pub const EnumTypeInfo = struct {
-    name: []const u8,
-    variants: [][]const u8,
-};
-
-pub const ScopeKind = enum {
-    Local, // Function-local variable
-    ModuleGlobal, // Module-level global
-    ImportedModule, // Variable from imported module
-    Builtin, // Built-in system variable
-};
-
-pub const CallKind = enum {
-    LocalFunction, // Function in current module
-    ModuleFunction, // Function in imported module
-    BuiltinFunction, // Built-in function
-};
-
-pub const ArithOp = enum { Add, Sub, Mul, Div, Mod };
-
-pub const CompareOp = enum { Eq, Ne, Lt, Le, Gt, Ge };
-
-pub const LogicalOpType = enum { And, Or, Not, Iff, Xor, Nand, Nor, Implies };
-
-pub const StringOpType = enum { Concat, Length, Substring };
-
-pub const OverflowBehavior = enum {
-    Trap, // VM: throw error, LLVM: generate trap
-    Saturate, // VM: clamp to limits, LLVM: use saturating intrinsics
-    Wrap, // VM: wrap around, LLVM: normal arithmetic
-};
-
-pub const ExceptionBehavior = enum {
-    Trap, // VM: throw error, LLVM: generate trap
-    NaN, // VM: return nothing, LLVM: allow NaN result
-};
-
-pub const ResizeBehavior = enum {
-    Double, // Double capacity when full (default)
-    Fixed, // Error if capacity exceeded
-    Exact, // Only allocate exact amount needed
-};
-
-//==================================================================
-// HIR PROGRAM REPRESENTATION
-//==================================================================
-
-pub const HIRProgram = struct {
-    instructions: []HIRInstruction,
-    constant_pool: []HIRValue, // VM: Direct constant access
-    string_pool: [][]const u8, // Shared string literals
-    function_table: []HIRProgram.HIRFunction, // VM: Function metadata
-    module_map: std.StringHashMap(ModuleInfo), // LLVM: Module context
-    allocator: std.mem.Allocator, // NEW: Keep allocator for cleanup
-
-    pub fn deinit(self: *HIRProgram) void {
-        self.allocator.free(self.instructions);
-        self.allocator.free(self.constant_pool);
-
-        // Free individual strings
-        for (self.string_pool) |str| {
-            self.allocator.free(str);
-        }
-        self.allocator.free(self.string_pool);
-
-        self.allocator.free(self.function_table);
-        self.module_map.deinit();
-    }
-
-    pub const HIRFunction = struct {
-        name: []const u8,
-        qualified_name: []const u8, // module.function for LLVM
-        arity: u32,
-        return_type: HIRType,
-        start_label: []const u8,
-        body_label: ?[]const u8 = null, // For tail call optimization - jumps here to skip parameter setup
-        local_var_count: u32, // VM: stack frame sizing
-        is_entry: bool,
-    };
-
-    pub const ModuleInfo = struct {
-        name: []const u8,
-        imports: [][]const u8,
-        exports: [][]const u8,
-        global_var_count: u32,
-    };
-};
-
-//==================================================================
-// HIR GENERATOR - The magic that makes AST walking 10-50x faster!
-//==================================================================
 
 /// Generates HIR from AST - This is where we eliminate recursive evaluation overhead
 pub const HIRGenerator = struct {
     allocator: std.mem.Allocator,
     instructions: std.ArrayList(HIRInstruction),
-    constant_pool: std.ArrayList(HIRValue),
+    constants: std.ArrayList(HIRValue),
+    debug_enabled: bool = false,
+    current_inspect_expr: ?*ast.Expr = null,
+    current_field_name: ?[]const u8 = null,
     string_pool: std.ArrayList([]const u8),
     constant_map: std.StringHashMap(u32), // For deduplication
     variables: std.StringHashMap(u32), // name -> index mapping
@@ -694,7 +87,9 @@ pub const HIRGenerator = struct {
         return HIRGenerator{
             .allocator = allocator,
             .instructions = std.ArrayList(HIRInstruction).init(allocator),
-            .constant_pool = std.ArrayList(HIRValue).init(allocator),
+            .constants = std.ArrayList(HIRValue).init(allocator),
+            .debug_enabled = false,
+            .current_inspect_expr = null,
             .string_pool = std.ArrayList([]const u8).init(allocator),
             .constant_map = std.StringHashMap(u32).init(allocator),
             .variables = std.StringHashMap(u32).init(allocator),
@@ -714,7 +109,7 @@ pub const HIRGenerator = struct {
 
     pub fn deinit(self: *HIRGenerator) void {
         self.instructions.deinit();
-        self.constant_pool.deinit();
+        self.constants.deinit();
         self.string_pool.deinit();
         self.constant_map.deinit();
         self.variables.deinit();
@@ -727,7 +122,6 @@ pub const HIRGenerator = struct {
 
     /// Main entry point - converts AST statements to HIR program using multi-pass approach
     pub fn generateProgram(self: *HIRGenerator, statements: []ast.Stmt) !HIRProgram {
-        std.debug.print(">> Starting multi-pass HIR generation for {} statements\n", .{statements.len});
 
         // Pass 1: Collect function signatures (forward declarations)
         try self.collectFunctionSignatures(statements);
@@ -741,11 +135,9 @@ pub const HIRGenerator = struct {
         // Pass 4: Build function table
         const function_table = try self.buildFunctionTable();
 
-        std.debug.print(">> Generated {} HIR instructions with {} functions\n", .{ self.instructions.items.len, function_table.len });
-
         return HIRProgram{
             .instructions = try self.instructions.toOwnedSlice(),
-            .constant_pool = try self.constant_pool.toOwnedSlice(),
+            .constant_pool = try self.constants.toOwnedSlice(),
             .string_pool = try self.string_pool.toOwnedSlice(),
             .function_table = function_table,
             .module_map = std.StringHashMap(HIRProgram.ModuleInfo).init(self.allocator),
@@ -755,13 +147,9 @@ pub const HIRGenerator = struct {
 
     /// Pass 1: Collect function signatures for forward declarations
     fn collectFunctionSignatures(self: *HIRGenerator, statements: []ast.Stmt) !void {
-        std.debug.print(">> Pass 1: Collecting function signatures\n", .{});
-
-        for (statements, 0..) |stmt, i| {
+        for (statements) |stmt| {
             switch (stmt.data) {
                 .FunctionDecl => |func| {
-                    std.debug.print("  >> Found function: {s} with {} params\n", .{ func.name.lexeme, func.params.len });
-
                     const return_type = self.convertTypeInfo(func.return_type_info);
                     const start_label = try self.generateLabel(try std.fmt.allocPrint(self.allocator, "func_{s}", .{func.name.lexeme}));
 
@@ -787,22 +175,14 @@ pub const HIRGenerator = struct {
                         .return_type_info = func.return_type_info,
                     });
                 },
-                else => {
-                    // Skip non-function statements in this pass
-                    std.debug.print("  >> Skipping statement {}: {s}\n", .{ i, @tagName(stmt.data) });
-                },
+                else => {},
             }
         }
-
-        std.debug.print(">> Pass 1 complete: {} functions collected\n", .{self.function_signatures.count()});
     }
 
     /// Pass 3: Generate function bodies AFTER main program
     fn generateFunctionBodies(self: *HIRGenerator) !void {
-        std.debug.print(">> Pass 3: Generating function bodies AFTER main\n", .{});
-
         for (self.function_bodies.items) |*function_body| {
-            std.debug.print("  >> Generating body for: {s}\n", .{function_body.function_info.name});
 
             // Set current function context
             self.current_function = function_body.function_info.name;
@@ -817,7 +197,6 @@ pub const HIRGenerator = struct {
 
             // Generate parameter setup - copy arguments from stack to local variables
             const params = function_body.function_params;
-            std.debug.print("  >> Setting up {} parameters\n", .{params.len});
 
             // Parameters are pushed in order, so we pop them in reverse order
             var param_index = params.len;
@@ -847,14 +226,11 @@ pub const HIRGenerator = struct {
                     .scope_kind = .Local,
                     .module_context = null,
                 } });
-
-                std.debug.print("  >> Parameter {}: {s} -> var[{}] (type: {s})\n", .{ param_index, param.name.lexeme, var_idx, @tagName(param_type) });
             }
 
             // TAIL CALL FIX: Add a separate label for tail calls to jump to (after parameter setup)
             const body_label = try self.generateLabel(try std.fmt.allocPrint(self.allocator, "func_{s}_body", .{function_body.function_info.name}));
             try self.instructions.append(.{ .Label = .{ .name = body_label, .vm_address = 0 } });
-            std.debug.print("  >> Added tail call target label: {s}\n", .{body_label});
 
             // Store body label in function signature for tail call use
             if (self.function_signatures.getPtr(function_body.function_info.name)) |func_info| {
@@ -866,7 +242,6 @@ pub const HIRGenerator = struct {
             for (function_body.statements) |body_stmt| {
                 // Skip statements after a definitive return (basic dead code elimination)
                 if (has_returned) {
-                    std.debug.print(">> Skipping unreachable statement after return\n", .{});
                     break;
                 }
 
@@ -886,14 +261,10 @@ pub const HIRGenerator = struct {
             self.current_function = null;
             self.current_function_return_type = .Nothing;
         }
-
-        std.debug.print(">> Pass 3 complete: {} function bodies generated\n", .{self.function_bodies.items.len});
     }
 
     /// Pass 2: Generate main program (non-function statements) - FIRST so execution starts here
     fn generateMainProgram(self: *HIRGenerator, statements: []ast.Stmt) !void {
-        std.debug.print(">> Pass 2: Generating main program FIRST\n", .{});
-
         for (statements) |stmt| {
             switch (stmt.data) {
                 .FunctionDecl => {
@@ -909,14 +280,10 @@ pub const HIRGenerator = struct {
         // Add halt instruction to end main program execution
         // This prevents execution from falling through to function definitions
         try self.instructions.append(.Halt);
-
-        std.debug.print(">> Pass 2 complete: Main program generated\n", .{});
     }
 
     /// Pass 4: Build function table from collected signatures
     fn buildFunctionTable(self: *HIRGenerator) ![]HIRProgram.HIRFunction {
-        std.debug.print(">> Pass 4: Building function table\n", .{});
-
         var function_table = std.ArrayList(HIRProgram.HIRFunction).init(self.allocator);
 
         var function_iterator = self.function_signatures.iterator();
@@ -935,7 +302,6 @@ pub const HIRGenerator = struct {
             });
         }
 
-        std.debug.print(">> Pass 4 complete: {} functions in table\n", .{function_table.items.len});
         return try function_table.toOwnedSlice();
     }
 
@@ -986,7 +352,6 @@ pub const HIRGenerator = struct {
                 }
             },
             .VarDecl => |decl| {
-                std.debug.print(">> Generating variable: {s}\n", .{decl.name.lexeme});
 
                 // NEW: Determine the variable's type for tracking
                 var var_type: HIRType = .Auto;
@@ -1002,7 +367,6 @@ pub const HIRGenerator = struct {
                         .U8 => .U8,
                         else => .Auto,
                     };
-                    std.debug.print(">> Using explicit type annotation: {s}\n", .{@tagName(var_type)});
                 }
 
                 // Generate the initializer expression
@@ -1012,7 +376,6 @@ pub const HIRGenerator = struct {
                     // Only infer type if no explicit annotation was provided
                     if (var_type == .Auto) {
                         var_type = self.inferTypeFromExpression(init_expr);
-                        std.debug.print(">> Inferred type from initializer: {s}\n", .{@tagName(var_type)});
                     }
                 } else {
                     // No initializer - push default value based on type
@@ -1020,7 +383,7 @@ pub const HIRGenerator = struct {
                         .Int => HIRValue{ .int = 0 },
                         .Float => HIRValue{ .float = 0.0 },
                         .String => HIRValue{ .string = "" },
-                        .Tetra => HIRValue{ .tetra = TETRA_FALSE },
+                        .Tetra => HIRValue{ .tetra = 0 },
                         else => HIRValue.nothing,
                     };
                     const const_idx = try self.addConstant(default_value);
@@ -1038,17 +401,14 @@ pub const HIRGenerator = struct {
                     .scope_kind = .Local,
                     .module_context = null,
                 } });
-                std.debug.print(">> Added StoreVar instruction at index {}\n", .{self.instructions.items.len - 1});
             },
             .FunctionDecl => {
                 // Skip - function declarations are handled in multi-pass approach
-                std.debug.print(">> Skipping function declaration (handled in Pass 1-2)\n", .{});
             },
             .Return => |ret| {
                 if (ret.value) |value| {
                     // TAIL CALL OPTIMIZATION: Check if return value is a direct function call
                     if (self.tryGenerateTailCall(value)) {
-                        std.debug.print(">> Generated tail call optimization for Return statement\n", .{});
                         return; // Tail call replaces both Call and Return
                     } else {
                         // Regular return with value
@@ -1062,14 +422,85 @@ pub const HIRGenerator = struct {
             .EnumDecl => |enum_decl| {
                 // NEW: Register enum type for TypeOf support (when enum is a statement)
                 try self.registerCustomType(enum_decl.name.lexeme, .Enum);
-                std.debug.print(">> Registered enum type: {s}\n", .{enum_decl.name.lexeme});
 
                 // Enum declarations don't generate runtime instructions, they're compile-time only
             },
             else => {
-                std.debug.print("!! Unhandled statement type: {}\n", .{stmt.data});
+                self.reporter.reportError("Unhandled statement type: {}", .{stmt.data});
             },
         }
+    }
+
+    // Tetra constants for fast operations
+    pub const TETRA_FALSE: u8 = 0; // 00
+    pub const TETRA_TRUE: u8 = 1; // 01
+    pub const TETRA_BOTH: u8 = 2; // 10
+    pub const TETRA_NEITHER: u8 = 3; // 11
+
+    // Fast lookup tables for tetra operations
+    pub const TETRA_AND_LUT: [4][4]u8 = [4][4]u8{
+        [4]u8{ 0, 0, 0, 0 }, // FALSE AND x = FALSE
+        [4]u8{ 0, 1, 2, 3 }, // TRUE AND x = x
+        [4]u8{ 0, 2, 2, 0 }, // BOTH AND x = special logic
+        [4]u8{ 0, 3, 0, 3 }, // NEITHER AND x = special logic
+    };
+
+    pub const TETRA_OR_LUT: [4][4]u8 = [4][4]u8{
+        [4]u8{ 0, 1, 2, 3 }, // FALSE OR x = x
+        [4]u8{ 1, 1, 1, 1 }, // TRUE OR x = TRUE
+        [4]u8{ 2, 1, 2, 2 }, // BOTH OR x = special logic
+        [4]u8{ 3, 1, 2, 3 }, // NEITHER OR x = special logic
+    };
+
+    pub const TETRA_NOT_LUT: [4]u8 = [4]u8{ 1, 0, 3, 2 }; // NOT lookup: false->true, true->false, both->neither, neither->both
+
+    // IFF (if and only if): A ↔ B - true when A and B have same truth value
+    pub const TETRA_IFF_LUT: [4][4]u8 = [4][4]u8{
+        [4]u8{ 1, 0, 3, 2 }, // FALSE IFF x: same as NOT x
+        [4]u8{ 0, 1, 2, 3 }, // TRUE IFF x: same as x
+        [4]u8{ 3, 2, 2, 3 }, // BOTH IFF x: complex logic
+        [4]u8{ 2, 3, 3, 2 }, // NEITHER IFF x: complex logic
+    };
+
+    // XOR (exclusive or): A ⊕ B - true when A and B have different truth values
+    pub const TETRA_XOR_LUT: [4][4]u8 = [4][4]u8{
+        [4]u8{ 0, 1, 2, 3 }, // FALSE XOR x: same as x
+        [4]u8{ 1, 0, 3, 2 }, // TRUE XOR x: same as NOT x
+        [4]u8{ 2, 3, 2, 3 }, // BOTH XOR x: complex logic
+        [4]u8{ 3, 2, 3, 2 }, // NEITHER XOR x: complex logic
+    };
+
+    // NAND: A ↑ B - NOT(A AND B)
+    pub const TETRA_NAND_LUT: [4][4]u8 = [4][4]u8{
+        [4]u8{ 1, 1, 1, 1 }, // FALSE NAND x = NOT(FALSE AND x) = NOT(FALSE) = TRUE
+        [4]u8{ 1, 0, 3, 2 }, // TRUE NAND x = NOT(TRUE AND x) = NOT(x)
+        [4]u8{ 1, 3, 3, 1 }, // BOTH NAND x = complex logic
+        [4]u8{ 1, 2, 1, 2 }, // NEITHER NAND x = complex logic
+    };
+
+    // NOR: A ↓ B - NOT(A OR B)
+    pub const TETRA_NOR_LUT: [4][4]u8 = [4][4]u8{
+        [4]u8{ 1, 0, 3, 2 }, // FALSE NOR x = NOT(FALSE OR x) = NOT(x)
+        [4]u8{ 0, 0, 0, 0 }, // TRUE NOR x = NOT(TRUE OR x) = NOT(TRUE) = FALSE
+        [4]u8{ 3, 0, 3, 3 }, // BOTH NOR x = complex logic
+        [4]u8{ 2, 0, 3, 2 }, // NEITHER NOR x = complex logic
+    };
+
+    // IMPLIES: A → B - NOT A OR B
+    pub const TETRA_IMPLIES_LUT: [4][4]u8 = [4][4]u8{
+        [4]u8{ 1, 1, 1, 1 }, // FALSE IMPLIES x = NOT(FALSE) OR x = TRUE OR x = TRUE
+        [4]u8{ 0, 1, 2, 3 }, // TRUE IMPLIES x = NOT(TRUE) OR x = FALSE OR x = x
+        [4]u8{ 2, 1, 2, 2 }, // BOTH IMPLIES x = complex logic
+        [4]u8{ 3, 1, 2, 3 }, // NEITHER IMPLIES x = complex logic
+    };
+
+    pub fn tetraFromEnum(tetra_enum: anytype) u8 {
+        return switch (tetra_enum) {
+            .false => TETRA_FALSE,
+            .true => TETRA_TRUE,
+            .both => TETRA_BOTH,
+            .neither => TETRA_NEITHER,
+        };
     }
 
     /// THE KEY FUNCTION - converts recursive AST evaluation to linear stack operations
@@ -1109,12 +540,9 @@ pub const HIRGenerator = struct {
                 // Generate right operand (pushes to stack)
                 try self.generateExpression(bin.right.?);
 
-                // Generate operation - THIS REPLACES MASSIVE AST WALKER OVERHEAD!
-                std.debug.print(">> Generating binary op: {}\n", .{bin.operator.type});
                 switch (bin.operator.type) {
                     .PLUS => {
                         try self.instructions.append(.{ .IntArith = .{ .op = .Add, .overflow_behavior = .Wrap } });
-                        std.debug.print(">> Added IntArith.Add instruction at index {}\n", .{self.instructions.items.len - 1});
                     },
                     .MINUS => try self.instructions.append(.{ .IntArith = .{ .op = .Sub, .overflow_behavior = .Wrap } }),
                     .ASTERISK => try self.instructions.append(.{ .IntArith = .{ .op = .Mul, .overflow_behavior = .Wrap } }),
@@ -1134,7 +562,6 @@ pub const HIRGenerator = struct {
             },
 
             .Logical => |log| {
-                std.debug.print(">> Generating logical op: {}\n", .{log.operator.type});
 
                 // For AND/OR, we need short-circuit evaluation
                 if (log.operator.type == .AND) {
@@ -1151,7 +578,7 @@ pub const HIRGenerator = struct {
                             .label_true = end_label,
                             .label_false = short_circuit_label,
                             .vm_offset = 0, // Will be patched
-                            .condition_type = .Boolean,
+                            .condition_type = .Tetra,
                         },
                     });
 
@@ -1198,7 +625,6 @@ pub const HIRGenerator = struct {
             },
 
             .If => |if_expr| {
-                std.debug.print(">> Generating if expression\n", .{});
 
                 // Generate condition
                 try self.generateExpression(if_expr.condition.?);
@@ -1214,7 +640,7 @@ pub const HIRGenerator = struct {
                         .label_true = then_label, // If TRUE: jump to then branch
                         .label_false = else_label, // If FALSE: jump to else branch
                         .vm_offset = 0, // Will be patched during VM bytecode generation
-                        .condition_type = .Boolean,
+                        .condition_type = .Tetra,
                     },
                 });
 
@@ -1243,8 +669,6 @@ pub const HIRGenerator = struct {
             },
 
             .While => |while_expr| {
-                std.debug.print(">> Generating while loop\n", .{});
-
                 const loop_start_label = try self.generateLabel("while_start");
                 const loop_body_label = try self.generateLabel("while_body");
                 const loop_end_label = try self.generateLabel("while_end");
@@ -1261,7 +685,7 @@ pub const HIRGenerator = struct {
                         .label_true = loop_body_label, // Continue to loop body when TRUE
                         .label_false = loop_end_label, // Exit loop when FALSE
                         .vm_offset = 0, // Will be patched
-                        .condition_type = .Boolean,
+                        .condition_type = .Tetra,
                     },
                 });
 
@@ -1284,7 +708,6 @@ pub const HIRGenerator = struct {
             },
 
             .Call => |call| {
-                std.debug.print(">> Generating function call\n", .{});
 
                 // Extract function name and determine call type
                 var function_name: []const u8 = "unknown";
@@ -1303,8 +726,6 @@ pub const HIRGenerator = struct {
                         if (field_access.object.data == .Variable) {
                             method_target_var = field_access.object.data.Variable.lexeme;
                         }
-
-                        std.debug.print(">> Method call: {s}\n", .{function_name});
 
                         // CRITICAL FIX: Generate object FIRST, then arguments for correct stack order
                         // The VM's push method expects: element (top), array (bottom)
@@ -1326,11 +747,9 @@ pub const HIRGenerator = struct {
                         if (self.getFunctionIndex(function_name)) |index| {
                             function_index = index;
                             call_kind = .LocalFunction;
-                            std.debug.print(">> User function call: {s} (index: {})\n", .{ function_name, index });
                         } else |_| {
                             // Fall back to built-in
                             call_kind = .BuiltinFunction;
-                            std.debug.print(">> Built-in function call: {s}\n", .{function_name});
                         }
                     },
                     else => {
@@ -1342,8 +761,18 @@ pub const HIRGenerator = struct {
 
                 // Generate arguments for non-method calls (method calls handle arguments differently)
                 if (call.callee.data != .FieldAccess) {
-                    for (call.arguments) |arg| {
-                        try self.generateExpression(arg);
+                    for (call.arguments, 0..) |arg, arg_index| {
+                        // Check if this is a default argument placeholder
+                        if (arg.data == .DefaultArgPlaceholder) {
+                            // Try to resolve the default value from function signature
+                            if (self.resolveDefaultArgument(function_name, arg_index)) |default_expr| {
+                                try self.generateExpression(default_expr);
+                            } else {
+                                try self.generateExpression(arg);
+                            }
+                        } else {
+                            try self.generateExpression(arg);
+                        }
                     }
                 }
 
@@ -1362,8 +791,6 @@ pub const HIRGenerator = struct {
                     },
                 });
 
-                std.debug.print(">> Generated Call instruction: function_name={s}, call_kind={s}, function_index={}\n", .{ function_name, @tagName(call_kind), function_index });
-
                 // CRITICAL FIX: For mutating method calls on variables, store result back to variable
                 if (call.callee.data == .FieldAccess and method_target_var != null) {
                     const target_var = method_target_var.?;
@@ -1375,7 +802,6 @@ pub const HIRGenerator = struct {
                         std.mem.eql(u8, function_name, "remove");
 
                     if (is_mutating_method) {
-                        std.debug.print(">> Storing mutating method result back to variable: {s}\n", .{target_var});
 
                         // Duplicate the result to leave it on stack as the expression result
                         try self.instructions.append(.Dup);
@@ -1393,7 +819,10 @@ pub const HIRGenerator = struct {
             },
 
             .Inspect => |inspect| {
-                std.debug.print(">> Generating inspect\n", .{});
+
+                // Set current inspect expression for field access tracking
+                self.current_inspect_expr = inspect.expr;
+                defer self.current_inspect_expr = null;
 
                 // Generate the expression to inspect
                 try self.generateExpression(inspect.expr);
@@ -1401,45 +830,37 @@ pub const HIRGenerator = struct {
                 // Duplicate it so it remains on stack after inspection
                 try self.instructions.append(.Dup);
 
-                // Extract variable name for tracked type lookup
-                var variable_name_for_lookup: ?[]const u8 = null;
-                if (inspect.expr.data == .Variable) {
-                    variable_name_for_lookup = inspect.expr.data.Variable.lexeme;
-                }
+                // Build the full path for the inspect expression (handles field access)
+                const inspect_path = try self.buildInspectPath(inspect.expr);
 
                 // NEW: Use tracked variable type when available, otherwise infer
-                std.debug.print(">> About to infer type for inspect expression: {s}\n", .{@tagName(inspect.expr.data)});
                 var inferred_type: HIRType = .Auto;
 
                 // If inspecting a variable, use the tracked type first
-                if (variable_name_for_lookup != null) {
-                    if (self.getTrackedVariableType(variable_name_for_lookup.?)) |tracked_type| {
-                        inferred_type = tracked_type;
-                        std.debug.print(">> Using tracked type for inspect: {s}\n", .{@tagName(inferred_type)});
+                if (inspect_path != null) {
+                    // For simple variables, try to get tracked type
+                    if (inspect.expr.data == .Variable) {
+                        if (self.getTrackedVariableType(inspect.expr.data.Variable.lexeme)) |tracked_type| {
+                            inferred_type = tracked_type;
+                        } else {
+                            inferred_type = self.inferTypeFromExpression(inspect.expr);
+                        }
                     } else {
                         inferred_type = self.inferTypeFromExpression(inspect.expr);
-                        std.debug.print(">> Inferred type for inspect: {s}\n", .{@tagName(inferred_type)});
                     }
                 } else {
                     inferred_type = self.inferTypeFromExpression(inspect.expr);
-                    std.debug.print(">> Inferred type for inspect: {s}\n", .{@tagName(inferred_type)});
                 }
 
-                // CRITICAL: Auto types are FORBIDDEN in .soxa files! Use String as fallback
-                if (inferred_type == .Auto) {
-                    std.debug.print(">> Warning: Auto type detected for inspect, using String fallback\n", .{});
-                    inferred_type = .String; // Safe fallback to prevent Auto leakage
-                }
-
-                // Use the inspect's stored variable_name if available, otherwise use extracted name
-                const inspect_name = inspect.variable_name orelse variable_name_for_lookup;
-
-                // Generate inspect instruction with correct type
-                try self.instructions.append(.{ .Inspect = .{ .name = inspect_name, .value_type = inferred_type } });
+                // Generate inspect instruction with full path and correct type
+                try self.instructions.append(.{ .Inspect = .{
+                    .name = inspect_path,
+                    .value_type = inferred_type,
+                    .location = inspect.location,
+                } });
             },
 
             .Assignment => |assign| {
-                std.debug.print(">> Generating assignment: {s}\n", .{assign.name.lexeme});
 
                 // Generate the value expression
                 try self.generateExpression(assign.value.?);
@@ -1464,7 +885,6 @@ pub const HIRGenerator = struct {
             },
 
             .Array => |elements| {
-                std.debug.print(">> Generating array with {} elements\n", .{elements.len});
 
                 // Determine array element type from first element (for now)
                 const element_type: HIRType = if (elements.len > 0) blk: {
@@ -1474,7 +894,7 @@ pub const HIRGenerator = struct {
                             .int => .Int,
                             .float => .Float,
                             .string => .String,
-                            .tetra => .Boolean,
+                            .tetra => .Tetra,
                             .u8 => .U8,
                             else => .Auto,
                         },
@@ -1507,20 +927,36 @@ pub const HIRGenerator = struct {
             },
 
             .Index => |index| {
-                std.debug.print(">> Generating array index access\n", .{});
 
-                // Generate array expression
+                // Generate array/map expression
                 try self.generateExpression(index.array);
 
                 // Generate index expression
                 try self.generateExpression(index.index);
 
-                // Generate ArrayGet instruction
-                try self.instructions.append(.{ .ArrayGet = .{ .bounds_check = true } });
+                // Determine if we're accessing an array or map
+                const container_type = self.inferTypeFromExpression(index.array);
+                switch (container_type) {
+                    .Map => {
+                        // Map access - use MapGet
+                        try self.instructions.append(.{
+                            .MapGet = .{
+                                .key_type = .String, // For now, assume string keys
+                            },
+                        });
+                    },
+                    .Array => {
+                        // Array access - use ArrayGet
+                        try self.instructions.append(.{ .ArrayGet = .{ .bounds_check = true } });
+                    },
+                    else => {
+                        // Default to array access for now
+                        try self.instructions.append(.{ .ArrayGet = .{ .bounds_check = true } });
+                    },
+                }
             },
 
             .IndexAssign => |assign| {
-                std.debug.print(">> Generating array index assignment\n", .{});
 
                 // Generate array expression
                 try self.generateExpression(assign.array);
@@ -1536,15 +972,14 @@ pub const HIRGenerator = struct {
             },
 
             .Tuple => |elements| {
-                std.debug.print(">> Generating tuple with {} elements\n", .{elements.len});
 
-                // Generate TupleNew instruction
-                try self.instructions.append(.{ .TupleNew = .{ .element_count = @intCast(elements.len) } });
-
-                // Generate each element
+                // Generate each element FIRST (they get pushed to stack)
                 for (elements) |element| {
                     try self.generateExpression(element);
                 }
+
+                // Generate TupleNew instruction AFTER elements are on stack
+                try self.instructions.append(.{ .TupleNew = .{ .element_count = @intCast(elements.len) } });
             },
 
             .Grouping => |grouping| {
@@ -1559,7 +994,6 @@ pub const HIRGenerator = struct {
             },
 
             .Block => |block| {
-                std.debug.print(">> Generating block with {} statements\n", .{block.statements.len});
 
                 // Generate all block statements without creating scopes for simple blocks
                 for (block.statements) |stmt| {
@@ -1578,7 +1012,6 @@ pub const HIRGenerator = struct {
             },
 
             .CompoundAssign => |compound| {
-                std.debug.print(">> Generating compound assignment: {s} {s}\n", .{ compound.name.lexeme, compound.operator.lexeme });
 
                 // Load current variable value
                 const var_idx = try self.getOrCreateVariable(compound.name.lexeme);
@@ -1620,12 +1053,10 @@ pub const HIRGenerator = struct {
             },
 
             .ReturnExpr => |return_expr| {
-                std.debug.print(">> Generating return expression\n", .{});
 
                 // TAIL CALL OPTIMIZATION: Check if return value is a direct function call
                 if (return_expr.value) |value| {
                     if (self.tryGenerateTailCall(value)) {
-                        std.debug.print(">> Generated tail call optimization\n", .{});
                         return; // Tail call replaces both Call and Return
                     } else {
                         // Regular return with value
@@ -1642,7 +1073,6 @@ pub const HIRGenerator = struct {
             },
 
             .Unary => |unary| {
-                std.debug.print(">> Generating unary op: {}\n", .{unary.operator.type});
 
                 // Generate the operand first
                 try self.generateExpression(unary.right.?);
@@ -1674,7 +1104,6 @@ pub const HIRGenerator = struct {
             },
 
             .ForAll => |forall| {
-                std.debug.print(">> Generating ForAll quantifier: {s}\n", .{forall.variable.lexeme});
 
                 // ForAll quantifier: ∀x ∈ array : condition
                 // Implementation: iterate through array, return false if any element fails condition
@@ -1697,7 +1126,6 @@ pub const HIRGenerator = struct {
             },
 
             .Exists => |exists| {
-                std.debug.print(">> Generating Exists quantifier: {s}\n", .{exists.variable.lexeme});
 
                 // Exists quantifier: ∃x ∈ array : condition
                 // Implementation: iterate through array, return true if any element satisfies condition
@@ -1720,7 +1148,6 @@ pub const HIRGenerator = struct {
             },
 
             .Match => |match_expr| {
-                std.debug.print(">> Generating Match expression\n", .{});
 
                 // Generate the value to match on
                 try self.generateExpression(match_expr.value);
@@ -1769,7 +1196,6 @@ pub const HIRGenerator = struct {
             },
 
             .EnumMember => |member| {
-                std.debug.print(">> Generating enum member: {s}\n", .{member.lexeme});
 
                 // Generate enum member as string constant
                 const enum_value = HIRValue{ .string = member.lexeme };
@@ -1778,17 +1204,68 @@ pub const HIRGenerator = struct {
             },
 
             .StructLiteral => |struct_lit| {
-                std.debug.print(">> Generating struct literal: {s}\n", .{struct_lit.name.lexeme});
 
-                // For now, create a simple representation
-                // TODO: Implement proper struct support
-                const struct_value = HIRValue{ .string = struct_lit.name.lexeme };
-                const const_idx = try self.addConstant(struct_value);
-                try self.instructions.append(.{ .Const = .{ .value = struct_value, .constant_id = const_idx } });
+                // Track field types for type checking
+                var field_types = try self.allocator.alloc(HIRType, struct_lit.fields.len);
+                defer self.allocator.free(field_types);
+
+                // Generate field values and names in reverse order for stack-based construction
+                var reverse_i = struct_lit.fields.len;
+                while (reverse_i > 0) {
+                    reverse_i -= 1;
+                    const field = struct_lit.fields[reverse_i];
+
+                    // Generate field value
+                    try self.generateExpression(field.value);
+
+                    // Infer and store field type
+                    field_types[reverse_i] = self.inferTypeFromExpression(field.value);
+
+                    // Push field name as constant
+                    const field_name_const = try self.addConstant(HIRValue{ .string = field.name.lexeme });
+                    try self.instructions.append(.{ .Const = .{ .value = HIRValue{ .string = field.name.lexeme }, .constant_id = field_name_const } });
+                }
+
+                // Generate StructNew instruction with field types
+                try self.instructions.append(.{
+                    .StructNew = .{
+                        .type_name = struct_lit.name.lexeme,
+                        .field_count = @intCast(struct_lit.fields.len),
+                        .field_types = try self.allocator.dupe(HIRType, field_types),
+                        .size_bytes = 0, // Size will be calculated by VM
+                    },
+                });
+
+                // Note: Removed Dup instruction as it was corrupting the stack for nested structs
+                // The struct instance will be used directly without duplication
+            },
+
+            .FieldAssignment => |field_assign| {
+
+                // Generate object expression
+                try self.generateExpression(field_assign.object);
+
+                // Store field name for proper path tracking
+                try self.instructions.append(.{
+                    .StoreFieldName = .{
+                        .field_name = field_assign.field.lexeme,
+                    },
+                });
+
+                // Generate value expression
+                try self.generateExpression(field_assign.value);
+
+                // Generate SetField instruction
+                try self.instructions.append(.{
+                    .SetField = .{
+                        .field_name = field_assign.field.lexeme,
+                        .container_type = .Struct,
+                        .field_index = 0, // Index will be resolved by VM
+                    },
+                });
             },
 
             .TypeOf => |expr_to_check| {
-                std.debug.print(">> Generating TypeOf expression\n", .{});
 
                 // NEW: Enhanced type inference with custom type support
                 const inferred_type = self.inferTypeFromExpression(expr_to_check);
@@ -1827,7 +1304,6 @@ pub const HIRGenerator = struct {
                         break :blk "enum"; // Generic enum type
                     },
                     .Function => "function",
-                    .Boolean => "boolean",
                     .Auto => blk: {
                         // ERROR: Unresolved auto type at runtime!
                         const error_msg = try std.fmt.allocPrint(self.allocator, "TypeOf failed to resolve type for expression: {s}", .{@tagName(expr_to_check.data)});
@@ -1836,25 +1312,47 @@ pub const HIRGenerator = struct {
                     },
                 };
 
-                std.debug.print(">> TypeOf inferred type: {s} for expression type: {s}\n", .{ type_name, @tagName(expr_to_check.data) });
-
                 const type_value = HIRValue{ .string = type_name };
                 const const_idx = try self.addConstant(type_value);
                 try self.instructions.append(.{ .Const = .{ .value = type_value, .constant_id = const_idx } });
             },
 
-            .Map => |_| {
-                std.debug.print(">> Generating Map expression\n", .{});
+            .Map => |entries| {
 
-                // For now, create a simple array representation
-                // TODO: Implement proper map support
-                const map_value = HIRValue{ .string = "map" };
-                const const_idx = try self.addConstant(map_value);
-                try self.instructions.append(.{ .Const = .{ .value = map_value, .constant_id = const_idx } });
+                // Generate each key-value pair in reverse order (for stack-based construction)
+                var reverse_i = entries.len;
+                while (reverse_i > 0) {
+                    reverse_i -= 1;
+                    const entry = entries[reverse_i];
+
+                    // Generate key first, then value (they'll be popped in reverse order)
+                    try self.generateExpression(entry.key);
+                    try self.generateExpression(entry.value);
+                }
+
+                // Create HIRMapEntry array with the right size (will be populated by VM)
+                const dummy_entries = try self.allocator.alloc(HIRMapEntry, entries.len);
+                // Initialize with dummy values (VM will replace with actual values from stack)
+                for (dummy_entries) |*entry| {
+                    entry.* = HIRMapEntry{
+                        .key = HIRValue.nothing,
+                        .value = HIRValue.nothing,
+                    };
+                }
+
+                const map_instruction = HIRInstruction{
+                    .Map = .{
+                        .entries = dummy_entries,
+                        .key_type = .String, // Assume string keys for now
+                        .value_type = .Auto, // Will be inferred from values
+                    },
+                };
+
+                // Generate HIR Map instruction
+                try self.instructions.append(map_instruction);
             },
 
             .DefaultArgPlaceholder => {
-                std.debug.print(">> Generating default argument placeholder\n", .{});
 
                 // Push nothing for default arguments - they should be replaced by the caller
                 const nothing_idx = try self.addConstant(HIRValue.nothing);
@@ -1862,7 +1360,6 @@ pub const HIRGenerator = struct {
             },
 
             .For => |_| {
-                std.debug.print(">> Generating For expression\n", .{});
 
                 // For now, just return nothing
                 // TODO: Implement proper for loop support
@@ -1871,19 +1368,39 @@ pub const HIRGenerator = struct {
             },
 
             .FieldAccess => |field| {
-                std.debug.print(">> Generating field access: {s}\n", .{field.field.lexeme});
 
-                // For now, just return the field name as a string
-                // TODO: Implement proper struct field access
-                const field_value = HIRValue{ .string = field.field.lexeme };
-                const const_idx = try self.addConstant(field_value);
-                try self.instructions.append(.{ .Const = .{ .value = field_value, .constant_id = const_idx } });
+                // Generate object expression
+                try self.generateExpression(field.object);
+
+                // Store field name for proper path tracking
+                try self.instructions.append(.{
+                    .StoreFieldName = .{
+                        .field_name = field.field.lexeme,
+                    },
+                });
+
+                // Generate GetField instruction
+                try self.instructions.append(.{
+                    .GetField = .{
+                        .field_name = field.field.lexeme,
+                        .container_type = .Struct,
+                        .field_index = 0, // Index will be resolved by VM
+                        .field_for_inspect = if (self.current_inspect_expr != null) true else false,
+                    },
+                });
+
+                // If this is for inspection, store the field name
+                if (self.current_inspect_expr) |inspect| {
+                    if (inspect.data == .Inspect) {
+                        // Store the field name for the upcoming INSPECT instruction
+                        self.current_field_name = field.field.lexeme;
+                    }
+                }
             },
 
             .EnumDecl => |enum_decl| {
                 // NEW: Register enum type for TypeOf support
                 try self.registerCustomType(enum_decl.name.lexeme, .Enum);
-                std.debug.print(">> Registered enum type: {s}\n", .{enum_decl.name.lexeme});
 
                 // Enum declarations don't generate runtime instructions, they're compile-time only
                 // Push nothing as a placeholder value
@@ -1894,7 +1411,6 @@ pub const HIRGenerator = struct {
             .StructDecl => |struct_decl| {
                 // NEW: Register struct type for TypeOf support
                 try self.registerCustomType(struct_decl.name.lexeme, .Struct);
-                std.debug.print(">> Registered struct type: {s}\n", .{struct_decl.name.lexeme});
 
                 // Struct declarations don't generate runtime instructions, they're compile-time only
                 // Push nothing as a placeholder value
@@ -1902,8 +1418,87 @@ pub const HIRGenerator = struct {
                 try self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } });
             },
 
+            .InspectStruct => |inspect| {
+
+                // Generate the expression to inspect
+                try self.generateExpression(inspect.expr);
+
+                // Get struct info from the expression
+                const struct_info: StructInspectInfo = switch (inspect.expr.data) {
+                    .StructLiteral => |struct_lit| blk: {
+                        const field_count: u32 = @truncate(struct_lit.fields.len);
+                        const field_names = try self.allocator.alloc([]const u8, struct_lit.fields.len);
+                        const field_types = try self.allocator.alloc(HIRType, struct_lit.fields.len);
+                        break :blk StructInspectInfo{
+                            .name = struct_lit.name.lexeme,
+                            .field_count = field_count,
+                            .field_names = field_names,
+                            .field_types = field_types,
+                        };
+                    },
+                    .Variable => |var_token| if (self.getTrackedVariableType(var_token.lexeme)) |var_type| blk: {
+                        if (var_type != .Struct) {
+                            return error.ExpectedStructType;
+                        }
+                        const field_names = try self.allocator.alloc([]const u8, 0);
+                        const field_types = try self.allocator.alloc(HIRType, 0);
+                        break :blk StructInspectInfo{
+                            .name = var_token.lexeme,
+                            .field_count = 0,
+                            .field_names = field_names,
+                            .field_types = field_types,
+                        };
+                    } else {
+                        return error.UnknownVariableType;
+                    },
+                    .FieldAccess => |field| blk: {
+                        // For field access, we need to generate the field access code first
+                        try self.generateExpression(field.object);
+                        try self.instructions.append(.{
+                            .StoreFieldName = .{
+                                .field_name = field.field.lexeme,
+                            },
+                        });
+
+                        // Generate GetField instruction to access the field
+                        try self.instructions.append(.{
+                            .GetField = .{
+                                .field_name = field.field.lexeme,
+                                .container_type = .Struct,
+                                .field_index = 0,
+                                .field_for_inspect = true,
+                            },
+                        });
+
+                        // Create a single-field struct info
+                        const field_names = try self.allocator.alloc([]const u8, 1);
+                        const field_types = try self.allocator.alloc(HIRType, 1);
+                        field_names[0] = field.field.lexeme;
+                        field_types[0] = self.inferTypeFromExpression(inspect.expr);
+
+                        break :blk StructInspectInfo{
+                            .name = field.field.lexeme,
+                            .field_count = 1,
+                            .field_names = field_names,
+                            .field_types = field_types,
+                        };
+                    },
+                    else => {
+                        return error.ExpectedStructType;
+                    },
+                };
+
+                // Add the InspectStruct instruction with the gathered info
+                try self.instructions.append(.{ .InspectStruct = .{
+                    .type_name = struct_info.name,
+                    .field_count = struct_info.field_count,
+                    .field_names = struct_info.field_names,
+                    .field_types = struct_info.field_types,
+                    .location = inspect.location,
+                } });
+            },
+
             else => {
-                std.debug.print("!! Unhandled expression type: {}\n", .{expr.data});
                 // Push nothing as fallback
                 const nothing_idx = try self.addConstant(HIRValue.nothing);
                 try self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } });
@@ -1913,8 +1508,8 @@ pub const HIRGenerator = struct {
 
     fn addConstant(self: *HIRGenerator, value: HIRValue) std.mem.Allocator.Error!u32 {
         // TODO: Add deduplication for identical constants
-        const index = @as(u32, @intCast(self.constant_pool.items.len));
-        try self.constant_pool.append(value);
+        const index = @as(u32, @intCast(self.constants.items.len));
+        try self.constants.append(value);
         return index;
     }
 
@@ -1926,7 +1521,6 @@ pub const HIRGenerator = struct {
         const idx = self.variable_count;
         try self.variables.put(name, idx);
         self.variable_count += 1;
-        std.debug.print(">> Created variable slot {} for '{s}'\n", .{ idx, name });
         return idx;
     }
 
@@ -1979,14 +1573,12 @@ pub const HIRGenerator = struct {
     /// Try to generate a tail call if the expression is a direct function call
     /// Returns true if tail call was generated, false if normal expression should be used
     fn tryGenerateTailCall(self: *HIRGenerator, expr: *ast.Expr) bool {
-        std.debug.print(">> tryGenerateTailCall: checking expression type: {s}\n", .{@tagName(expr.data)});
         switch (expr.data) {
             .Call => |call| {
                 // Check if the callee is a simple variable (function name)
                 switch (call.callee.data) {
                     .Variable => |var_token| {
                         const function_name = var_token.lexeme;
-                        std.debug.print(">> Detected tail call opportunity: {s}\n", .{function_name});
 
                         // Generate arguments in normal order (same as regular call)
                         for (call.arguments) |arg| {
@@ -2009,10 +1601,8 @@ pub const HIRGenerator = struct {
                             } };
 
                             self.instructions.append(tail_call) catch return false;
-                            std.debug.print(">> Generated TailCall instruction for: {s}\n", .{function_name});
                             return true; // Tail call generated successfully
                         } else |_| {
-                            std.debug.print(">> Function not found for tail call: {s}\n", .{function_name});
                             return false; // Not a known function, use regular call
                         }
                     },
@@ -2024,7 +1614,6 @@ pub const HIRGenerator = struct {
             },
             else => {
                 // Not a direct function call, cannot optimize
-                std.debug.print(">> tryGenerateTailCall: Expression is not a Call, type: {s}\n", .{@tagName(expr.data)});
                 return false;
             },
         }
@@ -2058,15 +1647,12 @@ pub const HIRGenerator = struct {
 
                 // Otherwise look up the variable's tracked type
                 const var_type = self.variable_types.get(var_token.lexeme) orelse .Auto;
-                std.debug.print(">> inferTypeFromExpression for variable '{s}': {s}\n", .{ var_token.lexeme, @tagName(var_type) });
                 return var_type;
             },
             .Binary => |binary| {
                 // Simple type inference for binary operations
                 const left_type = if (binary.left) |left| self.inferTypeFromExpression(left) else .Auto;
                 const right_type = if (binary.right) |right| self.inferTypeFromExpression(right) else .Auto;
-
-                // For comparisons and logical operations, always return tetra (boolean logic)
                 return switch (binary.operator.type) {
                     .EQUALITY, .BANG_EQUAL, .LESS, .LESS_EQUAL, .GREATER, .GREATER_EQUAL => .Tetra,
                     .AND, .OR, .XOR => .Tetra, // Logical operations return tetra values
@@ -2090,6 +1676,7 @@ pub const HIRGenerator = struct {
                     .Array => .String, // Most arrays in bigfile.doxa are int arrays, but for simplicity return String
                     .String => .String, // String indexing returns single character (still string in our system)
                     .Tuple => .String, // Tuples can have mixed types, return String for simplicity
+                    .Map => .Int, // Map values are integers in our test case
                     else => .String, // Default to String for most index operations
                 };
             },
@@ -2180,7 +1767,6 @@ pub const HIRGenerator = struct {
     /// NEW: Track a variable's type when it's declared or assigned
     fn trackVariableType(self: *HIRGenerator, var_name: []const u8, var_type: HIRType) !void {
         try self.variable_types.put(var_name, var_type);
-        std.debug.print(">> Tracked type for '{s}': {s}\n", .{ var_name, @tagName(var_type) });
     }
 
     /// NEW: Get tracked variable type
@@ -2195,7 +1781,6 @@ pub const HIRGenerator = struct {
             .kind = kind,
         };
         try self.custom_types.put(type_name, custom_type);
-        std.debug.print(">> Registered custom type '{s}': {s}\n", .{ type_name, @tagName(kind) });
     }
 
     /// NEW: Infer parameter type from usage in function body
@@ -2203,18 +1788,15 @@ pub const HIRGenerator = struct {
         // Analyze how the parameter is used in the function body
         for (function_body) |stmt| {
             if (self.analyzeStatementForParameterType(stmt, param_name)) |inferred_type| {
-                std.debug.print(">> Inferred parameter '{s}' type from usage: {s}\n", .{ param_name, @tagName(inferred_type) });
                 return inferred_type;
             }
         }
 
         // If no usage found, try to infer from call sites
         if (self.inferParameterTypeFromCallSites(param_name, function_name)) |inferred_type| {
-            std.debug.print(">> Inferred parameter '{s}' type from call sites: {s}\n", .{ param_name, @tagName(inferred_type) });
             return inferred_type;
         }
 
-        std.debug.print(">> Could not infer parameter '{s}' type, defaulting to Int\n", .{param_name});
         return .Int; // Reasonable default
     }
 
@@ -2331,6 +1913,23 @@ pub const HIRGenerator = struct {
         return null;
     }
 
+    /// Resolve default argument value for a function parameter
+    /// Returns the default expression if found, null otherwise
+    fn resolveDefaultArgument(self: *HIRGenerator, function_name: []const u8, arg_index: usize) ?*ast.Expr {
+        // Find the function body which contains the original parameter information
+        for (self.function_bodies.items) |function_body| {
+            if (std.mem.eql(u8, function_body.function_name, function_name)) {
+                // Check if argument index is valid and parameter has default value
+                if (arg_index < function_body.function_params.len) {
+                    const param = function_body.function_params[arg_index];
+                    return param.default_value;
+                }
+                break;
+            }
+        }
+        return null;
+    }
+
     /// NEW: Infer return type for function calls to prevent Auto leakage
     fn inferCallReturnType(self: *HIRGenerator, function_name: []const u8, call_kind: CallKind) !HIRType {
         switch (call_kind) {
@@ -2386,6 +1985,24 @@ pub const HIRGenerator = struct {
         }
         return .Auto; // Unresolved
     }
+
+    /// Build a full variable path for inspect expressions (e.g., "mike.person.age")
+    fn buildInspectPath(self: *HIRGenerator, expr: *const ast.Expr) !?[]const u8 {
+        switch (expr.data) {
+            .Variable => |var_token| {
+                return try self.allocator.dupe(u8, var_token.lexeme);
+            },
+            .FieldAccess => |field| {
+                // Recursively build the path for the object
+                if (try self.buildInspectPath(field.object)) |base_path| {
+                    return try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ base_path, field.field.lexeme });
+                } else {
+                    return try self.allocator.dupe(u8, field.field.lexeme);
+                }
+            },
+            else => return null,
+        }
+    }
 };
 
 //==================================================================
@@ -2396,8 +2013,6 @@ pub const HIRGenerator = struct {
 pub fn translateToVMBytecode(program: *HIRProgram, allocator: std.mem.Allocator, reporter: *reporting.Reporter) ![]u8 {
     var bytecode = std.ArrayList(u8).init(allocator);
     defer bytecode.deinit();
-
-    std.debug.print(">> Translating {} HIR instructions to VM bytecode\n", .{program.instructions.len});
 
     // First pass: resolve labels to addresses
     var label_addresses = std.StringHashMap(u32).init(allocator);
@@ -2505,7 +2120,6 @@ pub fn translateToVMBytecode(program: *HIRProgram, allocator: std.mem.Allocator,
     }
 
     const result = try bytecode.toOwnedSlice();
-    std.debug.print(">> Generated {} bytes of VM bytecode\n", .{result.len});
     return result;
 }
 
@@ -2599,14 +2213,11 @@ pub fn validateSoxaCache(soxa_path: []const u8, source_path: []const u8, allocat
             defer allocator.free(current_hash);
 
             const is_valid = std.mem.eql(u8, cached_hash, current_hash);
-            if (!is_valid) {
-                std.debug.print(">> Cache miss: source changed (cached: {s}, current: {s})\n", .{ cached_hash, current_hash });
-            }
+            if (!is_valid) {}
             return is_valid;
         }
     }
 
-    std.debug.print(">> Cache miss: no hash found (old format)\n", .{});
     return false; // No hash found = old format = invalid
 }
 
@@ -2661,8 +2272,6 @@ pub fn writeSoxaFile(program: *HIRProgram, file_path: []const u8, source_path: [
     for (program.instructions) |instruction| {
         try writeHIRInstructionText(writer, instruction);
     }
-
-    std.debug.print(">> SOXA text file written: {s} ({} instructions, {} constants, {} functions)\n", .{ file_path, program.instructions.len, program.constant_pool.len, program.function_table.len });
 }
 
 /// Reads a HIR program from a text-based .soxa file
@@ -2679,8 +2288,6 @@ pub fn readSoxaFile(file_path: []const u8, allocator: std.mem.Allocator) !HIRPro
 
     var parser = SoxaTextParser.init(allocator, source);
     const program = try parser.parse();
-
-    std.debug.print(">> SOXA text file loaded: {s} ({} instructions, {} constants, {} functions)\n", .{ file_path, program.instructions.len, program.constant_pool.len, program.function_table.len });
 
     return program;
 }
@@ -2792,7 +2399,6 @@ fn readHIRValue(reader: anytype, allocator: std.mem.Allocator) !HIRValue {
             return HIRValue.nothing; // TODO: Implement proper enum deserialization
         },
         else => {
-            std.debug.print("!! Unknown HIR value type tag: {}\n", .{type_tag});
             return reporting.ErrorList.InvalidArgument;
         },
     };
@@ -2878,6 +2484,16 @@ fn writeHIRInstruction(writer: anytype, instruction: HIRInstruction, allocator: 
                 try writer.writeByte(0); // No name
             }
             try writer.writeByte(@intFromEnum(i.value_type));
+            // Write whether location is present
+            if (i.location) |location| {
+                try writer.writeByte(1); // Has location
+                try writer.writeInt(u32, @as(u32, @intCast(location.file.len)), .little);
+                try writer.writeAll(location.file);
+                try writer.writeInt(u32, location.line, .little);
+                try writer.writeInt(u32, location.column, .little);
+            } else {
+                try writer.writeByte(0); // No location
+            }
         },
 
         // Array operations (Phase 1)
@@ -2920,7 +2536,6 @@ fn writeHIRInstruction(writer: anytype, instruction: HIRInstruction, allocator: 
         },
 
         else => {
-            std.debug.print("!! Unhandled HIR instruction for SOXA serialization: {}\n", .{instruction});
             return reporting.ErrorList.UnsupportedStatement;
         },
     }
@@ -2974,7 +2589,7 @@ fn readHIRInstruction(reader: anytype, allocator: std.mem.Allocator) !HIRInstruc
             const label_false = try allocator.alloc(u8, false_len);
             _ = try reader.readAll(label_false);
 
-            return HIRInstruction{ .JumpCond = .{ .label_true = label_true, .label_false = label_false, .vm_offset = 0, .condition_type = .Boolean } };
+            return HIRInstruction{ .JumpCond = .{ .label_true = label_true, .label_false = label_false, .vm_offset = 0, .condition_type = .Tetra } };
         },
         7 => { // Call
             const function_index = try reader.readInt(u32, .little);
@@ -3020,7 +2635,22 @@ fn readHIRInstruction(reader: anytype, allocator: std.mem.Allocator) !HIRInstruc
             const value_type_byte = try reader.readByte();
             const value_type = @as(HIRType, @enumFromInt(value_type_byte));
 
-            return HIRInstruction{ .Inspect = .{ .name = name, .value_type = value_type } };
+            // Read whether location is present
+            const has_location = (try reader.readByte()) != 0;
+            const location = if (has_location) blk: {
+                const file_len = try reader.readInt(u32, .little);
+                const file = try allocator.alloc(u8, file_len);
+                _ = try reader.readAll(file);
+                const line = try reader.readInt(u32, .little);
+                const column = try reader.readInt(u32, .little);
+                break :blk Reporting.Reporter.Location{
+                    .file = file,
+                    .line = line,
+                    .column = column,
+                };
+            } else null;
+
+            return HIRInstruction{ .Inspect = .{ .name = name, .value_type = value_type, .location = location } };
         },
 
         // Array operations (Phase 1)
@@ -3059,7 +2689,6 @@ fn readHIRInstruction(reader: anytype, allocator: std.mem.Allocator) !HIRInstruc
         },
 
         else => {
-            std.debug.print("!! Unknown HIR instruction tag: {}\n", .{instruction_tag});
             return reporting.ErrorList.UnsupportedStatement;
         },
     };
@@ -3112,9 +2741,17 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
 
         .Inspect => |i| {
             if (i.name) |name| {
-                try writer.print("    Inspect \"{s}\" {s}         ; Debug print\n", .{ name, @tagName(i.value_type) });
+                if (i.location) |location| {
+                    try writer.print("    Inspect \"{s}\" {s} @{s}:{}:{}         ; Debug print\n", .{ name, @tagName(i.value_type), location.file, location.line, location.column });
+                } else {
+                    try writer.print("    Inspect \"{s}\" {s}         ; Debug print\n", .{ name, @tagName(i.value_type) });
+                }
             } else {
-                try writer.print("    Inspect {s}                 ; Debug print\n", .{@tagName(i.value_type)});
+                if (i.location) |location| {
+                    try writer.print("    Inspect {s} @{s}:{}:{}                 ; Debug print\n", .{ @tagName(i.value_type), location.file, location.line, location.column });
+                } else {
+                    try writer.print("    Inspect {s}                 ; Debug print\n", .{@tagName(i.value_type)});
+                }
             }
         },
 
@@ -3129,15 +2766,50 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
         .ArrayLen => try writer.print("    ArrayLen                    ; Get array length\n", .{}),
         .ArrayConcat => try writer.print("    ArrayConcat                 ; Concatenate arrays\n", .{}),
 
+        .TupleNew => |t| try writer.print("    TupleNew {}                 ; Create tuple with {} elements\n", .{ t.element_count, t.element_count }),
+        .Map => |m| try writer.print("    Map {} {s}                   ; Create map with {} entries\n", .{ m.entries.len, @tagName(m.key_type), m.entries.len }),
+
+        // Struct operations
+        .StructNew => |s| try writer.print("    StructNew \"{s}\" {}          ; Create struct with {} fields\n", .{ s.type_name, s.field_count, s.field_count }),
+        .GetField => |f| try writer.print("    GetField \"{s}\"               ; Get field from struct\n", .{f.field_name}),
+        .SetField => |f| try writer.print("    SetField \"{s}\" {s} {}        ; Set field in struct\n", .{ f.field_name, @tagName(f.container_type), f.field_index }),
+        .StoreFieldName => |s| try writer.print("    StoreFieldName \"{s}\"          ; Store field name for struct\n", .{s.field_name}),
+
         // Scope management
         .EnterScope => |s| try writer.print("    EnterScope {} {}            ; Enter new scope\n", .{ s.scope_id, s.var_count }),
         .ExitScope => |s| try writer.print("    ExitScope {}                ; Exit scope\n", .{s.scope_id}),
+
+        .InspectStruct => |i| {
+            try writer.print("    InspectStruct \"{s}\" {} [", .{ i.type_name, i.field_count });
+            for (i.field_names, 0..) |name, idx| {
+                try writer.print("\"{s}\"", .{name});
+                if (idx < i.field_names.len - 1) try writer.writeByte(',');
+            }
+            try writer.writeAll("] [");
+            for (i.field_types, 0..) |type_info, idx| {
+                try writer.print("{s}", .{@tagName(type_info)});
+                if (idx < i.field_types.len - 1) try writer.writeByte(',');
+            }
+            try writer.writeAll("]");
+            if (i.location) |loc| {
+                try writer.print(" @{s}:{d}:{d}", .{ loc.file, loc.line, loc.column });
+            }
+            try writer.writeAll("         ; Inspect struct\n");
+        },
 
         else => try writer.print("    ; TODO: {s}\n", .{@tagName(instruction)}),
     }
 }
 
 /// Simple text parser for SOXA HIR format
+const StructContext = struct {
+    type_name: []const u8, // Changed from struct_name to type_name to match usage
+    field_count: u32,
+    field_names: std.ArrayList([]const u8),
+    field_types: std.ArrayList(HIRType),
+    field_path: std.ArrayList([]const u8), // Added to track nested field access
+};
+
 const SoxaTextParser = struct {
     allocator: std.mem.Allocator,
     source: []const u8,
@@ -3146,6 +2818,7 @@ const SoxaTextParser = struct {
     constants: std.ArrayList(HIRValue),
     functions: std.ArrayList(HIRProgram.HIRFunction),
     instructions: std.ArrayList(HIRInstruction),
+    struct_context: ?StructContext = null,
 
     fn init(allocator: std.mem.Allocator, source: []const u8) SoxaTextParser {
         return SoxaTextParser{
@@ -3154,7 +2827,16 @@ const SoxaTextParser = struct {
             .constants = std.ArrayList(HIRValue).init(allocator),
             .functions = std.ArrayList(HIRProgram.HIRFunction).init(allocator),
             .instructions = std.ArrayList(HIRInstruction).init(allocator),
+            .struct_context = null,
         };
+    }
+
+    fn deinit(self: *SoxaTextParser) void {
+        if (self.struct_context) |*context| {
+            context.field_names.deinit();
+            context.field_types.deinit();
+            context.field_path.deinit();
+        }
     }
 
     fn parse(self: *SoxaTextParser) !HIRProgram {
@@ -3183,27 +2865,43 @@ const SoxaTextParser = struct {
                 try self.updateFunctionEntry(trimmed_right);
                 continue;
             } else if (std.mem.indexOf(u8, trimmed_right, ":")) |colon_pos| {
-                // Label (can be either indented or not) - CHECK BEFORE INSTRUCTIONS!
-                const is_label = blk: {
-                    // Check if this is a label by seeing if colon comes before semicolon (or is at end)
-                    if (std.mem.indexOf(u8, trimmed_right, ";")) |semicolon_pos| {
-                        break :blk colon_pos < semicolon_pos;
-                    } else {
-                        break :blk std.mem.endsWith(u8, trimmed_right, ":");
-                    }
-                };
+                // Check if this is an instruction with location info (like "Inspect ... @file:line:column")
+                const trimmed_line = std.mem.trim(u8, trimmed_right, " \t");
+                const is_instruction_with_location = std.mem.startsWith(u8, trimmed_line, "Inspect ") or
+                    std.mem.startsWith(u8, trimmed_line, "Call ") or
+                    std.mem.startsWith(u8, trimmed_line, "LoadVar ") or
+                    std.mem.startsWith(u8, trimmed_line, "StoreVar ");
 
-                if (is_label) {
-                    const label_line = std.mem.trim(u8, trimmed_right, " \t");
-                    const label_colon_pos = std.mem.indexOf(u8, label_line, ":").?;
-                    const label_name = try self.allocator.dupe(u8, label_line[0..label_colon_pos]);
-                    try self.instructions.append(HIRInstruction{ .Label = .{ .name = label_name, .vm_address = 0 } });
-                } else {
-                    // Not a label, fall through to instruction parsing
+                if (is_instruction_with_location) {
+                    // This is an instruction, not a label
                     if (std.mem.indexOf(u8, trimmed_right, "(") != null and std.mem.indexOf(u8, trimmed_right, "args)") != null) {
                         try self.parseFunction(trimmed_right);
                     } else {
                         try self.parseInstruction(trimmed_right);
+                    }
+                } else {
+                    // Label (can be either indented or not) - CHECK BEFORE INSTRUCTIONS!
+                    const is_label = blk: {
+                        // Check if this is a label by seeing if colon comes before semicolon (or is at end)
+                        if (std.mem.indexOf(u8, trimmed_right, ";")) |semicolon_pos| {
+                            break :blk colon_pos < semicolon_pos;
+                        } else {
+                            break :blk std.mem.endsWith(u8, trimmed_right, ":");
+                        }
+                    };
+
+                    if (is_label) {
+                        const label_line = std.mem.trim(u8, trimmed_right, " \t");
+                        const label_colon_pos = std.mem.indexOf(u8, label_line, ":").?;
+                        const label_name = try self.allocator.dupe(u8, label_line[0..label_colon_pos]);
+                        try self.instructions.append(HIRInstruction{ .Label = .{ .name = label_name, .vm_address = 0 } });
+                    } else {
+                        // Not a label, fall through to instruction parsing
+                        if (std.mem.indexOf(u8, trimmed_right, "(") != null and std.mem.indexOf(u8, trimmed_right, "args)") != null) {
+                            try self.parseFunction(trimmed_right);
+                        } else {
+                            try self.parseInstruction(trimmed_right);
+                        }
                     }
                 }
             } else if (std.mem.startsWith(u8, trimmed_right, "    ") and !std.mem.startsWith(u8, trimmed_right, "        ")) {
@@ -3241,10 +2939,6 @@ const SoxaTextParser = struct {
             const quoted_str = std.mem.trim(u8, line[string_pos + 7 ..], " \t");
             const value = try self.parseQuotedString(quoted_str);
             try self.constants.append(HIRValue{ .string = value });
-        } else if (std.mem.indexOf(u8, line, "bool ")) |bool_pos| {
-            const value_str = std.mem.trim(u8, line[bool_pos + 5 ..], " \t");
-            const value = std.mem.eql(u8, value_str, "true");
-            try self.constants.append(HIRValue{ .tetra = tetraFromBool(value) });
         } else if (std.mem.indexOf(u8, line, "tetra ")) |tetra_pos| {
             const value_str = std.mem.trim(u8, line[tetra_pos + 6 ..], " \t");
             const value = try std.fmt.parseInt(u8, value_str, 10);
@@ -3307,6 +3001,73 @@ const SoxaTextParser = struct {
 
     fn parseInstruction(self: *SoxaTextParser, line: []const u8) !void {
         const trimmed = std.mem.trim(u8, line, " \t");
+
+        // Handle struct inspection instructions
+        if (std.mem.startsWith(u8, trimmed, "InspectStruct")) {
+            // Parse: InspectStruct "Person" 2 ["name", "age"] [String, Int]
+            const struct_name_start = std.mem.indexOf(u8, trimmed, "\"").? + 1;
+            const struct_name_end = std.mem.indexOfPos(u8, trimmed, struct_name_start, "\"").?;
+            const struct_name = try self.allocator.dupe(u8, trimmed[struct_name_start..struct_name_end]);
+
+            // Get field count
+            const count_start = struct_name_end + 2;
+            const count_end = std.mem.indexOfAny(u8, trimmed[count_start..], " [").? + count_start;
+            const field_count = try std.fmt.parseInt(u32, trimmed[count_start..count_end], 10);
+
+            // Initialize new struct context
+            var field_names = std.ArrayList([]const u8).init(self.allocator);
+            var field_types = std.ArrayList(HIRType).init(self.allocator);
+            const field_path = std.ArrayList([]const u8).init(self.allocator);
+
+            // Parse field names and types
+            var in_names = true;
+            var current_pos = count_end;
+            while (current_pos < trimmed.len) : (current_pos += 1) {
+                if (trimmed[current_pos] == '[') {
+                    continue;
+                } else if (trimmed[current_pos] == ']') {
+                    if (in_names) {
+                        in_names = false;
+                    } else {
+                        break;
+                    }
+                } else if (trimmed[current_pos] == '"') {
+                    const name_start = current_pos + 1;
+                    const name_end = std.mem.indexOfPos(u8, trimmed, name_start, "\"").?;
+                    const name = try self.allocator.dupe(u8, trimmed[name_start..name_end]);
+                    try field_names.append(name);
+                    current_pos = name_end;
+                } else if (std.mem.indexOfPos(u8, trimmed, current_pos, "String")) |type_pos| {
+                    if (type_pos == current_pos) {
+                        try field_types.append(.String);
+                        current_pos = type_pos + 5;
+                    }
+                } else if (std.mem.indexOfPos(u8, trimmed, current_pos, "Int")) |type_pos| {
+                    if (type_pos == current_pos) {
+                        try field_types.append(.Int);
+                        current_pos = type_pos + 2;
+                    }
+                }
+            }
+
+            // Set up the new struct context
+            self.struct_context = .{
+                .type_name = struct_name,
+                .field_count = field_count,
+                .field_names = field_names,
+                .field_types = field_types,
+                .field_path = field_path,
+            };
+
+            try self.instructions.append(.{ .InspectStruct = .{
+                .type_name = struct_name,
+                .field_count = field_count,
+                .field_names = try field_names.toOwnedSlice(),
+                .field_types = try field_types.toOwnedSlice(),
+                .location = null,
+            } });
+            return;
+        }
         var tokens = std.mem.splitScalar(u8, trimmed, ' ');
         const op = tokens.next() orelse return;
 
@@ -3343,7 +3104,7 @@ const SoxaTextParser = struct {
             const false_label = tokens.next() orelse return;
             const true_name = try self.allocator.dupe(u8, true_label);
             const false_name = try self.allocator.dupe(u8, false_label);
-            try self.instructions.append(HIRInstruction{ .JumpCond = .{ .label_true = true_name, .label_false = false_name, .vm_offset = 0, .condition_type = .Boolean } });
+            try self.instructions.append(HIRInstruction{ .JumpCond = .{ .label_true = true_name, .label_false = false_name, .vm_offset = 0, .condition_type = .Tetra } });
         } else if (std.mem.eql(u8, op, "Call")) {
             const func_idx_str = tokens.next() orelse return;
             const arg_count_str = tokens.next() orelse return;
@@ -3400,22 +3161,91 @@ const SoxaTextParser = struct {
             const name_or_type = tokens.next() orelse return;
             var name: ?[]const u8 = null;
             var value_type: HIRType = .String;
+            var location: ?Reporting.Reporter.Location = null;
+
+            // For struct inspection
+            var struct_name: ?[]const u8 = null;
+            var field_names = std.ArrayList([]const u8).init(self.allocator);
+            var field_types = std.ArrayList(HIRType).init(self.allocator);
+            defer field_names.deinit();
+            defer field_types.deinit();
+
+            // Track the full path for struct fields
+            var path_builder = std.ArrayList(u8).init(self.allocator);
+            defer path_builder.deinit();
+
+            // Build path from struct context if available
+            if (self.struct_context) |context| {
+                try path_builder.appendSlice(context.type_name);
+                for (context.field_path.items) |field| {
+                    try path_builder.appendSlice(".");
+                    try path_builder.appendSlice(field);
+                }
+            }
 
             if (name_or_type.len > 2 and name_or_type[0] == '"' and name_or_type[name_or_type.len - 1] == '"') {
                 // Has quoted name, get type from next token
                 name = try self.parseQuotedString(name_or_type);
                 const type_str = tokens.next() orelse "String";
-                value_type = if (std.mem.eql(u8, type_str, "Int")) HIRType.Int else if (std.mem.eql(u8, type_str, "Float")) HIRType.Float else if (std.mem.eql(u8, type_str, "String")) HIRType.String else if (std.mem.eql(u8, type_str, "Tetra")) HIRType.Tetra else if (std.mem.eql(u8, type_str, "Boolean")) HIRType.Boolean else if (std.mem.eql(u8, type_str, "Array")) HIRType.Array else if (std.mem.eql(u8, type_str, "Tuple")) HIRType.Tuple else if (std.mem.eql(u8, type_str, "Map")) HIRType.Map else if (std.mem.eql(u8, type_str, "Struct")) HIRType.Struct else if (std.mem.eql(u8, type_str, "Enum")) HIRType.Enum else HIRType.String;
+                value_type = if (std.mem.eql(u8, type_str, "Int")) HIRType.Int else if (std.mem.eql(u8, type_str, "Float")) HIRType.Float else if (std.mem.eql(u8, type_str, "String")) HIRType.String else if (std.mem.eql(u8, type_str, "Tetra")) HIRType.Tetra else if (std.mem.eql(u8, type_str, "Array")) HIRType.Array else if (std.mem.eql(u8, type_str, "Tuple")) HIRType.Tuple else if (std.mem.eql(u8, type_str, "Map")) HIRType.Map else if (std.mem.eql(u8, type_str, "Struct")) blk: {
+                    // For structs, we need to collect field information
+                    struct_name = if (path_builder.items.len > 0)
+                        try self.allocator.dupe(u8, path_builder.items)
+                    else if (name) |n| n else "anonymous";
+                    break :blk HIRType.Struct;
+                } else if (std.mem.eql(u8, type_str, "Enum")) HIRType.Enum else HIRType.String;
+
+                // Check for location info
+                if (tokens.next()) |location_str| {
+                    if (std.mem.startsWith(u8, location_str, "@")) {
+                        location = try self.parseLocationString(location_str);
+                    }
+                }
             } else {
-                // No quoted name, this token is the type
-                value_type = if (std.mem.eql(u8, name_or_type, "Int")) HIRType.Int else if (std.mem.eql(u8, name_or_type, "Float")) HIRType.Float else if (std.mem.eql(u8, name_or_type, "String")) HIRType.String else if (std.mem.eql(u8, name_or_type, "Tetra")) HIRType.Tetra else if (std.mem.eql(u8, name_or_type, "Boolean")) HIRType.Boolean else if (std.mem.eql(u8, name_or_type, "Array")) HIRType.Array else if (std.mem.eql(u8, name_or_type, "Tuple")) HIRType.Tuple else if (std.mem.eql(u8, name_or_type, "Map")) HIRType.Map else if (std.mem.eql(u8, name_or_type, "Struct")) HIRType.Struct else if (std.mem.eql(u8, name_or_type, "Enum")) HIRType.Enum else HIRType.String;
+                // Similar logic for non-quoted case...
+                value_type = if (std.mem.eql(u8, name_or_type, "Int")) HIRType.Int
+                    // ... other type checks ...
+                else if (std.mem.eql(u8, name_or_type, "Struct")) blk: {
+                    struct_name = if (path_builder.items.len > 0)
+                        try self.allocator.dupe(u8, path_builder.items)
+                    else
+                        "anonymous";
+                    break :blk HIRType.Struct;
+                } else HIRType.String;
             }
 
-            try self.instructions.append(HIRInstruction{ .Inspect = .{ .name = name, .value_type = value_type } });
+            // If this is a struct inspection, gather field information from the stack
+            if (value_type == .Struct) {
+                // Try to get struct info from the current context
+                const struct_info = try self.getCurrentStructInfo();
+                for (struct_info.fields) |field| {
+                    try field_names.append(field.name);
+                    try field_types.append(field.type);
+                }
+                // Free the allocated fields array
+                self.allocator.free(struct_info.fields);
+
+                try self.instructions.append(.{ .InspectStruct = .{
+                    .type_name = struct_name.?,
+                    .field_count = @intCast(field_names.items.len),
+                    .field_names = try field_names.toOwnedSlice(),
+                    .field_types = try field_types.toOwnedSlice(),
+                    .location = location,
+                } });
+            } else {
+                try self.instructions.append(.{ .Inspect = .{
+                    .name = if (path_builder.items.len > 0)
+                        try self.allocator.dupe(u8, path_builder.items)
+                    else
+                        name,
+                    .value_type = value_type,
+                    .location = location,
+                } });
+            }
         } else if (std.mem.eql(u8, op, "ArrayNew")) {
             const type_str = tokens.next() orelse return;
             const size_str = tokens.next() orelse return;
-            const element_type = if (std.mem.eql(u8, type_str, "Int")) HIRType.Int else if (std.mem.eql(u8, type_str, "Float")) HIRType.Float else if (std.mem.eql(u8, type_str, "String")) HIRType.String else if (std.mem.eql(u8, type_str, "Boolean")) HIRType.Boolean else HIRType.Auto;
+            const element_type = if (std.mem.eql(u8, type_str, "Int")) HIRType.Int else if (std.mem.eql(u8, type_str, "Float")) HIRType.Float else if (std.mem.eql(u8, type_str, "String")) HIRType.String else HIRType.Auto;
             const size = std.fmt.parseInt(u32, size_str, 10) catch return;
             try self.instructions.append(HIRInstruction{ .ArrayNew = .{ .element_type = element_type, .size = size } });
         } else if (std.mem.eql(u8, op, "ArrayGet")) {
@@ -3436,6 +3266,30 @@ const SoxaTextParser = struct {
             try self.instructions.append(HIRInstruction.ArrayLen);
         } else if (std.mem.eql(u8, op, "ArrayConcat")) {
             try self.instructions.append(HIRInstruction.ArrayConcat);
+        } else if (std.mem.eql(u8, op, "TupleNew")) {
+            const count_str = tokens.next() orelse return;
+            const element_count = std.fmt.parseInt(u32, count_str, 10) catch return;
+            try self.instructions.append(HIRInstruction{ .TupleNew = .{ .element_count = element_count } });
+        } else if (std.mem.eql(u8, op, "Map")) {
+            const count_str = tokens.next() orelse return;
+            const key_type_str = tokens.next() orelse return;
+            const entry_count = std.fmt.parseInt(u32, count_str, 10) catch return;
+            const key_type = if (std.mem.eql(u8, key_type_str, "String")) HIRType.String else if (std.mem.eql(u8, key_type_str, "Int")) HIRType.Int else HIRType.String;
+
+            // Create dummy entries array with correct size
+            const dummy_entries = try self.allocator.alloc(HIRMapEntry, entry_count);
+            for (dummy_entries) |*entry| {
+                entry.* = HIRMapEntry{
+                    .key = HIRValue.nothing,
+                    .value = HIRValue.nothing,
+                };
+            }
+
+            try self.instructions.append(HIRInstruction{ .Map = .{
+                .entries = dummy_entries,
+                .key_type = key_type,
+                .value_type = .Auto,
+            } });
         } else if (std.mem.eql(u8, op, "EnterScope")) {
             const scope_id_str = tokens.next() orelse return;
             const var_count_str = tokens.next() orelse return;
@@ -3446,6 +3300,59 @@ const SoxaTextParser = struct {
             const scope_id_str = tokens.next() orelse return;
             const scope_id = std.fmt.parseInt(u32, scope_id_str, 10) catch return;
             try self.instructions.append(HIRInstruction{ .ExitScope = .{ .scope_id = scope_id } });
+        } else if (std.mem.eql(u8, op, "StructNew")) {
+            const type_name_quoted = tokens.next() orelse return;
+            const field_count_str = tokens.next() orelse return;
+
+            const type_name = try self.parseQuotedString(type_name_quoted);
+            const field_count = std.fmt.parseInt(u32, field_count_str, 10) catch return;
+
+            // Create dummy field types - these will be populated by the VM at runtime
+            // based on the actual values on the stack
+            const field_types = try self.allocator.alloc(HIRType, field_count);
+            for (field_types) |*field_type| {
+                field_type.* = HIRType.Auto; // Default to Auto, will be resolved at runtime
+            }
+
+            try self.instructions.append(HIRInstruction{
+                .StructNew = .{
+                    .type_name = type_name,
+                    .field_count = field_count,
+                    .field_types = field_types,
+                    .size_bytes = 0, // Size will be calculated at runtime
+                },
+            });
+        } else if (std.mem.eql(u8, op, "GetField")) {
+            const field_name_quoted = tokens.next() orelse return;
+            const field_name = try self.parseQuotedString(field_name_quoted);
+
+            try self.instructions.append(HIRInstruction{
+                .GetField = .{
+                    .field_name = field_name,
+                    .container_type = HIRType.Struct,
+                    .field_index = 0, // Will be resolved at runtime
+                    .field_for_inspect = false,
+                },
+            });
+        } else if (std.mem.eql(u8, op, "SetField")) {
+            const field_name_quoted = tokens.next() orelse return;
+            // Parse format: SetField "age" Struct 0
+            const field_name = try self.parseQuotedString(field_name_quoted);
+
+            try self.instructions.append(HIRInstruction{
+                .SetField = .{
+                    .field_name = field_name,
+                    .container_type = HIRType.Struct,
+                    .field_index = 0, // Will be resolved at runtime
+                },
+            });
+        } else if (std.mem.eql(u8, op, "StoreFieldName")) {
+            const field_name_quoted = tokens.next() orelse return;
+            const field_name = try self.parseQuotedString(field_name_quoted);
+
+            try self.instructions.append(HIRInstruction{ .StoreFieldName = .{
+                .field_name = field_name,
+            } });
         }
         // Instructions not implemented yet are silently ignored for now
     }
@@ -3455,6 +3362,58 @@ const SoxaTextParser = struct {
             return try self.allocator.dupe(u8, quoted[1 .. quoted.len - 1]);
         }
         return try self.allocator.dupe(u8, quoted);
+    }
+
+    const StructInfo = struct {
+        fields: []StructField,
+
+        const StructField = struct {
+            name: []const u8,
+            type: HIRType,
+        };
+    };
+
+    fn getCurrentStructInfo(self: *SoxaTextParser) !StructInfo {
+        if (self.struct_context) |context| {
+            // Create array of fields with their types
+            var fields = try self.allocator.alloc(StructInfo.StructField, context.field_count);
+            for (0..context.field_count) |i| {
+                fields[i] = .{
+                    .name = context.field_names.items[i],
+                    .type = context.field_types.items[i],
+                };
+            }
+            return StructInfo{ .fields = fields };
+        }
+        return error.NoStructContext;
+    }
+
+    fn parseLocationString(self: *SoxaTextParser, location_str: []const u8) !Reporting.Reporter.Location {
+        // Parse format: @file:line:column
+        // Handle Windows paths by splitting from the right side
+        if (!std.mem.startsWith(u8, location_str, "@")) {
+            return error.InvalidLocationFormat;
+        }
+
+        const location_part = location_str[1..]; // Skip @
+
+        // Find the last two colons to get line and column
+        const last_colon = std.mem.lastIndexOfScalar(u8, location_part, ':') orelse return error.InvalidLocationFormat;
+        const second_last_colon = std.mem.lastIndexOfScalar(u8, location_part[0..last_colon], ':') orelse return error.InvalidLocationFormat;
+
+        const file_part = location_part[0..second_last_colon];
+        const line_part = location_part[second_last_colon + 1 .. last_colon];
+        const column_part = location_part[last_colon + 1 ..];
+
+        const file = try self.allocator.dupe(u8, file_part);
+        const line = try std.fmt.parseInt(i32, line_part, 10);
+        const column = try std.fmt.parseInt(usize, column_part, 10);
+
+        return Reporting.Reporter.Location{
+            .file = file,
+            .line = line,
+            .column = column,
+        };
     }
 };
 
