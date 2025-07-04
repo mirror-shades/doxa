@@ -2,6 +2,7 @@ const std = @import("std");
 const Token = @import("../lexer/token.zig").Token;
 const TokenLiteral = @import("../types/types.zig").TokenLiteral;
 const Reporting = @import("../utils/reporting.zig");
+const HIRType = @import("../codegen/soxa_types.zig").HIRType;
 
 /// Counter for generating unique node IDs
 var next_node_id: NodeId = 0;
@@ -374,6 +375,7 @@ pub const InspectExpr = struct {
     expr: *Expr,
     location: Reporting.Reporter.Location,
     variable_name: ?[]const u8,
+    field_name: ?[]const u8 = null,
 };
 
 pub const FieldAccess = struct {
@@ -400,6 +402,11 @@ pub const Expr = struct {
         Binary: Binary,
         Unary: Unary,
         Inspect: InspectExpr,
+        InspectStruct: struct {
+            expr: *Expr,
+            location: Reporting.Reporter.Location,
+            variable_name: ?[]const u8,
+        },
         Input: struct {
             prompt: Token,
         },
@@ -793,6 +800,10 @@ pub const Expr = struct {
                     value.deinit(allocator);
                     allocator.destroy(value);
                 }
+            },
+            .InspectStruct => |inspect| {
+                inspect.expr.deinit(allocator);
+                allocator.destroy(inspect.expr);
             },
         }
     }

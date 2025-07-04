@@ -157,7 +157,7 @@ pub const rules = blk: {
     r.set(.FUNCTION, .{ .prefix = null }); // Function declarations are handled as statements, not expressions
 
     // Add rule for the ? operator with lower precedence
-    r.set(.INSPECT, .{ .infix = print, .precedence = .UNARY });
+    r.set(.INSPECT, .{ .infix = inspectValue, .precedence = .CALL });
 
     // Add loop support
     r.set(.WHILE, .{ .prefix = whileExpr });
@@ -210,13 +210,6 @@ pub fn getRule(token_type: token.TokenType) ParseRule {
 }
 
 pub fn parsePrecedence(self: *Parser, prec: Precedence) ErrorList!?*ast.Expr {
-    if (self.debug_enabled) {
-        std.debug.print("\nParsing with precedence: {}\n", .{@intFromEnum(prec)});
-        std.debug.print("Current token: {s} at position {}\n", .{
-            @tagName(self.peek().type),
-            self.current,
-        });
-    }
 
     // Add specific check for BANG token
     if (self.peek().type == .BANG) {
@@ -226,18 +219,12 @@ pub fn parsePrecedence(self: *Parser, prec: Precedence) ErrorList!?*ast.Expr {
     // Get the prefix rule for the current token
     const prefix_rule = getRule(self.peek().type).prefix;
     if (prefix_rule == null) {
-        if (self.debug_enabled) {
-            std.debug.print("No prefix rule for token: {s}\n", .{@tagName(self.peek().type)});
-        }
         return null;
     }
 
     // Parse prefix expression with error handling
     var left = try prefix_rule.?(self, null, prec) orelse return null;
     errdefer {
-        if (self.debug_enabled) {
-            std.debug.print("Cleaning up left expression in parsePrecedence\n", .{});
-        }
         left.deinit(self.allocator);
         self.allocator.destroy(left);
     }
@@ -246,10 +233,6 @@ pub fn parsePrecedence(self: *Parser, prec: Precedence) ErrorList!?*ast.Expr {
     while (@intFromEnum(prec) <= @intFromEnum(getRule(self.peek().type).precedence)) {
         const infix_rule = getRule(self.peek().type).infix;
         if (infix_rule == null) break;
-
-        if (self.debug_enabled) {
-            std.debug.print("Found infix operator: {s}\n", .{@tagName(self.peek().type)});
-        }
 
         // Don't advance here for function calls or indexing operations
         if (self.peek().type != .LEFT_PAREN and self.peek().type != .LEFT_BRACKET) {
@@ -319,17 +302,24 @@ fn compound_assignment(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList
 }
 
 fn logical(self: *Parser, left: ?*ast.Expr, precedence: Precedence) ErrorList!?*ast.Expr {
-    if (self.debug_enabled) {
-        std.debug.print("Parsing logical expression\n", .{});
-    }
-
     const operator = self.tokens[self.current - 1]; // Get the operator token (AND/OR)
     const right = try parsePrecedence(self, precedence) orelse return error.ExpectedExpression;
     const logical_expr = try self.allocator.create(ast.Expr);
     logical_expr.* = .{
         .base = .{
             .id = ast.generateNodeId(),
-            .span = ast.SourceSpan.fromToken(operator),
+            .span = .{
+                .start = .{
+                    .file = self.peek().file,
+                    .line = self.peek().line,
+                    .column = self.peek().column,
+                },
+                .end = .{
+                    .file = self.peek().file,
+                    .line = self.peek().line,
+                    .column = self.peek().column + self.peek().lexeme.len,
+                },
+            },
         },
         .data = .{
             .Logical = .{
@@ -340,4 +330,48 @@ fn logical(self: *Parser, left: ?*ast.Expr, precedence: Precedence) ErrorList!?*
         },
     };
     return logical_expr;
+}
+
+fn inspectValue(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+    if (left == null) return error.ExpectedLeftOperand;
+
+    // Get the variable name if this is a variable expression
+    var name_token: ?[]const u8 = null;
+    if (left.?.data == .Variable) {
+        name_token = left.?.data.Variable.lexeme;
+    }
+
+    // Create the inspection expression
+    const inspect_expr = try self.allocator.create(ast.Expr);
+    inspect_expr.* = .{
+        .base = .{
+            .id = ast.generateNodeId(),
+            .span = .{
+                .start = .{
+                    .file = self.peek().file,
+                    .line = self.peek().line,
+                    .column = self.peek().column,
+                },
+                .end = .{
+                    .file = self.peek().file,
+                    .line = self.peek().line,
+                    .column = self.peek().column + self.peek().lexeme.len,
+                },
+            },
+        },
+        .data = .{
+            // Use regular Inspect for non-struct values
+            .Inspect = .{
+                .expr = left.?,
+                .location = .{
+                    .line = self.peek().line,
+                    .column = self.peek().column,
+                    .file = self.peek().file,
+                },
+                .variable_name = name_token,
+            },
+        },
+    };
+
+    return inspect_expr;
 }

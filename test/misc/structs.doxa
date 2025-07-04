@@ -1,22 +1,22 @@
 struct Person {
-    name: string,
-    age: int,
+    name :: string,
+    age :: int,
 }
 
 struct Employee {
-    person: Person,
-    salary: int,
+    person  :: Person,
+    salary  :: int,
 }
 
-var mike = Employee {
-    person = Person {
-        name = "Mike",
-        age = 25,
+var mike is Employee {
+    person is Person {
+        name is "Mike",
+        age is 25,
     },
-    salary = 1000,
+    salary is 1000,
 };
 
-mike.person.age = 26;
+mike.person.age is 26;
 mike.person.age?;
 
 mike.salary?;

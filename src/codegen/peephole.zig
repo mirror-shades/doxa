@@ -1,7 +1,8 @@
 const std = @import("std");
-const HIRInstruction = @import("soxa.zig").HIRInstruction;
-const HIRValue = @import("soxa.zig").HIRValue;
-const ArithOp = @import("soxa.zig").ArithOp;
+const HIRInstruction = @import("soxa_instructions.zig").HIRInstruction;
+const HIRValue = @import("soxa_values.zig").HIRValue;
+const ArithOp = @import("soxa_instructions.zig").ArithOp;
+const Reporter = @import("../utils/reporting.zig").Reporter;
 
 /// Comprehensive peephole optimizer for HIR instructions
 /// Organized by optimization categories for maintainability
@@ -22,7 +23,7 @@ pub const PeepholeOptimizer = struct {
     }
 
     /// Apply comprehensive peephole optimizations
-    pub fn optimize(self: *PeepholeOptimizer, instructions: []HIRInstruction) ![]HIRInstruction {
+    pub fn optimize(self: *PeepholeOptimizer, instructions: []HIRInstruction, reporter: *Reporter) ![]HIRInstruction {
         var optimized = std.ArrayList(HIRInstruction).init(self.allocator);
         defer optimized.deinit();
 
@@ -33,12 +34,12 @@ pub const PeepholeOptimizer = struct {
         }
 
         if (self.getTotalOptimizations() > 0) {
-            std.debug.print(">> Peephole optimization breakdown:\n", .{});
-            if (self.redundant_eliminations > 0) std.debug.print("   - Redundant eliminations: {}\n", .{self.redundant_eliminations});
-            if (self.arithmetic_optimizations > 0) std.debug.print("   - Arithmetic optimizations: {}\n", .{self.arithmetic_optimizations});
-            if (self.stack_optimizations > 0) std.debug.print("   - Stack optimizations: {}\n", .{self.stack_optimizations});
-            if (self.variable_optimizations > 0) std.debug.print("   - Variable optimizations: {}\n", .{self.variable_optimizations});
-            if (self.control_flow_optimizations > 0) std.debug.print("   - Control flow optimizations: {}\n", .{self.control_flow_optimizations});
+            reporter.debug("Peephole optimization breakdown:\n", .{});
+            if (self.redundant_eliminations > 0) reporter.debug("   - Redundant eliminations: {}\n", .{self.redundant_eliminations});
+            if (self.arithmetic_optimizations > 0) reporter.debug("   - Arithmetic optimizations: {}\n", .{self.arithmetic_optimizations});
+            if (self.stack_optimizations > 0) reporter.debug("   - Stack optimizations: {}\n", .{self.stack_optimizations});
+            if (self.variable_optimizations > 0) reporter.debug("   - Variable optimizations: {}\n", .{self.variable_optimizations});
+            if (self.control_flow_optimizations > 0) reporter.debug("   - Control flow optimizations: {}\n", .{self.control_flow_optimizations});
         }
 
         return optimized.toOwnedSlice();

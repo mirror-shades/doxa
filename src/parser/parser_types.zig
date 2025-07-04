@@ -24,6 +24,7 @@ pub const Parser = struct {
     allocator: std.mem.Allocator,
     debug_enabled: bool,
     current_file: []const u8,
+    reporter: *Reporter,
 
     // Add these fields to track entry points
     has_entry_point: bool = false,
@@ -45,18 +46,19 @@ pub const Parser = struct {
 
     declared_types: std.StringHashMap(void),
 
-    pub fn init(allocator: std.mem.Allocator, tokens: []const token.Token, current_file: []const u8, debug_enabled: bool) Parser {
+    pub fn init(allocator: std.mem.Allocator, tokens: []const token.Token, current_file: []const u8, debug_enabled: bool, reporter: *Reporter) Parser {
         const parser = Parser{
             .allocator = allocator,
             .tokens = tokens,
             .current = 0,
             .debug_enabled = debug_enabled,
             .current_file = current_file,
+            .reporter = reporter,
             .module_cache = std.StringHashMap(ModuleInfo).init(allocator),
             .module_namespaces = std.StringHashMap(ModuleInfo).init(allocator),
             .module_imports = std.StringHashMap(std.StringHashMap([]const u8)).init(allocator),
             .imported_symbols = std.StringHashMap(import_parser.ImportedSymbol).init(allocator),
-            .lexer = Lexer.init(allocator, "", current_file),
+            .lexer = Lexer.init(allocator, "", current_file, reporter),
             .declared_types = std.StringHashMap(void).init(allocator),
         };
 
@@ -322,8 +324,7 @@ pub const Parser = struct {
         // Final check: If entry point marker '->' was found but no function followed
         if (self.has_entry_point and self.entry_point_name == null) {
             // Report error using self.entry_point_location
-            var reporting = Reporter.init();
-            reporting.reportCompileError(.{
+            self.reporter.reportCompileError(.{
                 .file = self.current_file,
                 .line = self.entry_point_location.?.line,
                 .column = self.entry_point_location.?.column,
@@ -341,7 +342,7 @@ pub const Parser = struct {
         return statements.toOwnedSlice();
     }
 
-    pub fn parseParameters(self: *Parser, params: *std.ArrayList(ast.FunctionParam)) ErrorList!void {
+    pub fn parseParameters(self: *Parser, params: *std.ArrayList(ast.FunctionParam), reporter: *Reporter) ErrorList!void {
         if (self.debug_enabled) {
             std.debug.print("Parsing function parameters...\n", .{});
         }
@@ -352,7 +353,6 @@ pub const Parser = struct {
             }
 
             if (self.peek().type != .IDENTIFIER) {
-                var reporter = Reporter.init();
                 reporter.reportCompileError(.{
                     .file = self.current_file,
                     .line = self.peek().line,
@@ -1360,13 +1360,13 @@ pub const Parser = struct {
 
         // Load and parse module file - get both source and resolved path
         const module_data = try self.loadModuleSourceWithPath(module_name);
-        var module_lexer = Lexer.init(self.allocator, module_data.source, module_name);
+        var module_lexer = Lexer.init(self.allocator, module_data.source, module_name, self.reporter);
         defer module_lexer.deinit();
 
         try module_lexer.initKeywords();
         const tokens = try module_lexer.lexTokens();
 
-        var new_parser = Parser.init(self.allocator, tokens.items, module_data.resolved_path, self.debug_enabled);
+        var new_parser = Parser.init(self.allocator, tokens.items, module_data.resolved_path, self.debug_enabled, self.reporter);
 
         // Parse the module file
         const module_statements = try new_parser.execute();

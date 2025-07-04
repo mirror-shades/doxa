@@ -74,10 +74,6 @@ pub const Environment = struct {
     }
 
     pub fn define(self: *Environment, key: []const u8, value: TokenLiteral, type_info: ast.TypeInfo) !void {
-        if (self.debug_enabled) {
-            std.debug.print("Attempting to define '{s}' = {any} in the memory manager\n", .{ key, value });
-        }
-
         if (self.memory_manager.scope_manager.root_scope) |root_scope| {
             // Use the mutability information from type_info to determine if this is constant
             const is_constant = !type_info.is_mutable;
@@ -126,9 +122,6 @@ pub const Environment = struct {
     }
 
     pub fn assign(self: *Environment, name: []const u8, value: TokenLiteral) !void {
-        if (self.debug_enabled) {
-            std.debug.print("Attempting to assign '{s}' = {any}\n", .{ name, value });
-        }
 
         // Look up variable from root scope
         if (self.memory_manager.scope_manager.root_scope) |root_scope| {
@@ -141,18 +134,8 @@ pub const Environment = struct {
                         return error.CannotAssignToConstant;
                     }
 
-                    // Debug: show old value
-                    if (self.debug_enabled) {
-                        std.debug.print("Updating variable '{s}' from {any} to {any}\n", .{ name, storage.value, value });
-                    }
-
                     // Update the value in storage
                     storage.value = value;
-
-                    // Verify update
-                    if (self.debug_enabled) {
-                        std.debug.print("After update, storage value is: {any}\n", .{storage.value});
-                    }
 
                     return;
                 } else {
@@ -199,17 +182,18 @@ pub const TokenLiteral = union(enum) {
     tetra: Tetra,
     nothing: void,
     array: []TokenLiteral,
-    tuple: []TokenLiteral,
     struct_value: struct {
         type_name: []const u8,
         fields: []StructField,
+        path: ?[]const u8 = @as(?[]const u8, null),
     },
+    tuple: []TokenLiteral,
+    map: std.StringHashMap(TokenLiteral),
     function: struct {
         params: []FunctionParam,
         body: []ast.Stmt,
         closure: *Environment,
-        defining_module: ?*ModuleEnvironment, // NEW: Reference to the module where this function was defined
+        defining_module: ?*ModuleEnvironment, // Reference to the module where this function was defined
     },
     enum_variant: []const u8,
-    map: std.StringHashMap(TokenLiteral),
 };

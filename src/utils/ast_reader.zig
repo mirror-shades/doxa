@@ -21,10 +21,6 @@ pub const ASTReader = struct {
     }
 
     pub fn readAST(self: *ASTReader) !*ast.Expr {
-        // Read number of nodes
-        const node_count = try self.readInteger();
-        std.debug.print("Reading AST with {} nodes\n", .{node_count});
-
         const root_expr = try self.readNextExpression();
         try self.generator.generateAST(root_expr);
         return root_expr;

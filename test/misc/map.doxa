@@ -1,4 +1,4 @@
-var Map = {
+var Map is {
     "a": 1,
     "b": 2,
     "c": 3,
@@ -6,3 +6,5 @@ var Map = {
 
 Map["a"]?; // 1
 Map["c"]?; // 3
+Map["b"]?; // 2
+Map["missing"]?; // nothing (key not found)

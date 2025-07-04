@@ -41,6 +41,8 @@ pub const ErrorList = error{
     UndeclaredType,
     NullAssignmentValue,
     ExpectedClosedTuple,
+    ExpectedStructType,
+    UnknownVariableType,
 
     // Variable Management
     VariableNotFound,
@@ -281,6 +283,8 @@ pub const Reporter = struct {
     /// Total count of errors encountered
     error_count: i32 = 0,
 
+    is_debug: bool = false,
+
     /// Total count of warnings encountered
     warning_count: i32 = 0,
 
@@ -310,8 +314,10 @@ pub const Reporter = struct {
     }
 
     /// Initialize a new Reporter with default settings
-    pub fn init() Reporter {
-        return Reporter.initWithAllocator(null);
+    pub fn init(is_debug: bool) Reporter {
+        var reporter = Reporter.initWithAllocator(null);
+        reporter.is_debug = is_debug;
+        return reporter;
     }
 
     pub fn deinit(self: *Reporter) void {
@@ -392,8 +398,12 @@ pub const Reporter = struct {
         self.writer.print("DoxVM: Error: " ++ fmt ++ "\n", args) catch {};
     }
 
-    pub fn lightMessage(msg: []const u8) void {
-        std.debug.print("DoxVM: {s}\n", .{msg});
+    pub fn printf(self: *Reporter, comptime fmt: []const u8, args: anytype) void {
+        self.writer.print(fmt, args) catch {};
+    }
+
+    pub fn printl(self: *Reporter, comptime fmt: []const u8) void {
+        self.writer.print(fmt ++ "\n", .{}) catch {};
     }
 
     /// Get total error count
@@ -414,5 +424,11 @@ pub const Reporter = struct {
     /// Returns true if any warnings occurred
     pub fn hadWarning(self: Reporter) bool {
         return self.had_warning;
+    }
+
+    pub fn debug(self: *Reporter, comptime fmt: []const u8, args: anytype) void {
+        if (self.is_debug) {
+            self.writer.print("DoxVM: Debug: " ++ fmt ++ "\n", args) catch {};
+        }
     }
 };
