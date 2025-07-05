@@ -316,10 +316,22 @@ pub const HIRVM = struct {
                 // Convert StructField array to HIRStructField array
                 var hir_fields = self.allocator.alloc(HIRStructField, s.fields.len) catch break :blk HIRValue.nothing;
                 for (s.fields, 0..) |field, i| {
+                    // Recursively convert field value
+                    const field_value = self.tokenLiteralToHIRValue(field.value);
                     hir_fields[i] = HIRStructField{
                         .name = field.name,
-                        .value = self.tokenLiteralToHIRValue(field.value),
-                        .field_type = .Auto, // We'll need type inference here
+                        .value = field_value,
+                        // Infer field type from the value
+                        .field_type = switch (field_value) {
+                            .int => .Int,
+                            .u8 => .U8,
+                            .float => .Float,
+                            .string => .String,
+                            .tetra => .Tetra,
+                            .nothing => .Nothing,
+                            .struct_instance => .Struct,
+                            else => .Auto,
+                        },
                         .path = s.path,
                     };
                 }
@@ -352,6 +364,7 @@ pub const HIRVM = struct {
                 // Convert HIRStructField array to StructField array
                 var token_fields = self.allocator.alloc(StructField, s.fields.len) catch break :blk TokenLiteral{ .nothing = {} };
                 for (s.fields, 0..) |field, i| {
+                    // Recursively convert field value
                     token_fields[i] = StructField{
                         .name = field.name,
                         .value = self.hirValueToTokenLiteral(field.value),
@@ -924,14 +937,45 @@ pub const HIRVM = struct {
                             }
 
                             // Build the full field path
+                            var field_path: []const u8 = undefined;
                             if (s.path) |path| {
-                                try std.io.getStdOut().writer().print("{s}.{s} = ", .{ path, field.name });
+                                field_path = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ path, field.name });
                             } else {
-                                try std.io.getStdOut().writer().print("{s}.{s} = ", .{ s.type_name, field.name });
+                                field_path = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ s.type_name, field.name });
                             }
+                            defer self.allocator.free(field_path);
 
-                            try self.formatHIRValue(std.io.getStdOut().writer(), field.value);
-                            try std.io.getStdOut().writer().print("\n", .{});
+                            try std.io.getStdOut().writer().print("{s} = ", .{field_path});
+
+                            // For nested structs, recursively print their fields
+                            switch (field.value) {
+                                .struct_instance => |nested| {
+                                    // Create a new InspectStruct instruction for the nested struct
+                                    const field_names = try self.allocator.alloc([]const u8, nested.fields.len);
+                                    const field_types = try self.allocator.alloc(HIRType, nested.fields.len);
+                                    for (nested.fields, 0..) |nested_field, field_idx| {
+                                        field_names[field_idx] = nested_field.name;
+                                        field_types[field_idx] = nested_field.field_type;
+                                    }
+                                    const nested_inspect = HIRInstruction{ .InspectStruct = .{
+                                        .location = i.location,
+                                        .field_names = field_names,
+                                        .type_name = nested.type_name,
+                                        .field_count = @intCast(nested.fields.len),
+                                        .field_types = field_types,
+                                    } };
+                                    // Push the nested struct onto the stack with updated path
+                                    var nested_with_path = nested;
+                                    nested_with_path.path = field_path;
+                                    try self.stack.push(HIRFrame{ .value = HIRValue{ .struct_instance = nested_with_path } });
+                                    // Recursively inspect the nested struct
+                                    try self.executeInstruction(nested_inspect);
+                                },
+                                else => {
+                                    try self.formatHIRValue(std.io.getStdOut().writer(), field.value);
+                                    try std.io.getStdOut().writer().print("\n", .{});
+                                },
+                            }
                         }
                     },
                     else => {
@@ -1775,13 +1819,25 @@ pub const HIRVM = struct {
                 // Allocate array for fields
                 var fields = try self.allocator.alloc(HIRStructField, s.field_count);
 
-                // Pop values from stack and create fields in reverse order
+                // Pop field names and values from stack and create fields in reverse order
+                // Stack order: [value1, name1, value2, name2, ...]
                 var i: usize = s.field_count;
                 while (i > 0) {
                     i -= 1;
-                    const field_value = try self.stack.pop();
+                    const field_name = try self.stack.pop(); // Pop field name
+                    const field_value = try self.stack.pop(); // Pop field value
+
+                    // Extract field name as string
+                    const name_str = switch (field_name.value) {
+                        .string => |s_name| s_name,
+                        else => {
+                            self.reporter.reportError("Expected string for field name, got {s}", .{@tagName(field_name.value)});
+                            return ErrorList.TypeError;
+                        },
+                    };
+
                     fields[i] = HIRStructField{
-                        .name = "", // Field names are set later via StoreFieldName
+                        .name = try self.allocator.dupe(u8, name_str),
                         .value = field_value.value,
                         .field_type = s.field_types[i],
                         .path = null,
@@ -1806,7 +1862,7 @@ pub const HIRVM = struct {
 
                 // Ensure we have a struct instance
                 switch (frame.value) {
-                    .struct_instance => |*struct_inst| { // Note: changed to pointer to modify in place
+                    .struct_instance => |struct_inst| {
                         // Find the first empty field name and set it
                         for (struct_inst.fields) |*field| {
                             if (field.name.len == 0) {
@@ -1816,8 +1872,9 @@ pub const HIRVM = struct {
                             }
                         }
 
-                        // Push the struct back
-                        try self.stack.push(frame);
+                        // Create a new frame with the modified struct and push it back
+                        const modified_frame = HIRFrame.initFromHIRValue(HIRValue{ .struct_instance = struct_inst });
+                        try self.stack.push(modified_frame);
                     },
                     else => {
                         self.reporter.reportError("Cannot store field name on non-struct value: {s}", .{@tagName(frame.value)});
@@ -1839,8 +1896,21 @@ pub const HIRVM = struct {
                         // Find field by name
                         for (struct_inst.fields) |field| {
                             if (std.mem.eql(u8, field.name, interned_name)) {
+                                // For nested structs, we need to set the path
+                                var field_value = field.value;
+                                if (field_value == .struct_instance) {
+                                    // Build the full field path
+                                    var field_path: []const u8 = undefined;
+                                    if (struct_inst.path) |path| {
+                                        field_path = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ path, field.name });
+                                    } else {
+                                        field_path = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ struct_inst.type_name, field.name });
+                                    }
+                                    field_value.struct_instance.path = field_path;
+                                }
+
                                 // Push the field value onto the stack
-                                try self.stack.push(HIRFrame{ .value = field.value });
+                                try self.stack.push(HIRFrame{ .value = field_value });
                                 return;
                             }
                         }
@@ -1864,15 +1934,16 @@ pub const HIRVM = struct {
 
                 // Ensure we have a struct instance
                 switch (struct_frame.value) {
-                    .struct_instance => |*struct_inst| {
+                    .struct_instance => |struct_inst| {
                         // Find field by name
                         for (struct_inst.fields) |*field| {
                             if (std.mem.eql(u8, field.name, set_field.field_name)) {
                                 // Update the field value
                                 field.value = value_frame.value;
 
-                                // Push the struct back onto the stack
-                                try self.stack.push(struct_frame);
+                                // Create a new frame with the modified struct and push it back
+                                const modified_frame = HIRFrame.initFromHIRValue(HIRValue{ .struct_instance = struct_inst });
+                                try self.stack.push(modified_frame);
                                 return;
                             }
                         }
@@ -2475,27 +2546,27 @@ pub const HIRVM = struct {
     pub fn formatHIRValue(self: *HIRVM, writer: anytype, value: HIRValue) !void {
         switch (value) {
             .int => |i| try writer.print("{}", .{i}),
+            .u8 => |u| try writer.print("{}", .{u}),
             .float => |f| try writer.print("{d}", .{f}),
             .string => |s| try writer.print("\"{s}\"", .{s}),
-            .tetra => |b| try writer.print("{}", .{b}),
-            .u8 => |u| try writer.print("{}", .{u}),
+            .tetra => |t| try writer.print("{s}", .{switch (t) {
+                0 => "false",
+                1 => "true",
+                2 => "both",
+                3 => "neither",
+                else => "invalid",
+            }}),
             .nothing => try writer.print("nothing", .{}),
-            // Complex types - show contents for arrays
-            .array => |arr| {
-                try writer.print("[", .{});
-                var first = true;
-                for (arr.elements) |elem| {
-                    if (std.meta.eql(elem, HIRValue.nothing)) break;
-                    if (!first) try writer.print(", ", .{});
-                    try self.formatHIRValue(writer, elem);
-                    first = false;
+            .struct_instance => |s| {
+                try writer.print("{{ type: {s}, fields: [", .{s.type_name});
+                for (s.fields, 0..) |field, i| {
+                    try writer.print("{s}: ", .{field.name});
+                    try self.formatHIRValue(writer, field.value);
+                    if (i < s.fields.len - 1) try writer.print(", ", .{});
                 }
-                try writer.print("]", .{});
+                try writer.print("] }}", .{});
             },
-            .struct_instance => try writer.print("{{struct}}", .{}),
-            .tuple => try writer.print("(tuple)", .{}),
-            .map => try writer.print("{{map}}", .{}),
-            .enum_variant => try writer.print("enum_variant", .{}),
+            else => try writer.print("{s}", .{@tagName(value)}),
         }
     }
 
