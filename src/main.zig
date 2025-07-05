@@ -319,7 +319,7 @@ fn runSoxaFile(memoryManager: *MemoryManager, soxa_path: []const u8, reporter: *
     reporter.debug(">> Loaded SOXA: {} instructions, {} constants\n", .{ hir_program.instructions.len, hir_program.constant_pool.len });
 
     // Create and run HIR VM directly
-    var vm = try DoxaVM.init(&hir_program, reporter, memoryManager);
+    var vm = try DoxaVM.init(&hir_program, reporter, memoryManager, reporter.is_debug);
     defer vm.deinit();
 
     _ = try vm.run();
