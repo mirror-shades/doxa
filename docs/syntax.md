@@ -262,10 +262,10 @@ There are currently two trancendental operators, `and` and `not`. These can be r
 
 | ^     | T   | F   | B   | N   |
 | ----- | --- | --- | --- | --- |
-| **F** | F   | B   | B   | F   |
-| **T** | B   | T   | B   | F   |
-| **B** | B   | B   | B   | F   |
-| **N** | F   | F   | F   | F   |
+| **F** | F   | B   | B   | N   |
+| **T** | B   | T   | B   | N   |
+| **B** | B   | B   | B   | N   |
+| **N** | N   | N   | N   | N   |
 
 | ~     |     |
 | ----- | --- |

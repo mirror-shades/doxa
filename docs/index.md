@@ -1,13 +1,10 @@
 # Doxa
 
 ```
-Neither from itself nor from another,
-
-Nor from both,
-
-Nor without a cause,
-
-Does anything whatever, anywhere arise.
+Everything is real and is not real,
+Both real and not real,
+Neither real nor not real.
+This is Lord Buddha’s teaching.
 
 - Nāgārjuna
     Verses on the Middle Way (2nd–3rd century CE)
