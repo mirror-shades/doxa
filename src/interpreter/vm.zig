@@ -141,7 +141,7 @@ fn structFieldToHIRStructField(self: *HIRVM, field: types.StructField) !HIRStruc
     };
 }
 
-pub fn hirValueToTokenLiteral(hir_value: HIRValue) TokenLiteral {
+pub fn hirValueToTokenLiteral(self: *HIRVM, hir_value: HIRValue) TokenLiteral {
     return switch (hir_value) {
         .int => |i| TokenLiteral{ .int = i },
         .u8 => |u| TokenLiteral{ .u8 = u },
@@ -155,7 +155,15 @@ pub fn hirValueToTokenLiteral(hir_value: HIRValue) TokenLiteral {
             else => .false,
         } },
         .nothing => TokenLiteral{ .nothing = {} },
-        else => TokenLiteral{ .nothing = {} },
+        .array => |arr| blk: {
+            // Convert HIRArray to TokenLiteral array
+            var token_elements = self.allocator.alloc(TokenLiteral, arr.elements.len) catch break :blk TokenLiteral{ .nothing = {} };
+            for (arr.elements, 0..) |element, i| {
+                token_elements[i] = self.hirValueToTokenLiteral(element);
+            }
+            break :blk TokenLiteral{ .array = token_elements };
+        },
+        else => unreachable,
     };
 }
 
@@ -324,6 +332,36 @@ pub const HIRVM = struct {
                 .neither => 3,
             } },
             .nothing => HIRValue.nothing,
+            .array => |arr| blk: {
+                // Convert TokenLiteral array to HIRArray
+                var hir_elements = self.allocator.alloc(HIRValue, arr.len) catch break :blk HIRValue.nothing;
+                var element_type: HIRType = .Auto;
+
+                for (arr, 0..) |element, i| {
+                    hir_elements[i] = self.tokenLiteralToHIRValue(element);
+
+                    // Infer element type from first element
+                    if (i == 0 and element_type == .Auto) {
+                        element_type = switch (hir_elements[i]) {
+                            .int => .Int,
+                            .u8 => .U8,
+                            .float => .Float,
+                            .string => .String,
+                            .tetra => .Tetra,
+                            .nothing => .Nothing,
+                            .array => .Array,
+                            .struct_instance => .Struct,
+                            else => .Auto,
+                        };
+                    }
+                }
+
+                break :blk HIRValue{ .array = .{
+                    .elements = hir_elements,
+                    .element_type = element_type,
+                    .capacity = @intCast(arr.len),
+                } };
+            },
             .struct_value => |s| blk: {
                 // Convert StructField array to HIRStructField array
                 var hir_fields = self.allocator.alloc(HIRStructField, s.fields.len) catch break :blk HIRValue.nothing;
@@ -372,6 +410,14 @@ pub const HIRVM = struct {
                 else => .false,
             } },
             .nothing => TokenLiteral{ .nothing = {} },
+            .array => |arr| blk: {
+                // Convert HIRArray to TokenLiteral array
+                var token_elements = self.allocator.alloc(TokenLiteral, arr.elements.len) catch break :blk TokenLiteral{ .nothing = {} };
+                for (arr.elements, 0..) |element, i| {
+                    token_elements[i] = self.hirValueToTokenLiteral(element);
+                }
+                break :blk TokenLiteral{ .array = token_elements };
+            },
             .struct_instance => |s| blk: {
                 // Convert HIRStructField array to StructField array
                 var token_fields = self.allocator.alloc(StructField, s.fields.len) catch break :blk TokenLiteral{ .nothing = {} };
@@ -2503,6 +2549,17 @@ pub const HIRVM = struct {
                 else => "invalid",
             }}),
             .nothing => try writer.print("nothing", .{}),
+            .array => |arr| {
+                try writer.print("[", .{});
+                var first = true;
+                for (arr.elements) |elem| {
+                    if (std.meta.eql(elem, HIRValue.nothing)) break; // Stop at first nothing element
+                    if (!first) try writer.print(", ", .{});
+                    try self.formatHIRValue(writer, elem);
+                    first = false;
+                }
+                try writer.print("]", .{});
+            },
             .struct_instance => |s| {
                 try writer.print("{{ type: {s}, fields: [", .{s.type_name});
                 for (s.fields, 0..) |field, i| {
