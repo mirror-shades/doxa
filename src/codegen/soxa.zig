@@ -425,6 +425,9 @@ pub const HIRGenerator = struct {
 
                 // Enum declarations don't generate runtime instructions, they're compile-time only
             },
+            .Try => |try_stmt| {
+                try self.generateTryStmt(try_stmt);
+            },
             else => {
                 self.reporter.reportError("Unhandled statement type: {}", .{stmt.data});
             },
@@ -2002,6 +2005,57 @@ pub const HIRGenerator = struct {
             },
             else => return null,
         }
+    }
+
+    fn generateTryStmt(self: *HIRGenerator, try_stmt: ast.TryStmt) !void {
+        // Generate a unique label for the catch block
+        const catch_label = try self.generateLabel("catch");
+        const end_label = try self.generateLabel("try_end");
+
+        // Emit TryBegin instruction with catch label
+        try self.instructions.append(.{
+            .TryBegin = .{
+                .catch_label = catch_label,
+                .vm_catch_offset = 0, // Will be calculated later
+            },
+        });
+
+        // Generate try block code
+        for (try_stmt.try_body) |stmt| {
+            try self.generateStatement(stmt);
+        }
+
+        // Jump to end if no exception
+        try self.instructions.append(.{
+            .Jump = .{
+                .label = end_label,
+                .vm_offset = 0, // Will be calculated during VM initialization
+            },
+        });
+
+        // Emit catch label
+        try self.instructions.append(.{ .Label = .{
+            .name = catch_label,
+            .vm_address = 0,
+        } });
+
+        // Emit TryCatch instruction
+        try self.instructions.append(.{
+            .TryCatch = .{
+                .exception_type = null, // We'll add exception type support later
+            },
+        });
+
+        // Generate catch block code
+        for (try_stmt.catch_body) |stmt| {
+            try self.generateStatement(stmt);
+        }
+
+        // Emit end label
+        try self.instructions.append(.{ .Label = .{
+            .name = end_label,
+            .vm_address = 0,
+        } });
     }
 };
 
