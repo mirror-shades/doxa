@@ -26,6 +26,8 @@ const TokenLiteral = @import("../types/types.zig").TokenLiteral;
 const TypeInfo = @import("../ast/ast.zig").TypeInfo;
 const StructField = @import("../types/types.zig").StructField;
 const printi = std.debug.print;
+const StringInterner = memory.StringInterner;
+const types = @import("../types/types.zig");
 
 const STACK_SIZE: u32 = 1024 * 1024;
 
@@ -111,6 +113,22 @@ pub const HIRFrame = struct {
 };
 
 /// Utility functions to convert between HIR and memory system types
+fn hirStructFieldToStructField(self: *HIRVM, hir_field: HIRStructField) !types.StructField {
+    return types.StructField{
+        .name = try self.allocator.dupe(u8, hir_field.name),
+        .value = self.hirValueToTokenLiteral(hir_field.value),
+    };
+}
+
+fn structFieldToHIRStructField(self: *HIRVM, field: types.StructField) !HIRStructField {
+    return HIRStructField{
+        .name = try self.allocator.dupe(u8, field.name),
+        .value = self.tokenLiteralToHIRValue(field.value),
+        .field_type = .Auto,
+        .path = null,
+    };
+}
+
 pub fn hirValueToTokenLiteral(hir_value: HIRValue) TokenLiteral {
     return switch (hir_value) {
         .int => |i| TokenLiteral{ .int = i },
@@ -125,114 +143,7 @@ pub fn hirValueToTokenLiteral(hir_value: HIRValue) TokenLiteral {
             else => .false,
         } },
         .nothing => TokenLiteral{ .nothing = {} },
-        // Convert HIR arrays to TokenLiteral arrays
-        .array => |arr| blk: {
-            // Create a TokenLiteral array from HIR array
-            var token_elements = std.ArrayList(TokenLiteral).init(std.heap.page_allocator);
-            defer token_elements.deinit();
-
-            for (arr.elements) |elem| {
-                if (std.meta.eql(elem, HIRValue.nothing)) break;
-                token_elements.append(hirValueToTokenLiteral(elem)) catch break;
-            }
-
-            break :blk TokenLiteral{ .array = token_elements.toOwnedSlice() catch &[_]TokenLiteral{} };
-        },
-        // Other complex types still convert to nothing
-        .struct_instance => TokenLiteral{ .nothing = {} },
-        .tuple => TokenLiteral{ .nothing = {} },
-        .map => TokenLiteral{ .nothing = {} },
-        .enum_variant => TokenLiteral{ .nothing = {} },
-    };
-}
-
-pub fn tokenLiteralToHIRValue(token_literal: TokenLiteral) HIRValue {
-    return switch (token_literal) {
-        .int => |i| HIRValue{ .int = i },
-        .u8 => |u| HIRValue{ .u8 = u },
-        .float => |f| HIRValue{ .float = f },
-        .string => |s| HIRValue{ .string = s },
-        .tetra => |t| HIRValue{ .tetra = switch (t) {
-            .false => 0,
-            .true => 1,
-            .both => 2,
-            .neither => 3,
-        } },
-        .nothing => HIRValue.nothing,
-        // Convert TokenLiteral arrays back to HIR arrays
-        .array => |arr| blk: {
-            // CRITICAL FIX: For empty arrays, allocate minimum capacity for growth
-            const min_capacity = if (arr.len == 0) 8 else arr.len;
-            const elements = std.heap.page_allocator.alloc(HIRValue, min_capacity) catch {
-                // On allocation failure, return empty array
-                break :blk HIRValue{
-                    .array = HIRArray{
-                        .elements = &[_]HIRValue{},
-                        .element_type = .Auto,
-                        .capacity = 0,
-                    },
-                };
-            };
-
-            // Initialize all elements to nothing
-            for (elements) |*elem| {
-                elem.* = HIRValue.nothing;
-            }
-
-            // Copy actual elements
-            for (arr, 0..) |elem, i| {
-                if (i >= arr.len) break;
-                elements[i] = tokenLiteralToHIRValue(elem);
-            }
-
-            break :blk HIRValue{
-                .array = HIRArray{
-                    .elements = elements,
-                    .element_type = .Auto, // Infer from first element
-                    .capacity = @intCast(min_capacity), // CRITICAL FIX: Use min_capacity, not arr.len
-                },
-            };
-        },
-        // Other complex types still convert to nothing
-        .tuple => HIRValue.nothing,
-        .struct_value => HIRValue.nothing,
-        .function => HIRValue.nothing,
-        .enum_variant => HIRValue.nothing,
-        .map => HIRValue.nothing,
-    };
-}
-
-pub fn hirValueToTokenType(hir_value: HIRValue) TokenType {
-    return switch (hir_value) {
-        .int => .INT,
-        .u8 => .U8,
-        .float => .FLOAT,
-        .string => .STRING,
-        .tetra => .TETRA,
-        .nothing => .NOTHING,
-        // Complex types - map to closest TokenType
-        .array => .ARRAY,
-        .struct_instance => .IDENTIFIER, // Structs represented as identifiers
-        .tuple => .ARRAY, // Tuples similar to arrays
-        .map => .ARRAY, // Maps similar to arrays
-        .enum_variant => .IDENTIFIER, // Enums represented as identifiers
-    };
-}
-
-pub fn hirValueToTypeInfo(hir_value: HIRValue) TypeInfo {
-    return switch (hir_value) {
-        .int => TypeInfo{ .base = .Int, .is_mutable = true },
-        .u8 => TypeInfo{ .base = .U8, .is_mutable = true },
-        .float => TypeInfo{ .base = .Float, .is_mutable = true },
-        .string => TypeInfo{ .base = .String, .is_mutable = true },
-        .tetra => TypeInfo{ .base = .Tetra, .is_mutable = true },
-        .nothing => TypeInfo{ .base = .Nothing, .is_mutable = true },
-        // Complex types - map to appropriate TypeInfo
-        .array => TypeInfo{ .base = .Array, .is_mutable = true },
-        .struct_instance => TypeInfo{ .base = .Auto, .is_mutable = true }, // Struct types need resolution
-        .tuple => TypeInfo{ .base = .Tuple, .is_mutable = true },
-        .map => TypeInfo{ .base = .Map, .is_mutable = true },
-        .enum_variant => TypeInfo{ .base = .Auto, .is_mutable = true }, // Enum types need resolution
+        else => TokenLiteral{ .nothing = {} },
     };
 }
 
@@ -385,12 +296,122 @@ pub const HIRVM = struct {
     // New field for catch target
     current_catch_target: ?u32 = null, // Track the current catch block's IP
 
+    // Add string interner to VM
+    string_interner: *StringInterner,
+
+    pub fn tokenLiteralToHIRValue(self: *HIRVM, token_literal: TokenLiteral) HIRValue {
+        return switch (token_literal) {
+            .int => |i| HIRValue{ .int = i },
+            .u8 => |u| HIRValue{ .u8 = u },
+            .float => |f| HIRValue{ .float = f },
+            .string => |s| HIRValue{ .string = s },
+            .tetra => |t| HIRValue{ .tetra = switch (t) {
+                .false => 0,
+                .true => 1,
+                .both => 2,
+                .neither => 3,
+            } },
+            .nothing => HIRValue.nothing,
+            .struct_value => |s| blk: {
+                // Convert StructField array to HIRStructField array
+                var hir_fields = self.allocator.alloc(HIRStructField, s.fields.len) catch break :blk HIRValue.nothing;
+                for (s.fields, 0..) |field, i| {
+                    hir_fields[i] = HIRStructField{
+                        .name = field.name,
+                        .value = self.tokenLiteralToHIRValue(field.value),
+                        .field_type = .Auto, // We'll need type inference here
+                        .path = s.path,
+                    };
+                }
+                break :blk HIRValue{ .struct_instance = .{
+                    .type_name = s.type_name,
+                    .fields = hir_fields,
+                    .field_name = null,
+                    .path = s.path,
+                } };
+            },
+            else => HIRValue.nothing,
+        };
+    }
+
+    pub fn hirValueToTokenLiteral(self: *HIRVM, hir_value: HIRValue) TokenLiteral {
+        return switch (hir_value) {
+            .int => |i| TokenLiteral{ .int = i },
+            .u8 => |u| TokenLiteral{ .u8 = u },
+            .float => |f| TokenLiteral{ .float = f },
+            .string => |s| TokenLiteral{ .string = s },
+            .tetra => |t| TokenLiteral{ .tetra = switch (t) {
+                0 => .false,
+                1 => .true,
+                2 => .both,
+                3 => .neither,
+                else => .false,
+            } },
+            .nothing => TokenLiteral{ .nothing = {} },
+            .struct_instance => |s| blk: {
+                // Convert HIRStructField array to StructField array
+                var token_fields = self.allocator.alloc(StructField, s.fields.len) catch break :blk TokenLiteral{ .nothing = {} };
+                for (s.fields, 0..) |field, i| {
+                    token_fields[i] = StructField{
+                        .name = field.name,
+                        .value = self.hirValueToTokenLiteral(field.value),
+                    };
+                }
+                break :blk TokenLiteral{ .struct_value = .{
+                    .type_name = s.type_name,
+                    .fields = token_fields,
+                    .path = s.path,
+                } };
+            },
+            else => TokenLiteral{ .nothing = {} },
+        };
+    }
+
+    pub fn hirValueToTokenType(self: *HIRVM, hir_value: HIRValue) TokenType {
+        _ = self;
+        return switch (hir_value) {
+            .int => .INT,
+            .u8 => .U8,
+            .float => .FLOAT,
+            .string => .STRING,
+            .tetra => .TETRA,
+            .nothing => .NOTHING,
+            // Complex types - map to closest TokenType
+            .array => .ARRAY,
+            .struct_instance => .IDENTIFIER, // Structs represented as identifiers
+            .tuple => .ARRAY, // Tuples similar to arrays
+            .map => .ARRAY, // Maps similar to arrays
+            .enum_variant => .IDENTIFIER, // Enums represented as identifiers
+        };
+    }
+
+    pub fn hirValueToTypeInfo(self: *HIRVM, hir_value: HIRValue) TypeInfo {
+        _ = self;
+        return switch (hir_value) {
+            .int => TypeInfo{ .base = .Int, .is_mutable = true },
+            .u8 => TypeInfo{ .base = .U8, .is_mutable = true },
+            .float => TypeInfo{ .base = .Float, .is_mutable = true },
+            .string => TypeInfo{ .base = .String, .is_mutable = true },
+            .tetra => TypeInfo{ .base = .Tetra, .is_mutable = true },
+            .nothing => TypeInfo{ .base = .Nothing, .is_mutable = true },
+            // Complex types - map to appropriate TypeInfo
+            .array => TypeInfo{ .base = .Array, .is_mutable = true },
+            .struct_instance => TypeInfo{ .base = .Auto, .is_mutable = true }, // Struct types need resolution
+            .tuple => TypeInfo{ .base = .Tuple, .is_mutable = true },
+            .map => TypeInfo{ .base = .Map, .is_mutable = true },
+            .enum_variant => TypeInfo{ .base = .Auto, .is_mutable = true }, // Enum types need resolution
+        };
+    }
+
     pub fn init(program: *HIRProgram, reporter: *Reporter, memory_manager: *MemoryManager, debug_enabled: bool) !HIRVM {
         const allocator = memory_manager.getAllocator();
 
         // Create a new execution scope for this HIR VM run
         // This allows proper cleanup and isolation
         const execution_scope = try memory_manager.scope_manager.createScope(memory_manager.scope_manager.root_scope);
+
+        const string_interner = try allocator.create(StringInterner);
+        string_interner.* = StringInterner.init(allocator);
 
         var vm = HIRVM{
             .program = program,
@@ -407,6 +428,7 @@ pub const HIRVM = struct {
             .hot_vars = [_]?HotVar{null} ** 4,
             .hot_var_count = 0,
             .debug_enabled = debug_enabled,
+            .string_interner = string_interner,
         };
 
         // Pre-resolve all labels for efficient jumps
@@ -561,7 +583,7 @@ pub const HIRVM = struct {
                     for (self.hot_vars[0..self.hot_var_count]) |hot_var| {
                         if (hot_var != null and std.mem.eql(u8, hot_var.?.name, v.var_name)) {
                             if (self.memory_manager.scope_manager.value_storage.get(hot_var.?.storage_id)) |storage| {
-                                const hir_value = tokenLiteralToHIRValue(storage.value);
+                                const hir_value = self.tokenLiteralToHIRValue(storage.value);
                                 if (self.debug_enabled) {
                                     std.debug.print(">>   TURBO hit for '{s}' = {any} (storage_id: {})\n", .{ v.var_name, hir_value, hot_var.?.storage_id });
                                 }
@@ -578,7 +600,7 @@ pub const HIRVM = struct {
                     // Check cache first - trust storage_id if valid
                     if (self.var_cache.get(v.var_name)) |cached_storage_id| {
                         if (self.memory_manager.scope_manager.value_storage.get(cached_storage_id)) |storage| {
-                            const hir_value = tokenLiteralToHIRValue(storage.value);
+                            const hir_value = self.tokenLiteralToHIRValue(storage.value);
                             if (self.debug_enabled) {
                                 std.debug.print(">>   CACHE hit for '{s}' = {any} (storage_id: {})\n", .{ v.var_name, hir_value, cached_storage_id });
                             }
@@ -603,7 +625,7 @@ pub const HIRVM = struct {
                             self.var_cache.put(v.var_name, variable.storage_id) catch {};
                         }
 
-                        const hir_value = tokenLiteralToHIRValue(storage.value);
+                        const hir_value = self.tokenLiteralToHIRValue(storage.value);
 
                         if (self.debug_enabled) {
                             std.debug.print(">>   Found '{s}' = {any} (storage_id: {}, scope: {})\n", .{ v.var_name, hir_value, variable.storage_id, self.current_scope.id });
@@ -624,9 +646,9 @@ pub const HIRVM = struct {
             .StoreVar => |v| {
                 // Store top of stack to variable
                 const value = try self.stack.pop();
-                const token_literal = hirValueToTokenLiteral(value.value);
-                const token_type = hirValueToTokenType(value.value);
-                const type_info = hirValueToTypeInfo(value.value);
+                const token_literal = self.hirValueToTokenLiteral(value.value);
+                const token_type = self.hirValueToTokenType(value.value);
+                const type_info = self.hirValueToTypeInfo(value.value);
 
                 if (self.debug_enabled) {
                     std.debug.print(">> StoreVar '{s}' = {any} in scope {}\n", .{ v.var_name, value.value, self.current_scope.id });
@@ -1784,13 +1806,18 @@ pub const HIRVM = struct {
 
                 // Ensure we have a struct instance
                 switch (frame.value) {
-                    .struct_instance => |struct_inst| {
-                        // Create a modified copy of the struct
-                        var new_struct = struct_inst;
-                        new_struct.field_name = store_field.field_name;
+                    .struct_instance => |*struct_inst| { // Note: changed to pointer to modify in place
+                        // Find the first empty field name and set it
+                        for (struct_inst.fields) |*field| {
+                            if (field.name.len == 0) {
+                                // Allocate and store the field name
+                                field.name = try self.allocator.dupe(u8, store_field.field_name);
+                                break;
+                            }
+                        }
 
-                        // Push the modified frame back
-                        try self.stack.push(HIRFrame{ .value = .{ .struct_instance = new_struct } });
+                        // Push the struct back
+                        try self.stack.push(frame);
                     },
                     else => {
                         self.reporter.reportError("Cannot store field name on non-struct value: {s}", .{@tagName(frame.value)});
@@ -1806,9 +1833,12 @@ pub const HIRVM = struct {
                 // Ensure we have a struct instance
                 switch (frame.value) {
                     .struct_instance => |struct_inst| {
+                        // Intern the field name for comparison
+                        const interned_name = try self.string_interner.intern(get_field.field_name);
+
                         // Find field by name
                         for (struct_inst.fields) |field| {
-                            if (std.mem.eql(u8, field.name, get_field.field_name)) {
+                            if (std.mem.eql(u8, field.name, interned_name)) {
                                 // Push the field value onto the stack
                                 try self.stack.push(HIRFrame{ .value = field.value });
                                 return;
@@ -1820,6 +1850,38 @@ pub const HIRVM = struct {
                     },
                     else => {
                         self.reporter.reportError("Cannot get field from non-struct value: {s}", .{@tagName(frame.value)});
+                        return ErrorList.TypeError;
+                    },
+                }
+            },
+
+            .SetField => |set_field| {
+                // Get the value to set from the top of the stack
+                const value_frame = try self.stack.pop();
+
+                // Get the struct instance from the stack
+                const struct_frame = try self.stack.pop();
+
+                // Ensure we have a struct instance
+                switch (struct_frame.value) {
+                    .struct_instance => |*struct_inst| {
+                        // Find field by name
+                        for (struct_inst.fields) |*field| {
+                            if (std.mem.eql(u8, field.name, set_field.field_name)) {
+                                // Update the field value
+                                field.value = value_frame.value;
+
+                                // Push the struct back onto the stack
+                                try self.stack.push(struct_frame);
+                                return;
+                            }
+                        }
+
+                        self.reporter.reportError("Field '{s}' not found in struct '{s}'", .{ set_field.field_name, struct_inst.type_name });
+                        return ErrorList.FieldNotFound;
+                    },
+                    else => {
+                        self.reporter.reportError("Cannot set field on non-struct value: {s}", .{@tagName(struct_frame.value)});
                         return ErrorList.TypeError;
                     },
                 }
