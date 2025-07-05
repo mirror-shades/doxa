@@ -1863,16 +1863,28 @@ pub const HIRVM = struct {
                 // Ensure we have a struct instance
                 switch (frame.value) {
                     .struct_instance => |struct_inst| {
-                        // Find the first empty field name and set it
-                        for (struct_inst.fields) |*field| {
+                        // Check if field names are already set (modern StructNew behavior)
+                        var has_empty_fields = false;
+                        for (struct_inst.fields) |field| {
                             if (field.name.len == 0) {
-                                // Allocate and store the field name
-                                field.name = try self.allocator.dupe(u8, store_field.field_name);
+                                has_empty_fields = true;
                                 break;
                             }
                         }
 
-                        // Create a new frame with the modified struct and push it back
+                        if (has_empty_fields) {
+                            // Legacy behavior: find the first empty field name and set it
+                            for (struct_inst.fields) |*field| {
+                                if (field.name.len == 0) {
+                                    // Allocate and store the field name
+                                    field.name = try self.allocator.dupe(u8, store_field.field_name);
+                                    break;
+                                }
+                            }
+                        }
+                        // If no empty fields, this is a no-op (field names already set by StructNew)
+
+                        // Create a new frame with the (possibly modified) struct and push it back
                         const modified_frame = HIRFrame.initFromHIRValue(HIRValue{ .struct_instance = struct_inst });
                         try self.stack.push(modified_frame);
                     },

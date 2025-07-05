@@ -1248,13 +1248,6 @@ pub const HIRGenerator = struct {
                 // Generate object expression
                 try self.generateExpression(field_assign.object);
 
-                // Store field name for proper path tracking
-                try self.instructions.append(.{
-                    .StoreFieldName = .{
-                        .field_name = field_assign.field.lexeme,
-                    },
-                });
-
                 // Generate value expression
                 try self.generateExpression(field_assign.value);
 
@@ -1375,12 +1368,9 @@ pub const HIRGenerator = struct {
                 // Generate object expression
                 try self.generateExpression(field.object);
 
-                // Store field name for proper path tracking
-                try self.instructions.append(.{
-                    .StoreFieldName = .{
-                        .field_name = field.field.lexeme,
-                    },
-                });
+                // Only generate StoreFieldName for struct construction contexts
+                // For regular field access, we only need GetField
+                // StoreFieldName is only used during StructNew to set field names
 
                 // Generate GetField instruction
                 try self.instructions.append(.{

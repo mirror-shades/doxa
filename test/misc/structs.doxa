@@ -20,3 +20,5 @@ mike.person.age is 26;
 mike.person.age?;
 
 mike.salary?;
+
+mike.person?;
