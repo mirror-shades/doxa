@@ -335,6 +335,20 @@ pub const HIRInstruction = union(enum) {
     /// LLVM: Complex allocation + memcpy
     ArrayConcat,
 
+    /// Exists quantifier operation
+    /// VM: Check if any element satisfies predicate
+    /// LLVM: Generate loop with early exit
+    Exists: struct {
+        predicate_type: HIRType,
+    },
+
+    /// Forall quantifier operation
+    /// VM: Check if all elements satisfy predicate
+    /// LLVM: Generate loop with early exit
+    Forall: struct {
+        predicate_type: HIRType,
+    },
+
     //==================================================================
     // STRUCT OPERATIONS (Phase 1)
     //==================================================================
