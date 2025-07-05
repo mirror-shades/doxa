@@ -122,11 +122,11 @@ try {
 
 ## Special Operators
 
-### Inspect (`?`)
+### Peek operator (`?`)
 
 ```doxa
 var x is computeValue();
-x?;                              // Prints value with location
+x?;                              // Prints value with location, name, and type
 ```
 
 ### Type Information

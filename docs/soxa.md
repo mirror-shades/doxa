@@ -87,7 +87,7 @@ Offset | Size | Field
 ### Debug Operations (Tags 12, 13)
 
 - `Halt` (12) - Program termination
-- `Inspect` (13) - Print/debug value with optional variable name
+- `Peek` (13) - Print/debug value with optional variable name
 
 ## Value Serialization
 
@@ -133,7 +133,7 @@ The VM provides built-in functions for core operations:
 
 - **Array Methods**: `length()`, `push(element)`, `pop()`, array indexing
 - **String Methods**: `length()`, concatenation, substring operations
-- **Debug Functions**: `inspect()` for value debugging
+- **Debug Functions**: `peek()` for value debugging
 - **Type Functions**: `typeof()` for runtime type information
 
 Built-in functions are optimized with direct VM implementation rather than function calls.
@@ -208,7 +208,7 @@ Instructions are encoded as:
 | 10  | Pop         | (no operands)                                                                                              |
 | 11  | Label       | [name_length: 4 bytes] [name: variable]                                                                    |
 | 12  | Halt        | (no operands)                                                                                              |
-| 13  | Inspect     | [has_name: 1 byte] [name_length: 4 bytes if has_name] [name: variable if has_name] [value_type: 1 byte]    |
+| 13  | Peek        | [has_name: 1 byte] [name_length: 4 bytes if has_name] [name: variable if has_name] [value_type: 1 byte]    |
 | 14  | ArrayNew    | [element_type: 1 byte] [size: 4 bytes]                                                                     |
 | 15  | ArrayGet    | [bounds_check: 1 byte]                                                                                     |
 | 16  | ArraySet    | [bounds_check: 1 byte]                                                                                     |
@@ -252,7 +252,7 @@ Debug information (when present) includes:
 - Source file mapping
 - Line number information
 - Variable name preservation
-- Type information for inspection
+- Type information for peekion
 
 ## File Size Characteristics
 
