@@ -2576,12 +2576,13 @@ pub const HIRVM = struct {
                 try writer.print("]", .{});
             },
             .struct_instance => |s| {
+                try writer.print("{{ ", .{}); // Add opening bracket
                 for (s.fields, 0..) |field, i| {
                     try writer.print("{s}: ", .{field.name});
                     try self.formatHIRValue(writer, field.value);
                     if (i < s.fields.len - 1) try writer.print(", ", .{});
                 }
-                try writer.print("] }}", .{});
+                try writer.print(" }}", .{}); // Fix closing bracket
             },
             else => try writer.print("{s}", .{@tagName(value)}),
         }

@@ -3332,22 +3332,37 @@ const SoxaTextParser = struct {
 
             // If this is a struct peekion, gather field information from the stack
             if (value_type == .Struct) {
-                // Try to get struct info from the current context
-                const struct_info = try self.getCurrentStructInfo();
-                for (struct_info.fields) |field| {
-                    try field_names.append(field.name);
-                    try field_types.append(field.type);
-                }
-                // Free the allocated fields array
-                self.allocator.free(struct_info.fields);
+                // FIXED: Check if struct_context is available before trying to get struct info
+                // When parsing pre-generated HIR files, struct_context may be null
+                if (self.struct_context) |_| {
+                    // Try to get struct info from the current context
+                    const struct_info = try self.getCurrentStructInfo();
+                    for (struct_info.fields) |field| {
+                        try field_names.append(field.name);
+                        try field_types.append(field.type);
+                    }
+                    // Free the allocated fields array
+                    self.allocator.free(struct_info.fields);
 
-                try self.instructions.append(.{ .PeekStruct = .{
-                    .type_name = struct_name.?,
-                    .field_count = @intCast(field_names.items.len),
-                    .field_names = try field_names.toOwnedSlice(),
-                    .field_types = try field_types.toOwnedSlice(),
-                    .location = location,
-                } });
+                    try self.instructions.append(.{ .PeekStruct = .{
+                        .type_name = struct_name.?,
+                        .field_count = @intCast(field_names.items.len),
+                        .field_names = try field_names.toOwnedSlice(),
+                        .field_types = try field_types.toOwnedSlice(),
+                        .location = location,
+                    } });
+                } else {
+                    // No struct context available - create a regular Peek instruction
+                    // This happens when parsing pre-generated HIR files
+                    try self.instructions.append(.{ .Peek = .{
+                        .name = if (path_builder.items.len > 0)
+                            try self.allocator.dupe(u8, path_builder.items)
+                        else
+                            name,
+                        .value_type = value_type,
+                        .location = location,
+                    } });
+                }
             } else {
                 try self.instructions.append(.{ .Peek = .{
                     .name = if (path_builder.items.len > 0)
