@@ -23,7 +23,7 @@ const ResizeBehavior = @import("soxa_instructions.zig").ResizeBehavior;
 //==================================================================
 
 // Add this type definition before the HIRGenerator struct
-const StructInspectInfo = struct {
+const StructPeekInfo = struct {
     name: []const u8,
     field_count: u32,
     field_names: [][]const u8,
@@ -36,7 +36,7 @@ pub const HIRGenerator = struct {
     instructions: std.ArrayList(HIRInstruction),
     constants: std.ArrayList(HIRValue),
     debug_enabled: bool = false,
-    current_inspect_expr: ?*ast.Expr = null,
+    current_peek_expr: ?*ast.Expr = null,
     current_field_name: ?[]const u8 = null,
     string_pool: std.ArrayList([]const u8),
     constant_map: std.StringHashMap(u32), // For deduplication
@@ -89,7 +89,7 @@ pub const HIRGenerator = struct {
             .instructions = std.ArrayList(HIRInstruction).init(allocator),
             .constants = std.ArrayList(HIRValue).init(allocator),
             .debug_enabled = false,
-            .current_inspect_expr = null,
+            .current_peek_expr = null,
             .string_pool = std.ArrayList([]const u8).init(allocator),
             .constant_map = std.StringHashMap(u32).init(allocator),
             .variables = std.StringHashMap(u32).init(allocator),
@@ -821,45 +821,45 @@ pub const HIRGenerator = struct {
                 }
             },
 
-            .Inspect => |inspect| {
+            .Peek => |peek| {
 
-                // Set current inspect expression for field access tracking
-                self.current_inspect_expr = inspect.expr;
-                defer self.current_inspect_expr = null;
+                // Set current peek expression for field access tracking
+                self.current_peek_expr = peek.expr;
+                defer self.current_peek_expr = null;
 
-                // Generate the expression to inspect
-                try self.generateExpression(inspect.expr);
+                // Generate the expression to peek
+                try self.generateExpression(peek.expr);
 
-                // Duplicate it so it remains on stack after inspection
+                // Duplicate it so it remains on stack after peekion
                 try self.instructions.append(.Dup);
 
-                // Build the full path for the inspect expression (handles field access)
-                const inspect_path = try self.buildInspectPath(inspect.expr);
+                // Build the full path for the peek expression (handles field access)
+                const peek_path = try self.buildPeekPath(peek.expr);
 
                 // NEW: Use tracked variable type when available, otherwise infer
                 var inferred_type: HIRType = .Auto;
 
-                // If inspecting a variable, use the tracked type first
-                if (inspect_path != null) {
+                // If peeking a variable, use the tracked type first
+                if (peek_path != null) {
                     // For simple variables, try to get tracked type
-                    if (inspect.expr.data == .Variable) {
-                        if (self.getTrackedVariableType(inspect.expr.data.Variable.lexeme)) |tracked_type| {
+                    if (peek.expr.data == .Variable) {
+                        if (self.getTrackedVariableType(peek.expr.data.Variable.lexeme)) |tracked_type| {
                             inferred_type = tracked_type;
                         } else {
-                            inferred_type = self.inferTypeFromExpression(inspect.expr);
+                            inferred_type = self.inferTypeFromExpression(peek.expr);
                         }
                     } else {
-                        inferred_type = self.inferTypeFromExpression(inspect.expr);
+                        inferred_type = self.inferTypeFromExpression(peek.expr);
                     }
                 } else {
-                    inferred_type = self.inferTypeFromExpression(inspect.expr);
+                    inferred_type = self.inferTypeFromExpression(peek.expr);
                 }
 
-                // Generate inspect instruction with full path and correct type
-                try self.instructions.append(.{ .Inspect = .{
-                    .name = inspect_path,
+                // Generate peek instruction with full path and correct type
+                try self.instructions.append(.{ .Peek = .{
+                    .name = peek_path,
                     .value_type = inferred_type,
-                    .location = inspect.location,
+                    .location = peek.location,
                 } });
             },
 
@@ -1407,14 +1407,14 @@ pub const HIRGenerator = struct {
                             .field_name = field.field.lexeme,
                             .container_type = .Struct,
                             .field_index = 0,
-                            .field_for_inspect = if (self.current_inspect_expr != null) true else false,
+                            .field_for_peek = if (self.current_peek_expr != null) true else false,
                         },
                     });
                 }
 
-                // Handle inspection context
-                if (self.current_inspect_expr) |inspect| {
-                    if (inspect.data == .Inspect) {
+                // Handle peekion context
+                if (self.current_peek_expr) |peek| {
+                    if (peek.data == .Peek) {
                         self.current_field_name = field.field.lexeme;
                     }
                 }
@@ -1440,18 +1440,18 @@ pub const HIRGenerator = struct {
                 try self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } });
             },
 
-            .InspectStruct => |inspect| {
+            .PeekStruct => |peek| {
 
-                // Generate the expression to inspect
-                try self.generateExpression(inspect.expr);
+                // Generate the expression to peek
+                try self.generateExpression(peek.expr);
 
                 // Get struct info from the expression
-                const struct_info: StructInspectInfo = switch (inspect.expr.data) {
+                const struct_info: StructPeekInfo = switch (peek.expr.data) {
                     .StructLiteral => |struct_lit| blk: {
                         const field_count: u32 = @truncate(struct_lit.fields.len);
                         const field_names = try self.allocator.alloc([]const u8, struct_lit.fields.len);
                         const field_types = try self.allocator.alloc(HIRType, struct_lit.fields.len);
-                        break :blk StructInspectInfo{
+                        break :blk StructPeekInfo{
                             .name = struct_lit.name.lexeme,
                             .field_count = field_count,
                             .field_names = field_names,
@@ -1464,7 +1464,7 @@ pub const HIRGenerator = struct {
                         }
                         const field_names = try self.allocator.alloc([]const u8, 0);
                         const field_types = try self.allocator.alloc(HIRType, 0);
-                        break :blk StructInspectInfo{
+                        break :blk StructPeekInfo{
                             .name = var_token.lexeme,
                             .field_count = 0,
                             .field_names = field_names,
@@ -1488,7 +1488,7 @@ pub const HIRGenerator = struct {
                                 .field_name = field.field.lexeme,
                                 .container_type = .Struct,
                                 .field_index = 0,
-                                .field_for_inspect = true,
+                                .field_for_peek = true,
                             },
                         });
 
@@ -1496,9 +1496,9 @@ pub const HIRGenerator = struct {
                         const field_names = try self.allocator.alloc([]const u8, 1);
                         const field_types = try self.allocator.alloc(HIRType, 1);
                         field_names[0] = field.field.lexeme;
-                        field_types[0] = self.inferTypeFromExpression(inspect.expr);
+                        field_types[0] = self.inferTypeFromExpression(peek.expr);
 
-                        break :blk StructInspectInfo{
+                        break :blk StructPeekInfo{
                             .name = field.field.lexeme,
                             .field_count = 1,
                             .field_names = field_names,
@@ -1510,13 +1510,13 @@ pub const HIRGenerator = struct {
                     },
                 };
 
-                // Add the InspectStruct instruction with the gathered info
-                try self.instructions.append(.{ .InspectStruct = .{
+                // Add the PeekStruct instruction with the gathered info
+                try self.instructions.append(.{ .PeekStruct = .{
                     .type_name = struct_info.name,
                     .field_count = struct_info.field_count,
                     .field_names = struct_info.field_names,
                     .field_types = struct_info.field_types,
-                    .location = inspect.location,
+                    .location = peek.location,
                 } });
             },
 
@@ -2046,15 +2046,15 @@ pub const HIRGenerator = struct {
         return .Auto; // Unresolved
     }
 
-    /// Build a full variable path for inspect expressions (e.g., "mike.person.age")
-    fn buildInspectPath(self: *HIRGenerator, expr: *const ast.Expr) !?[]const u8 {
+    /// Build a full variable path for peek expressions (e.g., "mike.person.age")
+    fn buildPeekPath(self: *HIRGenerator, expr: *const ast.Expr) !?[]const u8 {
         switch (expr.data) {
             .Variable => |var_token| {
                 return try self.allocator.dupe(u8, var_token.lexeme);
             },
             .FieldAccess => |field| {
                 // Recursively build the path for the object
-                if (try self.buildInspectPath(field.object)) |base_path| {
+                if (try self.buildPeekPath(field.object)) |base_path| {
                     return try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ base_path, field.field.lexeme });
                 } else {
                     return try self.allocator.dupe(u8, field.field.lexeme);
@@ -2211,11 +2211,11 @@ pub fn translateToVMBytecode(program: *HIRProgram, allocator: std.mem.Allocator,
             .Pop => {
                 try bytecode.append(@intFromEnum(instructions.OpCode.OP_POP));
             },
-            .Inspect => |_| {
-                // For inspect, we can use existing VM inspection mechanism
+            .Peek => |_| {
+                // For peek, we can use existing VM peekion mechanism
                 // The VM will handle the printing based on the top stack value
                 try bytecode.append(@intFromEnum(instructions.OpCode.OP_DUP)); // Keep value on stack
-                // Note: Your VM's inspect handling is in the main execution loop
+                // Note: Your VM's peek handling is in the main execution loop
             },
             .Halt => {
                 try bytecode.append(@intFromEnum(instructions.OpCode.OP_HALT));
@@ -2238,7 +2238,7 @@ pub fn translateToVMBytecode(program: *HIRProgram, allocator: std.mem.Allocator,
 fn getBytecodeSize(instruction: HIRInstruction) u32 {
     return switch (instruction) {
         .Const, .LoadVar, .StoreVar, .Jump, .JumpCond, .Call, .TailCall => 2, // opcode + operand
-        .IntArith, .Compare, .Return, .Dup, .Pop, .Inspect, .Halt => 1, // opcode only
+        .IntArith, .Compare, .Return, .Dup, .Pop, .Peek, .Halt => 1, // opcode only
         .Label => 0, // No bytecode generated
         else => 1, // Default to 1 byte
     };
@@ -2584,7 +2584,7 @@ fn writeHIRInstruction(writer: anytype, instruction: HIRInstruction, allocator: 
         .Halt => {
             try writer.writeByte(12); // Instruction tag
         },
-        .Inspect => |i| {
+        .Peek => |i| {
             try writer.writeByte(13); // Instruction tag
             // Write whether name is present
             if (i.name) |name| {
@@ -2734,7 +2734,7 @@ fn readHIRInstruction(reader: anytype, allocator: std.mem.Allocator) !HIRInstruc
             return HIRInstruction{ .Label = .{ .name = name, .vm_address = 0 } };
         },
         12 => HIRInstruction.Halt,
-        13 => { // Inspect
+        13 => { // Peek
             const has_name = (try reader.readByte()) != 0;
             const name = if (has_name) blk: {
                 const name_len = try reader.readInt(u32, .little);
@@ -2761,7 +2761,7 @@ fn readHIRInstruction(reader: anytype, allocator: std.mem.Allocator) !HIRInstruc
                 };
             } else null;
 
-            return HIRInstruction{ .Inspect = .{ .name = name, .value_type = value_type, .location = location } };
+            return HIRInstruction{ .Peek = .{ .name = name, .value_type = value_type, .location = location } };
         },
 
         // Array operations (Phase 1)
@@ -2850,18 +2850,18 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
 
         .Pop => try writer.print("    Pop                         ; Remove top value\n", .{}),
 
-        .Inspect => |i| {
+        .Peek => |i| {
             if (i.name) |name| {
                 if (i.location) |location| {
-                    try writer.print("    Inspect \"{s}\" {s} @{s}:{}:{}         ; Debug print\n", .{ name, @tagName(i.value_type), location.file, location.line, location.column });
+                    try writer.print("    Peek \"{s}\" {s} @{s}:{}:{}         ; Debug print\n", .{ name, @tagName(i.value_type), location.file, location.line, location.column });
                 } else {
-                    try writer.print("    Inspect \"{s}\" {s}         ; Debug print\n", .{ name, @tagName(i.value_type) });
+                    try writer.print("    Peek \"{s}\" {s}         ; Debug print\n", .{ name, @tagName(i.value_type) });
                 }
             } else {
                 if (i.location) |location| {
-                    try writer.print("    Inspect {s} @{s}:{}:{}                 ; Debug print\n", .{ @tagName(i.value_type), location.file, location.line, location.column });
+                    try writer.print("    Peek {s} @{s}:{}:{}                 ; Debug print\n", .{ @tagName(i.value_type), location.file, location.line, location.column });
                 } else {
-                    try writer.print("    Inspect {s}                 ; Debug print\n", .{@tagName(i.value_type)});
+                    try writer.print("    Peek {s}                 ; Debug print\n", .{@tagName(i.value_type)});
                 }
             }
         },
@@ -2890,8 +2890,8 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
         .EnterScope => |s| try writer.print("    EnterScope {} {}            ; Enter new scope\n", .{ s.scope_id, s.var_count }),
         .ExitScope => |s| try writer.print("    ExitScope {}                ; Exit scope\n", .{s.scope_id}),
 
-        .InspectStruct => |i| {
-            try writer.print("    InspectStruct \"{s}\" {} [", .{ i.type_name, i.field_count });
+        .PeekStruct => |i| {
+            try writer.print("    PeekStruct \"{s}\" {} [", .{ i.type_name, i.field_count });
             for (i.field_names, 0..) |name, idx| {
                 try writer.print("\"{s}\"", .{name});
                 if (idx < i.field_names.len - 1) try writer.writeByte(',');
@@ -2905,7 +2905,7 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
             if (i.location) |loc| {
                 try writer.print(" @{s}:{d}:{d}", .{ loc.file, loc.line, loc.column });
             }
-            try writer.writeAll("         ; Inspect struct\n");
+            try writer.writeAll("         ; Peek struct\n");
         },
 
         else => try writer.print("    ; TODO: {s}\n", .{@tagName(instruction)}),
@@ -2976,9 +2976,9 @@ const SoxaTextParser = struct {
                 try self.updateFunctionEntry(trimmed_right);
                 continue;
             } else if (std.mem.indexOf(u8, trimmed_right, ":")) |colon_pos| {
-                // Check if this is an instruction with location info (like "Inspect ... @file:line:column")
+                // Check if this is an instruction with location info (like "Peek ... @file:line:column")
                 const trimmed_line = std.mem.trim(u8, trimmed_right, " \t");
-                const is_instruction_with_location = std.mem.startsWith(u8, trimmed_line, "Inspect ") or
+                const is_instruction_with_location = std.mem.startsWith(u8, trimmed_line, "Peek ") or
                     std.mem.startsWith(u8, trimmed_line, "Call ") or
                     std.mem.startsWith(u8, trimmed_line, "LoadVar ") or
                     std.mem.startsWith(u8, trimmed_line, "StoreVar ");
@@ -3113,9 +3113,9 @@ const SoxaTextParser = struct {
     fn parseInstruction(self: *SoxaTextParser, line: []const u8) !void {
         const trimmed = std.mem.trim(u8, line, " \t");
 
-        // Handle struct inspection instructions
-        if (std.mem.startsWith(u8, trimmed, "InspectStruct")) {
-            // Parse: InspectStruct "Person" 2 ["name", "age"] [String, Int]
+        // Handle struct peekion instructions
+        if (std.mem.startsWith(u8, trimmed, "PeekStruct")) {
+            // Parse: PeekStruct "Person" 2 ["name", "age"] [String, Int]
             const struct_name_start = std.mem.indexOf(u8, trimmed, "\"").? + 1;
             const struct_name_end = std.mem.indexOfPos(u8, trimmed, struct_name_start, "\"").?;
             const struct_name = try self.allocator.dupe(u8, trimmed[struct_name_start..struct_name_end]);
@@ -3170,7 +3170,7 @@ const SoxaTextParser = struct {
                 .field_path = field_path,
             };
 
-            try self.instructions.append(.{ .InspectStruct = .{
+            try self.instructions.append(.{ .PeekStruct = .{
                 .type_name = struct_name,
                 .field_count = field_count,
                 .field_names = try field_names.toOwnedSlice(),
@@ -3268,13 +3268,13 @@ const SoxaTextParser = struct {
             try self.instructions.append(HIRInstruction.Pop);
         } else if (std.mem.eql(u8, op, "Halt")) {
             try self.instructions.append(HIRInstruction.Halt);
-        } else if (std.mem.eql(u8, op, "Inspect")) {
+        } else if (std.mem.eql(u8, op, "Peek")) {
             const name_or_type = tokens.next() orelse return;
             var name: ?[]const u8 = null;
             var value_type: HIRType = .String;
             var location: ?Reporting.Reporter.Location = null;
 
-            // For struct inspection
+            // For struct peekion
             var struct_name: ?[]const u8 = null;
             var field_names = std.ArrayList([]const u8).init(self.allocator);
             var field_types = std.ArrayList(HIRType).init(self.allocator);
@@ -3314,18 +3314,23 @@ const SoxaTextParser = struct {
                 }
             } else {
                 // Similar logic for non-quoted case...
-                value_type = if (std.mem.eql(u8, name_or_type, "Int")) HIRType.Int
-                    // ... other type checks ...
-                else if (std.mem.eql(u8, name_or_type, "Struct")) blk: {
+                value_type = if (std.mem.eql(u8, name_or_type, "Int")) HIRType.Int else if (std.mem.eql(u8, name_or_type, "Float")) HIRType.Float else if (std.mem.eql(u8, name_or_type, "String")) HIRType.String else if (std.mem.eql(u8, name_or_type, "Tetra")) HIRType.Tetra else if (std.mem.eql(u8, name_or_type, "Array")) HIRType.Array else if (std.mem.eql(u8, name_or_type, "Tuple")) HIRType.Tuple else if (std.mem.eql(u8, name_or_type, "Map")) HIRType.Map else if (std.mem.eql(u8, name_or_type, "Struct")) blk: {
                     struct_name = if (path_builder.items.len > 0)
                         try self.allocator.dupe(u8, path_builder.items)
                     else
                         "anonymous";
                     break :blk HIRType.Struct;
-                } else HIRType.String;
+                } else if (std.mem.eql(u8, name_or_type, "Enum")) HIRType.Enum else HIRType.String;
+
+                // Check for location info after type
+                if (tokens.next()) |location_str| {
+                    if (std.mem.startsWith(u8, location_str, "@")) {
+                        location = try self.parseLocationString(location_str);
+                    }
+                }
             }
 
-            // If this is a struct inspection, gather field information from the stack
+            // If this is a struct peekion, gather field information from the stack
             if (value_type == .Struct) {
                 // Try to get struct info from the current context
                 const struct_info = try self.getCurrentStructInfo();
@@ -3336,7 +3341,7 @@ const SoxaTextParser = struct {
                 // Free the allocated fields array
                 self.allocator.free(struct_info.fields);
 
-                try self.instructions.append(.{ .InspectStruct = .{
+                try self.instructions.append(.{ .PeekStruct = .{
                     .type_name = struct_name.?,
                     .field_count = @intCast(field_names.items.len),
                     .field_names = try field_names.toOwnedSlice(),
@@ -3344,7 +3349,7 @@ const SoxaTextParser = struct {
                     .location = location,
                 } });
             } else {
-                try self.instructions.append(.{ .Inspect = .{
+                try self.instructions.append(.{ .Peek = .{
                     .name = if (path_builder.items.len > 0)
                         try self.allocator.dupe(u8, path_builder.items)
                     else
@@ -3442,7 +3447,7 @@ const SoxaTextParser = struct {
                     .field_name = field_name,
                     .container_type = HIRType.Struct,
                     .field_index = 0, // Will be resolved at runtime
-                    .field_for_inspect = false,
+                    .field_for_peek = false,
                 },
             });
         } else if (std.mem.eql(u8, op, "SetField")) {

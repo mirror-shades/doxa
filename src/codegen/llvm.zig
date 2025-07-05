@@ -410,11 +410,11 @@ pub const LLVMGenerator = struct {
                 return last_value orelse null;
             },
 
-            .Inspect => |inspect| {
-                std.debug.print("Generating inspect expression\n", .{});
-                const value = try self.generateExpr(inspect.expr);
+            .Peek => |peek| {
+                std.debug.print("Generating peek expression\n", .{});
+                const value = try self.generateExpr(peek.expr);
                 const type_kind = LLVMCore.LLVMGetTypeKind(LLVMCore.LLVMTypeOf(value));
-                std.debug.print("Inspect value type kind: {}\n", .{type_kind});
+                std.debug.print("Peek value type kind: {}\n", .{type_kind});
 
                 // Call appropriate print function based on type
                 switch (type_kind) {

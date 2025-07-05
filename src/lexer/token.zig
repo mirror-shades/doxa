@@ -13,7 +13,7 @@ pub const TokenType = enum {
     MODULO, // %
     HASH, // #
     TILDE, // ~
-    INSPECT, // ?
+    PEEK, // ?
 
     //one or two character tokens
     DOT, // .

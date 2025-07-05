@@ -1042,14 +1042,14 @@ pub const Parser = struct {
             name_token = left.?.data.Variable;
         }
 
-        const inspect_expr = try self.allocator.create(ast.Expr);
-        inspect_expr.* = .{
+        const peek_expr = try self.allocator.create(ast.Expr);
+        peek_expr.* = .{
             .base = .{
                 .id = ast.generateNodeId(),
                 .span = ast.SourceSpan.fromToken(self.peek()),
             },
             .data = .{
-                .Inspect = .{
+                .Peek = .{
                     .expr = left.?,
                     .location = .{
                         .file = self.current_file,
@@ -1061,7 +1061,7 @@ pub const Parser = struct {
             },
         };
 
-        return inspect_expr;
+        return peek_expr;
     }
 
     pub fn enumMember(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {

@@ -561,19 +561,19 @@ pub const HIRVM = struct {
     fn validateHIRProgram(self: *HIRVM) !void {
         for (self.program.instructions, 0..) |instruction, ip| {
             switch (instruction) {
-                .Inspect => |i| {
+                .Peek => |i| {
                     if (i.value_type == .Auto) {
-                        self.reporter.reportError("FATAL: Auto type found in Inspect instruction at IP {} for variable '{s}'. Type inference likely failed during code generation.", .{ ip, i.name orelse "unknown" });
+                        self.reporter.reportError("FATAL: Auto type found in Peek instruction at IP {} for variable '{s}'. Type inference likely failed during code generation.", .{ ip, i.name orelse "unknown" });
                         return ErrorList.InternalParserError;
                     }
                 },
 
-                .InspectStruct => |i| {
+                .PeekStruct => |i| {
                     // Check for Auto types in field types
                     for (i.field_types) |field_type| {
                         if (field_type == .Auto) {
-                            self.reporter.reportError("FATAL: Auto type found in InspectStruct instruction at IP {} for field {}. Type inference likely failed during code generation.", .{ ip, i });
-                            return error.AutoTypeInInspectStruct;
+                            self.reporter.reportError("FATAL: Auto type found in PeekStruct instruction at IP {} for field {}. Type inference likely failed during code generation.", .{ ip, i });
+                            return error.AutoTypeInPeekStruct;
                         }
                     }
                 },
@@ -861,36 +861,21 @@ pub const HIRVM = struct {
                 _ = value;
             },
 
-            .Inspect => |inspect| {
+            .Peek => |peek| {
                 const value = try self.stack.pop();
-                self.reporter.debug("Inspect called with value: {any}", .{value});
+                self.reporter.debug("Peek called with value: {any}", .{value});
 
-                if (inspect.location) |location| {
+                if (peek.location) |location| {
                     try std.io.getStdOut().writer().print("[{s}:{d}:{d}] ", .{ location.file, location.line, location.column });
                 }
 
-                // Determine the variable name to display
-                var variable_name: ?[]const u8 = null;
-
-                // First priority: use the name from the inspect instruction
-                if (inspect.name) |name| {
-                    variable_name = name;
-                } else if (value.value == .struct_instance) {
-                    // For struct instances, use the full path if available
-                    if (value.value.struct_instance.path) |path| {
-                        variable_name = path;
-                    } else if (value.field_name) |field_name| {
-                        variable_name = field_name;
-                    }
-                } else if (value.field_name) |field_name| {
-                    variable_name = field_name;
-                }
-
-                // Print the variable name and value
-                if (variable_name) |name| {
-                    try std.io.getStdOut().writer().print("{s} = ", .{name});
+                // Print variable name before :: if available, then always show type
+                if (peek.name) |name| {
+                    const type_string = self.getTypeString(value.value);
+                    try std.io.getStdOut().writer().print("{s} :: {s} is ", .{ name, type_string });
                 } else {
-                    try std.io.getStdOut().writer().print("value = ", .{});
+                    const type_string = self.getTypeString(value.value);
+                    try std.io.getStdOut().writer().print(":: {s} is ", .{type_string});
                 }
 
                 // Format the value
@@ -901,9 +886,9 @@ pub const HIRVM = struct {
                 try self.stack.push(value);
             },
 
-            .InspectStruct => |i| {
+            .PeekStruct => |i| {
                 const value = try self.stack.pop();
-                self.reporter.debug("InspectStruct called with value: {any}", .{value});
+                self.reporter.debug("PeekStruct called with value: {any}", .{value});
 
                 // Handle both struct instances and field values
                 switch (value.value) {
@@ -913,7 +898,7 @@ pub const HIRVM = struct {
                         for (s.fields) |field| {
                             self.reporter.debug("Processing field '{s}'", .{field.name});
 
-                            // Format with location information like the regular Inspect instruction
+                            // Format with location information like the regular Peek instruction
                             if (i.location) |location| {
                                 try std.io.getStdOut().writer().print("[{s}:{d}:{d}] ", .{ location.file, location.line, location.column });
                             }
@@ -927,19 +912,20 @@ pub const HIRVM = struct {
                             }
                             defer self.allocator.free(field_path);
 
-                            try std.io.getStdOut().writer().print("{s} = ", .{field_path});
+                            const field_type_string = self.getTypeString(field.value);
+                            try std.io.getStdOut().writer().print(":: {s} is ", .{field_type_string});
 
                             // For nested structs, recursively print their fields
                             switch (field.value) {
                                 .struct_instance => |nested| {
-                                    // Create a new InspectStruct instruction for the nested struct
+                                    // Create a new PeekStruct instruction for the nested struct
                                     const field_names = try self.allocator.alloc([]const u8, nested.fields.len);
                                     const field_types = try self.allocator.alloc(HIRType, nested.fields.len);
                                     for (nested.fields, 0..) |nested_field, field_idx| {
                                         field_names[field_idx] = nested_field.name;
                                         field_types[field_idx] = nested_field.field_type;
                                     }
-                                    const nested_inspect = HIRInstruction{ .InspectStruct = .{
+                                    const nested_peek = HIRInstruction{ .PeekStruct = .{
                                         .location = i.location,
                                         .field_names = field_names,
                                         .type_name = nested.type_name,
@@ -950,8 +936,8 @@ pub const HIRVM = struct {
                                     var nested_with_path = nested;
                                     nested_with_path.path = field_path;
                                     try self.stack.push(HIRFrame{ .value = HIRValue{ .struct_instance = nested_with_path } });
-                                    // Recursively inspect the nested struct
-                                    try self.executeInstruction(nested_inspect);
+                                    // Recursively peek the nested struct
+                                    try self.executeInstruction(nested_peek);
                                 },
                                 else => {
                                     try self.formatHIRValue(std.io.getStdOut().writer(), field.value);
@@ -968,8 +954,9 @@ pub const HIRVM = struct {
                                 try std.io.getStdOut().writer().print("[{s}:{d}:{d}] ", .{ location.file, location.line, location.column });
                             }
 
-                            // Always use the first field name from the instruction
-                            try std.io.getStdOut().writer().print("{s} = ", .{i.field_names[0]});
+                            // Show type information for non-struct values
+                            const value_type_string = self.getTypeString(value.value);
+                            try std.io.getStdOut().writer().print(":: {s} is ", .{value_type_string});
                             try self.formatHIRValue(std.io.getStdOut().writer(), value.value);
                             try std.io.getStdOut().writer().print("\n", .{});
                         }
@@ -2506,7 +2493,7 @@ pub const HIRVM = struct {
         };
     }
 
-    /// Print a HIR value for debugging/inspection
+    /// Print a HIR value for debugging/peekion
     pub fn printHIRValue(self: *HIRVM, value: HIRValue) !void {
         switch (value) {
             .int => |i| std.debug.print("{}", .{i}),
@@ -2532,6 +2519,34 @@ pub const HIRVM = struct {
             .map => std.debug.print("{{map}}", .{}),
             .enum_variant => std.debug.print("enum_variant", .{}),
         }
+    }
+
+    /// Get a readable type string from HIRValue for debug output
+    pub fn getTypeString(self: *HIRVM, value: HIRValue) []const u8 {
+        _ = self;
+        return switch (value) {
+            .int => "int",
+            .u8 => "u8",
+            .float => "float",
+            .string => "string",
+            .tetra => "tetra",
+            .nothing => "nothing",
+            .array => |arr| switch (arr.element_type) {
+                .Int => "int[]",
+                .U8 => "u8[]",
+                .Float => "float[]",
+                .String => "string[]",
+                .Tetra => "tetra[]",
+                .Array => "array[]", // Nested arrays
+                .Struct => "struct[]",
+                .Auto => "auto[]",
+                else => unreachable,
+            },
+            .struct_instance => |s| s.type_name,
+            .tuple => "tuple",
+            .map => "map",
+            .enum_variant => "enum",
+        };
     }
 
     /// Format HIR value to a writer (for proper UTF-8 buffered output like old interpreter)
@@ -2561,7 +2576,6 @@ pub const HIRVM = struct {
                 try writer.print("]", .{});
             },
             .struct_instance => |s| {
-                try writer.print("{{ type: {s}, fields: [", .{s.type_name});
                 for (s.fields, 0..) |field, i| {
                     try writer.print("{s}: ", .{field.name});
                     try self.formatHIRValue(writer, field.value);
