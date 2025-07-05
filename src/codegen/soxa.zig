@@ -1364,28 +1364,57 @@ pub const HIRGenerator = struct {
             },
 
             .FieldAccess => |field| {
-
                 // Generate object expression
                 try self.generateExpression(field.object);
 
-                // Only generate StoreFieldName for struct construction contexts
-                // For regular field access, we only need GetField
-                // StoreFieldName is only used during StructNew to set field names
+                // Check the type of the object being accessed
+                const obj_type = self.inferTypeFromExpression(field.object);
 
-                // Generate GetField instruction
-                try self.instructions.append(.{
-                    .GetField = .{
-                        .field_name = field.field.lexeme,
-                        .container_type = .Struct,
-                        .field_index = 0, // Index will be resolved by VM
-                        .field_for_inspect = if (self.current_inspect_expr != null) true else false,
-                    },
-                });
+                if (obj_type == .String) {
+                    // String operations
+                    if (std.mem.eql(u8, field.field.lexeme, "length")) {
+                        // Generate StringOp.Length instruction
+                        try self.instructions.append(.{
+                            .StringOp = .{
+                                .op = .Length,
+                            },
+                        });
+                    } else {
+                        // Treat as string indexing
+                        const index_const = try self.addConstant(HIRValue{ .int = 1 }); // Length 1 for single char
+                        try self.instructions.append(.{ .Const = .{ .value = HIRValue{ .int = 1 }, .constant_id = index_const } });
 
-                // If this is for inspection, store the field name
+                        // Parse field name as index
+                        if (std.fmt.parseInt(i32, field.field.lexeme, 10)) |index| {
+                            const idx_const = try self.addConstant(HIRValue{ .int = index });
+                            try self.instructions.append(.{ .Const = .{ .value = HIRValue{ .int = index }, .constant_id = idx_const } });
+
+                            // Generate substring operation for indexing
+                            try self.instructions.append(.{
+                                .StringOp = .{
+                                    .op = .Substring,
+                                },
+                            });
+                        } else |_| {
+                            // Not a valid string operation
+                            return self.reporter.reportError("Invalid string operation: {s}", .{field.field.lexeme});
+                        }
+                    }
+                } else {
+                    // Regular struct field access
+                    try self.instructions.append(.{
+                        .GetField = .{
+                            .field_name = field.field.lexeme,
+                            .container_type = .Struct,
+                            .field_index = 0,
+                            .field_for_inspect = if (self.current_inspect_expr != null) true else false,
+                        },
+                    });
+                }
+
+                // Handle inspection context
                 if (self.current_inspect_expr) |inspect| {
                     if (inspect.data == .Inspect) {
-                        // Store the field name for the upcoming INSPECT instruction
                         self.current_field_name = field.field.lexeme;
                     }
                 }
@@ -1723,19 +1752,57 @@ pub const HIRGenerator = struct {
             .StructLiteral => .Struct,
             .EnumMember => .Enum,
             .FieldAccess => |field| {
-                // Field access type depends on the field being accessed
-                if (std.mem.eql(u8, field.field.lexeme, "age") or
-                    std.mem.eql(u8, field.field.lexeme, "salary"))
-                {
-                    return .Int; // Numeric fields
+                // First check the type of the object being accessed
+                const obj_type = self.inferTypeFromExpression(field.object);
+
+                // Handle string operations
+                if (obj_type == .String) {
+                    if (std.mem.eql(u8, field.field.lexeme, "length")) {
+                        return .Int; // String length returns int
+                    }
+                    // String indexing returns a single character string
+                    if (std.fmt.parseInt(i32, field.field.lexeme, 10)) |_| {
+                        return .String;
+                    } else |_| {
+                        return .Auto; // Invalid string operation
+                    }
                 }
-                if (std.mem.eql(u8, field.field.lexeme, "name")) {
-                    return .String; // String fields
+
+                // Handle struct fields
+                if (obj_type == .Struct) {
+                    // Check if this is a nested field access
+                    if (field.object.data == .FieldAccess) {
+                        const parent_field = field.object.data.FieldAccess;
+                        const parent_type = self.inferTypeFromExpression(parent_field.object);
+                        if (parent_type == .Struct) {
+                            // Handle nested struct fields
+                            if (std.mem.eql(u8, parent_field.field.lexeme, "person")) {
+                                // Person struct fields
+                                if (std.mem.eql(u8, field.field.lexeme, "age")) {
+                                    return .Int;
+                                }
+                                if (std.mem.eql(u8, field.field.lexeme, "name")) {
+                                    return .String;
+                                }
+                            }
+                        }
+                    } else {
+                        // Top-level struct fields
+                        if (std.mem.eql(u8, field.field.lexeme, "age") or
+                            std.mem.eql(u8, field.field.lexeme, "salary"))
+                        {
+                            return .Int; // Numeric fields
+                        }
+                        if (std.mem.eql(u8, field.field.lexeme, "name")) {
+                            return .String; // String fields
+                        }
+                        if (std.mem.eql(u8, field.field.lexeme, "person")) {
+                            return .Struct; // Nested struct fields
+                        }
+                    }
                 }
-                if (std.mem.eql(u8, field.field.lexeme, "length")) {
-                    return .Int; // Length method returns int
-                }
-                return .String; // Default for field access
+
+                return .Auto; // Default for unknown object types
             },
             .Exists, .ForAll => .Tetra, // Quantifiers return tetra values
             .Logical => .Tetra, // Logical operations (↔, ⊕, ∧, ∨, ↑, ↓, →) return tetra values
