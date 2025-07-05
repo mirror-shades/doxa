@@ -403,15 +403,6 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#type-system" class="md-nav__link">
-    <span class="md-ellipsis">
-      Type System
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#basic-composition-example" class="md-nav__link">
     <span class="md-ellipsis">
       Basic Composition Example
@@ -478,9 +469,9 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#inspect" class="md-nav__link">
+  <a href="#peek-operator" class="md-nav__link">
     <span class="md-ellipsis">
-      Inspect (?)
+      Peek operator (?)
     </span>
   </a>
   
@@ -645,12 +636,6 @@
 
 <h1 id="doxa-language-reference">Doxa Language Reference</h1>
 <h2 id="core-language-features">Core Language Features</h2>
-<h3 id="type-system">Type System</h3>
-<ul>
-<li>No operator or function overloading</li>
-<li>No classes, only structs and composition</li>
-<li>Garbage collected memory management</li>
-</ul>
 <h3 id="basic-composition-example">Basic Composition Example</h3>
 <div class="highlight"><pre><span></span><code>struct Animal {
     name: string
@@ -754,9 +739,9 @@ var result is match status {
 }
 </code></pre></div>
 <h2 id="special-operators">Special Operators</h2>
-<h3 id="inspect">Inspect (<code>?</code>)</h3>
+<h3 id="peek-operator">Peek operator (<code>?</code>)</h3>
 <div class="highlight"><pre><span></span><code>var x is computeValue();
-x?;                              // Prints value with location
+x?;                              // Prints value with location, name, and type
 </code></pre></div>
 <h3 id="type-information">Type Information</h3>
 <div class="highlight"><pre><span></span><code>typeof(42);                      // &quot;int&quot;
@@ -870,16 +855,16 @@ not (forall x in arr where x &gt; 3); // true
 </thead>
 <tbody>
 <tr>
-<td><strong>T</strong></td>
-<td>T</td>
+<td><strong>F</strong></td>
+<td>F</td>
 <td>B</td>
 <td>B</td>
 <td>F</td>
 </tr>
 <tr>
-<td><strong>F</strong></td>
+<td><strong>T</strong></td>
 <td>B</td>
-<td>F</td>
+<td>T</td>
 <td>B</td>
 <td>F</td>
 </tr>
@@ -908,12 +893,12 @@ not (forall x in arr where x &gt; 3); // true
 </thead>
 <tbody>
 <tr>
-<td><strong>T</strong></td>
-<td>F</td>
-</tr>
-<tr>
 <td><strong>F</strong></td>
 <td>T</td>
+</tr>
+<tr>
+<td><strong>T</strong></td>
+<td>F</td>
 </tr>
 <tr>
 <td><strong>B</strong></td>

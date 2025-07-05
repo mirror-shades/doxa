@@ -919,7 +919,7 @@
 <h3 id="debug-operations-tags-12-13">Debug Operations (Tags 12, 13)</h3>
 <ul>
 <li><code>Halt</code> (12) - Program termination</li>
-<li><code>Inspect</code> (13) - Print/debug value with optional variable name</li>
+<li><code>Peek</code> (13) - Print/debug value with optional variable name</li>
 </ul>
 <h2 id="value-serialization">Value Serialization</h2>
 <p>Values are encoded with type tags:</p>
@@ -1010,7 +1010,7 @@
 <ul>
 <li><strong>Array Methods</strong>: <code>length()</code>, <code>push(element)</code>, <code>pop()</code>, array indexing</li>
 <li><strong>String Methods</strong>: <code>length()</code>, concatenation, substring operations</li>
-<li><strong>Debug Functions</strong>: <code>inspect()</code> for value debugging</li>
+<li><strong>Debug Functions</strong>: <code>peek()</code> for value debugging</li>
 <li><strong>Type Functions</strong>: <code>typeof()</code> for runtime type information</li>
 </ul>
 <p>Built-in functions are optimized with direct VM implementation rather than function calls.</p>
@@ -1133,7 +1133,7 @@
 </tr>
 <tr>
 <td>13</td>
-<td>Inspect</td>
+<td>Peek</td>
 <td>[has_name: 1 byte] [name_length: 4 bytes if has_name] [name: variable if has_name] [value_type: 1 byte]</td>
 </tr>
 <tr>
@@ -1212,7 +1212,7 @@
 <li>Source file mapping</li>
 <li>Line number information</li>
 <li>Variable name preservation</li>
-<li>Type information for inspection</li>
+<li>Type information for peekion</li>
 </ul>
 <h2 id="file-size-characteristics">File Size Characteristics</h2>
 <p>Typical SOXA files are 60-80% the size of equivalent source code due to:</p>
