@@ -40,6 +40,7 @@ const HotVar = struct {
 /// HIR-based VM Frame - simplified to work with memory management
 pub const HIRFrame = struct {
     value: HIRValue,
+    field_name: ?[]const u8 = null,
 
     // Helper constructors
     pub fn initInt(x: i32) HIRFrame {
@@ -67,7 +68,10 @@ pub const HIRFrame = struct {
     }
 
     pub fn initFromHIRValue(value: HIRValue) HIRFrame {
-        return HIRFrame{ .value = value };
+        return .{
+            .value = value,
+            .field_name = null,
+        };
     }
 
     pub fn asInt(self: HIRFrame) !i32 {
@@ -378,6 +382,9 @@ pub const HIRVM = struct {
     // Tail call optimization: flag to skip scope creation on next EnterScope
     skip_next_enter_scope: bool = false,
 
+    // New field for catch target
+    current_catch_target: ?u32 = null, // Track the current catch block's IP
+
     pub fn init(program: *HIRProgram, reporter: *Reporter, memory_manager: *MemoryManager, debug_enabled: bool) !HIRVM {
         const allocator = memory_manager.getAllocator();
 
@@ -477,8 +484,17 @@ pub const HIRVM = struct {
                 .Inspect => |i| {
                     if (i.value_type == .Auto) {
                         self.reporter.reportError("FATAL: Auto type found in Inspect instruction at IP {} for variable '{s}'. Type inference likely failed during code generation.", .{ ip, i.name orelse "unknown" });
-                        std.debug.print(">>   Inspect instruction: {any}\n", .{i});
                         return ErrorList.InternalParserError;
+                    }
+                },
+
+                .InspectStruct => |i| {
+                    // Check for Auto types in field types
+                    for (i.field_types) |field_type| {
+                        if (field_type == .Auto) {
+                            self.reporter.reportError("FATAL: Auto type found in InspectStruct instruction at IP {} for field {}. Type inference likely failed during code generation.", .{ ip, i });
+                            return error.AutoTypeInInspectStruct;
+                        }
                     }
                 },
 
@@ -828,48 +844,92 @@ pub const HIRVM = struct {
                 _ = value;
             },
 
-            .Inspect => |i| {
-                // OPTIMIZED: Use proper UTF-8 buffered output like the old interpreter
-                const value = try self.stack.peek();
+            .Inspect => |inspect| {
+                const value = try self.stack.pop();
+                self.reporter.debug("Inspect called with value: {any}", .{value});
 
-                var buffer = std.ArrayList(u8).init(self.allocator);
-                defer buffer.deinit();
-
-                const name = i.name orelse "";
-
-                std.debug.print(">> INSPECT DEBUG: name={s}, instruction_value_type={s}, actual_value={any}\n", .{ name, @tagName(i.value_type), value.value });
-
-                // Check for special tetra formatting based on value_type
-                if (i.value_type == .Tetra) {
-                    if (self.debug_enabled) {
-                        std.debug.print(">> Formatting tetra value: type={s}, value={any}\n", .{ @tagName(i.value_type), value.value });
-                    }
-                    // Handle tetra values regardless of storage type (could be .int or .tetra)
-                    const tetra_num = switch (value.value) {
-                        .tetra => |t| t,
-                        .int => |int_val| if (int_val >= 0 and int_val <= 3) @as(u8, @intCast(int_val)) else 0,
-                        else => 0,
-                    };
-                    const tetra_value = switch (tetra_num) {
-                        0 => "false",
-                        1 => "true",
-                        2 => "both",
-                        3 => "neither",
-                        else => "unknown",
-                    };
-                    try buffer.writer().print("INSPECT {s}: {s}\n", .{ name, tetra_value });
-                } else {
-                    if (self.debug_enabled and name.len > 0 and (std.mem.eql(u8, name, "firstFold") or std.mem.eql(u8, name, "secondFold"))) {
-                        std.debug.print(">> NOT formatting as tetra: name={s}, type={s}, value={any}\n", .{ name, @tagName(i.value_type), value.value });
-                    }
-                    try buffer.writer().print("INSPECT {s}: ", .{name});
-                    // Format the value using the same approach as old interpreter
-                    try self.formatHIRValue(buffer.writer(), value.value);
-                    try buffer.writer().print("\n", .{});
+                if (inspect.location) |location| {
+                    try std.io.getStdOut().writer().print("[{s}:{d}:{d}] ", .{ location.file, location.line, location.column });
                 }
 
-                // Use std.io.getStdOut().writeAll for proper UTF-8 output (like old interpreter)
-                try std.io.getStdOut().writeAll(buffer.items);
+                // Determine the variable name to display
+                var variable_name: ?[]const u8 = null;
+
+                // First priority: use the name from the inspect instruction
+                if (inspect.name) |name| {
+                    variable_name = name;
+                } else if (value.value == .struct_instance) {
+                    // For struct instances, use the full path if available
+                    if (value.value.struct_instance.path) |path| {
+                        variable_name = path;
+                    } else if (value.field_name) |field_name| {
+                        variable_name = field_name;
+                    }
+                } else if (value.field_name) |field_name| {
+                    variable_name = field_name;
+                }
+
+                // Print the variable name and value
+                if (variable_name) |name| {
+                    try std.io.getStdOut().writer().print("{s} = ", .{name});
+                } else {
+                    try std.io.getStdOut().writer().print("value = ", .{});
+                }
+
+                // Format the value
+                try self.formatHIRValue(std.io.getStdOut().writer(), value.value);
+                try std.io.getStdOut().writer().print("\n", .{});
+
+                // Push the value back onto the stack for potential further use
+                try self.stack.push(value);
+            },
+
+            .InspectStruct => |i| {
+                const value = try self.stack.pop();
+                self.reporter.debug("InspectStruct called with value: {any}", .{value});
+
+                // Handle both struct instances and field values
+                switch (value.value) {
+                    .struct_instance => |s| {
+                        self.reporter.debug("Processing struct instance of type '{s}' with {d} fields", .{ s.type_name, s.fields.len });
+                        // Print each field with proper location formatting
+                        for (s.fields) |field| {
+                            self.reporter.debug("Processing field '{s}'", .{field.name});
+
+                            // Format with location information like the regular Inspect instruction
+                            if (i.location) |location| {
+                                try std.io.getStdOut().writer().print("[{s}:{d}:{d}] ", .{ location.file, location.line, location.column });
+                            }
+
+                            // Build the full field path
+                            if (s.path) |path| {
+                                try std.io.getStdOut().writer().print("{s}.{s} = ", .{ path, field.name });
+                            } else {
+                                try std.io.getStdOut().writer().print("{s}.{s} = ", .{ s.type_name, field.name });
+                            }
+
+                            try self.formatHIRValue(std.io.getStdOut().writer(), field.value);
+                            try std.io.getStdOut().writer().print("\n", .{});
+                        }
+                    },
+                    else => {
+                        self.reporter.debug("Processing non-struct value with {d} field names", .{i.field_names.len});
+                        // For non-struct values (like field access results), print as a single value with location
+                        if (i.field_names.len > 0) {
+                            if (i.location) |location| {
+                                try std.io.getStdOut().writer().print("[{s}:{d}:{d}] ", .{ location.file, location.line, location.column });
+                            }
+
+                            // Always use the first field name from the instruction
+                            try std.io.getStdOut().writer().print("{s} = ", .{i.field_names[0]});
+                            try self.formatHIRValue(std.io.getStdOut().writer(), value.value);
+                            try std.io.getStdOut().writer().print("\n", .{});
+                        }
+                    },
+                }
+
+                // Push the value back onto the stack for potential further use
+                try self.stack.push(value);
             },
 
             .EnterScope => |s| {
@@ -928,18 +988,14 @@ pub const HIRVM = struct {
             },
 
             // ULTRA-FAST Logical operations using lookup tables!
-            .LogicalOp => |l| {
+            .LogicalOp => |op| {
                 const b = try self.stack.pop();
                 const a = try self.stack.pop();
 
-                const result = switch (l.op) {
+                const result = switch (op.op) {
                     .And => try self.logicalAnd(a, b),
                     .Or => try self.logicalOr(a, b),
-                    .Not => blk: {
-                        // For NOT, we only use 'a', push 'b' back
-                        try self.stack.push(b);
-                        break :blk try self.logicalNot(a);
-                    },
+                    .Not => try self.logicalNot(a),
                     .Iff => try self.logicalIff(a, b),
                     .Xor => try self.logicalXor(a, b),
                     .Nand => try self.logicalNand(a, b),
@@ -1642,10 +1698,161 @@ pub const HIRVM = struct {
                 }
             },
 
-            else => {
-                if (self.debug_enabled) {
-                    std.debug.print("!! Unhandled HIR instruction: {s}\n", .{@tagName(instruction)});
+            .TryBegin => |t| {
+                // Create a new scope for the try block
+                const new_scope = try self.memory_manager.scope_manager.createScope(self.current_scope);
+                self.current_scope = new_scope;
+                if (self.fast_mode) {
+                    self.var_cache.clearRetainingCapacity();
                 }
+
+                // Store the catch label for later use
+                if (self.label_map.get(t.catch_label)) |target_ip| {
+                    // Store the catch target for use by Throw
+                    self.current_catch_target = target_ip;
+                } else {
+                    return self.reporter.reportError("Catch label not found: {s}", .{t.catch_label});
+                }
+            },
+
+            .TryCatch => |t| {
+                // Exit the try block scope and create a new scope for the catch block
+                if (self.current_scope.parent) |parent_scope| {
+                    const old_scope = self.current_scope;
+                    self.current_scope = parent_scope;
+                    if (self.fast_mode) {
+                        self.var_cache.clearRetainingCapacity();
+                    }
+                    old_scope.deinit();
+                }
+
+                // Create new scope for catch block
+                const catch_scope = try self.memory_manager.scope_manager.createScope(self.current_scope);
+                self.current_scope = catch_scope;
+                if (self.fast_mode) {
+                    self.var_cache.clearRetainingCapacity();
+                }
+
+                // If there's an exception type, we could store it for type checking
+                _ = t.exception_type;
+            },
+
+            .Throw => |t| {
+                // For now, we'll just push nothing onto the stack as the error value
+                try self.stack.push(HIRFrame.initNothing());
+
+                // Jump to the catch block if we have one
+                if (self.current_catch_target) |target_ip| {
+                    self.ip = target_ip;
+                } else {
+                    return self.reporter.reportError("No catch block found for throw with type {s}", .{@tagName(t.exception_type)});
+                }
+            },
+
+            .StructNew => |s| {
+                // Allocate array for fields
+                var fields = try self.allocator.alloc(HIRStructField, s.field_count);
+
+                // Pop values from stack and create fields in reverse order
+                var i: usize = s.field_count;
+                while (i > 0) {
+                    i -= 1;
+                    const field_value = try self.stack.pop();
+                    fields[i] = HIRStructField{
+                        .name = "", // Field names are set later via StoreFieldName
+                        .value = field_value.value,
+                        .field_type = s.field_types[i],
+                        .path = null,
+                    };
+                }
+
+                // Create new struct value
+                const struct_value = HIRValue{ .struct_instance = .{
+                    .type_name = try self.allocator.dupe(u8, s.type_name),
+                    .fields = fields,
+                    .field_name = null,
+                    .path = null,
+                } };
+
+                // Push struct onto stack
+                try self.stack.push(HIRFrame.initFromHIRValue(struct_value));
+            },
+
+            .StoreFieldName => |store_field| {
+                // Get the struct instance from the top of the stack
+                const frame = try self.stack.pop();
+
+                // Ensure we have a struct instance
+                switch (frame.value) {
+                    .struct_instance => |struct_inst| {
+                        // Create a modified copy of the struct
+                        var new_struct = struct_inst;
+                        new_struct.field_name = store_field.field_name;
+
+                        // Push the modified frame back
+                        try self.stack.push(HIRFrame{ .value = .{ .struct_instance = new_struct } });
+                    },
+                    else => {
+                        self.reporter.reportError("Cannot store field name on non-struct value: {s}", .{@tagName(frame.value)});
+                        return ErrorList.TypeError;
+                    },
+                }
+            },
+
+            .GetField => |get_field| {
+                // Get the struct instance from the top of the stack
+                const frame = try self.stack.pop();
+
+                // Ensure we have a struct instance
+                switch (frame.value) {
+                    .struct_instance => |struct_inst| {
+                        // Find field by name
+                        for (struct_inst.fields) |field| {
+                            if (std.mem.eql(u8, field.name, get_field.field_name)) {
+                                // Push the field value onto the stack
+                                try self.stack.push(HIRFrame{ .value = field.value });
+                                return;
+                            }
+                        }
+
+                        self.reporter.reportError("Field '{s}' not found in struct '{s}'", .{ get_field.field_name, struct_inst.type_name });
+                        return ErrorList.FieldNotFound;
+                    },
+                    else => {
+                        self.reporter.reportError("Cannot get field from non-struct value: {s}", .{@tagName(frame.value)});
+                        return ErrorList.TypeError;
+                    },
+                }
+            },
+
+            else => {
+                std.debug.print("\n!! Unhandled HIR instruction at IP {d}:\n", .{self.ip});
+                std.debug.print("  Type: {s}\n", .{@tagName(instruction)});
+
+                // Print detailed instruction info based on type
+                switch (instruction) {
+                    .LogicalOp => |op| {
+                        std.debug.print("  Operation: {s}\n", .{@tagName(op.op)});
+                    },
+                    .StringOp => |op| {
+                        std.debug.print("  Operation: {s}\n", .{@tagName(op.op)});
+                    },
+                    .MapGet => |m| {
+                        std.debug.print("  Key type: {s}\n", .{@tagName(m.key_type)});
+                    },
+                    else => {
+                        std.debug.print("  Raw data: {any}\n", .{instruction});
+                    },
+                }
+
+                // Print stack state
+                std.debug.print("  Stack depth: {d}\n", .{self.stack.size()});
+                if (!self.stack.isEmpty()) {
+                    if (self.stack.peek()) |top| {
+                        std.debug.print("  Top of stack: {s}\n", .{@tagName(top.value)});
+                    } else |_| {}
+                }
+
                 return ErrorList.NotImplemented;
             },
         }
