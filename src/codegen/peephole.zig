@@ -75,9 +75,7 @@ pub const PeepholeOptimizer = struct {
 
     fn tryRedundantElimination(self: *PeepholeOptimizer, instructions: []HIRInstruction, i: usize, optimized: *std.ArrayList(HIRInstruction)) !?usize {
 
-        // ULTRA-LIGHTWEIGHT INSPECT OPTIMIZATIONS - Make inspect zero overhead!
-
-        // Pattern 1: Detect ANY chain of Dups followed by Inspect + Pop → just Inspect
+        // Pattern 1: Detect chain of Dups followed by Peek + Pop → just Peek
         if (std.meta.activeTag(instructions[i]) == .Dup) {
             var dup_count: usize = 0;
             var j = i;
@@ -88,38 +86,38 @@ pub const PeepholeOptimizer = struct {
                 j += 1;
             }
 
-            // Check if followed by Inspect + Pop
+            // Check if followed by Peek + Pop
             if (j + 1 < instructions.len and
-                std.meta.activeTag(instructions[j]) == .Inspect and
+                std.meta.activeTag(instructions[j]) == .Peek and
                 std.meta.activeTag(instructions[j + 1]) == .Pop)
             {
-                // Replace entire chain with just Inspect - MAXIMUM EFFICIENCY!
-                try optimized.append(instructions[j]); // Just the Inspect
+                // Replace entire chain with just Peek - MAXIMUM EFFICIENCY!
+                try optimized.append(instructions[j]); // Just the Peek
                 self.redundant_eliminations += @intCast(dup_count); // Count all eliminated Dups + Pop
-                return dup_count + 2; // Consumed: Dups + Inspect + Pop
+                return dup_count + 2; // Consumed: Dups + Peek + Pop
             }
         }
 
-        // Pattern 2: Single Dup + Inspect + Pop → just Inspect
+        // Pattern 2: Single Dup + Peek + Pop → just Peek
         if (i + 2 < instructions.len and
             std.meta.activeTag(instructions[i]) == .Dup and
-            std.meta.activeTag(instructions[i + 1]) == .Inspect and
+            std.meta.activeTag(instructions[i + 1]) == .Peek and
             std.meta.activeTag(instructions[i + 2]) == .Pop)
         {
-            try optimized.append(instructions[i + 1]); // Just Inspect
+            try optimized.append(instructions[i + 1]); // Just Peek
             self.redundant_eliminations += 1;
             return 3;
         }
 
-        // Pattern 3: LoadVar + Dup + Inspect + Pop → LoadVar + Inspect
+        // Pattern 3: LoadVar + Dup + Peek + Pop → LoadVar + Peek
         if (i + 3 < instructions.len and
             std.meta.activeTag(instructions[i]) == .LoadVar and
             std.meta.activeTag(instructions[i + 1]) == .Dup and
-            std.meta.activeTag(instructions[i + 2]) == .Inspect and
+            std.meta.activeTag(instructions[i + 2]) == .Peek and
             std.meta.activeTag(instructions[i + 3]) == .Pop)
         {
             try optimized.append(instructions[i]); // LoadVar
-            try optimized.append(instructions[i + 2]); // Inspect
+            try optimized.append(instructions[i + 2]); // Peek
             self.redundant_eliminations += 1;
             return 4;
         }
@@ -133,7 +131,7 @@ pub const PeepholeOptimizer = struct {
             return 2; // Skip both instructions
         }
 
-        // Pattern 5: Dup + Pop → eliminate entirely (when not part of inspect pattern)
+        // Pattern 5: Dup + Pop → eliminate entirely (when not part of peek pattern)
         if (i + 1 < instructions.len and
             std.meta.activeTag(instructions[i]) == .Dup and
             std.meta.activeTag(instructions[i + 1]) == .Pop)

@@ -377,7 +377,7 @@ pub const Lexer = struct {
                 }
             },
             '~' => try self.addMinimalToken(.TILDE),
-            '?' => try self.addMinimalToken(.INSPECT),
+            '?' => try self.addMinimalToken(.PEEK),
         }
     }
 

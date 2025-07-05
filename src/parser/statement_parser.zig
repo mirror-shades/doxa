@@ -184,7 +184,7 @@ pub fn parseExpressionStmt(self: *Parser) ErrorList!ast.Stmt {
         .While => false,
         .For => false,
         .ForEach => false,
-        .Inspect => true,
+        .Peek => true,
         .Match => false,
         .Index => true,
         .Assignment => true,
@@ -193,7 +193,7 @@ pub fn parseExpressionStmt(self: *Parser) ErrorList!ast.Stmt {
     } else true;
 
     // Handle question mark operator
-    if (expr != null and self.peek().type == .INSPECT) {
+    if (expr != null and self.peek().type == .PEEK) {
         const question_token = self.peek(); // Capture the question mark token
         self.advance(); // consume the question mark
 
@@ -203,15 +203,15 @@ pub fn parseExpressionStmt(self: *Parser) ErrorList!ast.Stmt {
             name_token = expr.?.data.Variable.lexeme;
         }
 
-        // Create the inspection expression
-        const inspect_expr = try self.allocator.create(ast.Expr);
-        inspect_expr.* = .{
+        // Create the peekion expression
+        const peek_expr = try self.allocator.create(ast.Expr);
+        peek_expr.* = .{
             .base = .{
                 .id = ast.generateNodeId(),
                 .span = ast.SourceSpan.fromToken(question_token),
             },
             .data = .{
-                .InspectStruct = .{
+                .PeekStruct = .{
                     .expr = expr.?,
                     .location = .{
                         .line = question_token.line,
@@ -223,7 +223,7 @@ pub fn parseExpressionStmt(self: *Parser) ErrorList!ast.Stmt {
             },
         };
 
-        expr = inspect_expr;
+        expr = peek_expr;
     }
 
     // Only check for semicolon if we need one

@@ -35,7 +35,7 @@ pub const ASTReader = struct {
             .VarDecl => try self.readVarDecl(),
             .Return => try self.readReturn(),
             .Binary => try self.readBinary(),
-            .Inspect => try self.readInspect(),
+            .Peek => try self.readPeek(),
             else => error.UnsupportedExpressionType,
         };
     }
@@ -123,10 +123,10 @@ pub const ASTReader = struct {
         };
     }
 
-    fn readInspect(self: *ASTReader) !*ast.Expr {
+    fn readPeek(self: *ASTReader) !*ast.Expr {
         const expr = try self.readNextExpression();
-        const inspect = try self.allocator.create(ast.Expr);
-        inspect.* = .{ .Inspect = .{
+        const peek = try self.allocator.create(ast.Expr);
+        peek.* = .{ .Peek = .{
             .expr = expr,
             .location = .{
                 .file = "main",
@@ -135,7 +135,7 @@ pub const ASTReader = struct {
             },
             .variable_name = null,
         } };
-        return inspect;
+        return peek;
     }
 
     // Helper functions
@@ -192,7 +192,7 @@ const ExprType = enum {
     VarDecl,
     Return,
     Binary,
-    Inspect,
+    Peek,
     Unknown,
 };
 

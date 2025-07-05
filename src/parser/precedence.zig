@@ -157,7 +157,7 @@ pub const rules = blk: {
     r.set(.FUNCTION, .{ .prefix = null }); // Function declarations are handled as statements, not expressions
 
     // Add rule for the ? operator with lower precedence
-    r.set(.INSPECT, .{ .infix = inspectValue, .precedence = .CALL });
+    r.set(.PEEK, .{ .infix = peekValue, .precedence = .CALL });
 
     // Add loop support
     r.set(.WHILE, .{ .prefix = whileExpr });
@@ -332,7 +332,7 @@ fn logical(self: *Parser, left: ?*ast.Expr, precedence: Precedence) ErrorList!?*
     return logical_expr;
 }
 
-fn inspectValue(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+fn peekValue(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     if (left == null) return error.ExpectedLeftOperand;
 
     // Get the variable name if this is a variable expression
@@ -341,9 +341,9 @@ fn inspectValue(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
         name_token = left.?.data.Variable.lexeme;
     }
 
-    // Create the inspection expression
-    const inspect_expr = try self.allocator.create(ast.Expr);
-    inspect_expr.* = .{
+    // Create the peekion expression
+    const peek_expr = try self.allocator.create(ast.Expr);
+    peek_expr.* = .{
         .base = .{
             .id = ast.generateNodeId(),
             .span = .{
@@ -360,8 +360,8 @@ fn inspectValue(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
             },
         },
         .data = .{
-            // Use regular Inspect for non-struct values
-            .Inspect = .{
+            // Use regular Peek for non-struct values
+            .Peek = .{
                 .expr = left.?,
                 .location = .{
                     .line = self.peek().line,
@@ -373,5 +373,5 @@ fn inspectValue(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
         },
     };
 
-    return inspect_expr;
+    return peek_expr;
 }

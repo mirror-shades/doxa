@@ -233,7 +233,7 @@ pub const HIRInstruction = union(enum) {
         field_name: []const u8,
         container_type: HIRType,
         field_index: u32, // Pre-resolved for efficiency
-        field_for_inspect: bool = false,
+        field_for_peek: bool = false,
     },
 
     /// Array/struct field assignment
@@ -246,7 +246,7 @@ pub const HIRInstruction = union(enum) {
     },
 
     /// Store field name for struct field
-    /// VM: Store field name for later use in inspect
+    /// VM: Store field name for later use in peek
     /// LLVM: No-op
     StoreFieldName: struct {
         field_name: []const u8,
@@ -398,19 +398,19 @@ pub const HIRInstruction = union(enum) {
     // DEBUG/INTROSPECTION
     //==================================================================
 
-    /// Print/inspect value
+    /// Print/peek value
     /// VM: Complex printValue logic
     /// LLVM: Generate printf calls with format strings
-    Inspect: struct {
+    Peek: struct {
         name: ?[]const u8,
         value_type: HIRType,
         location: ?Reporting.Reporter.Location,
     },
 
     /// Prints a struct
-    /// VM: OP_INSPECT_STRUCT
+    /// VM: OP_PEEK_STRUCT
     /// LLVM: Generate constant string based on LLVM type
-    InspectStruct: struct {
+    PeekStruct: struct {
         type_name: []const u8, // Changed from struct_name to type_name
         field_count: u32,
         field_names: [][]const u8,

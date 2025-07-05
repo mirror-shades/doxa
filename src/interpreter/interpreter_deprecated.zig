@@ -1926,7 +1926,7 @@ pub const Interpreter = struct {
                     .defining_module = null, // TODO: Set this to the actual module when available
                 },
             },
-            .Inspect => |insp| {
+            .Peek => |insp| {
                 const value = try self.evaluate(insp.expr);
                 var buffer = std.ArrayList(u8).init(self.allocator);
                 defer buffer.deinit();
@@ -1946,7 +1946,7 @@ pub const Interpreter = struct {
 
                 return value;
             },
-            .InspectStruct => {
+            .PeekStruct => {
                 unreachable;
             },
             .While => |while_expr| {

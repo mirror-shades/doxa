@@ -371,7 +371,7 @@ pub const ForEachExpr = struct {
     body: []Stmt,
 };
 
-pub const InspectExpr = struct {
+pub const PeekExpr = struct {
     expr: *Expr,
     location: Reporting.Reporter.Location,
     variable_name: ?[]const u8,
@@ -401,8 +401,8 @@ pub const Expr = struct {
         Literal: TokenLiteral,
         Binary: Binary,
         Unary: Unary,
-        Inspect: InspectExpr,
-        InspectStruct: struct {
+        Peek: PeekExpr,
+        PeekStruct: struct {
             expr: *Expr,
             location: Reporting.Reporter.Location,
             variable_name: ?[]const u8,
@@ -637,7 +637,7 @@ pub const Expr = struct {
                 }
                 allocator.free(f.body);
             },
-            .Inspect => |i| {
+            .Peek => |i| {
                 i.expr.deinit(allocator);
                 allocator.destroy(i.expr);
             },
@@ -801,9 +801,9 @@ pub const Expr = struct {
                     allocator.destroy(value);
                 }
             },
-            .InspectStruct => |inspect| {
-                inspect.expr.deinit(allocator);
-                allocator.destroy(inspect.expr);
+            .PeekStruct => |peek| {
+                peek.expr.deinit(allocator);
+                allocator.destroy(peek.expr);
             },
         }
     }
@@ -1232,7 +1232,7 @@ pub const HIRInstruction = union(enum) {
     Return, // Return from function
 
     // Debug operations
-    Inspect: ?[]const u8, // Print value with optional name
+    Peek: ?[]const u8, // Print value with optional name
 
     // Array operations
     MakeArray: u32, // Create array from top N stack values
