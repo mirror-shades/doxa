@@ -20,35 +20,7 @@ const TokenLiteral = TypesImport.TokenLiteral;
 const Tetra = TypesImport.Tetra;
 const ModuleEnvironment = TypesImport.ModuleEnvironment;
 const Expr = ast.Expr;
-
-const StringInterner = struct {
-    strings: std.StringHashMap([]const u8),
-    allocator: std.mem.Allocator,
-
-    pub fn init(allocator: std.mem.Allocator) StringInterner {
-        return StringInterner{
-            .strings = std.StringHashMap([]const u8).init(allocator),
-            .allocator = allocator,
-        };
-    }
-
-    pub fn deinit(self: *StringInterner) void {
-        var it = self.strings.iterator();
-        while (it.next()) |entry| {
-            self.allocator.free(entry.key_ptr.*);
-        }
-        self.strings.deinit();
-    }
-
-    pub fn intern(self: *StringInterner, string: []const u8) ![]const u8 {
-        if (self.strings.get(string)) |existing| {
-            return existing;
-        }
-        const copy = try self.allocator.dupe(u8, string);
-        try self.strings.put(copy, copy);
-        return copy;
-    }
-};
+const StringInterner = Memory.StringInterner;
 
 pub const Interpreter = struct {
     environment: *Environment,

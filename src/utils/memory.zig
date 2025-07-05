@@ -5,6 +5,35 @@ const TypeInfo = @import("../ast/ast.zig").TypeInfo;
 const TypesImport = @import("../types/types.zig");
 const TokenLiteral = TypesImport.TokenLiteral;
 
+pub const StringInterner = struct {
+    strings: std.StringHashMap([]const u8),
+    allocator: std.mem.Allocator,
+
+    pub fn init(allocator: std.mem.Allocator) StringInterner {
+        return StringInterner{
+            .strings = std.StringHashMap([]const u8).init(allocator),
+            .allocator = allocator,
+        };
+    }
+
+    pub fn deinit(self: *StringInterner) void {
+        var it = self.strings.iterator();
+        while (it.next()) |entry| {
+            self.allocator.free(entry.key_ptr.*);
+        }
+        self.strings.deinit();
+    }
+
+    pub fn intern(self: *StringInterner, string: []const u8) ![]const u8 {
+        if (self.strings.get(string)) |existing| {
+            return existing;
+        }
+        const copy = try self.allocator.dupe(u8, string);
+        try self.strings.put(copy, copy);
+        return copy;
+    }
+};
+
 pub const MemoryManager = struct {
     arena: std.heap.ArenaAllocator,
     scope_manager: *ScopeManager,
