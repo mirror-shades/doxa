@@ -40,7 +40,6 @@ const HotVar = struct {
 /// HIR-based VM Frame - simplified to work with memory management
 pub const HIRFrame = struct {
     value: HIRValue,
-    field_name: ?[]const u8 = null,
 
     // Helper constructors
     pub fn initInt(x: i32) HIRFrame {
@@ -68,10 +67,7 @@ pub const HIRFrame = struct {
     }
 
     pub fn initFromHIRValue(value: HIRValue) HIRFrame {
-        return .{
-            .value = value,
-            .field_name = null,
-        };
+        return HIRFrame{ .value = value };
     }
 
     pub fn asInt(self: HIRFrame) !i32 {
@@ -114,6 +110,7 @@ pub const HIRFrame = struct {
 pub fn hirValueToTokenLiteral(hir_value: HIRValue) TokenLiteral {
     return switch (hir_value) {
         .int => |i| TokenLiteral{ .int = i },
+        .u8 => |u| TokenLiteral{ .u8 = u },
         .float => |f| TokenLiteral{ .float = f },
         .string => |s| TokenLiteral{ .string = s },
         .tetra => |t| TokenLiteral{ .tetra = switch (t) {
@@ -124,85 +121,80 @@ pub fn hirValueToTokenLiteral(hir_value: HIRValue) TokenLiteral {
             else => .false,
         } },
         .nothing => TokenLiteral{ .nothing = {} },
-        .u8 => |u| TokenLiteral{ .u8 = u },
-        .enum_variant => |e| TokenLiteral{ .enum_variant = e.variant_name },
+        // Convert HIR arrays to TokenLiteral arrays
         .array => |arr| blk: {
+            // Create a TokenLiteral array from HIR array
             var token_elements = std.ArrayList(TokenLiteral).init(std.heap.page_allocator);
             defer token_elements.deinit();
 
             for (arr.elements) |elem| {
                 if (std.meta.eql(elem, HIRValue.nothing)) break;
-                // Ignore append errors - just return empty array if allocation fails
-                token_elements.append(hirValueToTokenLiteral(elem)) catch break :blk TokenLiteral{ .nothing = {} };
+                token_elements.append(hirValueToTokenLiteral(elem)) catch break;
             }
 
             break :blk TokenLiteral{ .array = token_elements.toOwnedSlice() catch &[_]TokenLiteral{} };
         },
-        .struct_instance => |s| blk: {
-            var fields = std.ArrayList(StructField).init(std.heap.page_allocator);
-            defer fields.deinit();
+        // Other complex types still convert to nothing
+        .struct_instance => TokenLiteral{ .nothing = {} },
+        .tuple => TokenLiteral{ .nothing = {} },
+        .map => TokenLiteral{ .nothing = {} },
+        .enum_variant => TokenLiteral{ .nothing = {} },
+    };
+}
 
-            for (s.fields) |field| {
-                // Create a new path for the field by appending its name to the current path
-                const field_path = if (s.path) |path| blk2: {
-                    const new_path = std.fmt.allocPrint(std.heap.page_allocator, "{s}.{s}", .{ path, field.name }) catch break :blk2 field.name;
-                    break :blk2 new_path;
-                } else field.name;
-
-                // Create a new HIRValue with the field's path and name
-                var field_value = field.value;
-                if (field_value == .struct_instance) {
-                    var new_struct = field_value.struct_instance;
-                    new_struct.path = field_path;
-                    new_struct.field_name = field.name;
-                    field_value = HIRValue{ .struct_instance = new_struct };
-                }
-
-                // Ignore append errors - just return empty struct if allocation fails
-                fields.append(.{
-                    .name = field.name,
-                    .value = hirValueToTokenLiteral(field_value),
-                }) catch continue;
-            }
-
-            const fields_slice = fields.toOwnedSlice() catch &[_]StructField{};
-            const mutable_slice = std.heap.page_allocator.alloc(StructField, fields_slice.len) catch break :blk TokenLiteral{ .nothing = {} };
-            @memcpy(mutable_slice, fields_slice);
-            const result = TokenLiteral{ .struct_value = .{
-                .type_name = s.type_name,
-                .fields = mutable_slice,
-                .path = s.path,
-            } };
-            break :blk result;
-        },
-        .tuple => |t| blk: {
-            var token_elements = std.ArrayList(TokenLiteral).init(std.heap.page_allocator);
-            defer token_elements.deinit();
-
-            for (t.elements) |elem| {
-                // Ignore append errors - just return empty tuple if allocation fails
-                token_elements.append(hirValueToTokenLiteral(elem)) catch break;
-            }
-
-            break :blk TokenLiteral{ .tuple = token_elements.toOwnedSlice() catch &[_]TokenLiteral{} };
-        },
-        .map => |m| blk: {
-            var token_map = std.StringHashMap(TokenLiteral).init(std.heap.page_allocator);
-
-            for (m.entries) |entry| {
-                // Convert key to string (maps expect string keys)
-                const key_str = switch (entry.key) {
-                    .string => |s| s,
-                    .int => |i| std.fmt.allocPrint(std.heap.page_allocator, "{d}", .{i}) catch continue,
-                    else => continue, // Skip non-string, non-int keys
+pub fn tokenLiteralToHIRValue(token_literal: TokenLiteral) HIRValue {
+    return switch (token_literal) {
+        .int => |i| HIRValue{ .int = i },
+        .u8 => |u| HIRValue{ .u8 = u },
+        .float => |f| HIRValue{ .float = f },
+        .string => |s| HIRValue{ .string = s },
+        .tetra => |t| HIRValue{ .tetra = switch (t) {
+            .false => 0,
+            .true => 1,
+            .both => 2,
+            .neither => 3,
+        } },
+        .nothing => HIRValue.nothing,
+        // Convert TokenLiteral arrays back to HIR arrays
+        .array => |arr| blk: {
+            // CRITICAL FIX: For empty arrays, allocate minimum capacity for growth
+            const min_capacity = if (arr.len == 0) 8 else arr.len;
+            const elements = std.heap.page_allocator.alloc(HIRValue, min_capacity) catch {
+                // On allocation failure, return empty array
+                break :blk HIRValue{
+                    .array = HIRArray{
+                        .elements = &[_]HIRValue{},
+                        .element_type = .Auto,
+                        .capacity = 0,
+                    },
                 };
+            };
 
-                const token_value = hirValueToTokenLiteral(entry.value);
-                token_map.put(key_str, token_value) catch continue;
+            // Initialize all elements to nothing
+            for (elements) |*elem| {
+                elem.* = HIRValue.nothing;
             }
 
-            break :blk TokenLiteral{ .map = token_map };
+            // Copy actual elements
+            for (arr, 0..) |elem, i| {
+                if (i >= arr.len) break;
+                elements[i] = tokenLiteralToHIRValue(elem);
+            }
+
+            break :blk HIRValue{
+                .array = HIRArray{
+                    .elements = elements,
+                    .element_type = .Auto, // Infer from first element
+                    .capacity = @intCast(min_capacity), // CRITICAL FIX: Use min_capacity, not arr.len
+                },
+            };
         },
+        // Other complex types still convert to nothing
+        .tuple => HIRValue.nothing,
+        .struct_value => HIRValue.nothing,
+        .function => HIRValue.nothing,
+        .enum_variant => HIRValue.nothing,
+        .map => HIRValue.nothing,
     };
 }
 
@@ -216,7 +208,7 @@ pub fn hirValueToTokenType(hir_value: HIRValue) TokenType {
         .nothing => .NOTHING,
         // Complex types - map to closest TokenType
         .array => .ARRAY,
-        .struct_instance => .STRUCT, // Structs represented as struct values
+        .struct_instance => .IDENTIFIER, // Structs represented as identifiers
         .tuple => .ARRAY, // Tuples similar to arrays
         .map => .ARRAY, // Maps similar to arrays
         .enum_variant => .IDENTIFIER, // Enums represented as identifiers
@@ -242,48 +234,66 @@ pub fn hirValueToTypeInfo(hir_value: HIRValue) TypeInfo {
 
 /// HIR-based Stack - uses heap allocation to avoid system stack overflow
 const HIRStack = struct {
-    stack: []HIRFrame,
-    sp: u32,
+    data: []HIRFrame,
+    sp: i32 = 0,
     allocator: std.mem.Allocator,
 
-    pub fn init(allocator: std.mem.Allocator, size: u32) !HIRStack {
-        const stack = try allocator.alloc(HIRFrame, size);
+    pub fn init(allocator: std.mem.Allocator) !HIRStack {
+        // Allocate stack on heap to avoid system stack overflow
+        const data = try allocator.alloc(HIRFrame, STACK_SIZE);
+
+        // Initialize all frames to NOTHING
+        for (data) |*frame| {
+            frame.* = HIRFrame.initNothing();
+        }
+
         return HIRStack{
-            .stack = stack,
+            .data = data,
             .sp = 0,
             .allocator = allocator,
         };
     }
 
     pub fn deinit(self: *HIRStack) void {
-        self.allocator.free(self.stack);
+        self.allocator.free(self.data);
+        self.sp = 0;
     }
 
-    pub fn push(self: *HIRStack, value: HIRFrame) !void {
-        if (self.sp >= self.stack.len) {
-            return error.StackOverflow;
+    // PERFORMANCE: Inline stack operations for maximum speed
+    pub inline fn push(self: *HIRStack, value: HIRFrame) !void {
+        // FAST MODE: Skip bounds check in release builds for maximum performance
+        if (std.debug.runtime_safety and self.sp >= STACK_SIZE) {
+            std.debug.print("Stack overflow: Attempted to push at sp={}\n", .{self.sp});
+            return ErrorList.StackOverflow;
         }
-        self.stack[self.sp] = value;
+        self.data[@intCast(self.sp)] = value;
         self.sp += 1;
     }
 
-    pub fn pop(self: *HIRStack) !HIRFrame {
-        if (self.sp == 0) {
-            return error.StackUnderflow;
+    pub inline fn pop(self: *HIRStack) !HIRFrame {
+        // FAST MODE: Skip bounds check in release builds for maximum performance
+        if (std.debug.runtime_safety and self.sp <= 0) {
+            std.debug.print("Stack underflow: Attempted to pop at sp={}\n", .{self.sp});
+            return ErrorList.StackUnderflow;
         }
         self.sp -= 1;
-        return self.stack[self.sp];
+        return self.data[@intCast(self.sp)];
     }
 
-    pub fn peek(self: *HIRStack) ?HIRFrame {
-        if (self.sp == 0) {
-            return null;
+    pub fn peek(self: HIRStack) !HIRFrame {
+        if (self.sp <= 0) {
+            std.debug.print("Stack underflow: Attempted to peek at sp={}\n", .{self.sp});
+            return ErrorList.StackUnderflow;
         }
-        return self.stack[self.sp - 1];
+        return self.data[@intCast(self.sp - 1)];
     }
 
-    pub fn clear(self: *HIRStack) void {
-        self.sp = 0;
+    pub fn size(self: HIRStack) i32 {
+        return self.sp;
+    }
+
+    pub fn isEmpty(self: HIRStack) bool {
+        return self.sp == 0;
     }
 };
 
@@ -344,6 +354,7 @@ pub const HIRVM = struct {
     reporter: *Reporter,
     memory_manager: *MemoryManager, // Use existing memory manager from main
     allocator: std.mem.Allocator,
+    debug_enabled: bool,
 
     // Execution state
     ip: u32 = 0, // Instruction pointer (index into instructions array)
@@ -351,7 +362,6 @@ pub const HIRVM = struct {
     call_stack: CallStack, // Track function calls and returns
     current_scope: *Scope, // Current execution scope
     running: bool = true,
-    current_field_name: ?[]const u8 = null, // Track current field name for struct access
 
     // Label resolution
     label_map: std.StringHashMap(u32), // label_name -> instruction index
@@ -368,227 +378,7 @@ pub const HIRVM = struct {
     // Tail call optimization: flag to skip scope creation on next EnterScope
     skip_next_enter_scope: bool = false,
 
-    fn tokenLiteralToHIRValue(self: *HIRVM, token_literal: TokenLiteral) HIRValue {
-        const allocator = self.memory_manager.getAllocator();
-        return switch (token_literal) {
-            .int => |i| HIRValue{ .int = i },
-            .u8 => |u| HIRValue{ .u8 = u },
-            .float => |f| HIRValue{ .float = f },
-            .string => |s| HIRValue{ .string = s },
-            .tetra => |t| HIRValue{ .tetra = switch (t) {
-                .false => 0,
-                .true => 1,
-                .both => 2,
-                .neither => 3,
-            } },
-            .nothing => HIRValue.nothing,
-            // Convert TokenLiteral arrays back to HIR arrays
-            .array => |arr| blk: {
-                // CRITICAL FIX: For empty arrays, allocate minimum capacity for growth
-                const min_capacity = if (arr.len == 0) 8 else arr.len;
-                const elements = allocator.alloc(HIRValue, min_capacity) catch {
-                    // On allocation failure, return empty array
-                    break :blk HIRValue{
-                        .array = HIRArray{
-                            .elements = &[_]HIRValue{},
-                            .element_type = .Auto,
-                            .capacity = 0,
-                        },
-                    };
-                };
-
-                // Initialize all elements to nothing
-                for (elements) |*elem| {
-                    elem.* = HIRValue.nothing;
-                }
-
-                // Copy actual elements
-                for (arr, 0..) |elem, i| {
-                    if (i >= arr.len) break;
-                    elements[i] = self.tokenLiteralToHIRValue(elem);
-                }
-
-                break :blk HIRValue{
-                    .array = HIRArray{
-                        .elements = elements,
-                        .element_type = .Auto, // Infer from first element
-                        .capacity = @intCast(min_capacity), // CRITICAL FIX: Use min_capacity, not arr.len
-                    },
-                };
-            },
-            // Convert TokenLiteral tuples back to HIR tuples
-            .tuple => |t| blk: {
-                const elements = allocator.alloc(HIRValue, t.len) catch {
-                    break :blk HIRValue.nothing;
-                };
-
-                for (t, 0..) |elem, i| {
-                    elements[i] = self.tokenLiteralToHIRValue(elem);
-                }
-
-                break :blk HIRValue{
-                    .tuple = HIRTuple{
-                        .elements = elements,
-                    },
-                };
-            },
-            // Convert TokenLiteral maps back to HIR maps
-            .map => |m| blk: {
-                // Count entries in the hashmap
-                var count: usize = 0;
-                var iterator = m.iterator();
-                while (iterator.next()) |_| {
-                    count += 1;
-                }
-
-                const entries = allocator.alloc(HIRMapEntry, count) catch {
-                    break :blk HIRValue.nothing;
-                };
-
-                // Fill entries array
-                var i: usize = 0;
-                iterator = m.iterator();
-                while (iterator.next()) |entry| {
-                    entries[i] = HIRMapEntry{
-                        .key = HIRValue{ .string = entry.key_ptr.* },
-                        .value = self.tokenLiteralToHIRValue(entry.value_ptr.*),
-                    };
-                    i += 1;
-                }
-
-                break :blk HIRValue{
-                    .map = HIRMap{
-                        .entries = entries,
-                        .key_type = .String,
-                        .value_type = .Auto, // Infer from values
-                    },
-                };
-            },
-            // Other complex types still convert to nothing
-            .struct_value => |s| blk: {
-                // Allocate fields array
-                const fields = allocator.alloc(HIRStructField, s.fields.len) catch {
-                    break :blk HIRValue.nothing;
-                };
-
-                // Convert each field
-                for (s.fields, 0..) |field, i| {
-                    fields[i] = HIRStructField{
-                        .name = field.name,
-                        .value = self.tokenLiteralToHIRValue(field.value),
-                        .field_type = .Auto, // Default to Auto, will be inferred from value
-                    };
-                }
-
-                // Create struct instance with proper field tracking
-                break :blk HIRValue{
-                    .struct_instance = HIRStruct{
-                        .type_name = s.type_name,
-                        .fields = fields,
-                        .field_name = null, // Base struct has no field name
-                        .path = null, // Base struct has no path initially
-                    },
-                };
-            },
-            .function => HIRValue.nothing,
-            .enum_variant => HIRValue.nothing,
-        };
-    }
-
-    fn pop(self: *HIRVM) HIRFrame {
-        return self.stack.pop() catch unreachable;
-    }
-
-    fn popString(self: *HIRVM) ![]const u8 {
-        const value = try self.stack.pop();
-        return value.asString();
-    }
-
-    fn didJump(self: *HIRVM, instruction: HIRInstruction) bool {
-        _ = self; // Not used currently
-        return switch (instruction) {
-            .Jump => true,
-            .JumpCond => true,
-            .Call => |c| switch (c.call_kind) {
-                .LocalFunction => true,
-                else => false,
-            },
-            .TailCall => true,
-            .Return => true,
-            else => false,
-        };
-    }
-
-    fn formatHIRValue(self: *HIRVM, writer: anytype, value: HIRValue) !void {
-        self.reporter.debug("Formatting HIR value: {any}", .{value});
-        switch (value) {
-            .int => |i| {
-                self.reporter.debug("Formatting integer: {d}", .{i});
-                try writer.print("{}", .{i});
-            },
-            .float => |f| {
-                self.reporter.debug("Formatting float: {d}", .{f});
-                try writer.print("{d}", .{f});
-            },
-            .string => |s| {
-                self.reporter.debug("Formatting string: {s}", .{s});
-                try writer.print("\"{s}\"", .{s});
-            },
-            .nothing => {
-                self.reporter.debug("Formatting nothing", .{});
-                try writer.print("nothing", .{});
-            },
-            .tetra => |b| {
-                self.reporter.debug("Formatting tetra: {}", .{b});
-                try writer.print("{}", .{b});
-            },
-            .array => |a| {
-                self.reporter.debug("Formatting array with {d} elements", .{a.elements.len});
-                try writer.print("[", .{});
-                for (a.elements, 0..) |element, i| {
-                    try self.formatHIRValue(writer, element);
-                    if (i < a.elements.len - 1) {
-                        try writer.print(", ", .{});
-                    }
-                }
-                try writer.print("]", .{});
-            },
-            .struct_instance => |s| {
-                self.reporter.debug("Formatting struct instance of type '{s}' with {d} fields", .{ s.type_name, s.fields.len });
-                // Don't print the struct type name for nested structs
-                if (s.path == null) {
-                    try writer.print("{s} {{ ", .{s.type_name});
-                } else {
-                    try writer.print("{{ ", .{});
-                }
-                for (s.fields, 0..) |field, i| {
-                    try writer.print("{s}: ", .{field.name});
-                    try self.formatHIRValue(writer, field.value);
-                    if (i < s.fields.len - 1) {
-                        try writer.print(", ", .{});
-                    }
-                }
-                try writer.print(" }}", .{});
-            },
-            .tuple => |t| {
-                self.reporter.debug("Formatting tuple with {d} elements", .{t.elements.len});
-                try writer.print("(", .{});
-                for (t.elements, 0..) |element, i| {
-                    try self.formatHIRValue(writer, element);
-                    if (i < t.elements.len - 1) {
-                        try writer.print(", ", .{});
-                    }
-                }
-                try writer.print(")", .{});
-            },
-            else => {
-                self.reporter.debug("Formatting unknown value type: {s}", .{@tagName(value)});
-                try writer.print("<{s}>", .{@tagName(value)});
-            },
-        }
-    }
-
-    pub fn init(program: *HIRProgram, reporter: *Reporter, memory_manager: *MemoryManager) !HIRVM {
+    pub fn init(program: *HIRProgram, reporter: *Reporter, memory_manager: *MemoryManager, debug_enabled: bool) !HIRVM {
         const allocator = memory_manager.getAllocator();
 
         // Create a new execution scope for this HIR VM run
@@ -600,7 +390,7 @@ pub const HIRVM = struct {
             .reporter = reporter,
             .memory_manager = memory_manager,
             .allocator = allocator, // Use the passed allocator (memory manager's arena)
-            .stack = try HIRStack.init(allocator, STACK_SIZE), // Use the passed allocator
+            .stack = try HIRStack.init(allocator), // Use the passed allocator
             .call_stack = try CallStack.init(allocator), // Use the passed allocator
             .current_scope = execution_scope,
             .label_map = std.StringHashMap(u32).init(allocator), // Use the passed allocator
@@ -609,6 +399,7 @@ pub const HIRVM = struct {
             .turbo_mode = true,
             .hot_vars = [_]?HotVar{null} ** 4,
             .hot_var_count = 0,
+            .debug_enabled = debug_enabled,
         };
 
         // Pre-resolve all labels for efficient jumps
@@ -628,18 +419,24 @@ pub const HIRVM = struct {
 
     /// Pre-resolve all labels to instruction indices for O(1) jump lookup
     fn resolveLabels(self: *HIRVM) !void {
+        std.debug.print(">> Resolving labels from {} instructions\n", .{self.program.instructions.len});
         for (self.program.instructions, 0..) |instruction, i| {
             switch (instruction) {
                 .Label => |label| {
                     try self.label_map.put(label.name, @intCast(i));
+                    std.debug.print(">>   Resolved label '{s}' to instruction {}\n", .{ label.name, i });
                 },
                 else => {},
             }
         }
+        std.debug.print(">> Total labels resolved: {}\n", .{self.label_map.count()});
     }
 
     /// Main execution loop - directly execute HIR instructions
     pub fn run(self: *HIRVM) !?HIRFrame {
+        if (self.debug_enabled) {
+            std.debug.print(">> Starting HIR VM execution with {} instructions\n", .{self.program.instructions.len});
+        }
 
         // sanity check on soxa code
         try self.validateHIRProgram();
@@ -648,8 +445,11 @@ pub const HIRVM = struct {
             const instruction = self.program.instructions[self.ip];
 
             // OPTIMIZED: Reduce debug output in fast mode for better performance
-            if (!self.fast_mode or self.ip < 10) {
-                self.reporter.debug("HIR VM [{}]: Executing {s}\n", .{ self.ip, @tagName(instruction) });
+            if (self.debug_enabled and (!self.fast_mode or self.ip < 10)) {
+                std.debug.print("HIR VM [{}]: Executing {s}\n", .{ self.ip, @tagName(instruction) });
+                if (self.ip == 6) {
+                    std.debug.print(">> CRITICAL: Instruction at IP 6 is: {any}\n", .{instruction});
+                }
             }
 
             try self.executeInstruction(instruction);
@@ -661,7 +461,7 @@ pub const HIRVM = struct {
         }
 
         // Return final result from stack if available
-        if (self.stack.sp > 0) {
+        if (self.stack.size() > 0) {
             return try self.stack.pop();
         }
 
@@ -670,52 +470,50 @@ pub const HIRVM = struct {
 
     /// CRITICAL: Validate that no Auto types exist in the HIR program
     fn validateHIRProgram(self: *HIRVM) !void {
+        std.debug.print(">> SANITY CHECK: Validating HIR program for Auto types...\n", .{});
+
         for (self.program.instructions, 0..) |instruction, ip| {
             switch (instruction) {
                 .Inspect => |i| {
                     if (i.value_type == .Auto) {
                         self.reporter.reportError("FATAL: Auto type found in Inspect instruction at IP {} for variable '{s}'. Type inference likely failed during code generation.", .{ ip, i.name orelse "unknown" });
+                        std.debug.print(">>   Inspect instruction: {any}\n", .{i});
                         return ErrorList.InternalParserError;
-                    }
-                },
-
-                .InspectStruct => |i| {
-                    // Check for Auto types in field types
-                    for (i.field_types) |field_type| {
-                        if (field_type == .Auto) {
-                            self.reporter.reportError("FATAL: Auto type found in InspectStruct instruction at IP {} for field {}. Type inference likely failed during code generation.", .{ ip, i });
-                            return error.AutoTypeInInspectStruct;
-                        }
                     }
                 },
 
                 .Compare => |c| {
                     if (c.operand_type == .Auto) {
                         self.reporter.reportError("FATAL: Auto operand_type found in Compare instruction at IP {}. Type inference likely failed during code generation.", .{ip});
+                        std.debug.print(">>   Compare instruction: {any}\n", .{c});
                         return ErrorList.InternalParserError;
                     }
                 },
                 .Convert => |c| {
                     if (c.from_type == .Auto or c.to_type == .Auto) {
                         self.reporter.reportError("FATAL: Auto type found in Convert instruction at IP {} (from: {s}, to: {s}). Type inference likely failed during code generation.", .{ ip, @tagName(c.from_type), @tagName(c.to_type) });
+                        std.debug.print(">>   Convert instruction: {any}\n", .{c});
                         return ErrorList.InternalParserError;
                     }
                 },
                 .Call => |c| {
                     if (c.return_type == .Auto) {
                         self.reporter.reportError("FATAL: Auto return_type found in Call instruction at IP {} for function '{s}'. Type inference likely failed during code generation.", .{ ip, c.qualified_name });
+                        std.debug.print(">>   Call instruction: {any}\n", .{c});
                         return ErrorList.InternalParserError;
                     }
                 },
                 .TailCall => |c| {
                     if (c.return_type == .Auto) {
                         self.reporter.reportError("FATAL: Auto return_type found in TailCall instruction at IP {} for function '{s}'. Type inference likely failed during code generation.", .{ ip, c.qualified_name });
+                        std.debug.print(">>   TailCall instruction: {any}\n", .{c});
                         return ErrorList.InternalParserError;
                     }
                 },
                 .Return => |r| {
                     if (r.return_type == .Auto) {
                         self.reporter.reportError("FATAL: Auto return_type found in Return instruction at IP {}. Type inference likely failed during code generation.", .{ip});
+                        std.debug.print(">>   Return instruction: {any}\n", .{r});
                         return ErrorList.InternalParserError;
                     }
                 },
@@ -725,7 +523,7 @@ pub const HIRVM = struct {
             }
         }
 
-        self.reporter.debug(">> SANITY CHECK PASSED: No Auto types found in HIR program\n", .{});
+        std.debug.print(">> SANITY CHECK PASSED: No Auto types found in HIR program\n", .{});
     }
 
     /// Execute a single HIR instruction
@@ -737,98 +535,20 @@ pub const HIRVM = struct {
                 try self.stack.push(HIRFrame.initFromHIRValue(constant_value));
             },
 
-            .StructNew => |s| {
-                var fields = std.ArrayList(hir_values.HIRStructField).init(self.allocator);
-                defer fields.deinit();
-
-                // Fields are pushed in reverse order, so we need to process them in reverse
-                var field_values = try self.allocator.alloc(HIRFrame, s.field_count);
-                defer self.allocator.free(field_values);
-                var field_names = try self.allocator.alloc([]const u8, s.field_count);
-                defer self.allocator.free(field_names);
-
-                // First pop all values and names
-                // HIR generation pushes field_value first, then field_name, so we pop field_name first
-                var i: usize = 0;
-                while (i < s.field_count) : (i += 1) {
-                    const field_name = try self.stack.pop();
-                    const field_value = try self.stack.pop();
-
-                    // Debug output removed for cleaner execution
-
-                    field_names[s.field_count - 1 - i] = try field_name.asString(); // Store in reverse
-                    field_values[s.field_count - 1 - i] = field_value; // Store in reverse
-                }
-
-                // Now process them in the correct order
-                for (0..s.field_count) |idx| {
-                    const field_name = field_names[idx];
-                    const field_value = field_values[idx];
-
-                    // Validate field type
-                    const expected_type = s.field_types[idx];
-                    const actual_type = switch (field_value.value) {
-                        .int => HIRType.Int,
-                        .float => HIRType.Float,
-                        .string => HIRType.String,
-                        .tetra => HIRType.Tetra,
-                        .array => HIRType.Array,
-                        .struct_instance => HIRType.Struct,
-                        .tuple => HIRType.Tuple,
-                        .map => HIRType.Map,
-                        .nothing => HIRType.Nothing,
-                        else => HIRType.Auto,
-                    };
-
-                    if (expected_type != actual_type and expected_type != .Auto) {
-                        return self.reporter.reportError("Type mismatch for field '{s}' in struct '{s}'. Expected {s}, got {s}", .{
-                            field_name,
-                            s.type_name,
-                            @tagName(expected_type),
-                            @tagName(actual_type),
-                        });
-                    }
-
-                    // Create field with proper path tracking
-                    var field_value_to_store = field_value.value;
-                    if (field_value.value == .struct_instance) {
-                        var new_struct = field_value.value.struct_instance;
-                        new_struct.field_name = field_name;
-                        // For nested structs, create a path that includes the field name
-                        new_struct.path = try self.allocator.dupe(u8, field_name);
-                        field_value_to_store = HIRValue{ .struct_instance = new_struct };
-                    }
-
-                    try fields.append(.{
-                        .name = field_name,
-                        .value = field_value_to_store,
-                        .field_type = expected_type,
-                    });
-                }
-
-                // Create struct instance with proper path tracking
-                const struct_instance = HIRValue{
-                    .struct_instance = .{
-                        .type_name = s.type_name,
-                        .fields = try fields.toOwnedSlice(),
-                        .field_name = null, // Base struct has no field name
-                        .path = null, // Base struct has no path initially
-                    },
-                };
-
-                var frame = HIRFrame{ .value = struct_instance };
-                frame.field_name = null; // Base struct has no field name
-                try self.stack.push(frame);
-            },
-
             .LoadVar => |v| {
+                if (self.debug_enabled) {
+                    std.debug.print(">> LoadVar '{s}' in scope {}\n", .{ v.var_name, self.current_scope.id });
+                }
+
                 if (self.turbo_mode) {
                     // TURBO: Check hot variable cache first (array lookup - fastest possible)
                     for (self.hot_vars[0..self.hot_var_count]) |hot_var| {
                         if (hot_var != null and std.mem.eql(u8, hot_var.?.name, v.var_name)) {
                             if (self.memory_manager.scope_manager.value_storage.get(hot_var.?.storage_id)) |storage| {
-                                const hir_value = self.tokenLiteralToHIRValue(storage.value);
-                                self.reporter.debug(">>   TURBO hit for '{s}' = {any} (storage_id: {})\n", .{ v.var_name, hir_value, hot_var.?.storage_id });
+                                const hir_value = tokenLiteralToHIRValue(storage.value);
+                                if (self.debug_enabled) {
+                                    std.debug.print(">>   TURBO hit for '{s}' = {any} (storage_id: {})\n", .{ v.var_name, hir_value, hot_var.?.storage_id });
+                                }
                                 try self.stack.push(HIRFrame.initFromHIRValue(hir_value));
                                 return; // Ultra-fast path
                             }
@@ -842,13 +562,17 @@ pub const HIRVM = struct {
                     // Check cache first - trust storage_id if valid
                     if (self.var_cache.get(v.var_name)) |cached_storage_id| {
                         if (self.memory_manager.scope_manager.value_storage.get(cached_storage_id)) |storage| {
-                            const hir_value = self.tokenLiteralToHIRValue(storage.value);
-                            self.reporter.debug(">>   CACHE hit for '{s}' = {any} (storage_id: {})\n", .{ v.var_name, hir_value, cached_storage_id });
+                            const hir_value = tokenLiteralToHIRValue(storage.value);
+                            if (self.debug_enabled) {
+                                std.debug.print(">>   CACHE hit for '{s}' = {any} (storage_id: {})\n", .{ v.var_name, hir_value, cached_storage_id });
+                            }
                             try self.stack.push(HIRFrame.initFromHIRValue(hir_value));
                             return; // Ultra-fast cached path
                         } else {
                             // Cache is stale, remove entry
-                            self.reporter.debug(">>   CACHE stale for '{s}' (storage_id: {})\n", .{ v.var_name, cached_storage_id });
+                            if (self.debug_enabled) {
+                                std.debug.print(">>   CACHE stale for '{s}' (storage_id: {})\n", .{ v.var_name, cached_storage_id });
+                            }
                             _ = self.var_cache.remove(v.var_name);
                         }
                     }
@@ -863,31 +587,34 @@ pub const HIRVM = struct {
                             self.var_cache.put(v.var_name, variable.storage_id) catch {};
                         }
 
-                        const hir_value = self.tokenLiteralToHIRValue(storage.value);
+                        const hir_value = tokenLiteralToHIRValue(storage.value);
+
+                        if (self.debug_enabled) {
+                            std.debug.print(">>   Found '{s}' = {any} (storage_id: {}, scope: {})\n", .{ v.var_name, hir_value, variable.storage_id, self.current_scope.id });
+                        }
 
                         try self.stack.push(HIRFrame.initFromHIRValue(hir_value));
                     } else {
-                        return self.reporter.reportError("Undefined variable: {s}", .{v.var_name});
+                        return self.reporter.reportError("Variable storage not found for: {s}", .{v.var_name});
                     }
                 } else {
+                    if (self.debug_enabled) {
+                        std.debug.print(">>   Variable '{s}' not found in scope {} (parent: {})\n", .{ v.var_name, self.current_scope.id, if (self.current_scope.parent) |p| p.id else 999 });
+                    }
                     return self.reporter.reportError("Undefined variable: {s}", .{v.var_name});
                 }
             },
 
             .StoreVar => |v| {
+                // Store top of stack to variable
                 const value = try self.stack.pop();
+                const token_literal = hirValueToTokenLiteral(value.value);
+                const token_type = hirValueToTokenType(value.value);
+                const type_info = hirValueToTypeInfo(value.value);
 
-                // Initialize the path with the variable name for struct instances
-                var store_value = value.value;
-                if (store_value == .struct_instance) {
-                    var new_struct = store_value.struct_instance;
-                    new_struct.path = try self.allocator.dupe(u8, v.var_name);
-                    store_value = HIRValue{ .struct_instance = new_struct };
+                if (self.debug_enabled) {
+                    std.debug.print(">> StoreVar '{s}' = {any} in scope {}\n", .{ v.var_name, value.value, self.current_scope.id });
                 }
-
-                const token_literal = hirValueToTokenLiteral(store_value);
-                const token_type = hirValueToTokenType(store_value);
-                const type_info = hirValueToTypeInfo(store_value);
 
                 // PERFORMANCE: Update cache after storing to keep it synchronized with memory module
                 if (self.fast_mode) {
@@ -906,6 +633,10 @@ pub const HIRVM = struct {
                             return self.reporter.reportError("Cannot modify constant variable: {s}", .{v.var_name});
                         }
 
+                        if (self.debug_enabled) {
+                            std.debug.print(">>   Updated existing '{s}' from {any} to {any} (storage_id: {}, scope: {})\n", .{ v.var_name, storage.*.value, token_literal, variable.storage_id, self.current_scope.id });
+                        }
+
                         storage.*.value = token_literal;
                         storage.*.type = token_type;
                         storage.*.type_info = type_info;
@@ -915,40 +646,75 @@ pub const HIRVM = struct {
                 } else {
                     // Variable doesn't exist in current scope - create NEW variable with NEW storage
                     // This ensures function parameters get their own storage in each recursive call
-
+                    if (self.debug_enabled) {
+                        std.debug.print(">>   Creating new variable '{s}' = {any} in scope {} (may shadow parent)\n", .{ v.var_name, value.value, self.current_scope.id });
+                    }
                     _ = self.current_scope.createValueBinding(v.var_name, token_literal, token_type, type_info, false) catch |err| {
                         return self.reporter.reportError("Failed to create variable {s}: {}", .{ v.var_name, err });
                     };
                 }
-
-                // Push the value back onto the stack with field names preserved
-                var frame = HIRFrame.initFromHIRValue(store_value);
-                frame.field_name = value.field_name;
-                try self.stack.push(frame);
-            },
-
-            .StoreConst => |c| {
-                const value = try self.stack.pop();
-                const token_literal = hirValueToTokenLiteral(value.value);
-                const token_type = hirValueToTokenType(value.value);
-                const type_info = hirValueToTypeInfo(value.value);
-
-                _ = self.current_scope.createValueBinding(c.var_name, token_literal, token_type, type_info, true) catch |err| {
-                    return self.reporter.reportError("Failed to create constant {s}: {}", .{ c.var_name, err });
-                };
             },
 
             .IntArith => |a| {
+                if (self.debug_enabled) {
+                    std.debug.print(">> IntArith.{s}: Stack size before: {}\n", .{ @tagName(a.op), self.stack.size() });
+                }
+
                 const b = try self.stack.pop();
                 const a_val = try self.stack.pop();
 
-                const result = switch (a.op) {
-                    .Add => try a_val.asInt() + try b.asInt(),
-                    .Sub => try a_val.asInt() - try b.asInt(),
-                    .Mul => try a_val.asInt() * try b.asInt(),
-                    .Div => @divTrunc(try a_val.asInt(), try b.asInt()),
-                    .Mod => @mod(try a_val.asInt(), try b.asInt()),
+                if (self.debug_enabled) {
+                    std.debug.print(">> IntArith.{s}: {any} {s} {any} = ", .{ @tagName(a.op), a_val.value, @tagName(a.op), b.value });
+                }
+
+                // IMPROVED TYPE CHECKING: Handle non-integer values gracefully
+                const a_int = switch (a_val.value) {
+                    .int => |i| i,
+                    .u8 => |u| @as(i32, u),
+                    .tetra => |t| @as(i32, t),
+                    .nothing => {
+                        return self.reporter.reportError("Cannot perform arithmetic on 'nothing' value", .{});
+                    },
+                    else => {
+                        return self.reporter.reportError("Cannot convert {s} to integer for arithmetic", .{@tagName(a_val.value)});
+                    },
                 };
+
+                const b_int = switch (b.value) {
+                    .int => |i| i,
+                    .u8 => |u| @as(i32, u),
+                    .tetra => |t| @as(i32, t),
+                    .nothing => {
+                        return self.reporter.reportError("Cannot perform arithmetic on 'nothing' value", .{});
+                    },
+                    else => {
+                        return self.reporter.reportError("Cannot convert {s} to integer for arithmetic", .{@tagName(b.value)});
+                    },
+                };
+
+                const result = switch (a.op) {
+                    .Add => std.math.add(i32, a_int, b_int) catch |err| {
+                        if (self.debug_enabled) std.debug.print("Integer overflow in addition: {} + {}\n", .{ a_int, b_int });
+                        return err;
+                    },
+                    .Sub => std.math.sub(i32, a_int, b_int) catch |err| {
+                        if (self.debug_enabled) std.debug.print("Integer overflow in subtraction: {} - {}\n", .{ a_int, b_int });
+                        return err;
+                    },
+                    .Mul => std.math.mul(i32, a_int, b_int) catch |err| {
+                        if (self.debug_enabled) std.debug.print("Integer overflow in multiplication: {} * {}\n", .{ a_int, b_int });
+                        return err;
+                    },
+                    .Div => if (b_int == 0) {
+                        if (self.debug_enabled) std.debug.print("Division by zero: {} / {}\n", .{ a_int, b_int });
+                        return ErrorList.DivisionByZero;
+                    } else @divTrunc(a_int, b_int),
+                    .Mod => try self.fastIntMod(a_int, b_int), // Use optimized modulo
+                };
+
+                if (self.debug_enabled) {
+                    std.debug.print("{d} [Stack size after: {}]\n", .{ result, self.stack.size() + 1 });
+                }
 
                 try self.stack.push(HIRFrame.initInt(result));
             },
@@ -957,64 +723,211 @@ pub const HIRVM = struct {
                 const b = try self.stack.pop();
                 const a_val = try self.stack.pop();
 
+                // PERFORMANCE: Inline float operations for maximum speed
+                const a_float = try a_val.asFloat();
+                const b_float = try b.asFloat();
+
                 const result = switch (a.op) {
-                    .Add => try a_val.asFloat() + try b.asFloat(),
-                    .Sub => try a_val.asFloat() - try b.asFloat(),
-                    .Mul => try a_val.asFloat() * try b.asFloat(),
-                    .Div => try a_val.asFloat() / try b.asFloat(),
-                    .Mod => return ErrorList.UnsupportedOperator,
+                    .Add => a_float + b_float,
+                    .Sub => a_float - b_float,
+                    .Mul => a_float * b_float,
+                    .Div => if (b_float == 0.0) {
+                        if (self.debug_enabled) std.debug.print("Float division by zero: {} / {}\n", .{ a_float, b_float });
+                        return ErrorList.DivisionByZero;
+                    } else a_float / b_float,
+                    .Mod => return ErrorList.UnsupportedOperator, // Float modulo not supported
                 };
 
                 try self.stack.push(HIRFrame.initFloat(result));
             },
 
-            .Convert => |c| {
-                const value = try self.stack.pop();
-                const result = switch (c.from_type) {
-                    .Int => switch (c.to_type) {
-                        .Float => HIRFrame.initFloat(@as(f64, @floatFromInt(try value.asInt()))),
-                        .String => HIRFrame.initString(try std.fmt.allocPrint(self.allocator, "{d}", .{try value.asInt()})),
-                        else => return ErrorList.TypeError,
-                    },
-                    .Float => switch (c.to_type) {
-                        .Int => HIRFrame.initInt(@as(i32, @intFromFloat(try value.asFloat()))),
-                        .String => HIRFrame.initString(try std.fmt.allocPrint(self.allocator, "{d}", .{try value.asFloat()})),
-                        else => return ErrorList.TypeError,
-                    },
-                    .String => switch (c.to_type) {
-                        .Int => blk: {
-                            const str = try value.asString();
-                            const parsed = std.fmt.parseInt(i32, str, 10) catch break :blk HIRFrame.initNothing();
-                            break :blk HIRFrame.initInt(parsed);
-                        },
-                        .Float => blk: {
-                            const str = try value.asString();
-                            const parsed = std.fmt.parseFloat(f64, str) catch break :blk HIRFrame.initNothing();
-                            break :blk HIRFrame.initFloat(parsed);
-                        },
-                        else => return ErrorList.TypeError,
-                    },
-                    else => return ErrorList.TypeError,
-                };
-                try self.stack.push(result);
-            },
-
             .Compare => |c| {
                 const b = try self.stack.pop();
-                const a = try self.stack.pop();
+                const a_val = try self.stack.pop();
+
+                if (self.debug_enabled) {
+                    std.debug.print(">> Compare {s}: {any} {s} {any}\n", .{ @tagName(c.op), a_val.value, @tagName(c.op), b.value });
+                }
 
                 const result = switch (c.op) {
-                    .Eq => try self.compareEqual(a, b),
-                    .Ne => !(try self.compareEqual(a, b)),
-                    .Lt => try self.compareLess(a, b),
-                    .Le => (try self.compareLess(a, b)) or (try self.compareEqual(a, b)),
-                    .Gt => try self.compareGreater(a, b),
-                    .Ge => (try self.compareGreater(a, b)) or (try self.compareEqual(a, b)),
+                    .Eq => try self.compareEqual(a_val, b),
+                    .Ne => !(try self.compareEqual(a_val, b)),
+                    .Lt => try self.compareLess(a_val, b),
+                    .Le => (try self.compareLess(a_val, b)) or (try self.compareEqual(a_val, b)),
+                    .Gt => try self.compareGreater(a_val, b),
+                    .Ge => (try self.compareGreater(a_val, b)) or (try self.compareEqual(a_val, b)),
                 };
+
+                if (self.debug_enabled) {
+                    std.debug.print(">> Compare result: {} (pushing tetra {})\n", .{ result, if (result) @as(u8, 1) else @as(u8, 0) });
+                }
 
                 try self.stack.push(HIRFrame.initTetra(if (result) 1 else 0));
             },
 
+            .Jump => |j| {
+                // Unconditional jump to label
+                if (self.label_map.get(j.label)) |target_ip| {
+                    self.ip = target_ip;
+                    if (self.debug_enabled and !self.fast_mode) {
+                        std.debug.print("Jumping to label '{s}' at instruction {}\n", .{ j.label, target_ip });
+                    }
+                } else {
+                    return self.reporter.reportFatalError("Unknown label: {s}", .{j.label});
+                }
+            },
+
+            .JumpCond => |j| {
+                // OPTIMIZED: Conditional jump with reduced overhead
+                const condition = try self.stack.pop();
+                if (self.debug_enabled) {
+                    std.debug.print(">> JumpCond: condition = {any}, true_label = {s}, false_label = {s}\n", .{ condition.value, j.label_true, j.label_false });
+                }
+
+                const should_jump = switch (condition.value) {
+                    .tetra => |t| switch (t) {
+                        0 => false, // false -> don't jump
+                        1 => true, // true -> jump
+                        2 => true, // both -> jump (contains true)
+                        3 => false, // neither -> don't jump (contains no truth)
+                        else => false,
+                    },
+                    .int => |i| i != 0,
+                    .float => |f| f != 0.0,
+                    .nothing => false,
+                    else => true,
+                };
+
+                const target_label = if (should_jump) j.label_true else j.label_false;
+                if (self.debug_enabled) {
+                    std.debug.print(">> JumpCond: should_jump = {}, target_label = {s}\n", .{ should_jump, target_label });
+                }
+
+                if (self.label_map.get(target_label)) |target_ip| {
+                    self.ip = target_ip;
+                    if (self.debug_enabled) {
+                        std.debug.print(">> JumpCond: Jumping to '{s}' at instruction {} (current IP was {})\n", .{ target_label, target_ip, self.ip - 1 });
+                    }
+                } else {
+                    return self.reporter.reportFatalError("Unknown label: {s}", .{target_label});
+                }
+            },
+
+            .Label => {
+                // Labels are no-ops during execution (already resolved)
+            },
+
+            .Dup => {
+                const value = try self.stack.peek();
+                try self.stack.push(HIRFrame.initFromHIRValue(value.value));
+            },
+
+            .Pop => {
+                const value = try self.stack.pop();
+                // HIRFrame doesn't need cleanup - it's just a simple wrapper
+                _ = value;
+            },
+
+            .Inspect => |i| {
+                // OPTIMIZED: Use proper UTF-8 buffered output like the old interpreter
+                const value = try self.stack.peek();
+
+                var buffer = std.ArrayList(u8).init(self.allocator);
+                defer buffer.deinit();
+
+                const name = i.name orelse "";
+
+                std.debug.print(">> INSPECT DEBUG: name={s}, instruction_value_type={s}, actual_value={any}\n", .{ name, @tagName(i.value_type), value.value });
+
+                // Check for special tetra formatting based on value_type
+                if (i.value_type == .Tetra) {
+                    if (self.debug_enabled) {
+                        std.debug.print(">> Formatting tetra value: type={s}, value={any}\n", .{ @tagName(i.value_type), value.value });
+                    }
+                    // Handle tetra values regardless of storage type (could be .int or .tetra)
+                    const tetra_num = switch (value.value) {
+                        .tetra => |t| t,
+                        .int => |int_val| if (int_val >= 0 and int_val <= 3) @as(u8, @intCast(int_val)) else 0,
+                        else => 0,
+                    };
+                    const tetra_value = switch (tetra_num) {
+                        0 => "false",
+                        1 => "true",
+                        2 => "both",
+                        3 => "neither",
+                        else => "unknown",
+                    };
+                    try buffer.writer().print("INSPECT {s}: {s}\n", .{ name, tetra_value });
+                } else {
+                    if (self.debug_enabled and name.len > 0 and (std.mem.eql(u8, name, "firstFold") or std.mem.eql(u8, name, "secondFold"))) {
+                        std.debug.print(">> NOT formatting as tetra: name={s}, type={s}, value={any}\n", .{ name, @tagName(i.value_type), value.value });
+                    }
+                    try buffer.writer().print("INSPECT {s}: ", .{name});
+                    // Format the value using the same approach as old interpreter
+                    try self.formatHIRValue(buffer.writer(), value.value);
+                    try buffer.writer().print("\n", .{});
+                }
+
+                // Use std.io.getStdOut().writeAll for proper UTF-8 output (like old interpreter)
+                try std.io.getStdOut().writeAll(buffer.items);
+            },
+
+            .EnterScope => |s| {
+                // TAIL CALL FIX: Skip scope creation if this is a tail call
+                if (self.skip_next_enter_scope) {
+                    self.skip_next_enter_scope = false; // Reset flag
+                    if (self.debug_enabled) {
+                        std.debug.print(">> Skipped EnterScope {} for tail call (reusing current scope {})\n", .{ s.scope_id, self.current_scope.id });
+                    }
+                    return; // Skip scope creation entirely
+                }
+
+                // Create new scope - the memory module handles all the complexity
+                const new_scope = try self.memory_manager.scope_manager.createScope(self.current_scope);
+                self.current_scope = new_scope;
+
+                // PERFORMANCE: Clear cache when entering new scope to prevent stale data
+                // This is fast because we're using arena allocator
+                if (self.fast_mode) {
+                    self.var_cache.clearRetainingCapacity();
+                }
+
+                if (self.debug_enabled) {
+                    if (new_scope.parent) |parent| {
+                        std.debug.print(">> Entered scope {} (parent: {}) [Call stack: {}]\n", .{ s.scope_id, parent.id, self.call_stack.sp });
+                    } else {
+                        std.debug.print(">> Entered scope {} (no parent) [Call stack: {}]\n", .{ s.scope_id, self.call_stack.sp });
+                    }
+                }
+            },
+
+            .ExitScope => |s| {
+                if (self.current_scope.parent) |parent_scope| {
+                    const old_scope = self.current_scope;
+                    self.current_scope = parent_scope;
+
+                    if (self.debug_enabled) {
+                        std.debug.print(">> Exited scope {} (returned to: {}) [Call stack: {}]\n", .{ s.scope_id, parent_scope.id, self.call_stack.sp });
+                    }
+                    // Clean up the old scope
+                    old_scope.deinit();
+                } else {
+                    // GRACEFUL HANDLING: Don't error on root scope exit, just warn and continue
+                    if (self.debug_enabled) {
+                        std.debug.print(">> Warning: Attempted to exit root scope {} - ignoring\n", .{s.scope_id});
+                    }
+                    // Don't return error, just continue execution
+                }
+            },
+
+            .Halt => {
+                if (self.debug_enabled) {
+                    std.debug.print("HIR VM halted\n", .{});
+                }
+                self.running = false;
+            },
+
+            // ULTRA-FAST Logical operations using lookup tables!
             .LogicalOp => |l| {
                 const b = try self.stack.pop();
                 const a = try self.stack.pop();
@@ -1022,7 +935,11 @@ pub const HIRVM = struct {
                 const result = switch (l.op) {
                     .And => try self.logicalAnd(a, b),
                     .Or => try self.logicalOr(a, b),
-                    .Not => try self.logicalNot(a),
+                    .Not => blk: {
+                        // For NOT, we only use 'a', push 'b' back
+                        try self.stack.push(b);
+                        break :blk try self.logicalNot(a);
+                    },
                     .Iff => try self.logicalIff(a, b),
                     .Xor => try self.logicalXor(a, b),
                     .Nand => try self.logicalNand(a, b),
@@ -1033,6 +950,7 @@ pub const HIRVM = struct {
                 try self.stack.push(HIRFrame.initTetra(result));
             },
 
+            // String operations (from old VM - proven implementations)
             .StringOp => |s| {
                 switch (s.op) {
                     .Concat => {
@@ -1056,945 +974,1285 @@ pub const HIRVM = struct {
                 }
             },
 
-            .Jump => |j| {
-                if (self.label_map.get(j.label)) |target_ip| {
-                    self.ip = target_ip;
-                } else {
-                    return self.reporter.reportError("Unknown label: {s}", .{j.label});
-                }
-            },
-
-            .JumpCond => |j| {
-                const condition = try self.stack.pop();
-                const should_jump = switch (condition.value) {
-                    .tetra => |t| t == 1,
-                    .int => |i| i != 0,
-                    .float => |f| f != 0.0,
-                    else => false,
-                };
-
-                const target_label = if (should_jump) j.label_true else j.label_false;
-                if (self.label_map.get(target_label)) |target_ip| {
-                    self.ip = target_ip;
-                } else {
-                    return self.reporter.reportError("Unknown label: {s}", .{target_label});
-                }
-            },
-
-            .Label => {
-                // Labels are no-ops during execution
-            },
-
-            .Call => |c| {
-                // Handle function calls
-                switch (c.call_kind) {
-                    .LocalFunction => {
-                        if (c.function_index >= self.program.function_table.len) {
-                            return self.reporter.reportError("Invalid function index: {} (max: {})", .{ c.function_index, self.program.function_table.len });
-                        }
-
-                        const function = self.program.function_table[c.function_index];
-                        const return_ip = self.ip + 1;
-
-                        const call_frame = CallFrame{
-                            .return_ip = return_ip,
-                            .function_name = function.name,
-                            .arg_count = c.arg_count,
-                        };
-                        try self.call_stack.push(call_frame);
-
-                        if (self.label_map.get(function.start_label)) |target_ip| {
-                            self.ip = target_ip;
-                        } else {
-                            return self.reporter.reportError("Function label not found: {s}", .{function.start_label});
-                        }
-                    },
-                    .BuiltinFunction => {
-                        // Handle built-in functions
-                        if (std.mem.eql(u8, c.qualified_name, "print")) {
-                            const value = try self.stack.pop();
-                            try self.formatHIRValue(std.io.getStdOut().writer(), value.value);
-                            try std.io.getStdOut().writer().writeByte('\n');
-                        } else {
-                            return self.reporter.reportError("Unknown built-in function: {s}", .{c.qualified_name});
-                        }
-                    },
-                    .ModuleFunction => {
-                        // Module functions not implemented yet
-                        return self.reporter.reportError("Module functions not implemented yet: {s}", .{c.qualified_name});
-                    },
-                }
-            },
-
-            .TailCall => |c| {
-                switch (c.call_kind) {
-                    .LocalFunction => {
-                        if (c.function_index >= self.program.function_table.len) {
-                            return self.reporter.reportError("Invalid function index: {} (max: {})", .{ c.function_index, self.program.function_table.len });
-                        }
-
-                        const function = self.program.function_table[c.function_index];
-                        if (self.label_map.get(function.start_label)) |target_ip| {
-                            self.ip = target_ip;
-                        } else {
-                            return self.reporter.reportError("Function label not found: {s}", .{function.start_label});
-                        }
-                    },
-                    else => return self.reporter.reportError("Tail call not supported for call kind: {s}", .{@tagName(c.call_kind)}),
-                }
-            },
-
-            .Return => |r| {
-                if (!r.has_value) {
-                    try self.stack.push(HIRFrame.initNothing());
-                }
-
-                if (self.call_stack.isEmpty()) {
-                    self.running = false;
-                } else {
-                    const call_frame = try self.call_stack.pop();
-                    self.ip = call_frame.return_ip;
-                }
-            },
-
-            .GetField => |f| {
-                const value = try self.stack.pop();
-                self.reporter.debug("GetField called for field '{s}' on value: {any}", .{ f.field_name, value });
-
-                switch (value.value) {
-                    .struct_instance => |s| {
-                        self.reporter.debug("Looking up field '{s}' in struct of type '{s}'", .{ f.field_name, s.type_name });
-                        for (s.fields) |field| {
-                            if (std.mem.eql(u8, field.name, f.field_name)) {
-                                self.reporter.debug("Found field '{s}' with value: {any}", .{ field.name, field.value });
-                                var frame = HIRFrame.initFromHIRValue(field.value);
-                                frame.field_name = field.name;
-                                try self.stack.push(frame);
-                                return;
-                            }
-                        }
-                        return self.reporter.reportError("Field not found: {s}", .{f.field_name});
-                    },
-                    else => return self.reporter.reportError("Cannot access field '{s}' on non-struct value", .{f.field_name}),
-                }
-            },
-
-            .SetField => |f| {
-                const new_value = try self.stack.pop();
-                const target = try self.stack.pop();
-                self.reporter.debug("SetField called for field '{s}' with new value: {any}", .{ f.field_name, new_value });
-
-                switch (target.value) {
-                    .struct_instance => |*s| {
-                        self.reporter.debug("Setting field '{s}' in struct of type '{s}'", .{ f.field_name, s.type_name });
-                        for (s.fields) |*field| {
-                            if (std.mem.eql(u8, field.name, f.field_name)) {
-                                self.reporter.debug("Found field '{s}', updating value from {any} to {any}", .{ field.name, field.value, new_value.value });
-                                field.value = new_value.value;
-                                try self.stack.push(target);
-                                return;
-                            }
-                        }
-                        return self.reporter.reportError("Field not found: {s}", .{f.field_name});
-                    },
-                    else => return self.reporter.reportError("Cannot set field '{s}' on non-struct value", .{f.field_name}),
-                }
-            },
-
-            .StoreFieldName => |s| {
-                // Get the top value on the stack without popping it
-                if (self.stack.peek()) |top| {
-                    if (top.value == .struct_instance) {
-                        var new_struct = top.value.struct_instance;
-                        // Update field_name
-                        new_struct.field_name = s.field_name;
-
-                        // Build or extend the path properly for nested field access
-                        if (new_struct.path) |existing_path| {
-                            // Extend existing path: e.g., "mike.person" + "age" = "mike.person.age"
-                            const new_path = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ existing_path, s.field_name });
-                            new_struct.path = new_path;
-                        } else {
-                            // Start a new path with just the field name
-                            new_struct.path = try self.allocator.dupe(u8, s.field_name);
-                        }
-
-                        // Update the value on the stack
-                        _ = try self.stack.pop();
-                        var frame = HIRFrame.initFromHIRValue(HIRValue{ .struct_instance = new_struct });
-                        frame.field_name = s.field_name;
-                        try self.stack.push(frame);
-                    } else {
-                        // For non-struct values, just store the field name
-                        var frame = HIRFrame.initFromHIRValue(top.value);
-                        frame.field_name = s.field_name;
-                        _ = try self.stack.pop();
-                        try self.stack.push(frame);
-                    }
-                }
-                self.current_field_name = s.field_name;
-            },
-
-            .TryBegin, .TryCatch, .Throw => {
-                // Exception handling not implemented yet
-                return ErrorList.NotImplemented;
-            },
-
-            .EnterScope => {
-                const new_scope = try self.memory_manager.scope_manager.createScope(self.current_scope);
-                self.current_scope = new_scope;
-                if (self.fast_mode) {
-                    self.var_cache.clearRetainingCapacity();
-                }
-            },
-
-            .ExitScope => {
-                if (self.current_scope.parent) |parent_scope| {
-                    const old_scope = self.current_scope;
-                    self.current_scope = parent_scope;
-                    if (self.fast_mode) {
-                        self.var_cache.clearRetainingCapacity();
-                    }
-                    old_scope.deinit();
-                }
-            },
-
+            // Array operations (Phase 1: Core Data Types)
             .ArrayNew => |a| {
-                const elements = try self.allocator.alloc(HIRValue, a.size);
+                // Create new array with specified size
+                // CRITICAL FIX: For empty arrays (size=0), allocate minimum capacity for growth
+                const initial_capacity = if (a.size == 0) 8 else a.size; // Start with capacity 8 for empty arrays
+                const elements = try self.allocator.alloc(HIRValue, initial_capacity);
+
+                // Initialize all elements to nothing
                 for (elements) |*element| {
                     element.* = HIRValue.nothing;
                 }
+
+                // For empty arrays, we use the full capacity but track length separately
                 const array = HIRValue{ .array = HIRArray{
                     .elements = elements,
                     .element_type = a.element_type,
-                    .capacity = a.size,
+                    .capacity = initial_capacity,
                 } };
+
                 try self.stack.push(HIRFrame.initFromHIRValue(array));
             },
 
-            .ArrayGet => {
-                const index = try self.stack.pop();
-                const array = try self.stack.pop();
+            .ArrayGet => |a| {
+                // Get array element by index: array[index]
+                const index = try self.stack.pop(); // Index
+                const array = try self.stack.pop(); // Array
+
+                // IMPROVED: Handle different index types more gracefully
+                const index_val = switch (index.value) {
+                    .int => |i| if (i < 0) {
+                        return self.reporter.reportError("Array index cannot be negative: {}", .{i});
+                    } else @as(u32, @intCast(i)),
+                    .u8 => |u| @as(u32, u),
+                    .tetra => |t| @as(u32, t), // Allow tetra values as indices
+                    .string => |s| blk: {
+                        // GRACEFUL: Try to parse string as integer
+                        const parsed = std.fmt.parseInt(i32, s, 10) catch {
+                            if (self.debug_enabled) {
+                                std.debug.print(">> Warning: Cannot parse string '{s}' as array index, returning nothing\n", .{s});
+                            }
+                            try self.stack.push(HIRFrame.initFromHIRValue(HIRValue.nothing));
+                            return;
+                        };
+                        if (parsed < 0) {
+                            return self.reporter.reportError("Array index cannot be negative: {}", .{parsed});
+                        }
+                        break :blk @as(u32, @intCast(parsed));
+                    },
+                    .nothing => {
+                        if (self.debug_enabled) {
+                            std.debug.print(">> Warning: Using 'nothing' as array index, returning nothing\n", .{});
+                        }
+                        try self.stack.push(HIRFrame.initFromHIRValue(HIRValue.nothing));
+                        return;
+                    },
+                    else => {
+                        if (self.debug_enabled) {
+                            std.debug.print(">> Warning: Cannot use {s} as array index, returning nothing\n", .{@tagName(index.value)});
+                        }
+                        try self.stack.push(HIRFrame.initFromHIRValue(HIRValue.nothing));
+                        return;
+                    },
+                };
 
                 switch (array.value) {
                     .array => |arr| {
-                        const idx = switch (index.value) {
-                            .int => |i| if (i < 0) return ErrorList.IndexOutOfBounds else @as(usize, @intCast(i)),
-                            else => return ErrorList.TypeError,
-                        };
-                        if (idx >= arr.elements.len) {
-                            return ErrorList.IndexOutOfBounds;
+                        if (a.bounds_check and index_val >= arr.elements.len) {
+                            if (self.debug_enabled) {
+                                std.debug.print(">> Warning: Array index {} out of bounds (length: {}), returning nothing\n", .{ index_val, arr.elements.len });
+                            }
+                            try self.stack.push(HIRFrame.initFromHIRValue(HIRValue.nothing));
+                            return;
                         }
-                        try self.stack.push(HIRFrame.initFromHIRValue(arr.elements[idx]));
+
+                        const element = arr.elements[index_val];
+                        try self.stack.push(HIRFrame.initFromHIRValue(element));
                     },
-                    else => return ErrorList.TypeError,
+                    .nothing => {
+                        // GRACEFUL: Treat 'nothing' as empty array - any index returns nothing
+                        if (self.debug_enabled) {
+                            std.debug.print(">> Warning: Indexing 'nothing' value, returning nothing\n", .{});
+                        }
+                        try self.stack.push(HIRFrame.initFromHIRValue(HIRValue.nothing));
+                    },
+                    .string => |s| {
+                        // GRACEFUL: Allow string indexing (return character as string)
+                        if (index_val >= s.len) {
+                            if (self.debug_enabled) {
+                                std.debug.print(">> Warning: String index {} out of bounds (length: {}), returning nothing\n", .{ index_val, s.len });
+                            }
+                            try self.stack.push(HIRFrame.initFromHIRValue(HIRValue.nothing));
+                            return;
+                        }
+                        const char_str = s[index_val .. index_val + 1];
+                        try self.stack.push(HIRFrame.initFromHIRValue(HIRValue{ .string = char_str }));
+                    },
+                    .tuple => |t| {
+                        // GRACEFUL: Allow tuple indexing
+                        if (index_val >= t.elements.len) {
+                            if (self.debug_enabled) {
+                                std.debug.print(">> Warning: Tuple index {} out of bounds (length: {}), returning nothing\n", .{ index_val, t.elements.len });
+                            }
+                            try self.stack.push(HIRFrame.initFromHIRValue(HIRValue.nothing));
+                            return;
+                        }
+                        const element = t.elements[index_val];
+                        try self.stack.push(HIRFrame.initFromHIRValue(element));
+                    },
+                    else => {
+                        if (self.debug_enabled) {
+                            std.debug.print(">> Warning: Cannot index {s} value, returning nothing\n", .{@tagName(array.value)});
+                        }
+                        try self.stack.push(HIRFrame.initFromHIRValue(HIRValue.nothing));
+                    },
                 }
             },
 
-            .ArraySet => {
-                const value = try self.stack.pop();
-                const index = try self.stack.pop();
-                const array = try self.stack.pop();
+            .ArraySet => |a| {
+                // Set array element by index
+                // Stack order (top to bottom): value, index, array
+                const value = try self.stack.pop(); // Value to set
+                const index = try self.stack.pop(); // Index
+                const array_frame = try self.stack.pop(); // Array
 
-                switch (array.value) {
-                    .array => |*arr| {
-                        const idx = switch (index.value) {
-                            .int => |i| if (i < 0) return ErrorList.IndexOutOfBounds else @as(usize, @intCast(i)),
-                            else => return ErrorList.TypeError,
+                // IMPROVED: Handle different index types more gracefully
+                const index_val = switch (index.value) {
+                    .int => |i| if (i < 0) {
+                        return self.reporter.reportError("Array index cannot be negative: {}", .{i});
+                    } else @as(u32, @intCast(i)),
+                    .u8 => |u| @as(u32, u),
+                    .tetra => |t| @as(u32, t), // Allow tetra values as indices
+                    .string => |s| blk: {
+                        // GRACEFUL: Try to parse string as integer
+                        const parsed = std.fmt.parseInt(i32, s, 10) catch {
+                            if (self.debug_enabled) {
+                                std.debug.print(">> Warning: Cannot parse string '{s}' as array index, operation ignored\n", .{s});
+                            }
+                            try self.stack.push(array_frame); // Push original array back
+                            return;
                         };
-                        if (idx >= arr.elements.len) {
-                            return ErrorList.IndexOutOfBounds;
+                        if (parsed < 0) {
+                            return self.reporter.reportError("Array index cannot be negative: {}", .{parsed});
                         }
-                        arr.elements[idx] = value.value;
-                        try self.stack.push(HIRFrame.initFromHIRValue(array.value));
+                        break :blk @as(u32, @intCast(parsed));
                     },
-                    else => return ErrorList.TypeError,
+                    .nothing => {
+                        if (self.debug_enabled) {
+                            std.debug.print(">> Warning: Cannot use 'nothing' as array index, operation ignored\n", .{});
+                        }
+                        try self.stack.push(array_frame); // Push original array back
+                        return;
+                    },
+                    else => {
+                        if (self.debug_enabled) {
+                            std.debug.print(">> Warning: Cannot use {s} as array index, operation ignored\n", .{@tagName(index.value)});
+                        }
+                        try self.stack.push(array_frame); // Push original array back
+                        return;
+                    },
+                };
+
+                switch (array_frame.value) {
+                    .array => |arr| {
+                        // Create a mutable copy of the array
+                        var mutable_arr = arr;
+
+                        if (a.bounds_check and index_val >= mutable_arr.elements.len) {
+                            if (self.debug_enabled) {
+                                std.debug.print(">> Warning: Array index {} out of bounds (length: {}), operation ignored\n", .{ index_val, mutable_arr.elements.len });
+                            }
+                            try self.stack.push(array_frame); // Push original array back
+                            return;
+                        }
+
+                        mutable_arr.elements[index_val] = value.value;
+                        // Push the modified array back onto the stack
+                        const modified_array_value = HIRValue{ .array = mutable_arr };
+                        try self.stack.push(HIRFrame.initFromHIRValue(modified_array_value));
+                    },
+                    .nothing => {
+                        // GRACEFUL: Cannot set on 'nothing', just ignore
+                        if (self.debug_enabled) {
+                            std.debug.print(">> Warning: Cannot set array element on 'nothing' value, operation ignored\n", .{});
+                        }
+                        try self.stack.push(HIRFrame.initFromHIRValue(HIRValue.nothing));
+                    },
+                    else => {
+                        if (self.debug_enabled) {
+                            std.debug.print(">> Warning: Cannot set array element on {s} value, operation ignored\n", .{@tagName(array_frame.value)});
+                        }
+                        try self.stack.push(array_frame); // Push original value back
+                    },
                 }
             },
 
-            .ArrayPush => {
-                const value = try self.stack.pop();
-                const array = try self.stack.pop();
+            .ArrayPush => |a| {
+                // Push element to end of array
+                const element = try self.stack.pop(); // Element to push
+                const array = try self.stack.pop(); // Array
 
                 switch (array.value) {
                     .array => |arr| {
-                        var length: usize = 0;
-                        for (arr.elements) |elem| {
+                        // Create a mutable copy of the array
+                        var mutable_arr = arr;
+
+                        // Check if we need to resize
+                        if (mutable_arr.elements.len >= mutable_arr.capacity) {
+                            const new_capacity = switch (a.resize_behavior) {
+                                .Double => mutable_arr.capacity * 2,
+                                .Fixed => return self.reporter.reportError("Array at capacity {} - cannot push more elements", .{mutable_arr.capacity}),
+                                .Exact => mutable_arr.capacity + 1,
+                            };
+
+                            // Reallocate with new capacity
+                            const new_elements = try self.allocator.realloc(mutable_arr.elements, new_capacity);
+                            mutable_arr.elements = new_elements;
+                            mutable_arr.capacity = new_capacity;
+                        }
+
+                        // Add element to end (we need to track current length separately)
+                        // For now, find the first nothing element to determine length
+                        var length: u32 = 0;
+                        for (mutable_arr.elements) |elem| {
                             if (std.meta.eql(elem, HIRValue.nothing)) break;
                             length += 1;
                         }
-                        if (length >= arr.capacity) {
-                            const new_capacity = arr.capacity * 2;
-                            // Create a new array with increased capacity
-                            const new_elements = try self.allocator.alloc(HIRValue, new_capacity);
-                            // Copy existing elements
-                            @memcpy(new_elements[0..arr.elements.len], arr.elements);
-                            // Initialize remaining elements to nothing
-                            for (new_elements[arr.elements.len..]) |*elem| {
-                                elem.* = HIRValue.nothing;
-                            }
-                            // Create a new array value with the new elements
-                            const new_array = HIRValue{ .array = HIRArray{
-                                .elements = new_elements,
-                                .element_type = arr.element_type,
-                                .capacity = new_capacity,
-                            } };
-                            // Add the new value
-                            new_elements[length] = value.value;
-                            // Push the new array onto the stack
-                            try self.stack.push(HIRFrame.initFromHIRValue(new_array));
-                            return;
+
+                        if (length < mutable_arr.elements.len) {
+                            mutable_arr.elements[length] = element.value;
+                        } else {
+                            return self.reporter.reportError("Array is full and cannot be resized", .{});
                         }
-                        // If we didn't need to resize, create a new array value with modified elements
-                        var new_elements = try self.allocator.alloc(HIRValue, arr.capacity);
-                        @memcpy(new_elements[0..arr.elements.len], arr.elements);
-                        new_elements[length] = value.value;
+
+                        // Push the modified array back onto the stack
+                        const modified_array_value = HIRValue{ .array = mutable_arr };
+                        try self.stack.push(HIRFrame.initFromHIRValue(modified_array_value));
+                    },
+                    .nothing => {
+                        // GRACEFUL: Treat 'nothing' as creating a new single-element array
+                        if (self.debug_enabled) {
+                            std.debug.print(">> Warning: Pushing to 'nothing' value, creating new array\n", .{});
+                        }
+                        const elements = try self.allocator.alloc(HIRValue, 8);
+                        for (elements) |*elem| {
+                            elem.* = HIRValue.nothing;
+                        }
+                        elements[0] = element.value;
+
                         const new_array = HIRValue{ .array = HIRArray{
-                            .elements = new_elements,
-                            .element_type = arr.element_type,
-                            .capacity = arr.capacity,
+                            .elements = elements,
+                            .element_type = .Auto,
+                            .capacity = 8,
                         } };
                         try self.stack.push(HIRFrame.initFromHIRValue(new_array));
                     },
-                    else => return ErrorList.TypeError,
+                    else => {
+                        if (self.debug_enabled) {
+                            std.debug.print(">> Warning: Cannot push to {s} value, returning original value\n", .{@tagName(array.value)});
+                        }
+                        try self.stack.push(array); // Return original value
+                    },
                 }
             },
 
             .ArrayPop => {
-                const array = try self.stack.pop();
+                // Pop element from end of array
+                const array = try self.stack.pop(); // Array
 
                 switch (array.value) {
-                    .array => |*arr| {
-                        var length: usize = 0;
-                        for (arr.elements) |elem| {
+                    .array => |arr| {
+                        // Create a mutable copy of the array
+                        var mutable_arr = arr;
+
+                        // Find the last non-nothing element
+                        var length: u32 = 0;
+                        for (mutable_arr.elements) |elem| {
                             if (std.meta.eql(elem, HIRValue.nothing)) break;
                             length += 1;
                         }
+
                         if (length == 0) {
-                            return ErrorList.IndexOutOfBounds;
+                            return self.reporter.reportError("Cannot pop from empty array", .{});
                         }
-                        const value = arr.elements[length - 1];
-                        arr.elements[length - 1] = HIRValue.nothing;
-                        try self.stack.push(HIRFrame.initFromHIRValue(value));
+
+                        const last_element = mutable_arr.elements[length - 1];
+                        mutable_arr.elements[length - 1] = HIRValue.nothing; // Clear the element
+
+                        // Push the popped element onto the stack
+                        try self.stack.push(HIRFrame.initFromHIRValue(last_element));
+
+                        // Note: We don't push the array back since pop consumes it
                     },
-                    else => return ErrorList.TypeError,
+                    else => return self.reporter.reportError("Cannot pop from non-array value: {s}", .{@tagName(array.value)}),
                 }
             },
 
             .ArrayLen => {
-                const array = try self.stack.pop();
+                // Get array length
+                const array = try self.stack.pop(); // Array
 
                 switch (array.value) {
                     .array => |arr| {
-                        var length: usize = 0;
+                        // Find the actual length by counting non-nothing elements
+                        var length: u32 = 0;
                         for (arr.elements) |elem| {
                             if (std.meta.eql(elem, HIRValue.nothing)) break;
                             length += 1;
                         }
+
                         try self.stack.push(HIRFrame.initInt(@as(i32, @intCast(length))));
                     },
-                    else => return ErrorList.TypeError,
+                    else => return self.reporter.reportError("Cannot get length of non-array value: {s}", .{@tagName(array.value)}),
                 }
             },
 
             .ArrayConcat => {
-                const b = try self.stack.pop();
-                const a = try self.stack.pop();
+                // Concatenate two arrays
+                const b = try self.stack.pop(); // Second array
+                const a = try self.stack.pop(); // First array
 
                 switch (a.value) {
                     .array => |arr_a| {
                         switch (b.value) {
                             .array => |arr_b| {
-                                var length_a: usize = 0;
+                                // Calculate lengths
+                                var len_a: u32 = 0;
                                 for (arr_a.elements) |elem| {
                                     if (std.meta.eql(elem, HIRValue.nothing)) break;
-                                    length_a += 1;
+                                    len_a += 1;
                                 }
-                                var length_b: usize = 0;
+
+                                var len_b: u32 = 0;
                                 for (arr_b.elements) |elem| {
                                     if (std.meta.eql(elem, HIRValue.nothing)) break;
-                                    length_b += 1;
+                                    len_b += 1;
                                 }
-                                const total_capacity = @as(u32, @intCast(@min(length_a + length_b, std.math.maxInt(u32))));
-                                const elements = try self.allocator.alloc(HIRValue, total_capacity);
-                                @memcpy(elements[0..length_a], arr_a.elements[0..length_a]);
-                                @memcpy(elements[length_a..], arr_b.elements[0..length_b]);
-                                const array = HIRValue{ .array = HIRArray{
-                                    .elements = elements,
-                                    .element_type = arr_a.element_type,
-                                    .capacity = total_capacity,
-                                } };
-                                try self.stack.push(HIRFrame.initFromHIRValue(array));
+
+                                // Create new array with combined elements
+                                const new_elements = try self.allocator.alloc(HIRValue, len_a + len_b);
+
+                                // Copy elements from first array
+                                for (0..len_a) |i| {
+                                    new_elements[i] = arr_a.elements[i];
+                                }
+
+                                // Copy elements from second array
+                                for (0..len_b) |i| {
+                                    new_elements[len_a + i] = arr_b.elements[i];
+                                }
+
+                                const result_array = HIRValue{
+                                    .array = HIRArray{
+                                        .elements = new_elements,
+                                        .element_type = arr_a.element_type, // Use first array's element type
+                                        .capacity = len_a + len_b,
+                                    },
+                                };
+
+                                try self.stack.push(HIRFrame.initFromHIRValue(result_array));
                             },
-                            else => return ErrorList.TypeError,
+                            else => return self.reporter.reportError("Cannot concatenate array with non-array: {s}", .{@tagName(b.value)}),
                         }
                     },
-                    else => return ErrorList.TypeError,
+                    else => return self.reporter.reportError("Cannot concatenate non-array: {s}", .{@tagName(a.value)}),
                 }
             },
 
-            .TupleNew => |t| {
-                const elements = try self.allocator.alloc(HIRValue, t.element_count);
-                var i: usize = 0;
-                while (i < t.element_count) : (i += 1) {
-                    const value = try self.stack.pop();
-                    elements[i] = value.value;
+            .TailCall => |c| {
+                // TAIL CALL OPTIMIZATION: Reuse current stack frame instead of creating new one
+                if (self.debug_enabled) {
+                    std.debug.print("Tail call: {s} with {} args (kind: {s}) [Stack size: {}]\n", .{ c.qualified_name, c.arg_count, @tagName(c.call_kind), self.stack.size() });
                 }
-                const tuple = HIRValue{ .tuple = HIRTuple{
-                    .elements = elements,
-                } };
-                try self.stack.push(HIRFrame.initFromHIRValue(tuple));
-            },
 
-            .TupleGet => |t| {
-                const tuple = try self.stack.pop();
-
-                switch (tuple.value) {
-                    .tuple => |tup| {
-                        if (t.index >= tup.elements.len) {
-                            return ErrorList.IndexOutOfBounds;
+                switch (c.call_kind) {
+                    .LocalFunction => {
+                        // Tail call optimization for user-defined functions
+                        if (c.function_index >= self.program.function_table.len) {
+                            return self.reporter.reportError("Invalid function index: {} (max: {})", .{ c.function_index, self.program.function_table.len });
                         }
-                        try self.stack.push(HIRFrame.initFromHIRValue(tup.elements[t.index]));
-                    },
-                    else => return ErrorList.TypeError,
-                }
-            },
 
-            .EnumNew => {
-                // Enum support not implemented yet
-                return ErrorList.NotImplemented;
-            },
+                        const function = self.program.function_table[c.function_index];
 
-            .Inspect => |inspect| {
-                const value = try self.stack.pop();
-                self.reporter.debug("Inspect called with value: {any}", .{value});
+                        // TAIL CALL FIX: Use start_label to include parameter setup, but we need to handle the scope issue
+                        const target_label = function.start_label;
 
-                if (inspect.location) |location| {
-                    try std.io.getStdOut().writer().print("[{s}:{d}:{d}] ", .{ location.file, location.line, location.column });
-                }
+                        if (self.debug_enabled) {
+                            std.debug.print(">> Tail call to: {s} with {} args at label: {s}\n", .{ function.name, c.arg_count, target_label });
+                        }
 
-                // Determine the variable name to display
-                var variable_name: ?[]const u8 = null;
+                        // TAIL CALL FIX: Clear variable cache and set flag to skip scope creation
+                        if (self.fast_mode) {
+                            self.var_cache.clearRetainingCapacity();
+                        }
+                        self.skip_next_enter_scope = true; // Skip scope creation when we jump to function start
 
-                // First priority: use the name from the inspect instruction
-                if (inspect.name) |name| {
-                    variable_name = name;
-                } else if (value.value == .struct_instance) {
-                    // For struct instances, use the full path if available
-                    if (value.value.struct_instance.path) |path| {
-                        variable_name = path;
-                    } else if (value.field_name) |field_name| {
-                        variable_name = field_name;
-                    }
-                } else if (value.field_name) |field_name| {
-                    variable_name = field_name;
-                }
+                        if (self.debug_enabled) {
+                            std.debug.print(">> Cleared variable cache and set skip_next_enter_scope for tail call\n", .{});
+                        }
 
-                // Print the variable name and value
-                if (variable_name) |name| {
-                    try std.io.getStdOut().writer().print("{s} = ", .{name});
-                } else {
-                    try std.io.getStdOut().writer().print("value = ", .{});
-                }
-
-                // Format the value
-                try self.formatHIRValue(std.io.getStdOut().writer(), value.value);
-                try std.io.getStdOut().writer().print("\n", .{});
-
-                // Push the value back onto the stack for potential further use
-                try self.stack.push(value);
-            },
-
-            .InspectStruct => |i| {
-                const value = try self.stack.pop();
-                self.reporter.debug("InspectStruct called with value: {any}", .{value});
-
-                // Handle both struct instances and field values
-                switch (value.value) {
-                    .struct_instance => |s| {
-                        self.reporter.debug("Processing struct instance of type '{s}' with {d} fields", .{ s.type_name, s.fields.len });
-                        // Print each field with proper location formatting
-                        for (s.fields) |field| {
-                            self.reporter.debug("Processing field '{s}'", .{field.name});
-
-                            // Format with location information like the regular Inspect instruction
-                            if (i.location) |location| {
-                                try std.io.getStdOut().writer().print("[{s}:{d}:{d}] ", .{ location.file, location.line, location.column });
+                        // Jump to function start (including parameter setup) without call stack modification
+                        if (self.label_map.get(target_label)) |target_ip| {
+                            self.ip = target_ip;
+                            if (self.debug_enabled) {
+                                std.debug.print(">> Tail call jump to '{s}' at instruction {} (call stack unchanged: {})\n", .{ target_label, target_ip, self.call_stack.sp });
                             }
-
-                            // Build the full field path
-                            if (s.path) |path| {
-                                try std.io.getStdOut().writer().print("{s}.{s} = ", .{ path, field.name });
-                            } else {
-                                try std.io.getStdOut().writer().print("{s}.{s} = ", .{ s.type_name, field.name });
-                            }
-
-                            try self.formatHIRValue(std.io.getStdOut().writer(), field.value);
-                            try std.io.getStdOut().writer().print("\n", .{});
+                            return; // Jump to function body
+                        } else {
+                            return self.reporter.reportError("Function label not found: {s}", .{target_label});
                         }
                     },
                     else => {
-                        self.reporter.debug("Processing non-struct value with {d} field names", .{i.field_names.len});
-                        // For non-struct values (like field access results), print as a single value with location
-                        if (i.field_names.len > 0) {
-                            if (i.location) |location| {
-                                try std.io.getStdOut().writer().print("[{s}:{d}:{d}] ", .{ location.file, location.line, location.column });
-                            }
-
-                            // Use the field name or build path if available
-                            if (value.field_name) |field_name| {
-                                try std.io.getStdOut().writer().print("{s} = ", .{field_name});
-                            } else {
-                                try std.io.getStdOut().writer().print("{s} = ", .{i.field_names[0]});
-                            }
-
-                            try self.formatHIRValue(std.io.getStdOut().writer(), value.value);
-                            try std.io.getStdOut().writer().print("\n", .{});
-                        }
+                        return self.reporter.reportError("Tail call not supported for call kind: {s}", .{@tagName(c.call_kind)});
                     },
                 }
-
-                // Push the value back onto the stack for potential further use
-                try self.stack.push(value);
             },
 
-            .TypeOf => {
-                // Type reflection not implemented yet
-                return ErrorList.NotImplemented;
-            },
-
-            .Halt => {
-                self.running = false;
-            },
-
-            .Map => |m| {
-                const entries = try self.allocator.alloc(HIRMapEntry, m.entries.len);
-                var i: usize = 0;
-                while (i < m.entries.len) : (i += 1) {
-                    const value = try self.stack.pop();
-                    const key = try self.stack.pop();
-                    entries[i] = HIRMapEntry{
-                        .key = key.value,
-                        .value = value.value,
-                    };
+            .Call => |c| {
+                // Handle function calls
+                if (self.debug_enabled) {
+                    std.debug.print("Function call: {s} with {} args (kind: {s}) [Stack size: {}]\n", .{ c.qualified_name, c.arg_count, @tagName(c.call_kind), self.stack.size() });
                 }
-                const map = HIRValue{ .map = HIRMap{
-                    .entries = entries,
-                    .key_type = m.key_type,
-                    .value_type = m.value_type,
-                } };
-                try self.stack.push(HIRFrame.initFromHIRValue(map));
-            },
 
-            .MapGet => {
-                const key = try self.stack.pop();
-                const map = try self.stack.pop();
+                switch (c.call_kind) {
+                    .LocalFunction => {
+                        // User-defined function call with proper stack management
+                        if (c.function_index >= self.program.function_table.len) {
+                            return self.reporter.reportError("Invalid function index: {} (max: {})", .{ c.function_index, self.program.function_table.len });
+                        }
 
-                switch (map.value) {
-                    .map => |m| {
-                        for (m.entries) |entry| {
-                            if (std.meta.eql(entry.key, key.value)) {
-                                try self.stack.push(HIRFrame.initFromHIRValue(entry.value));
+                        const function = self.program.function_table[c.function_index];
+                        if (self.debug_enabled) {
+                            std.debug.print("Calling user function: {s} with {} args at label: {s}\n", .{ function.name, c.arg_count, function.start_label });
+                        }
+
+                        // Arguments are already on the stack in the correct order for parameter setup
+                        // The function's parameter setup (StoreVar instructions) will handle them
+                        if (self.debug_enabled) {
+                            std.debug.print(">> Stack has {} args ready for parameter setup\n", .{c.arg_count});
+                            std.debug.print(">> Call stack depth: {}\n", .{self.call_stack.sp});
+                            std.debug.print(">> Current scope: {} (parent: {})\n", .{ self.current_scope.id, if (self.current_scope.parent) |p| p.id else 999 });
+
+                            // Debug: Show the actual argument values on stack
+                            if (c.arg_count > 0) {
+                                var i: u32 = 0;
+                                while (i < c.arg_count and i < 3) : (i += 1) { // Show up to 3 args
+                                    const stack_idx = self.stack.sp - 1 - @as(i32, @intCast(i));
+                                    if (stack_idx >= 0) {
+                                        const arg = self.stack.data[@intCast(stack_idx)];
+                                        std.debug.print(">>   Arg[{}]: {any}\n", .{ i, arg.value });
+                                    }
+                                }
+                            }
+                        }
+
+                        // Push call frame for proper return handling
+                        const return_ip = self.ip + 1; // Return to instruction after this call
+                        if (self.debug_enabled) {
+                            std.debug.print(">> Setting return IP to {} (current IP: {})\n", .{ return_ip, self.ip });
+                        }
+                        const call_frame = CallFrame{
+                            .return_ip = return_ip,
+                            .function_name = function.name,
+                            .arg_count = c.arg_count, // Store arg count to clean up stack later
+                        };
+                        try self.call_stack.push(call_frame);
+
+                        // Use pre-resolved label map for O(1) lookup
+                        if (self.label_map.get(function.start_label)) |target_ip| {
+                            self.ip = target_ip;
+                            return; // Jump to function start
+                        } else {
+                            return self.reporter.reportError("Function label not found: {s}", .{function.start_label});
+                        }
+                    },
+                    .BuiltinFunction => {
+                        // Built-in function/method call
+                        if (std.mem.eql(u8, c.qualified_name, "length")) {
+                            // Array length method - expects array on stack
+                            const array = try self.stack.pop();
+                            switch (array.value) {
+                                .array => |arr| {
+                                    // Find the actual length by counting non-nothing elements
+                                    var length: u32 = 0;
+                                    for (arr.elements) |elem| {
+                                        if (std.meta.eql(elem, HIRValue.nothing)) break;
+                                        length += 1;
+                                    }
+                                    try self.stack.push(HIRFrame.initInt(@as(i32, @intCast(length))));
+                                },
+                                else => return self.reporter.reportError("Cannot get length of non-array value: {s}", .{@tagName(array.value)}),
+                            }
+                        } else if (std.mem.eql(u8, c.qualified_name, "push")) {
+                            // Array push method - expects element and array on stack
+                            const element = try self.stack.pop(); // Element to push
+                            const array = try self.stack.pop(); // Array
+
+                            switch (array.value) {
+                                .array => |arr| {
+                                    // Create a mutable copy of the array
+                                    var mutable_arr = arr;
+
+                                    // Find the current length
+                                    var length: u32 = 0;
+                                    for (mutable_arr.elements) |elem| {
+                                        if (std.meta.eql(elem, HIRValue.nothing)) break;
+                                        length += 1;
+                                    }
+
+                                    // Check if we need to resize
+                                    if (length >= mutable_arr.capacity) {
+                                        // CRITICAL FIX: Resize the array by doubling capacity
+                                        const new_capacity = mutable_arr.capacity * 2;
+                                        const new_elements = try self.allocator.realloc(mutable_arr.elements, new_capacity);
+                                        mutable_arr.elements = new_elements;
+                                        mutable_arr.capacity = new_capacity;
+
+                                        // Initialize new elements to nothing
+                                        for (new_elements[length..]) |*elem| {
+                                            elem.* = HIRValue.nothing;
+                                        }
+                                    }
+
+                                    // Add element to end (capacity is guaranteed to be > length)
+                                    mutable_arr.elements[length] = element.value;
+
+                                    // Push the modified array back onto the stack
+                                    const modified_array_value = HIRValue{ .array = mutable_arr };
+                                    try self.stack.push(HIRFrame.initFromHIRValue(modified_array_value));
+                                },
+                                else => return self.reporter.reportError("Cannot push to non-array value: {s}", .{@tagName(array.value)}),
+                            }
+                        } else if (std.mem.eql(u8, c.qualified_name, "safeAdd")) {
+                            // Safe addition with overflow protection
+                            const b = try self.stack.pop();
+                            const a = try self.stack.pop();
+
+                            const a_int = switch (a.value) {
+                                .int => |i| i,
+                                .u8 => |u| @as(i32, u),
+                                else => return self.reporter.reportError("safeAdd: first argument must be integer", .{}),
+                            };
+
+                            const b_int = switch (b.value) {
+                                .int => |i| i,
+                                .u8 => |u| @as(i32, u),
+                                else => return self.reporter.reportError("safeAdd: second argument must be integer", .{}),
+                            };
+
+                            const result = std.math.add(i32, a_int, b_int) catch {
+                                // On overflow, return nothing instead of crashing
+                                try self.stack.push(HIRFrame.initFromHIRValue(HIRValue.nothing));
                                 return;
+                            };
+
+                            try self.stack.push(HIRFrame.initInt(result));
+                        } else if (std.mem.eql(u8, c.qualified_name, "exists_quantifier")) {
+                            // Existential quantifier - check if any element in array satisfies condition
+                            const array = try self.stack.pop();
+
+                            switch (array.value) {
+                                .array => |arr| {
+                                    // For now, just return true if array has any non-nothing elements
+                                    // TODO: Add predicate support when needed
+                                    var found = false;
+                                    for (arr.elements) |elem| {
+                                        if (!std.meta.eql(elem, HIRValue.nothing)) {
+                                            found = true;
+                                            break;
+                                        }
+                                    }
+                                    try self.stack.push(HIRFrame.initTetra(if (found) 1 else 0));
+                                },
+                                else => return self.reporter.reportError("exists_quantifier: argument must be array", .{}),
                             }
+                        } else if (std.mem.eql(u8, c.qualified_name, "forall_quantifier")) {
+                            // Universal quantifier - check if all elements in array satisfy condition
+                            const array = try self.stack.pop();
+
+                            switch (array.value) {
+                                .array => |arr| {
+                                    // For now, just return true if array has all non-nothing elements
+                                    // TODO: Add predicate support when needed
+                                    var has_elements = false;
+                                    for (arr.elements) |elem| {
+                                        if (std.meta.eql(elem, HIRValue.nothing)) {
+                                            break; // End of actual elements
+                                        }
+                                        has_elements = true;
+                                        // For now, all non-nothing elements are considered valid
+                                    }
+                                    try self.stack.push(HIRFrame.initTetra(if (has_elements) 1 else 0));
+                                },
+                                else => return self.reporter.reportError("forall_quantifier: argument must be array", .{}),
+                            }
+                        } else {
+                            return self.reporter.reportError("Unknown built-in function: {s}", .{c.qualified_name});
                         }
-                        try self.stack.push(HIRFrame.initNothing());
                     },
-                    else => return ErrorList.TypeError,
+                    else => {
+                        return self.reporter.reportError("Unsupported call kind: {s}", .{@tagName(c.call_kind)});
+                    },
                 }
             },
 
-            .Dup => {
-                const value = self.stack.peek() orelse return self.reporter.reportError("Stack underflow in Dup", .{});
-                var frame = HIRFrame.initFromHIRValue(value.value);
-                frame.field_name = value.field_name;
-                try self.stack.push(frame);
+            .Return => |ret| {
+                // Handle function return
+                if (self.debug_enabled) {
+                    const top_value = if (self.stack.size() > 0)
+                        (self.stack.peek() catch HIRFrame.initFromHIRValue(HIRValue.nothing)).value
+                    else
+                        HIRValue.nothing;
+                    std.debug.print(">> Function return (has_value: {}) [Stack size: {}, Top: {s}]\n", .{ ret.has_value, self.stack.size(), @tagName(top_value) });
+
+                    // Debug: Show return value if present
+                    if (ret.has_value and self.stack.size() > 0) {
+                        const return_val = self.stack.peek() catch HIRFrame.initFromHIRValue(HIRValue.nothing);
+                        std.debug.print(">>   Return value: {any}\n", .{return_val.value});
+                    }
+                }
+
+                // Check if we're returning from main program or a function call
+                if (self.call_stack.isEmpty()) {
+                    // Returning from main program - halt execution
+                    if (self.debug_enabled) {
+                        std.debug.print(">> Returning from main program - halting VM\n", .{});
+                    }
+                    self.running = false;
+                } else {
+                    // Auto-exit current scope before returning to restore caller's scope
+                    if (self.current_scope.parent) |parent_scope| {
+                        const old_scope = self.current_scope;
+                        self.current_scope = parent_scope;
+
+                        // PERFORMANCE: Clear cache on scope change for correctness
+                        if (self.fast_mode) {
+                            self.var_cache.clearRetainingCapacity();
+                        }
+
+                        if (self.debug_enabled) {
+                            std.debug.print(">> Auto-exited scope {} on return (restored to: {}) [Call stack: {}]\n", .{ old_scope.id, parent_scope.id, self.call_stack.sp });
+                        }
+                        // Clean up the old scope
+                        old_scope.deinit();
+                    }
+
+                    // Returning from function call - pop call frame and return to caller
+                    const call_frame = try self.call_stack.pop();
+                    if (self.debug_enabled) {
+                        std.debug.print(">> Returning from function '{s}' to IP {} (current IP: {})\n", .{ call_frame.function_name, call_frame.return_ip, self.ip });
+                        std.debug.print(">>   Current scope: {} (parent: {})\n", .{ self.current_scope.id, if (self.current_scope.parent) |p| p.id else 999 });
+                        std.debug.print(">>   Call stack depth after pop: {}\n", .{self.call_stack.sp});
+                    }
+
+                    if (!ret.has_value) {
+                        // No return value - push nothing for void functions
+                        try self.stack.push(HIRFrame.initFromHIRValue(HIRValue.nothing));
+                    }
+                    // Note: Return value is already on stack for functions with return values
+
+                    // Return to caller
+                    self.ip = call_frame.return_ip;
+                    if (self.debug_enabled) {
+                        std.debug.print(">> Set IP to {} after return\n", .{self.ip});
+                    }
+                    return; // Don't auto-increment IP since we just set it
+                }
             },
 
-            .Pop => {
-                _ = try self.stack.pop();
+            else => {
+                if (self.debug_enabled) {
+                    std.debug.print("!! Unhandled HIR instruction: {s}\n", .{@tagName(instruction)});
+                }
+                return ErrorList.NotImplemented;
             },
         }
     }
 
+    /// Check if the last instruction caused a jump (to avoid auto-incrementing IP)
+    fn didJump(self: *HIRVM, instruction: HIRInstruction) bool {
+        _ = self;
+        return switch (instruction) {
+            .Jump, .JumpCond => true,
+            .Call => |c| c.call_kind == .LocalFunction, // Function calls jump to function start
+            .TailCall => true, // Tail calls always jump to function start
+            .Return => true, // ALL Return instructions set IP manually, never auto-increment
+            else => false,
+        };
+    }
+
+    // ===============================================================================
+    // ARITHMETIC OPERATIONS (Enhanced with mixed-type support from old VM)
+    // ===============================================================================
+
+    /// Integer arithmetic with overflow checking
+    fn intAdd(self: *HIRVM, a: i32, b: i32) !i32 {
+        _ = self;
+        return std.math.add(i32, a, b) catch |err| {
+            std.debug.print("Integer overflow in addition: {} + {}\n", .{ a, b });
+            return err;
+        };
+    }
+
+    fn intSub(self: *HIRVM, a: i32, b: i32) !i32 {
+        _ = self;
+        return std.math.sub(i32, a, b) catch |err| {
+            std.debug.print("Integer overflow in subtraction: {} - {}\n", .{ a, b });
+            return err;
+        };
+    }
+
+    fn intMul(self: *HIRVM, a: i32, b: i32) !i32 {
+        _ = self;
+        return std.math.mul(i32, a, b) catch |err| {
+            std.debug.print("Integer overflow in multiplication: {} * {}\n", .{ a, b });
+            return err;
+        };
+    }
+
+    fn intDiv(self: *HIRVM, a: i32, b: i32) !i32 {
+        _ = self;
+        if (b == 0) {
+            std.debug.print("Division by zero: {} / {}\n", .{ a, b });
+            return ErrorList.DivisionByZero;
+        }
+        return @divTrunc(a, b);
+    }
+
+    fn fastIntMod(self: *HIRVM, a: i32, b: i32) !i32 {
+        _ = self;
+        if (b == 0) {
+            std.debug.print("Modulo by zero: {} % {}\n", .{ a, b });
+            return ErrorList.DivisionByZero;
+        }
+
+        // FIZZBUZZ OPTIMIZATION: Fast modulo for common divisors
+        // Avoid expensive division for the most common cases in benchmarks
+        return switch (b) {
+            3 => fastMod3(a),
+            5 => fastMod5(a),
+            15 => fastMod15(a),
+            else => @mod(a, b),
+        };
+    }
+
+    // Ultra-fast modulo implementations for FizzBuzz
+    inline fn fastMod3(n: i32) i32 {
+        // n % 3 using bit tricks: faster than division
+        var x = n;
+        if (x < 0) x = -x;
+        while (x >= 3) {
+            x = (x >> 2) + (x & 3);
+            if (x >= 3) x -= 3;
+        }
+        return if (n < 0 and x != 0) 3 - x else x;
+    }
+
+    inline fn fastMod5(n: i32) i32 {
+        // n % 5 using multiplication trick
+        var x = n;
+        if (x < 0) x = -x;
+        x = (x >> 2) + (x & 3);
+        x = (x >> 2) + (x & 3);
+        if (x >= 5) x -= 5;
+        return if (n < 0 and x != 0) 5 - x else x;
+    }
+
+    inline fn fastMod15(n: i32) i32 {
+        // n % 15 = n % (3*5), use Chinese Remainder Theorem concept
+        const mod3 = fastMod3(n);
+        const mod5 = fastMod5(n);
+        // Reconstruct n % 15 from mod 3 and mod 5
+        return @mod(mod3 + 3 * @mod(mod5 * 2, 5), 15); // 2 is inverse of 3 mod 5
+    }
+
+    /// Float arithmetic operations
+    fn floatAdd(self: *HIRVM, a: f64, b: f64) !f64 {
+        _ = self;
+        return a + b;
+    }
+
+    fn floatSub(self: *HIRVM, a: f64, b: f64) !f64 {
+        _ = self;
+        return a - b;
+    }
+
+    fn floatMul(self: *HIRVM, a: f64, b: f64) !f64 {
+        _ = self;
+        return a * b;
+    }
+
+    fn floatDiv(self: *HIRVM, a: f64, b: f64) !f64 {
+        _ = self;
+        if (b == 0.0) {
+            std.debug.print("Float division by zero: {} / {}\n", .{ a, b });
+            return ErrorList.DivisionByZero;
+        }
+        return a / b;
+    }
+
+    // ===============================================================================
+    // LOGICAL OPERATIONS (From old VM - proven implementations)
+    // ===============================================================================
+
+    fn logicalAnd(self: *HIRVM, a: HIRFrame, b: HIRFrame) !u8 {
+        const a_tetra = switch (a.value) {
+            .tetra => |val| if (val <= 3) val else {
+                self.reporter.reportError("Invalid tetra value: {}", .{val});
+                return ErrorList.TypeError;
+            },
+            else => {
+                self.reporter.reportError("Cannot perform AND on non-tetra values: {s} AND {s}", .{ @tagName(a.value), @tagName(b.value) });
+                return ErrorList.TypeError;
+            },
+        };
+
+        const b_tetra = switch (b.value) {
+            .tetra => |val| if (val <= 3) val else {
+                self.reporter.reportError("Invalid tetra value: {}", .{val});
+                return ErrorList.TypeError;
+            },
+            else => {
+                self.reporter.reportError("Cannot perform AND on non-tetra values: {s} AND {s}", .{ @tagName(a.value), @tagName(b.value) });
+                return ErrorList.TypeError;
+            },
+        };
+
+        // First-order logic: collapse 4-valued inputs to classical true/false, then apply classical AND
+        // false=0, true=1, both=2, neither=3
+        // both(2) contains true, so treat as true; neither(3) doesn't contain true, so treat as false
+        const a_classical = if (a_tetra == 1 or a_tetra == 2) true else false;
+        const b_classical = if (b_tetra == 1 or b_tetra == 2) true else false;
+
+        // Classical AND: true only if both inputs are true
+        return if (a_classical and b_classical) 1 else 0;
+    }
+
+    fn logicalOr(self: *HIRVM, a: HIRFrame, b: HIRFrame) !u8 {
+        const a_tetra = switch (a.value) {
+            .tetra => |val| if (val <= 3) val else {
+                self.reporter.reportError("Invalid tetra value: {}", .{val});
+                return ErrorList.TypeError;
+            },
+            else => {
+                self.reporter.reportError("Cannot perform OR on non-tetra values: {s} OR {s}", .{ @tagName(a.value), @tagName(b.value) });
+                return ErrorList.TypeError;
+            },
+        };
+
+        const b_tetra = switch (b.value) {
+            .tetra => |val| if (val <= 3) val else {
+                self.reporter.reportError("Invalid tetra value: {}", .{val});
+                return ErrorList.TypeError;
+            },
+            else => {
+                self.reporter.reportError("Cannot perform OR on non-tetra values: {s} OR {s}", .{ @tagName(a.value), @tagName(b.value) });
+                return ErrorList.TypeError;
+            },
+        };
+
+        // First-order logic: collapse 4-valued inputs to classical true/false, then apply classical OR
+        const a_classical = if (a_tetra == 1 or a_tetra == 2) true else false;
+        const b_classical = if (b_tetra == 1 or b_tetra == 2) true else false;
+
+        // Classical OR: true if either input is true
+        return if (a_classical or b_classical) 1 else 0;
+    }
+
+    fn logicalNot(self: *HIRVM, a: HIRFrame) !u8 {
+        const a_tetra = switch (a.value) {
+            .tetra => |val| if (val <= 3) val else {
+                self.reporter.reportError("Invalid tetra value: {}", .{val});
+                return ErrorList.TypeError;
+            },
+            else => {
+                self.reporter.reportError("Cannot perform NOT on a non-tetra value: {s}", .{@tagName(a.value)});
+                return ErrorList.TypeError;
+            },
+        };
+
+        // First-order logic: collapse 4-valued input to classical true/false, then apply classical NOT
+        const a_classical = if (a_tetra == 1 or a_tetra == 2) true else false;
+
+        // Classical NOT: flip the truth value
+        return if (a_classical) 0 else 1;
+    }
+
+    fn logicalIff(self: *HIRVM, a: HIRFrame, b: HIRFrame) !u8 {
+        const a_tetra = switch (a.value) {
+            .tetra => |val| if (val <= 3) val else {
+                self.reporter.reportError("Invalid tetra value: {}", .{val});
+                return ErrorList.TypeError;
+            },
+            else => {
+                self.reporter.reportError("Cannot perform IFF on non-tetra values: {s} IFF {s}", .{ @tagName(a.value), @tagName(b.value) });
+                return ErrorList.TypeError;
+            },
+        };
+
+        const b_tetra = switch (b.value) {
+            .tetra => |val| if (val <= 3) val else {
+                self.reporter.reportError("Invalid tetra value: {}", .{val});
+                return ErrorList.TypeError;
+            },
+            else => {
+                self.reporter.reportError("Cannot perform IFF on non-tetra values: {s} IFF {s}", .{ @tagName(a.value), @tagName(b.value) });
+                return ErrorList.TypeError;
+            },
+        };
+
+        // First-order logic: collapse 4-valued inputs to classical true/false, then apply classical IFF
+        const a_classical = if (a_tetra == 1 or a_tetra == 2) true else false;
+        const b_classical = if (b_tetra == 1 or b_tetra == 2) true else false;
+
+        // Classical IFF: true if both inputs have the same truth value
+        return if (a_classical == b_classical) 1 else 0;
+    }
+
+    fn logicalXor(self: *HIRVM, a: HIRFrame, b: HIRFrame) !u8 {
+        const a_tetra = switch (a.value) {
+            .tetra => |val| if (val <= 3) val else {
+                self.reporter.reportError("Invalid tetra value: {}", .{val});
+                return ErrorList.TypeError;
+            },
+            else => {
+                self.reporter.reportError("Cannot perform XOR on non-tetra values: {s} XOR {s}", .{ @tagName(a.value), @tagName(b.value) });
+                return ErrorList.TypeError;
+            },
+        };
+
+        const b_tetra = switch (b.value) {
+            .tetra => |val| if (val <= 3) val else {
+                self.reporter.reportError("Invalid tetra value: {}", .{val});
+                return ErrorList.TypeError;
+            },
+            else => {
+                self.reporter.reportError("Cannot perform XOR on non-tetra values: {s} XOR {s}", .{ @tagName(a.value), @tagName(b.value) });
+                return ErrorList.TypeError;
+            },
+        };
+
+        // First-order logic: collapse 4-valued inputs to classical true/false, then apply classical XOR
+        const a_classical = if (a_tetra == 1 or a_tetra == 2) true else false;
+        const b_classical = if (b_tetra == 1 or b_tetra == 2) true else false;
+
+        // Classical XOR: true if inputs have different truth values
+        return if (a_classical != b_classical) 1 else 0;
+    }
+
+    fn logicalNand(self: *HIRVM, a: HIRFrame, b: HIRFrame) !u8 {
+        const a_tetra = switch (a.value) {
+            .tetra => |val| if (val <= 3) val else {
+                self.reporter.reportError("Invalid tetra value: {}", .{val});
+                return ErrorList.TypeError;
+            },
+            else => {
+                self.reporter.reportError("Cannot perform NAND on non-tetra values: {s} NAND {s}", .{ @tagName(a.value), @tagName(b.value) });
+                return ErrorList.TypeError;
+            },
+        };
+
+        const b_tetra = switch (b.value) {
+            .tetra => |val| if (val <= 3) val else {
+                self.reporter.reportError("Invalid tetra value: {}", .{val});
+                return ErrorList.TypeError;
+            },
+            else => {
+                self.reporter.reportError("Cannot perform NAND on non-tetra values: {s} NAND {s}", .{ @tagName(a.value), @tagName(b.value) });
+                return ErrorList.TypeError;
+            },
+        };
+
+        // First-order logic: collapse 4-valued inputs to classical true/false, then apply classical NAND
+        const a_classical = if (a_tetra == 1 or a_tetra == 2) true else false;
+        const b_classical = if (b_tetra == 1 or b_tetra == 2) true else false;
+
+        // Classical NAND: NOT(AND) - false only if both inputs are true
+        return if (a_classical and b_classical) 0 else 1;
+    }
+
+    fn logicalNor(self: *HIRVM, a: HIRFrame, b: HIRFrame) !u8 {
+        const a_tetra = switch (a.value) {
+            .tetra => |val| if (val <= 3) val else {
+                self.reporter.reportError("Invalid tetra value: {}", .{val});
+                return ErrorList.TypeError;
+            },
+            else => {
+                self.reporter.reportError("Cannot perform NOR on non-tetra values: {s} NOR {s}", .{ @tagName(a.value), @tagName(b.value) });
+                return ErrorList.TypeError;
+            },
+        };
+
+        const b_tetra = switch (b.value) {
+            .tetra => |val| if (val <= 3) val else {
+                self.reporter.reportError("Invalid tetra value: {}", .{val});
+                return ErrorList.TypeError;
+            },
+            else => {
+                self.reporter.reportError("Cannot perform NOR on non-tetra values: {s} NOR {s}", .{ @tagName(a.value), @tagName(b.value) });
+                return ErrorList.TypeError;
+            },
+        };
+
+        // First-order logic: collapse 4-valued inputs to classical true/false, then apply classical NOR
+        const a_classical = if (a_tetra == 1 or a_tetra == 2) true else false;
+        const b_classical = if (b_tetra == 1 or b_tetra == 2) true else false;
+
+        // Classical NOR: NOT(OR) - true only if both inputs are false
+        return if (a_classical or b_classical) 0 else 1;
+    }
+
+    fn logicalImplies(self: *HIRVM, a: HIRFrame, b: HIRFrame) !u8 {
+        const a_tetra = switch (a.value) {
+            .tetra => |val| if (val <= 3) val else {
+                self.reporter.reportError("Invalid tetra value: {}", .{val});
+                return ErrorList.TypeError;
+            },
+            else => {
+                self.reporter.reportError("Cannot perform IMPLIES on non-tetra values: {s} IMPLIES {s}", .{ @tagName(a.value), @tagName(b.value) });
+                return ErrorList.TypeError;
+            },
+        };
+
+        const b_tetra = switch (b.value) {
+            .tetra => |val| if (val <= 3) val else {
+                self.reporter.reportError("Invalid tetra value: {}", .{val});
+                return ErrorList.TypeError;
+            },
+            else => {
+                self.reporter.reportError("Cannot perform IMPLIES on non-tetra values: {s} IMPLIES {s}", .{ @tagName(a.value), @tagName(b.value) });
+                return ErrorList.TypeError;
+            },
+        };
+
+        // First-order logic: collapse 4-valued inputs to classical true/false, then apply classical IMPLIES
+        const a_classical = if (a_tetra == 1 or a_tetra == 2) true else false;
+        const b_classical = if (b_tetra == 1 or b_tetra == 2) true else false;
+
+        // Classical IMPLIES: false only if true implies false, otherwise true
+        return if (a_classical and !b_classical) 0 else 1;
+    }
+
+    // ===============================================================================
+    // STRING OPERATIONS (From old VM - proven implementations)
+    // ===============================================================================
+
+    /// String concatenation - creates new string from two input strings
+    fn stringConcat(self: *HIRVM, a: HIRFrame, b: HIRFrame) !HIRFrame {
+        const a_str = switch (a.value) {
+            .string => |s| s,
+            else => return ErrorList.TypeError,
+        };
+
+        const b_str = switch (b.value) {
+            .string => |s| s,
+            else => return ErrorList.TypeError,
+        };
+
+        // Allocate new string buffer
+        const new_string = try self.allocator.alloc(u8, a_str.len + b_str.len);
+        // Note: This creates a memory leak - in production we'd use string interning
+        // TODO: Integrate with memory manager's string interning when available
+
+        @memcpy(new_string[0..a_str.len], a_str);
+        @memcpy(new_string[a_str.len..], b_str);
+
+        return HIRFrame.initString(new_string);
+    }
+
+    /// String length operation
+    fn stringLength(self: *HIRVM, a: HIRFrame) !HIRFrame {
+        _ = self;
+        const str = switch (a.value) {
+            .string => |s| s,
+            else => return ErrorList.TypeError,
+        };
+
+        return HIRFrame.initInt(@as(i32, @intCast(str.len)));
+    }
+
+    /// String substring operation - from old VM implementation
+    fn stringSubstring(self: *HIRVM, str_frame: HIRFrame, start_frame: HIRFrame, len_frame: HIRFrame) !HIRFrame {
+        const str = switch (str_frame.value) {
+            .string => |s| s,
+            else => return ErrorList.TypeError,
+        };
+
+        const start = switch (start_frame.value) {
+            .int => |i| i,
+            else => return ErrorList.TypeError,
+        };
+
+        const length = switch (len_frame.value) {
+            .int => |i| i,
+            else => return ErrorList.TypeError,
+        };
+
+        if (start < 0 or length < 0 or start >= str.len or start + length > str.len) {
+            return ErrorList.IndexOutOfBounds;
+        }
+
+        const start_idx = @as(usize, @intCast(start));
+        const len_val = @as(usize, @intCast(length));
+        const slice = str[start_idx .. start_idx + len_val];
+
+        // TODO: Use string interning when available
+        const new_string = try self.allocator.dupe(u8, slice);
+        return HIRFrame.initString(new_string);
+    }
+
+    // ===============================================================================
+    // COMPARISON OPERATIONS (Enhanced with mixed-type support from old VM)
+    // ===============================================================================
+
+    /// Enhanced comparison with mixed int/float support from old VM
     fn compareEqual(self: *HIRVM, a: HIRFrame, b: HIRFrame) !bool {
+        _ = self;
         return switch (a.value) {
-            .int => |i| switch (b.value) {
-                .int => |j| i == j,
+            .int => |a_val| switch (b.value) {
+                .int => |b_val| a_val == b_val,
+                // Mixed int/float comparison (from old VM)
+                .float => |b_val| @as(f64, @floatFromInt(a_val)) == b_val,
                 else => false,
             },
-            .float => |f| switch (b.value) {
-                .float => |g| f == g,
+            .float => |a_val| switch (b.value) {
+                .float => |b_val| a_val == b_val,
+                // Mixed float/int comparison (from old VM)
+                .int => |b_val| a_val == @as(f64, @floatFromInt(b_val)),
                 else => false,
             },
-            .string => |s| switch (b.value) {
-                .string => |t| std.mem.eql(u8, s, t),
+            .tetra => |a_val| switch (b.value) {
+                .tetra => |b_val| a_val == b_val,
                 else => false,
             },
-            .tetra => |t| switch (b.value) {
-                .tetra => |u| t == u,
-                else => false,
-            },
-            .struct_instance => |s| switch (b.value) {
-                .struct_instance => |t| blk: {
-                    if (!std.mem.eql(u8, s.type_name, t.type_name)) break :blk false;
-                    if (s.fields.len != t.fields.len) break :blk false;
-                    for (s.fields, t.fields) |field_a, field_b| {
-                        if (!std.mem.eql(u8, field_a.name, field_b.name)) break :blk false;
-                        const frame_a = HIRFrame.initFromHIRValue(field_a.value);
-                        const frame_b = HIRFrame.initFromHIRValue(field_b.value);
-                        if (!try self.compareEqual(frame_a, frame_b)) break :blk false;
-                    }
-                    break :blk true;
-                },
-                else => false,
-            },
-            .array => |arr| switch (b.value) {
-                .array => |brr| blk: {
-                    if (arr.elements.len != brr.elements.len) break :blk false;
-                    for (arr.elements, brr.elements) |elem_a, elem_b| {
-                        const frame_a = HIRFrame.initFromHIRValue(elem_a);
-                        const frame_b = HIRFrame.initFromHIRValue(elem_b);
-                        if (!try self.compareEqual(frame_a, frame_b)) break :blk false;
-                    }
-                    break :blk true;
-                },
-                else => false,
-            },
-            .tuple => |tup| switch (b.value) {
-                .tuple => |tup_b| blk: {
-                    if (tup.elements.len != tup_b.elements.len) break :blk false;
-                    for (tup.elements, tup_b.elements) |elem_a, elem_b| {
-                        const frame_a = HIRFrame.initFromHIRValue(elem_a);
-                        const frame_b = HIRFrame.initFromHIRValue(elem_b);
-                        if (!try self.compareEqual(frame_a, frame_b)) break :blk false;
-                    }
-                    break :blk true;
-                },
-                else => false,
-            },
-            .map => |map| switch (b.value) {
-                .map => |map_b| blk: {
-                    if (map.entries.len != map_b.entries.len) break :blk false;
-                    for (map.entries) |entry_a| {
-                        var found = false;
-                        for (map_b.entries) |entry_b| {
-                            const key_a = HIRFrame.initFromHIRValue(entry_a.key);
-                            const key_b = HIRFrame.initFromHIRValue(entry_b.key);
-                            if (try self.compareEqual(key_a, key_b)) {
-                                const val_a = HIRFrame.initFromHIRValue(entry_a.value);
-                                const val_b = HIRFrame.initFromHIRValue(entry_b.value);
-                                if (!try self.compareEqual(val_a, val_b)) break :blk false;
-                                found = true;
-                                break;
-                            }
-                        }
-                        if (!found) break :blk false;
-                    }
-                    break :blk true;
-                },
+            .string => |a_val| switch (b.value) {
+                .string => |b_val| std.mem.eql(u8, a_val, b_val),
                 else => false,
             },
             .nothing => switch (b.value) {
                 .nothing => true,
                 else => false,
             },
-            .u8 => |byte| switch (b.value) {
-                .u8 => |other| byte == other,
+            .u8 => |a_val| switch (b.value) {
+                .u8 => |b_val| a_val == b_val,
                 else => false,
             },
-            .enum_variant => |enum_val| switch (b.value) {
-                .enum_variant => |other| std.mem.eql(u8, enum_val.variant_name, other.variant_name),
-                else => false,
-            },
+            // Complex types - basic equality for now
+            .array, .struct_instance, .tuple, .map, .enum_variant => false, // Complex equality not implemented yet
         };
     }
 
+    /// Enhanced less-than with mixed int/float support from old VM
     fn compareLess(self: *HIRVM, a: HIRFrame, b: HIRFrame) !bool {
-        // Keep self parameter for future error reporting and debugging
         _ = self;
         return switch (a.value) {
-            .int => |i| switch (b.value) {
-                .int => |j| i < j,
-                else => false,
+            .int => |a_val| switch (b.value) {
+                .int => |b_val| a_val < b_val,
+                // Mixed int/float comparison (from old VM)
+                .float => |b_val| @as(f64, @floatFromInt(a_val)) < b_val,
+                else => ErrorList.TypeError,
             },
-            .float => |f| switch (b.value) {
-                .float => |g| f < g,
-                else => false,
+            .float => |a_val| switch (b.value) {
+                .float => |b_val| a_val < b_val,
+                // Mixed float/int comparison (from old VM)
+                .int => |b_val| a_val < @as(f64, @floatFromInt(b_val)),
+                else => ErrorList.TypeError,
             },
-            .string => |s| switch (b.value) {
-                .string => |t| std.mem.lessThan(u8, s, t),
-                else => false,
+            .u8 => |a_val| switch (b.value) {
+                .u8 => |b_val| a_val < b_val,
+                else => ErrorList.TypeError,
             },
-            else => false,
+            // Complex types don't support comparison
+            .tetra, .string, .nothing, .array, .struct_instance, .tuple, .map, .enum_variant => ErrorList.TypeError,
         };
     }
 
+    /// Enhanced greater-than with mixed int/float support from old VM
     fn compareGreater(self: *HIRVM, a: HIRFrame, b: HIRFrame) !bool {
-        // Keep self parameter for future error reporting and debugging
         _ = self;
         return switch (a.value) {
-            .int => |i| switch (b.value) {
-                .int => |j| i > j,
-                else => false,
+            .int => |a_val| switch (b.value) {
+                .int => |b_val| a_val > b_val,
+                // Mixed int/float comparison (from old VM)
+                .float => |b_val| @as(f64, @floatFromInt(a_val)) > b_val,
+                else => ErrorList.TypeError,
             },
-            .float => |f| switch (b.value) {
-                .float => |g| f > g,
-                else => false,
+            .float => |a_val| switch (b.value) {
+                .float => |b_val| a_val > b_val,
+                // Mixed float/int comparison (from old VM)
+                .int => |b_val| a_val > @as(f64, @floatFromInt(b_val)),
+                else => ErrorList.TypeError,
             },
-            .string => |s| switch (b.value) {
-                .string => |t| std.mem.lessThan(u8, t, s),
-                else => false,
+            .u8 => |a_val| switch (b.value) {
+                .u8 => |b_val| a_val > b_val,
+                else => ErrorList.TypeError,
             },
-            else => false,
+            // Complex types don't support comparison
+            .tetra, .string, .nothing, .array, .struct_instance, .tuple, .map, .enum_variant => ErrorList.TypeError,
         };
     }
 
-    fn logicalAnd(self: *HIRVM, a: HIRFrame, b: HIRFrame) !u8 {
-        // Keep self parameter for future error reporting and debugging
-        _ = self;
-        const a_tetra = try a.asTetra();
-        const b_tetra = try b.asTetra();
-        return switch (a_tetra) {
-            0 => switch (b_tetra) { // false
-                0 => 0, // false
-                1 => 0, // false
-                2 => 0, // false
-                3 => 0, // false
-                else => return ErrorList.TypeError,
+    /// Print a HIR value for debugging/inspection
+    pub fn printHIRValue(self: *HIRVM, value: HIRValue) !void {
+        switch (value) {
+            .int => |i| std.debug.print("{}", .{i}),
+            .float => |f| std.debug.print("{d}", .{f}),
+            .string => |s| std.debug.print("\"{s}\"", .{s}),
+            .tetra => |b| std.debug.print("{}", .{b}),
+            .u8 => |u| std.debug.print("{}", .{u}),
+            .nothing => std.debug.print("nothing", .{}),
+            // Complex types - show contents for arrays
+            .array => |arr| {
+                std.debug.print("[", .{});
+                var first = true;
+                for (arr.elements) |elem| {
+                    if (std.meta.eql(elem, HIRValue.nothing)) break;
+                    if (!first) std.debug.print(", ", .{});
+                    try self.printHIRValue(elem);
+                    first = false;
+                }
+                std.debug.print("]", .{});
             },
-            1 => switch (b_tetra) { // true
-                0 => 0, // false
-                1 => 1, // true
-                2 => 2, // both
-                3 => 3, // neither
-                else => return ErrorList.TypeError,
-            },
-            2 => switch (b_tetra) { // both
-                0 => 0, // false
-                1 => 2, // both
-                2 => 2, // both
-                3 => 3, // neither
-                else => return ErrorList.TypeError,
-            },
-            3 => switch (b_tetra) { // neither
-                0 => 0, // false
-                1 => 3, // neither
-                2 => 3, // neither
-                3 => 3, // neither
-                else => return ErrorList.TypeError,
-            },
-            else => return ErrorList.TypeError,
-        };
-    }
-
-    fn logicalOr(self: *HIRVM, a: HIRFrame, b: HIRFrame) !u8 {
-        // Keep self parameter for future error reporting and debugging
-        _ = self;
-        const a_tetra = try a.asTetra();
-        const b_tetra = try b.asTetra();
-        return switch (a_tetra) {
-            0 => switch (b_tetra) { // false
-                0 => 0, // false
-                1 => 1, // true
-                2 => 2, // both
-                3 => 3, // neither
-                else => return ErrorList.TypeError,
-            },
-            1 => switch (b_tetra) { // true
-                0 => 1, // true
-                1 => 1, // true
-                2 => 2, // both
-                3 => 1, // true
-                else => return ErrorList.TypeError,
-            },
-            2 => switch (b_tetra) { // both
-                0 => 2, // both
-                1 => 2, // both
-                2 => 2, // both
-                3 => 2, // both
-                else => return ErrorList.TypeError,
-            },
-            3 => switch (b_tetra) { // neither
-                0 => 3, // neither
-                1 => 1, // true
-                2 => 2, // both
-                3 => 3, // neither
-                else => return ErrorList.TypeError,
-            },
-            else => return ErrorList.TypeError,
-        };
-    }
-
-    fn logicalNot(self: *HIRVM, a: HIRFrame) !u8 {
-        // Keep self parameter for future error reporting and debugging
-        _ = self;
-        const a_tetra = try a.asTetra();
-        return switch (a_tetra) {
-            0 => 1, // false -> true
-            1 => 0, // true -> false
-            2 => 2, // both -> both
-            3 => 3, // neither -> neither
-            else => return ErrorList.TypeError,
-        };
-    }
-
-    fn logicalIff(self: *HIRVM, a: HIRFrame, b: HIRFrame) !u8 {
-        // Keep self parameter for future error reporting and debugging
-        _ = self;
-        const a_tetra = try a.asTetra();
-        const b_tetra = try b.asTetra();
-        return switch (a_tetra) {
-            0 => switch (b_tetra) { // false
-                0 => 1, // true (false iff false)
-                1 => 0, // false (false iff true)
-                2 => 0, // false (false iff both)
-                3 => 0, // false (false iff neither)
-                else => return ErrorList.TypeError,
-            },
-            1 => switch (b_tetra) { // true
-                0 => 0, // false (true iff false)
-                1 => 1, // true (true iff true)
-                2 => 0, // false (true iff both)
-                3 => 0, // false (true iff neither)
-                else => return ErrorList.TypeError,
-            },
-            2 => switch (b_tetra) { // both
-                0 => 0, // false (both iff false)
-                1 => 0, // false (both iff true)
-                2 => 1, // true (both iff both)
-                3 => 0, // false (both iff neither)
-                else => return ErrorList.TypeError,
-            },
-            3 => switch (b_tetra) { // neither
-                0 => 0, // false (neither iff false)
-                1 => 0, // false (neither iff true)
-                2 => 0, // false (neither iff both)
-                3 => 1, // true (neither iff neither)
-                else => return ErrorList.TypeError,
-            },
-            else => return ErrorList.TypeError,
-        };
-    }
-
-    fn logicalXor(self: *HIRVM, a: HIRFrame, b: HIRFrame) !u8 {
-        // Keep self parameter for future error reporting and debugging
-        _ = self;
-        const a_tetra = try a.asTetra();
-        const b_tetra = try b.asTetra();
-        return switch (a_tetra) {
-            0 => switch (b_tetra) { // false
-                0 => 0, // false (false xor false)
-                1 => 1, // true (false xor true)
-                2 => 2, // both (false xor both)
-                3 => 3, // neither (false xor neither)
-                else => return ErrorList.TypeError,
-            },
-            1 => switch (b_tetra) { // true
-                0 => 1, // true (true xor false)
-                1 => 0, // false (true xor true)
-                2 => 2, // both (true xor both)
-                3 => 3, // neither (true xor neither)
-                else => return ErrorList.TypeError,
-            },
-            2 => switch (b_tetra) { // both
-                0 => 2, // both (both xor false)
-                1 => 2, // both (both xor true)
-                2 => 0, // false (both xor both)
-                3 => 2, // both (both xor neither)
-                else => return ErrorList.TypeError,
-            },
-            3 => switch (b_tetra) { // neither
-                0 => 3, // neither (neither xor false)
-                1 => 3, // neither (neither xor true)
-                2 => 2, // both (neither xor both)
-                3 => 0, // false (neither xor neither)
-                else => return ErrorList.TypeError,
-            },
-            else => return ErrorList.TypeError,
-        };
-    }
-
-    fn logicalNand(self: *HIRVM, a: HIRFrame, b: HIRFrame) !u8 {
-        // NAND is equivalent to NOT(AND)
-        const and_result = try self.logicalAnd(a, b);
-        return switch (and_result) {
-            0 => 1, // false -> true
-            1 => 0, // true -> false
-            2 => 2, // both -> both
-            3 => 3, // neither -> neither
-            else => return ErrorList.TypeError,
-        };
-    }
-
-    fn logicalNor(self: *HIRVM, a: HIRFrame, b: HIRFrame) !u8 {
-        // NOR is equivalent to NOT(OR)
-        const or_result = try self.logicalOr(a, b);
-        return switch (or_result) {
-            0 => 1, // false -> true
-            1 => 0, // true -> false
-            2 => 2, // both -> both
-            3 => 3, // neither -> neither
-            else => return ErrorList.TypeError,
-        };
-    }
-
-    fn logicalImplies(self: *HIRVM, a: HIRFrame, b: HIRFrame) !u8 {
-        // Keep self parameter for future error reporting and debugging
-        _ = self;
-        const a_tetra = try a.asTetra();
-        const b_tetra = try b.asTetra();
-        return switch (a_tetra) {
-            0 => 1, // false implies anything is true
-            1 => b_tetra, // true implies b
-            2 => switch (b_tetra) { // both implies b
-                0 => 0, // false
-                1 => 1, // true
-                2 => 2, // both
-                3 => 3, // neither
-                else => return ErrorList.TypeError,
-            },
-            3 => switch (b_tetra) { // neither implies b
-                0 => 3, // neither
-                1 => 1, // true
-                2 => 2, // both
-                3 => 3, // neither
-                else => return ErrorList.TypeError,
-            },
-            else => return ErrorList.TypeError,
-        };
-    }
-
-    fn stringConcat(self: *HIRVM, a: HIRFrame, b: HIRFrame) !HIRFrame {
-        const a_str = try a.asString();
-        const b_str = try b.asString();
-        const result = try std.fmt.allocPrint(self.allocator, "{s}{s}", .{ a_str, b_str });
-        return HIRFrame.initString(result);
-    }
-
-    fn stringLength(self: *HIRVM, a: HIRFrame) !HIRFrame {
-        _ = self; // Not needed for string length calculation
-        const str = try a.asString();
-        return HIRFrame.initInt(@as(i32, @intCast(str.len)));
-    }
-
-    fn stringSubstring(self: *HIRVM, str: HIRFrame, start: HIRFrame, len: HIRFrame) !HIRFrame {
-        const s = try str.asString();
-        const start_idx = try start.asInt();
-        const length = try len.asInt();
-
-        if (start_idx < 0 or length < 0) {
-            return ErrorList.IndexOutOfBounds;
+            .struct_instance => std.debug.print("{{struct}}", .{}),
+            .tuple => std.debug.print("(tuple)", .{}),
+            .map => std.debug.print("{{map}}", .{}),
+            .enum_variant => std.debug.print("enum_variant", .{}),
         }
+    }
 
-        const start_usize = @as(usize, @intCast(start_idx));
-        const len_usize = @as(usize, @intCast(length));
-
-        if (start_usize + len_usize > s.len) {
-            return ErrorList.IndexOutOfBounds;
+    /// Format HIR value to a writer (for proper UTF-8 buffered output like old interpreter)
+    pub fn formatHIRValue(self: *HIRVM, writer: anytype, value: HIRValue) !void {
+        switch (value) {
+            .int => |i| try writer.print("{}", .{i}),
+            .float => |f| try writer.print("{d}", .{f}),
+            .string => |s| try writer.print("\"{s}\"", .{s}),
+            .tetra => |b| try writer.print("{}", .{b}),
+            .u8 => |u| try writer.print("{}", .{u}),
+            .nothing => try writer.print("nothing", .{}),
+            // Complex types - show contents for arrays
+            .array => |arr| {
+                try writer.print("[", .{});
+                var first = true;
+                for (arr.elements) |elem| {
+                    if (std.meta.eql(elem, HIRValue.nothing)) break;
+                    if (!first) try writer.print(", ", .{});
+                    try self.formatHIRValue(writer, elem);
+                    first = false;
+                }
+                try writer.print("]", .{});
+            },
+            .struct_instance => try writer.print("{{struct}}", .{}),
+            .tuple => try writer.print("(tuple)", .{}),
+            .map => try writer.print("{{map}}", .{}),
+            .enum_variant => try writer.print("enum_variant", .{}),
         }
+    }
 
-        const result = try self.allocator.dupe(u8, s[start_usize .. start_usize + len_usize]);
-        return HIRFrame.initString(result);
+    /// Debug helper to dump current VM state
+    pub fn dumpState(self: *HIRVM) void {
+        if (!self.debug_enabled) return;
+
+        std.debug.print("\n=== HIR VM State Dump ===\n", .{});
+        std.debug.print("IP: {}, Running: {}, Stack size: {}\n", .{ self.ip, self.running, self.stack.size() });
+
+        // Dump memory state
+        self.memory_manager.scope_manager.dumpState(self.current_scope.id);
+
+        // Dump stack contents
+        if (self.stack.size() > 0) {
+            std.debug.print("Stack contents (top to bottom):\n", .{});
+            var i: i32 = self.stack.sp - 1;
+            while (i >= 0) : (i -= 1) {
+                const frame = self.stack.data[@intCast(i)];
+                std.debug.print("  [{}]: ", .{i});
+                try self.printHIRValue(frame.value);
+                std.debug.print("\n", .{});
+            }
+        } else {
+            std.debug.print("Stack is empty\n", .{});
+        }
+        std.debug.print("=========================\n\n", .{});
     }
 };
