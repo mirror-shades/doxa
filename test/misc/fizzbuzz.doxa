@@ -1,0 +1,13 @@
+function fizzbuzz(x:: int) {
+    var current is x;
+    while current <= 15 {
+        if current % 3 equals 0 and current % 5 equals 0 then "fizzbuzz"?;
+        else if current % 3 equals 0 then "fizz"?;
+        else if current % 5 equals 0 then "buzz"?;
+        else current?;
+        
+        current += 1;
+    }
+}
+
+fizzbuzz(1);//fizzbuzz 1-15

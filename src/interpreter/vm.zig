@@ -2100,13 +2100,8 @@ pub const HIRVM = struct {
     }
 
     inline fn fastMod5(n: i32) i32 {
-        // n % 5 using multiplication trick
-        var x = n;
-        if (x < 0) x = -x;
-        x = (x >> 2) + (x & 3);
-        x = (x >> 2) + (x & 3);
-        if (x >= 5) x -= 5;
-        return if (n < 0 and x != 0) 5 - x else x;
+        // Fixed: Use correct modulo operation
+        return @mod(n, 5);
     }
 
     inline fn fastMod15(n: i32) i32 {

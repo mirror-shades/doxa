@@ -674,11 +674,11 @@ pub const HIRGenerator = struct {
                     const short_circuit_label = try self.generateLabel("and_short_circuit");
                     const end_label = try self.generateLabel("and_end");
 
-                    // If left is false, short-circuit to end
+                    // If left is false, short-circuit to end; if left is true, continue to evaluate right
                     try self.instructions.append(.{
                         .JumpCond = .{
-                            .label_true = end_label,
-                            .label_false = short_circuit_label,
+                            .label_true = short_circuit_label,
+                            .label_false = end_label,
                             .vm_offset = 0, // Will be patched
                             .condition_type = .Tetra,
                         },
