@@ -2488,8 +2488,12 @@ pub const HIRVM = struct {
                 .u8 => |b_val| a_val == b_val,
                 else => false,
             },
+            .enum_variant => |a_val| switch (b.value) {
+                .enum_variant => |b_val| std.mem.eql(u8, a_val.variant_name, b_val.variant_name) and std.mem.eql(u8, a_val.type_name, b_val.type_name),
+                else => false,
+            },
             // Complex types - basic equality for now
-            .array, .struct_instance, .tuple, .map, .enum_variant => false, // Complex equality not implemented yet
+            .array, .struct_instance, .tuple, .map => false, // Complex equality not implemented yet
         };
     }
 
@@ -2567,7 +2571,7 @@ pub const HIRVM = struct {
             .struct_instance => std.debug.print("{{struct}}", .{}),
             .tuple => std.debug.print("(tuple)", .{}),
             .map => std.debug.print("{{map}}", .{}),
-            .enum_variant => std.debug.print("enum_variant", .{}),
+            .enum_variant => |e| std.debug.print(".{s}", .{e.variant_name}),
         }
     }
 
@@ -2595,7 +2599,7 @@ pub const HIRVM = struct {
             .struct_instance => |s| s.type_name,
             .tuple => "tuple",
             .map => "map",
-            .enum_variant => "enum",
+            .enum_variant => |e| e.type_name,
         };
     }
 
@@ -2634,6 +2638,7 @@ pub const HIRVM = struct {
                 }
                 try writer.print(" }}", .{}); // Fix closing bracket
             },
+            .enum_variant => |e| try writer.print(".{s}", .{e.variant_name}),
             else => try writer.print("{s}", .{@tagName(value)}),
         }
     }

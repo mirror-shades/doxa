@@ -47,6 +47,7 @@ pub const HIRGenerator = struct {
 
     // NEW: Type tracking for proper TypeOf support
     variable_types: std.StringHashMap(HIRType), // Track inferred types of variables
+    variable_custom_types: std.StringHashMap([]const u8), // Track custom type names for variables
 
     // NEW: Custom type registry for struct/enum names
     custom_types: std.StringHashMap(CustomTypeInfo), // Track struct/enum type definitions
@@ -64,6 +65,9 @@ pub const HIRGenerator = struct {
     function_calls: std.ArrayList(FunctionCallSite),
 
     module_namespaces: std.StringHashMap(ast.ModuleInfo), // Track module namespaces for function call resolution
+
+    // NEW: Current enum type context for proper enum variant generation
+    current_enum_type: ?[]const u8 = null,
 
     pub const FunctionInfo = struct {
         name: []const u8,
@@ -99,6 +103,7 @@ pub const HIRGenerator = struct {
             .label_count = 0,
             .reporter = reporter,
             .variable_types = std.StringHashMap(HIRType).init(allocator),
+            .variable_custom_types = std.StringHashMap([]const u8).init(allocator),
             .custom_types = std.StringHashMap(CustomTypeInfo).init(allocator),
             .function_signatures = std.StringHashMap(FunctionInfo).init(allocator),
             .function_bodies = std.ArrayList(FunctionBody).init(allocator),
@@ -107,6 +112,7 @@ pub const HIRGenerator = struct {
             .stats = HIRStats.init(allocator),
             .function_calls = std.ArrayList(FunctionCallSite).init(allocator),
             .module_namespaces = module_namespaces,
+            .current_enum_type = null,
         };
     }
 
@@ -117,6 +123,7 @@ pub const HIRGenerator = struct {
         self.constant_map.deinit();
         self.variables.deinit();
         self.variable_types.deinit();
+        self.variable_custom_types.deinit();
         self.custom_types.deinit();
         self.function_signatures.deinit();
         self.function_bodies.deinit();
@@ -357,10 +364,16 @@ pub const HIRGenerator = struct {
             },
             .VarDecl => |decl| {
 
+                // DEBUG: Print variable declaration info
+                if (self.debug_enabled) {
+                    std.debug.print("HIR: VarDecl {s}, type_info.base={s}, custom_type={s}\n", .{ decl.name.lexeme, @tagName(decl.type_info.base), if (decl.type_info.custom_type) |ct| ct else "null" });
+                }
+
                 // NEW: Determine the variable's type for tracking
                 var var_type: HIRType = .Auto;
 
                 // FIXED: Prioritize explicit type annotation over inference
+                var enum_type_name: ?[]const u8 = null;
                 if (decl.type_info.base != .Auto) {
                     // Use explicit type annotation first
                     var_type = switch (decl.type_info.base) {
@@ -369,13 +382,48 @@ pub const HIRGenerator = struct {
                         .String => .String,
                         .Tetra => .Tetra,
                         .U8 => .U8,
+                        .Enum => blk: {
+                            // Extract the actual enum type name from the custom_type field
+                            enum_type_name = decl.type_info.custom_type;
+                            break :blk .Enum;
+                        },
+                        .Custom => blk: {
+                            // CRITICAL FIX: Handle Custom type - check if it's an enum
+                            if (decl.type_info.custom_type) |custom_type_name| {
+                                // Check if this custom type is a registered enum
+                                if (self.custom_types.get(custom_type_name)) |custom_type| {
+                                    if (custom_type.kind == .Enum) {
+                                        enum_type_name = custom_type_name;
+                                        break :blk .Enum;
+                                    } else {
+                                        break :blk .Struct; // It's a struct
+                                    }
+                                }
+                            }
+                            // If we can't determine the custom type, it's unknown
+                            break :blk .Auto; // Unknown custom type
+                        },
                         else => .Auto,
                     };
                 }
 
-                // Generate the initializer expression
+                // Generate the initializer expression with enum type context
                 if (decl.initializer) |init_expr| {
+                    // Set enum type context if we're declaring an enum variable
+                    const old_enum_context = self.current_enum_type;
+                    if (enum_type_name != null) {
+                        self.current_enum_type = enum_type_name;
+
+                        // DEBUG: Print enum context setting
+                        if (self.debug_enabled) {
+                            std.debug.print("HIR: Setting enum context to {s} for variable {s}\n", .{ enum_type_name.?, decl.name.lexeme });
+                        }
+                    }
+
                     try self.generateExpression(init_expr);
+
+                    // Restore previous enum context
+                    self.current_enum_type = old_enum_context;
 
                     // Only infer type if no explicit annotation was provided
                     if (var_type == .Auto) {
@@ -396,6 +444,11 @@ pub const HIRGenerator = struct {
 
                 // NEW: Track the variable's type
                 try self.trackVariableType(decl.name.lexeme, var_type);
+
+                // NEW: Track custom type name for enums/structs
+                if (enum_type_name) |custom_type| {
+                    try self.trackVariableCustomType(decl.name.lexeme, custom_type);
+                }
 
                 // Store to variable
                 const var_idx = try self.getOrCreateVariable(decl.name.lexeme);
@@ -424,8 +477,27 @@ pub const HIRGenerator = struct {
                 }
             },
             .EnumDecl => |enum_decl| {
-                // NEW: Register enum type for TypeOf support (when enum is a statement)
-                try self.registerCustomType(enum_decl.name.lexeme, .Enum);
+                // NEW: Register enum type with variants for proper index calculation
+                var variant_names = try self.allocator.alloc([]const u8, enum_decl.variants.len);
+                for (enum_decl.variants, 0..) |variant_token, i| {
+                    variant_names[i] = variant_token.lexeme;
+                }
+                try self.registerEnumType(enum_decl.name.lexeme, variant_names);
+
+                // Register the enum type name as a special variable so Color.Red works
+                const var_idx = try self.getOrCreateVariable(enum_decl.name.lexeme);
+                try self.trackVariableType(enum_decl.name.lexeme, .Enum);
+
+                // Create a special enum type value and store it
+                const enum_type_value = HIRValue{ .string = enum_decl.name.lexeme }; // Simple representation for now
+                const const_idx = try self.addConstant(enum_type_value);
+                try self.instructions.append(.{ .Const = .{ .value = enum_type_value, .constant_id = const_idx } });
+                try self.instructions.append(.{ .StoreVar = .{
+                    .var_index = var_idx,
+                    .var_name = enum_decl.name.lexeme,
+                    .scope_kind = .Local,
+                    .module_context = null,
+                } });
 
                 // Enum declarations don't generate runtime instructions, they're compile-time only
             },
@@ -522,6 +594,29 @@ pub const HIRGenerator = struct {
                     .tetra => |t| HIRValue{ .tetra = tetraFromEnum(t) },
                     .u8 => |b| HIRValue{ .u8 = b },
                     .nothing => HIRValue.nothing,
+                    .enum_variant => |variant| blk: {
+                        // Handle enum variant literals - need to find the enum type
+                        if (self.current_enum_type) |enum_type_name| {
+                            // Look up the actual variant index from registered enum type
+                            const variant_index = if (self.custom_types.get(enum_type_name)) |custom_type|
+                                custom_type.getEnumVariantIndex(variant) orelse 0
+                            else
+                                0;
+
+                            break :blk HIRValue{
+                                .enum_variant = .{
+                                    .type_name = enum_type_name,
+                                    .variant_name = variant,
+                                    .variant_index = variant_index,
+                                    .path = null,
+                                },
+                            };
+                        } else {
+                            // Try to infer enum type from context or fallback to string
+                            // This is a fallback for when enum context is not available
+                            break :blk HIRValue{ .string = variant };
+                        }
+                    },
                     else => HIRValue.nothing,
                 };
                 const const_idx = try self.addConstant(hir_value);
@@ -863,7 +958,17 @@ pub const HIRGenerator = struct {
                 try self.instructions.append(.Dup);
 
                 // Build the full path for the peek expression (handles field access)
-                const peek_path = try self.buildPeekPath(peek.expr);
+                // Special case: Don't show variable name for enum member access like Color.Red
+                const peek_path = if (peek.expr.data == .FieldAccess) blk: {
+                    const field = peek.expr.data.FieldAccess;
+                    const obj_type = self.inferTypeFromExpression(field.object);
+                    // If this is enum member access (Color.Red), don't show variable name
+                    if (obj_type == .Enum and field.object.data == .Variable) {
+                        break :blk null; // No variable name for enum member access
+                    } else {
+                        break :blk try self.buildPeekPath(peek.expr);
+                    }
+                } else try self.buildPeekPath(peek.expr);
 
                 // NEW: Use tracked variable type when available, otherwise infer
                 var inferred_type: HIRType = .Auto;
@@ -1180,23 +1285,47 @@ pub const HIRGenerator = struct {
             },
 
             .Match => |match_expr| {
+                // Extract enum type context from the match value if it's a variable
+                var match_enum_type: ?[]const u8 = null;
+                if (match_expr.value.data == .Variable) {
+                    const var_name = match_expr.value.data.Variable.lexeme;
+                    if (self.variable_types.get(var_name)) |var_type| {
+                        if (var_type == .Enum) {
+                            // Look up the actual enum type name from tracked custom types
+                            match_enum_type = self.variable_custom_types.get(var_name);
+                        }
+                    }
+                }
 
                 // Generate the value to match on
                 try self.generateExpression(match_expr.value);
 
-                // Create labels for each case and the end
+                // Create labels for each case body and the end
                 const end_label = try self.generateLabel("match_end");
                 var case_labels = std.ArrayList([]const u8).init(self.allocator);
                 defer case_labels.deinit();
+                var check_labels = std.ArrayList([]const u8).init(self.allocator);
+                defer check_labels.deinit();
 
-                // Generate labels for each case
-                for (match_expr.cases) |_| {
+                // Generate labels for each case body and case check
+                for (match_expr.cases, 0..) |_, i| {
                     const case_label = try self.generateLabel("match_case");
                     try case_labels.append(case_label);
+
+                    // Create check labels for all but the first case (first case starts immediately)
+                    if (i > 0) {
+                        const check_label = try self.generateLabel("match_check");
+                        try check_labels.append(check_label);
+                    }
                 }
 
                 // Generate comparison and jumps for each case
                 for (match_expr.cases, 0..) |case, i| {
+                    // Add check label for cases after the first
+                    if (i > 0) {
+                        try self.instructions.append(.{ .Label = .{ .name = check_labels.items[i - 1], .vm_address = 0 } });
+                    }
+
                     // Duplicate the match value for comparison
                     try self.instructions.append(.Dup);
 
@@ -1205,21 +1334,55 @@ pub const HIRGenerator = struct {
                         try self.instructions.append(.Pop);
                         try self.instructions.append(.{ .Jump = .{ .label = case_labels.items[i], .vm_offset = 0 } });
                     } else {
-                        // Generate the pattern value (enum member)
-                        const pattern_value = HIRValue{ .string = case.pattern.lexeme };
+                        // Generate the pattern value (enum member with proper context)
+                        const pattern_value = if (match_enum_type) |enum_type_name| blk: {
+                            // Look up the actual variant index from registered enum type
+                            const variant_index = if (self.custom_types.get(enum_type_name)) |custom_type|
+                                custom_type.getEnumVariantIndex(case.pattern.lexeme) orelse 0
+                            else
+                                0;
+
+                            break :blk HIRValue{
+                                .enum_variant = .{
+                                    .type_name = enum_type_name,
+                                    .variant_name = case.pattern.lexeme,
+                                    .variant_index = variant_index,
+                                    .path = null,
+                                },
+                            };
+                        } else HIRValue{ .string = case.pattern.lexeme };
+
                         const pattern_idx = try self.addConstant(pattern_value);
                         try self.instructions.append(.{ .Const = .{ .value = pattern_value, .constant_id = pattern_idx } });
 
-                        // Compare and jump if equal
-                        try self.instructions.append(.{ .Compare = .{ .op = .Eq, .operand_type = .String } });
-                        try self.instructions.append(.{ .JumpCond = .{ .label_true = case_labels.items[i], .label_false = end_label, .vm_offset = 0, .condition_type = .Tetra } });
+                        // Compare and jump if equal (use appropriate operand type)
+                        const operand_type: HIRType = if (match_enum_type != null) .Enum else .String;
+                        try self.instructions.append(.{ .Compare = .{ .op = .Eq, .operand_type = operand_type } });
+
+                        // FIXED: When condition is false, continue to next case check instead of jumping to end
+                        const false_label = if (i < match_expr.cases.len - 1)
+                            check_labels.items[i] // Jump to next case check
+                        else
+                            end_label; // Last case - jump to end if no match
+                        try self.instructions.append(.{ .JumpCond = .{ .label_true = case_labels.items[i], .label_false = false_label, .vm_offset = 0, .condition_type = .Tetra } });
                     }
                 }
 
-                // Generate case bodies
+                // Generate case bodies with enum context
                 for (match_expr.cases, 0..) |case, i| {
                     try self.instructions.append(.{ .Label = .{ .name = case_labels.items[i], .vm_address = 0 } });
+
+                    // Set enum context for case body generation if needed
+                    const old_enum_context = self.current_enum_type;
+                    if (match_enum_type) |enum_type_name| {
+                        self.current_enum_type = enum_type_name;
+                    }
+
                     try self.generateExpression(case.body);
+
+                    // Restore previous enum context
+                    self.current_enum_type = old_enum_context;
+
                     try self.instructions.append(.{ .Jump = .{ .label = end_label, .vm_offset = 0 } });
                 }
 
@@ -1228,11 +1391,52 @@ pub const HIRGenerator = struct {
             },
 
             .EnumMember => |member| {
+                // DEBUG: Print what's happening with enum member generation
+                if (self.debug_enabled) {
+                    std.debug.print("HIR: Generating EnumMember: {s}, current_enum_type: {s}\n", .{ member.lexeme, if (self.current_enum_type) |t| t else "null" });
+                }
 
-                // Generate enum member as string constant
-                const enum_value = HIRValue{ .string = member.lexeme };
-                const const_idx = try self.addConstant(enum_value);
-                try self.instructions.append(.{ .Const = .{ .value = enum_value, .constant_id = const_idx } });
+                // Generate enum member using current enum type context
+                if (self.current_enum_type) |enum_type_name| {
+                    // Look up the actual variant index from registered enum type
+                    const variant_index = if (self.custom_types.get(enum_type_name)) |custom_type|
+                        custom_type.getEnumVariantIndex(member.lexeme) orelse 0
+                    else
+                        0;
+
+                    // DEBUG: Print variant index lookup
+                    if (self.debug_enabled) {
+                        std.debug.print("HIR: Found variant index {} for {s}.{s}\n", .{ variant_index, enum_type_name, member.lexeme });
+                    }
+
+                    // Generate proper enum variant with correct index
+                    const enum_value = HIRValue{
+                        .enum_variant = .{
+                            .type_name = enum_type_name,
+                            .variant_name = member.lexeme,
+                            .variant_index = variant_index,
+                            .path = null,
+                        },
+                    };
+                    const const_idx = try self.addConstant(enum_value);
+
+                    // DEBUG: Confirm enum variant generation
+                    if (self.debug_enabled) {
+                        std.debug.print("HIR: Generated enum_variant constant at index {}\n", .{const_idx});
+                    }
+
+                    try self.instructions.append(.{ .Const = .{ .value = enum_value, .constant_id = const_idx } });
+                } else {
+                    // DEBUG: Print fallback case
+                    if (self.debug_enabled) {
+                        std.debug.print("HIR: No enum context - falling back to string for {s}\n", .{member.lexeme});
+                    }
+
+                    // Fallback to string constant if no enum context
+                    const enum_value = HIRValue{ .string = member.lexeme };
+                    const const_idx = try self.addConstant(enum_value);
+                    try self.instructions.append(.{ .Const = .{ .value = enum_value, .constant_id = const_idx } });
+                }
             },
 
             .StructLiteral => |struct_lit| {
@@ -1393,11 +1597,88 @@ pub const HIRGenerator = struct {
             },
 
             .FieldAccess => |field| {
-                // Generate object expression
-                try self.generateExpression(field.object);
-
-                // Check the type of the object being accessed
+                // Check the type of the object being accessed first
                 const obj_type = self.inferTypeFromExpression(field.object);
+
+                // DEBUG: Add debug output to see what's happening
+                if (self.debug_enabled) {
+                    std.debug.print("HIR: FieldAccess: object={s}, field={s}, obj_type={s}, current_enum_type={s}\n", .{ if (field.object.data == .Variable) field.object.data.Variable.lexeme else @tagName(field.object.data), field.field.lexeme, @tagName(obj_type), if (self.current_enum_type) |t| t else "null" });
+                }
+
+                // CRITICAL FIX: Handle standalone enum member access (e.g., .Blue in enum context)
+                // When we're in an enum context, check if this is Color.Blue syntax
+                if (self.current_enum_type) |enum_type_name| {
+                    if (field.object.data == .Variable) {
+                        const var_token = field.object.data.Variable;
+                        if (std.mem.eql(u8, var_token.lexeme, enum_type_name)) {
+                            // This is Color.Blue syntax - generate enum variant
+                            const variant_index = if (self.custom_types.get(enum_type_name)) |custom_type|
+                                custom_type.getEnumVariantIndex(field.field.lexeme) orelse 0
+                            else
+                                0;
+
+                            const enum_value = HIRValue{
+                                .enum_variant = .{
+                                    .type_name = enum_type_name,
+                                    .variant_name = field.field.lexeme,
+                                    .variant_index = variant_index,
+                                    .path = null,
+                                },
+                            };
+                            const const_idx = try self.addConstant(enum_value);
+                            try self.instructions.append(.{ .Const = .{ .value = enum_value, .constant_id = const_idx } });
+                            return; // Early return - this is an enum variant
+                        }
+                    }
+                }
+
+                // Handle enum member access (e.g., Color.Red)
+                if (obj_type == .Enum and field.object.data == .Variable) {
+                    const enum_type_name = field.object.data.Variable.lexeme;
+
+                    // DEBUG: Check if enum is registered
+                    if (self.debug_enabled) {
+                        std.debug.print("Checking enum registration for: {s}\n", .{enum_type_name});
+                        if (self.custom_types.get(enum_type_name)) |custom_type| {
+                            std.debug.print("Found custom type: {s}, kind: {s}\n", .{ custom_type.name, @tagName(custom_type.kind) });
+                        } else {
+                            std.debug.print("Custom type not found for: {s}\n", .{enum_type_name});
+                        }
+                    }
+
+                    // Look up the actual variant index from registered enum type
+                    const variant_index = if (self.custom_types.get(enum_type_name)) |custom_type|
+                        custom_type.getEnumVariantIndex(field.field.lexeme) orelse 0
+                    else
+                        0;
+
+                    // DEBUG: Check variant index
+                    if (self.debug_enabled) {
+                        std.debug.print("Variant index for {s}.{s}: {}\n", .{ enum_type_name, field.field.lexeme, variant_index });
+                    }
+
+                    // Generate proper enum variant with correct index
+                    const enum_value = HIRValue{
+                        .enum_variant = .{
+                            .type_name = enum_type_name,
+                            .variant_name = field.field.lexeme,
+                            .variant_index = variant_index,
+                            .path = null,
+                        },
+                    };
+                    const const_idx = try self.addConstant(enum_value);
+
+                    // DEBUG: Confirm enum variant generation
+                    if (self.debug_enabled) {
+                        std.debug.print("Generated enum variant constant at index: {}\n", .{const_idx});
+                    }
+
+                    try self.instructions.append(.{ .Const = .{ .value = enum_value, .constant_id = const_idx } });
+                    return; // Early return - don't generate object expression or field access
+                }
+
+                // Generate object expression for non-enum cases
+                try self.generateExpression(field.object);
 
                 if (obj_type == .String) {
                     // String operations
@@ -1430,12 +1711,37 @@ pub const HIRGenerator = struct {
                         }
                     }
                 } else {
-                    // Regular struct field access
+                    // Regular struct field access with proper field index lookup
+                    var field_index: u32 = 0;
+
+                    // Try to get the field index from the struct type info
+                    const field_obj_type = self.inferTypeFromExpression(field.object);
+                    if (field_obj_type == .Struct) {
+                        if (field.object.data == .Variable) {
+                            const var_name = field.object.data.Variable.lexeme;
+                            // Try to find the struct type from tracked variable types
+                            if (self.variable_types.get(var_name)) |var_type| {
+                                if (var_type == .Struct) {
+                                    // Look for any registered struct type that has this field
+                                    var type_iter = self.custom_types.iterator();
+                                    while (type_iter.next()) |entry| {
+                                        if (entry.value_ptr.kind == .Struct) {
+                                            if (entry.value_ptr.getStructFieldIndex(field.field.lexeme)) |index| {
+                                                field_index = index;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     try self.instructions.append(.{
                         .GetField = .{
                             .field_name = field.field.lexeme,
                             .container_type = .Struct,
-                            .field_index = 0,
+                            .field_index = field_index,
                             .field_for_peek = if (self.current_peek_expr != null) true else false,
                         },
                     });
@@ -1450,18 +1756,36 @@ pub const HIRGenerator = struct {
             },
 
             .EnumDecl => |enum_decl| {
-                // NEW: Register enum type for TypeOf support
-                try self.registerCustomType(enum_decl.name.lexeme, .Enum);
+                // NEW: Register enum type with variants for proper index calculation
+                var variant_names = try self.allocator.alloc([]const u8, enum_decl.variants.len);
+                for (enum_decl.variants, 0..) |variant_token, i| {
+                    variant_names[i] = variant_token.lexeme;
+                }
+                try self.registerEnumType(enum_decl.name.lexeme, variant_names);
 
-                // Enum declarations don't generate runtime instructions, they're compile-time only
-                // Push nothing as a placeholder value
-                const nothing_idx = try self.addConstant(HIRValue.nothing);
-                try self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } });
+                // Register the enum type name as a special variable so Color.Red works
+                const var_idx = try self.getOrCreateVariable(enum_decl.name.lexeme);
+                try self.trackVariableType(enum_decl.name.lexeme, .Enum);
+
+                // Create a special enum type value and store it
+                const enum_type_value = HIRValue{ .string = enum_decl.name.lexeme }; // Simple representation for now
+                const const_idx = try self.addConstant(enum_type_value);
+                try self.instructions.append(.{ .Const = .{ .value = enum_type_value, .constant_id = const_idx } });
+                try self.instructions.append(.{ .StoreVar = .{
+                    .var_index = var_idx,
+                    .var_name = enum_decl.name.lexeme,
+                    .scope_kind = .Local,
+                    .module_context = null,
+                } });
             },
 
             .StructDecl => |struct_decl| {
-                // NEW: Register struct type for TypeOf support
-                try self.registerCustomType(struct_decl.name.lexeme, .Struct);
+                // NEW: Register struct type with fields for proper field access
+                var field_names = try self.allocator.alloc([]const u8, struct_decl.fields.len);
+                for (struct_decl.fields, 0..) |field_ptr, i| {
+                    field_names[i] = field_ptr.name.lexeme;
+                }
+                try self.registerStructType(struct_decl.name.lexeme, field_names);
 
                 // Struct declarations don't generate runtime instructions, they're compile-time only
                 // Push nothing as a placeholder value
@@ -1872,6 +2196,11 @@ pub const HIRGenerator = struct {
         try self.variable_types.put(var_name, var_type);
     }
 
+    /// NEW: Track a variable's custom type name (for enums/structs)
+    fn trackVariableCustomType(self: *HIRGenerator, var_name: []const u8, custom_type_name: []const u8) !void {
+        try self.variable_custom_types.put(var_name, custom_type_name);
+    }
+
     /// NEW: Get tracked variable type
     fn getTrackedVariableType(self: *HIRGenerator, var_name: []const u8) ?HIRType {
         return self.variable_types.get(var_name);
@@ -1884,6 +2213,45 @@ pub const HIRGenerator = struct {
             .kind = kind,
         };
         try self.custom_types.put(type_name, custom_type);
+    }
+
+    /// NEW: Register an enum type with its variants
+    fn registerEnumType(self: *HIRGenerator, enum_name: []const u8, variants: []const []const u8) !void {
+        // Create enum variants array with proper indices
+        var enum_variants = try self.allocator.alloc(CustomTypeInfo.EnumVariant, variants.len);
+        for (variants, 0..) |variant_name, index| {
+            enum_variants[index] = CustomTypeInfo.EnumVariant{
+                .name = try self.allocator.dupe(u8, variant_name),
+                .index = @intCast(index),
+            };
+        }
+
+        const custom_type = CustomTypeInfo{
+            .name = try self.allocator.dupe(u8, enum_name),
+            .kind = .Enum,
+            .enum_variants = enum_variants,
+        };
+        try self.custom_types.put(enum_name, custom_type);
+    }
+
+    /// NEW: Register a struct type with its fields
+    fn registerStructType(self: *HIRGenerator, struct_name: []const u8, fields: []const []const u8) !void {
+        // Create struct fields array with proper indices and types
+        var struct_fields = try self.allocator.alloc(CustomTypeInfo.StructField, fields.len);
+        for (fields, 0..) |field_name, index| {
+            struct_fields[index] = CustomTypeInfo.StructField{
+                .name = try self.allocator.dupe(u8, field_name),
+                .field_type = .Auto, // Will be inferred at runtime
+                .index = @intCast(index),
+            };
+        }
+
+        const custom_type = CustomTypeInfo{
+            .name = try self.allocator.dupe(u8, struct_name),
+            .kind = .Struct,
+            .struct_fields = struct_fields,
+        };
+        try self.custom_types.put(struct_name, custom_type);
     }
 
     /// NEW: Infer parameter type from usage in function body
@@ -2498,9 +2866,14 @@ fn writeHIRValue(writer: anytype, value: HIRValue) !void {
             try writer.writeByte(9); // Type tag for map
             // TODO: Implement map serialization when needed
         },
-        .enum_variant => {
+        .enum_variant => |variant| {
             try writer.writeByte(10); // Type tag for enum
-            // TODO: Implement enum serialization when needed
+            // Serialize enum variant information
+            try writer.writeInt(u32, @as(u32, @intCast(variant.type_name.len)), .little);
+            try writer.writeAll(variant.type_name);
+            try writer.writeInt(u32, @as(u32, @intCast(variant.variant_name.len)), .little);
+            try writer.writeAll(variant.variant_name);
+            try writer.writeInt(u32, variant.variant_index, .little);
         },
     }
 }
@@ -2554,8 +2927,25 @@ fn readHIRValue(reader: anytype, allocator: std.mem.Allocator) !HIRValue {
             return HIRValue.nothing; // TODO: Implement proper map deserialization
         },
         10 => {
-            // Enum variant - return placeholder for now
-            return HIRValue.nothing; // TODO: Implement proper enum deserialization
+            // Enum variant deserialization
+            const type_name_len = try reader.readInt(u32, .little);
+            const type_name = try allocator.alloc(u8, type_name_len);
+            _ = try reader.readAll(type_name);
+
+            const variant_name_len = try reader.readInt(u32, .little);
+            const variant_name = try allocator.alloc(u8, variant_name_len);
+            _ = try reader.readAll(variant_name);
+
+            const variant_index = try reader.readInt(u32, .little);
+
+            return HIRValue{
+                .enum_variant = .{
+                    .type_name = type_name,
+                    .variant_name = variant_name,
+                    .variant_index = variant_index,
+                    .path = null,
+                },
+            };
         },
         else => {
             return reporting.ErrorList.InvalidArgument;
@@ -2866,7 +3256,7 @@ fn writeHIRValueText(writer: anytype, value: HIRValue) !void {
         .struct_instance => try writer.print("struct", .{}),
         .tuple => try writer.print("tuple", .{}),
         .map => try writer.print("map", .{}),
-        .enum_variant => try writer.print("enum", .{}),
+        .enum_variant => |variant| try writer.print("enum_variant {s}.{s}", .{ variant.type_name, variant.variant_name }),
     }
 }
 
@@ -3106,6 +3496,23 @@ const SoxaTextParser = struct {
             const value_str = std.mem.trim(u8, line[u8_pos + 3 ..], " \t");
             const value = try std.fmt.parseInt(u8, value_str, 10);
             try self.constants.append(HIRValue{ .u8 = value });
+        } else if (std.mem.indexOf(u8, line, "enum_variant ")) |enum_pos| {
+            // Parse: "enum_variant Color.Red"
+            const variant_str = std.mem.trim(u8, line[enum_pos + 13 ..], " \t");
+            if (std.mem.indexOf(u8, variant_str, ".")) |dot_pos| {
+                const type_name = try self.allocator.dupe(u8, variant_str[0..dot_pos]);
+                const variant_name = try self.allocator.dupe(u8, variant_str[dot_pos + 1 ..]);
+                try self.constants.append(HIRValue{
+                    .enum_variant = .{
+                        .type_name = type_name,
+                        .variant_name = variant_name,
+                        .variant_index = 0, // Default to 0, actual index will be resolved at runtime
+                        .path = null,
+                    },
+                });
+            } else {
+                try self.constants.append(HIRValue.nothing);
+            }
         } else if (std.mem.indexOf(u8, line, "nothing")) |_| {
             try self.constants.append(HIRValue.nothing);
         } else {
@@ -3600,11 +4007,50 @@ const SoxaTextParser = struct {
 pub const CustomTypeInfo = struct {
     name: []const u8,
     kind: CustomTypeKind,
+    // NEW: Enhanced enum support
+    enum_variants: ?[]EnumVariant = null,
+    // NEW: Enhanced struct support
+    struct_fields: ?[]StructField = null,
 
     pub const CustomTypeKind = enum {
         Struct,
         Enum,
     };
+
+    pub const EnumVariant = struct {
+        name: []const u8,
+        index: u32,
+    };
+
+    pub const StructField = struct {
+        name: []const u8,
+        field_type: HIRType,
+        index: u32,
+    };
+
+    /// Get the index of an enum variant by name
+    pub fn getEnumVariantIndex(self: *const CustomTypeInfo, variant_name: []const u8) ?u32 {
+        if (self.kind != .Enum or self.enum_variants == null) return null;
+
+        for (self.enum_variants.?) |variant| {
+            if (std.mem.eql(u8, variant.name, variant_name)) {
+                return variant.index;
+            }
+        }
+        return null;
+    }
+
+    /// Get the index of a struct field by name
+    pub fn getStructFieldIndex(self: *const CustomTypeInfo, field_name: []const u8) ?u32 {
+        if (self.kind != .Struct or self.struct_fields == null) return null;
+
+        for (self.struct_fields.?) |field| {
+            if (std.mem.eql(u8, field.name, field_name)) {
+                return field.index;
+            }
+        }
+        return null;
+    }
 };
 
 /// NEW: HIR generation statistics
