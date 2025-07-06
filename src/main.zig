@@ -277,7 +277,7 @@ fn compileDoxaToSoxa(memoryManager: *MemoryManager, source_path: []const u8, sox
 
     reporter.debug(">> Constant folding applied: {} optimizations\n", .{constant_folder.getOptimizationCount()});
 
-    var hir_generator = SoxaCompiler.HIRGenerator.init(memoryManager.getAllocator(), reporter);
+    var hir_generator = SoxaCompiler.HIRGenerator.init(memoryManager.getAllocator(), reporter, parser.module_namespaces);
     defer hir_generator.deinit();
 
     var hir_program = try hir_generator.generateProgram(statements);
