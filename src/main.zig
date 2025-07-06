@@ -108,8 +108,8 @@ fn interpreter_deprecated(memoryManager: *MemoryManager, parser: *Parser, statem
 }
 
 /// Generate a path for an artifact file based on the source file path
-fn generateArtifactPath(source_path: []const u8, extension: []const u8) ![]u8 {
-    // Extract filename from path
+fn generateArtifactPath(memoryManager: *MemoryManager, source_path: []const u8, extension: []const u8) ![]u8 {
+    // Find the last path separator to extract the filename
     var filename_start: usize = 0;
     for (source_path, 0..) |c, i| {
         if (c == '/' or c == '\\') filename_start = i + 1;
@@ -132,14 +132,14 @@ fn generateArtifactPath(source_path: []const u8, extension: []const u8) ![]u8 {
     if (last_dot) |dot| {
         // Build path: out/filename_without_extension + extension
         const basename = filename[0..dot];
-        const new_path = try std.heap.page_allocator.alloc(u8, "out/".len + basename.len + extension.len);
+        const new_path = try memoryManager.getAllocator().alloc(u8, "out/".len + basename.len + extension.len);
         @memcpy(new_path[0.."out/".len], "out/");
         @memcpy(new_path["out/".len..("out/".len + basename.len)], basename);
         @memcpy(new_path[("out/".len + basename.len)..], extension);
         return new_path;
     } else {
         // If no dot found, append extension to full filename
-        const new_path = try std.heap.page_allocator.alloc(u8, "out/".len + filename.len + extension.len);
+        const new_path = try memoryManager.getAllocator().alloc(u8, "out/".len + filename.len + extension.len);
         @memcpy(new_path[0.."out/".len], "out/");
         @memcpy(new_path["out/".len..("out/".len + filename.len)], filename);
         @memcpy(new_path[("out/".len + filename.len)..], extension);
@@ -151,8 +151,8 @@ fn generateArtifactPath(source_path: []const u8, extension: []const u8) ![]u8 {
 fn processSoxaPipeline(memoryManager: *MemoryManager, source_path: []const u8, cli_options: CLI, reporter: *Reporter) !void {
     reporter.debug("=== ENTERING processSoxaPipeline ===\n", .{});
     // Determine output paths
-    const soxa_path = try generateArtifactPath(source_path, ".soxa");
-    defer std.heap.page_allocator.free(soxa_path);
+    const soxa_path = try generateArtifactPath(memoryManager, source_path, ".soxa");
+    defer memoryManager.getAllocator().free(soxa_path);
 
     // TESTING: Always delete cached .soxa file to test fixes
     std.fs.cwd().deleteFile(soxa_path) catch {};
@@ -188,8 +188,8 @@ fn processSoxaPipeline(memoryManager: *MemoryManager, source_path: []const u8, c
 
         .compile => {
             reporter.debug(">> Compiling to native binary\n", .{});
-            const output_path = cli_options.output orelse try generateArtifactPath(source_path, "");
-            defer if (cli_options.output == null) std.heap.page_allocator.free(output_path);
+            const output_path = cli_options.output orelse try generateArtifactPath(memoryManager, source_path, "");
+            defer if (cli_options.output == null) memoryManager.getAllocator().free(output_path);
 
             try compileToNative(memoryManager, soxa_path, output_path, reporter);
         },
@@ -234,8 +234,8 @@ fn processFile(memoryManager: *MemoryManager, path: []const u8, cli_options: CLI
     const statements = try parser.execute();
 
     // Write AST for debugging
-    const ast_path = try generateArtifactPath(path, ".ast");
-    defer std.heap.page_allocator.free(ast_path);
+    const ast_path = try generateArtifactPath(memoryManager, path, ".ast");
+    defer memoryManager.getAllocator().free(ast_path);
     try ASTWriter.writeASTToFile(statements, ast_path);
 
     switch (cli_options.command) {
