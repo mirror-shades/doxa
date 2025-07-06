@@ -1588,10 +1588,60 @@ pub const HIRGenerator = struct {
                 try self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } });
             },
 
-            .For => |_| {
+            .For => |for_expr| {
+                const loop_start_label = try self.generateLabel("for_start");
+                const loop_body_label = try self.generateLabel("for_body");
+                const loop_increment_label = try self.generateLabel("for_increment");
+                const loop_end_label = try self.generateLabel("for_end");
 
-                // For now, just return nothing
-                // TODO: Implement proper for loop support
+                // Generate initializer (var i is 0)
+                if (for_expr.initializer) |initializer| {
+                    try self.generateStatement(initializer.*);
+                }
+
+                // Loop start - condition check
+                try self.instructions.append(.{ .Label = .{ .name = loop_start_label, .vm_address = 0 } });
+
+                // Generate condition (i < x)
+                if (for_expr.condition) |condition| {
+                    try self.generateExpression(condition);
+                } else {
+                    // No condition means infinite loop - push true
+                    const true_idx = try self.addConstant(HIRValue{ .tetra = TETRA_TRUE });
+                    try self.instructions.append(.{ .Const = .{ .value = HIRValue{ .tetra = TETRA_TRUE }, .constant_id = true_idx } });
+                }
+
+                // Jump based on condition: TRUE=continue to body, FALSE=exit loop
+                try self.instructions.append(.{
+                    .JumpCond = .{
+                        .label_true = loop_body_label, // Continue to loop body when TRUE
+                        .label_false = loop_end_label, // Exit loop when FALSE
+                        .vm_offset = 0, // Will be patched
+                        .condition_type = .Tetra,
+                    },
+                });
+
+                // Loop body label (where TRUE condition jumps to)
+                try self.instructions.append(.{ .Label = .{ .name = loop_body_label, .vm_address = 0 } });
+
+                // Generate body
+                try self.generateExpression(for_expr.body);
+                try self.instructions.append(.Pop); // Discard body result
+
+                // Increment label and execution
+                try self.instructions.append(.{ .Label = .{ .name = loop_increment_label, .vm_address = 0 } });
+                if (for_expr.increment) |increment| {
+                    try self.generateExpression(increment);
+                    try self.instructions.append(.Pop); // Discard increment result
+                }
+
+                // Jump back to condition check
+                try self.instructions.append(.{ .Jump = .{ .label = loop_start_label, .vm_offset = 0 } });
+
+                // Loop end
+                try self.instructions.append(.{ .Label = .{ .name = loop_end_label, .vm_address = 0 } });
+
+                // Push nothing as for loop result
                 const nothing_idx = try self.addConstant(HIRValue.nothing);
                 try self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } });
             },
