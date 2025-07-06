@@ -1811,6 +1811,7 @@ pub const HIRGenerator = struct {
                                 .op = .Length,
                             },
                         });
+                        return; // Early return to avoid further processing
                     } else {
                         // Treat as string indexing
                         const index_const = try self.addConstant(HIRValue{ .int = 1 }); // Length 1 for single char
@@ -3469,6 +3470,9 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
             try writer.writeAll("         ; Peek struct\n");
         },
 
+        // String operations
+        .StringOp => |s| try writer.print("    StringOp {s}                ; String operation\n", .{@tagName(s.op)}),
+
         else => try writer.print("    ; TODO: {s}\n", .{@tagName(instruction)}),
     }
 }
@@ -4063,6 +4067,13 @@ const SoxaTextParser = struct {
 
             try self.instructions.append(HIRInstruction{ .StoreFieldName = .{
                 .field_name = field_name,
+            } });
+        } else if (std.mem.eql(u8, op, "StringOp")) {
+            const op_type_str = tokens.next() orelse return;
+            const op_type = if (std.mem.eql(u8, op_type_str, "Length")) StringOpType.Length else if (std.mem.eql(u8, op_type_str, "Concat")) StringOpType.Concat else if (std.mem.eql(u8, op_type_str, "Substring")) StringOpType.Substring else StringOpType.Length;
+
+            try self.instructions.append(HIRInstruction{ .StringOp = .{
+                .op = op_type,
             } });
         }
         // Instructions not implemented yet are silently ignored for now
