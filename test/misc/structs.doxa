@@ -16,9 +16,4 @@ var mike is Employee {
     salary is 1000,
 };
 
-mike.person.age is 26;
-mike.person.age?;
-
-mike.salary?;
-
-mike.person?;
+mike.person.name.length?;
