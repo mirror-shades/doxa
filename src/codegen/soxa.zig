@@ -63,6 +63,8 @@ pub const HIRGenerator = struct {
     // NEW: Function call site tracking for tail recursion optimization
     function_calls: std.ArrayList(FunctionCallSite),
 
+    module_namespaces: std.StringHashMap(ast.ModuleInfo), // Track module namespaces for function call resolution
+
     pub const FunctionInfo = struct {
         name: []const u8,
         arity: u32,
@@ -83,7 +85,7 @@ pub const HIRGenerator = struct {
         return_type_info: ast.TypeInfo,
     };
 
-    pub fn init(allocator: std.mem.Allocator, reporter: *reporting.Reporter) HIRGenerator {
+    pub fn init(allocator: std.mem.Allocator, reporter: *reporting.Reporter, module_namespaces: std.StringHashMap(ast.ModuleInfo)) HIRGenerator {
         return HIRGenerator{
             .allocator = allocator,
             .instructions = std.ArrayList(HIRInstruction).init(allocator),
@@ -104,6 +106,7 @@ pub const HIRGenerator = struct {
             .current_function_return_type = .Nothing,
             .stats = HIRStats.init(allocator),
             .function_calls = std.ArrayList(FunctionCallSite).init(allocator),
+            .module_namespaces = module_namespaces,
         };
     }
 
@@ -118,6 +121,7 @@ pub const HIRGenerator = struct {
         self.function_signatures.deinit();
         self.function_bodies.deinit();
         self.function_calls.deinit();
+        // Note: module_namespaces is not owned by HIRGenerator, so we don't deinit it
     }
 
     /// Main entry point - converts AST statements to HIR program using multi-pass approach
@@ -721,25 +725,50 @@ pub const HIRGenerator = struct {
                 var method_target_var: ?[]const u8 = null; // Track if method is called on a variable
                 switch (call.callee.data) {
                     .FieldAccess => |field_access| {
-                        // This is a method call like arr.length()
-                        function_name = field_access.field.lexeme;
-                        call_kind = .BuiltinFunction;
-
-                        // Check if the method is called on a variable (for mutating methods)
+                        // Check if this is a module function call (e.g., safeMath.safeAdd)
                         if (field_access.object.data == .Variable) {
-                            method_target_var = field_access.object.data.Variable.lexeme;
-                        }
+                            const object_name = field_access.object.data.Variable.lexeme;
 
-                        // CRITICAL FIX: Generate object FIRST, then arguments for correct stack order
-                        // The VM's push method expects: element (top), array (bottom)
-                        // So we need stack order: [array, element] (bottom to top)
+                            if (self.isModuleNamespace(object_name)) {
+                                // This is a module function call like safeMath.safeAdd
+                                function_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ object_name, field_access.field.lexeme });
+                                call_kind = .ModuleFunction;
 
-                        // Generate the object expression (arr) FIRST
-                        try self.generateExpression(field_access.object);
+                                // Don't generate the object expression - skip the LoadVar
+                                // Just generate the arguments
+                                for (call.arguments) |arg| {
+                                    try self.generateExpression(arg);
+                                }
+                            } else {
+                                // This is a regular method call like arr.length()
+                                function_name = field_access.field.lexeme;
+                                call_kind = .BuiltinFunction;
+                                method_target_var = object_name;
 
-                        // Generate arguments (in order) AFTER object - these will be on top for VM
-                        for (call.arguments) |arg| {
-                            try self.generateExpression(arg);
+                                // CRITICAL FIX: Generate object FIRST, then arguments for correct stack order
+                                // The VM's push method expects: element (top), array (bottom)
+                                // So we need stack order: [array, element] (bottom to top)
+
+                                // Generate the object expression (arr) FIRST
+                                try self.generateExpression(field_access.object);
+
+                                // Generate arguments (in order) AFTER object - these will be on top for VM
+                                for (call.arguments) |arg| {
+                                    try self.generateExpression(arg);
+                                }
+                            }
+                        } else {
+                            // Complex object expression (not a simple variable)
+                            function_name = field_access.field.lexeme;
+                            call_kind = .BuiltinFunction;
+
+                            // Generate the object expression FIRST
+                            try self.generateExpression(field_access.object);
+
+                            // Generate arguments (in order) AFTER object
+                            for (call.arguments) |arg| {
+                                try self.generateExpression(arg);
+                            }
                         }
                     },
                     .Variable => |var_token| {
@@ -762,7 +791,7 @@ pub const HIRGenerator = struct {
                     },
                 }
 
-                // Generate arguments for non-method calls (method calls handle arguments differently)
+                // Generate arguments for non-method calls (method calls and module calls handle arguments differently)
                 if (call.callee.data != .FieldAccess) {
                     for (call.arguments, 0..) |arg, arg_index| {
                         // Check if this is a default argument placeholder
@@ -2113,6 +2142,11 @@ pub const HIRGenerator = struct {
             .name = end_label,
             .vm_address = 0,
         } });
+    }
+
+    /// Check if a name is a module namespace
+    fn isModuleNamespace(self: *HIRGenerator, name: []const u8) bool {
+        return self.module_namespaces.contains(name);
     }
 };
 

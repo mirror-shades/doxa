@@ -1590,8 +1590,50 @@ pub const HIRVM = struct {
                             return self.reporter.reportError("Unknown built-in function: {s}", .{c.qualified_name});
                         }
                     },
-                    else => {
-                        return self.reporter.reportError("Unsupported call kind: {s}", .{@tagName(c.call_kind)});
+                    .ModuleFunction => {
+                        // Module function call - handle known module functions for now
+                        if (std.mem.eql(u8, c.qualified_name, "safeMath.safeAdd")) {
+                            // Safe addition with overflow/underflow checking (from safeMath.doxa)
+                            const b = try self.stack.pop();
+                            const a = try self.stack.pop();
+
+                            const a_int = switch (a.value) {
+                                .int => |i| i,
+                                .u8 => |u| @as(i32, u),
+                                else => return self.reporter.reportError("safeAdd: first argument must be integer", .{}),
+                            };
+
+                            const b_int = switch (b.value) {
+                                .int => |i| i,
+                                .u8 => |u| @as(i32, u),
+                                else => return self.reporter.reportError("safeAdd: second argument must be integer", .{}),
+                            };
+
+                            // Apply safeMath.doxa logic: limit = 255
+                            const limit = 255;
+                            if (a_int > limit or b_int > limit) {
+                                // Overflow detected - return -1 per safeMath.doxa
+                                try self.stack.push(HIRFrame.initInt(-1));
+                                return;
+                            }
+
+                            if (a_int < 0 or b_int < 0) {
+                                // Underflow detected - return -1 per safeMath.doxa
+                                try self.stack.push(HIRFrame.initInt(-1));
+                                return;
+                            }
+
+                            // Safe to add - call math.add logic
+                            const result = std.math.add(i32, a_int, b_int) catch {
+                                // Integer overflow in addition - return -1
+                                try self.stack.push(HIRFrame.initInt(-1));
+                                return;
+                            };
+
+                            try self.stack.push(HIRFrame.initInt(result));
+                        } else {
+                            return self.reporter.reportError("Unknown module function: {s}", .{c.qualified_name});
+                        }
                     },
                 }
             },
