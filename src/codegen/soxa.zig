@@ -1,5 +1,6 @@
 const std = @import("std");
 const ast = @import("../ast/ast.zig");
+const Token = @import("../lexer/token.zig").Token;
 const TokenLiteral = @import("../types/types.zig").TokenLiteral;
 const instructions = @import("../interpreter/instructions.zig");
 const reporting = @import("../utils/reporting.zig");
@@ -1241,20 +1242,26 @@ pub const HIRGenerator = struct {
             },
 
             .ForAll => |forall| {
-
                 // ForAll quantifier: ∀x ∈ array : condition
                 // Implementation: iterate through array, return false if any element fails condition
 
                 // Generate array expression
                 try self.generateExpression(forall.array);
 
-                // For now, generate as builtin function call
-                // TODO: Implement proper quantifier logic with VM support
+                // Generate predicate function
+                const predicate_function_index = try self.generatePredicateFunction(forall.variable, forall.condition);
+
+                // Push predicate function index as constant
+                const predicate_value = HIRValue{ .int = @intCast(predicate_function_index) };
+                const predicate_const_idx = try self.addConstant(predicate_value);
+                try self.instructions.append(.{ .Const = .{ .value = predicate_value, .constant_id = predicate_const_idx } });
+
+                // Generate builtin function call with proper arguments
                 try self.instructions.append(.{
                     .Call = .{
                         .function_index = 0,
                         .qualified_name = "forall_quantifier",
-                        .arg_count = 2, // array + condition (as closure)
+                        .arg_count = 2, // array + predicate function index
                         .call_kind = .BuiltinFunction,
                         .target_module = null,
                         .return_type = .Tetra,
@@ -1263,20 +1270,26 @@ pub const HIRGenerator = struct {
             },
 
             .Exists => |exists| {
-
                 // Exists quantifier: ∃x ∈ array : condition
                 // Implementation: iterate through array, return true if any element satisfies condition
 
                 // Generate array expression
                 try self.generateExpression(exists.array);
 
-                // For now, generate as builtin function call
-                // TODO: Implement proper quantifier logic with VM support
+                // Generate predicate function
+                const predicate_function_index = try self.generatePredicateFunction(exists.variable, exists.condition);
+
+                // Push predicate function index as constant
+                const predicate_value = HIRValue{ .int = @intCast(predicate_function_index) };
+                const predicate_const_idx = try self.addConstant(predicate_value);
+                try self.instructions.append(.{ .Const = .{ .value = predicate_value, .constant_id = predicate_const_idx } });
+
+                // Generate builtin function call with proper arguments
                 try self.instructions.append(.{
                     .Call = .{
                         .function_index = 0,
                         .qualified_name = "exists_quantifier",
-                        .arg_count = 2, // array + condition (as closure)
+                        .arg_count = 2, // array + predicate function index
                         .call_kind = .BuiltinFunction,
                         .target_module = null,
                         .return_type = .Tetra,
@@ -2652,6 +2665,67 @@ pub const HIRGenerator = struct {
     /// Check if a name is a module namespace
     fn isModuleNamespace(self: *HIRGenerator, name: []const u8) bool {
         return self.module_namespaces.contains(name);
+    }
+
+    /// Generate a predicate function for quantifiers
+    /// Creates an anonymous function that takes one parameter (the iterator variable)
+    /// and returns a tetra (boolean) result by evaluating the condition
+    fn generatePredicateFunction(self: *HIRGenerator, variable: Token, condition: *ast.Expr) !u32 {
+        // Generate unique function name for predicate
+        const predicate_name = try std.fmt.allocPrint(self.allocator, "predicate_{d}", .{self.label_count});
+
+        // Create function info
+        const start_label = try self.generateLabel(predicate_name);
+        const function_info = FunctionInfo{
+            .name = predicate_name,
+            .arity = 1, // Takes one parameter (the iterator variable)
+            .return_type = .Tetra, // Returns boolean
+            .start_label = start_label,
+            .local_var_count = 1,
+            .is_entry = false,
+        };
+
+        // Add to function signatures
+        try self.function_signatures.put(predicate_name, function_info);
+
+        // Create fake parameter for the iterator variable
+        const fake_param = ast.FunctionParam{
+            .name = variable,
+            .type_expr = null, // Will be inferred
+            .default_value = null,
+        };
+
+        // Create fake function body with just the condition as a return statement
+        const return_stmt = ast.Stmt{
+            .base = ast.Base{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan{
+                    .start = .{ .file = "", .line = 0, .column = 0 },
+                    .end = .{ .file = "", .line = 0, .column = 0 },
+                },
+            },
+            .data = .{ .Return = .{
+                .value = condition,
+                .type_info = ast.TypeInfo{ .base = .Tetra, .custom_type = null },
+            } },
+        };
+
+        // Create array with single statement
+        const body_statements = try self.allocator.alloc(ast.Stmt, 1);
+        body_statements[0] = return_stmt;
+
+        // Add function body for later generation
+        try self.function_bodies.append(FunctionBody{
+            .function_info = function_info,
+            .statements = body_statements,
+            .start_instruction_index = 0,
+            .function_name = predicate_name,
+            .function_params = try self.allocator.dupe(ast.FunctionParam, &[_]ast.FunctionParam{fake_param}),
+            .return_type_info = ast.TypeInfo{ .base = .Tetra, .custom_type = null },
+        });
+
+        // Return the function index
+        return self.getFunctionIndex(predicate_name);
     }
 };
 
