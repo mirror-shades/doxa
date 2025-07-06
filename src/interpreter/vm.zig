@@ -26,7 +26,6 @@ const TokenType = @import("../lexer/token.zig").TokenType;
 const TokenLiteral = @import("../types/types.zig").TokenLiteral;
 const TypeInfo = @import("../ast/ast.zig").TypeInfo;
 const StructField = @import("../types/types.zig").StructField;
-const printi = std.debug.print;
 const StringInterner = memory.StringInterner;
 const types = @import("../types/types.zig");
 
@@ -531,9 +530,6 @@ pub const HIRVM = struct {
 
     /// Main execution loop - directly execute HIR instructions
     pub fn run(self: *HIRVM) !?HIRFrame {
-        if (self.debug_enabled) {
-            std.debug.print(">> Starting HIR VM execution with {} instructions\n", .{self.program.instructions.len});
-        }
 
         // sanity check on soxa code
         try self.validateHIRProgram();
@@ -682,9 +678,13 @@ pub const HIRVM = struct {
             .StoreVar => |v| {
                 // Store top of stack to variable
                 const value = try self.stack.pop();
-                const token_literal = self.hirValueToTokenLiteral(value.value);
-                const token_type = self.hirValueToTokenType(value.value);
-                const type_info = self.hirValueToTypeInfo(value.value);
+
+                // Perform type coercion if needed
+                const coerced_value = self.coerceValue(value.value, v.expected_type);
+
+                const token_literal = self.hirValueToTokenLiteral(coerced_value);
+                const token_type = self.hirValueToTokenType(coerced_value);
+                const type_info = self.hirValueToTypeInfo(coerced_value);
 
                 // PERFORMANCE: Update cache after storing to keep it synchronized with memory module
                 if (self.fast_mode) {
@@ -764,10 +764,6 @@ pub const HIRVM = struct {
                     } else @divTrunc(a_int, b_int),
                     .Mod => try self.fastIntMod(a_int, b_int), // Use optimized modulo
                 };
-
-                if (self.debug_enabled) {
-                    std.debug.print("{d} [Stack size after: {}]\n", .{ result, self.stack.size() + 1 });
-                }
 
                 try self.stack.push(HIRFrame.initInt(result));
             },
@@ -974,13 +970,11 @@ pub const HIRVM = struct {
                 try self.stack.push(value);
             },
 
-            .EnterScope => |s| {
+            .EnterScope => {
                 // TAIL CALL FIX: Skip scope creation if this is a tail call
                 if (self.skip_next_enter_scope) {
                     self.skip_next_enter_scope = false; // Reset flag
-                    if (self.debug_enabled) {
-                        std.debug.print(">> Skipped EnterScope {} for tail call (reusing current scope {})\n", .{ s.scope_id, self.current_scope.id });
-                    }
+
                     return; // Skip scope creation entirely
                 }
 
@@ -993,32 +987,15 @@ pub const HIRVM = struct {
                 if (self.fast_mode) {
                     self.var_cache.clearRetainingCapacity();
                 }
-
-                if (self.debug_enabled) {
-                    if (new_scope.parent) |parent| {
-                        std.debug.print(">> Entered scope {} (parent: {}) [Call stack: {}]\n", .{ s.scope_id, parent.id, self.call_stack.sp });
-                    } else {
-                        std.debug.print(">> Entered scope {} (no parent) [Call stack: {}]\n", .{ s.scope_id, self.call_stack.sp });
-                    }
-                }
             },
 
-            .ExitScope => |s| {
+            .ExitScope => {
                 if (self.current_scope.parent) |parent_scope| {
                     const old_scope = self.current_scope;
                     self.current_scope = parent_scope;
 
-                    if (self.debug_enabled) {
-                        std.debug.print(">> Exited scope {} (returned to: {}) [Call stack: {}]\n", .{ s.scope_id, parent_scope.id, self.call_stack.sp });
-                    }
                     // Clean up the old scope
                     old_scope.deinit();
-                } else {
-                    // GRACEFUL HANDLING: Don't error on root scope exit, just warn and continue
-                    if (self.debug_enabled) {
-                        std.debug.print(">> Warning: Attempted to exit root scope {} - ignoring\n", .{s.scope_id});
-                    }
-                    // Don't return error, just continue execution
                 }
             },
 
@@ -1050,14 +1027,7 @@ pub const HIRVM = struct {
 
             // String operations (from old VM - proven implementations)
             .StringOp => |s| {
-                if (self.debug_enabled) {
-                    std.debug.print("DoxVM: Debug: Executing StringOp: {s}\n", .{@tagName(s.op)});
-                }
                 const str = try self.stack.pop();
-
-                if (self.debug_enabled) {
-                    std.debug.print("DoxVM: Debug: StringOp input: {s}\n", .{@tagName(str.value)});
-                }
 
                 switch (str.value) {
                     .string => |s_val| {
@@ -1065,9 +1035,7 @@ pub const HIRVM = struct {
                             .Length => {
                                 // Return string length as integer
                                 const length = @as(i32, @intCast(s_val.len));
-                                if (self.debug_enabled) {
-                                    std.debug.print("DoxVM: Debug: String length calculated: {}\n", .{length});
-                                }
+
                                 try self.stack.push(HIRFrame.initInt(length));
                             },
                             .Substring => {
@@ -1105,10 +1073,6 @@ pub const HIRVM = struct {
                                 try self.stack.push(HIRFrame.initString(result));
                             },
                             .Bytes => {
-                                // Convert string to array of bytes
-                                if (self.debug_enabled) {
-                                    std.debug.print("DoxVM: Debug: Converting string to bytes, length: {}\n", .{s_val.len});
-                                }
                                 const elements = try self.allocator.alloc(HIRValue, s_val.len);
                                 for (s_val, 0..) |byte, i| {
                                     elements[i] = HIRValue{ .byte = byte };
@@ -1118,9 +1082,7 @@ pub const HIRVM = struct {
                                     .element_type = .Byte,
                                     .capacity = @intCast(s_val.len),
                                 } };
-                                if (self.debug_enabled) {
-                                    std.debug.print("DoxVM: Debug: Created byte array with {} elements\n", .{elements.len});
-                                }
+
                                 try self.stack.push(HIRFrame.initFromHIRValue(array));
                             },
                         }
@@ -1406,9 +1368,6 @@ pub const HIRVM = struct {
 
             .TailCall => |c| {
                 // TAIL CALL OPTIMIZATION: Reuse current stack frame instead of creating new one
-                if (self.debug_enabled) {
-                    std.debug.print("Tail call: {s} with {} args (kind: {s}) [Stack size: {}]\n", .{ c.qualified_name, c.arg_count, @tagName(c.call_kind), self.stack.size() });
-                }
 
                 switch (c.call_kind) {
                     .LocalFunction => {
@@ -1443,11 +1402,6 @@ pub const HIRVM = struct {
             },
 
             .Call => |c| {
-                // Handle function calls
-                if (self.debug_enabled) {
-                    std.debug.print("Function call: {s} with {} args (kind: {s}) [Stack size: {}]\n", .{ c.qualified_name, c.arg_count, @tagName(c.call_kind), self.stack.size() });
-                }
-
                 switch (c.call_kind) {
                     .LocalFunction => {
                         // User-defined function call with proper stack management
@@ -1456,9 +1410,6 @@ pub const HIRVM = struct {
                         }
 
                         const function = self.program.function_table[c.function_index];
-                        if (self.debug_enabled) {
-                            std.debug.print("Calling user function: {s} with {} args at label: {s}\n", .{ function.name, c.arg_count, function.start_label });
-                        }
 
                         // Push call frame for proper return handling
                         const return_ip = self.ip + 1; // Return to instruction after this call
@@ -1698,10 +1649,6 @@ pub const HIRVM = struct {
                             self.var_cache.clearRetainingCapacity();
                         }
 
-                        if (self.debug_enabled) {
-                            std.debug.print(">> Auto-exited scope {} on return (restored to: {}) [Call stack: {}]\n", .{ old_scope.id, parent_scope.id, self.call_stack.sp });
-                        }
-                        // Clean up the old scope
                         old_scope.deinit();
                     }
 
@@ -2663,8 +2610,8 @@ pub const HIRVM = struct {
     pub fn formatHIRValue(self: *HIRVM, writer: anytype, value: HIRValue) !void {
         switch (value) {
             .int => |i| try writer.print("{}", .{i}),
-            .byte => |u| try writer.print("{}", .{u}),
-            .float => |f| try writer.print("{d}", .{f}),
+            .byte => |u| try writer.print("0x{X:0>2}", .{u}),
+            .float => |f| try writer.print("{d:.1}", .{f}),
             .string => |s| try writer.print("\"{s}\"", .{s}),
             .tetra => |t| try writer.print("{s}", .{switch (t) {
                 0 => "false",
@@ -2750,29 +2697,6 @@ pub const HIRVM = struct {
                 return self.reporter.reportError("forall_quantifier: argument must be array", .{});
             },
         }
-    }
-
-    pub fn resolveFieldAccess(self: *HIRVM, object: HIRFrame, field: []const u8) !HIRValue {
-        if (self.debug_enabled) {
-            std.debug.print("Resolving field access: object type = {s}, field = {s}\n", .{ @tagName(object.value), field });
-
-            switch (object.value) {
-                .struct_instance => |s| {
-                    std.debug.print("  Struct instance: {s}, looking for field {s}\n", .{ s.type_name, field });
-                    for (s.fields) |f| {
-                        std.debug.print("  Field: {s}\n", .{f.name});
-                        if (std.mem.eql(u8, f.name, field)) {
-                            std.debug.print("  Found field {s}\n", .{field});
-                        }
-                    }
-                },
-                else => {
-                    std.debug.print("  Not a struct instance, cannot access field {s}\n", .{field});
-                },
-            }
-        }
-
-        // ... existing code ...
     }
 
     pub fn exitScope(self: *HIRVM, scope_id: u32) !void {
@@ -2983,5 +2907,45 @@ pub const HIRVM = struct {
         // Restore original execution state
         self.ip = saved_ip;
         self.running = saved_running;
+    }
+
+    /// Coerce a value to the expected type if possible
+    fn coerceValue(self: *HIRVM, value: HIRValue, expected_type: HIRType) HIRValue {
+        // If expected type is Auto, no coercion needed
+        if (expected_type == .Auto) {
+            return value;
+        }
+
+        // Debug output for coercion
+        if (self.debug_enabled) {
+            std.debug.print("Coercing value {any} to expected type {s}\n", .{ value, @tagName(expected_type) });
+        }
+
+        // Perform type coercion based on expected type
+        const result = switch (expected_type) {
+            .Float => switch (value) {
+                .int => |i| HIRValue{ .float = @floatFromInt(i) },
+                .byte => |u| HIRValue{ .float = @floatFromInt(u) },
+                .float => value, // Already correct type
+                else => value, // Cannot coerce, return original
+            },
+            .Byte => switch (value) {
+                .int => |i| if (i >= 0 and i <= 255) HIRValue{ .byte = @intCast(i) } else value,
+                .byte => value, // Already correct type
+                else => value, // Cannot coerce, return original
+            },
+            .Int => switch (value) {
+                .byte => |u| HIRValue{ .int = @intCast(u) },
+                .int => value, // Already correct type
+                else => value, // Cannot coerce, return original
+            },
+            else => value, // No coercion for other types
+        };
+
+        if (self.debug_enabled) {
+            std.debug.print("Coercion result: {any}\n", .{result});
+        }
+
+        return result;
     }
 };
