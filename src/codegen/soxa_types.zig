@@ -8,7 +8,7 @@ const HIRValue = @import("soxa_values.zig").HIRValue;
 
 pub const HIRType = enum {
     Int,
-    U8,
+    Byte,
     Float,
     String,
     Tetra,

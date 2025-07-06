@@ -626,14 +626,24 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
 
     // 1. Check for Basic Types
     const maybe_basic_type: ?ast.BasicType = blk: {
-        if (std.mem.eql(u8, type_name, "int")) break :blk ast.BasicType.Integer;
-        if (std.mem.eql(u8, type_name, "u8")) break :blk ast.BasicType.U8;
-        if (std.mem.eql(u8, type_name, "float")) break :blk ast.BasicType.Float;
-        if (std.mem.eql(u8, type_name, "string")) break :blk ast.BasicType.String;
-        if (std.mem.eql(u8, type_name, "tetra")) break :blk ast.BasicType.Tetra;
-        if (std.mem.eql(u8, type_name, "auto") or std.mem.eql(u8, type_name, "")) break :blk ast.BasicType.Auto;
-        // Not a basic type keyword
-        break :blk null;
+        switch (type_token.type) {
+            .INT_TYPE => break :blk ast.BasicType.Integer,
+            .BYTE_TYPE => break :blk ast.BasicType.Byte,
+            .FLOAT_TYPE => break :blk ast.BasicType.Float,
+            .STRING_TYPE => break :blk ast.BasicType.String,
+            .TETRA_TYPE => break :blk ast.BasicType.Tetra,
+            .AUTO_TYPE => break :blk ast.BasicType.Auto,
+            else => {
+                // For backward compatibility, also check lexemes
+                if (std.mem.eql(u8, type_name, "int")) break :blk ast.BasicType.Integer;
+                if (std.mem.eql(u8, type_name, "byte")) break :blk ast.BasicType.Byte;
+                if (std.mem.eql(u8, type_name, "float")) break :blk ast.BasicType.Float;
+                if (std.mem.eql(u8, type_name, "string")) break :blk ast.BasicType.String;
+                if (std.mem.eql(u8, type_name, "tetra")) break :blk ast.BasicType.Tetra;
+                if (std.mem.eql(u8, type_name, "auto") or std.mem.eql(u8, type_name, "")) break :blk ast.BasicType.Auto;
+                break :blk null;
+            },
+        }
     };
 
     if (maybe_basic_type) |basic| {
@@ -1129,7 +1139,7 @@ pub fn literal(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr
     }
 
     const expr = switch (current.type) {
-        .INT, .FLOAT, .LOGIC, .NOTHING, .TETRA => blk: {
+        .INT, .FLOAT, .LOGIC, .NOTHING, .TETRA, .BYTE => blk: { // Add BYTE here
             const new_expr = try self.allocator.create(ast.Expr);
             new_expr.* = .{
                 .base = .{
@@ -1394,7 +1404,7 @@ fn parseBasicType(self: *Parser) ErrorList!?*ast.TypeExpr {
     const type_token = self.peek();
     const basic_type = switch (type_token.type) {
         .INT_TYPE => ast.BasicType.Integer,
-        .U8_TYPE => ast.BasicType.U8,
+        .BYTE_TYPE => ast.BasicType.Byte,
         .FLOAT_TYPE => ast.BasicType.Float,
         .STRING_TYPE => ast.BasicType.String,
         .TETRA_TYPE => ast.BasicType.Tetra,
@@ -1422,7 +1432,7 @@ pub fn inferType(expr: *ast.Expr) !ast.TypeInfo {
         .Literal => |lit| {
             switch (lit) {
                 .int => return .{ .base = .Int, .is_mutable = false },
-                .u8 => return .{ .base = .U8, .is_mutable = false },
+                .byte => return .{ .base = .Byte, .is_mutable = false },
                 .float => return .{ .base = .Float, .is_mutable = false },
                 .string => return .{ .base = .String, .is_mutable = false },
                 .tetra => return .{ .base = .Tetra, .is_mutable = false },

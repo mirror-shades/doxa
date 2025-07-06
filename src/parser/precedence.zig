@@ -128,6 +128,7 @@ pub const rules = blk: {
 
     // Literals
     r.set(.INT, .{ .prefix = literal });
+    r.set(.BYTE, .{ .prefix = literal });
     r.set(.FLOAT, .{ .prefix = literal });
     r.set(.STRING, .{ .prefix = literal });
     r.set(.LOGIC, .{ .prefix = literal });

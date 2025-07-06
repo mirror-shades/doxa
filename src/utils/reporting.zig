@@ -122,6 +122,7 @@ pub const ErrorList = error{
     LeadingZeros,
     MultipleExponents,
     InvalidExponent,
+    ByteValueTooLarge,
 
     // Unicode & UTF-8 Handling
     Utf8InvalidStartByte,

@@ -207,8 +207,8 @@ con?; // 1
 var _int is 5;
 typeof(_int)?; // int
 
-var byte :: u8 is 255;
-typeof(byte)?; // u8
+var _byte :: byte is 255;
+typeof(_byte)?; // byte
 
 var _float is 5.5;
 typeof(_float)?; // float

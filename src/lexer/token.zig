@@ -101,7 +101,7 @@ pub const TokenType = enum {
     IDENTIFIER, // identifier
     SPREAD, // ...
     INT, // integer
-    U8, // 8-bit unsigned integer
+    BYTE, // hex literal u8
     FLOAT, // float
     STRING, // string
     ARRAY, // array
@@ -115,7 +115,7 @@ pub const TokenType = enum {
 
     // Type keywords
     INT_TYPE, // int type declaration
-    U8_TYPE, // 8-bit unsigned integer type declaration
+    BYTE_TYPE, // 8-bit unsigned integer type declaration
     FLOAT_TYPE, // float type declaration
     STRING_TYPE, // string type declaration
     TETRA_TYPE, // tetra type declaration
@@ -179,7 +179,7 @@ pub fn deinit(self: *TokenLiteral, allocator: std.mem.Allocator) void {
 pub fn convertTokenTypeToTypeInfo(token_type: TokenType) ast.TypeInfo {
     return switch (token_type) {
         .INT => ast.TypeInfo{ .base = .Int, .is_mutable = true },
-        .U8 => ast.TypeInfo{ .base = .U8, .is_mutable = true },
+        .BYTE => ast.TypeInfo{ .base = .Byte, .is_mutable = true },
         .FLOAT => ast.TypeInfo{ .base = .Float, .is_mutable = true },
         .STRING => ast.TypeInfo{ .base = .String, .is_mutable = true },
         .TETRA => ast.TypeInfo{ .base = .Tetra, .is_mutable = true },

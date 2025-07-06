@@ -64,7 +64,7 @@ pub const HIRFrame = struct {
     }
 
     pub fn initU8(x: u8) HIRFrame {
-        return HIRFrame{ .value = HIRValue{ .u8 = x } };
+        return HIRFrame{ .value = HIRValue{ .byte = x } };
     }
 
     pub fn initNothing() HIRFrame {
@@ -108,7 +108,7 @@ pub const HIRFrame = struct {
 
     pub fn asU8(self: HIRFrame) !u8 {
         return switch (self.value) {
-            .u8 => |u| u,
+            .byte => |u| u,
             else => ErrorList.TypeError,
         };
     }
@@ -144,7 +144,7 @@ fn structFieldToHIRStructField(self: *HIRVM, field: types.StructField) !HIRStruc
 pub fn hirValueToTokenLiteral(self: *HIRVM, hir_value: HIRValue) TokenLiteral {
     return switch (hir_value) {
         .int => |i| TokenLiteral{ .int = i },
-        .u8 => |u| TokenLiteral{ .u8 = u },
+        .byte => |u| TokenLiteral{ .byte = u },
         .float => |f| TokenLiteral{ .float = f },
         .string => |s| TokenLiteral{ .string = s },
         .tetra => |t| TokenLiteral{ .tetra = switch (t) {
@@ -322,7 +322,7 @@ pub const HIRVM = struct {
     pub fn tokenLiteralToHIRValue(self: *HIRVM, token_literal: TokenLiteral) HIRValue {
         return switch (token_literal) {
             .int => |i| HIRValue{ .int = i },
-            .u8 => |u| HIRValue{ .u8 = u },
+            .byte => |u| HIRValue{ .byte = u },
             .float => |f| HIRValue{ .float = f },
             .string => |s| HIRValue{ .string = s },
             .tetra => |t| HIRValue{ .tetra = switch (t) {
@@ -344,7 +344,7 @@ pub const HIRVM = struct {
                     if (i == 0 and element_type == .Auto) {
                         element_type = switch (hir_elements[i]) {
                             .int => .Int,
-                            .u8 => .U8,
+                            .byte => .Byte,
                             .float => .Float,
                             .string => .String,
                             .tetra => .Tetra,
@@ -374,7 +374,7 @@ pub const HIRVM = struct {
                         // Infer field type from the value
                         .field_type = switch (field_value) {
                             .int => .Int,
-                            .u8 => .U8,
+                            .byte => .Byte,
                             .float => .Float,
                             .string => .String,
                             .tetra => .Tetra,
@@ -399,7 +399,7 @@ pub const HIRVM = struct {
     pub fn hirValueToTokenLiteral(self: *HIRVM, hir_value: HIRValue) TokenLiteral {
         return switch (hir_value) {
             .int => |i| TokenLiteral{ .int = i },
-            .u8 => |u| TokenLiteral{ .u8 = u },
+            .byte => |u| TokenLiteral{ .byte = u },
             .float => |f| TokenLiteral{ .float = f },
             .string => |s| TokenLiteral{ .string = s },
             .tetra => |t| TokenLiteral{ .tetra = switch (t) {
@@ -442,7 +442,7 @@ pub const HIRVM = struct {
         _ = self;
         return switch (hir_value) {
             .int => .INT,
-            .u8 => .U8,
+            .byte => .BYTE,
             .float => .FLOAT,
             .string => .STRING,
             .tetra => .TETRA,
@@ -460,7 +460,7 @@ pub const HIRVM = struct {
         _ = self;
         return switch (hir_value) {
             .int => TypeInfo{ .base = .Int, .is_mutable = true },
-            .u8 => TypeInfo{ .base = .U8, .is_mutable = true },
+            .byte => TypeInfo{ .base = .Byte, .is_mutable = true },
             .float => TypeInfo{ .base = .Float, .is_mutable = true },
             .string => TypeInfo{ .base = .String, .is_mutable = true },
             .tetra => TypeInfo{ .base = .Tetra, .is_mutable = true },
@@ -723,7 +723,7 @@ pub const HIRVM = struct {
                 // IMPROVED TYPE CHECKING: Handle non-integer values gracefully
                 const a_int = switch (a_val.value) {
                     .int => |i| i,
-                    .u8 => |u| @as(i32, u),
+                    .byte => |u| @as(i32, u),
                     .tetra => |t| @as(i32, t),
                     .nothing => {
                         return self.reporter.reportError("Cannot perform arithmetic on 'nothing' value", .{});
@@ -735,7 +735,7 @@ pub const HIRVM = struct {
 
                 const b_int = switch (b.value) {
                     .int => |i| i,
-                    .u8 => |u| @as(i32, u),
+                    .byte => |u| @as(i32, u),
                     .tetra => |t| @as(i32, t),
                     .nothing => {
                         return self.reporter.reportError("Cannot perform arithmetic on 'nothing' value", .{});
@@ -1111,11 +1111,11 @@ pub const HIRVM = struct {
                                 }
                                 const elements = try self.allocator.alloc(HIRValue, s_val.len);
                                 for (s_val, 0..) |byte, i| {
-                                    elements[i] = HIRValue{ .u8 = byte };
+                                    elements[i] = HIRValue{ .byte = byte };
                                 }
                                 const array = HIRValue{ .array = HIRArray{
                                     .elements = elements,
-                                    .element_type = .U8,
+                                    .element_type = .Byte,
                                     .capacity = @intCast(s_val.len),
                                 } };
                                 if (self.debug_enabled) {
@@ -1161,7 +1161,7 @@ pub const HIRVM = struct {
                     .int => |i| if (i < 0) {
                         return self.reporter.reportError("Array index cannot be negative: {}", .{i});
                     } else @as(u32, @intCast(i)),
-                    .u8 => |u| @as(u32, u),
+                    .byte => |u| @as(u32, u),
                     .tetra => |t| @as(u32, t), // Allow tetra values as indices
                     .string => |s| blk: {
                         // GRACEFUL: Try to parse string as integer
@@ -1235,7 +1235,7 @@ pub const HIRVM = struct {
                     .int => |i| if (i < 0) {
                         return self.reporter.reportError("Array index cannot be negative: {}", .{i});
                     } else @as(u32, @intCast(i)),
-                    .u8 => |u| @as(u32, u),
+                    .byte => |u| @as(u32, u),
                     .tetra => |t| @as(u32, t), // Allow tetra values as indices
                     .string => |s| blk: {
                         // GRACEFUL: Try to parse string as integer
@@ -1542,13 +1542,13 @@ pub const HIRVM = struct {
 
                             const a_int = switch (a.value) {
                                 .int => |i| i,
-                                .u8 => |u| @as(i32, u),
+                                .byte => |u| @as(i32, u),
                                 else => return self.reporter.reportError("safeAdd: first argument must be integer", .{}),
                             };
 
                             const b_int = switch (b.value) {
                                 .int => |i| i,
-                                .u8 => |u| @as(i32, u),
+                                .byte => |u| @as(i32, u),
                                 else => return self.reporter.reportError("safeAdd: second argument must be integer", .{}),
                             };
 
@@ -1635,13 +1635,13 @@ pub const HIRVM = struct {
 
                             const a_int = switch (a.value) {
                                 .int => |i| i,
-                                .u8 => |u| @as(i32, u),
+                                .byte => |u| @as(i32, u),
                                 else => return self.reporter.reportError("safeAdd: first argument must be integer", .{}),
                             };
 
                             const b_int = switch (b.value) {
                                 .int => |i| i,
-                                .u8 => |u| @as(i32, u),
+                                .byte => |u| @as(i32, u),
                                 else => return self.reporter.reportError("safeAdd: second argument must be integer", .{}),
                             };
 
@@ -2468,11 +2468,11 @@ pub const HIRVM = struct {
         // Convert string to array of bytes
         const elements = try self.allocator.alloc(HIRValue, str.len);
         for (str, 0..) |byte, i| {
-            elements[i] = HIRValue{ .u8 = byte };
+            elements[i] = HIRValue{ .byte = byte };
         }
         const array = HIRValue{ .array = HIRArray{
             .elements = elements,
-            .element_type = .U8,
+            .element_type = .Byte,
             .capacity = @intCast(str.len),
         } };
         return HIRFrame.initFromHIRValue(array);
@@ -2540,8 +2540,8 @@ pub const HIRVM = struct {
                 .nothing => true,
                 else => false,
             },
-            .u8 => |a_val| switch (b.value) {
-                .u8 => |b_val| a_val == b_val,
+            .byte => |a_val| switch (b.value) {
+                .byte => |b_val| a_val == b_val,
                 else => false,
             },
             .enum_variant => |a_val| switch (b.value) {
@@ -2569,8 +2569,8 @@ pub const HIRVM = struct {
                 .int => |b_val| a_val < @as(f64, @floatFromInt(b_val)),
                 else => ErrorList.TypeError,
             },
-            .u8 => |a_val| switch (b.value) {
-                .u8 => |b_val| a_val < b_val,
+            .byte => |a_val| switch (b.value) {
+                .byte => |b_val| a_val < b_val,
                 else => ErrorList.TypeError,
             },
             // Complex types don't support comparison
@@ -2594,8 +2594,8 @@ pub const HIRVM = struct {
                 .int => |b_val| a_val > @as(f64, @floatFromInt(b_val)),
                 else => ErrorList.TypeError,
             },
-            .u8 => |a_val| switch (b.value) {
-                .u8 => |b_val| a_val > b_val,
+            .byte => |a_val| switch (b.value) {
+                .byte => |b_val| a_val > b_val,
                 else => ErrorList.TypeError,
             },
             // Complex types don't support comparison
@@ -2610,7 +2610,7 @@ pub const HIRVM = struct {
             .float => |f| std.debug.print("{d}", .{f}),
             .string => |s| std.debug.print("\"{s}\"", .{s}),
             .tetra => |b| std.debug.print("{}", .{b}),
-            .u8 => |u| std.debug.print("{}", .{u}),
+            .byte => |u| std.debug.print("{}", .{u}),
             .nothing => std.debug.print("nothing", .{}),
             // Complex types - show contents for arrays
             .array => |arr| {
@@ -2636,14 +2636,14 @@ pub const HIRVM = struct {
         _ = self;
         return switch (value) {
             .int => "int",
-            .u8 => "u8",
+            .byte => "u8",
             .float => "float",
             .string => "string",
             .tetra => "tetra",
             .nothing => "nothing",
             .array => |arr| switch (arr.element_type) {
                 .Int => "int[]",
-                .U8 => "u8[]",
+                .Byte => "byte[]",
                 .Float => "float[]",
                 .String => "string[]",
                 .Tetra => "tetra[]",
@@ -2663,7 +2663,7 @@ pub const HIRVM = struct {
     pub fn formatHIRValue(self: *HIRVM, writer: anytype, value: HIRValue) !void {
         switch (value) {
             .int => |i| try writer.print("{}", .{i}),
-            .u8 => |u| try writer.print("{}", .{u}),
+            .byte => |u| try writer.print("{}", .{u}),
             .float => |f| try writer.print("{d}", .{f}),
             .string => |s| try writer.print("\"{s}\"", .{s}),
             .tetra => |t| try writer.print("{s}", .{switch (t) {

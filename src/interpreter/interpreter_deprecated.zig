@@ -155,7 +155,7 @@ pub const Interpreter = struct {
                                 // Default value based on type
                                 const default_value = switch (var_decl.type_info.base) {
                                     .Int => TokenLiteral{ .int = 0 },
-                                    .U8 => TokenLiteral{ .u8 = 0 },
+                                    .Byte => TokenLiteral{ .byte = 0 },
                                     .Float => TokenLiteral{ .float = 0.0 },
                                     .String => TokenLiteral{ .string = try self.string_interner.intern("") },
                                     .Tetra => TokenLiteral{ .tetra = .false },
@@ -206,11 +206,11 @@ pub const Interpreter = struct {
     fn u8BoundsCheck(self: *Interpreter, value: TokenLiteral) ErrorList!void {
         if (value.int < 0) {
             self.reporter.reportRuntimeError("Underflow: u8 cannot be negative", .{});
-            return error.u8Underflow;
+            return error.byteUnderflow;
         }
         if (value.int > 255) {
             self.reporter.reportRuntimeError("Overflow: u8 cannot be greater than 255", .{});
-            return error.u8Overflow;
+            return error.byteOverflow;
         }
     }
 
@@ -482,7 +482,7 @@ pub const Interpreter = struct {
                     var type_info = decl.type_info;
                     if (decl.type_info.array_type != null) {
                         // Check if this is a u8 array
-                        if (decl.type_info.array_type.?.base == .U8) {
+                        if (decl.type_info.array_type.?.base == .Byte) {
                             if (self.debug_enabled) {
                                 std.debug.print("Detected u8 array\n", .{});
                             }
@@ -490,7 +490,7 @@ pub const Interpreter = struct {
                             type_info = ast.TypeInfo{
                                 .base = .Array,
                                 .is_mutable = true,
-                                .element_type = .U8,
+                                .element_type = .Byte,
                                 .array_type = decl.type_info.array_type,
                                 .array_size = decl.type_info.array_size,
                             };
@@ -507,12 +507,12 @@ pub const Interpreter = struct {
 
                     // Type checking for initialization
                     switch (decl.type_info.base) {
-                        .Int => if (init_value != .int and init_value != .u8) {
+                        .Int => if (init_value != .int and init_value != .byte) {
                             self.reporter.reportRuntimeError("Type error: Cannot initialize int variable with {s}", .{@tagName(init_value)});
                             return error.TypeError;
                         },
-                        .U8 => {
-                            if (init_value != .u8 and init_value != .int) {
+                        .Byte => {
+                            if (init_value != .byte and init_value != .int) {
                                 self.reporter.reportRuntimeError("Type error: Cannot initialize u8 variable with {s}", .{@tagName(init_value)});
                                 return error.TypeError;
                             }
@@ -523,12 +523,19 @@ pub const Interpreter = struct {
                                     self.reporter.reportRuntimeError("Type error: Integer value {d} out of range for u8", .{init_value.int});
                                     return error.TypeError;
                                 }
-                                break :blk TokenLiteral{ .u8 = @intCast(init_value.int) };
+                                break :blk TokenLiteral{ .byte = @intCast(init_value.int) };
                             }
                         },
-                        .Float => if (init_value != .float and init_value != .int) {
-                            self.reporter.reportRuntimeError("Type error: Cannot initialize float variable with {s}", .{@tagName(init_value)});
-                            return error.TypeError;
+                        .Float => {
+                            if (init_value != .float and init_value != .int) {
+                                self.reporter.reportRuntimeError("Type error: Cannot initialize float variable with {s}", .{@tagName(init_value)});
+                                return error.TypeError;
+                            }
+                            // Convert int to float if needed
+                            if (init_value == .int) {
+                                break :blk TokenLiteral{ .float = @floatFromInt(init_value.int) };
+                            }
+                            break :blk init_value;
                         },
                         .Array => {
                             if (init_value != .array) {
@@ -539,7 +546,7 @@ pub const Interpreter = struct {
                             // Check array element types if element_type is specified
                             if (decl.type_info.element_type) |expected_type| {
                                 // If this is a u8 array, convert int elements to u8
-                                if (expected_type == .U8) {
+                                if (expected_type == .Byte) {
                                     var new_array = try self.allocator.alloc(TokenLiteral, init_value.array.len);
                                     for (init_value.array, 0..) |elem, idx| {
                                         if (elem == .int) {
@@ -548,8 +555,8 @@ pub const Interpreter = struct {
                                                 self.allocator.free(new_array);
                                                 return error.TypeError;
                                             }
-                                            new_array[idx] = TokenLiteral{ .u8 = @intCast(elem.int) };
-                                        } else if (elem == .u8) {
+                                            new_array[idx] = TokenLiteral{ .byte = @intCast(elem.int) };
+                                        } else if (elem == .byte) {
                                             new_array[idx] = elem;
                                         } else {
                                             self.reporter.reportRuntimeError("Type error: Cannot convert {s} at index {d} to u8", .{ @tagName(elem), idx });
@@ -569,7 +576,7 @@ pub const Interpreter = struct {
                                 for (init_value.array) |element| {
                                     const matches = switch (expected_type) {
                                         .Int => element == .int,
-                                        .U8 => element == .u8,
+                                        .Byte => element == .byte,
                                         .Float => element == .float,
                                         .String => element == .string,
                                         .Tetra => element == .tetra,
@@ -593,7 +600,7 @@ pub const Interpreter = struct {
                     break :blk init_value;
                 } else switch (decl.type_info.base) {
                     .Int => TokenLiteral{ .int = 0 },
-                    .U8 => TokenLiteral{ .u8 = 0 },
+                    .Byte => TokenLiteral{ .byte = 0 },
                     .Float => TokenLiteral{ .float = 0.0 },
                     .String => TokenLiteral{ .string = try self.string_interner.intern("") },
                     .Map => TokenLiteral{ .map = std.StringHashMap(TokenLiteral).init(self.allocator) },
@@ -610,7 +617,7 @@ pub const Interpreter = struct {
                                 if (decl.type_info.element_type) |elem_type| {
                                     elem.* = switch (elem_type) {
                                         .Int => TokenLiteral{ .int = 0 },
-                                        .U8 => TokenLiteral{ .u8 = 0 },
+                                        .Byte => TokenLiteral{ .byte = 0 },
                                         .Float => TokenLiteral{ .float = 0.0 },
                                         .String => TokenLiteral{ .string = try self.string_interner.intern("") },
                                         .Tetra => TokenLiteral{ .tetra = Tetra.false },
@@ -618,7 +625,7 @@ pub const Interpreter = struct {
                                     };
                                 } else {
                                     // Default to u8 if no element type specified
-                                    elem.* = TokenLiteral{ .u8 = 0 };
+                                    elem.* = TokenLiteral{ .byte = 0 };
                                 }
                             }
 
@@ -635,7 +642,7 @@ pub const Interpreter = struct {
                 var final_type_info = decl.type_info;
                 if (decl.type_info.base == .Array and
                     decl.type_info.array_type != null and
-                    decl.type_info.array_type.?.base == .U8)
+                    decl.type_info.array_type.?.base == .Byte)
                 {
                     if (self.debug_enabled) {
                         std.debug.print("Using specialized u8 array type info\n", .{});
@@ -644,7 +651,7 @@ pub const Interpreter = struct {
                     final_type_info = ast.TypeInfo{
                         .base = .Array,
                         .is_mutable = true,
-                        .element_type = .U8,
+                        .element_type = .Byte,
                         .array_type = decl.type_info.array_type,
                         .array_size = decl.type_info.array_size,
                     };
@@ -793,12 +800,12 @@ pub const Interpreter = struct {
                     .EQUALITY => switch (left) {
                         .int => |i| switch (right) {
                             .int => |j| TokenLiteral{ .tetra = if (i == j) .true else .false },
-                            .u8 => |j| TokenLiteral{ .tetra = if (i == j) .true else .false },
+                            .byte => |j| TokenLiteral{ .tetra = if (i == j) .true else .false },
                             else => TokenLiteral{ .tetra = .false },
                         },
-                        .u8 => |i| switch (right) {
+                        .byte => |i| switch (right) {
                             .int => |j| TokenLiteral{ .tetra = if (i == j) .true else .false },
-                            .u8 => |j| TokenLiteral{ .tetra = if (i == j) .true else .false },
+                            .byte => |j| TokenLiteral{ .tetra = if (i == j) .true else .false },
                             else => TokenLiteral{ .tetra = .false },
                         },
                         .float => {
@@ -1220,13 +1227,13 @@ pub const Interpreter = struct {
                 // Type checking (always enabled in statically typed mode)
                 switch (var_type.base) {
                     .Int => {
-                        if (value != .int and value != .u8) {
+                        if (value != .int and value != .byte) {
                             self.reporter.reportRuntimeError("Type error: Cannot assign {s} to int variable", .{@tagName(value)});
                             return error.TypeError;
                         }
                     },
-                    .U8 => {
-                        if (value != .u8 and value != .int) {
+                    .Byte => {
+                        if (value != .byte and value != .int) {
                             self.reporter.reportRuntimeError("Type error: Cannot assign {s} to u8 variable", .{@tagName(value)});
                             return error.TypeError;
                         }
@@ -1280,14 +1287,14 @@ pub const Interpreter = struct {
                             TokenLiteral{ .int = current_value.int + rhs_value.int }
                         else
                             return error.TypeError,
-                        .u8 => switch (rhs_value) {
-                            .u8 => {
-                                const result = @addWithOverflow(current_value.u8, rhs_value.u8);
+                        .byte => switch (rhs_value) {
+                            .byte => {
+                                const result = @addWithOverflow(current_value.byte, rhs_value.byte);
                                 if (result[1] != 0) { // Check overflow flag
                                     self.reporter.reportRuntimeError("Overflow during u8 addition", .{});
                                     return error.Overflow;
                                 }
-                                return TokenLiteral{ .u8 = result[0] };
+                                return TokenLiteral{ .byte = result[0] };
                             },
                             .int => {
                                 // Check if the int is representable as u8 for addition operand
@@ -1296,12 +1303,12 @@ pub const Interpreter = struct {
                                     return error.Overflow;
                                 }
                                 const val: u8 = @intCast(rhs_value.int); // Safe cast due to above check
-                                const result = @addWithOverflow(current_value.u8, val);
+                                const result = @addWithOverflow(current_value.byte, val);
                                 if (result[1] != 0) { // Check overflow flag
                                     self.reporter.reportRuntimeError("Overflow during u8 addition", .{});
                                     return error.Overflow;
                                 }
-                                return TokenLiteral{ .u8 = result[0] };
+                                return TokenLiteral{ .byte = result[0] };
                             },
                             else => return error.TypeError,
                         },
@@ -1313,14 +1320,14 @@ pub const Interpreter = struct {
                             TokenLiteral{ .int = current_value.int - rhs_value.int }
                         else
                             return error.TypeError,
-                        .u8 => switch (rhs_value) {
-                            .u8 => {
-                                const result = @subWithOverflow(current_value.u8, rhs_value.u8);
+                        .byte => switch (rhs_value) {
+                            .byte => {
+                                const result = @subWithOverflow(current_value.byte, rhs_value.byte);
                                 if (result[1] != 0) { // Check underflow flag
                                     self.reporter.reportRuntimeError("Underflow during u8 subtraction", .{});
                                     return error.Overflow; // Using Overflow for underflow too
                                 }
-                                return TokenLiteral{ .u8 = result[0] };
+                                return TokenLiteral{ .byte = result[0] };
                             },
                             .int => {
                                 // Check if the int is representable as u8 for subtraction operand
@@ -1329,12 +1336,12 @@ pub const Interpreter = struct {
                                     return error.Overflow;
                                 }
                                 const val: u8 = @intCast(rhs_value.int); // Safe cast
-                                const result = @subWithOverflow(current_value.u8, val);
+                                const result = @subWithOverflow(current_value.byte, val);
                                 if (result[1] != 0) { // Check underflow flag
                                     self.reporter.reportRuntimeError("Underflow during u8 subtraction", .{});
                                     return error.Overflow; // Using Overflow for underflow too
                                 }
-                                return TokenLiteral{ .u8 = result[0] };
+                                return TokenLiteral{ .byte = result[0] };
                             },
                             else => return error.TypeError,
                         },
@@ -1447,10 +1454,10 @@ pub const Interpreter = struct {
                             if (self.environment.getTypeInfo(var_name)) |type_info| {
                                 if (type_info.base == .Array and type_info.element_type != null) {
                                     // If element is an int but array type is u8, convert to u8
-                                    if (type_info.element_type.? == .U8 and arr[idx] == .int) {
+                                    if (type_info.element_type.? == .Byte and arr[idx] == .int) {
                                         const int_val = arr[idx].int;
                                         if (int_val >= 0 and int_val <= 255) {
-                                            return TokenLiteral{ .u8 = @intCast(int_val) };
+                                            return TokenLiteral{ .byte = @intCast(int_val) };
                                         }
                                     }
                                 }
@@ -1509,18 +1516,18 @@ pub const Interpreter = struct {
                                 TokenLiteral{ .int = current_value.int + rhs_value.int }
                             else
                                 return error.TypeError,
-                            .u8 => switch (rhs_value) {
+                            .byte => switch (rhs_value) {
                                 .int => {
                                     if (rhs_value.int < 0 or rhs_value.int > 255) return error.Overflow;
                                     const val: u8 = @intCast(rhs_value.int);
-                                    const sum = current_value.u8 + val;
+                                    const sum = current_value.byte + val;
                                     if (sum > 255) return error.Overflow;
-                                    return TokenLiteral{ .u8 = sum };
+                                    return TokenLiteral{ .byte = sum };
                                 },
-                                .u8 => {
-                                    const sum = current_value.u8 + rhs_value.u8;
+                                .byte => {
+                                    const sum = current_value.byte + rhs_value.byte;
                                     if (sum > 255) return error.Overflow;
-                                    return TokenLiteral{ .u8 = sum };
+                                    return TokenLiteral{ .byte = sum };
                                 },
                                 else => return error.TypeError,
                             },
@@ -1531,19 +1538,19 @@ pub const Interpreter = struct {
                                 TokenLiteral{ .int = current_value.int - rhs_value.int }
                             else
                                 return error.TypeError,
-                            .u8 => switch (rhs_value) {
-                                .u8 => {
-                                    const result = @subWithOverflow(current_value.u8, rhs_value.u8);
+                            .byte => switch (rhs_value) {
+                                .byte => {
+                                    const result = @subWithOverflow(current_value.byte, rhs_value.byte);
                                     if (result[1] != 0) return error.Overflow;
-                                    return TokenLiteral{ .u8 = result[0] };
+                                    return TokenLiteral{ .byte = result[0] };
                                 },
                                 .int => {
                                     if (rhs_value.int < 0 or rhs_value.int > 255)
                                         return error.Overflow;
                                     const val: u8 = @intCast(rhs_value.int);
-                                    const result = @subWithOverflow(current_value.u8, val);
+                                    const result = @subWithOverflow(current_value.byte, val);
                                     if (result[1] != 0) return error.Overflow;
-                                    return TokenLiteral{ .u8 = result[0] };
+                                    return TokenLiteral{ .byte = result[0] };
                                 },
                                 else => return error.TypeError,
                             },
@@ -2096,7 +2103,7 @@ pub const Interpreter = struct {
                 if (array_value.array.len > 0) {
                     item_type = switch (array_value.array[0]) {
                         .int => ast.TypeInfo{ .base = .Int },
-                        .u8 => ast.TypeInfo{ .base = .U8 },
+                        .byte => ast.TypeInfo{ .base = .Byte },
                         .float => ast.TypeInfo{ .base = .Float },
                         .string => ast.TypeInfo{ .base = .String },
                         .tetra => ast.TypeInfo{ .base = .Tetra },
@@ -2120,32 +2127,8 @@ pub const Interpreter = struct {
             .FieldAccess => |field| {
                 const object = try self.evaluate(field.object);
 
-                // Handle string length property
-                if (object == .string) {
-                    if (std.mem.eql(u8, field.field.lexeme, "length")) {
-                        return TokenLiteral{ .int = @intCast(object.string.len) };
-                    }
-                    // Add bytes field access
-                    if (std.mem.eql(u8, field.field.lexeme, "bytes")) {
-                        var bytes = try self.allocator.alloc(TokenLiteral, object.string.len);
-                        for (object.string, 0..) |byte, i| {
-                            bytes[i] = TokenLiteral{ .u8 = byte };
-                        }
-                        const array_value = TokenLiteral{ .array = bytes };
-                        try self.environment.define(field.field.lexeme, array_value, .{ .base = .Array, .element_type = .U8, .is_mutable = true });
-                        return array_value;
-                    }
-                }
-
-                // Handle array properties first
-                if (object == .array) {
-                    if (std.mem.eql(u8, field.field.lexeme, "length")) {
-                        return TokenLiteral{ .int = @intCast(object.array.len) };
-                    }
-                    return error.UnknownMethod;
-                }
-
                 // First check if this is an enum type access
+                // TODO: why is this looking for nothing?
                 if (object == .nothing) {
                     // Try to get type info for the object
                     if (field.object.data == .Variable) {
@@ -2367,7 +2350,7 @@ pub const Interpreter = struct {
                                 // Verify type matches
                                 const matches = switch (type_field.type_info.base) {
                                     .Int => value == .int,
-                                    .U8 => value == .u8,
+                                    .Byte => value == .byte,
                                     .Float => value == .float,
                                     .String => value == .string,
                                     .Tetra => value == .tetra,
@@ -2579,9 +2562,9 @@ pub const Interpreter = struct {
                         std.debug.print("Array type info: base={any}, element_type={any}\n", .{ array_type_info.base, array_type_info.element_type });
                     }
 
-                    // If this is a u8 array, return "u8" as the type
+                    // If this is a byte array, return "byte" as the type
                     if (array_type_info.base == .Array and array_type_info.element_type != null) {
-                        if (array_type_info.element_type.? == .U8) {
+                        if (array_type_info.element_type.? == .Byte) {
                             if (self.debug_enabled) {
                                 std.debug.print("Found u8 array, returning u8 type\n", .{});
                             }
@@ -2607,7 +2590,7 @@ pub const Interpreter = struct {
                     return TokenLiteral{
                         .string = switch (type_info.base) {
                             .Int => "int",
-                            .U8 => "u8",
+                            .Byte => "byte",
                             .Float => "float",
                             .String => "string",
                             .Tetra => "tetra",
@@ -2629,7 +2612,7 @@ pub const Interpreter = struct {
                     return TokenLiteral{
                         .string = switch (value) {
                             .int => "int",
-                            .u8 => "u8",
+                            .byte => "u8",
                             .float => "float",
                             .string => "string",
                             .tetra => "tetra",
@@ -2660,7 +2643,7 @@ pub const Interpreter = struct {
                     .string => |s| {
                         var bytes = try self.allocator.alloc(TokenLiteral, s.len);
                         for (s, 0..) |byte, i| {
-                            bytes[i] = TokenLiteral{ .u8 = byte };
+                            bytes[i] = TokenLiteral{ .byte = byte };
                         }
                         return TokenLiteral{ .array = bytes };
                     },
@@ -2872,13 +2855,13 @@ pub const Interpreter = struct {
         // Type checking (always enabled in statically typed mode)
         switch (var_type.base) {
             .Int => {
-                if (value != .int and value != .u8) {
+                if (value != .int and value != .byte) {
                     self.reporter.reportRuntimeError("Type error: Cannot assign {s} to int variable", .{@tagName(value)});
                     return error.TypeError;
                 }
             },
-            .U8 => {
-                if (value != .u8 and value != .int) {
+            .Byte => {
+                if (value != .byte and value != .int) {
                     self.reporter.reportRuntimeError("Type error: Cannot assign {s} to u8 variable", .{@tagName(value)});
                     return error.TypeError;
                 }
@@ -3151,7 +3134,7 @@ pub const Interpreter = struct {
                             break :blk2 result;
                         },
                         .int => |n| TokenLiteral{ .int = n },
-                        .u8 => |u| TokenLiteral{ .u8 = u },
+                        .byte => |u| TokenLiteral{ .byte = u },
                         .float => |fl| TokenLiteral{ .float = fl },
                         .tetra => |t| TokenLiteral{ .tetra = t },
                         .nothing => TokenLiteral{ .nothing = {} },
@@ -3223,7 +3206,7 @@ pub const Interpreter = struct {
     fn valuesEqual(self: *Interpreter, a: TokenLiteral, b: TokenLiteral) ErrorList!bool {
         return switch (a) {
             .int => |val| b == .int and val == b.int,
-            .u8 => |val| b == .u8 and val == b.u8,
+            .byte => |val| b == .byte and val == b.byte,
             .float => |val| b == .float and val == b.float,
             .string => |val| b == .string and std.mem.eql(u8, val, b.string),
             .nothing => b == .nothing,
@@ -3417,8 +3400,8 @@ fn formatValue(writer: anytype, value: TokenLiteral) !void {
         .tetra => |t| try writer.print("{s}", .{@tagName(t)}),
         .string => |s| try writer.print("\"{s}\"", .{s}),
         .int => |i| try writer.print("{d}", .{i}),
-        .u8 => |u| try writer.print("{d}", .{u}),
-        .float => |f| try writer.print("{d}", .{f}),
+        .byte => |u| try writer.print("0x{X:0>2}", .{u}),
+        .float => |f| try writer.print("{d:.1}", .{f}),
         .nothing => try writer.print("nothing", .{}),
         .function => try writer.print("function", .{}),
         .array => |arr| {

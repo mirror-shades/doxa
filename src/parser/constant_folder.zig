@@ -262,9 +262,9 @@ pub const ConstantFolder = struct {
                 .float => |r| TokenLiteral{ .float = @as(f64, @floatFromInt(l)) + r },
                 else => null,
             },
-            .u8 => |l| switch (right) {
-                .u8 => |r| TokenLiteral{ .u8 = l + r },
-                .int => |r| if (r >= 0 and r <= 255) TokenLiteral{ .u8 = l + @as(u8, @intCast(r)) } else null,
+            .byte => |l| switch (right) {
+                .byte => |r| TokenLiteral{ .byte = l + r },
+                .int => |r| if (r >= 0 and r <= 255) TokenLiteral{ .byte = l + @as(u8, @intCast(r)) } else null,
                 else => null,
             },
             .float => |l| switch (right) {
@@ -284,9 +284,9 @@ pub const ConstantFolder = struct {
                 .float => |r| TokenLiteral{ .float = @as(f64, @floatFromInt(l)) - r },
                 else => null,
             },
-            .u8 => |l| switch (right) {
-                .u8 => |r| if (l >= r) TokenLiteral{ .u8 = l - r } else null,
-                .int => |r| if (r >= 0 and r <= l) TokenLiteral{ .u8 = l - @as(u8, @intCast(r)) } else null,
+            .byte => |l| switch (right) {
+                .byte => |r| if (l >= r) TokenLiteral{ .byte = l - r } else null,
+                .int => |r| if (r >= 0 and r <= l) TokenLiteral{ .byte = l - @as(u8, @intCast(r)) } else null,
                 else => null,
             },
             .float => |l| switch (right) {
@@ -306,9 +306,9 @@ pub const ConstantFolder = struct {
                 .float => |r| TokenLiteral{ .float = @as(f64, @floatFromInt(l)) * r },
                 else => null,
             },
-            .u8 => |l| switch (right) {
-                .u8 => |r| TokenLiteral{ .u8 = l * r },
-                .int => |r| if (r >= 0 and r <= 255 and l * @as(u8, @intCast(r)) <= 255) TokenLiteral{ .u8 = l * @as(u8, @intCast(r)) } else null,
+            .byte => |l| switch (right) {
+                .byte => |r| TokenLiteral{ .byte = l * r },
+                .int => |r| if (r >= 0 and r <= 255 and l * @as(u8, @intCast(r)) <= 255) TokenLiteral{ .byte = l * @as(u8, @intCast(r)) } else null,
                 else => null,
             },
             .float => |l| switch (right) {
@@ -328,9 +328,9 @@ pub const ConstantFolder = struct {
                 .float => |r| if (r != 0.0) TokenLiteral{ .float = @as(f64, @floatFromInt(l)) / r } else null,
                 else => null,
             },
-            .u8 => |l| switch (right) {
-                .u8 => |r| if (r != 0) TokenLiteral{ .u8 = l / r } else null,
-                .int => |r| if (r > 0 and r <= 255) TokenLiteral{ .u8 = l / @as(u8, @intCast(r)) } else null,
+            .byte => |l| switch (right) {
+                .byte => |r| if (r != 0) TokenLiteral{ .byte = l / r } else null,
+                .int => |r| if (r > 0 and r <= 255) TokenLiteral{ .byte = l / @as(u8, @intCast(r)) } else null,
                 else => null,
             },
             .float => |l| switch (right) {
@@ -349,9 +349,9 @@ pub const ConstantFolder = struct {
                 .int => |r| if (r != 0) TokenLiteral{ .int = @mod(l, r) } else null,
                 else => null,
             },
-            .u8 => |l| switch (right) {
-                .u8 => |r| if (r != 0) TokenLiteral{ .u8 = l % r } else null,
-                .int => |r| if (r > 0 and r <= 255) TokenLiteral{ .u8 = l % @as(u8, @intCast(r)) } else null,
+            .byte => |l| switch (right) {
+                .byte => |r| if (r != 0) TokenLiteral{ .byte = l % r } else null,
+                .int => |r| if (r > 0 and r <= 255) TokenLiteral{ .byte = l % @as(u8, @intCast(r)) } else null,
                 else => null,
             },
             else => null,
@@ -383,8 +383,8 @@ pub const ConstantFolder = struct {
                 .float => |r| TokenLiteral{ .tetra = if (@as(f64, @floatFromInt(l)) < r) .true else .false },
                 else => null,
             },
-            .u8 => |l| switch (right) {
-                .u8 => |r| TokenLiteral{ .tetra = if (l < r) .true else .false },
+            .byte => |l| switch (right) {
+                .byte => |r| TokenLiteral{ .tetra = if (l < r) .true else .false },
                 .int => |r| TokenLiteral{ .tetra = if (@as(i32, l) < r) .true else .false },
                 else => null,
             },
@@ -405,8 +405,8 @@ pub const ConstantFolder = struct {
                 .float => |r| TokenLiteral{ .tetra = if (@as(f64, @floatFromInt(l)) <= r) .true else .false },
                 else => null,
             },
-            .u8 => |l| switch (right) {
-                .u8 => |r| TokenLiteral{ .tetra = if (l <= r) .true else .false },
+            .byte => |l| switch (right) {
+                .byte => |r| TokenLiteral{ .tetra = if (l <= r) .true else .false },
                 .int => |r| TokenLiteral{ .tetra = if (@as(i32, l) <= r) .true else .false },
                 else => null,
             },
@@ -427,8 +427,8 @@ pub const ConstantFolder = struct {
                 .float => |r| TokenLiteral{ .tetra = if (@as(f64, @floatFromInt(l)) > r) .true else .false },
                 else => null,
             },
-            .u8 => |l| switch (right) {
-                .u8 => |r| TokenLiteral{ .tetra = if (l > r) .true else .false },
+            .byte => |l| switch (right) {
+                .byte => |r| TokenLiteral{ .tetra = if (l > r) .true else .false },
                 .int => |r| TokenLiteral{ .tetra = if (@as(i32, l) > r) .true else .false },
                 else => null,
             },
@@ -449,8 +449,8 @@ pub const ConstantFolder = struct {
                 .float => |r| TokenLiteral{ .tetra = if (@as(f64, @floatFromInt(l)) >= r) .true else .false },
                 else => null,
             },
-            .u8 => |l| switch (right) {
-                .u8 => |r| TokenLiteral{ .tetra = if (l >= r) .true else .false },
+            .byte => |l| switch (right) {
+                .byte => |r| TokenLiteral{ .tetra = if (l >= r) .true else .false },
                 .int => |r| TokenLiteral{ .tetra = if (@as(i32, l) >= r) .true else .false },
                 else => null,
             },
@@ -471,8 +471,8 @@ pub const ConstantFolder = struct {
                 .float => |r| TokenLiteral{ .tetra = if (@as(f64, @floatFromInt(l)) == r) .true else .false },
                 else => null,
             },
-            .u8 => |l| switch (right) {
-                .u8 => |r| TokenLiteral{ .tetra = if (l == r) .true else .false },
+            .byte => |l| switch (right) {
+                .byte => |r| TokenLiteral{ .tetra = if (l == r) .true else .false },
                 .int => |r| TokenLiteral{ .tetra = if (@as(i32, l) == r) .true else .false },
                 else => null,
             },
@@ -679,7 +679,7 @@ pub const ConstantFolder = struct {
                 .neither => false,
             },
             .int => |i| i != 0,
-            .u8 => |u| u != 0,
+            .byte => |u| u != 0,
             .float => |f| f != 0.0,
             .string => |s| s.len > 0,
             .nothing => false,
