@@ -11,9 +11,6 @@ const Reporter = Reporting.Reporter;
 const ErrorList = Reporting.ErrorList;
 const printTemp = std.debug.print;
 pub fn parseExpression(self: *Parser) ErrorList!?*ast.Expr {
-    if (self.debug_enabled) {
-        std.debug.print("\nParsing expression...\n", .{});
-    }
 
     // Special handling for array type expressions
     if (self.peek().type == .ARRAY_TYPE) {
@@ -118,10 +115,6 @@ pub fn braceExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Ex
 }
 
 pub fn typeofExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-    if (self.debug_enabled) {
-        std.debug.print("\nParsing typeof expression...\n", .{});
-    }
-
     // We're already at 'typeof', advance to the next token
     self.advance();
 
@@ -616,10 +609,6 @@ pub fn forExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr
 pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
     const type_token = self.peek();
     const type_name = type_token.lexeme;
-
-    if (self.debug_enabled) {
-        std.debug.print("Parsing type expression, current token: {s} ({s})\n", .{ @tagName(type_token.type), type_name });
-    }
 
     var base_type_expr: ?*ast.TypeExpr = null;
     var consumed_token = false;
@@ -1139,7 +1128,7 @@ pub fn literal(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr
     }
 
     const expr = switch (current.type) {
-        .INT, .FLOAT, .LOGIC, .NOTHING, .TETRA, .BYTE => blk: { // Add BYTE here
+        .INT, .FLOAT, .LOGIC, .NOTHING, .TETRA, .BYTE => blk: {
             const new_expr = try self.allocator.create(ast.Expr);
             new_expr.* = .{
                 .base = .{
@@ -1216,12 +1205,6 @@ pub fn grouping(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
 }
 
 pub fn unary(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-    if (self.debug_enabled) {
-        std.debug.print("Parsing unary expression, current token: {s}\n", .{
-            @tagName(self.peek().type),
-        });
-    }
-
     const operator = self.peek(); // Get the current token as operator
     self.advance(); // Move past the operator
 
