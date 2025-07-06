@@ -155,6 +155,82 @@ pub fn typeofExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.E
     return typeof_expr;
 }
 
+pub fn lengthofExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+    if (self.debug_enabled) {
+        std.debug.print("\nParsing lengthof expression...\n", .{});
+    }
+
+    // We're already at 'lengthof', advance to the next token
+    self.advance();
+
+    // Expect opening parenthesis
+    if (self.peek().type != .LEFT_PAREN) {
+        return error.ExpectedLeftParen;
+    }
+    self.advance();
+
+    // Parse the expression whose length we want to check
+    const expr = try parseExpression(self) orelse return error.ExpectedExpression;
+
+    // Expect closing parenthesis
+    if (self.peek().type != .RIGHT_PAREN) {
+        expr.deinit(self.allocator);
+        self.allocator.destroy(expr);
+        return error.ExpectedRightParen;
+    }
+    self.advance();
+
+    const lengthof_expr = try self.allocator.create(ast.Expr);
+    lengthof_expr.* = .{
+        .base = .{
+            .id = ast.generateNodeId(),
+            .span = ast.SourceSpan.fromToken(self.peek()),
+        },
+        .data = .{
+            .LengthOf = expr,
+        },
+    };
+    return lengthof_expr;
+}
+
+pub fn bytesofExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+    if (self.debug_enabled) {
+        std.debug.print("\nParsing bytesof expression...\n", .{});
+    }
+
+    // We're already at 'bytesof', advance to the next token
+    self.advance();
+
+    // Expect opening parenthesis
+    if (self.peek().type != .LEFT_PAREN) {
+        return error.ExpectedLeftParen;
+    }
+    self.advance();
+
+    // Parse the expression whose bytes we want to get
+    const expr = try parseExpression(self) orelse return error.ExpectedExpression;
+
+    // Expect closing parenthesis
+    if (self.peek().type != .RIGHT_PAREN) {
+        expr.deinit(self.allocator);
+        self.allocator.destroy(expr);
+        return error.ExpectedRightParen;
+    }
+    self.advance();
+
+    const bytesof_expr = try self.allocator.create(ast.Expr);
+    bytesof_expr.* = .{
+        .base = .{
+            .id = ast.generateNodeId(),
+            .span = ast.SourceSpan.fromToken(self.peek()),
+        },
+        .data = .{
+            .BytesOf = expr,
+        },
+    };
+    return bytesof_expr;
+}
+
 pub fn parseMatchExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     if (self.debug_enabled) {
         std.debug.print("\nParsing match expression...\n", .{});

@@ -11,7 +11,7 @@ pub const CompareOp = enum { Eq, Ne, Lt, Le, Gt, Ge };
 
 pub const LogicalOpType = enum { And, Or, Not, Iff, Xor, Nand, Nor, Implies };
 
-pub const StringOpType = enum { Concat, Length, Substring };
+pub const StringOpType = enum { Concat, Length, Substring, Bytes };
 
 pub const OverflowBehavior = enum {
     Trap, // VM: throw error, LLVM: generate trap

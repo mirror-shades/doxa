@@ -36,6 +36,8 @@ const returnExpr = expr_parser.returnExpr;
 
 const arrayType = expr_parser.arrayType;
 const typeofExpr = expr_parser.typeofExpr;
+const lengthofExpr = expr_parser.lengthofExpr;
+const bytesofExpr = expr_parser.bytesofExpr;
 
 const existentialQuantifier = quantifer_parser.existentialQuantifier;
 const universalQuantifier = quantifer_parser.universalQuantifier;
@@ -198,6 +200,12 @@ pub const rules = blk: {
 
     // Add typeof support
     r.set(.TYPEOF, .{ .prefix = typeofExpr, .precedence = .CALL }); // Added precedence
+
+    // Add lengthof support
+    r.set(.LENGTHOF, .{ .prefix = lengthofExpr, .precedence = .CALL });
+
+    // Add bytesof support
+    r.set(.BYTESOF, .{ .prefix = bytesofExpr, .precedence = .CALL });
 
     // Add input support
     r.set(.INPUT, .{ .prefix = Parser.input, .precedence = .PRIMARY });
