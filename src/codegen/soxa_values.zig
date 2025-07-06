@@ -2,7 +2,7 @@ const HIRType = @import("soxa_types.zig").HIRType;
 
 pub const HIRValue = union(enum(u8)) {
     int: i32,
-    u8: u8,
+    byte: u8,
     float: f64,
     string: []const u8,
     tetra: u8, // NEW: Direct u8 storage for tetras

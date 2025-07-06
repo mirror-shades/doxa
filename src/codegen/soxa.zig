@@ -337,7 +337,7 @@ pub const HIRGenerator = struct {
             .Float => .Float,
             .String => .String,
             .Tetra => .Tetra,
-            .U8 => .U8,
+            .Byte => .Byte,
             .Auto => .Auto,
             else => .Auto,
         };
@@ -381,7 +381,7 @@ pub const HIRGenerator = struct {
                         .Float => .Float,
                         .String => .String,
                         .Tetra => .Tetra,
-                        .U8 => .U8,
+                        .Byte => .Byte,
                         .Enum => blk: {
                             // Extract the actual enum type name from the custom_type field
                             enum_type_name = decl.type_info.custom_type;
@@ -592,7 +592,7 @@ pub const HIRGenerator = struct {
                     .float => |f| HIRValue{ .float = f },
                     .string => |s| HIRValue{ .string = s },
                     .tetra => |t| HIRValue{ .tetra = tetraFromEnum(t) },
-                    .u8 => |b| HIRValue{ .u8 = b },
+                    .byte => |b| HIRValue{ .byte = b },
                     .nothing => HIRValue.nothing,
                     .enum_variant => |variant| blk: {
                         // Handle enum variant literals - need to find the enum type
@@ -1032,7 +1032,7 @@ pub const HIRGenerator = struct {
                             .float => .Float,
                             .string => .String,
                             .tetra => .Tetra,
-                            .u8 => .U8,
+                            .byte => .Byte,
                             else => .Auto,
                         },
                         else => break :blk .Auto,
@@ -1575,7 +1575,7 @@ pub const HIRGenerator = struct {
                     .Float => "float",
                     .String => "string",
                     .Tetra => "tetra",
-                    .U8 => "u8",
+                    .Byte => "byte",
                     .Nothing => "nothing",
                     .Array => "array",
                     .Struct => blk: {
@@ -2154,7 +2154,7 @@ pub const HIRGenerator = struct {
             .float => .Float,
             .string => .String,
             .tetra => .Tetra,
-            .u8 => .U8,
+            .byte => .Byte,
             .nothing => .Nothing,
             else => .Auto,
         };
@@ -2829,7 +2829,7 @@ pub fn convertHIRConstants(hir_constants: []HIRValue, allocator: std.mem.Allocat
             .float => |f| instructions.Value{ .type = .FLOAT, .nothing = false, .data = .{ .float = f } },
             .string => |s| instructions.Value{ .type = .STRING, .nothing = false, .data = .{ .string = s } },
             .tetra => |t| instructions.Value{ .type = .INT, .nothing = false, .data = .{ .int = @as(i32, t) } },
-            .u8 => |u| instructions.Value{ .type = .INT, .nothing = false, .data = .{ .int = @as(i32, u) } }, // Convert u8 to int
+            .byte => |u| instructions.Value{ .type = .INT, .nothing = false, .data = .{ .int = @as(i32, u) } }, // Convert u8 to int
             .nothing => instructions.Value{ .type = .INT, .nothing = true, .data = .{ .int = 0 } },
         };
         try vm_constants.append(vm_value);
@@ -2997,7 +2997,7 @@ fn writeHIRValue(writer: anytype, value: HIRValue) !void {
             try writer.writeByte(3); // Type tag
             try writer.writeByte(t);
         },
-        .u8 => |u| {
+        .byte => |u| {
             try writer.writeByte(4); // Type tag
             try writer.writeByte(u);
         },
@@ -3050,7 +3050,7 @@ fn readHIRValue(reader: anytype, allocator: std.mem.Allocator) !HIRValue {
             return HIRValue{ .string = str_data };
         },
         3 => HIRValue{ .tetra = try reader.readByte() },
-        4 => HIRValue{ .u8 = try reader.readByte() },
+        4 => HIRValue{ .byte = try reader.readByte() },
         5 => HIRValue.nothing,
         6 => {
             // Array deserialization (basic structure)
@@ -3408,7 +3408,7 @@ fn writeHIRValueText(writer: anytype, value: HIRValue) !void {
         .float => |f| try writer.print("float {d}", .{f}),
         .string => |s| try writer.print("string \"{s}\"", .{s}),
         .tetra => |t| try writer.print("tetra {}", .{t}),
-        .u8 => |u| try writer.print("u8 {}", .{u}),
+        .byte => |u| try writer.print("byte {}", .{u}),
         .nothing => try writer.print("nothing", .{}),
         .array => |arr| try writer.print("array[{s}] capacity:{}", .{ @tagName(arr.element_type), arr.capacity }),
         .struct_instance => try writer.print("struct", .{}),
@@ -3664,7 +3664,7 @@ const SoxaTextParser = struct {
         } else if (std.mem.indexOf(u8, line, "u8 ")) |u8_pos| {
             const value_str = std.mem.trim(u8, line[u8_pos + 3 ..], " \t");
             const value = try std.fmt.parseInt(u8, value_str, 10);
-            try self.constants.append(HIRValue{ .u8 = value });
+            try self.constants.append(HIRValue{ .byte = value });
         } else if (std.mem.indexOf(u8, line, "enum_variant ")) |enum_pos| {
             // Parse: "enum_variant Color.Red"
             const variant_str = std.mem.trim(u8, line[enum_pos + 13 ..], " \t");

@@ -153,7 +153,7 @@ fn writeExpression(expr: *const ast.Expr, writer: anytype) std.fs.File.WriteErro
                 .int => |i| try writer.print("value:int:{d}\n", .{i}),
                 .float => |f| try writer.print("value:float:{d}\n", .{f}),
                 .string => |s| try writer.print("value:string:{s}\n", .{s}),
-                .u8 => |b| try writer.print("value:u8:{d}\n", .{b}),
+                .byte => |b| try writer.print("value:byte:{d}\n", .{b}),
                 else => try writer.print("value:other\n", .{}),
             }
         },

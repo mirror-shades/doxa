@@ -81,7 +81,7 @@ pub const Environment = struct {
             // Convert TypeInfo to TokenType if needed
             const token_type = switch (type_info.base) {
                 .Int => TokenType.INT,
-                .U8 => TokenType.U8,
+                .Byte => TokenType.BYTE,
                 .Float => TokenType.FLOAT,
                 .String => TokenType.STRING,
                 .Array => TokenType.ARRAY,
@@ -176,7 +176,7 @@ pub const Tetra = enum {
 
 pub const TokenLiteral = union(enum) {
     int: i32,
-    u8: u8,
+    byte: u8,
     float: f64,
     string: []const u8,
     tetra: Tetra,

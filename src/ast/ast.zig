@@ -619,7 +619,7 @@ pub const Expr = struct {
             .Literal => |lit| {
                 switch (lit) {
                     .string => |str| allocator.free(str),
-                    .u8 => {}, // No cleanup needed for u8
+                    .byte => {}, // No cleanup needed for byte
                     else => {}, // Other literals don't own memory
                 }
             },
@@ -825,7 +825,7 @@ pub const Expr = struct {
 
 pub const Type = enum {
     Int,
-    U8,
+    Byte,
     Float,
     String,
     Tetra,
@@ -888,7 +888,7 @@ pub const TypeInfo = struct {
 
         self.base = switch (value) {
             .int => .Int,
-            .u8 => .U8,
+            .byte => .Byte,
             .float => .Float,
             .string => .String,
             .tetra => .Tetra,
@@ -909,7 +909,7 @@ pub const StructFieldType = struct {
 
 pub const BasicType = enum {
     Integer,
-    U8,
+    Byte,
     Float,
     String,
     Tetra,
@@ -1055,7 +1055,7 @@ pub fn typeInfoFromExpr(allocator: std.mem.Allocator, type_expr: ?*TypeExpr) !*T
     type_info.* = switch (type_expr.?.data) {
         .Basic => |basic| switch (basic) {
             .Integer => TypeInfo{ .base = .Int },
-            .U8 => TypeInfo{ .base = .U8 },
+            .Byte => TypeInfo{ .base = .Byte },
             .Float => TypeInfo{ .base = .Float },
             .String => TypeInfo{ .base = .String },
             .Tetra => TypeInfo{ .base = .Tetra },

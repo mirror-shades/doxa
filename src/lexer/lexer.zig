@@ -116,7 +116,7 @@ pub const Lexer = struct {
         try self.keywords.put("auto", .AUTO);
         try self.keywords.put("equals", .EQUALITY);
         try self.keywords.put("int", .INT_TYPE);
-        try self.keywords.put("u8", .U8_TYPE);
+        try self.keywords.put("byte", .BYTE_TYPE);
         try self.keywords.put("float", .FLOAT_TYPE);
         try self.keywords.put("string", .STRING_TYPE);
         try self.keywords.put("tetra", .TETRA_TYPE);
@@ -892,6 +892,8 @@ pub const Lexer = struct {
     }
 
     fn handleHex(self: *Lexer, is_negative: bool) !void {
+        if (is_negative) return error.InvalidNumber; // Bytes can't be negative
+
         var digits_start: usize = self.current;
         // If we're at 'x', back up to include the '0'
         if (self.source[self.current] == 'x') {
@@ -904,7 +906,7 @@ pub const Lexer = struct {
         if (!isHexDigit(self.peekAt(0))) return error.InvalidNumber;
 
         // Mark where the actual hex digits begin (after 0x)
-        digits_start = self.current; // Update digits_start to after the 0x prefix
+        digits_start = self.current;
 
         // Consume all hex digits and underscores
         while (isHexDigit(self.peekAt(0)) or self.peekAt(0) == '_') {
@@ -918,23 +920,20 @@ pub const Lexer = struct {
         const clean_hex = try self.removeUnderscores(hex_digits);
         defer self.allocator.free(clean_hex);
 
-        // Special handling for MIN_INT (-0x80000000)
-        if (is_negative and std.mem.eql(u8, clean_hex, "80000000")) {
-            try self.addToken(.INT, .{ .int = std.math.minInt(i32) });
-            return;
+        // Enforce maximum 2 digits for byte values (0x00-0xFF)
+        if (clean_hex.len > 2) {
+            return error.ByteValueTooLarge; // New error type for values > 0xFF
         }
 
-        // Convert the hex string to an integer
-        var int_val = std.fmt.parseInt(i32, clean_hex, 16) catch |err| switch (err) {
+        // Convert the hex string to a u8
+        const byte_val = std.fmt.parseInt(u8, clean_hex, 16) catch |err| switch (err) {
             error.InvalidCharacter => return error.InvalidNumber,
+            error.Overflow => return error.ByteValueTooLarge,
             else => return err,
         };
 
-        // Apply negative sign if needed
-        if (is_negative) int_val = -int_val;
-
-        // Create the final token and return
-        try self.addToken(.INT, .{ .int = int_val });
+        // Create byte token
+        try self.addToken(.BYTE, .{ .byte = byte_val });
     }
 
     fn handleBinary(self: *Lexer, is_negative: bool) !void {
