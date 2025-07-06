@@ -1477,21 +1477,93 @@ pub const HIRGenerator = struct {
             },
 
             .FieldAssignment => |field_assign| {
+                // Check if this is a nested field assignment (e.g., mike.person.age is 26)
+                if (field_assign.object.data == .FieldAccess) {
+                    // This is a nested field assignment - handle it specially
+                    const outer_field = field_assign.object.data.FieldAccess;
 
-                // Generate object expression
-                try self.generateExpression(field_assign.object);
+                    // Generate code to load base variable, modify nested field, and store back
+                    // For mike.person.age is 26:
+                    // 1. Load mike
+                    // 2. Get person field
+                    // 3. Duplicate it
+                    // 4. Generate value (26)
+                    // 5. Set age field on the duplicate
+                    // 6. Store the modified person back to mike.person
 
-                // Generate value expression
-                try self.generateExpression(field_assign.value);
+                    // Generate base object (mike)
+                    try self.generateExpression(outer_field.object);
 
-                // Generate SetField instruction
-                try self.instructions.append(.{
-                    .SetField = .{
-                        .field_name = field_assign.field.lexeme,
-                        .container_type = .Struct,
-                        .field_index = 0, // Index will be resolved by VM
-                    },
-                });
+                    // Get the outer field (person)
+                    try self.instructions.append(.{
+                        .GetField = .{
+                            .field_name = outer_field.field.lexeme,
+                            .container_type = .Struct,
+                            .field_index = 0,
+                            .field_for_peek = false,
+                        },
+                    });
+
+                    // Duplicate the nested struct so we can modify it
+                    try self.instructions.append(.Dup);
+
+                    // Generate value expression (26)
+                    try self.generateExpression(field_assign.value);
+
+                    // Set the inner field (age) on the duplicate
+                    try self.instructions.append(.{
+                        .SetField = .{
+                            .field_name = field_assign.field.lexeme,
+                            .container_type = .Struct,
+                            .field_index = 0,
+                        },
+                    });
+
+                    // Now we need to store the modified nested struct back to the original
+                    // Generate base object again (mike)
+                    try self.generateExpression(outer_field.object);
+
+                    // Swap the modified nested struct to the top of the stack
+                    try self.instructions.append(.Swap);
+
+                    // Set the outer field (person) with the modified struct
+                    try self.instructions.append(.{
+                        .SetField = .{
+                            .field_name = outer_field.field.lexeme,
+                            .container_type = .Struct,
+                            .field_index = 0,
+                        },
+                    });
+
+                    // Store the result back to the base variable
+                    if (outer_field.object.data == .Variable) {
+                        const var_name = outer_field.object.data.Variable.lexeme;
+                        const var_index = try self.getOrCreateVariable(var_name);
+                        try self.instructions.append(.{
+                            .StoreVar = .{
+                                .var_index = var_index,
+                                .var_name = var_name,
+                                .scope_kind = .Local,
+                                .module_context = null,
+                            },
+                        });
+                    }
+                } else {
+                    // Regular field assignment - generate object expression
+                    try self.generateExpression(field_assign.object);
+
+                    // Generate value expression
+                    try self.generateExpression(field_assign.value);
+
+                    // Generate SetField instruction
+                    try self.instructions.append(.{
+                        .SetField = .{
+                            .field_name = field_assign.field.lexeme,
+                            .container_type = .Struct,
+                            .field_index = 0, // Index will be resolved by VM
+                        },
+                    });
+                }
             },
 
             .TypeOf => |expr_to_check| {
@@ -2704,7 +2776,7 @@ pub fn translateToVMBytecode(program: *HIRProgram, allocator: std.mem.Allocator,
 fn getBytecodeSize(instruction: HIRInstruction) u32 {
     return switch (instruction) {
         .Const, .LoadVar, .StoreVar, .Jump, .JumpCond, .Call, .TailCall => 2, // opcode + operand
-        .IntArith, .Compare, .Return, .Dup, .Pop, .Peek, .Halt => 1, // opcode only
+        .IntArith, .Compare, .Return, .Dup, .Pop, .Swap, .Peek, .Halt => 1, // opcode only
         .Label => 0, // No bytecode generated
         else => 1, // Default to 1 byte
     };
@@ -3337,6 +3409,7 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
         .Dup => try writer.print("    Dup                         ; Duplicate top value\n", .{}),
 
         .Pop => try writer.print("    Pop                         ; Remove top value\n", .{}),
+        .Swap => try writer.print("    Swap                        ; Swap top two values\n", .{}),
 
         .Peek => |i| {
             if (i.name) |name| {
@@ -3771,6 +3844,8 @@ const SoxaTextParser = struct {
             try self.instructions.append(HIRInstruction.Dup);
         } else if (std.mem.eql(u8, op, "Pop")) {
             try self.instructions.append(HIRInstruction.Pop);
+        } else if (std.mem.eql(u8, op, "Swap")) {
+            try self.instructions.append(HIRInstruction.Swap);
         } else if (std.mem.eql(u8, op, "Halt")) {
             try self.instructions.append(HIRInstruction.Halt);
         } else if (std.mem.eql(u8, op, "Peek")) {
