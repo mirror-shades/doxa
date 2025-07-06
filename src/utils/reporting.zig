@@ -59,6 +59,8 @@ pub const ErrorList = error{
     ExpectedVarOrConst,
     u8Overflow,
     u8Underflow,
+    CannotModifyConstant,
+    TypeMismatch,
 
     // Function & Frame Management
     InvalidFunction,

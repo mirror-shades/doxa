@@ -100,8 +100,10 @@ mike.person.age?; // 26
 lengthof(mike.person.name)?;
 //testing bytes method
 bytesof(mike.person.name)?;
-// //testing index method
+// testing index method
 mike.person.name[0]?; // M
+// testing bytes print and bytes index
+//bytesof(mike.person.name)[0]?; // 77
 
 mike.salary?; // 1000
 

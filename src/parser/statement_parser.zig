@@ -175,7 +175,7 @@ pub fn parseExpressionStmt(self: *Parser) ErrorList!ast.Stmt {
         return declaration_parser.parseVarDecl(self); // Handle var declarations separately
     }
 
-    var expr = try expression_parser.parseExpression(self);
+    const expr = try expression_parser.parseExpression(self);
 
     // Check if we need a semicolon
     const needs_semicolon = if (expr) |e| switch (e.data) {
@@ -191,40 +191,6 @@ pub fn parseExpressionStmt(self: *Parser) ErrorList!ast.Stmt {
         .Assert => true,
         else => true,
     } else true;
-
-    // Handle question mark operator
-    if (expr != null and self.peek().type == .PEEK) {
-        const question_token = self.peek(); // Capture the question mark token
-        self.advance(); // consume the question mark
-
-        // Get the variable name if this is a variable expression
-        var name_token: ?[]const u8 = null;
-        if (expr.?.data == .Variable) {
-            name_token = expr.?.data.Variable.lexeme;
-        }
-
-        // Create the peekion expression
-        const peek_expr = try self.allocator.create(ast.Expr);
-        peek_expr.* = .{
-            .base = .{
-                .id = ast.generateNodeId(),
-                .span = ast.SourceSpan.fromToken(question_token),
-            },
-            .data = .{
-                .PeekStruct = .{
-                    .expr = expr.?,
-                    .location = .{
-                        .line = question_token.line,
-                        .column = question_token.column,
-                        .file = question_token.file,
-                    },
-                    .variable_name = name_token,
-                },
-            },
-        };
-
-        expr = peek_expr;
-    }
 
     // Only check for semicolon if we need one
     if (needs_semicolon) {

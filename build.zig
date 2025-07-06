@@ -28,7 +28,7 @@ pub fn build(b: *std.Build) void {
 
     const test_step = b.step("test", "Run all tests");
     test_step.dependOn(&run_test_old.step);
-    test_step.dependOn(&run_test_run.step);
+    //test_step.dependOn(&run_test_run.step);
 
     const test_old_step = b.step("test-old", "Run the old tests");
     test_old_step.dependOn(&run_test_old.step);

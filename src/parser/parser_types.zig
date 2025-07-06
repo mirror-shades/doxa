@@ -361,26 +361,11 @@ pub const Parser = struct {
             return error.MissingEntryPointFunction;
         }
 
-        if (self.debug_enabled) {
-            std.debug.print("\n=== Parse complete, statement count: {} ===\n", .{statements.items.len});
-            for (statements.items, 0..) |st, i| {
-                std.debug.print("Statement {}: {s}\n", .{ i, @tagName(st.data) });
-            }
-        }
-
         return statements.toOwnedSlice();
     }
 
     pub fn parseParameters(self: *Parser, params: *std.ArrayList(ast.FunctionParam), reporter: *Reporter) ErrorList!void {
-        if (self.debug_enabled) {
-            std.debug.print("Parsing function parameters...\n", .{});
-        }
-
         while (true) {
-            if (self.debug_enabled) {
-                std.debug.print("Current token: {s} ({s})\n", .{ @tagName(self.peek().type), self.peek().lexeme });
-            }
-
             if (self.peek().type != .IDENTIFIER) {
                 reporter.reportCompileError(.{
                     .file = self.current_file,
@@ -397,13 +382,7 @@ pub const Parser = struct {
             var type_expr: ?*ast.TypeExpr = null;
             if (self.peek().type == .TYPE_SYMBOL) {
                 self.advance(); // consume ::
-                if (self.debug_enabled) {
-                    std.debug.print("Parsing type expression, current token: {s} ({s})\n", .{ @tagName(self.peek().type), self.peek().lexeme });
-                }
                 type_expr = try expression_parser.parseTypeExpr(self);
-                if (self.debug_enabled) {
-                    std.debug.print("Finished parsing type expression\n", .{});
-                }
             }
 
             // Handle default value
@@ -438,10 +417,6 @@ pub const Parser = struct {
                 continue;
             }
             break;
-        }
-
-        if (self.debug_enabled) {
-            std.debug.print("Parsed {} parameters\n", .{params.items.len});
         }
     }
 
@@ -717,12 +692,6 @@ pub const Parser = struct {
         }
 
         while (self.peek().type != .RIGHT_BRACE) {
-            if (self.debug_enabled) {
-                std.debug.print("Parsing field at position {}, token: {s}\n", .{
-                    self.current,
-                    @tagName(self.peek().type),
-                });
-            }
 
             // Parse field name
             if (self.peek().type != .IDENTIFIER) {
@@ -805,9 +774,6 @@ pub const Parser = struct {
     }
 
     pub fn index(self: *Parser, array_expr: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-        if (self.debug_enabled) {
-            std.debug.print("Parsing array/tuple index\n", .{});
-        }
 
         // Parse the index expression
         const index_expr = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;

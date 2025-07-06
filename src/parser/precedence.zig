@@ -187,9 +187,6 @@ pub const rules = blk: {
     // Add 'in' keyword support for quantifiers
     r.set(.IN, .{ .infix = inOperator, .precedence = .TERM });
 
-    // Add array literal support
-    r.set(.LEFT_BRACKET, .{ .prefix = parseArrayLiteral });
-
     // Add enum declaration support using the wrapper
     r.set(.ENUM_TYPE, .{ .prefix = enumDeclPrefix });
 
