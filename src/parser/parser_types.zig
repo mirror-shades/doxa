@@ -18,6 +18,29 @@ const TokenStyle = enum {
     Undefined,
 };
 
+// Add module resolution status tracking
+pub const ModuleResolutionStatus = enum {
+    NOT_STARTED,
+    IN_PROGRESS,
+    COMPLETED,
+};
+
+// Add import stack entry for tracking import chains
+pub const ImportStackEntry = struct {
+    module_path: []const u8,
+    imported_from: ?[]const u8,
+
+    pub fn format(self: ImportStackEntry, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = options;
+        if (self.imported_from) |from| {
+            try writer.print("{s} (imported from {s})", .{ self.module_path, from });
+        } else {
+            try writer.print("{s}", .{self.module_path});
+        }
+    }
+};
+
 pub const Parser = struct {
     tokens: []const token.Token,
     current: usize,
@@ -46,6 +69,10 @@ pub const Parser = struct {
 
     declared_types: std.StringHashMap(void),
 
+    // Add circular import detection fields
+    module_resolution_status: std.StringHashMap(ModuleResolutionStatus),
+    import_stack: std.ArrayList(ImportStackEntry),
+
     pub fn init(allocator: std.mem.Allocator, tokens: []const token.Token, current_file: []const u8, debug_enabled: bool, reporter: *Reporter) Parser {
         const parser = Parser{
             .allocator = allocator,
@@ -60,6 +87,8 @@ pub const Parser = struct {
             .imported_symbols = std.StringHashMap(import_parser.ImportedSymbol).init(allocator),
             .lexer = Lexer.init(allocator, "", current_file, reporter),
             .declared_types = std.StringHashMap(void).init(allocator),
+            .module_resolution_status = std.StringHashMap(ModuleResolutionStatus).init(allocator),
+            .import_stack = std.ArrayList(ImportStackEntry).init(allocator),
         };
 
         return parser;
@@ -1353,23 +1382,76 @@ pub const Parser = struct {
     }
 
     pub fn resolveModule(self: *Parser, module_name: []const u8) ErrorList!ast.ModuleInfo {
-        // Check module cache first
-        if (self.module_cache.get(module_name)) |info| {
+        // Normalize the module path for consistent tracking
+        const normalized_path = try self.normalizeModulePath(module_name);
+        defer self.allocator.free(normalized_path);
+
+        // Check if we're already processing this module (circular import)
+        if (self.module_resolution_status.get(normalized_path)) |status| {
+            switch (status) {
+                .IN_PROGRESS => {
+                    // Circular import detected! Build error message with full chain
+                    return self.reportCircularImport(normalized_path);
+                },
+                .COMPLETED => {
+                    // Module is already resolved, return cached result
+                    return self.module_cache.get(normalized_path).?;
+                },
+                .NOT_STARTED => {
+                    // This shouldn't happen, but handle gracefully
+                },
+            }
+        }
+
+        // Check module cache (for completed modules)
+        if (self.module_cache.get(normalized_path)) |info| {
             return info;
         }
 
+        // Mark this module as being processed
+        try self.module_resolution_status.put(normalized_path, .IN_PROGRESS);
+
+        // Add to import stack for tracking
+        const current_file_copy = try self.allocator.dupe(u8, self.current_file);
+        try self.import_stack.append(.{
+            .module_path = try self.allocator.dupe(u8, normalized_path),
+            .imported_from = if (self.import_stack.items.len > 0) current_file_copy else null,
+        });
+
+        // Ensure we clean up the import stack on exit
+        defer {
+            _ = self.import_stack.pop();
+        }
+
         // Load and parse module file - get both source and resolved path
-        const module_data = try self.loadModuleSourceWithPath(module_name);
+        const module_data = self.loadModuleSourceWithPath(module_name) catch |err| {
+            // Mark as not started since we failed to load
+            _ = self.module_resolution_status.remove(normalized_path);
+            return err;
+        };
+
         var module_lexer = Lexer.init(self.allocator, module_data.source, module_name, self.reporter);
         defer module_lexer.deinit();
 
         try module_lexer.initKeywords();
-        const tokens = try module_lexer.lexTokens();
+        const tokens = module_lexer.lexTokens() catch |err| {
+            // Mark as not started since we failed to lex
+            _ = self.module_resolution_status.remove(normalized_path);
+            return err;
+        };
 
         var new_parser = Parser.init(self.allocator, tokens.items, module_data.resolved_path, self.debug_enabled, self.reporter);
 
+        // Copy the resolution status and import stack to the new parser
+        new_parser.module_resolution_status = try self.module_resolution_status.clone();
+        new_parser.import_stack = try self.import_stack.clone();
+
         // Parse the module file
-        const module_statements = try new_parser.execute();
+        const module_statements = new_parser.execute() catch |err| {
+            // Mark as not started since we failed to parse
+            _ = self.module_resolution_status.remove(normalized_path);
+            return err;
+        };
 
         // Create a block expression to hold the module statements
         const module_block = try self.allocator.create(ast.Expr);
@@ -1387,11 +1469,59 @@ pub const Parser = struct {
         };
 
         // Extract module info and cache it
-        // Pass the module parser so we can access its import information
-        const info = try self.extractModuleInfoWithParser(module_block, module_name, null, &new_parser);
-        try self.module_cache.put(module_name, info);
+        const info = try self.extractModuleInfoWithParser(module_block, normalized_path, null, &new_parser);
+
+        // Mark as completed and cache the result
+        try self.module_resolution_status.put(normalized_path, .COMPLETED);
+        try self.module_cache.put(normalized_path, info);
 
         return info;
+    }
+
+    // Helper function to normalize module paths for consistent tracking
+    fn normalizeModulePath(self: *Parser, module_path: []const u8) ![]const u8 {
+        // Remove ./ prefix if present
+        var clean_path = module_path;
+        if (std.mem.startsWith(u8, clean_path, "./")) {
+            clean_path = clean_path[2..];
+        }
+
+        // Add .doxa extension if not present
+        if (!std.mem.endsWith(u8, clean_path, ".doxa")) {
+            return try std.fmt.allocPrint(self.allocator, "{s}.doxa", .{clean_path});
+        }
+
+        return try self.allocator.dupe(u8, clean_path);
+    }
+
+    // Helper function to report circular import with full chain
+    fn reportCircularImport(self: *Parser, current_module: []const u8) ErrorList!ast.ModuleInfo {
+        if (self.debug_enabled) {
+            std.debug.print("Circular import detected!\n", .{});
+        }
+
+        // Build error message with full import chain
+        var error_msg = std.ArrayList(u8).init(self.allocator);
+        defer error_msg.deinit();
+
+        try error_msg.appendSlice("Circular import detected:\n");
+
+        // Show the import chain
+        for (self.import_stack.items) |entry| {
+            try error_msg.appendSlice("  ");
+            try error_msg.appendSlice(entry.module_path);
+            try error_msg.appendSlice(" imports\n");
+        }
+
+        // Show the circular dependency
+        try error_msg.appendSlice("  ");
+        try error_msg.appendSlice(current_module);
+        try error_msg.appendSlice(" (circular dependency)\n");
+
+        // Report the error with correct format
+        self.reporter.reportError("{s}", .{error_msg.items});
+
+        return error.CircularImport;
     }
 
     const ModuleData = struct {

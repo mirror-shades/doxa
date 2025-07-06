@@ -1,0 +1,5 @@
+import "./badSafeMath.doxa" as safeMath; 
+
+pub function add(a :: int, b :: int) returns (int) { 
+    return safeMath.safeAdd(a, b); 
+}

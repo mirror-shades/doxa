@@ -172,6 +172,7 @@ pub const ErrorList = error{
     ExpectedStringLiteral,
     ParserDidNotAdvance,
     ImportMustHaveAlias,
+    CircularImport,
 
     // Miscellaneous
     NotImplemented,
