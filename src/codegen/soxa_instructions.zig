@@ -55,6 +55,11 @@ pub const HIRInstruction = union(enum) {
     /// LLVM: (no-op, just don't use the value)
     Pop,
 
+    /// Swap top two stack values
+    /// VM: OP_SWAP
+    /// LLVM: Create temporary for value reordering
+    Swap,
+
     //==================================================================
     // VARIABLE OPERATIONS (Context-aware)
     //==================================================================

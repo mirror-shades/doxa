@@ -861,6 +861,13 @@ pub const HIRVM = struct {
                 _ = value;
             },
 
+            .Swap => {
+                const top = try self.stack.pop();
+                const second = try self.stack.pop();
+                try self.stack.push(top);
+                try self.stack.push(second);
+            },
+
             .Peek => |peek| {
                 const value = try self.stack.pop();
                 self.reporter.debug("Peek called with value: {any}", .{value});
