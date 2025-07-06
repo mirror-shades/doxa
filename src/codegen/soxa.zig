@@ -1797,6 +1797,20 @@ pub const HIRGenerator = struct {
                     }
                 }
 
+                // Handle enum member access
+                if (obj_type == .Enum) {
+                    // For enum member access like Color.Blue, return the enum type
+                    if (field.object.data == .Variable) {
+                        const enum_name = field.object.data.Variable.lexeme;
+                        if (self.isCustomType(enum_name)) |custom_type| {
+                            if (custom_type.kind == .Enum) {
+                                return .Enum; // Return enum type for enum member access
+                            }
+                        }
+                    }
+                    return .Enum; // Generic enum type for other enum member accesses
+                }
+
                 // Handle struct fields
                 if (obj_type == .Struct) {
                     // Check if this is a nested field access

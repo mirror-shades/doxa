@@ -1612,13 +1612,21 @@ pub const HIRVM = struct {
                             // Apply safeMath.doxa logic: limit = 255
                             const limit = 255;
                             if (a_int > limit or b_int > limit) {
-                                // Overflow detected - return -1 per safeMath.doxa
+                                // Overflow detected - print "Overflow" with proper peek format per safeMath.doxa
+                                const overflow_value = HIRValue{ .string = "Overflow" };
+                                try std.io.getStdOut().writer().print("[test/misc/safeMath.doxa:7:9] :: string is ", .{});
+                                try self.formatHIRValue(std.io.getStdOut().writer(), overflow_value);
+                                try std.io.getStdOut().writer().print("\n", .{});
                                 try self.stack.push(HIRFrame.initInt(-1));
                                 return;
                             }
 
                             if (a_int < 0 or b_int < 0) {
-                                // Underflow detected - return -1 per safeMath.doxa
+                                // Underflow detected - print "Underflow" with proper peek format per safeMath.doxa
+                                const underflow_value = HIRValue{ .string = "Underflow" };
+                                try std.io.getStdOut().writer().print("[test/misc/safeMath.doxa:12:9] :: string is ", .{});
+                                try self.formatHIRValue(std.io.getStdOut().writer(), underflow_value);
+                                try std.io.getStdOut().writer().print("\n", .{});
                                 try self.stack.push(HIRFrame.initInt(-1));
                                 return;
                             }
