@@ -103,7 +103,7 @@ bytesof(mike.person.name)?;
 // testing index method
 mike.person.name[0]?; // M
 // testing bytes print and bytes index
-//bytesof(mike.person.name)[0]?; // 77
+bytesof(mike.person.name)[0]?; // 77
 
 mike.salary?; // 1000
 
