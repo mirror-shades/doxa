@@ -774,14 +774,35 @@ pub const Parser = struct {
     }
 
     pub fn index(self: *Parser, array_expr: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+        if (self.debug_enabled) {
+            std.debug.print("\n=== INDEX FUNCTION CALLED ===\n", .{});
+            std.debug.print("Current position: {}\n", .{self.current});
+            std.debug.print("Current token: {s} ({s})\n", .{
+                @tagName(self.peek().type),
+                self.peek().lexeme,
+            });
+            std.debug.print("Array expr type: {s}\n", .{@tagName(array_expr.?.data)});
+        }
+
+        // We should be at the LEFT_BRACKET, advance past it
+        if (self.peek().type == .LEFT_BRACKET) {
+            self.advance(); // consume [
+        }
 
         // Parse the index expression
         const index_expr = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
+
+        if (self.debug_enabled) {
+            std.debug.print("After parsing index expr, current token: {s}\n", .{@tagName(self.peek().type)});
+        }
 
         // Check for and consume the RIGHT_BRACKET
         if (self.peek().type != .RIGHT_BRACKET) {
             index_expr.deinit(self.allocator);
             self.allocator.destroy(index_expr);
+            if (self.debug_enabled) {
+                std.debug.print("ERROR: Expected RIGHT_BRACKET, got {s}\n", .{@tagName(self.peek().type)});
+            }
             return error.ExpectedRightBracket;
         }
         self.advance(); // consume ]
