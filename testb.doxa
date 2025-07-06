@@ -1,5 +1,5 @@
 var x is "mike";
 var y is bytesof(x);
-y[0];
+y[0]?;
 
-bytesof(x)[0];
+bytesof(x)[0]?;
