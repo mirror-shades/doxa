@@ -1104,14 +1104,33 @@ pub const HIRGenerator = struct {
                 // Generate array expression
                 try self.generateExpression(assign.array);
 
-                // Generate value expression
-                try self.generateExpression(assign.value);
-
                 // Generate index expression
                 try self.generateExpression(assign.index);
 
+                // Generate value expression
+                try self.generateExpression(assign.value);
+
                 // Generate ArraySet instruction
+                // Stack order expected by VM (top to bottom): value, index, array
                 try self.instructions.append(.{ .ArraySet = .{ .bounds_check = true } });
+
+                // Store the modified array back to the variable
+                if (assign.array.data == .Variable) {
+                    const var_name = assign.array.data.Variable.lexeme;
+                    const var_idx = try self.getOrCreateVariable(var_name);
+                    const expected_type = self.getTrackedVariableType(var_name) orelse .Auto;
+
+                    // Duplicate the result to leave it on stack as the expression result
+                    try self.instructions.append(.Dup);
+
+                    try self.instructions.append(.{ .StoreVar = .{
+                        .var_index = var_idx,
+                        .var_name = var_name,
+                        .scope_kind = .Local,
+                        .module_context = null,
+                        .expected_type = expected_type,
+                    } });
+                }
             },
 
             .Tuple => |elements| {
