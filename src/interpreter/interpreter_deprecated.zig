@@ -2644,6 +2644,29 @@ pub const Interpreter = struct {
                     };
                 }
             },
+            .LengthOf => |expr_to_check| {
+                // Evaluate the expression and return its length
+                const value = try self.evaluate(expr_to_check);
+                return switch (value) {
+                    .string => |s| TokenLiteral{ .int = @intCast(s.len) },
+                    .array => |a| TokenLiteral{ .int = @intCast(a.len) },
+                    else => error.TypeError,
+                };
+            },
+            .BytesOf => |expr_to_check| {
+                // Evaluate the expression and return its bytes
+                const value = try self.evaluate(expr_to_check);
+                return switch (value) {
+                    .string => |s| {
+                        var bytes = try self.allocator.alloc(TokenLiteral, s.len);
+                        for (s, 0..) |byte, i| {
+                            bytes[i] = TokenLiteral{ .u8 = byte };
+                        }
+                        return TokenLiteral{ .array = bytes };
+                    },
+                    else => error.TypeError,
+                };
+            },
             .Tuple => |elements| {
                 var tuple_values = std.ArrayList(TokenLiteral).init(self.allocator);
                 errdefer tuple_values.deinit();

@@ -479,6 +479,8 @@ pub const Expr = struct {
         EnumMember: Token,
         DefaultArgPlaceholder: void,
         TypeOf: *Expr,
+        LengthOf: *Expr,
+        BytesOf: *Expr,
         Map: []MapEntry,
         MethodCall: struct {
             receiver: *Expr,
@@ -730,6 +732,14 @@ pub const Expr = struct {
             .EnumMember => {}, // No allocation to free
             .DefaultArgPlaceholder => {}, // Nothing to deallocate
             .TypeOf => |expr| {
+                expr.deinit(allocator);
+                allocator.destroy(expr);
+            },
+            .LengthOf => |expr| {
+                expr.deinit(allocator);
+                allocator.destroy(expr);
+            },
+            .BytesOf => |expr| {
                 expr.deinit(allocator);
                 allocator.destroy(expr);
             },

@@ -75,6 +75,8 @@ pub const TokenType = enum {
     ASYNC, // async
     AWAIT, // await
     TYPEOF, // typeof
+    LENGTHOF, // lengthof
+    BYTESOF, // bytesof
     GUIDE, // guide
     SAFE, // safe
     NORMAL, // normal

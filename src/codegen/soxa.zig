@@ -1,6 +1,5 @@
 const std = @import("std");
 const ast = @import("../ast/ast.zig");
-const Token = @import("../lexer/token.zig").Token;
 const TokenLiteral = @import("../types/types.zig").TokenLiteral;
 const instructions = @import("../interpreter/instructions.zig");
 const reporting = @import("../utils/reporting.zig");
@@ -1242,26 +1241,20 @@ pub const HIRGenerator = struct {
             },
 
             .ForAll => |forall| {
+
                 // ForAll quantifier: ∀x ∈ array : condition
                 // Implementation: iterate through array, return false if any element fails condition
 
                 // Generate array expression
                 try self.generateExpression(forall.array);
 
-                // Generate predicate function
-                const predicate_function_index = try self.generatePredicateFunction(forall.variable, forall.condition);
-
-                // Push predicate function index as constant
-                const predicate_value = HIRValue{ .int = @intCast(predicate_function_index) };
-                const predicate_const_idx = try self.addConstant(predicate_value);
-                try self.instructions.append(.{ .Const = .{ .value = predicate_value, .constant_id = predicate_const_idx } });
-
-                // Generate builtin function call with proper arguments
+                // For now, generate as builtin function call
+                // TODO: Implement proper quantifier logic with VM support
                 try self.instructions.append(.{
                     .Call = .{
                         .function_index = 0,
                         .qualified_name = "forall_quantifier",
-                        .arg_count = 2, // array + predicate function index
+                        .arg_count = 2, // array + condition (as closure)
                         .call_kind = .BuiltinFunction,
                         .target_module = null,
                         .return_type = .Tetra,
@@ -1270,26 +1263,20 @@ pub const HIRGenerator = struct {
             },
 
             .Exists => |exists| {
+
                 // Exists quantifier: ∃x ∈ array : condition
                 // Implementation: iterate through array, return true if any element satisfies condition
 
                 // Generate array expression
                 try self.generateExpression(exists.array);
 
-                // Generate predicate function
-                const predicate_function_index = try self.generatePredicateFunction(exists.variable, exists.condition);
-
-                // Push predicate function index as constant
-                const predicate_value = HIRValue{ .int = @intCast(predicate_function_index) };
-                const predicate_const_idx = try self.addConstant(predicate_value);
-                try self.instructions.append(.{ .Const = .{ .value = predicate_value, .constant_id = predicate_const_idx } });
-
-                // Generate builtin function call with proper arguments
+                // For now, generate as builtin function call
+                // TODO: Implement proper quantifier logic with VM support
                 try self.instructions.append(.{
                     .Call = .{
                         .function_index = 0,
                         .qualified_name = "exists_quantifier",
-                        .arg_count = 2, // array + predicate function index
+                        .arg_count = 2, // array + condition (as closure)
                         .call_kind = .BuiltinFunction,
                         .target_module = null,
                         .return_type = .Tetra,
@@ -1631,6 +1618,30 @@ pub const HIRGenerator = struct {
                 try self.instructions.append(.{ .Const = .{ .value = type_value, .constant_id = const_idx } });
             },
 
+            .LengthOf => |expr_to_check| {
+                // Generate the expression whose length we want to get
+                try self.generateExpression(expr_to_check);
+
+                // Generate StringOp.Length instruction
+                try self.instructions.append(.{
+                    .StringOp = .{
+                        .op = .Length,
+                    },
+                });
+            },
+
+            .BytesOf => |expr_to_check| {
+                // Generate the expression whose bytes we want to get
+                try self.generateExpression(expr_to_check);
+
+                // Generate StringOp.Bytes instruction
+                try self.instructions.append(.{
+                    .StringOp = .{
+                        .op = .Bytes,
+                    },
+                });
+            },
+
             .Map => |entries| {
 
                 // Generate each key-value pair in reverse order (for stack-based construction)
@@ -1824,7 +1835,13 @@ pub const HIRGenerator = struct {
                                 .op = .Length,
                             },
                         });
-                        return; // Early return to avoid further processing
+                    } else if (std.mem.eql(u8, field.field.lexeme, "bytes")) {
+                        // Generate StringOp.Bytes instruction
+                        try self.instructions.append(.{
+                            .StringOp = .{
+                                .op = .Bytes,
+                            },
+                        });
                     } else {
                         // Treat as string indexing
                         const index_const = try self.addConstant(HIRValue{ .int = 1 }); // Length 1 for single char
@@ -2249,6 +2266,9 @@ pub const HIRGenerator = struct {
                     if (std.mem.eql(u8, field.field.lexeme, "length")) {
                         return .Int; // String length returns int
                     }
+                    if (std.mem.eql(u8, field.field.lexeme, "bytes")) {
+                        return .Array; // String bytes returns array of u8
+                    }
                     // String indexing returns a single character string
                     if (std.fmt.parseInt(i32, field.field.lexeme, 10)) |_| {
                         return .String;
@@ -2323,6 +2343,8 @@ pub const HIRGenerator = struct {
                     return .Nothing; // Empty grouping
                 }
             },
+            .LengthOf => .Int, // lengthof returns int
+            .BytesOf => .Array, // bytesof returns array of u8
             else => .String, // Default to String for any unhandled expression types to prevent Auto leakage
         };
     }
@@ -2665,67 +2687,6 @@ pub const HIRGenerator = struct {
     /// Check if a name is a module namespace
     fn isModuleNamespace(self: *HIRGenerator, name: []const u8) bool {
         return self.module_namespaces.contains(name);
-    }
-
-    /// Generate a predicate function for quantifiers
-    /// Creates an anonymous function that takes one parameter (the iterator variable)
-    /// and returns a tetra (boolean) result by evaluating the condition
-    fn generatePredicateFunction(self: *HIRGenerator, variable: Token, condition: *ast.Expr) !u32 {
-        // Generate unique function name for predicate
-        const predicate_name = try std.fmt.allocPrint(self.allocator, "predicate_{d}", .{self.label_count});
-
-        // Create function info
-        const start_label = try self.generateLabel(predicate_name);
-        const function_info = FunctionInfo{
-            .name = predicate_name,
-            .arity = 1, // Takes one parameter (the iterator variable)
-            .return_type = .Tetra, // Returns boolean
-            .start_label = start_label,
-            .local_var_count = 1,
-            .is_entry = false,
-        };
-
-        // Add to function signatures
-        try self.function_signatures.put(predicate_name, function_info);
-
-        // Create fake parameter for the iterator variable
-        const fake_param = ast.FunctionParam{
-            .name = variable,
-            .type_expr = null, // Will be inferred
-            .default_value = null,
-        };
-
-        // Create fake function body with just the condition as a return statement
-        const return_stmt = ast.Stmt{
-            .base = ast.Base{
-                .id = ast.generateNodeId(),
-                .span = ast.SourceSpan{
-                    .start = .{ .file = "", .line = 0, .column = 0 },
-                    .end = .{ .file = "", .line = 0, .column = 0 },
-                },
-            },
-            .data = .{ .Return = .{
-                .value = condition,
-                .type_info = ast.TypeInfo{ .base = .Tetra, .custom_type = null },
-            } },
-        };
-
-        // Create array with single statement
-        const body_statements = try self.allocator.alloc(ast.Stmt, 1);
-        body_statements[0] = return_stmt;
-
-        // Add function body for later generation
-        try self.function_bodies.append(FunctionBody{
-            .function_info = function_info,
-            .statements = body_statements,
-            .start_instruction_index = 0,
-            .function_name = predicate_name,
-            .function_params = try self.allocator.dupe(ast.FunctionParam, &[_]ast.FunctionParam{fake_param}),
-            .return_type_info = ast.TypeInfo{ .base = .Tetra, .custom_type = null },
-        });
-
-        // Return the function index
-        return self.getFunctionIndex(predicate_name);
     }
 };
 
@@ -3544,8 +3505,15 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
             try writer.writeAll("         ; Peek struct\n");
         },
 
-        // String operations
-        .StringOp => |s| try writer.print("    StringOp {s}                ; String operation\n", .{@tagName(s.op)}),
+        .StringOp => |s| {
+            const op_name = switch (s.op) {
+                .Length => "Length",
+                .Bytes => "Bytes",
+                .Substring => "Substring",
+                .Concat => "Concat",
+            };
+            try writer.print("    StringOp {s}                 ; String operation\n", .{op_name});
+        },
 
         else => try writer.print("    ; TODO: {s}\n", .{@tagName(instruction)}),
     }
@@ -4143,11 +4111,20 @@ const SoxaTextParser = struct {
                 .field_name = field_name,
             } });
         } else if (std.mem.eql(u8, op, "StringOp")) {
-            const op_type_str = tokens.next() orelse return;
-            const op_type = if (std.mem.eql(u8, op_type_str, "Length")) StringOpType.Length else if (std.mem.eql(u8, op_type_str, "Concat")) StringOpType.Concat else if (std.mem.eql(u8, op_type_str, "Substring")) StringOpType.Substring else StringOpType.Length;
+            const op_str = tokens.next() orelse return;
+            const string_op = if (std.mem.eql(u8, op_str, "Length"))
+                StringOpType.Length
+            else if (std.mem.eql(u8, op_str, "Bytes"))
+                StringOpType.Bytes
+            else if (std.mem.eql(u8, op_str, "Substring"))
+                StringOpType.Substring
+            else if (std.mem.eql(u8, op_str, "Concat"))
+                StringOpType.Concat
+            else
+                StringOpType.Length; // Default fallback
 
             try self.instructions.append(HIRInstruction{ .StringOp = .{
-                .op = op_type,
+                .op = string_op,
             } });
         }
         // Instructions not implemented yet are silently ignored for now

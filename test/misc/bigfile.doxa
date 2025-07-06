@@ -97,7 +97,9 @@ var mike is Employee {
 mike.person.age is 26;
 mike.person.age?; // 26
 //testing length method
-mike.person.name.length?;
+lengthof(mike.person.name)?;
+//testing bytes method
+bytesof(mike.person.name)?;
 // //testing index method
 mike.person.name[0]?; // M
 

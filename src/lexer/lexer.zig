@@ -108,6 +108,8 @@ pub const Lexer = struct {
         try self.keywords.put("async", .ASYNC);
         try self.keywords.put("await", .AWAIT);
         try self.keywords.put("typeof", .TYPEOF);
+        try self.keywords.put("lengthof", .LENGTHOF);
+        try self.keywords.put("bytesof", .BYTESOF);
         try self.keywords.put("is", .ASSIGN);
         try self.keywords.put("as", .AS);
         try self.keywords.put("from", .FROM);
