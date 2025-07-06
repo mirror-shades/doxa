@@ -82,6 +82,7 @@ pub const HIRInstruction = union(enum) {
         var_name: []const u8,
         scope_kind: ScopeKind,
         module_context: ?[]const u8,
+        expected_type: HIRType, // Add expected type for coercion
     },
 
     /// Store constant (one-time assignment)

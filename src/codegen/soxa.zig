@@ -236,6 +236,7 @@ pub const HIRGenerator = struct {
                     .var_name = param.name.lexeme,
                     .scope_kind = .Local,
                     .module_context = null,
+                    .expected_type = param_type,
                 } });
             }
 
@@ -457,6 +458,7 @@ pub const HIRGenerator = struct {
                     .var_name = decl.name.lexeme,
                     .scope_kind = .Local,
                     .module_context = null,
+                    .expected_type = var_type,
                 } });
             },
             .FunctionDecl => {
@@ -497,6 +499,7 @@ pub const HIRGenerator = struct {
                     .var_name = enum_decl.name.lexeme,
                     .scope_kind = .Local,
                     .module_context = null,
+                    .expected_type = .Enum,
                 } });
 
                 // Enum declarations don't generate runtime instructions, they're compile-time only
@@ -935,11 +938,13 @@ pub const HIRGenerator = struct {
 
                         // Store the result back to the original variable
                         const var_idx = try self.getOrCreateVariable(target_var);
+                        const expected_type = self.getTrackedVariableType(target_var) orelse .Auto;
                         try self.instructions.append(.{ .StoreVar = .{
                             .var_index = var_idx,
                             .var_name = target_var,
                             .scope_kind = .Local,
                             .module_context = null,
+                            .expected_type = expected_type,
                         } });
                     }
                 }
@@ -1018,6 +1023,7 @@ pub const HIRGenerator = struct {
                     .var_name = assign.name.lexeme,
                     .scope_kind = .Local,
                     .module_context = null,
+                    .expected_type = assigned_type,
                 } });
             },
 
@@ -1181,11 +1187,13 @@ pub const HIRGenerator = struct {
                 try self.instructions.append(.Dup);
 
                 // Store the result back to the variable
+                const expected_type = self.getTrackedVariableType(compound.name.lexeme) orelse .Auto;
                 try self.instructions.append(.{ .StoreVar = .{
                     .var_index = var_idx,
                     .var_name = compound.name.lexeme,
                     .scope_kind = .Local,
                     .module_context = null,
+                    .expected_type = expected_type,
                 } });
             },
 
@@ -1539,12 +1547,14 @@ pub const HIRGenerator = struct {
                     if (outer_field.object.data == .Variable) {
                         const var_name = outer_field.object.data.Variable.lexeme;
                         const var_index = try self.getOrCreateVariable(var_name);
+                        const expected_type = self.getTrackedVariableType(var_name) orelse .Auto;
                         try self.instructions.append(.{
                             .StoreVar = .{
                                 .var_index = var_index,
                                 .var_name = var_name,
                                 .scope_kind = .Local,
                                 .module_context = null,
+                                .expected_type = expected_type,
                             },
                         });
                     }
@@ -1929,6 +1939,7 @@ pub const HIRGenerator = struct {
                     .var_name = enum_decl.name.lexeme,
                     .scope_kind = .Local,
                     .module_context = null,
+                    .expected_type = .Enum,
                 } });
             },
 
@@ -3269,7 +3280,7 @@ fn readHIRInstruction(reader: anytype, allocator: std.mem.Allocator) !HIRInstruc
             const name_len = try reader.readInt(u32, .little);
             const name = try allocator.alloc(u8, name_len);
             _ = try reader.readAll(name);
-            return HIRInstruction{ .StoreVar = .{ .var_index = var_index, .var_name = name, .scope_kind = .Local, .module_context = null } };
+            return HIRInstruction{ .StoreVar = .{ .var_index = var_index, .var_name = name, .scope_kind = .Local, .module_context = null, .expected_type = .Auto } };
         },
         3 => { // IntArith
             const op_byte = try reader.readByte();
@@ -3821,7 +3832,7 @@ const SoxaTextParser = struct {
             const var_index = std.fmt.parseInt(u32, idx_str, 10) catch return;
             const name_quoted = tokens.next() orelse return;
             const var_name = try self.parseQuotedString(name_quoted);
-            try self.instructions.append(HIRInstruction{ .StoreVar = .{ .var_index = var_index, .var_name = var_name, .scope_kind = .Local, .module_context = null } });
+            try self.instructions.append(HIRInstruction{ .StoreVar = .{ .var_index = var_index, .var_name = var_name, .scope_kind = .Local, .module_context = null, .expected_type = .Auto } });
         } else if (std.mem.eql(u8, op, "IntArith")) {
             const op_str = tokens.next() orelse return;
             const arith_op = if (std.mem.eql(u8, op_str, "Add")) ArithOp.Add else if (std.mem.eql(u8, op_str, "Sub")) ArithOp.Sub else if (std.mem.eql(u8, op_str, "Mul")) ArithOp.Mul else if (std.mem.eql(u8, op_str, "Div")) ArithOp.Div else if (std.mem.eql(u8, op_str, "Mod")) ArithOp.Mod else ArithOp.Add;
