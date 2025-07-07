@@ -15,6 +15,7 @@ const HIRMapEntry = @import("soxa_values.zig").HIRMapEntry;
 const ArithOp = @import("soxa_instructions.zig").ArithOp;
 const CompareOp = @import("soxa_instructions.zig").CompareOp;
 const StringOpType = @import("soxa_instructions.zig").StringOpType;
+const LogicalOpType = @import("soxa_instructions.zig").LogicalOpType;
 const OverflowBehavior = @import("soxa_instructions.zig").OverflowBehavior;
 const ExceptionBehavior = @import("soxa_instructions.zig").ExceptionBehavior;
 const ResizeBehavior = @import("soxa_instructions.zig").ResizeBehavior;
@@ -3589,6 +3590,7 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
         .TupleNew => |t| try writer.print("    TupleNew {}                 ; Create tuple with {} elements\n", .{ t.element_count, t.element_count }),
         .TupleGet => |t| try writer.print("    TupleGet {}                 ; Get tuple element at index {}\n", .{ t.index, t.index }),
         .Map => |m| try writer.print("    Map {} {s}                   ; Create map with {} entries\n", .{ m.entries.len, @tagName(m.key_type), m.entries.len }),
+        .MapGet => |m| try writer.print("    MapGet {s}                   ; Get map value by key\n", .{@tagName(m.key_type)}),
 
         // Struct operations
         .StructNew => |s| try writer.print("    StructNew \"{s}\" {}          ; Create struct with {} fields\n", .{ s.type_name, s.field_count, s.field_count }),
@@ -3626,6 +3628,20 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
                 .Concat => "Concat",
             };
             try writer.print("    StringOp {s}                 ; String operation\n", .{op_name});
+        },
+
+        .LogicalOp => |l| {
+            const op_name = switch (l.op) {
+                .And => "And",
+                .Or => "Or",
+                .Not => "Not",
+                .Iff => "Iff",
+                .Xor => "Xor",
+                .Nand => "Nand",
+                .Nor => "Nor",
+                .Implies => "Implies",
+            };
+            try writer.print("    LogicalOp {s}                ; Logical operation\n", .{op_name});
         },
 
         else => try writer.print("    ; TODO: {s}\n", .{@tagName(instruction)}),
@@ -4164,6 +4180,13 @@ const SoxaTextParser = struct {
                 .key_type = key_type,
                 .value_type = .Auto,
             } });
+        } else if (std.mem.eql(u8, op, "MapGet")) {
+            const key_type_str = tokens.next() orelse return;
+            const key_type = if (std.mem.eql(u8, key_type_str, "String")) HIRType.String else if (std.mem.eql(u8, key_type_str, "Int")) HIRType.Int else HIRType.String;
+
+            try self.instructions.append(HIRInstruction{ .MapGet = .{
+                .key_type = key_type,
+            } });
         } else if (std.mem.eql(u8, op, "EnterScope")) {
             const scope_id_str = tokens.next() orelse return;
             const var_count_str = tokens.next() orelse return;
@@ -4242,6 +4265,30 @@ const SoxaTextParser = struct {
 
             try self.instructions.append(HIRInstruction{ .StringOp = .{
                 .op = string_op,
+            } });
+        } else if (std.mem.eql(u8, op, "LogicalOp")) {
+            const op_str = tokens.next() orelse return;
+            const logical_op = if (std.mem.eql(u8, op_str, "And"))
+                LogicalOpType.And
+            else if (std.mem.eql(u8, op_str, "Or"))
+                LogicalOpType.Or
+            else if (std.mem.eql(u8, op_str, "Not"))
+                LogicalOpType.Not
+            else if (std.mem.eql(u8, op_str, "Iff"))
+                LogicalOpType.Iff
+            else if (std.mem.eql(u8, op_str, "Xor"))
+                LogicalOpType.Xor
+            else if (std.mem.eql(u8, op_str, "Nand"))
+                LogicalOpType.Nand
+            else if (std.mem.eql(u8, op_str, "Nor"))
+                LogicalOpType.Nor
+            else if (std.mem.eql(u8, op_str, "Implies"))
+                LogicalOpType.Implies
+            else
+                LogicalOpType.And; // Default fallback
+
+            try self.instructions.append(HIRInstruction{ .LogicalOp = .{
+                .op = logical_op,
             } });
         }
         // Instructions not implemented yet are silently ignored for now
