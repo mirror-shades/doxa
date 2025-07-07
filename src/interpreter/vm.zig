@@ -1124,18 +1124,6 @@ pub const HIRVM = struct {
             },
 
             .Halt => {
-                // Check if there's an assertion message on the stack
-                if (self.stack.size() > 0) {
-                    if (self.stack.peek()) |top| {
-                        if (top.value == .string) {
-                            // This looks like an assertion failure - print the message
-                            const message = try self.stack.pop();
-                            const stderr = std.io.getStdErr().writer();
-                            try stderr.print("Assertion failed:\n{s}\n", .{message.value.string});
-                        }
-                    } else |_| {}
-                }
-
                 if (self.debug_enabled) {
                     std.debug.print("HIR VM halted\n", .{});
                 }
