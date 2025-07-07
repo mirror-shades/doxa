@@ -580,13 +580,24 @@ pub const HIRVM = struct {
 
     /// Pre-resolve all labels to instruction indices for O(1) jump lookup
     fn resolveLabels(self: *HIRVM) !void {
+        if (self.debug_enabled) {
+            std.debug.print("DoxVM: Resolving labels from {} instructions\n", .{self.program.instructions.len});
+        }
+
         for (self.program.instructions, 0..) |instruction, i| {
             switch (instruction) {
                 .Label => |label| {
+                    if (self.debug_enabled) {
+                        std.debug.print("DoxVM: Found label '{s}' at instruction {}\n", .{ label.name, i });
+                    }
                     try self.label_map.put(label.name, @intCast(i));
                 },
                 else => {},
             }
+        }
+
+        if (self.debug_enabled) {
+            std.debug.print("DoxVM: Resolved {} labels total\n", .{self.label_map.count()});
         }
     }
 
@@ -680,6 +691,11 @@ pub const HIRVM = struct {
 
     /// Execute a single HIR instruction
     fn executeInstruction(self: *HIRVM, instruction: HIRInstruction) ErrorList!void {
+        // Add debug logging for all instructions
+        if (self.debug_enabled) {
+            std.debug.print("DoxVM: Executing instruction at IP {}: {s}\n", .{ self.ip, @tagName(instruction) });
+        }
+
         switch (instruction) {
             .Const => |c| {
                 // Push constant from constant pool
@@ -1520,6 +1536,10 @@ pub const HIRVM = struct {
             },
 
             .Call => |c| {
+                if (self.debug_enabled) {
+                    std.debug.print("DoxVM: Call instruction - function_index: {}, call_kind: {s}, qualified_name: {s}\n", .{ c.function_index, @tagName(c.call_kind), c.qualified_name });
+                }
+
                 switch (c.call_kind) {
                     .LocalFunction => {
                         // User-defined function call with proper stack management
@@ -1528,6 +1548,10 @@ pub const HIRVM = struct {
                         }
 
                         const function = self.program.function_table[c.function_index];
+
+                        if (self.debug_enabled) {
+                            std.debug.print("DoxVM: Calling function: {s}, start_label: {s}\n", .{ function.name, function.start_label });
+                        }
 
                         // Push call frame for proper return handling
                         const return_ip = self.ip + 1; // Return to instruction after this call
@@ -1541,9 +1565,19 @@ pub const HIRVM = struct {
 
                         // Use pre-resolved label map for O(1) lookup
                         if (self.label_map.get(function.start_label)) |target_ip| {
+                            if (self.debug_enabled) {
+                                std.debug.print("DoxVM: Jumping to label {s} at IP {}\n", .{ function.start_label, target_ip });
+                            }
                             self.ip = target_ip;
                             return; // Jump to function start
                         } else {
+                            if (self.debug_enabled) {
+                                std.debug.print("DoxVM: Available labels in label_map:\n", .{});
+                                var iterator = self.label_map.iterator();
+                                while (iterator.next()) |entry| {
+                                    std.debug.print("  {s} -> {}\n", .{ entry.key_ptr.*, entry.value_ptr.* });
+                                }
+                            }
                             return self.reporter.reportError("Function label not found: {s}", .{function.start_label});
                         }
                     },

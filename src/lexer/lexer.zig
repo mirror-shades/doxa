@@ -27,6 +27,7 @@ pub const Lexer = struct {
     file_path: []const u8,
     token_line: i32, // Add this to track line at token start
     reporter: *Reporter,
+    found_main: bool,
 
     //======================================================================
     // Initialization
@@ -48,6 +49,7 @@ pub const Lexer = struct {
             .file_path = file_path,
             .token_line = 1, // Initialize token_line
             .reporter = reporter,
+            .found_main = false,
         };
     }
 
@@ -341,6 +343,10 @@ pub const Lexer = struct {
             '-' => {
                 if (self.match('>')) {
                     try self.addMinimalToken(.MAIN);
+                    if (self.found_main) {
+                        return error.TwoMainFunctions;
+                    }
+                    self.found_main = true;
                 } else if (self.match('-')) {
                     try self.addMinimalToken(.MINUS_MINUS);
                 } else if (self.match('=')) {

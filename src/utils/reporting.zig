@@ -215,7 +215,7 @@ pub const ErrorList = error{
     // Entry Points
     MultipleEntryPoints,
     MisplacedEntryPoint,
-    EntryPointMustBeMain,
+    TwoMainFunctions,
     MissingEntryPoint,
     ExpectedFunction,
     InvalidEntryPoint,

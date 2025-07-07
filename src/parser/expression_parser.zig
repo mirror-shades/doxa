@@ -1020,11 +1020,6 @@ pub fn functionExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast
     }
     const name = self.peek();
 
-    // If this is an entry point, verify it's named 'main'
-    if (is_entry and !std.mem.eql(u8, name.lexeme, "main")) {
-        return error.EntryPointMustBeMain;
-    }
-
     self.advance();
 
     // Parse parameter list
