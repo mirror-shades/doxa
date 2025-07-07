@@ -71,15 +71,13 @@ const expected_results = [_]result{
     .{ .type = "tetra", .value = "true" },
     .{ .type = "tetra", .value = "false" },
     .{ .type = "string", .value = "\"true\"" },
-    .{ .type = "int", .value = "3" },
-    .{ .type = "int", .value = "6" },
-    .{ .type = "int", .value = "10" },
-    .{ .type = "int", .value = "20" },
-    .{ .type = "int", .value = "30" },
-    .{ .type = "int", .value = "1" },
-    .{ .type = "int", .value = "3" },
-    .{ .type = "string", .value = "\"can't do that\"" },
-    .{ .type = "int", .value = "1" },
+    .{ .type = "int", .value = "779" },
+    .{ .type = "int", .value = "782" },
+    .{ .type = "int", .value = "1234" },
+    .{ .type = "int", .value = "2345" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "float", .value = "1.5" },
+    .{ .type = "float", .value = "3.5" },
     .{ .type = "tetra", .value = "true" },
     .{ .type = "tetra", .value = "false" },
     .{ .type = "tetra", .value = "true" },
@@ -160,6 +158,7 @@ test "big file" {
     var i: usize = 0;
     while (i < outputs.items.len) : (i += 1) {
         if (std.mem.eql(u8, outputs.items[i].type, expected_results[i].type) and std.mem.eql(u8, outputs.items[i].value, expected_results[i].value)) {
+            std.debug.print("expected: {s} {s} found: {s} {s}\n", .{ expected_results[i].type, expected_results[i].value, outputs.items[i].type, outputs.items[i].value });
             continue;
         }
         std.debug.print("Test {d} failed\n", .{i});

@@ -411,6 +411,25 @@ pub const HIRVM = struct {
                     .path = s.path,
                 } };
             },
+            .map => |m| blk: {
+                // Convert TokenLiteral map to HIRMap
+                var hir_entries = self.allocator.alloc(HIRMapEntry, m.count()) catch break :blk HIRValue.nothing;
+                var i: usize = 0;
+                var iter = m.iterator();
+                while (iter.next()) |entry| {
+                    hir_entries[i] = HIRMapEntry{
+                        .key = HIRValue{ .string = entry.key_ptr.* },
+                        .value = self.tokenLiteralToHIRValue(entry.value_ptr.*),
+                    };
+                    i += 1;
+                }
+                break :blk HIRValue{ .map = .{
+                    .entries = hir_entries,
+                    .key_type = .String,
+                    .value_type = .Auto,
+                    .path = null,
+                } };
+            },
             else => HIRValue.nothing,
         };
     }
@@ -460,6 +479,21 @@ pub const HIRVM = struct {
                     .fields = token_fields,
                     .path = s.path,
                 } };
+            },
+            .map => |m| blk: {
+                // Convert HIRMap to TokenLiteral map
+                var token_map = std.StringHashMap(TokenLiteral).init(self.allocator);
+                for (m.entries) |entry| {
+                    // Convert the key to a string for HashMap key
+                    const key_str = switch (entry.key) {
+                        .string => |s| s,
+                        .int => |i| std.fmt.allocPrint(self.allocator, "{d}", .{i}) catch break :blk TokenLiteral{ .nothing = {} },
+                        else => break :blk TokenLiteral{ .nothing = {} }, // Only string and int keys supported
+                    };
+                    const value_token = self.hirValueToTokenLiteral(entry.value);
+                    token_map.put(key_str, value_token) catch break :blk TokenLiteral{ .nothing = {} };
+                }
+                break :blk TokenLiteral{ .map = token_map };
             },
             else => TokenLiteral{ .nothing = {} },
         };
@@ -1044,18 +1078,28 @@ pub const HIRVM = struct {
 
             // ULTRA-FAST Logical operations using lookup tables!
             .LogicalOp => |op| {
-                const b = try self.stack.pop();
-                const a = try self.stack.pop();
-
                 const result = switch (op.op) {
-                    .And => try self.logicalAnd(a, b),
-                    .Or => try self.logicalOr(a, b),
-                    .Not => try self.logicalNot(a),
-                    .Iff => try self.logicalIff(a, b),
-                    .Xor => try self.logicalXor(a, b),
-                    .Nand => try self.logicalNand(a, b),
-                    .Nor => try self.logicalNor(a, b),
-                    .Implies => try self.logicalImplies(a, b),
+                    .Not => blk: {
+                        // Unary operation - only pop one value
+                        const a = try self.stack.pop();
+                        break :blk try self.logicalNot(a);
+                    },
+                    else => blk: {
+                        // Binary operations - pop two values
+                        const b = try self.stack.pop();
+                        const a = try self.stack.pop();
+
+                        break :blk switch (op.op) {
+                            .And => try self.logicalAnd(a, b),
+                            .Or => try self.logicalOr(a, b),
+                            .Iff => try self.logicalIff(a, b),
+                            .Xor => try self.logicalXor(a, b),
+                            .Nand => try self.logicalNand(a, b),
+                            .Nor => try self.logicalNor(a, b),
+                            .Implies => try self.logicalImplies(a, b),
+                            .Not => unreachable, // Handled above
+                        };
+                    },
                 };
 
                 try self.stack.push(HIRFrame.initTetra(result));
@@ -2007,10 +2051,28 @@ pub const HIRVM = struct {
             },
 
             .Map => |map| {
-                // Create a new map with the specified entries
+                // Create a new map by popping key-value pairs from the stack
+                if (self.debug_enabled) {
+                    std.debug.print("DoxVM: Debug: Creating map with {} entries, stack size: {}\n", .{ map.entries.len, self.stack.size() });
+                }
+
                 var entries = try self.allocator.alloc(HIRMapEntry, map.entries.len);
-                for (map.entries, 0..) |entry, i| {
-                    entries[i] = entry;
+
+                // The codegen pushes entries in reverse order: [key_last, value_last, ..., key_first, value_first]
+                // When we pop, we get them in reverse: value_first, key_first, value_second, key_second, etc.
+                // So we need to fill entries in reverse order to get the original order
+                var reverse_i = entries.len;
+                while (reverse_i > 0) {
+                    reverse_i -= 1;
+                    const value = try self.stack.pop(); // Pop value first
+                    const key = try self.stack.pop(); // Pop key second
+                    if (self.debug_enabled) {
+                        std.debug.print("DoxVM: Debug: Map entry {}: key={s}, value={s}\n", .{ reverse_i, @tagName(key.value), @tagName(value.value) });
+                    }
+                    entries[reverse_i] = HIRMapEntry{
+                        .key = key.value,
+                        .value = value.value,
+                    };
                 }
 
                 const map_value = HIRValue{ .map = HIRMap{
@@ -2019,6 +2081,9 @@ pub const HIRVM = struct {
                     .value_type = map.value_type,
                 } };
 
+                if (self.debug_enabled) {
+                    std.debug.print("DoxVM: Debug: Created map, pushing to stack\n", .{});
+                }
                 try self.stack.push(HIRFrame.initFromHIRValue(map_value));
             },
 
@@ -2027,12 +2092,40 @@ pub const HIRVM = struct {
                 const key = try self.stack.pop();
                 const map = try self.stack.pop();
 
+                if (self.debug_enabled) {
+                    std.debug.print("DoxVM: Debug: MapGet - key: {any}, map type: {s}\n", .{ key.value, @tagName(map.value) });
+                }
+
                 switch (map.value) {
                     .map => |m| {
+                        if (self.debug_enabled) {
+                            std.debug.print("DoxVM: Debug: MapGet - searching in map with {} entries\n", .{m.entries.len});
+                        }
+
                         // Find entry with matching key
                         var found = false;
-                        for (m.entries) |entry| {
-                            if (std.meta.eql(entry.key, key.value)) {
+                        for (m.entries, 0..) |entry, i| {
+                            if (self.debug_enabled) {
+                                std.debug.print("DoxVM: Debug: MapGet - entry {}: key={any}, value={any}\n", .{ i, entry.key, entry.value });
+                            }
+
+                            // Use custom comparison for HIRValue keys
+                            const keys_match = switch (entry.key) {
+                                .string => |entry_str| switch (key.value) {
+                                    .string => |key_str| std.mem.eql(u8, entry_str, key_str),
+                                    else => false,
+                                },
+                                .int => |entry_int| switch (key.value) {
+                                    .int => |key_int| entry_int == key_int,
+                                    else => false,
+                                },
+                                else => false,
+                            };
+
+                            if (keys_match) {
+                                if (self.debug_enabled) {
+                                    std.debug.print("DoxVM: Debug: MapGet - found matching key, returning value\n", .{});
+                                }
                                 try self.stack.push(HIRFrame.initFromHIRValue(entry.value));
                                 found = true;
                                 break;
@@ -2040,6 +2133,9 @@ pub const HIRVM = struct {
                         }
 
                         if (!found) {
+                            if (self.debug_enabled) {
+                                std.debug.print("DoxVM: Debug: MapGet - key not found, returning nothing\n", .{});
+                            }
                             // Key not found - return nothing
                             try self.stack.push(HIRFrame.initFromHIRValue(HIRValue.nothing));
                         }

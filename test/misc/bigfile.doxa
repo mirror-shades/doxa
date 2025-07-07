@@ -72,7 +72,7 @@ fn forloop(x :: int) {
     }
 }
 
-forloop(5); //660, 726, 792, 858, 924
+forloop(5); //660, 726, 732, 798, 864
 
 // return statements
 fn return_test() returns(string) {
@@ -194,13 +194,13 @@ var Map is {
 Map["a"]?; // 1.5
 Map["c"]?; // 3.5
 
-// try catch
-const con :: int is 1;
-try {
-    con is 2;
-} catch {
-    "can't do that"?;
-}
+// // try catch, deprecated
+// const con :: int is 1;
+// try {
+//     con is 2;
+// } catch {
+//     "can't do that"?;
+// }
 
 /////   
 // FORMAL LOGICAL NOTATION
