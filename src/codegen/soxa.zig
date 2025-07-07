@@ -279,6 +279,9 @@ pub const HIRGenerator = struct {
 
     /// Pass 2: Generate main program (non-function statements) - FIRST so execution starts here
     fn generateMainProgram(self: *HIRGenerator, statements: []ast.Stmt) !void {
+        var has_non_function_statements = false;
+
+        // First pass: check if there are any non-function statements
         for (statements) |stmt| {
             switch (stmt.data) {
                 .FunctionDecl => {
@@ -286,8 +289,45 @@ pub const HIRGenerator = struct {
                     continue;
                 },
                 else => {
-                    try self.generateStatement(stmt);
+                    has_non_function_statements = true;
+                    break;
                 },
+            }
+        }
+
+        // If there are no top-level statements but there's a main function, call it
+        if (!has_non_function_statements) {
+            if (self.function_signatures.get("main")) |main_func| {
+                // Generate a call to main function
+                const main_call_instruction = HIRInstruction{
+                    .Call = .{
+                        .function_index = 0, // Will be resolved by VM
+                        .qualified_name = "main",
+                        .arg_count = 0,
+                        .call_kind = .LocalFunction,
+                        .target_module = null,
+                        .return_type = main_func.return_type,
+                    },
+                };
+                try self.instructions.append(main_call_instruction);
+
+                // Pop the return value if any (since we're not using it)
+                if (main_func.return_type != .Nothing) {
+                    try self.instructions.append(.Pop);
+                }
+            }
+        } else {
+            // Process non-function statements as before
+            for (statements) |stmt| {
+                switch (stmt.data) {
+                    .FunctionDecl => {
+                        // Skip - already handled in previous passes
+                        continue;
+                    },
+                    else => {
+                        try self.generateStatement(stmt);
+                    },
+                }
             }
         }
 
