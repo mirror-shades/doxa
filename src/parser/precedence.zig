@@ -295,11 +295,58 @@ fn compound_assignment(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList
                 .id = ast.generateNodeId(),
                 .span = ast.SourceSpan.fromToken(operator),
             },
-            .data = .{ .IndexAssign = .{
-                .array = idx.array,
-                .index = idx.index,
-                .value = value,
-            } },
+            .data = .{
+                .IndexAssign = .{
+                    .array = idx.array,
+                    .index = idx.index,
+                    .value = blk: {
+                        // For compound assignments, create the proper binary expression
+                        // Convert += to + etc. (only for enabled compound operators)
+                        const binary_op = switch (operator.type) {
+                            .PLUS_EQUAL => token.TokenType.PLUS,
+                            .MINUS_EQUAL => token.TokenType.MINUS,
+                            .POWER_EQUAL => token.TokenType.POWER,
+                            else => unreachable,
+                        };
+
+                        // Create array[index] expression for the left side
+                        const array_access = try self.allocator.create(ast.Expr);
+                        array_access.* = .{
+                            .base = .{
+                                .id = ast.generateNodeId(),
+                                .span = ast.SourceSpan.fromToken(operator),
+                            },
+                            .data = .{ .Index = .{
+                                .array = idx.array,
+                                .index = idx.index,
+                            } },
+                        };
+
+                        // Create binary expression: array[index] + value
+                        const binary_expr = try self.allocator.create(ast.Expr);
+                        binary_expr.* = .{
+                            .base = .{
+                                .id = ast.generateNodeId(),
+                                .span = ast.SourceSpan.fromToken(operator),
+                            },
+                            .data = .{ .Binary = .{
+                                .left = array_access,
+                                .operator = .{
+                                    .type = binary_op,
+                                    .lexeme = operator.lexeme,
+                                    .literal = operator.literal,
+                                    .line = operator.line,
+                                    .column = operator.column,
+                                    .file = operator.file,
+                                },
+                                .right = value,
+                            } },
+                        };
+
+                        break :blk binary_expr;
+                    },
+                },
+            },
         },
         else => unreachable,
     };

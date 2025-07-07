@@ -57,8 +57,8 @@ pub const ErrorList = error{
     ImmutableVariable,
     UseIsForAssignment,
     ExpectedVarOrConst,
-    u8Overflow,
-    u8Underflow,
+    byteOverflow,
+    byteUnderflow,
     CannotModifyConstant,
     TypeMismatch,
 

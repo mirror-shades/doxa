@@ -2521,7 +2521,7 @@ pub const HIRGenerator = struct {
                         return .Int; // String length returns int
                     }
                     if (std.mem.eql(u8, field.field.lexeme, "bytes")) {
-                        return .Array; // String bytes returns array of u8
+                        return .Array; // String bytes returns array of byte
                     }
                     // String indexing returns a single character string
                     if (std.fmt.parseInt(i32, field.field.lexeme, 10)) |_| {
@@ -2598,7 +2598,7 @@ pub const HIRGenerator = struct {
                 }
             },
             .LengthOf => .Int, // lengthof returns int
-            .BytesOf => .Array, // bytesof returns array of u8
+            .BytesOf => .Array, // bytesof returns array of byte
             else => .String, // Default to String for any unhandled expression types to prevent Auto leakage
         };
     }
