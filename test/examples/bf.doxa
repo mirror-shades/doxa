@@ -2,8 +2,6 @@
 
 const symbols is [ ">", "<", "+", "-", ".", ",", "[", "]" ];
 
-// input is read as a string and converted to an
-// array of u8 using the bytes method.
 function getInput() returns(byte) {
     var userInput :: string is input;
     var newByte :: byte is userInput.bytes[0];
@@ -48,9 +46,6 @@ function checkClosingBracket(scan :: string) returns(tetra) {
 
 
 function interpret(scan :: string) {
-    // tape is a list of u8 values to represent bytes on the tape
-    // tape is initialized with 30000 cells
-    // this can be increased to allow for more memory
     var tape :: byte[30000];
     var tp :: int is 0;
     var ip :: int is 0;
@@ -58,12 +53,11 @@ function interpret(scan :: string) {
     var loopSpot :: int[];
     const scanLength is scan.length;
 
-    // do a pass to check if the brackets are matched
     var closedBrackets :: tetra is checkClosingBracket(scan);
     assert(closedBrackets, "Unmatched brackets");
 
     while(ip < scanLength) {
-        var currentInstruction is scan[ip]?;
+        var currentInstruction is scan[ip];
         if(currentInstruction equals ">") then tp += 1;
         if(currentInstruction equals "<") then tp -= 1;
         if(currentInstruction equals "+") then tape[tp] += 1;
@@ -78,5 +72,5 @@ function interpret(scan :: string) {
 }
 
 -> function main() {
-    interpret("++.");
+    interpret(",+.");
 }
