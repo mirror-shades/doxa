@@ -129,9 +129,9 @@ thirdFold?;
 fourthFold?;    
 
 //both is both true and false
-(both equals true and both equals false)?; 
+(both equals true and both equals false)?; // true
 //neither is neither true or false
-(neither equals true or neither equals false)?;
+(neither equals true or neither equals false)?; // false
 
 
 /////
@@ -249,7 +249,6 @@ typeof(_tetra)?; // tetra
 typeof(arr)?; // array
 
 typeof(Employee)?; // struct
-
 typeof(mike)?; // Employee
 
 typeof(Color)?; // enum

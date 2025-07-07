@@ -9,6 +9,9 @@ pub const OpCode = enum(u8) {
     OP_SET_VAR,
     OP_SET_CONST,
 
+    // Assertion handling
+    OP_ASSERT_FAIL,
+
     // Arithmetic operations
     OP_IADD,
     OP_ISUB,

@@ -906,6 +906,7 @@ pub const HIRVM = struct {
                 const target_label = if (should_jump) j.label_true else j.label_false;
 
                 if (self.label_map.get(target_label)) |target_ip| {
+                    // Always set IP explicitly since JumpCond is marked as a "jump" instruction
                     self.ip = target_ip;
                 } else {
                     return self.reporter.reportFatalError("Unknown label: {s}", .{target_label});
@@ -1069,7 +1070,56 @@ pub const HIRVM = struct {
                 }
             },
 
+            .AssertFail => |a| {
+
+                // Format and print assertion failure message
+                const location_str = try std.fmt.allocPrint(self.allocator, "{s}:{}:{}", .{ a.location.file, a.location.line, a.location.column });
+                defer self.allocator.free(location_str);
+
+                if (a.has_message) {
+
+                    // Get the message from the stack
+                    const message = try self.stack.pop();
+                    const message_str = switch (message.value) {
+                        .string => |s| s,
+                        else => "Invalid message type",
+                    };
+
+                    // DEBUG: Print the message we got
+                    std.debug.print("DEBUG: Message from stack: {s}\n", .{message_str});
+
+                    // Print formatted assertion failure
+                    const stderr = std.io.getStdErr().writer();
+                    try stderr.print("Assertion failed at {s}:\n{s}\n", .{ location_str, message_str });
+                } else {
+                    // DEBUG: Print that no message was provided
+                    std.debug.print("DEBUG: No message provided\n", .{});
+
+                    // No message provided
+                    const stderr = std.io.getStdErr().writer();
+                    try stderr.print("Assertion failed at {s}\n", .{location_str});
+                }
+
+                // DEBUG: Print that we're halting
+                std.debug.print("DEBUG: Halting program after assertion failure\n", .{});
+
+                // Halt the program after assertion failure
+                self.running = false;
+            },
+
             .Halt => {
+                // Check if there's an assertion message on the stack
+                if (self.stack.size() > 0) {
+                    if (self.stack.peek()) |top| {
+                        if (top.value == .string) {
+                            // This looks like an assertion failure - print the message
+                            const message = try self.stack.pop();
+                            const stderr = std.io.getStdErr().writer();
+                            try stderr.print("Assertion failed:\n{s}\n", .{message.value.string});
+                        }
+                    } else |_| {}
+                }
+
                 if (self.debug_enabled) {
                     std.debug.print("HIR VM halted\n", .{});
                 }

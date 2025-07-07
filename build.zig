@@ -11,6 +11,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    // Install the executable first
     b.installArtifact(exe);
 
     // Add test steps
@@ -20,7 +21,14 @@ pub fn build(b: *std.Build) void {
     });
     const run_test_run = b.addRunArtifact(test_run);
 
+    // Make tests depend on successful compilation
+    run_test_run.step.dependOn(&exe.step);
+
+    // Make default step just build the executable
+    const build_step = b.step("default", "Build the Doxa compiler");
+    build_step.dependOn(&exe.step);
+
+    // Keep the separate test step
     const test_step = b.step("test", "Run all tests");
     test_step.dependOn(&run_test_run.step);
-    //test_step.dependOn(&compile_test_run.step);
 }

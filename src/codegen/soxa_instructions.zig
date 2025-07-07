@@ -444,4 +444,12 @@ pub const HIRInstruction = union(enum) {
     MapGet: struct {
         key_type: HIRType,
     },
+
+    /// Assertion failure with formatted error message
+    /// VM: Print formatted "Assertion failed at [location]: [message]" and halt
+    /// LLVM: Generate formatted error output and exit
+    AssertFail: struct {
+        location: Reporting.Reporter.Location,
+        has_message: bool,
+    },
 };
