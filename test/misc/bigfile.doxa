@@ -148,6 +148,11 @@ arr[5]?; // 420000
 
 const checkAgainst is 333333;
 
+var initArr :: byte[10];
+
+initArr[0]?;
+initArr[9]?;
+
 // quantifiers
 var ex is exists e in arr where e > checkAgainst;
 
