@@ -1244,9 +1244,10 @@ pub const HIRVM = struct {
                 const initial_capacity = if (a.size == 0) 8 else a.size; // Start with capacity 8 for empty arrays
                 const elements = try self.allocator.alloc(HIRValue, initial_capacity);
 
-                // Initialize all elements to nothing
+                // Initialize all elements to default values based on element type
+                const default_value = HIRVM.getDefaultValue(a.element_type);
                 for (elements) |*element| {
-                    element.* = HIRValue.nothing;
+                    element.* = default_value;
                 }
 
                 // For empty arrays, we use the full capacity but track length separately
@@ -1295,8 +1296,8 @@ pub const HIRVM = struct {
                 switch (array.value) {
                     .array => |arr| {
                         if (a.bounds_check and index_val >= arr.elements.len) {
-                            try self.stack.push(HIRFrame.initFromHIRValue(HIRValue.nothing));
-                            return;
+                            self.reporter.reportError("Array index {} out of bounds (array has {} elements)", .{ index_val, arr.elements.len });
+                            return ErrorList.IndexOutOfBounds;
                         }
 
                         const element = arr.elements[index_val];
@@ -1372,8 +1373,8 @@ pub const HIRVM = struct {
                         var mutable_arr = arr;
 
                         if (a.bounds_check and index_val >= mutable_arr.elements.len) {
-                            try self.stack.push(array_frame); // Push original array back
-                            return;
+                            self.reporter.reportError("Array index {} out of bounds for assignment (array has {} elements)", .{ index_val, mutable_arr.elements.len });
+                            return ErrorList.IndexOutOfBounds;
                         }
 
                         mutable_arr.elements[index_val] = value.value;
@@ -3193,5 +3194,17 @@ pub const HIRVM = struct {
         }
 
         return result;
+    }
+
+    pub fn getDefaultValue(hir_type: HIRType) HIRValue {
+        return switch (hir_type) {
+            .Int => HIRValue{ .int = 0 },
+            .Byte => HIRValue{ .byte = 0 },
+            .Float => HIRValue{ .float = 0.0 },
+            .String => HIRValue{ .string = "" },
+            .Tetra => HIRValue{ .tetra = 0 }, // false
+            .Nothing => HIRValue.nothing,
+            else => HIRValue.nothing, // Default for complex types
+        };
     }
 };
