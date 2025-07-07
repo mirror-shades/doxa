@@ -60,11 +60,10 @@ function interpret(scan :: string) {
 
     // do a pass to check if the brackets are matched
     var closedBrackets :: tetra is checkClosingBracket(scan);
-    closedBrackets?;
     assert(closedBrackets, "Unmatched brackets");
 
     while(ip < scanLength) {
-        var currentInstruction is scan[ip];
+        var currentInstruction is scan[ip]?;
         if(currentInstruction equals ">") then tp += 1;
         if(currentInstruction equals "<") then tp -= 1;
         if(currentInstruction equals "+") then tape[tp] += 1;
@@ -80,5 +79,4 @@ function interpret(scan :: string) {
 
 -> function main() {
     interpret("++.");
-    "main exited"?;
 }

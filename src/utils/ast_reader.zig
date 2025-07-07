@@ -52,7 +52,7 @@ pub const ASTReader = struct {
             .int => .{ .Literal = .{ .int = try std.fmt.parseInt(i32, value_str, 10) } },
             .string => .{ .Literal = .{ .string = try self.allocator.dupe(u8, value_str) } },
             .float => .{ .Literal = .{ .float = try std.fmt.parseFloat(f64, value_str) } },
-            .u8 => .{ .Literal = .{ .u8 = try std.fmt.parseInt(u8, value_str, 10) } },
+            .byte => .{ .Literal = .{ .byte = try std.fmt.parseInt(u8, value_str, 10) } },
             else => return error.UnsupportedLiteralType,
         };
         return expr;
@@ -207,7 +207,7 @@ const LiteralType = enum {
     int,
     string,
     float,
-    u8,
+    byte,
     Unknown,
 };
 

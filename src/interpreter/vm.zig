@@ -62,7 +62,7 @@ pub const HIRFrame = struct {
         return HIRFrame{ .value = HIRValue{ .tetra = x } };
     }
 
-    pub fn initU8(x: u8) HIRFrame {
+    pub fn initByte(x: u8) HIRFrame {
         return HIRFrame{ .value = HIRValue{ .byte = x } };
     }
 
@@ -105,7 +105,7 @@ pub const HIRFrame = struct {
         };
     }
 
-    pub fn asU8(self: HIRFrame) !u8 {
+    pub fn asByte(self: HIRFrame) !u8 {
         return switch (self.value) {
             .byte => |u| u,
             else => ErrorList.TypeError,
@@ -854,7 +854,7 @@ pub const HIRVM = struct {
                 // CRITICAL FIX: Preserve the original type when possible
                 // If the first operand was a byte and result fits in byte range, return as byte
                 if (a_val.value == .byte and result >= 0 and result <= 255) {
-                    try self.stack.push(HIRFrame.initU8(@intCast(result)));
+                    try self.stack.push(HIRFrame.initByte(@intCast(result)));
                 } else {
                     try self.stack.push(HIRFrame.initInt(result));
                 }
@@ -1365,7 +1365,22 @@ pub const HIRVM = struct {
                             return ErrorList.IndexOutOfBounds;
                         }
 
-                        mutable_arr.elements[index_val] = value.value;
+                        // TYPE PRESERVATION: Convert value to match array element type when possible
+                        const element_value = switch (mutable_arr.element_type) {
+                            .Byte => switch (value.value) {
+                                .int => |i| if (i >= 0 and i <= 255) HIRValue{ .byte = @intCast(i) } else value.value,
+                                .byte => value.value, // Already correct type
+                                else => value.value, // Keep original for other types
+                            },
+                            .Int => switch (value.value) {
+                                .byte => |b| HIRValue{ .int = @as(i32, b) }, // Convert byte to int
+                                .int => value.value, // Already correct type
+                                else => value.value, // Keep original for other types
+                            },
+                            else => value.value, // For other array types, keep original value
+                        };
+
+                        mutable_arr.elements[index_val] = element_value;
                         // Push the modified array back onto the stack
                         const modified_array_value = HIRValue{ .array = mutable_arr };
                         try self.stack.push(HIRFrame.initFromHIRValue(modified_array_value));
