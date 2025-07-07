@@ -1001,6 +1001,9 @@ pub const HIRGenerator = struct {
                     .value_type = inferred_type,
                     .location = peek.location,
                 } });
+
+                // Pop the value after peeking to clean up the stack
+                try self.instructions.append(.Pop);
             },
 
             .Assignment => |assign| {
@@ -2868,6 +2871,10 @@ pub fn translateToVMBytecode(program: *HIRProgram, allocator: std.mem.Allocator,
             .Pop => {
                 try bytecode.append(@intFromEnum(instructions.OpCode.OP_POP));
             },
+            .TupleGet => |t| {
+                try bytecode.append(@intFromEnum(instructions.OpCode.OP_ARRAY_GET));
+                try bytecode.append(@intCast(t.index));
+            },
             .Peek => |_| {
                 // For peek, we can use existing VM peekion mechanism
                 // The VM will handle the printing based on the top stack value
@@ -2895,6 +2902,7 @@ pub fn translateToVMBytecode(program: *HIRProgram, allocator: std.mem.Allocator,
 fn getBytecodeSize(instruction: HIRInstruction) u32 {
     return switch (instruction) {
         .Const, .LoadVar, .StoreVar, .Jump, .JumpCond, .Call, .TailCall => 2, // opcode + operand
+        .TupleGet => 2, // opcode + index
         .IntArith, .Compare, .Return, .Dup, .Pop, .Swap, .Peek, .Halt => 1, // opcode only
         .Label => 0, // No bytecode generated
         else => 1, // Default to 1 byte
@@ -3558,6 +3566,7 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
         .ArrayConcat => try writer.print("    ArrayConcat                 ; Concatenate arrays\n", .{}),
 
         .TupleNew => |t| try writer.print("    TupleNew {}                 ; Create tuple with {} elements\n", .{ t.element_count, t.element_count }),
+        .TupleGet => |t| try writer.print("    TupleGet {}                 ; Get tuple element at index {}\n", .{ t.index, t.index }),
         .Map => |m| try writer.print("    Map {} {s}                   ; Create map with {} entries\n", .{ m.entries.len, @tagName(m.key_type), m.entries.len }),
 
         // Struct operations
@@ -4110,6 +4119,10 @@ const SoxaTextParser = struct {
             const count_str = tokens.next() orelse return;
             const element_count = std.fmt.parseInt(u32, count_str, 10) catch return;
             try self.instructions.append(HIRInstruction{ .TupleNew = .{ .element_count = element_count } });
+        } else if (std.mem.eql(u8, op, "TupleGet")) {
+            const index_str = tokens.next() orelse return;
+            const index = std.fmt.parseInt(u32, index_str, 10) catch return;
+            try self.instructions.append(HIRInstruction{ .TupleGet = .{ .index = index } });
         } else if (std.mem.eql(u8, op, "Map")) {
             const count_str = tokens.next() orelse return;
             const key_type_str = tokens.next() orelse return;

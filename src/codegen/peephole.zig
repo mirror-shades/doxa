@@ -109,6 +109,32 @@ pub const PeepholeOptimizer = struct {
             return 3;
         }
 
+        // Pattern 2b: Dup + TupleGet + Peek + Pop → TupleGet + Peek
+        if (i + 3 < instructions.len and
+            std.meta.activeTag(instructions[i]) == .Dup and
+            std.meta.activeTag(instructions[i + 1]) == .TupleGet and
+            std.meta.activeTag(instructions[i + 2]) == .Peek and
+            std.meta.activeTag(instructions[i + 3]) == .Pop)
+        {
+            try optimized.append(instructions[i + 1]); // TupleGet
+            try optimized.append(instructions[i + 2]); // Peek
+            self.redundant_eliminations += 1;
+            return 4;
+        }
+
+        // Pattern 2c: Dup + ArrayGet + Peek + Pop → ArrayGet + Peek
+        if (i + 3 < instructions.len and
+            std.meta.activeTag(instructions[i]) == .Dup and
+            std.meta.activeTag(instructions[i + 1]) == .ArrayGet and
+            std.meta.activeTag(instructions[i + 2]) == .Peek and
+            std.meta.activeTag(instructions[i + 3]) == .Pop)
+        {
+            try optimized.append(instructions[i + 1]); // ArrayGet
+            try optimized.append(instructions[i + 2]); // Peek
+            self.redundant_eliminations += 1;
+            return 4;
+        }
+
         // Pattern 3: LoadVar + Dup + Peek + Pop → LoadVar + Peek
         if (i + 3 < instructions.len and
             std.meta.activeTag(instructions[i]) == .LoadVar and
