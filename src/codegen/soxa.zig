@@ -298,10 +298,13 @@ pub const HIRGenerator = struct {
         // If there are no top-level statements but there's a main function, call it
         if (!has_non_function_statements) {
             if (self.function_signatures.get("main")) |main_func| {
+                // Get the correct function index for main
+                const main_function_index = self.getFunctionIndex("main") catch 0;
+
                 // Generate a call to main function
                 const main_call_instruction = HIRInstruction{
                     .Call = .{
-                        .function_index = 0, // Will be resolved by VM
+                        .function_index = main_function_index,
                         .qualified_name = "main",
                         .arg_count = 0,
                         .call_kind = .LocalFunction,
@@ -340,9 +343,9 @@ pub const HIRGenerator = struct {
     fn buildFunctionTable(self: *HIRGenerator) ![]HIRProgram.HIRFunction {
         var function_table = std.ArrayList(HIRProgram.HIRFunction).init(self.allocator);
 
-        var function_iterator = self.function_signatures.iterator();
-        while (function_iterator.next()) |entry| {
-            const function_info = entry.value_ptr.*;
+        // Use function_bodies order for deterministic indices (same as getFunctionIndex)
+        for (self.function_bodies.items) |function_body| {
+            const function_info = function_body.function_info;
 
             try function_table.append(HIRProgram.HIRFunction{
                 .name = function_info.name,
@@ -361,13 +364,11 @@ pub const HIRGenerator = struct {
 
     /// Get function index for call generation
     fn getFunctionIndex(self: *HIRGenerator, function_name: []const u8) !u32 {
-        var function_iterator = self.function_signatures.iterator();
-        var index: u32 = 0;
-        while (function_iterator.next()) |entry| {
-            if (std.mem.eql(u8, entry.key_ptr.*, function_name)) {
-                return index;
+        // Use function_bodies order for deterministic indices
+        for (self.function_bodies.items, 0..) |function_body, index| {
+            if (std.mem.eql(u8, function_body.function_info.name, function_name)) {
+                return @as(u32, @intCast(index));
             }
-            index += 1;
         }
         return error.FunctionNotFound;
     }
