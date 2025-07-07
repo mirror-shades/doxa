@@ -515,6 +515,47 @@ pub const HIRGenerator = struct {
             .Try => |try_stmt| {
                 try self.generateTryStmt(try_stmt);
             },
+            .Assert => |assert_stmt| {
+                // Generate the condition expression
+                try self.generateExpression(assert_stmt.condition);
+
+                // Create labels for control flow
+                const success_label = try std.fmt.allocPrint(self.allocator, "assert_success_{}", .{self.label_count});
+                const failure_label = try std.fmt.allocPrint(self.allocator, "assert_failure_{}", .{self.label_count});
+                self.label_count += 1;
+
+                // Jump to success label if condition is true, fall through to failure if false
+                try self.instructions.append(.{
+                    .JumpCond = .{
+                        .label_true = success_label,
+                        .label_false = failure_label,
+                        .vm_offset = 0, // Will be patched
+                        .condition_type = .Tetra,
+                    },
+                });
+
+                // Failure label - condition was false
+                try self.instructions.append(.{ .Label = .{ .name = failure_label, .vm_address = 0 } });
+
+                // Handle assert message if provided
+                if (assert_stmt.message) |msg| {
+                    // Generate message expression (will be on stack for AssertFail to use)
+                    try self.generateExpression(msg);
+                    try self.instructions.append(.{ .AssertFail = .{
+                        .location = assert_stmt.location,
+                        .has_message = true,
+                    } });
+                } else {
+                    // No message provided
+                    try self.instructions.append(.{ .AssertFail = .{
+                        .location = assert_stmt.location,
+                        .has_message = false,
+                    } });
+                }
+
+                // Success label - continue execution
+                try self.instructions.append(.{ .Label = .{ .name = success_label, .vm_address = 0 } });
+            },
             else => {
                 self.reporter.reportError("Unhandled statement type: {}", .{stmt.data});
             },
@@ -2932,6 +2973,10 @@ pub fn translateToVMBytecode(program: *HIRProgram, allocator: std.mem.Allocator,
                 try bytecode.append(@intFromEnum(instructions.OpCode.OP_DUP)); // Keep value on stack
                 // Note: Your VM's peek handling is in the main execution loop
             },
+            .AssertFail => |_| {
+                // Generate proper AssertFail bytecode
+                try bytecode.append(@intFromEnum(instructions.OpCode.OP_ASSERT_FAIL));
+            },
             .Halt => {
                 try bytecode.append(@intFromEnum(instructions.OpCode.OP_HALT));
             },
@@ -2954,7 +2999,7 @@ fn getBytecodeSize(instruction: HIRInstruction) u32 {
     return switch (instruction) {
         .Const, .LoadVar, .StoreVar, .Jump, .JumpCond, .Call, .TailCall => 2, // opcode + operand
         .TupleGet => 2, // opcode + index
-        .IntArith, .Compare, .Return, .Dup, .Pop, .Swap, .Peek, .Halt => 1, // opcode only
+        .IntArith, .Compare, .Return, .Dup, .Pop, .Swap, .Peek, .Halt, .AssertFail => 1, // opcode only
         .Label => 0, // No bytecode generated
         else => 1, // Default to 1 byte
     };
@@ -3603,6 +3648,10 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
                     try writer.print("    Peek {s}                 ; Debug print\n", .{@tagName(i.value_type)});
                 }
             }
+        },
+
+        .AssertFail => |a| {
+            try writer.print("    AssertFail @{s}:{}:{}{s}        ; Assertion failure\n", .{ a.location.file, a.location.line, a.location.column, if (a.has_message) " with message" else "" });
         },
 
         .Halt => try writer.print("    Halt                        ; Program termination\n", .{}),
@@ -4318,6 +4367,37 @@ const SoxaTextParser = struct {
 
             try self.instructions.append(HIRInstruction{ .LogicalOp = .{
                 .op = logical_op,
+            } });
+        } else if (std.mem.eql(u8, op, "AssertFail")) {
+            // Parse: AssertFail @file:line:column with message
+            // or: AssertFail @file:line:column
+            const rest_of_line = tokens.rest();
+            var has_message = false;
+            var location: ?Reporting.Reporter.Location = null;
+
+            // Look for location string starting with @
+            if (std.mem.indexOf(u8, rest_of_line, "@")) |at_pos| {
+                const location_part = rest_of_line[at_pos..];
+
+                // Find the end of the location (before " with message" if present)
+                var location_end = location_part.len;
+                if (std.mem.indexOf(u8, location_part, " with message")) |msg_pos| {
+                    location_end = msg_pos;
+                    has_message = true;
+                }
+
+                // Parse the location
+                const location_str = location_part[0..location_end];
+                location = self.parseLocationString(location_str) catch null;
+            }
+
+            try self.instructions.append(HIRInstruction{ .AssertFail = .{
+                .location = location orelse Reporting.Reporter.Location{
+                    .file = "unknown",
+                    .line = 0,
+                    .column = 0,
+                },
+                .has_message = has_message,
             } });
         }
         // Instructions not implemented yet are silently ignored for now
