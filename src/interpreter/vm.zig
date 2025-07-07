@@ -1251,18 +1251,6 @@ pub const HIRVM = struct {
                 try self.handleArrayPush(value.value);
             },
 
-            .Exists => |_| {
-                const predicate = try self.stack.pop();
-                const array = try self.stack.pop();
-                try self.handleQuantifier(array, predicate.value, true);
-            },
-
-            .Forall => |_| {
-                const predicate = try self.stack.pop();
-                const array = try self.stack.pop();
-                try self.handleQuantifier(array, predicate.value, false);
-            },
-
             .ArrayPop => {
                 // Pop element from end of array
                 const array = try self.stack.pop(); // Array
@@ -1510,42 +1498,49 @@ pub const HIRVM = struct {
                             };
 
                             try self.stack.push(HIRFrame.initInt(result));
-                        } else if (std.mem.eql(u8, c.qualified_name, "exists_quantifier")) {
-                            // Existential quantifier - check if any element in array satisfies condition
+                        } else if (std.mem.eql(u8, c.qualified_name, "exists_quantifier_gt")) {
+                            // Existential quantifier with greater-than condition
+                            const comparison_value = try self.stack.pop();
                             const array = try self.stack.pop();
 
                             switch (array.value) {
                                 .array => |arr| {
-                                    // Check if array has any elements
+                                    // Check if any element is greater than comparison_value
                                     var found = false;
                                     for (arr.elements) |elem| {
                                         if (std.meta.eql(elem, HIRValue.nothing)) {
                                             break; // End of array
                                         }
-                                        // For now, treat non-zero integers and true tetras as satisfying the condition
-                                        switch (elem) {
-                                            .int => |i| if (i != 0) {
-                                                found = true;
-                                                break;
+                                        // Check if element > comparison_value
+                                        const satisfies_condition = switch (elem) {
+                                            .int => |elem_int| switch (comparison_value.value) {
+                                                .int => |comp_int| elem_int > comp_int,
+                                                else => false,
                                             },
-                                            .tetra => |t| if (t == 1) {
-                                                found = true;
-                                                break;
+                                            .float => |elem_float| switch (comparison_value.value) {
+                                                .float => |comp_float| elem_float > comp_float,
+                                                .int => |comp_int| elem_float > @as(f64, @floatFromInt(comp_int)),
+                                                else => false,
                                             },
-                                            else => {}, // Other types don't satisfy condition
+                                            else => false,
+                                        };
+                                        if (satisfies_condition) {
+                                            found = true;
+                                            break;
                                         }
                                     }
                                     try self.stack.push(HIRFrame.initTetra(if (found) 1 else 0));
                                 },
-                                else => return self.reporter.reportError("exists_quantifier: argument must be array", .{}),
+                                else => return self.reporter.reportError("exists_quantifier_gt: argument must be array", .{}),
                             }
-                        } else if (std.mem.eql(u8, c.qualified_name, "forall_quantifier")) {
-                            // Universal quantifier - check if all elements in array satisfy condition
+                        } else if (std.mem.eql(u8, c.qualified_name, "forall_quantifier_gt")) {
+                            // Universal quantifier with greater-than condition
+                            const comparison_value = try self.stack.pop();
                             const array = try self.stack.pop();
 
                             switch (array.value) {
                                 .array => |arr| {
-                                    // Check if all elements satisfy condition
+                                    // Check if all elements are greater than comparison_value
                                     var all_satisfy = true;
                                     var has_elements = false;
                                     for (arr.elements) |elem| {
@@ -1553,25 +1548,28 @@ pub const HIRVM = struct {
                                             break; // End of array
                                         }
                                         has_elements = true;
-                                        // For now, treat non-zero integers and true tetras as satisfying the condition
-                                        switch (elem) {
-                                            .int => |i| if (i == 0) {
-                                                all_satisfy = false;
-                                                break;
+                                        // Check if element > comparison_value
+                                        const satisfies_condition = switch (elem) {
+                                            .int => |elem_int| switch (comparison_value.value) {
+                                                .int => |comp_int| elem_int > comp_int,
+                                                else => false,
                                             },
-                                            .tetra => |t| if (t == 0) {
-                                                all_satisfy = false;
-                                                break;
+                                            .float => |elem_float| switch (comparison_value.value) {
+                                                .float => |comp_float| elem_float > comp_float,
+                                                .int => |comp_int| elem_float > @as(f64, @floatFromInt(comp_int)),
+                                                else => false,
                                             },
-                                            else => {
-                                                all_satisfy = false;
-                                                break;
-                                            }, // Other types don't satisfy condition
+                                            else => false,
+                                        };
+                                        if (!satisfies_condition) {
+                                            all_satisfy = false;
+                                            break;
                                         }
                                     }
-                                    try self.stack.push(HIRFrame.initTetra(if (has_elements and all_satisfy) 1 else 0));
+                                    // For empty arrays, forall returns true (vacuous truth)
+                                    try self.stack.push(HIRFrame.initTetra(if (!has_elements or all_satisfy) 1 else 0));
                                 },
-                                else => return self.reporter.reportError("forall_quantifier: argument must be array", .{}),
+                                else => return self.reporter.reportError("forall_quantifier_gt: argument must be array", .{}),
                             }
                         } else {
                             return self.reporter.reportError("Unknown built-in function: {s}", .{c.qualified_name});
@@ -2583,7 +2581,7 @@ pub const HIRVM = struct {
         _ = self;
         return switch (value) {
             .int => "int",
-            .byte => "u8",
+            .byte => "byte",
             .float => "float",
             .string => "string",
             .tetra => "tetra",
