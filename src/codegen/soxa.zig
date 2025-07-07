@@ -496,6 +496,11 @@ pub const HIRGenerator = struct {
                             const const_idx = try self.addConstant(default_value);
                             try self.instructions.append(.{ .Const = .{ .value = default_value, .constant_id = const_idx } });
                         },
+                        .Byte => {
+                            const default_value = HIRValue{ .byte = 0 };
+                            const const_idx = try self.addConstant(default_value);
+                            try self.instructions.append(.{ .Const = .{ .value = default_value, .constant_id = const_idx } });
+                        },
                         .Array => {
                             // Create an array with the proper size and element type
                             const size = if (decl.type_info.array_size) |s| @as(u32, @intCast(s)) else 0;
@@ -3939,8 +3944,8 @@ const SoxaTextParser = struct {
             const value_str = std.mem.trim(u8, line[tetra_pos + 6 ..], " \t");
             const value = try std.fmt.parseInt(u8, value_str, 10);
             try self.constants.append(HIRValue{ .tetra = value });
-        } else if (std.mem.indexOf(u8, line, "u8 ")) |u8_pos| {
-            const value_str = std.mem.trim(u8, line[u8_pos + 3 ..], " \t");
+        } else if (std.mem.indexOf(u8, line, "byte ")) |byte_pos| {
+            const value_str = std.mem.trim(u8, line[byte_pos + 5 ..], " \t");
             const value = try std.fmt.parseInt(u8, value_str, 10);
             try self.constants.append(HIRValue{ .byte = value });
         } else if (std.mem.indexOf(u8, line, "enum_variant ")) |enum_pos| {
