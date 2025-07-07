@@ -1107,9 +1107,6 @@ pub const HIRVM = struct {
                         else => "Invalid message type",
                     };
 
-                    // DEBUG: Print the message we got
-                    std.debug.print("DEBUG: Message from stack: {s}\n", .{message_str});
-
                     // Print formatted assertion failure
                     const stderr = std.io.getStdErr().writer();
                     try stderr.print("Assertion failed at {s}:\n{s}\n", .{ location_str, message_str });
@@ -1121,9 +1118,6 @@ pub const HIRVM = struct {
                     const stderr = std.io.getStdErr().writer();
                     try stderr.print("Assertion failed at {s}\n", .{location_str});
                 }
-
-                // DEBUG: Print that we're halting
-                std.debug.print("DEBUG: Halting program after assertion failure\n", .{});
 
                 // Halt the program after assertion failure
                 self.running = false;
