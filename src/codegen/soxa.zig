@@ -3871,7 +3871,8 @@ const SoxaTextParser = struct {
                 const is_instruction_with_location = std.mem.startsWith(u8, trimmed_line, "Peek ") or
                     std.mem.startsWith(u8, trimmed_line, "Call ") or
                     std.mem.startsWith(u8, trimmed_line, "LoadVar ") or
-                    std.mem.startsWith(u8, trimmed_line, "StoreVar ");
+                    std.mem.startsWith(u8, trimmed_line, "StoreVar ") or
+                    std.mem.startsWith(u8, trimmed_line, "AssertFail ");
 
                 if (is_instruction_with_location) {
                     // This is an instruction, not a label
