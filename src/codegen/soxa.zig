@@ -279,9 +279,7 @@ pub const HIRGenerator = struct {
 
     /// Pass 2: Generate main program (non-function statements) - FIRST so execution starts here
     fn generateMainProgram(self: *HIRGenerator, statements: []ast.Stmt) !void {
-        var has_non_function_statements = false;
-
-        // First pass: check if there are any non-function statements
+        // Process all non-function statements first (global variables, etc.)
         for (statements) |stmt| {
             switch (stmt.data) {
                 .FunctionDecl => {
@@ -289,48 +287,32 @@ pub const HIRGenerator = struct {
                     continue;
                 },
                 else => {
-                    has_non_function_statements = true;
-                    break;
+                    try self.generateStatement(stmt);
                 },
             }
         }
 
-        // If there are no top-level statements but there's a main function, call it
-        if (!has_non_function_statements) {
-            if (self.function_signatures.get("main")) |main_func| {
-                // Get the correct function index for main
-                const main_function_index = self.getFunctionIndex("main") catch 0;
+        // After processing global statements, call main if it exists
+        if (self.function_signatures.get("main")) |main_func| {
+            // Get the correct function index for main
+            const main_function_index = self.getFunctionIndex("main") catch 0;
 
-                // Generate a call to main function
-                const main_call_instruction = HIRInstruction{
-                    .Call = .{
-                        .function_index = main_function_index,
-                        .qualified_name = "main",
-                        .arg_count = 0,
-                        .call_kind = .LocalFunction,
-                        .target_module = null,
-                        .return_type = main_func.return_type,
-                    },
-                };
-                try self.instructions.append(main_call_instruction);
+            // Generate a call to main function
+            const main_call_instruction = HIRInstruction{
+                .Call = .{
+                    .function_index = main_function_index,
+                    .qualified_name = "main",
+                    .arg_count = 0,
+                    .call_kind = .LocalFunction,
+                    .target_module = null,
+                    .return_type = main_func.return_type,
+                },
+            };
+            try self.instructions.append(main_call_instruction);
 
-                // Pop the return value if any (since we're not using it)
-                if (main_func.return_type != .Nothing) {
-                    try self.instructions.append(.Pop);
-                }
-            }
-        } else {
-            // Process non-function statements as before
-            for (statements) |stmt| {
-                switch (stmt.data) {
-                    .FunctionDecl => {
-                        // Skip - already handled in previous passes
-                        continue;
-                    },
-                    else => {
-                        try self.generateStatement(stmt);
-                    },
-                }
+            // Pop the return value if any (since we're not using it)
+            if (main_func.return_type != .Nothing) {
+                try self.instructions.append(.Pop);
             }
         }
 
@@ -382,6 +364,7 @@ pub const HIRGenerator = struct {
             .String => .String,
             .Tetra => .Tetra,
             .Byte => .Byte,
+            .Array => .Array,
             .Auto => .Auto,
             else => .Auto,
         };
@@ -416,6 +399,11 @@ pub const HIRGenerator = struct {
                 // NEW: Determine the variable's type for tracking
                 var var_type: HIRType = .Auto;
 
+                // DEBUG: Print initial var_type
+                if (self.debug_enabled) {
+                    std.debug.print("HIR: Initial var_type={s}\n", .{@tagName(var_type)});
+                }
+
                 // FIXED: Prioritize explicit type annotation over inference
                 var enum_type_name: ?[]const u8 = null;
                 if (decl.type_info.base != .Auto) {
@@ -426,6 +414,7 @@ pub const HIRGenerator = struct {
                         .String => .String,
                         .Tetra => .Tetra,
                         .Byte => .Byte,
+                        .Array => .Array, // Add missing Array case
                         .Enum => blk: {
                             // Extract the actual enum type name from the custom_type field
                             enum_type_name = decl.type_info.custom_type;
@@ -449,6 +438,11 @@ pub const HIRGenerator = struct {
                         },
                         else => .Auto,
                     };
+
+                    // DEBUG: Print final var_type after switch
+                    if (self.debug_enabled) {
+                        std.debug.print("HIR: Final var_type after switch={s}\n", .{@tagName(var_type)});
+                    }
                 }
 
                 // Generate the initializer expression with enum type context
@@ -481,15 +475,56 @@ pub const HIRGenerator = struct {
                     }
                 } else {
                     // No initializer - push default value based on type
-                    const default_value = switch (var_type) {
-                        .Int => HIRValue{ .int = 0 },
-                        .Float => HIRValue{ .float = 0.0 },
-                        .String => HIRValue{ .string = "" },
-                        .Tetra => HIRValue{ .tetra = 0 },
-                        else => HIRValue.nothing,
-                    };
-                    const const_idx = try self.addConstant(default_value);
-                    try self.instructions.append(.{ .Const = .{ .value = default_value, .constant_id = const_idx } });
+                    switch (var_type) {
+                        .Int => {
+                            const default_value = HIRValue{ .int = 0 };
+                            const const_idx = try self.addConstant(default_value);
+                            try self.instructions.append(.{ .Const = .{ .value = default_value, .constant_id = const_idx } });
+                        },
+                        .Float => {
+                            const default_value = HIRValue{ .float = 0.0 };
+                            const const_idx = try self.addConstant(default_value);
+                            try self.instructions.append(.{ .Const = .{ .value = default_value, .constant_id = const_idx } });
+                        },
+                        .String => {
+                            const default_value = HIRValue{ .string = "" };
+                            const const_idx = try self.addConstant(default_value);
+                            try self.instructions.append(.{ .Const = .{ .value = default_value, .constant_id = const_idx } });
+                        },
+                        .Tetra => {
+                            const default_value = HIRValue{ .tetra = 0 };
+                            const const_idx = try self.addConstant(default_value);
+                            try self.instructions.append(.{ .Const = .{ .value = default_value, .constant_id = const_idx } });
+                        },
+                        .Array => {
+                            // Create an array with the proper size and element type
+                            const size = if (decl.type_info.array_size) |s| @as(u32, @intCast(s)) else 0;
+                            const element_type = if (decl.type_info.array_type) |at| switch (at.base) {
+                                .Byte => HIRType.Byte,
+                                .Int => HIRType.Int,
+                                .Float => HIRType.Float,
+                                .String => HIRType.String,
+                                .Tetra => HIRType.Tetra,
+                                else => HIRType.Auto,
+                            } else HIRType.Auto;
+
+                            // DEBUG: Print array creation info
+                            if (self.debug_enabled) {
+                                std.debug.print("HIR: Creating array for {s}, size={}, element_type={s}\n", .{ decl.name.lexeme, size, @tagName(element_type) });
+                            }
+
+                            // Create the array
+                            try self.instructions.append(.{ .ArrayNew = .{
+                                .element_type = element_type,
+                                .size = size,
+                            } });
+                        },
+                        else => {
+                            const default_value = HIRValue.nothing;
+                            const const_idx = try self.addConstant(default_value);
+                            try self.instructions.append(.{ .Const = .{ .value = default_value, .constant_id = const_idx } });
+                        },
+                    }
                 }
 
                 // NEW: Track the variable's type
