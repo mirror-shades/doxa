@@ -1,0 +1,20 @@
+var initArr :: int[10];
+var floatArr :: float[10];
+var byteArr :: byte[10];
+var tetraArr :: tetra[10];
+var strArr :: string[10];
+
+initArr[0]?;
+initArr[9]?;
+
+floatArr[0]?;
+floatArr[9]?;
+
+byteArr[0]?;
+byteArr[9]?;
+
+tetraArr[0]?;
+tetraArr[9]?;
+
+strArr[0]?;
+strArr[9]?;

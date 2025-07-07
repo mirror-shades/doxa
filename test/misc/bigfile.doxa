@@ -148,10 +148,27 @@ arr[5]?; // 420000
 
 const checkAgainst is 333333;
 
-var initArr :: byte[10];
+var initArr :: int[10];
+var floatArr :: float[10];
+var byteArr :: byte[10];
+var tetraArr :: tetra[10];
+var strArr :: string[10];
 
 initArr[0]?;
 initArr[9]?;
+
+floatArr[0]?;
+floatArr[9]?;
+
+byteArr[0]?;
+byteArr[9]?;
+
+tetraArr[0]?;
+tetraArr[9]?;
+
+strArr[0]?;
+strArr[9]?;
+
 
 // quantifiers
 var ex is exists e in arr where e > checkAgainst;
@@ -235,6 +252,23 @@ Map["c"]?; // 3.5
 /////
 // TYPEOF AND INFERENCE
 /////
+
+var __int :: int;
+__int?; // 0
+
+var __float :: float;
+__float?; // 0.0
+
+var __byte :: byte;
+__byte?; // 0x00
+
+var __tetra :: tetra;
+__tetra?; // false
+
+var __string :: string;
+__string?; // ""
+
+
 var _int is 5;
 typeof(_int)?; // int
 
@@ -246,7 +280,6 @@ typeof(_float)?; // float
 
 var _string is "hello";
 typeof(_string)?; // string
-
 
 var _tetra is both;
 typeof(_tetra)?; // tetra

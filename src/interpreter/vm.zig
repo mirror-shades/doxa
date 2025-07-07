@@ -806,7 +806,7 @@ pub const HIRVM = struct {
                 const b = try self.stack.pop();
                 const a_val = try self.stack.pop();
 
-                // IMPROVED TYPE CHECKING: Handle non-integer values gracefully
+                // IMPROVED TYPE CHECKING: Handle non-integer values gracefully and preserve original type
                 const a_int = switch (a_val.value) {
                     .int => |i| i,
                     .byte => |u| @as(i32, u),
@@ -851,7 +851,13 @@ pub const HIRVM = struct {
                     .Mod => try self.fastIntMod(a_int, b_int), // Use optimized modulo
                 };
 
-                try self.stack.push(HIRFrame.initInt(result));
+                // CRITICAL FIX: Preserve the original type when possible
+                // If the first operand was a byte and result fits in byte range, return as byte
+                if (a_val.value == .byte and result >= 0 and result <= 255) {
+                    try self.stack.push(HIRFrame.initU8(@intCast(result)));
+                } else {
+                    try self.stack.push(HIRFrame.initInt(result));
+                }
             },
 
             .FloatArith => |a| {
