@@ -508,11 +508,6 @@ pub const HIRGenerator = struct {
                                 else => HIRType.Auto,
                             } else HIRType.Auto;
 
-                            // DEBUG: Print array creation info
-                            if (self.debug_enabled) {
-                                std.debug.print("HIR: Creating array for {s}, size={}, element_type={s}\n", .{ decl.name.lexeme, size, @tagName(element_type) });
-                            }
-
                             // Create the array
                             try self.instructions.append(.{ .ArrayNew = .{
                                 .element_type = element_type,
@@ -4285,7 +4280,7 @@ const SoxaTextParser = struct {
         } else if (std.mem.eql(u8, op, "ArrayNew")) {
             const type_str = tokens.next() orelse return;
             const size_str = tokens.next() orelse return;
-            const element_type = if (std.mem.eql(u8, type_str, "Int")) HIRType.Int else if (std.mem.eql(u8, type_str, "Float")) HIRType.Float else if (std.mem.eql(u8, type_str, "String")) HIRType.String else HIRType.Auto;
+            const element_type = if (std.mem.eql(u8, type_str, "Int")) HIRType.Int else if (std.mem.eql(u8, type_str, "Float")) HIRType.Float else if (std.mem.eql(u8, type_str, "String")) HIRType.String else if (std.mem.eql(u8, type_str, "Byte")) HIRType.Byte else if (std.mem.eql(u8, type_str, "Tetra")) HIRType.Tetra else HIRType.Auto;
             const size = std.fmt.parseInt(u32, size_str, 10) catch return;
             try self.instructions.append(HIRInstruction{ .ArrayNew = .{ .element_type = element_type, .size = size } });
         } else if (std.mem.eql(u8, op, "ArrayGet")) {
