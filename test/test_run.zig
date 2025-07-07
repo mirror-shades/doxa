@@ -98,7 +98,7 @@ const expected_results = [_]result{
     .{ .type = "string", .value = "\"struct\"" },
     .{ .type = "string", .value = "\"Employee\"" },
     .{ .type = "string", .value = "\"enum\"" },
-    .{ .type = "string", .value = "\"enum_variant\"" },
+    .{ .type = "string", .value = "\"Color\"" },
     .{ .type = "string", .value = "\"tuple\"" },
     .{ .type = "string", .value = "\"map\"" },
 };
@@ -158,13 +158,14 @@ test "big file" {
     var i: usize = 0;
     while (i < outputs.items.len) : (i += 1) {
         if (std.mem.eql(u8, outputs.items[i].type, expected_results[i].type) and std.mem.eql(u8, outputs.items[i].value, expected_results[i].value)) {
-            std.debug.print("expected: {s} {s} found: {s} {s}\n", .{ expected_results[i].type, expected_results[i].value, outputs.items[i].type, outputs.items[i].value });
             continue;
         }
         std.debug.print("Test {d} failed\n", .{i});
         std.debug.print("Expected: {s} {s} found {s} {s}\n", .{ expected_results[i].type, expected_results[i].value, outputs.items[i].type, outputs.items[i].value });
         break;
     }
+    std.debug.print("verified {d} test cases\n", .{i});
+    std.debug.print("\n=== Big file test complete ===\n", .{});
 }
 
 fn parseOutput(output: []const u8, allocator: std.mem.Allocator) !std.ArrayList(result) {

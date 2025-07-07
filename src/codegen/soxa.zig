@@ -431,6 +431,12 @@ pub const HIRGenerator = struct {
                     // Only infer type if no explicit annotation was provided
                     if (var_type == .Auto) {
                         var_type = self.inferTypeFromExpression(init_expr);
+
+                        // FIXED: Extract custom type name from struct literals
+                        if (var_type == .Struct and init_expr.data == .StructLiteral) {
+                            const struct_lit = init_expr.data.StructLiteral;
+                            try self.trackVariableCustomType(decl.name.lexeme, struct_lit.name.lexeme);
+                        }
                     }
                 } else {
                     // No initializer - push default value based on type
@@ -699,6 +705,7 @@ pub const HIRGenerator = struct {
                     // Similar for OR but with inverted logic
                     try self.generateExpression(log.left);
                     try self.generateExpression(log.right);
+                    try self.instructions.append(.{ .LogicalOp = .{ .op = .Or } });
                     // Simple OR for now - TODO: add short-circuit optimization
                 } else if (log.operator.type == .IFF) {
                     // IFF (if and only if): A ↔ B - true when A and B have same truth value
@@ -1640,13 +1647,17 @@ pub const HIRGenerator = struct {
                     .Nothing => "nothing",
                     .Array => "array",
                     .Struct => blk: {
-                        // For struct types, try to get the specific struct name
                         if (expr_to_check.data == .Variable) {
                             const var_name = expr_to_check.data.Variable.lexeme;
                             if (self.isCustomType(var_name)) |custom_type| {
                                 if (custom_type.kind == .Struct) {
-                                    break :blk var_name; // Return the specific struct name
+                                    break :blk "struct"; // Type declaration returns "struct"
                                 }
+                            }
+
+                            // Check if this is an instance (mike)
+                            if (self.variable_custom_types.get(var_name)) |custom_type_name| {
+                                break :blk custom_type_name; // Instance returns type name
                             }
                         }
                         break :blk "struct"; // Generic struct type
@@ -1654,15 +1665,33 @@ pub const HIRGenerator = struct {
                     .Tuple => "tuple",
                     .Map => "map",
                     .Enum => blk: {
-                        // For enum types, try to get the specific enum name
                         if (expr_to_check.data == .Variable) {
                             const var_name = expr_to_check.data.Variable.lexeme;
                             if (self.isCustomType(var_name)) |custom_type| {
                                 if (custom_type.kind == .Enum) {
-                                    break :blk var_name; // Return the specific enum name
+                                    break :blk "enum"; // Type declaration returns "enum"
+                                }
+                            }
+
+                            // Check if this is an instance or enum member
+                            if (self.variable_custom_types.get(var_name)) |custom_type_name| {
+                                break :blk custom_type_name; // Instance returns type name
+                            }
+                        }
+
+                        // Handle enum member access like Color.Blue
+                        if (expr_to_check.data == .FieldAccess) {
+                            const field_access = expr_to_check.data.FieldAccess;
+                            if (field_access.object.data == .Variable) {
+                                const obj_name = field_access.object.data.Variable.lexeme;
+                                if (self.isCustomType(obj_name)) |custom_type| {
+                                    if (custom_type.kind == .Enum) {
+                                        break :blk obj_name; // Color.Blue returns "Color"
+                                    }
                                 }
                             }
                         }
+
                         break :blk "enum"; // Generic enum type
                     },
                     .Function => "function",

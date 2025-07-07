@@ -10,8 +10,6 @@ const TypesImport = @import("./types/types.zig");
 const TokenLiteral = TypesImport.TokenLiteral;
 const Environment = TypesImport.Environment;
 const env = @import("./interpreter/environment.zig");
-const DeprecatedInterpreterImport = @import("./interpreter/interpreter_deprecated.zig");
-const DeprecatedInterpreter = DeprecatedInterpreterImport.Interpreter;
 const ASTWriter = @import("./utils/ast_writer.zig");
 const ASTReader = @import("./utils/ast_reader.zig");
 const AST = @import("./ast/ast.zig");
@@ -85,28 +83,6 @@ const SourceFile = struct {
 ///==========================================================================
 /// Interpret
 ///==========================================================================
-fn interpreter_deprecated(memoryManager: *MemoryManager, parser: *Parser, statements: []AST.Stmt, reporter: *Reporter) !void {
-    var global_env = try memoryManager.getAllocator().create(Environment);
-    global_env.* = env.init(memoryManager.getAllocator(), null, reporter.is_debug, memoryManager);
-    defer {
-        global_env.deinit();
-        memoryManager.getAllocator().destroy(global_env);
-    }
-
-    var deprecated_interpreter = DeprecatedInterpreter.init(
-        memoryManager.getAllocator(),
-        global_env,
-        parser, // Now we can pass the pointer directly
-        reporter.is_debug,
-        memoryManager,
-        reporter,
-    );
-
-    defer deprecated_interpreter.deinit();
-
-    try deprecated_interpreter.interpret(statements);
-}
-
 /// Generate a path for an artifact file based on the source file path
 fn generateArtifactPath(memoryManager: *MemoryManager, source_path: []const u8, extension: []const u8) ![]u8 {
     // Find the last path separator to extract the filename
@@ -238,16 +214,7 @@ fn processFile(memoryManager: *MemoryManager, path: []const u8, cli_options: CLI
     defer memoryManager.getAllocator().free(ast_path);
     try ASTWriter.writeASTToFile(statements, ast_path);
 
-    switch (cli_options.command) {
-        .run, .compile => {
-            // Production pipeline: .doxa → .soxa → [HIR VM | LLVM IR]
-            try processSoxaPipeline(memoryManager, path, cli_options, reporter);
-        },
-
-        .deprecated_interpreter => {
-            try interpreter_deprecated(memoryManager, &parser, statements, reporter);
-        },
-    }
+    try processSoxaPipeline(memoryManager, path, cli_options, reporter);
 }
 
 ///==========================================================================
