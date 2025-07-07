@@ -1,11 +1,17 @@
+/////
+//IMPORTS
+/////
 import "./safeMath.doxa" as safeMath;
 
 // complex import statement
-var import1 is safeMath.safeAdd(1, 2);
-import1?;
-var import2 is safeMath.safeAdd(1000, 2);
-import2?;
+var import1 is safeMath.safeAdd(15, 66);
+import1?; // 81
+var import2 is safeMath.safeAdd(1000, 2); // "Overflow"
+import2?; // -1
 
+/////
+// ENUMS, MATCH
+/////
 enum Color {
     Red,
     Green,
@@ -19,7 +25,7 @@ var result is match b {
     .Red => "It's red",
     .Blue => "It's blue",
     else => "It's something else",
-};
+}; 
 
 result?; // It's blue
 
@@ -31,11 +37,12 @@ result is match g {
 
 result?; // It's something else
 
-
-// functions and loops / recursion
-function fizzbuzz(x:: int) {
+/////
+// FUNCTIONS AND LOOPS / RECURSION
+/////
+function fizzbuzz(x:: int, limit:: int) {
     var current is x;
-    while current <= 15 {
+    while current <= limit {
         if current % 3 equals 0 and current % 5 equals 0 then "fizzbuzz"?;
         else if current % 3 equals 0 then "fizz"?;
         else if current % 5 equals 0 then "buzz"?;
@@ -45,27 +52,27 @@ function fizzbuzz(x:: int) {
     }
 }
 
-fizzbuzz(1);//fizzbuzz 1-15
+fizzbuzz(100, 115);//fizzbuzz 1-15
 
 
-fn fber(x:: int) {
+fn fber(x:: int, limit:: int) {
     if x % 3 equals 0 and x % 5 equals 0 then "fizzbuzzer"?;
     else if x % 3 equals 0 then "fizzer"?;
     else if x % 5 equals 0 then "buzzer"?;
     else x?;
 
-    if x < 15 then fber(x + 1);
+    if x < limit then fber(x + 1, limit);
 }
 
-fber(1); //fizzerbuzzer 1-15
+fber(1000, 1015); //fizzerbuzzer 1-15
 
 fn forloop(x :: int) {
     for (var i is 0; i < x; i++) {
-        (i+1)?;
+        ((i+10)*66)?;
     }
 }
 
-forloop(5); //just lists 1-5
+forloop(5); //660, 726, 792, 858, 924
 
 // return statements
 fn return_test() returns(string) {
@@ -74,8 +81,9 @@ fn return_test() returns(string) {
 
 return_test()?; // return
 
-
-// structs
+/////
+// STRUCTS AND BYTES
+/////
 struct Person {
     name :: string,
     age :: int,
@@ -107,7 +115,9 @@ bytesof(mike.person.name)[0]?; // 77
 
 mike.salary?; // 1000
 
-// Tetras and contradictions
+/////
+// TETRAS AND CONTRADICTIONS
+/////
 var firstFold :: tetra is true;
 var secondFold :: tetra is false;
 var thirdFold :: tetra is both;
@@ -124,53 +134,65 @@ fourthFold?;
 (neither equals true or neither equals false)?;
 
 
-// arrays
-var arr :: int[] is [1, 2, 3, 4, 5];
+/////
+// ARRAYS
+/////
+var arr :: int[] is [111111, 222222, 333333, 444444, 555555];
 
 arr?;
-arr[3]?; // 4
-arr[3] is 6;
-arr[3]?; // 6
-arr.push(42);
-arr[5]?; // 42
+arr[3]?; // 444444
+arr[3] is 666666;
+arr[3]?; // 666666
+arr.push(420000);
+arr[5]?; // 420000
+
+const checkAgainst is 333333;
 
 // quantifiers
-var ex is exists e in arr where e > 3;
+var ex is exists e in arr where e > checkAgainst;
 
 ex?; // true
 
-var uni is forall u in arr where u > 3;
+var uni is forall u in arr where u > checkAgainst;
 uni?; // false
 
-// conditionals
+/////
+// CONDITIONALS
+/////
 var condition is if true then "true" else "false";
 condition?; // true
 
-// default arguments
+/////
+// DEFAULT ARGUMENTS
+/////
 fn foo(a :: int, b :: int is 5) returns(int) {
     return a+b;
 }
 
-foo(1, 2)?; // 3
-foo(1, ~)?; // 6
+foo(777, 2)?; // 779
+foo(777, ~)?; // 782
 
-// tuple
-var point is (: 10, 20, 30, 40, 50 :);
-point[0]?; // 10
-point[1]?; // 20
+/////
+// TUPLES
+/////
+var point is (: 1234, 2345 :);
+point[0]?; // 1234
+point[1]?; // 2345
 
-var point2 is (: (: 10, 20 :), (: 30, 40 :) :);
-point2[1][0]?; // 30
+var point2 is (: (: 10, "20" :), (: true, 40 :) :);
+point2[1][0]?; // true
 
-// map
+/////
+// MAPS
+/////
 var Map is {
-    "a": 1,
-    "b": 2,
-    "c": 3,
+    "a": 1.5,
+    "b": 2.5,
+    "c": 3.5,
 };
 
-Map["a"]?; // 1
-Map["c"]?; // 3
+Map["a"]?; // 1.5
+Map["c"]?; // 3.5
 
 // try catch
 const con :: int is 1;
@@ -179,12 +201,13 @@ try {
 } catch {
     "can't do that"?;
 }
-con?; // 1
 
-// formal logical notation
-(∃x ∈ arr : x > 3)?; // true  67
-(∀x ∈ arr : x > 3)?; // false  68
-(¬∀x ∈ arr : x > 3)?; // true  69
+/////   
+// FORMAL LOGICAL NOTATION
+/////
+(∃x ∈ arr : x > checkAgainst)?; // true  67
+(∀x ∈ arr : x > checkAgainst)?; // false  68
+(¬∀x ∈ arr : x > checkAgainst)?; // true  69
 (false ↔ false)?; // true  70
 (true ⊕ true)?; // false  71
 (true ∧ false)?; // false  72
@@ -204,12 +227,13 @@ con?; // 1
     ?
 ; // true
 
-
-// typeof
+/////
+// TYPEOF AND INFERENCE
+/////
 var _int is 5;
 typeof(_int)?; // int
 
-var _byte :: byte is 255;
+var _byte is 0xff;
 typeof(_byte)?; // byte
 
 var _float is 5.5;
