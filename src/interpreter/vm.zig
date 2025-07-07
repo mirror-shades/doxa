@@ -1574,6 +1574,12 @@ pub const HIRVM = struct {
                             const comparison_value = try self.stack.pop();
                             const array = try self.stack.pop();
 
+                            if (self.debug_enabled) {
+                                std.debug.print("DoxVM: Debug: forall_quantifier_gt: comparison_value = ", .{});
+                                try self.printHIRValue(comparison_value.value);
+                                std.debug.print("\n", .{});
+                            }
+
                             switch (array.value) {
                                 .array => |arr| {
                                     // Check if all elements are greater than comparison_value
@@ -1587,7 +1593,13 @@ pub const HIRVM = struct {
                                         // Check if element > comparison_value
                                         const satisfies_condition = switch (elem) {
                                             .int => |elem_int| switch (comparison_value.value) {
-                                                .int => |comp_int| elem_int > comp_int,
+                                                .int => |comp_int| blk: {
+                                                    const result = elem_int > comp_int;
+                                                    if (self.debug_enabled) {
+                                                        std.debug.print("DoxVM: Debug: forall check: {} > {} = {}\n", .{ elem_int, comp_int, result });
+                                                    }
+                                                    break :blk result;
+                                                },
                                                 else => false,
                                             },
                                             .float => |elem_float| switch (comparison_value.value) {
@@ -1599,11 +1611,17 @@ pub const HIRVM = struct {
                                         };
                                         if (!satisfies_condition) {
                                             all_satisfy = false;
+                                            if (self.debug_enabled) {
+                                                std.debug.print("DoxVM: Debug: forall: condition failed, setting all_satisfy = false\n", .{});
+                                            }
                                             break;
                                         }
                                     }
+                                    if (self.debug_enabled) {
+                                        std.debug.print("DoxVM: Debug: forall final: has_elements = {}, all_satisfy = {}\n", .{ has_elements, all_satisfy });
+                                    }
                                     // For empty arrays, forall returns true (vacuous truth)
-                                    try self.stack.push(HIRFrame.initTetra(if (!has_elements or all_satisfy) 1 else 0));
+                                    try self.stack.push(HIRFrame.initTetra(if ((!has_elements) or all_satisfy) 1 else 0));
                                 },
                                 else => return self.reporter.reportError("forall_quantifier_gt: argument must be array", .{}),
                             }
