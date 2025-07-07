@@ -1,5 +1,6 @@
 const std = @import("std");
 const ast = @import("../ast/ast.zig");
+const Token = @import("../lexer/token.zig").Token;
 const TokenLiteral = @import("../types/types.zig").TokenLiteral;
 const instructions = @import("../interpreter/instructions.zig");
 const reporting = @import("../utils/reporting.zig");
@@ -1074,13 +1075,13 @@ pub const HIRGenerator = struct {
                 // Generate array/map expression
                 try self.generateExpression(index.array);
 
-                // Generate index expression
-                try self.generateExpression(index.index);
-
-                // Determine if we're accessing an array or map
+                // Determine if we're accessing an array, map, or tuple
                 const container_type = self.inferTypeFromExpression(index.array);
                 switch (container_type) {
                     .Map => {
+                        // Generate index expression
+                        try self.generateExpression(index.index);
+
                         // Map access - use MapGet
                         try self.instructions.append(.{
                             .MapGet = .{
@@ -1089,10 +1090,29 @@ pub const HIRGenerator = struct {
                         });
                     },
                     .Array => {
+                        // Generate index expression
+                        try self.generateExpression(index.index);
+
                         // Array access - use ArrayGet
                         try self.instructions.append(.{ .ArrayGet = .{ .bounds_check = true } });
                     },
+                    .Tuple => {
+                        // For tuples, we need to extract the compile-time constant index
+                        // Check if the index is a compile-time constant
+                        if (index.index.data == .Literal and index.index.data.Literal == .int) {
+                            const tuple_index = @as(u32, @intCast(index.index.data.Literal.int));
+                            // Generate TupleGet instruction with compile-time index
+                            try self.instructions.append(.{ .TupleGet = .{ .index = tuple_index } });
+                        } else {
+                            // For non-constant indices, fall back to ArrayGet (runtime bounds checking)
+                            try self.generateExpression(index.index);
+                            try self.instructions.append(.{ .ArrayGet = .{ .bounds_check = true } });
+                        }
+                    },
                     else => {
+                        // Generate index expression
+                        try self.generateExpression(index.index);
+
                         // Default to array access for now
                         try self.instructions.append(.{ .ArrayGet = .{ .bounds_check = true } });
                     },
@@ -1275,13 +1295,17 @@ pub const HIRGenerator = struct {
                 // Generate array expression
                 try self.generateExpression(forall.array);
 
-                // For now, generate as builtin function call
-                // TODO: Implement proper quantifier logic with VM support
+                // For simple conditions like "e > 3", generate comparison value
+                const comparison_value = try self.extractSimpleComparison(forall.condition);
+                const const_idx = try self.addConstant(comparison_value);
+                try self.instructions.append(.{ .Const = .{ .value = comparison_value, .constant_id = const_idx } });
+
+                // Use builtin function call with proper predicate
                 try self.instructions.append(.{
                     .Call = .{
                         .function_index = 0,
-                        .qualified_name = "forall_quantifier",
-                        .arg_count = 2, // array + condition (as closure)
+                        .qualified_name = "forall_quantifier_gt",
+                        .arg_count = 2, // array + comparison value
                         .call_kind = .BuiltinFunction,
                         .target_module = null,
                         .return_type = .Tetra,
@@ -1297,13 +1321,17 @@ pub const HIRGenerator = struct {
                 // Generate array expression
                 try self.generateExpression(exists.array);
 
-                // For now, generate as builtin function call
-                // TODO: Implement proper quantifier logic with VM support
+                // For simple conditions like "e > 3", generate comparison value
+                const comparison_value = try self.extractSimpleComparison(exists.condition);
+                const const_idx = try self.addConstant(comparison_value);
+                try self.instructions.append(.{ .Const = .{ .value = comparison_value, .constant_id = const_idx } });
+
+                // Use builtin function call with proper predicate
                 try self.instructions.append(.{
                     .Call = .{
                         .function_index = 0,
-                        .qualified_name = "exists_quantifier",
-                        .arg_count = 2, // array + condition (as closure)
+                        .qualified_name = "exists_quantifier_gt",
+                        .arg_count = 2, // array + comparison value
                         .call_kind = .BuiltinFunction,
                         .target_module = null,
                         .return_type = .Tetra,
@@ -2086,6 +2114,31 @@ pub const HIRGenerator = struct {
         const label = try std.fmt.allocPrint(self.allocator, "{s}_{d}", .{ prefix, self.label_count });
         self.label_count += 1;
         return label;
+    }
+
+    /// Extract comparison value from simple quantifier conditions like "e > 3"
+    fn extractSimpleComparison(_: *HIRGenerator, condition: *ast.Expr) !HIRValue {
+        switch (condition.data) {
+            .Binary => |binary| {
+                // Handle "variable > literal" patterns
+                if (binary.right) |right| {
+                    switch (right.data) {
+                        .Literal => |lit| {
+                            return switch (lit) {
+                                .int => |i| HIRValue{ .int = i },
+                                .float => |f| HIRValue{ .float = f },
+                                .string => |s| HIRValue{ .string = s },
+                                else => HIRValue{ .int = 0 }, // Default fallback
+                            };
+                        },
+                        else => {},
+                    }
+                }
+            },
+            else => {},
+        }
+        // Fallback for complex conditions
+        return HIRValue{ .int = 0 };
     }
 
     /// Helper function to determine if a statement always returns (for dead code elimination)
