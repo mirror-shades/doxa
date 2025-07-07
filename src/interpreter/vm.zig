@@ -1757,6 +1757,32 @@ pub const HIRVM = struct {
                                 },
                                 else => return self.reporter.reportError("forall_quantifier_gt: argument must be array", .{}),
                             }
+                        } else if (std.mem.eql(u8, c.qualified_name, "input")) {
+                            // Read input from stdin
+                            const stdin = std.io.getStdIn().reader();
+
+                            // Allocate a buffer for input
+                            const input_buffer = try self.allocator.alloc(u8, 1024);
+                            defer self.allocator.free(input_buffer);
+
+                            // Read a line from stdin
+                            const maybe_line = try stdin.readUntilDelimiterOrEof(input_buffer, '\n');
+
+                            if (maybe_line) |line| {
+                                // Remove trailing carriage return if present (Windows compatibility)
+                                const cleaned_line = if (line.len > 0 and line[line.len - 1] == '\r')
+                                    line[0 .. line.len - 1]
+                                else
+                                    line;
+
+                                // Create a copy of the input string in VM memory
+                                const input_string = try self.allocator.dupe(u8, cleaned_line);
+                                try self.stack.push(HIRFrame.initString(input_string));
+                            } else {
+                                // EOF reached, return empty string
+                                const empty_string = try self.allocator.dupe(u8, "");
+                                try self.stack.push(HIRFrame.initString(empty_string));
+                            }
                         } else {
                             return self.reporter.reportError("Unknown built-in function: {s}", .{c.qualified_name});
                         }

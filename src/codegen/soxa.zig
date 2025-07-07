@@ -2234,6 +2234,20 @@ pub const HIRGenerator = struct {
                 } });
             },
 
+            .Input => |_| {
+                // Generate input call as a builtin function
+                try self.instructions.append(.{
+                    .Call = .{
+                        .function_index = 0,
+                        .qualified_name = "input",
+                        .arg_count = 0,
+                        .call_kind = .BuiltinFunction,
+                        .target_module = null,
+                        .return_type = .String,
+                    },
+                });
+            },
+
             else => {
                 // Push nothing as fallback
                 const nothing_idx = try self.addConstant(HIRValue.nothing);
@@ -2843,6 +2857,9 @@ pub const HIRGenerator = struct {
                     std.mem.eql(u8, function_name, "println"))
                 {
                     return .Nothing;
+                }
+                if (std.mem.eql(u8, function_name, "input")) {
+                    return .String;
                 }
                 return .String; // Default for unknown builtins
             },
