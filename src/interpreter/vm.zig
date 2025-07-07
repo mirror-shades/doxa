@@ -318,6 +318,26 @@ pub const HIRVM = struct {
     // Add string interner to VM
     string_interner: *StringInterner,
 
+    pub fn tokenLiteralToHIRValueWithType(self: *HIRVM, token_literal: TokenLiteral, type_info: TypeInfo) HIRValue {
+        // If the type info indicates this should be a tuple, convert arrays to tuples
+        if (type_info.base == .Tuple and token_literal == .array) {
+            const arr = token_literal.array;
+            var hir_elements = self.allocator.alloc(HIRValue, arr.len) catch return HIRValue.nothing;
+
+            for (arr, 0..) |element, i| {
+                hir_elements[i] = self.tokenLiteralToHIRValue(element);
+            }
+
+            return HIRValue{ .tuple = .{
+                .elements = hir_elements,
+                .path = null,
+            } };
+        }
+
+        // Otherwise, use the regular conversion
+        return self.tokenLiteralToHIRValue(token_literal);
+    }
+
     pub fn tokenLiteralToHIRValue(self: *HIRVM, token_literal: TokenLiteral) HIRValue {
         return switch (token_literal) {
             .int => |i| HIRValue{ .int = i },
@@ -413,6 +433,14 @@ pub const HIRVM = struct {
                 // Convert HIRArray to TokenLiteral array
                 var token_elements = self.allocator.alloc(TokenLiteral, arr.elements.len) catch break :blk TokenLiteral{ .nothing = {} };
                 for (arr.elements, 0..) |element, i| {
+                    token_elements[i] = self.hirValueToTokenLiteral(element);
+                }
+                break :blk TokenLiteral{ .array = token_elements };
+            },
+            .tuple => |t| blk: {
+                // Convert HIRTuple to TokenLiteral array (tuples are stored as arrays)
+                var token_elements = self.allocator.alloc(TokenLiteral, t.elements.len) catch break :blk TokenLiteral{ .nothing = {} };
+                for (t.elements, 0..) |element, i| {
                     token_elements[i] = self.hirValueToTokenLiteral(element);
                 }
                 break :blk TokenLiteral{ .array = token_elements };
@@ -626,12 +654,16 @@ pub const HIRVM = struct {
             },
 
             .LoadVar => |v| {
+                if (self.debug_enabled) {
+                    std.debug.print("DoxVM: Debug: LoadVar {} \"{s}\" - Stack size before: {}\n", .{ v.var_index, v.var_name, self.stack.size() });
+                }
+
                 if (self.turbo_mode) {
                     // TURBO: Check hot variable cache first (array lookup - fastest possible)
                     for (self.hot_vars[0..self.hot_var_count]) |hot_var| {
                         if (hot_var != null and std.mem.eql(u8, hot_var.?.name, v.var_name)) {
                             if (self.memory_manager.scope_manager.value_storage.get(hot_var.?.storage_id)) |storage| {
-                                const hir_value = self.tokenLiteralToHIRValue(storage.value);
+                                const hir_value = self.tokenLiteralToHIRValueWithType(storage.value, storage.type_info);
                                 try self.stack.push(HIRFrame.initFromHIRValue(hir_value));
                                 return; // Ultra-fast path
                             }
@@ -645,7 +677,7 @@ pub const HIRVM = struct {
                     // Check cache first - trust storage_id if valid
                     if (self.var_cache.get(v.var_name)) |cached_storage_id| {
                         if (self.memory_manager.scope_manager.value_storage.get(cached_storage_id)) |storage| {
-                            const hir_value = self.tokenLiteralToHIRValue(storage.value);
+                            const hir_value = self.tokenLiteralToHIRValueWithType(storage.value, storage.type_info);
 
                             try self.stack.push(HIRFrame.initFromHIRValue(hir_value));
                             return; // Ultra-fast cached path
@@ -664,9 +696,13 @@ pub const HIRVM = struct {
                             self.var_cache.put(v.var_name, variable.storage_id) catch {};
                         }
 
-                        const hir_value = self.tokenLiteralToHIRValue(storage.value);
+                        const hir_value = self.tokenLiteralToHIRValueWithType(storage.value, storage.type_info);
 
                         try self.stack.push(HIRFrame.initFromHIRValue(hir_value));
+
+                        if (self.debug_enabled) {
+                            std.debug.print("DoxVM: Debug: LoadVar {} \"{s}\" - Stack size after: {}, loaded value: {s}\n", .{ v.var_index, v.var_name, self.stack.size(), @tagName(hir_value) });
+                        }
                     } else {
                         return self.reporter.reportError("Variable storage not found for: {s}", .{v.var_name});
                     }
@@ -1922,20 +1958,34 @@ pub const HIRVM = struct {
             },
 
             .TupleGet => |tuple_get| {
+                if (self.debug_enabled) {
+                    std.debug.print("DoxVM: Debug: TupleGet {} - Stack size before: {}\n", .{ tuple_get.index, self.stack.size() });
+                }
+
                 // Get the tuple from the stack
                 const frame = try self.stack.pop();
                 if (frame.value != .tuple) {
+                    if (self.debug_enabled) {
+                        std.debug.print("DoxVM: Debug: TupleGet error - expected tuple, got {s}\n", .{@tagName(frame.value)});
+                    }
                     return ErrorList.TypeError;
                 }
 
                 // Get the element at the specified index
                 const tuple = frame.value.tuple;
                 if (tuple_get.index >= tuple.elements.len) {
+                    if (self.debug_enabled) {
+                        std.debug.print("DoxVM: Debug: TupleGet error - index {} out of bounds (tuple has {} elements)\n", .{ tuple_get.index, tuple.elements.len });
+                    }
                     return ErrorList.IndexOutOfBounds;
                 }
 
                 // Push the element onto the stack
                 try self.stack.push(HIRFrame.initFromHIRValue(tuple.elements[tuple_get.index]));
+
+                if (self.debug_enabled) {
+                    std.debug.print("DoxVM: Debug: TupleGet {} - Stack size after: {}, value: {s}\n", .{ tuple_get.index, self.stack.size(), @tagName(tuple.elements[tuple_get.index]) });
+                }
             },
 
             .Map => |map| {
