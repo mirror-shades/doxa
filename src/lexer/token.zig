@@ -57,14 +57,11 @@ pub const TokenType = enum {
     BREAK, // break
     CONTINUE, // continue
     MATCH, // match
-    THROW, // throw
-    TRY, // try
-    CATCH, // catch
     WHILE, // while
     FOR, // for
     FOREACH, // foreach
     XOR, // xor
-    NOT_TRANCENDENTAL, // ⊖
+    NOT_PARADOXICAL, // ⊖
     EXISTS, // exists ∃
     FORALL, // forall ∀
     FROM, // from
@@ -109,7 +106,6 @@ pub const TokenType = enum {
     LOGIC, // logic
     STRUCT, // struct
     ENUM, // enum
-    AUTO, // auto
     TUPLE, // tuple
     MAP, // map
 
@@ -122,7 +118,6 @@ pub const TokenType = enum {
     ARRAY_TYPE, // array type declaration
     STRUCT_TYPE, // struct type declaration
     ENUM_TYPE, // enum type declaration
-    AUTO_TYPE, // auto type declaration
     TUPLE_TYPE, // tuple type declaration
     MAP_TYPE, // map type declaration
     NOTHING, // nothing
@@ -184,7 +179,5 @@ pub fn convertTokenTypeToTypeInfo(token_type: TokenType) ast.TypeInfo {
         .STRING => ast.TypeInfo{ .base = .String, .is_mutable = true },
         .TETRA => ast.TypeInfo{ .base = .Tetra, .is_mutable = true },
         .ARRAY => ast.TypeInfo{ .base = .Array, .is_mutable = true },
-        // Add more mappings as needed
-        else => ast.TypeInfo{ .base = .Auto, .is_mutable = true },
     };
 }

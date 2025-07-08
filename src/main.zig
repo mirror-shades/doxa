@@ -10,13 +10,13 @@ const TypesImport = @import("./types/types.zig");
 const TokenLiteral = TypesImport.TokenLiteral;
 const Environment = TypesImport.Environment;
 const env = @import("./interpreter/environment.zig");
+const DoxaVM = @import("./interpreter/vm.zig").HIRVM;
+const ConstantFolder = @import("./parser/constant_folder.zig").ConstantFolder;
 const ASTWriter = @import("./utils/ast_writer.zig");
 const ASTReader = @import("./utils/ast_reader.zig");
 const AST = @import("./ast/ast.zig");
-const SoxaCompiler = @import("./codegen/soxa.zig");
-const DoxaVM = @import("./interpreter/vm.zig").HIRVM;
-const ConstantFolder = @import("./parser/constant_folder.zig").ConstantFolder;
-const PeepholeOptimizer = @import("./codegen/peephole.zig").PeepholeOptimizer;
+const SoxaCompiler = @import("./codegen/hir/soxa.zig");
+const PeepholeOptimizer = @import("./codegen/hir/peephole.zig").PeepholeOptimizer;
 
 ///==========================================================================
 /// Constants
@@ -290,7 +290,13 @@ fn runSoxaFile(memoryManager: *MemoryManager, soxa_path: []const u8, reporter: *
     var vm = try DoxaVM.init(&hir_program, reporter, memoryManager, reporter.is_debug);
     defer vm.deinit();
 
-    _ = try vm.run();
+    // Ensure cleanup happens even on error
+    _ = vm.run() catch |err| {
+        if (reporter.is_debug) {
+            std.debug.print("VM execution error: {}\n", .{err});
+        }
+        return err;
+    };
 }
 
 pub fn main() !void {
@@ -299,15 +305,21 @@ pub fn main() !void {
     var reporter = Reporter.initWithAllocator(gpa.allocator());
     defer reporter.deinit();
 
+    // Parse args first
+    const cli_options = try parseArgs(gpa.allocator(), &reporter);
+    // Set debug mode based on CLI options
+    reporter.is_debug = cli_options.debug;
+
+    // IMPORTANT: GPA deinit check must be the FIRST defer so it runs LAST (after all cleanup)
     defer {
         const leaked = gpa.deinit();
         if (leaked == .leak) reporter.reportError("Warning: Memory leak detected!\n", .{});
     }
 
-    // Parse args first
-    const cli_options = try parseArgs(gpa.allocator(), &reporter);
-    // Set debug mode based on CLI options
-    reporter.is_debug = cli_options.debug;
+    // Initialize memory manager with debug setting
+    var memoryManager = try MemoryManager.init(gpa.allocator(), cli_options.debug);
+    defer memoryManager.deinit();
+
     // Ensure script_path is freed
     defer if (cli_options.script_path) |path| {
         gpa.allocator().free(path);
@@ -315,10 +327,6 @@ pub fn main() !void {
 
     reporter.debug("=== DOXA MAIN STARTED ===\n", .{});
     reporter.debug("=== CLI OPTIONS: command={s}, debug={}, keep_intermediate={} ===\n", .{ @tagName(cli_options.command), cli_options.debug, cli_options.keep_intermediate });
-
-    // Initialize memory manager with debug setting
-    var memoryManager = try MemoryManager.init(gpa.allocator(), cli_options.debug);
-    defer memoryManager.deinit();
 
     if (cli_options.output) |out_file| {
         output_file = out_file;

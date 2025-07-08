@@ -3,7 +3,7 @@ const HIRType = @import("soxa_types.zig").HIRType;
 const HIRMapEntry = @import("soxa_values.zig").HIRMapEntry;
 const ScopeKind = @import("soxa_types.zig").ScopeKind;
 const CallKind = @import("soxa_types.zig").CallKind;
-const Reporting = @import("../utils/reporting.zig");
+const Reporting = @import("../../utils/reporting.zig");
 
 pub const ArithOp = enum { Add, Sub, Mul, Div, Mod };
 

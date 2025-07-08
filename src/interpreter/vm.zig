@@ -1,8 +1,8 @@
 const std = @import("std");
-const hir_soxa = @import("../codegen/soxa.zig");
-const hir_instructions = @import("../codegen/soxa_instructions.zig");
-const hir_values = @import("../codegen/soxa_values.zig");
-const hir_types = @import("../codegen/soxa_types.zig");
+const hir_soxa = @import("../codegen/hir/soxa.zig");
+const hir_instructions = @import("../codegen/hir/soxa_instructions.zig");
+const hir_values = @import("../codegen/hir/soxa_values.zig");
+const hir_types = @import("../codegen/hir/soxa_types.zig");
 const HIRInstruction = hir_instructions.HIRInstruction;
 const HIRValue = hir_values.HIRValue;
 const HIRArray = hir_values.HIRArray;
@@ -132,12 +132,56 @@ fn hirStructFieldToStructField(self: *HIRVM, hir_field: HIRStructField) !types.S
 }
 
 fn structFieldToHIRStructField(self: *HIRVM, field: types.StructField) !HIRStructField {
+    const hir_value = self.tokenLiteralToHIRValue(field.value);
     return HIRStructField{
         .name = try self.allocator.dupe(u8, field.name),
-        .value = self.tokenLiteralToHIRValue(field.value),
-        .field_type = .Auto,
+        .value = hir_value,
+        .field_type = inferHIRType(hir_value), // Infer from actual value
         .path = null,
     };
+}
+
+// Add helper function to infer HIRType from HIRValue
+fn inferHIRType(hir_value: HIRValue) HIRType {
+    return switch (hir_value) {
+        .int => .Int,
+        .byte => .Byte,
+        .float => .Float,
+        .string => .String,
+        .tetra => .Tetra,
+        .nothing => .Nothing,
+        .array => .Array,
+        .struct_instance => .Struct,
+        .tuple => .Tuple,
+        .map => .Map,
+        .enum_variant => .Enum,
+    };
+}
+
+// Add helper function to infer common element type from array elements
+fn inferArrayElementType(elements: []HIRValue) HIRType {
+    if (elements.len == 0) return .Nothing;
+
+    // Get type of first non-nothing element
+    for (elements) |element| {
+        if (element != .nothing) {
+            return inferHIRType(element);
+        }
+    }
+    return .Nothing;
+}
+
+// Add helper function to infer map value type from entries
+fn inferMapValueType(entries: []HIRMapEntry) HIRType {
+    if (entries.len == 0) return .Nothing;
+
+    // Get type of first entry's value
+    for (entries) |entry| {
+        if (entry.value != .nothing) {
+            return inferHIRType(entry.value);
+        }
+    }
+    return .Nothing;
 }
 
 pub fn hirValueToTokenLiteral(self: *HIRVM, hir_value: HIRValue) TokenLiteral {
@@ -354,26 +398,13 @@ pub const HIRVM = struct {
             .array => |arr| blk: {
                 // Convert TokenLiteral array to HIRArray
                 var hir_elements = self.allocator.alloc(HIRValue, arr.len) catch break :blk HIRValue.nothing;
-                var element_type: HIRType = .Auto;
 
                 for (arr, 0..) |element, i| {
                     hir_elements[i] = self.tokenLiteralToHIRValue(element);
-
-                    // Infer element type from first element
-                    if (i == 0 and element_type == .Auto) {
-                        element_type = switch (hir_elements[i]) {
-                            .int => .Int,
-                            .byte => .Byte,
-                            .float => .Float,
-                            .string => .String,
-                            .tetra => .Tetra,
-                            .nothing => .Nothing,
-                            .array => .Array,
-                            .struct_instance => .Struct,
-                            else => .Auto,
-                        };
-                    }
                 }
+
+                // Infer element type from actual elements
+                const element_type = inferArrayElementType(hir_elements);
 
                 break :blk HIRValue{ .array = .{
                     .elements = hir_elements,
@@ -390,17 +421,7 @@ pub const HIRVM = struct {
                     hir_fields[i] = HIRStructField{
                         .name = field.name,
                         .value = field_value,
-                        // Infer field type from the value
-                        .field_type = switch (field_value) {
-                            .int => .Int,
-                            .byte => .Byte,
-                            .float => .Float,
-                            .string => .String,
-                            .tetra => .Tetra,
-                            .nothing => .Nothing,
-                            .struct_instance => .Struct,
-                            else => .Auto,
-                        },
+                        .field_type = inferHIRType(field_value), // Infer from actual value
                         .path = s.path,
                     };
                 }
@@ -423,12 +444,18 @@ pub const HIRVM = struct {
                     };
                     i += 1;
                 }
-                break :blk HIRValue{ .map = .{
-                    .entries = hir_entries,
-                    .key_type = .String,
-                    .value_type = .Auto,
-                    .path = null,
-                } };
+
+                // Infer value type from actual entries
+                const value_type = inferMapValueType(hir_entries);
+
+                break :blk HIRValue{
+                    .map = .{
+                        .entries = hir_entries,
+                        .key_type = .String, // Keys are strings in this case
+                        .value_type = value_type,
+                        .path = null,
+                    },
+                };
             },
             else => HIRValue.nothing,
         };
@@ -526,12 +553,11 @@ pub const HIRVM = struct {
             .string => TypeInfo{ .base = .String, .is_mutable = true },
             .tetra => TypeInfo{ .base = .Tetra, .is_mutable = true },
             .nothing => TypeInfo{ .base = .Nothing, .is_mutable = true },
-            // Complex types - map to appropriate TypeInfo
             .array => TypeInfo{ .base = .Array, .is_mutable = true },
-            .struct_instance => TypeInfo{ .base = .Auto, .is_mutable = true }, // Struct types need resolution
+            .struct_instance => TypeInfo{ .base = .Struct, .is_mutable = true },
             .tuple => TypeInfo{ .base = .Tuple, .is_mutable = true },
             .map => TypeInfo{ .base = .Map, .is_mutable = true },
-            .enum_variant => TypeInfo{ .base = .Auto, .is_mutable = true }, // Enum types need resolution
+            .enum_variant => TypeInfo{ .base = .Enum, .is_mutable = true },
         };
     }
 
@@ -570,12 +596,32 @@ pub const HIRVM = struct {
     }
 
     pub fn deinit(self: *HIRVM) void {
-        // Clean up the execution scope
+        if (self.debug_enabled) {
+            std.debug.print("DoxVM: Starting VM cleanup\n", .{});
+        }
+
+        // Clean up StringInterner
+        self.string_interner.deinit();
+        self.allocator.destroy(self.string_interner);
+
+        // Clean up hashmaps
+        self.label_map.deinit();
+        self.var_cache.deinit();
+
+        // Clean up stack and call stack
+        self.stack.deinit();
+        self.call_stack.deinit();
+
+        // Clean up the execution scope that was created for this VM
+        // This is safe because the execution scope was created specifically for this VM instance
+        if (self.debug_enabled) {
+            std.debug.print("DoxVM: Cleaning up execution scope\n", .{});
+        }
         self.current_scope.deinit();
 
-        // Note: stack, call_stack, label_map, and var_cache are allocated with
-        // the memory manager's arena allocator, so they'll be cleaned up automatically
-        // when the memory manager deinitializes its arena
+        if (self.debug_enabled) {
+            std.debug.print("DoxVM: VM cleanup completed\n", .{});
+        }
     }
 
     /// Pre-resolve all labels to instruction indices for O(1) jump lookup
@@ -603,10 +649,6 @@ pub const HIRVM = struct {
 
     /// Main execution loop - directly execute HIR instructions
     pub fn run(self: *HIRVM) !?HIRFrame {
-
-        // sanity check on soxa code
-        try self.validateHIRProgram();
-
         while (self.running and self.ip < self.program.instructions.len) {
             const instruction = self.program.instructions[self.ip];
 
@@ -624,69 +666,6 @@ pub const HIRVM = struct {
         }
 
         return null;
-    }
-
-    /// CRITICAL: Validate that no Auto types exist in the HIR program
-    fn validateHIRProgram(self: *HIRVM) !void {
-        for (self.program.instructions, 0..) |instruction, ip| {
-            switch (instruction) {
-                .Peek => |i| {
-                    if (i.value_type == .Auto) {
-                        self.reporter.reportError("FATAL: Auto type found in Peek instruction at IP {} for variable '{s}'. Type inference likely failed during code generation.", .{ ip, i.name orelse "unknown" });
-                        return ErrorList.InternalParserError;
-                    }
-                },
-
-                .PeekStruct => |i| {
-                    // Check for Auto types in field types
-                    for (i.field_types) |field_type| {
-                        if (field_type == .Auto) {
-                            self.reporter.reportError("FATAL: Auto type found in PeekStruct instruction at IP {} for field {}. Type inference likely failed during code generation.", .{ ip, i });
-                            return error.AutoTypeInPeekStruct;
-                        }
-                    }
-                },
-
-                .Compare => |c| {
-                    if (c.operand_type == .Auto) {
-                        self.reporter.reportError("FATAL: Auto operand_type found in Compare instruction at IP {}. Type inference likely failed during code generation.", .{ip});
-                        std.debug.print(">>   Compare instruction: {any}\n", .{c});
-                        return ErrorList.InternalParserError;
-                    }
-                },
-                .Convert => |c| {
-                    if (c.from_type == .Auto or c.to_type == .Auto) {
-                        self.reporter.reportError("FATAL: Auto type found in Convert instruction at IP {} (from: {s}, to: {s}). Type inference likely failed during code generation.", .{ ip, @tagName(c.from_type), @tagName(c.to_type) });
-                        std.debug.print(">>   Convert instruction: {any}\n", .{c});
-                        return ErrorList.InternalParserError;
-                    }
-                },
-                .Call => |c| {
-                    if (c.return_type == .Auto) {
-                        self.reporter.reportError("FATAL: Auto return_type found in Call instruction at IP {} for function '{s}'. Type inference likely failed during code generation.", .{ ip, c.qualified_name });
-                        std.debug.print(">>   Call instruction: {any}\n", .{c});
-                        return ErrorList.InternalParserError;
-                    }
-                },
-                .TailCall => |c| {
-                    if (c.return_type == .Auto) {
-                        self.reporter.reportError("FATAL: Auto return_type found in TailCall instruction at IP {} for function '{s}'. Type inference likely failed during code generation.", .{ ip, c.qualified_name });
-                        std.debug.print(">>   TailCall instruction: {any}\n", .{c});
-                        return ErrorList.InternalParserError;
-                    }
-                },
-                .Return => |r| {
-                    if (r.return_type == .Auto) {
-                        self.reporter.reportError("FATAL: Auto return_type found in Return instruction at IP {}. Type inference likely failed during code generation.", .{ip});
-                        std.debug.print(">>   Return instruction: {any}\n", .{r});
-                        return ErrorList.InternalParserError;
-                    }
-                },
-                else => {
-                    // Other instructions don't have explicit type fields to validate
-                },
-            }
-        }
     }
 
     /// Execute a single HIR instruction
@@ -754,10 +733,10 @@ pub const HIRVM = struct {
                             std.debug.print("DoxVM: Debug: LoadVar {} \"{s}\" - Stack size after: {}, loaded value: {s}\n", .{ v.var_index, v.var_name, self.stack.size(), @tagName(hir_value) });
                         }
                     } else {
-                        return self.reporter.reportError("Variable storage not found for: {s}", .{v.var_name});
+                        return self.reporter.throwError("Variable storage not found for: {s}", .{v.var_name}, ErrorList.VariableNotFound);
                     }
                 } else {
-                    return self.reporter.reportError("Undefined variable: {s}", .{v.var_name});
+                    return self.reporter.throwError("Undefined variable: {s}", .{v.var_name}, ErrorList.UndefinedVariable);
                 }
             },
 
@@ -786,18 +765,18 @@ pub const HIRVM = struct {
                     // Variable exists in current scope - update its storage
                     if (self.memory_manager.scope_manager.value_storage.getPtr(variable.storage_id)) |storage| {
                         if (storage.*.constant) {
-                            return self.reporter.reportError("Cannot modify constant variable: {s}", .{v.var_name});
+                            return self.reporter.throwError("Cannot modify constant variable: {s}", .{v.var_name}, ErrorList.CannotModifyConstant);
                         }
 
                         storage.*.value = token_literal;
                         storage.*.type = token_type;
                         storage.*.type_info = type_info;
                     } else {
-                        return self.reporter.reportError("Variable storage not found for: {s}", .{v.var_name});
+                        return self.reporter.throwError("Variable storage not found for: {s}", .{v.var_name}, ErrorList.VariableNotFound);
                     }
                 } else {
                     _ = self.current_scope.createValueBinding(v.var_name, token_literal, token_type, type_info, false) catch |err| {
-                        return self.reporter.reportError("Failed to create variable {s}: {}", .{ v.var_name, err });
+                        return self.reporter.throwError("Failed to create variable {s}: {}", .{ v.var_name, err }, ErrorList.RuntimeError);
                     };
                 }
             },
@@ -812,10 +791,10 @@ pub const HIRVM = struct {
                     .byte => |u| @as(i32, u),
                     .tetra => |t| @as(i32, t),
                     .nothing => {
-                        return self.reporter.reportError("Cannot perform arithmetic on 'nothing' value", .{});
+                        return self.reporter.throwError("Cannot perform arithmetic on 'nothing' value", .{}, ErrorList.InvalidOperand);
                     },
                     else => {
-                        return self.reporter.reportError("Cannot convert {s} to integer for arithmetic", .{@tagName(a_val.value)});
+                        return self.reporter.throwError("Cannot convert {s} to integer for arithmetic", .{@tagName(a_val.value)}, ErrorList.TypeError);
                     },
                 };
 
@@ -824,10 +803,10 @@ pub const HIRVM = struct {
                     .byte => |u| @as(i32, u),
                     .tetra => |t| @as(i32, t),
                     .nothing => {
-                        return self.reporter.reportError("Cannot perform arithmetic on 'nothing' value", .{});
+                        return self.reporter.throwError("Cannot perform arithmetic on 'nothing' value", .{}, ErrorList.InvalidOperand);
                     },
                     else => {
-                        return self.reporter.reportError("Cannot convert {s} to integer for arithmetic", .{@tagName(b.value)});
+                        return self.reporter.throwError("Cannot convert {s} to integer for arithmetic", .{@tagName(b.value)}, ErrorList.TypeError);
                     },
                 };
 
@@ -1084,11 +1063,9 @@ pub const HIRVM = struct {
 
             .ExitScope => {
                 if (self.current_scope.parent) |parent_scope| {
-                    const old_scope = self.current_scope;
+                    // Just change the current scope reference
+                    // Let MemoryManager.deinit() handle all cleanup at the end
                     self.current_scope = parent_scope;
-
-                    // Clean up the old scope
-                    old_scope.deinit();
                 }
             },
 
@@ -1851,7 +1828,6 @@ pub const HIRVM = struct {
                 } else {
                     // Auto-exit current scope before returning to restore caller's scope
                     if (self.current_scope.parent) |parent_scope| {
-                        const old_scope = self.current_scope;
                         self.current_scope = parent_scope;
 
                         // PERFORMANCE: Clear cache on scope change for correctness
@@ -1859,7 +1835,7 @@ pub const HIRVM = struct {
                             self.var_cache.clearRetainingCapacity();
                         }
 
-                        old_scope.deinit();
+                        // Don't call deinit() - let the MemoryManager handle all scope cleanup
                     }
 
                     // Returning from function call - pop call frame and return to caller
@@ -1898,12 +1874,11 @@ pub const HIRVM = struct {
             .TryCatch => |t| {
                 // Exit the try block scope and create a new scope for the catch block
                 if (self.current_scope.parent) |parent_scope| {
-                    const old_scope = self.current_scope;
                     self.current_scope = parent_scope;
                     if (self.fast_mode) {
                         self.var_cache.clearRetainingCapacity();
                     }
-                    old_scope.deinit();
+                    // Don't call deinit() - let the MemoryManager handle all scope cleanup
                 }
 
                 // Create new scope for catch block
@@ -2408,23 +2383,19 @@ pub const HIRVM = struct {
     fn logicalAnd(self: *HIRVM, a: HIRFrame, b: HIRFrame) !u8 {
         const a_tetra = switch (a.value) {
             .tetra => |val| if (val <= 3) val else {
-                self.reporter.reportError("Invalid tetra value: {}", .{val});
-                return ErrorList.TypeError;
+                return self.reporter.throwError("Invalid tetra value: {}", .{val}, ErrorList.TypeError);
             },
             else => {
-                self.reporter.reportError("Cannot perform AND on non-tetra values: {s} AND {s}", .{ @tagName(a.value), @tagName(b.value) });
-                return ErrorList.TypeError;
+                return self.reporter.throwError("Cannot perform AND on non-tetra values: {s} AND {s}", .{ @tagName(a.value), @tagName(b.value) }, ErrorList.TypeError);
             },
         };
 
         const b_tetra = switch (b.value) {
             .tetra => |val| if (val <= 3) val else {
-                self.reporter.reportError("Invalid tetra value: {}", .{val});
-                return ErrorList.TypeError;
+                return self.reporter.throwError("Invalid tetra value: {}", .{val}, ErrorList.TypeError);
             },
             else => {
-                self.reporter.reportError("Cannot perform AND on non-tetra values: {s} AND {s}", .{ @tagName(a.value), @tagName(b.value) });
-                return ErrorList.TypeError;
+                return self.reporter.throwError("Cannot perform AND on non-tetra values: {s} AND {s}", .{ @tagName(a.value), @tagName(b.value) }, ErrorList.TypeError);
             },
         };
 
@@ -2472,12 +2443,10 @@ pub const HIRVM = struct {
     fn logicalNot(self: *HIRVM, a: HIRFrame) !u8 {
         const a_tetra = switch (a.value) {
             .tetra => |val| if (val <= 3) val else {
-                self.reporter.reportError("Invalid tetra value: {}", .{val});
-                return ErrorList.TypeError;
+                return self.reporter.throwError("Invalid tetra value: {}", .{val}, ErrorList.TypeError);
             },
             else => {
-                self.reporter.reportError("Cannot perform NOT on a non-tetra value: {s}", .{@tagName(a.value)});
-                return ErrorList.TypeError;
+                return self.reporter.throwError("Cannot perform NOT on a non-tetra value: {s}", .{@tagName(a.value)}, ErrorList.TypeError);
             },
         };
 
@@ -2491,23 +2460,19 @@ pub const HIRVM = struct {
     fn logicalIff(self: *HIRVM, a: HIRFrame, b: HIRFrame) !u8 {
         const a_tetra = switch (a.value) {
             .tetra => |val| if (val <= 3) val else {
-                self.reporter.reportError("Invalid tetra value: {}", .{val});
-                return ErrorList.TypeError;
+                return self.reporter.throwError("Invalid tetra value: {}", .{val}, ErrorList.TypeError);
             },
             else => {
-                self.reporter.reportError("Cannot perform IFF on non-tetra values: {s} IFF {s}", .{ @tagName(a.value), @tagName(b.value) });
-                return ErrorList.TypeError;
+                return self.reporter.throwError("Cannot perform IFF on non-tetra values: {s} IFF {s}", .{ @tagName(a.value), @tagName(b.value) }, ErrorList.TypeError);
             },
         };
 
         const b_tetra = switch (b.value) {
             .tetra => |val| if (val <= 3) val else {
-                self.reporter.reportError("Invalid tetra value: {}", .{val});
-                return ErrorList.TypeError;
+                return self.reporter.throwError("Invalid tetra value: {}", .{val}, ErrorList.TypeError);
             },
             else => {
-                self.reporter.reportError("Cannot perform IFF on non-tetra values: {s} IFF {s}", .{ @tagName(a.value), @tagName(b.value) });
-                return ErrorList.TypeError;
+                return self.reporter.throwError("Cannot perform IFF on non-tetra values: {s} IFF {s}", .{ @tagName(a.value), @tagName(b.value) }, ErrorList.TypeError);
             },
         };
 
@@ -2522,23 +2487,19 @@ pub const HIRVM = struct {
     fn logicalXor(self: *HIRVM, a: HIRFrame, b: HIRFrame) !u8 {
         const a_tetra = switch (a.value) {
             .tetra => |val| if (val <= 3) val else {
-                self.reporter.reportError("Invalid tetra value: {}", .{val});
-                return ErrorList.TypeError;
+                return self.reporter.throwError("Invalid tetra value: {}", .{val}, ErrorList.TypeError);
             },
             else => {
-                self.reporter.reportError("Cannot perform XOR on non-tetra values: {s} XOR {s}", .{ @tagName(a.value), @tagName(b.value) });
-                return ErrorList.TypeError;
+                return self.reporter.throwError("Cannot perform XOR on non-tetra values: {s} XOR {s}", .{ @tagName(a.value), @tagName(b.value) }, ErrorList.TypeError);
             },
         };
 
         const b_tetra = switch (b.value) {
             .tetra => |val| if (val <= 3) val else {
-                self.reporter.reportError("Invalid tetra value: {}", .{val});
-                return ErrorList.TypeError;
+                return self.reporter.throwError("Invalid tetra value: {}", .{val}, ErrorList.TypeError);
             },
             else => {
-                self.reporter.reportError("Cannot perform XOR on non-tetra values: {s} XOR {s}", .{ @tagName(a.value), @tagName(b.value) });
-                return ErrorList.TypeError;
+                return self.reporter.throwError("Cannot perform XOR on non-tetra values: {s} XOR {s}", .{ @tagName(a.value), @tagName(b.value) }, ErrorList.TypeError);
             },
         };
 
@@ -2553,23 +2514,19 @@ pub const HIRVM = struct {
     fn logicalNand(self: *HIRVM, a: HIRFrame, b: HIRFrame) !u8 {
         const a_tetra = switch (a.value) {
             .tetra => |val| if (val <= 3) val else {
-                self.reporter.reportError("Invalid tetra value: {}", .{val});
-                return ErrorList.TypeError;
+                return self.reporter.throwError("Invalid tetra value: {}", .{val}, ErrorList.TypeError);
             },
             else => {
-                self.reporter.reportError("Cannot perform NAND on non-tetra values: {s} NAND {s}", .{ @tagName(a.value), @tagName(b.value) });
-                return ErrorList.TypeError;
+                return self.reporter.throwError("Cannot perform NAND on non-tetra values: {s} NAND {s}", .{ @tagName(a.value), @tagName(b.value) }, ErrorList.TypeError);
             },
         };
 
         const b_tetra = switch (b.value) {
             .tetra => |val| if (val <= 3) val else {
-                self.reporter.reportError("Invalid tetra value: {}", .{val});
-                return ErrorList.TypeError;
+                return self.reporter.throwError("Invalid tetra value: {}", .{val}, ErrorList.TypeError);
             },
             else => {
-                self.reporter.reportError("Cannot perform NAND on non-tetra values: {s} NAND {s}", .{ @tagName(a.value), @tagName(b.value) });
-                return ErrorList.TypeError;
+                return self.reporter.throwError("Cannot perform NAND on non-tetra values: {s} NAND {s}", .{ @tagName(a.value), @tagName(b.value) }, ErrorList.TypeError);
             },
         };
 
@@ -2584,23 +2541,19 @@ pub const HIRVM = struct {
     fn logicalNor(self: *HIRVM, a: HIRFrame, b: HIRFrame) !u8 {
         const a_tetra = switch (a.value) {
             .tetra => |val| if (val <= 3) val else {
-                self.reporter.reportError("Invalid tetra value: {}", .{val});
-                return ErrorList.TypeError;
+                return self.reporter.throwError("Invalid tetra value: {}", .{val}, ErrorList.TypeError);
             },
             else => {
-                self.reporter.reportError("Cannot perform NOR on non-tetra values: {s} NOR {s}", .{ @tagName(a.value), @tagName(b.value) });
-                return ErrorList.TypeError;
+                return self.reporter.throwError("Cannot perform NOR on non-tetra values: {s} NOR {s}", .{ @tagName(a.value), @tagName(b.value) }, ErrorList.TypeError);
             },
         };
 
         const b_tetra = switch (b.value) {
             .tetra => |val| if (val <= 3) val else {
-                self.reporter.reportError("Invalid tetra value: {}", .{val});
-                return ErrorList.TypeError;
+                return self.reporter.throwError("Invalid tetra value: {}", .{val}, ErrorList.TypeError);
             },
             else => {
-                self.reporter.reportError("Cannot perform NOR on non-tetra values: {s} NOR {s}", .{ @tagName(a.value), @tagName(b.value) });
-                return ErrorList.TypeError;
+                return self.reporter.throwError("Cannot perform NOR on non-tetra values: {s} NOR {s}", .{ @tagName(a.value), @tagName(b.value) }, ErrorList.TypeError);
             },
         };
 
@@ -2615,23 +2568,19 @@ pub const HIRVM = struct {
     fn logicalImplies(self: *HIRVM, a: HIRFrame, b: HIRFrame) !u8 {
         const a_tetra = switch (a.value) {
             .tetra => |val| if (val <= 3) val else {
-                self.reporter.reportError("Invalid tetra value: {}", .{val});
-                return ErrorList.TypeError;
+                return self.reporter.throwError("Invalid tetra value: {}", .{val}, ErrorList.TypeError);
             },
             else => {
-                self.reporter.reportError("Cannot perform IMPLIES on non-tetra values: {s} IMPLIES {s}", .{ @tagName(a.value), @tagName(b.value) });
-                return ErrorList.TypeError;
+                return self.reporter.throwError("Cannot perform IMPLIES on non-tetra values: {s} IMPLIES {s}", .{ @tagName(a.value), @tagName(b.value) }, ErrorList.TypeError);
             },
         };
 
         const b_tetra = switch (b.value) {
             .tetra => |val| if (val <= 3) val else {
-                self.reporter.reportError("Invalid tetra value: {}", .{val});
-                return ErrorList.TypeError;
+                return self.reporter.throwError("Invalid tetra value: {}", .{val}, ErrorList.TypeError);
             },
             else => {
-                self.reporter.reportError("Cannot perform IMPLIES on non-tetra values: {s} IMPLIES {s}", .{ @tagName(a.value), @tagName(b.value) });
-                return ErrorList.TypeError;
+                return self.reporter.throwError("Cannot perform IMPLIES on non-tetra values: {s} IMPLIES {s}", .{ @tagName(a.value), @tagName(b.value) }, ErrorList.TypeError);
             },
         };
 
@@ -2856,7 +2805,6 @@ pub const HIRVM = struct {
 
     /// Get a readable type string from HIRValue for debug output
     pub fn getTypeString(self: *HIRVM, value: HIRValue) []const u8 {
-        _ = self;
         return switch (value) {
             .int => "int",
             .byte => "byte",
@@ -2871,14 +2819,53 @@ pub const HIRVM = struct {
                 .String => "string[]",
                 .Tetra => "tetra[]",
                 .Array => "array[]", // Nested arrays
-                .Struct => "struct[]",
-                .Auto => "auto[]",
-                else => unreachable,
+                .Struct => blk: {
+                    // For struct arrays, we need to look at the first element to get the type name
+                    if (arr.elements.len > 0) {
+                        switch (arr.elements[0]) {
+                            .struct_instance => |s| {
+                                // Use string interner to avoid memory leaks
+                                const type_str = std.fmt.allocPrint(self.allocator, "{s}[]", .{s.type_name}) catch "struct[]";
+                                const interned = self.string_interner.intern(type_str) catch "struct[]";
+                                // Free the temporary string since it's now interned
+                                self.allocator.free(type_str);
+                                break :blk interned;
+                            },
+                            else => break :blk "struct[]",
+                        }
+                    } else {
+                        break :blk "struct[]";
+                    }
+                },
+                .Enum => blk: {
+                    // For enum arrays, we need to look at the first element to get the type name
+                    if (arr.elements.len > 0) {
+                        switch (arr.elements[0]) {
+                            .enum_variant => |e| {
+                                // Use string interner to avoid memory leaks
+                                const type_str = std.fmt.allocPrint(self.allocator, "{s}[]", .{e.type_name}) catch "enum[]";
+                                const interned = self.string_interner.intern(type_str) catch "enum[]";
+                                // Free the temporary string since it's now interned
+                                self.allocator.free(type_str);
+                                break :blk interned;
+                            },
+                            else => break :blk "enum[]",
+                        }
+                    } else {
+                        break :blk "enum[]";
+                    }
+                },
+                .Nothing => "nothing[]",
+                .Tuple => "tuple[]",
+                .Map => "map[]",
+                .Function => "function[]",
+                .Union => "union[]",
+                .Custom => "custom[]",
             },
-            .struct_instance => |s| s.type_name,
+            .struct_instance => |s| s.type_name, // Return actual struct type name
             .tuple => "tuple",
             .map => "map",
-            .enum_variant => |e| e.type_name,
+            .enum_variant => |e| e.type_name, // Return actual enum type name
         };
     }
 
@@ -2983,7 +2970,7 @@ pub const HIRVM = struct {
                 const parent_id = if (scope.parent) |parent| parent.id else 0;
                 const frame = try self.stack.peek();
                 if (frame.scope_refs == 0) {
-                    scope.deinit();
+                    // Don't call deinit() - let the MemoryManager handle all scope cleanup
                     self.reporter.debug(">> Exited scope {} (returned to: {}) [Call stack: {}]", .{ scope_id, parent_id, self.call_stack.sp });
                 } else {
                     self.reporter.debug(">> Skipped exiting scope {} ({} refs remain)", .{ scope_id, frame.scope_refs });
@@ -3067,22 +3054,31 @@ pub const HIRVM = struct {
                 // Create new array with increased capacity if needed
                 const current_len = arr.elements.len;
                 const new_capacity = if (current_len >= arr.capacity) arr.capacity * 2 else arr.capacity;
-                var new_array = HIRArray{
-                    .elements = try self.allocator.alloc(HIRValue, new_capacity),
-                    .element_type = arr.element_type,
-                    .capacity = new_capacity,
-                };
+
+                var new_elements = try self.allocator.alloc(HIRValue, new_capacity);
 
                 // Copy existing elements
-                @memcpy(new_array.elements[0..current_len], arr.elements);
+                @memcpy(new_elements[0..current_len], arr.elements);
 
                 // Add the new element
-                new_array.elements[current_len] = value;
+                new_elements[current_len] = value;
 
                 // Initialize remaining elements to nothing
-                for (new_array.elements[current_len + 1 ..]) |*element| {
+                for (new_elements[current_len + 1 ..]) |*element| {
                     element.* = HIRValue.nothing;
                 }
+
+                // Update element type if this is the first element or if current type is Nothing
+                var element_type = arr.element_type;
+                if (element_type == .Nothing and value != .nothing) {
+                    element_type = inferHIRType(value);
+                }
+
+                const new_array = HIRArray{
+                    .elements = new_elements,
+                    .element_type = element_type,
+                    .capacity = new_capacity,
+                };
 
                 // Free old array and push new one
                 self.allocator.free(arr.elements);
@@ -3090,17 +3086,19 @@ pub const HIRVM = struct {
             },
             .nothing => {
                 // Create new array with initial capacity of 8
-                var new_array = HIRArray{
-                    .elements = try self.allocator.alloc(HIRValue, 8),
-                    .element_type = .Auto,
-                    .capacity = 8,
-                };
+                var new_elements = try self.allocator.alloc(HIRValue, 8);
 
                 // Initialize all elements to nothing
-                for (new_array.elements) |*element| {
+                for (new_elements) |*element| {
                     element.* = HIRValue.nothing;
                 }
-                new_array.elements[0] = value;
+                new_elements[0] = value;
+
+                const new_array = HIRArray{
+                    .elements = new_elements,
+                    .element_type = inferHIRType(value), // Infer from first element
+                    .capacity = 8,
+                };
 
                 try self.stack.push(HIRFrame.initFromHIRValue(HIRValue{ .array = new_array }));
             },
@@ -3187,16 +3185,6 @@ pub const HIRVM = struct {
 
     /// Coerce a value to the expected type if possible
     fn coerceValue(self: *HIRVM, value: HIRValue, expected_type: HIRType) HIRValue {
-        // If expected type is Auto, no coercion needed
-        if (expected_type == .Auto) {
-            return value;
-        }
-
-        // Debug output for coercion
-        if (self.debug_enabled) {
-            std.debug.print("Coercing value {any} to expected type {s}\n", .{ value, @tagName(expected_type) });
-        }
-
         // Perform type coercion based on expected type
         const result = switch (expected_type) {
             .Float => switch (value) {

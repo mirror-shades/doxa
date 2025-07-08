@@ -8,7 +8,7 @@ const Reporter = Reporting.Reporter;
 const token = @import("../lexer/token.zig");
 const declaration_parser = @import("./declaration_parser.zig");
 const expression_parser = @import("./expression_parser.zig");
-const HIRType = @import("../codegen/soxa_types.zig").HIRType;
+const HIRType = @import("../codegen/hir/soxa_types.zig").HIRType;
 
 pub fn parse(self: *Parser, reporter: *Reporter) ErrorList![]ast.Stmt {
     reporter.debug("Token stream:", .{});
@@ -143,8 +143,6 @@ pub fn parse(self: *Parser, reporter: *Reporter) ErrorList![]ast.Stmt {
                 break :blk try self.parseStructDeclStmt();
             } else if (self.peek().type == .ENUM_TYPE) {
                 break :blk try self.parseEnumDecl();
-            } else if (self.peek().type == .TRY) {
-                break :blk try self.parseTryStmt();
             } else if (self.peek().type == .ASSERT) {
                 break :blk try self.parseAssertStmt();
             } else break :blk try self.parseExpressionStmt();
@@ -307,7 +305,6 @@ pub fn parseStatement(self: *Parser) ErrorList!ast.Stmt {
         else
             try parseExpressionStmt(self),
         .ENUM_TYPE => declaration_parser.parseEnumDecl(self),
-        .TRY => try parseTryStmt(self),
         .ASSERT => try parseAssertStmt(self),
         else => try parseExpressionStmt(self),
     };
@@ -366,86 +363,6 @@ pub fn parseAssertStmt(self: *Parser) ErrorList!ast.Stmt {
                 .condition = condition.?,
                 .location = location,
                 .message = message,
-            },
-        },
-    };
-}
-
-pub fn parseTryStmt(self: *Parser) ErrorList!ast.Stmt {
-    self.advance(); // consume 'try'
-
-    // Parse the try block
-    if (self.peek().type != .LEFT_BRACE) {
-        return error.ExpectedLeftBrace;
-    }
-
-    // Parse try block statements
-    self.advance(); // consume {
-    var try_statements = std.ArrayList(ast.Stmt).init(self.allocator);
-    errdefer {
-        for (try_statements.items) |*stmt| {
-            stmt.deinit(self.allocator);
-        }
-        try_statements.deinit();
-    }
-
-    while (self.peek().type != .RIGHT_BRACE and self.peek().type != .EOF) {
-        const stmt = try parseStatement(self);
-        try try_statements.append(stmt);
-    }
-
-    if (self.peek().type != .RIGHT_BRACE) {
-        return error.ExpectedRightBrace;
-    }
-    self.advance(); // consume }
-
-    // Parse catch block
-    if (self.peek().type != .CATCH) {
-        return error.ExpectedCatch;
-    }
-    self.advance(); // consume 'catch'
-
-    // Parse optional error variable
-    var error_var: ?token.Token = null;
-    if (self.peek().type == .IDENTIFIER) {
-        error_var = self.peek();
-        self.advance();
-    }
-
-    // Parse catch block
-    if (self.peek().type != .LEFT_BRACE) {
-        return error.ExpectedLeftBrace;
-    }
-
-    self.advance(); // consume {
-    var catch_statements = std.ArrayList(ast.Stmt).init(self.allocator);
-    errdefer {
-        for (catch_statements.items) |*stmt| {
-            stmt.deinit(self.allocator);
-        }
-        catch_statements.deinit();
-    }
-
-    while (self.peek().type != .RIGHT_BRACE and self.peek().type != .EOF) {
-        const stmt = try parseStatement(self);
-        try catch_statements.append(stmt);
-    }
-
-    if (self.peek().type != .RIGHT_BRACE) {
-        return error.ExpectedRightBrace;
-    }
-    self.advance(); // consume }
-
-    return ast.Stmt{
-        .base = .{
-            .id = ast.generateNodeId(),
-            .span = ast.SourceSpan.fromToken(self.previous()),
-        },
-        .data = .{
-            .Try = .{
-                .try_body = try try_statements.toOwnedSlice(),
-                .catch_body = try catch_statements.toOwnedSlice(),
-                .error_var = null,
             },
         },
     };

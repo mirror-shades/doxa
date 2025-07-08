@@ -19,7 +19,8 @@ pub const HIRType = enum {
     Map,
     Enum,
     Function,
-    Auto, // will throw error in VM, Soxa is explicit
+    Union,
+    Custom,
 };
 
 // Additional type information for complex types
@@ -96,7 +97,7 @@ pub const HIRProgram = struct {
         name: []const u8,
         qualified_name: []const u8, // module.function for LLVM
         arity: u32,
-        return_type: HIRType,
+        return_type: ?HIRType,
         start_label: []const u8,
         body_label: ?[]const u8 = null, // For tail call optimization - jumps here to skip parameter setup
         local_var_count: u32, // VM: stack frame sizing

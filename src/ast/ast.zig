@@ -2,7 +2,7 @@ const std = @import("std");
 const Token = @import("../lexer/token.zig").Token;
 const TokenLiteral = @import("../types/types.zig").TokenLiteral;
 const Reporting = @import("../utils/reporting.zig");
-const HIRType = @import("../codegen/soxa_types.zig").HIRType;
+const HIRType = @import("../codegen/hir/soxa_types.zig").HIRType;
 
 /// Counter for generating unique node IDs
 var next_node_id: NodeId = 0;
@@ -834,11 +834,11 @@ pub const Type = enum {
     Function,
     Struct,
     Enum,
-    Auto,
     Custom,
     Map,
     Nothing,
     Reference,
+    Union,
 };
 
 pub const TypeInfo = struct {
@@ -852,6 +852,7 @@ pub const TypeInfo = struct {
     variants: ?[][]const u8 = null,
     array_size: ?usize = null,
     referenced_type: ?*TypeInfo = null,
+    union_type: ?*UnionType = null,
 
     pub fn deinit(self: *TypeInfo, allocator: std.mem.Allocator) void {
         if (self.array_type) |array_type| {
@@ -881,11 +882,17 @@ pub const TypeInfo = struct {
             ref_type.deinit(allocator);
             allocator.destroy(ref_type);
         }
+        if (self.union_type) |union_type| {
+            for (union_type.types) |type_info| {
+                type_info.deinit(allocator);
+                allocator.destroy(type_info);
+            }
+            allocator.free(union_type.types);
+            allocator.destroy(union_type);
+        }
     }
 
     pub fn inferFrom(self: *TypeInfo, value: TokenLiteral) void {
-        if (self.base != .Auto) return;
-
         self.base = switch (value) {
             .int => .Int,
             .byte => .Byte,
@@ -907,13 +914,26 @@ pub const StructFieldType = struct {
     type_info: *TypeInfo,
 };
 
+pub const UnionType = struct {
+    types: []const *TypeInfo,
+    current_type_index: ?u32 = null, // Index into types array
+
+    pub fn getCurrentType(self: *const UnionType) ?*TypeInfo {
+        return if (self.current_type_index) |idx| self.types[idx] else null;
+    }
+
+    pub fn setCurrentType(self: *UnionType, type_index: u32) void {
+        self.current_type_index = type_index;
+    }
+};
+
 pub const BasicType = enum {
     Integer,
     Byte,
     Float,
     String,
     Tetra,
-    Auto,
+    Nothing,
 };
 
 pub const ArrayType = struct {
@@ -1048,7 +1068,7 @@ pub fn typeInfoFromExpr(allocator: std.mem.Allocator, type_expr: ?*TypeExpr) !*T
     errdefer allocator.destroy(type_info);
 
     if (type_expr == null) {
-        type_info.* = TypeInfo{ .base = .Auto };
+        type_info.* = TypeInfo{ .base = .Nothing };
         return type_info;
     }
 
@@ -1059,8 +1079,7 @@ pub fn typeInfoFromExpr(allocator: std.mem.Allocator, type_expr: ?*TypeExpr) !*T
             .Float => TypeInfo{ .base = .Float },
             .String => TypeInfo{ .base = .String },
             .Tetra => TypeInfo{ .base = .Tetra },
-            // should never happen, auto is only used for type inference
-            .Auto => TypeInfo{ .base = .Auto },
+            .Nothing => TypeInfo{ .base = .Nothing },
         },
         .Array => |array| blk: {
             const element_type = try typeInfoFromExpr(allocator, array.element_type);
@@ -1098,8 +1117,8 @@ pub fn typeInfoFromExpr(allocator: std.mem.Allocator, type_expr: ?*TypeExpr) !*T
                 .struct_fields = struct_fields,
             };
         },
-        .Custom => TypeInfo{ .base = .Custom },
-        .Enum => TypeInfo{ .base = .Auto },
+        .Custom => |custom_token| TypeInfo{ .base = .Custom, .custom_type = custom_token.lexeme },
+        .Enum => TypeInfo{ .base = .Nothing },
     };
 
     return type_info;

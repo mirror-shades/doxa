@@ -240,7 +240,7 @@ pub const ConstantFolder = struct {
                 .float => |f| TokenLiteral{ .float = -f },
                 else => null,
             },
-            .BANG, .NOT => switch (operand) {
+            .NOT => switch (operand) {
                 .tetra => |t| TokenLiteral{ .tetra = switch (t) {
                     .true => .false,
                     .false => .true,
