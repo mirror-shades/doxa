@@ -2233,18 +2233,41 @@ pub const HIRGenerator = struct {
                 } });
             },
 
-            .Input => |_| {
-                // Generate input call as a builtin function
-                try self.instructions.append(.{
-                    .Call = .{
-                        .function_index = 0,
-                        .qualified_name = "input",
-                        .arg_count = 0,
-                        .call_kind = .BuiltinFunction,
-                        .target_module = null,
-                        .return_type = .String,
-                    },
-                });
+            .Input => |input| {
+                // Check if we have a non-empty prompt
+                const prompt_str = input.prompt.literal.string;
+                if (prompt_str.len > 0) {
+                    // Generate the prompt as a constant first
+                    const prompt_value = HIRValue{ .string = prompt_str };
+                    const prompt_idx = try self.addConstant(prompt_value);
+
+                    // Push the prompt onto the stack as an argument
+                    try self.instructions.append(.{ .Const = .{ .value = prompt_value, .constant_id = prompt_idx } });
+
+                    // Generate input call with the prompt as argument
+                    try self.instructions.append(.{
+                        .Call = .{
+                            .function_index = 0,
+                            .qualified_name = "input",
+                            .arg_count = 1, // Has 1 argument (the prompt)
+                            .call_kind = .BuiltinFunction,
+                            .target_module = null,
+                            .return_type = .String,
+                        },
+                    });
+                } else {
+                    // No prompt - call input with no arguments
+                    try self.instructions.append(.{
+                        .Call = .{
+                            .function_index = 0,
+                            .qualified_name = "input",
+                            .arg_count = 0, // No arguments
+                            .call_kind = .BuiltinFunction,
+                            .target_module = null,
+                            .return_type = .String,
+                        },
+                    });
+                }
             },
 
             else => {
