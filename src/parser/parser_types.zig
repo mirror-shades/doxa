@@ -297,7 +297,7 @@ pub const Parser = struct {
                     try statements.append(enum_decl);
                 },
                 // Handle other statement types recognised by statement_parser
-                .IF, .WHILE, .RETURN, .LEFT_BRACE, .TRY => {
+                .IF, .WHILE, .RETURN, .LEFT_BRACE => {
                     // Modifiers likely invalid here
                     if (is_entry) {
                         return error.MisplacedEntryPoint;
@@ -2459,7 +2459,7 @@ pub const Parser = struct {
 
         self.advance(); // consume 'input' token
 
-        // Check if there's a prompt string
+        // Check if there's a prompt string (with or without parentheses)
         var prompt: token.Token = token.Token{
             .type = .IDENTIFIER,
             .lexeme = "prompt",
@@ -2468,7 +2468,27 @@ pub const Parser = struct {
             .column = 0,
             .file = "",
         };
-        if (self.peek().type == .STRING) {
+
+        // Handle both input("prompt") and input "prompt" syntax
+        if (self.peek().type == .LEFT_PAREN) {
+            self.advance(); // consume '('
+
+            if (self.peek().type == .STRING) {
+                prompt = self.peek();
+                if (self.debug_enabled) {
+                    std.debug.print("Found prompt string in parentheses: '{s}'\n", .{prompt.lexeme});
+                }
+                self.advance(); // consume the string
+
+                // Expect closing parenthesis
+                if (self.peek().type != .RIGHT_PAREN) {
+                    return error.ExpectedRightParen;
+                }
+                self.advance(); // consume ')'
+            } else {
+                return error.ExpectedString;
+            }
+        } else if (self.peek().type == .STRING) {
             prompt = self.peek();
             if (self.debug_enabled) {
                 std.debug.print("Found prompt string: '{s}'\n", .{prompt.lexeme});

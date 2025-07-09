@@ -97,9 +97,6 @@ pub const Lexer = struct {
         try self.keywords.put("struct", .STRUCT);
         try self.keywords.put("break", .BREAK);
         try self.keywords.put("continue", .CONTINUE);
-        try self.keywords.put("throw", .THROW);
-        try self.keywords.put("try", .TRY);
-        try self.keywords.put("catch", .CATCH);
         try self.keywords.put("and", .AND);
         try self.keywords.put("or", .OR);
         try self.keywords.put("nothing", .NOTHING);
@@ -115,7 +112,6 @@ pub const Lexer = struct {
         try self.keywords.put("is", .ASSIGN);
         try self.keywords.put("as", .AS);
         try self.keywords.put("from", .FROM);
-        try self.keywords.put("auto", .AUTO);
         try self.keywords.put("equals", .EQUALITY);
         try self.keywords.put("int", .INT_TYPE);
         try self.keywords.put("byte", .BYTE_TYPE);
@@ -148,8 +144,8 @@ pub const Lexer = struct {
         try self.keywords.put("↑", .NAND);
         try self.keywords.put("↓", .NOR);
         try self.keywords.put("→", .IMPLIES);
-        //try self.keywords.put("⊞", .AND_TRANCENDENTAL); // let you add true and false to get both
-        try self.keywords.put("⊟", .NOT_TRANCENDENTAL);
+        //try self.keywords.put("⊞", .AND_PARADOXICAL); // let you add true and false to get both
+        try self.keywords.put("⊟", .NOT_PARADOXICAL);
     }
 
     //======================================================================

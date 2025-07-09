@@ -2,7 +2,7 @@ const std = @import("std");
 const HIRInstruction = @import("soxa_instructions.zig").HIRInstruction;
 const HIRValue = @import("soxa_values.zig").HIRValue;
 const ArithOp = @import("soxa_instructions.zig").ArithOp;
-const Reporter = @import("../utils/reporting.zig").Reporter;
+const Reporter = @import("../../utils/reporting.zig").Reporter;
 
 /// Comprehensive peephole optimizer for HIR instructions
 /// Organized by optimization categories for maintainability

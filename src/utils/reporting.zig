@@ -43,6 +43,8 @@ pub const ErrorList = error{
     ExpectedClosedTuple,
     ExpectedStructType,
     UnknownVariableType,
+    UnknownCustomType,
+    InvalidExpressionType,
 
     // Variable Management
     VariableNotFound,
@@ -98,6 +100,8 @@ pub const ErrorList = error{
     FieldNotFound,
     InvalidFieldAccess,
     InvalidFieldAccessTarget,
+    InvalidFieldType,
+    MissingFieldTypes,
     InvalidEnumVariant,
     NoMatchCase,
     UndefinedType,
@@ -187,6 +191,7 @@ pub const ErrorList = error{
     EndOfStream,
     StreamTooLong,
     InternalParserError,
+    RuntimeError,
 
     // Safe Mode
     UnknownType,
@@ -396,10 +401,16 @@ pub const Reporter = struct {
     }
 
     /// Report a generic error - used by compiler and other components
-    pub fn reportError(self: *Reporter, comptime fmt: []const u8, args: anytype) void {
+    pub fn throwError(self: *Reporter, comptime fmt: []const u8, args: anytype, err: ?ErrorList) ErrorList {
         self.had_error = true;
         self.error_count += 1;
         self.writer.print("DoxVM: Error: " ++ fmt ++ "\n", args) catch {};
+        return err orelse ErrorList.RuntimeError;
+    }
+
+    /// Report a generic error - used by compiler and other components
+    pub fn reportError(self: *Reporter, comptime fmt: []const u8, args: anytype) void {
+        self.throwError(fmt, args, null) catch {};
     }
 
     pub fn printf(self: *Reporter, comptime fmt: []const u8, args: anytype) void {

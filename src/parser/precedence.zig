@@ -123,7 +123,7 @@ pub const rules = blk: {
     r.set(.XOR, .{ .infix = logical, .precedence = .XOR });
     r.set(.IFF, .{ .infix = logical, .precedence = .IFF });
     r.set(.NOT, .{ .prefix = unary, .precedence = .UNARY });
-    r.set(.NOT_TRANCENDENTAL, .{ .prefix = unary, .precedence = .UNARY });
+    r.set(.NOT_PARADOXICAL, .{ .prefix = unary, .precedence = .UNARY });
     r.set(.IMPLIES, .{ .infix = logical, .precedence = .IMPLIES });
 
     // Literals
@@ -216,11 +216,6 @@ pub fn getRule(token_type: token.TokenType) ParseRule {
 }
 
 pub fn parsePrecedence(self: *Parser, prec: Precedence) ErrorList!?*ast.Expr {
-
-    // Add specific check for BANG token
-    if (self.peek().type == .BANG) {
-        return error.BangNegationNotSupported;
-    }
 
     // Get the prefix rule for the current token
     const prefix_rule = getRule(self.peek().type).prefix;
