@@ -1,8 +1,8 @@
 const std = @import("std");
-const hir_soxa = @import("../codegen/soxa.zig");
-const hir_instructions = @import("../codegen/soxa_instructions.zig");
-const hir_values = @import("../codegen/soxa_values.zig");
-const hir_types = @import("../codegen/soxa_types.zig");
+const hir_soxa = @import("../codegen/hir/soxa.zig");
+const hir_instructions = @import("../codegen/hir/soxa_instructions.zig");
+const hir_values = @import("../codegen/hir/soxa_values.zig");
+const hir_types = @import("../codegen/hir/soxa_types.zig");
 const HIRInstruction = hir_instructions.HIRInstruction;
 const HIRValue = hir_values.HIRValue;
 const HIRArray = hir_values.HIRArray;
@@ -528,10 +528,10 @@ pub const HIRVM = struct {
             .nothing => TypeInfo{ .base = .Nothing, .is_mutable = true },
             // Complex types - map to appropriate TypeInfo
             .array => TypeInfo{ .base = .Array, .is_mutable = true },
-            .struct_instance => TypeInfo{ .base = .Auto, .is_mutable = true }, // Struct types need resolution
+            .struct_instance => TypeInfo{ .base = .Struct, .is_mutable = true }, // Struct types need resolution
             .tuple => TypeInfo{ .base = .Tuple, .is_mutable = true },
             .map => TypeInfo{ .base = .Map, .is_mutable = true },
-            .enum_variant => TypeInfo{ .base = .Auto, .is_mutable = true }, // Enum types need resolution
+            .enum_variant => TypeInfo{ .base = .Enum, .is_mutable = true }, // Enum types need resolution
         };
     }
 

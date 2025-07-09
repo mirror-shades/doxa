@@ -2,7 +2,7 @@ const std = @import("std");
 const llvm = @import("llvm");
 const ast = @import("../ast/ast.zig");
 const Token = @import("../lexer/token.zig").Token;
-const LLVMGenerator = @import("../codegen/llvm.zig").LLVMGenerator;
+const LLVMGenerator = @import("../codegen/llvmir/llvm.zig").LLVMGenerator;
 const TokenType = @import("../lexer/token.zig").TokenType;
 
 pub const ASTReader = struct {
