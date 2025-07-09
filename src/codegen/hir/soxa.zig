@@ -534,8 +534,11 @@ pub const HIRGenerator = struct {
                     try self.trackVariableCustomType(decl.name.lexeme, custom_type);
                 }
 
-                // Store to variable
+                // Store variable (single instruction). Duplicate value only at global scope
                 const var_idx = try self.getOrCreateVariable(decl.name.lexeme);
+                if (self.current_function == null) {
+                    try self.instructions.append(.Dup);
+                }
                 try self.instructions.append(.{ .StoreVar = .{
                     .var_index = var_idx,
                     .var_name = decl.name.lexeme,
@@ -543,6 +546,8 @@ pub const HIRGenerator = struct {
                     .module_context = null,
                     .expected_type = var_type,
                 } });
+
+                // No extra value should remain on stack now; nothing to pop
             },
             .FunctionDecl => {
                 // Skip - function declarations are handled in multi-pass approach
