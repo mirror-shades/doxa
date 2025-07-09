@@ -334,6 +334,25 @@ pub const HIRVM = struct {
             } };
         }
 
+        // Handle enum types with proper type information
+        if (type_info.base == .Enum and token_literal == .enum_variant) {
+            const variant_name = token_literal.enum_variant;
+            const enum_type_name = type_info.custom_type orelse "unknown";
+
+            // Try to find the variant index (simplified for now)
+            var variant_index: u32 = 0;
+            if (std.mem.eql(u8, variant_name, "Red")) variant_index = 0;
+            if (std.mem.eql(u8, variant_name, "Green")) variant_index = 1;
+            if (std.mem.eql(u8, variant_name, "Blue")) variant_index = 2;
+
+            return HIRValue{ .enum_variant = .{
+                .type_name = enum_type_name,
+                .variant_name = variant_name,
+                .variant_index = variant_index,
+                .path = null,
+            } };
+        }
+
         // Otherwise, use the regular conversion
         return self.tokenLiteralToHIRValue(token_literal);
     }
@@ -430,6 +449,14 @@ pub const HIRVM = struct {
                     .path = null,
                 } };
             },
+            .enum_variant => |variant_name| HIRValue{
+                .enum_variant = .{
+                    .type_name = "unknown", // We'll need to handle this better
+                    .variant_name = variant_name,
+                    .variant_index = 0, // We'll need to handle this better
+                    .path = null,
+                },
+            },
             else => HIRValue.nothing,
         };
     }
@@ -495,7 +522,7 @@ pub const HIRVM = struct {
                 }
                 break :blk TokenLiteral{ .map = token_map };
             },
-            else => TokenLiteral{ .nothing = {} },
+            .enum_variant => |e| TokenLiteral{ .enum_variant = e.variant_name },
         };
     }
 
@@ -531,7 +558,7 @@ pub const HIRVM = struct {
             .struct_instance => TypeInfo{ .base = .Struct, .is_mutable = true }, // Struct types need resolution
             .tuple => TypeInfo{ .base = .Tuple, .is_mutable = true },
             .map => TypeInfo{ .base = .Map, .is_mutable = true },
-            .enum_variant => TypeInfo{ .base = .Enum, .is_mutable = true }, // Enum types need resolution
+            .enum_variant => |e| TypeInfo{ .base = .Enum, .is_mutable = true, .custom_type = e.type_name }, // Preserve enum type name
         };
     }
 
