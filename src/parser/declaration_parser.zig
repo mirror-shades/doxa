@@ -47,7 +47,12 @@ pub fn parseEnumDecl(self: *Parser) ErrorList!ast.Stmt {
         if (self.peek().type != .IDENTIFIER) {
             return error.ExpectedIdentifier;
         }
-        try variants.append(self.peek());
+        const variant_token = self.peek();
+        try variants.append(variant_token);
+
+        // Register each enum variant in declared_types for type resolution
+        try self.declared_types.put(variant_token.lexeme, {});
+
         self.advance();
 
         if (self.peek().type == .COMMA) {
@@ -359,10 +364,18 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
         return error.ExpectedVarOrConst;
     }
 
-    var type_info: ast.TypeInfo = .{
-        .base = .Auto,
-        .is_mutable = !is_const, // const variables can't change value
-    };
+    // Initialize with default Nothing type
+    var type_info = ast.TypeInfo{ .base = .Nothing, .is_mutable = !is_const };
+
+    // Check for explicit type annotation
+    if (self.peek().type == .TYPE_SYMBOL) {
+        self.advance(); // consume ::
+        const type_expr = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
+        const type_info_ptr = try ast.typeInfoFromExpr(self.allocator, type_expr);
+        type_info = type_info_ptr.*;
+        self.allocator.destroy(type_info_ptr); // Free the pointer since we copied the struct
+        type_info.is_mutable = !is_const; // Preserve mutability
+    }
 
     // Special handling for array type declarations
     if (self.peek().type == .ARRAY_TYPE) {
@@ -418,27 +431,24 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
         break :blk n;
     };
 
-    // still unsure if I should enforce explicit type annotations
-    // if (self.peek().type != .TYPE_SYMBOL) {
-    //     const location = Reporter.Location{
-    //         .file = self.current_file,
-    //         .line = self.peek().line,
-    //         .column = self.peek().column,
-    //     };
-    //     self.reporter.reportCompileError(location, "Type must be declared, use auto if needed.", .{});
-    //     return error.ExpectedTypeAnnotation;
-    // }
-
     // Check specifically for '=' where 'is' or '::' is expected
     if (std.mem.eql(u8, self.peek().lexeme, "=")) {
         std.debug.print("The equal sign '=' is not used for variable declarations, use 'is' instead", .{});
-        // Optionally, you could try to recover by treating '=' as 'is' here,
-        // but returning an error is usually better.
-        return error.UseIsForAssignment; // You might need to add this error
+        return error.UseIsForAssignment;
     }
 
-    // Handle type annotation
-    if (self.peek().type == .TYPE_SYMBOL) {
+    if (self.peek().type == .WHERE) {
+        const location = Reporter.Location{
+            .file = self.current_file,
+            .line = self.peek().line,
+            .column = self.peek().column,
+        };
+        self.reporter.reportCompileError(location, "Type declaration uses ::", .{});
+        return error.ExpectedTypeAnnotation;
+    }
+
+    // Handle type annotation (only if not already parsed above)
+    if (self.peek().type == .TYPE_SYMBOL and type_info.base == .Nothing) {
         self.advance(); // consume ::
         const type_expr = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
 
@@ -494,6 +504,35 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
         if (initializer == null) {
             return error.ExpectedExpression;
         }
+    } else if (self.peek().type == .OR) { // union type
+        var types = std.ArrayList(*ast.TypeInfo).init(self.allocator);
+        defer types.deinit();
+
+        // Add the first type we already have
+        const first_type = try self.allocator.create(ast.TypeInfo);
+        first_type.* = type_info;
+        try types.append(first_type);
+
+        while (self.peek().type == .OR) {
+            self.advance(); // consume 'or'
+            const type_expr = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
+            const next_type_info = try ast.typeInfoFromExpr(self.allocator, type_expr);
+            try types.append(next_type_info);
+        }
+
+        // Create union type
+        const union_type = try self.allocator.create(ast.UnionType);
+        union_type.* = .{
+            .types = try types.toOwnedSlice(),
+            .current_type_index = null,
+        };
+
+        // The memory manager will handle this type_info through ValueStorage
+        type_info = .{
+            .base = .Union,
+            .union_type = union_type,
+            .is_mutable = !is_const,
+        };
     }
 
     if (self.peek().type != .SEMICOLON) {
@@ -504,11 +543,9 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
     }
     self.advance();
 
-    if (type_info.base == .Auto and initializer == null) {
-        return error.ExpectedExpression;
-    }
-
-    if (type_info.base == .Auto and initializer != null) {
+    // Remove Auto type handling since Auto is no longer in the Type enum
+    // If no type was explicitly specified and we have an initializer, infer the type
+    if (type_info.base == .Nothing and initializer != null) {
         // infer type from initializer
         const inferred_type = try expression_parser.inferType(initializer.?);
         // Preserve mutability from the original declaration (var vs const)
