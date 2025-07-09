@@ -1,0 +1,8 @@
+fn simple_add(a:: int, b:: int)  {
+    return a + b;
+}
+
+fn main() {
+    var result is simple_add(5, 3);
+    result?;
+} 

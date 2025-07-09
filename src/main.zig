@@ -13,10 +13,10 @@ const env = @import("./interpreter/environment.zig");
 const ASTWriter = @import("./utils/ast_writer.zig");
 const ASTReader = @import("./utils/ast_reader.zig");
 const AST = @import("./ast/ast.zig");
-const SoxaCompiler = @import("./codegen/soxa.zig");
+const SoxaCompiler = @import("./codegen/hir/soxa.zig");
 const DoxaVM = @import("./interpreter/vm.zig").HIRVM;
 const ConstantFolder = @import("./parser/constant_folder.zig").ConstantFolder;
-const PeepholeOptimizer = @import("./codegen/peephole.zig").PeepholeOptimizer;
+const PeepholeOptimizer = @import("./codegen/hir/peephole.zig").PeepholeOptimizer;
 
 ///==========================================================================
 /// Constants

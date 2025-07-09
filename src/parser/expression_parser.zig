@@ -621,7 +621,6 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
             .FLOAT_TYPE => break :blk ast.BasicType.Float,
             .STRING_TYPE => break :blk ast.BasicType.String,
             .TETRA_TYPE => break :blk ast.BasicType.Tetra,
-            .AUTO_TYPE => break :blk ast.BasicType.Auto,
             else => {
                 // For backward compatibility, also check lexemes
                 if (std.mem.eql(u8, type_name, "int")) break :blk ast.BasicType.Integer;
@@ -629,7 +628,6 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
                 if (std.mem.eql(u8, type_name, "float")) break :blk ast.BasicType.Float;
                 if (std.mem.eql(u8, type_name, "string")) break :blk ast.BasicType.String;
                 if (std.mem.eql(u8, type_name, "tetra")) break :blk ast.BasicType.Tetra;
-                if (std.mem.eql(u8, type_name, "auto") or std.mem.eql(u8, type_name, "")) break :blk ast.BasicType.Auto;
                 break :blk null;
             },
         }
@@ -1310,7 +1308,7 @@ pub fn arrayType(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Ex
             .span = ast.SourceSpan.fromToken(self.peek()),
         },
         .data = .{
-            .Basic = .Auto,
+            .Basic = .Nothing,
         },
     };
 
@@ -1386,7 +1384,6 @@ fn parseBasicType(self: *Parser) ErrorList!?*ast.TypeExpr {
         .FLOAT_TYPE => ast.BasicType.Float,
         .STRING_TYPE => ast.BasicType.String,
         .TETRA_TYPE => ast.BasicType.Tetra,
-        .AUTO_TYPE => ast.BasicType.Auto,
         else => return null,
     };
 
@@ -1427,11 +1424,6 @@ pub fn inferType(expr: *ast.Expr) !ast.TypeInfo {
         .Tuple => return .{ .base = .Tuple, .is_mutable = false },
         .Map => return .{ .base = .Map, .is_mutable = false },
         .StructLiteral => return .{ .base = .Struct, .is_mutable = false },
-        .Call => return .{ .base = .Auto, .is_mutable = false }, // Function calls
-        .If => return .{ .base = .Auto, .is_mutable = false }, // Conditional expressions
-        .Variable => return .{ .base = .Auto, .is_mutable = false }, // Variables
-        .Binary => return .{ .base = .Auto, .is_mutable = false }, // Binary expressions
-        .Unary => return .{ .base = .Auto, .is_mutable = false }, // Unary expressions
-        else => return .{ .base = .Auto, .is_mutable = false },
+        else => return .{ .base = .Nothing, .is_mutable = false },
     }
 }
