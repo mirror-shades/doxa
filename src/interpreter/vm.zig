@@ -779,6 +779,12 @@ pub const HIRVM = struct {
 
                         if (self.debug_enabled) {
                             std.debug.print("DoxVM: Debug: LoadVar {} \"{s}\" - Stack size after: {}, loaded value: {s}\n", .{ v.var_index, v.var_name, self.stack.size(), @tagName(hir_value) });
+                            if (std.mem.eql(u8, v.var_name, "tape")) {
+                                std.debug.print("DoxVM: Debug: *** TAPE VARIABLE LOADED - Type: {s} ***\n", .{@tagName(hir_value)});
+                                if (hir_value != .array) {
+                                    std.debug.print("DoxVM: Debug: *** ERROR: TAPE SHOULD BE ARRAY BUT IS {s} ***\n", .{@tagName(hir_value)});
+                                }
+                            }
                         }
                     } else {
                         return self.reporter.reportError("Variable storage not found for: {s}", .{v.var_name});
@@ -1244,6 +1250,9 @@ pub const HIRVM = struct {
                                     .capacity = @intCast(s_val.len),
                                 } };
 
+                                if (self.debug_enabled) {
+                                    std.debug.print("StringOp.Bytes: Created byte array with {} elements\n", .{s_val.len});
+                                }
                                 try self.stack.push(HIRFrame.initFromHIRValue(array));
                             },
                         }
@@ -1258,6 +1267,10 @@ pub const HIRVM = struct {
                 // CRITICAL FIX: For empty arrays (size=0), allocate minimum capacity for growth
                 const initial_capacity = if (a.size == 0) 8 else a.size; // Start with capacity 8 for empty arrays
                 const elements = try self.allocator.alloc(HIRValue, initial_capacity);
+
+                if (self.debug_enabled) {
+                    std.debug.print("ArrayNew: Creating array with element_type: {s}, size: {}, capacity: {}\n", .{ @tagName(a.element_type), a.size, initial_capacity });
+                }
 
                 // Initialize all elements to default values based on element type
                 const default_value = HIRVM.getDefaultValue(a.element_type);
@@ -1310,12 +1323,18 @@ pub const HIRVM = struct {
 
                 switch (array.value) {
                     .array => |arr| {
+                        if (self.debug_enabled) {
+                            std.debug.print("ArrayGet: Accessing array element at index {}, element_type: {s}\n", .{ index_val, @tagName(arr.element_type) });
+                        }
                         if (a.bounds_check and index_val >= arr.elements.len) {
                             self.reporter.reportError("Array index {} out of bounds (array has {} elements)", .{ index_val, arr.elements.len });
                             return ErrorList.IndexOutOfBounds;
                         }
 
                         const element = arr.elements[index_val];
+                        if (self.debug_enabled) {
+                            std.debug.print("ArrayGet: Element type: {s}\n", .{@tagName(element)});
+                        }
                         try self.stack.push(HIRFrame.initFromHIRValue(element));
                     },
                     .nothing => {
@@ -1353,6 +1372,11 @@ pub const HIRVM = struct {
                 const value = try self.stack.pop(); // Value to set
                 const index = try self.stack.pop(); // Index
                 const array_frame = try self.stack.pop(); // Array
+
+                if (self.debug_enabled) {
+                    std.debug.print("ArraySet: About to set - array type: {s}, index type: {s}, value type: {s}\n", .{ @tagName(array_frame.value), @tagName(index.value), @tagName(value.value) });
+                    std.debug.print("ArraySet: Stack size before pops: {}, IP: {}\n", .{ self.stack.size() + 3, self.ip });
+                }
 
                 // IMPROVED: Handle different index types more gracefully
                 const index_val = switch (index.value) {
@@ -1393,11 +1417,19 @@ pub const HIRVM = struct {
                         }
 
                         // TYPE PRESERVATION: Convert value to match array element type when possible
+                        if (self.debug_enabled) {
+                            std.debug.print("ArraySet: Array element_type: {s}, value type: {s}\n", .{ @tagName(mutable_arr.element_type), @tagName(value.value) });
+                        }
                         const element_value = switch (mutable_arr.element_type) {
                             .Byte => switch (value.value) {
                                 .int => |i| if (i >= 0 and i <= 255) HIRValue{ .byte = @intCast(i) } else value.value,
                                 .byte => value.value, // Already correct type
-                                else => value.value, // Keep original for other types
+                                else => blk: {
+                                    if (self.debug_enabled) {
+                                        std.debug.print("ArraySet: Warning - storing {s} in byte array\n", .{@tagName(value.value)});
+                                    }
+                                    break :blk value.value; // Keep original for other types
+                                },
                             },
                             .Int => switch (value.value) {
                                 .byte => |b| HIRValue{ .int = @as(i32, b) }, // Convert byte to int
@@ -1408,6 +1440,9 @@ pub const HIRVM = struct {
                         };
 
                         mutable_arr.elements[index_val] = element_value;
+                        if (self.debug_enabled) {
+                            std.debug.print("ArraySet: Stored element type: {s}\n", .{@tagName(element_value)});
+                        }
                         // Push the modified array back onto the stack
                         const modified_array_value = HIRValue{ .array = mutable_arr };
                         try self.stack.push(HIRFrame.initFromHIRValue(modified_array_value));
@@ -1569,6 +1604,7 @@ pub const HIRVM = struct {
             .Call => |c| {
                 if (self.debug_enabled) {
                     std.debug.print("DoxVM: Call instruction - function_index: {}, call_kind: {s}, qualified_name: {s}\n", .{ c.function_index, @tagName(c.call_kind), c.qualified_name });
+                    std.debug.print("DoxVM: Call stack size before: {}\n", .{self.stack.size()});
                 }
 
                 switch (c.call_kind) {
@@ -1871,6 +1907,9 @@ pub const HIRVM = struct {
             },
 
             .Return => |ret| {
+                if (self.debug_enabled) {
+                    std.debug.print("DoxVM: Return instruction - has_value: {}, stack size: {}\n", .{ ret.has_value, self.stack.size() });
+                }
 
                 // Check if we're returning from main program or a function call
                 if (self.call_stack.isEmpty()) {
