@@ -14,6 +14,7 @@ const ASTWriter = @import("./utils/ast_writer.zig");
 const ASTReader = @import("./utils/ast_reader.zig");
 const AST = @import("./ast/ast.zig");
 const SoxaCompiler = @import("./codegen/hir/soxa.zig");
+const HIRGenerator = @import("./codegen/hir/soxa_generator.zig").HIRGenerator;
 const DoxaVM = @import("./interpreter/vm.zig").HIRVM;
 const ConstantFolder = @import("./parser/constant_folder.zig").ConstantFolder;
 const PeepholeOptimizer = @import("./codegen/hir/peephole.zig").PeepholeOptimizer;
@@ -244,7 +245,7 @@ fn compileDoxaToSoxa(memoryManager: *MemoryManager, source_path: []const u8, sox
 
     reporter.debug(">> Constant folding applied: {} optimizations\n", .{constant_folder.getOptimizationCount()});
 
-    var hir_generator = SoxaCompiler.HIRGenerator.init(memoryManager.getAllocator(), reporter, parser.module_namespaces);
+    var hir_generator = HIRGenerator.init(memoryManager.getAllocator(), reporter, parser.module_namespaces);
     hir_generator.debug_enabled = reporter.is_debug; // Enable debug output if --debug flag is set
     defer hir_generator.deinit();
 

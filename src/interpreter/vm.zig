@@ -787,10 +787,12 @@ pub const HIRVM = struct {
                             }
                         }
                     } else {
-                        return self.reporter.reportError("Variable storage not found for: {s}", .{v.var_name});
+                        // Propagate error so VM halts execution immediately
+                        return self.reporter.throwError("Variable storage not found for: {s}", .{v.var_name}, ErrorList.VariableNotFound);
                     }
                 } else {
-                    return self.reporter.reportError("Undefined variable: {s}", .{v.var_name});
+                    // Propagate undefined variable error
+                    return self.reporter.throwError("Undefined variable: {s}", .{v.var_name}, ErrorList.UndefinedVariable);
                 }
             },
 
@@ -1060,6 +1062,7 @@ pub const HIRVM = struct {
                                         .type_name = nested.type_name,
                                         .field_count = @intCast(nested.fields.len),
                                         .field_types = field_types,
+                                        .should_pop_after_peek = i.should_pop_after_peek, // Pass the flag down
                                     } };
                                     // Push the nested struct onto the stack with updated path
                                     var nested_with_path = nested;
@@ -1092,8 +1095,10 @@ pub const HIRVM = struct {
                     },
                 }
 
-                // Push the value back onto the stack for potential further use
-                try self.stack.push(value);
+                if (!i.should_pop_after_peek) {
+                    // Push the value back onto the stack for potential further use
+                    try self.stack.push(value);
+                }
             },
 
             .EnterScope => {
@@ -1192,19 +1197,29 @@ pub const HIRVM = struct {
                 try self.stack.push(HIRFrame.initTetra(result));
             },
 
-            // String operations (from old VM - proven implementations)
             .StringOp => |s| {
-                const str = try self.stack.pop();
+                const val = try self.stack.pop();
 
-                switch (str.value) {
+                // Fast-path for Length which is valid for both strings and arrays
+                if (s.op == .Length) {
+                    switch (val.value) {
+                        .string => |sv| {
+                            const len = @as(i32, @intCast(sv.len));
+                            try self.stack.push(HIRFrame.initInt(len));
+                        },
+                        .array => |arr| {
+                            const len = @as(i32, @intCast(arr.elements.len));
+                            try self.stack.push(HIRFrame.initInt(len));
+                        },
+                        else => return ErrorList.TypeError,
+                    }
+                    return; // done handling Length
+                }
+
+                // For the remaining ops we expect a string value
+                switch (val.value) {
                     .string => |s_val| {
                         switch (s.op) {
-                            .Length => {
-                                // Return string length as integer
-                                const length = @as(i32, @intCast(s_val.len));
-
-                                try self.stack.push(HIRFrame.initInt(length));
-                            },
                             .Substring => {
                                 // Get substring parameters
                                 const length = try self.stack.pop();
@@ -1255,6 +1270,7 @@ pub const HIRVM = struct {
                                 }
                                 try self.stack.push(HIRFrame.initFromHIRValue(array));
                             },
+                            else => return ErrorList.TypeError,
                         }
                     },
                     else => return ErrorList.TypeError,
@@ -1492,25 +1508,6 @@ pub const HIRVM = struct {
                         // Note: We don't push the array back since pop consumes it
                     },
                     else => return self.reporter.reportError("Cannot pop from non-array value: {s}", .{@tagName(array.value)}),
-                }
-            },
-
-            .ArrayLen => {
-                // Get array length
-                const array = try self.stack.pop(); // Array
-
-                switch (array.value) {
-                    .array => |arr| {
-                        // Find the actual length by counting non-nothing elements
-                        var length: u32 = 0;
-                        for (arr.elements) |elem| {
-                            if (std.meta.eql(elem, HIRValue.nothing)) break;
-                            length += 1;
-                        }
-
-                        try self.stack.push(HIRFrame.initInt(@as(i32, @intCast(length))));
-                    },
-                    else => return self.reporter.reportError("Cannot get length of non-array value: {s}", .{@tagName(array.value)}),
                 }
             },
 
@@ -2913,7 +2910,15 @@ pub const HIRVM = struct {
                 }
                 std.debug.print("]", .{});
             },
-            .struct_instance => std.debug.print("{{struct}}", .{}),
+            .struct_instance => |s| {
+                std.debug.print("{{ ", .{}); // Add opening bracket
+                for (s.fields, 0..) |field, i| {
+                    std.debug.print("{s}: ", .{field.name});
+                    try self.printHIRValue(field.value);
+                    if (i < s.fields.len - 1) std.debug.print(", ", .{});
+                }
+                std.debug.print(" }}", .{}); // Fix closing bracket
+            },
             .tuple => std.debug.print("(tuple)", .{}),
             .map => std.debug.print("{{map}}", .{}),
             .enum_variant => |e| std.debug.print(".{s}", .{e.variant_name}),

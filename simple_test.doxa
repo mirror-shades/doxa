@@ -1,8 +1,8 @@
-fn simple_add(a:: int, b:: int)  {
-    return a + b;
-}
+var my_array :: int[] is [1, 2, 3, 4, 5];
 
-fn main() {
-    var result is simple_add(5, 3);
-    result?;
-} 
+var bs :: byte[] is bytesof "hello";
+
+bs?;
+bs[0]?;
+bs[0] += 1;
+bs[0]?;

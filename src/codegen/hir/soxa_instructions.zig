@@ -422,6 +422,7 @@ pub const HIRInstruction = union(enum) {
         field_names: [][]const u8,
         field_types: []HIRType,
         location: ?Reporting.Reporter.Location,
+        should_pop_after_peek: bool,
     },
 
     /// Program termination
@@ -453,3 +454,4 @@ pub const HIRInstruction = union(enum) {
         has_message: bool,
     },
 };
+
