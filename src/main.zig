@@ -15,6 +15,7 @@ const ASTReader = @import("./utils/ast_reader.zig");
 const AST = @import("./ast/ast.zig");
 const SoxaCompiler = @import("./codegen/hir/soxa.zig");
 const HIRGenerator = @import("./codegen/hir/soxa_generator.zig").HIRGenerator;
+const SoxaTextParser = @import("./codegen/hir/soxa_parser.zig").SoxaTextParser;
 const DoxaVM = @import("./interpreter/vm.zig").HIRVM;
 const ConstantFolder = @import("./parser/constant_folder.zig").ConstantFolder;
 const PeepholeOptimizer = @import("./codegen/hir/peephole.zig").PeepholeOptimizer;
