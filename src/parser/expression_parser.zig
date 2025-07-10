@@ -156,22 +156,23 @@ pub fn lengthofExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast
     // We're already at 'lengthof', advance to the next token
     self.advance();
 
-    // Expect opening parenthesis
-    if (self.peek().type != .LEFT_PAREN) {
-        return error.ExpectedLeftParen;
+    // Allow optional parentheses around the target expression
+    const has_parens = self.peek().type == .LEFT_PAREN;
+    if (has_parens) {
+        self.advance(); // consume '('
     }
-    self.advance();
 
     // Parse the expression whose length we want to check
-    const expr = try parseExpression(self) orelse return error.ExpectedExpression;
+    const expr = try precedence.parsePrecedence(self, .UNARY) orelse return error.ExpectedExpression;
 
-    // Expect closing parenthesis
-    if (self.peek().type != .RIGHT_PAREN) {
-        expr.deinit(self.allocator);
-        self.allocator.destroy(expr);
-        return error.ExpectedRightParen;
+    if (has_parens) {
+        if (self.peek().type != .RIGHT_PAREN) {
+            expr.deinit(self.allocator);
+            self.allocator.destroy(expr);
+            return error.ExpectedRightParen;
+        }
+        self.advance(); // consume ')'
     }
-    self.advance();
 
     const lengthof_expr = try self.allocator.create(ast.Expr);
     lengthof_expr.* = .{
@@ -194,22 +195,23 @@ pub fn bytesofExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
     // We're already at 'bytesof', advance to the next token
     self.advance();
 
-    // Expect opening parenthesis
-    if (self.peek().type != .LEFT_PAREN) {
-        return error.ExpectedLeftParen;
+    // Allow optional parentheses around the target expression
+    const has_parens = self.peek().type == .LEFT_PAREN;
+    if (has_parens) {
+        self.advance(); // consume '('
     }
-    self.advance();
 
     // Parse the expression whose bytes we want to get
-    const expr = try parseExpression(self) orelse return error.ExpectedExpression;
+    const expr = try precedence.parsePrecedence(self, .UNARY) orelse return error.ExpectedExpression;
 
-    // Expect closing parenthesis
-    if (self.peek().type != .RIGHT_PAREN) {
-        expr.deinit(self.allocator);
-        self.allocator.destroy(expr);
-        return error.ExpectedRightParen;
+    if (has_parens) {
+        if (self.peek().type != .RIGHT_PAREN) {
+            expr.deinit(self.allocator);
+            self.allocator.destroy(expr);
+            return error.ExpectedRightParen;
+        }
+        self.advance(); // consume ')'
     }
-    self.advance();
 
     const bytesof_expr = try self.allocator.create(ast.Expr);
     bytesof_expr.* = .{

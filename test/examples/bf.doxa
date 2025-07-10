@@ -46,7 +46,7 @@ function checkClosingBracket(scan :: string) returns(tetra) {
 
 
 function interpret(scan :: string) {
-    var tape :: byte[30000];
+    var tape :: byte[10];
     var tp :: int is 0;
     var ip :: int is 0;
     var loops :: int is 0;
@@ -66,7 +66,8 @@ function interpret(scan :: string) {
         if(currentInstruction equals ",") then tape[tp] is getInput();
         if(currentInstruction equals "[") then startLoop();
         if(currentInstruction equals "]") then endLoop();
-
+        tape[tp]?;
+        tape?;
         ip += 1;
     }
 }
