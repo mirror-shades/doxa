@@ -48,7 +48,7 @@ zig build
 - string
 - tetra (four-value logic unit)
 - nothing (void/null type)
-- alias (pass-by-reference for mutation)
+- alias (pass-by-alias for mutation)
 
 ### Molecular
 
