@@ -112,17 +112,17 @@ pub const TokenType = enum {
     FLOAT, // float
     STRING, // string
     TETRA, // tetra
-    ALIAS, // reference
+    ALIAS, // alias
     NOTHING, // nothing
     INT_TYPE, // int type declaration
     BYTE_TYPE, // 8-bit unsigned integer type declaration
     FLOAT_TYPE, // float type declaration
     STRING_TYPE, // string type declaration
     TETRA_TYPE, // tetra type declaration
-    ALIAS_TYPE, // reference type declaration
+    ALIAS_TYPE, // alias type declaration
     NOTHING_TYPE, // nothing type declaration
 
-    // molecular types
+    // molecular typeslia
     STRUCT, // struct
     ENUM, // enum
     MAP, // map

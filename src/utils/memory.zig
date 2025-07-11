@@ -79,7 +79,7 @@ pub const MemoryManager = struct {
 /// ValueStorage holds a value with alias counting
 const ValueStorage = struct { value: TokenLiteral, type: TokenType, type_info: TypeInfo, alias_count: u32, constant: bool };
 
-/// Variable represents a named reference to a storage location
+/// Variable represents a named alias to a storage location
 pub const Variable = struct {
     name: []const u8,
     type: TokenType,
