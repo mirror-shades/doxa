@@ -9,7 +9,7 @@ const Reporting = @import("../utils/reporting.zig");
 const ErrorList = Reporting.ErrorList;
 const Reporter = Reporting.Reporter;
 const Precedence = @import("./precedence.zig").Precedence;
-const Lexer = @import("../lexer/lexer.zig").Lexer;
+const Lexer = @import("../analysis/lexical.zig").Lexer;
 const import_parser = @import("import_parser.zig");
 
 const TokenStyle = enum {
