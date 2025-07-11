@@ -1,9 +1,10 @@
 const std = @import("std");
 const llvm = @import("llvm");
 const ast = @import("../ast/ast.zig");
-const Token = @import("../lexer/token.zig").Token;
 const LLVMGenerator = @import("../codegen/llvmir/llvm.zig").LLVMGenerator;
-const TokenType = @import("../lexer/token.zig").TokenType;
+const TokenImport = @import("../types/token.zig");
+const Token = TokenImport.Token;
+const TokenType = TokenImport.TokenType;
 
 pub const ASTReader = struct {
     allocator: std.mem.Allocator,

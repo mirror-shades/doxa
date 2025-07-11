@@ -22,7 +22,7 @@ const MemoryManager = memory.MemoryManager;
 const ScopeManager = memory.ScopeManager;
 const Scope = memory.Scope;
 const Variable = memory.Variable;
-const TokenType = @import("../lexer/token.zig").TokenType;
+const TokenType = @import("../types/token.zig").TokenType;
 const TokenLiteral = @import("../types/types.zig").TokenLiteral;
 const TypeInfo = @import("../ast/ast.zig").TypeInfo;
 const StructField = @import("../types/types.zig").StructField;
@@ -1056,14 +1056,16 @@ pub const HIRVM = struct {
                                         field_names[field_idx] = nested_field.name;
                                         field_types[field_idx] = nested_field.field_type;
                                     }
-                                    const nested_peek = HIRInstruction{ .PeekStruct = .{
-                                        .location = i.location,
-                                        .field_names = field_names,
-                                        .type_name = nested.type_name,
-                                        .field_count = @intCast(nested.fields.len),
-                                        .field_types = field_types,
-                                        .should_pop_after_peek = i.should_pop_after_peek, // Pass the flag down
-                                    } };
+                                    const nested_peek = HIRInstruction{
+                                        .PeekStruct = .{
+                                            .location = i.location,
+                                            .field_names = field_names,
+                                            .type_name = nested.type_name,
+                                            .field_count = @intCast(nested.fields.len),
+                                            .field_types = field_types,
+                                            .should_pop_after_peek = i.should_pop_after_peek, // Pass the flag down
+                                        },
+                                    };
                                     // Push the nested struct onto the stack with updated path
                                     var nested_with_path = nested;
                                     nested_with_path.path = field_path;

@@ -1,5 +1,5 @@
 const std = @import("std");
-const TokenImport = @import("../lexer/token.zig");
+const TokenImport = @import("../types/token.zig");
 const TokenType = TokenImport.TokenType;
 const TypeInfo = @import("../ast/ast.zig").TypeInfo;
 const TypesImport = @import("../types/types.zig");

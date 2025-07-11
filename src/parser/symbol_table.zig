@@ -2,7 +2,7 @@
 
 const std = @import("std");
 const ast = @import("../ast/ast.zig");
-const token = @import("../lexer/token.zig");
+const token = @import("../types/token.zig");
 
 pub const SymbolState = enum {
     Declared, // Forward declaration
