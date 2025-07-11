@@ -118,3 +118,49 @@
 // var explicit_sized_tetra_array :: array[3] tetra is [both, false, true];
 // var implicit_tetra_array is [true, false, both];
 // var unit_tetra_array :: array[] tetra; // []
+
+struct Person {
+    name :: string,
+    age :: int,
+}
+
+struct Employee {
+    person ::  Person,
+    salary :: int,
+}
+
+var mike is Employee {
+    person is Person {
+        name is "Mike",
+        age is 25,
+    },
+    salary is 1000,
+};
+
+mike.person.age is 26;
+
+
+enum Color {
+    Red,
+    Green,
+    Blue,
+}
+
+const b :: Color is .Blue;
+const g :: Color is .Green;
+
+var result is match b {
+    .Red => "It's red",
+    .Blue => "It's blue",
+    else => "It's something else",
+}; 
+
+result?; // It's blue
+
+result is match g {
+    .Red => "It's red",
+    .Blue => "It's blue",
+    else => "It's something else",
+};
+
+result?; // It's something else
