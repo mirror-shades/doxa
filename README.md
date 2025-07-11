@@ -48,7 +48,6 @@ zig build
 - string
 - tetra (four-value logic unit)
 - nothing (void/null type)
-- alias (pass-by-alias for mutation)
 
 ### Molecular
 
@@ -58,6 +57,10 @@ zig build
 - enum
 - union
 - function
+
+### Meta
+
+- alias (pass-by-alias for mutation)
 - intrinsic (@length, @cast, etc.)
 
 ## Example
