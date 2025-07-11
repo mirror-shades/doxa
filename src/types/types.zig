@@ -90,7 +90,6 @@ pub const Environment = struct {
                 .Enum => TokenType.ENUM,
                 .Map => TokenType.MAP,
                 .Nothing => TokenType.NOTHING,
-                .Auto => TokenType.AUTO,
                 .Tuple => TokenType.TUPLE,
                 .Custom => TokenType.ENUM_TYPE,
                 .Tetra => TokenType.TETRA,
