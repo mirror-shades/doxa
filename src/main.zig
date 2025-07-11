@@ -44,9 +44,6 @@ var output_file: ?[]const u8 = null;
 const Command = enum {
     run, // doxa run file.doxa (HIR VM - primary execution)
     compile, // doxa compile file.doxa (LLVM pipeline)
-
-    // Testing/development only - will be removed
-    deprecated_interpreter, // doxa deprecated file.doxa (deprecated interpreter)
 };
 
 const CLI = struct {
@@ -126,60 +123,6 @@ fn generateArtifactPath(memoryManager: *MemoryManager, source_path: []const u8, 
     }
 }
 
-/// Core production pipeline: .doxa → .soxa → [HIR VM | LLVM IR]
-fn processSoxaPipeline(memoryManager: *MemoryManager, source_path: []const u8, cli_options: CLI, reporter: *Reporter) !void {
-    reporter.debug("=== ENTERING processSoxaPipeline ===\n", .{});
-    // Determine output paths
-    const soxa_path = try generateArtifactPath(memoryManager, source_path, ".soxa");
-    defer memoryManager.getAllocator().free(soxa_path);
-
-    // TESTING: Always delete cached .soxa file to test fixes
-    std.fs.cwd().deleteFile(soxa_path) catch {};
-
-    // Check if we need to recompile .doxa → .soxa using cache validation
-    const needs_recompile = try needsRecompilation(source_path, soxa_path, memoryManager.getAllocator());
-
-    if (needs_recompile) {
-        try compileDoxaToSoxa(memoryManager, source_path, soxa_path, reporter);
-    } else {
-        reporter.debug(">> Using cached SOXA: {s}\n", .{soxa_path});
-    }
-
-    // Execute based on command
-    switch (cli_options.command) {
-        .run => {
-            reporter.debug(">> Executing with HIR VM\n", .{});
-            // Try to run SOXA file, but recompile if it's incompatible
-            runSoxaFile(memoryManager, soxa_path, reporter) catch |err| {
-                if (err == error.EndOfStream or err == error.InvalidFormat) {
-                    reporter.reportError("!! SOXA file incompatible, regenerating...\n", .{});
-                    // Delete the incompatible SOXA file
-                    std.fs.cwd().deleteFile(soxa_path) catch {};
-                    // Recompile
-                    try compileDoxaToSoxa(memoryManager, source_path, soxa_path, reporter);
-                    // Try again
-                    try runSoxaFile(memoryManager, soxa_path, reporter);
-                } else {
-                    return err;
-                }
-            };
-        },
-
-        .compile => {
-            reporter.debug(">> Compiling to native binary\n", .{});
-            const output_path = cli_options.output orelse try generateArtifactPath(memoryManager, source_path, "");
-            defer if (cli_options.output == null) memoryManager.getAllocator().free(output_path);
-
-            try compileToNative(memoryManager, soxa_path, output_path, reporter);
-        },
-
-        .deprecated_interpreter => {
-            // Skip SOXA generation for deprecated interpreter
-            reporter.debug(">> Using deprecated interpreter\n", .{});
-        },
-    }
-}
-
 /// Check if .soxa file needs to be regenerated using cache validation
 fn needsRecompilation(source_path: []const u8, soxa_path: []const u8, allocator: std.mem.Allocator) !bool {
     // Use embedded hash validation for robust cache checking
@@ -195,36 +138,10 @@ fn compileToNative(memoryManager: *MemoryManager, soxa_path: []const u8, output_
     reporter.debug(">> Would compile {s} -> {s}\n", .{ soxa_path, output_path });
 }
 
-fn processFile(memoryManager: *MemoryManager, path: []const u8, cli_options: CLI, reporter: *Reporter) !void {
-
-    // Read source file for AST interpretation
-    const source = try std.fs.cwd().readFileAlloc(memoryManager.getAllocator(), path, MAX_FILE_SIZE);
-    defer memoryManager.getAllocator().free(source);
-
-    // Lexical analysis
-    var lexer = LexicalAnalyzer.init(memoryManager.getAllocator(), source, path, reporter);
-    defer lexer.deinit();
-    try lexer.initKeywords();
-    const tokens = try lexer.lexTokens();
-
-    // Parsing phase
-    var parser = Parser.init(memoryManager.getAllocator(), tokens.items, path, reporter.is_debug, reporter);
-    defer parser.deinit();
-    const statements = try parser.execute();
-
-    // Write AST for debugging
-    const ast_path = try generateArtifactPath(memoryManager, path, ".ast");
-    defer memoryManager.getAllocator().free(ast_path);
-    try ASTWriter.writeASTToFile(statements, ast_path);
-
-    try processSoxaPipeline(memoryManager, path, cli_options, reporter);
-}
-
 ///==========================================================================
 /// Compile DOXA to SOXA (HIR)
 ///==========================================================================
 fn compileDoxaToSoxa(memoryManager: *MemoryManager, source_path: []const u8, soxa_path: []const u8, reporter: *Reporter) !void {
-    //_ = soxa_path;
 
     // Read and parse the .doxa file
     const source = try std.fs.cwd().readFileAlloc(memoryManager.getAllocator(), source_path, MAX_FILE_SIZE);
@@ -240,11 +157,6 @@ fn compileDoxaToSoxa(memoryManager: *MemoryManager, source_path: []const u8, sox
     var parser = Parser.init(memoryManager.getAllocator(), tokens.items, source_path, reporter.is_debug, reporter);
     defer parser.deinit();
     const statements = try parser.execute();
-
-    // // Semantic analysis
-    // var semantic_analyzer = SemanticAnalyzer.init(memoryManager.getAllocator(), reporter, memoryManager);
-    // defer semantic_analyzer.deinit();
-    // try semantic_analyzer.analyze(statements);
 
     // Constant folding optimization pass
     var constant_folder = ConstantFolder.init(memoryManager.getAllocator());
@@ -303,55 +215,6 @@ fn runSoxaFile(memoryManager: *MemoryManager, soxa_path: []const u8, reporter: *
     _ = try vm.run();
 }
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-
-    var reporter = Reporter.initWithAllocator(gpa.allocator());
-    defer reporter.deinit();
-
-    defer {
-        const leaked = gpa.deinit();
-        if (leaked == .leak) reporter.reportError("Warning: Memory leak detected!\n", .{});
-    }
-
-    // Parse args first
-    const cli_options = try parseArgs(gpa.allocator(), &reporter);
-    // Set debug mode based on CLI options
-    reporter.is_debug = cli_options.debug;
-    // Ensure script_path is freed
-    defer if (cli_options.script_path) |path| {
-        gpa.allocator().free(path);
-    };
-
-    reporter.debug("=== DOXA MAIN STARTED ===\n", .{});
-    reporter.debug("=== CLI OPTIONS: command={s}, debug={}, keep_intermediate={} ===\n", .{ @tagName(cli_options.command), cli_options.debug, cli_options.keep_intermediate });
-
-    // Initialize memory manager with debug setting
-    var memoryManager = try MemoryManager.init(gpa.allocator(), cli_options.debug);
-    defer memoryManager.deinit();
-
-    if (cli_options.output) |out_file| {
-        output_file = out_file;
-    }
-
-    // Process the script
-    const path = cli_options.script_path.?; // Safe to unwrap since we validated it
-    reporter.debug("Debug: Processing script: '{s}'\n", .{path});
-
-    if (!stringEndsWith(path, DOXA_EXTENSION)) {
-        reporter.reportError("Error: '{s}' is not a doxa file\n", .{path});
-        std.process.exit(EXIT_CODE_USAGE);
-    }
-
-    // Convert relative path to absolute if needed
-    var path_buffer: [std.fs.max_path_bytes]u8 = undefined; // Changed from MAX_PATH_BYTES to max_path_bytes
-    const abs_path = try std.fs.cwd().realpath(path, &path_buffer);
-
-    reporter.debug("Debug: Absolute path: '{s}'\n", .{abs_path});
-
-    try processFile(&memoryManager, abs_path, cli_options, &reporter);
-}
-
 fn parseArgs(allocator: std.mem.Allocator, reporter: *Reporter) !CLI {
     const args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);
@@ -402,10 +265,6 @@ fn parseArgs(allocator: std.mem.Allocator, reporter: *Reporter) !CLI {
             break;
         } else if (stringEquals(arg, "compile")) {
             options.command = .compile;
-            i += 1; // Move to next argument (should be file)
-            break;
-        } else if (stringEquals(arg, "old")) {
-            options.command = .deprecated_interpreter;
             i += 1; // Move to next argument (should be file)
             break;
         } else if (stringEndsWith(arg, DOXA_EXTENSION)) {
@@ -493,4 +352,144 @@ fn stringEndsWith(str: []const u8, suffix: []const u8) bool {
     const start = str.len - suffix.len;
     const result = stringEquals(str[start..], suffix);
     return result;
+}
+pub fn main() !void {
+    //==========================================================================
+    // Initialization
+    //==========================================================================
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+
+    var reporter = Reporter.initWithAllocator(gpa.allocator());
+    defer reporter.deinit();
+
+    defer {
+        const leaked = gpa.deinit();
+        if (leaked == .leak) reporter.reportError("Warning: Memory leak detected!\n", .{});
+    }
+
+    // Parse args first
+    const cli_options = try parseArgs(gpa.allocator(), &reporter);
+    // Set debug mode based on CLI options
+    reporter.is_debug = cli_options.debug;
+    // Ensure script_path is freed
+    defer if (cli_options.script_path) |path| {
+        gpa.allocator().free(path);
+    };
+
+    // Initialize memory manager with debug setting
+    var memoryManager = try MemoryManager.init(gpa.allocator(), cli_options.debug);
+    defer memoryManager.deinit();
+
+    if (cli_options.output) |out_file| {
+        output_file = out_file;
+    }
+
+    //==========================================================================
+    // Process the script
+    //==========================================================================
+
+    // Process the script
+    const path = cli_options.script_path.?; // Safe to unwrap since we validated it
+    reporter.debug("Debug: Processing script: '{s}'\n", .{path});
+
+    if (!stringEndsWith(path, DOXA_EXTENSION)) {
+        reporter.reportError("Error: '{s}' is not a doxa file\n", .{path});
+        std.process.exit(EXIT_CODE_USAGE);
+    }
+
+    // Convert relative path to absolute if needed
+    var path_buffer: [std.fs.max_path_bytes]u8 = undefined; // Changed from MAX_PATH_BYTES to max_path_bytes
+    const abs_path = try std.fs.cwd().realpath(path, &path_buffer);
+
+    reporter.debug("Debug: Absolute path: '{s}'\n", .{abs_path});
+
+    // Read source file for AST interpretation
+    const source = try std.fs.cwd().readFileAlloc(memoryManager.getAllocator(), path, MAX_FILE_SIZE);
+    defer memoryManager.getAllocator().free(source);
+
+    //==========================================================================
+    // Lexical analysis
+    //==========================================================================
+
+    // Lexical analysis
+    var lexer = LexicalAnalyzer.init(memoryManager.getAllocator(), source, path, &reporter);
+    defer lexer.deinit();
+    try lexer.initKeywords();
+    const tokens = try lexer.lexTokens();
+
+    //==========================================================================
+    // Parsing phase
+    //==========================================================================
+
+    // Parsing phase
+    var parser = Parser.init(memoryManager.getAllocator(), tokens.items, path, reporter.is_debug, &reporter);
+    defer parser.deinit();
+    const statements = try parser.execute();
+
+    // Write AST for debugging
+    const ast_path = try generateArtifactPath(&memoryManager, path, ".ast");
+    defer memoryManager.getAllocator().free(ast_path);
+    try ASTWriter.writeASTToFile(statements, ast_path);
+
+    //==========================================================================
+    // Semantic analysis
+    //==========================================================================
+    // var semantic_analyzer = SemanticAnalyzer.init(memoryManager.getAllocator(), &reporter, &memoryManager);
+    // defer semantic_analyzer.deinit();
+    // try semantic_analyzer.analyze(statements);
+
+    // memoryManager.scope_manager.dumpState(0);
+
+    //==========================================================================
+    // Compile to SOXA
+    //==========================================================================
+
+    // Determine output paths
+    const soxa_path = try generateArtifactPath(&memoryManager, path, ".soxa");
+    defer memoryManager.getAllocator().free(soxa_path);
+
+    // TESTING: Always delete cached .soxa file to test fixes
+    std.fs.cwd().deleteFile(soxa_path) catch {};
+
+    // Check if we need to recompile .doxa → .soxa using cache validation
+    const needs_recompile = try needsRecompilation(path, soxa_path, memoryManager.getAllocator());
+
+    if (needs_recompile) {
+        try compileDoxaToSoxa(&memoryManager, path, soxa_path, &reporter);
+    } else {
+        reporter.debug(">> Using cached SOXA: {s}\n", .{soxa_path});
+    }
+
+    //==========================================================================
+    // Execute
+    //==========================================================================
+
+    // Execute based on command
+    switch (cli_options.command) {
+        .run => {
+            reporter.debug(">> Executing with HIR VM\n", .{});
+            // Try to run SOXA file, but recompile if it's incompatible
+            runSoxaFile(&memoryManager, soxa_path, &reporter) catch |err| {
+                if (err == error.EndOfStream or err == error.InvalidFormat) {
+                    reporter.reportError("!! SOXA file incompatible, regenerating...\n", .{});
+                    // Delete the incompatible SOXA file
+                    std.fs.cwd().deleteFile(soxa_path) catch {};
+                    // Recompile
+                    try compileDoxaToSoxa(&memoryManager, path, soxa_path, &reporter);
+                    // Try again
+                    try runSoxaFile(&memoryManager, soxa_path, &reporter);
+                } else {
+                    return err;
+                }
+            };
+        },
+
+        .compile => {
+            reporter.debug(">> Compiling to native binary\n", .{});
+            const output_path = cli_options.output orelse try generateArtifactPath(&memoryManager, path, "");
+            defer if (cli_options.output == null) memoryManager.getAllocator().free(output_path);
+
+            try compileToNative(&memoryManager, soxa_path, output_path, &reporter);
+        },
+    }
 }
