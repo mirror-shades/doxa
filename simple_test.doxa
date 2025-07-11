@@ -1,5 +1,5 @@
-// // 
-// //var no_type_possible; // ERROR
+// // // 
+// // //var no_type_possible; // ERROR
 
 // var explicit_int :: int is 1;
 // var implicit_int is 2;
@@ -33,69 +33,77 @@
 // const const_implicit_string is "bar";
 // const const_unit_string :: string; // ""
 
-var int_arith is 1 + 2;
-var byte_arith is 0x01 + 0x02;
-var float_arith is 1.0 + 2.0;
+// var int_arith is 1 + 2;
+// var byte_arith is 0x01 + 0x02;
+// var float_arith is 1.0 + 2.0;
 
-var float_add_int is 1.0 + 2;
-var int_add_float is 1 + 2.0;
-var float_add_byte is 1.0 + 0x02;
-var byte_add_float is 0x01 + 2.0;
-var byte_add_int is 0x01 + 2;
-var int_add_byte is 1 + 0x02;
+// var float_add_int is 1.0 + 2;
+// var int_add_float is 1 + 2.0;
+// var float_add_byte is 1.0 + 0x02;
+// var byte_add_float is 0x01 + 2.0;
+// var byte_add_int is 0x01 + 2;
+// var int_add_byte is 1 + 0x02;
 
-var float_minus_int is 1.0 - 2;
-var int_minus_float is 1 - 2.0;
-var float_minus_byte is 1.0 - 0x02;
-var byte_minus_float is 0x01 - 2.0;
-var byte_minus_int is 0x01 - 2;
-var int_minus_byte is 1 - 0x02;
+// var float_minus_int is 1.0 - 2;
+// var int_minus_float is 1 - 2.0;
+// var float_minus_byte is 1.0 - 0x02;
+// var byte_minus_float is 0x01 - 2.0;
+// var byte_minus_int is 0x01 - 2;
+// var int_minus_byte is 1 - 0x02;
 
-var float_mul_int is 1.0 * 2;
-var int_mul_float is 1 * 2.0;
-var float_mul_byte is 1.0 * 0x02;
-var byte_mul_float is 0x01 * 2.0;
-var byte_mul_int is 0x01 * 2;
-var int_mul_byte is 1 * 0x02;
+// var float_mul_int is 1.0 * 2;
+// var int_mul_float is 1 * 2.0;
+// var float_mul_byte is 1.0 * 0x02;
+// var byte_mul_float is 0x01 * 2.0;
+// var byte_mul_int is 0x01 * 2;
+// var int_mul_byte is 1 * 0x02;
 
-var float_div_int is 1.0 / 2;
-var int_div_float is 1 / 2.0;
-var byte_div_float is 0x01 / 2.0;
-var byte_div_int is 0x01 / 2;
-var int_div_byte is 1 / 0x02;
-var int_div_int is 10 / 3;
+// var float_div_int is 1.0 / 2;
+// var int_div_float is 1 / 2.0;
+// var byte_div_float is 0x01 / 2.0;
+// var byte_div_int is 0x01 / 2;
+// var int_div_byte is 1 / 0x02;
+// var int_div_int is 10 / 3;
 
-// Modulo (should only work with integers)
-var int_mod_int is 10 % 3;
-var byte_mod_byte is 0x10 % 0x03;
+// // Modulo (should only work with integers)
+// var int_mod_int is 10 % 3;
+// var byte_mod_byte is 0x10 % 0x03;
 
-// Power/Exponentiation (should return float)
-var int_power_int is 2 ** 3;
-var float_power_int is 2.0 ** 3;
-var int_power_float is 2 ** 3.0;
-var float_power_float is 2.0 ** 3.0;
+// // Power/Exponentiation (should return float)
+// var int_power_int is 2 ** 3;
+// var float_power_int is 2.0 ** 3;
+// var int_power_float is 2 ** 3.0;
+// var float_power_float is 2.0 ** 3.0;
 
-// Comparison operators (should return tetra/boolean)
-var int_less_than is 5 < 10;
-var float_greater_than is 3.14 > 2.71;
-var byte_less_equal is 0x05 <= 0x10;
-var int_greater_equal is 100 >= 50;
-var string_equality is "hello" == "world";
-var int_not_equal is 42 != 24;
+// // Comparison operators (should return tetra/boolean)
+// var int_less_than is 5 < 10;
+// var float_greater_than is 3.14 > 2.71;
+// var byte_less_equal is 0x05 <= 0x10;
+// var int_greater_equal is 100 >= 50;
+// var string_equality is "hello" == "world";
+// var int_not_equal is 42 != 24;
 
-// Logical operators (should work with tetra/boolean)
-var logical_and is true and false;
-var logical_or is true or false;
-var logical_not is not true;
+// // Logical operators (should work with tetra/boolean)
+// var logical_and is true and false;
+// var logical_or is true or false;
+// var logical_not is not true;
 
-// Mixed type comparisons
-var int_float_compare is 5 < 5.5;
-var byte_int_compare is 0x10 > 15;
-var float_byte_compare is 3.14 >= 0x03;
+// // Mixed type comparisons
+// var int_float_compare is 5 < 5.5;
+// var byte_int_compare is 0x10 > 15;
+// var float_byte_compare is 3.14 >= 0x03;
+
+// // number type conversions
+// var int_as_float :: float is 1;
+// // var float_as_int :: int is 1.0; // ERROR
+// var byte_as_int :: int is 0x01;
+// var int_as_byte :: byte is 1;
+// // var float_as_byte :: byte is 1.0; // ERROR
+// var byte_as_float :: float is 0x01;
 
 
 // var explicit_int_array :: array[] int is [1, 2, 3];
-// var explicit_sized_int_array :: array[] byte is [4, 5, 6];
+// var explicit_sized_int_array :: array[] int is [4, 5, 6];
 // var implicit_int_array is [7, 8, 9];
 // var unit_int_array :: array[] int; // []
 // var explicit_byte_array :: array[] byte is [0x00, 0x01, 0x02];
@@ -110,3 +118,5 @@ var float_byte_compare is 3.14 >= 0x03;
 // var explicit_sized_tetra_array :: array[3] tetra is [both, false, true];
 // var implicit_tetra_array is [true, false, both];
 // var unit_tetra_array :: array[] tetra; // []
+
+var homo_tuple :: (: int, int, int :) is (: 1, 2, 3 :);
