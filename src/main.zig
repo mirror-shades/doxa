@@ -1,5 +1,5 @@
 const std = @import("std");
-const Lexer = @import("./lexer/lexer.zig").Lexer;
+const Lexer = @import("./analysis/lexical.zig").Lexer;
 const Parser = @import("./parser/parser_types.zig").Parser;
 const Reporting = @import("./utils/reporting.zig");
 const Reporter = Reporting.Reporter;
