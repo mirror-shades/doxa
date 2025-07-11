@@ -43,7 +43,7 @@ zig build
 
 - int (32 bit integer)
 - float (64 bit float)
-- u8 (8 bit unsigned integer)
+- byte (8 bit uint hex literal)
 - string
 - tetra
 - array (homogenous)
