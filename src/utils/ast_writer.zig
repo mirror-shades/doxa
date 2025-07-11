@@ -178,13 +178,6 @@ fn writeExpression(expr: *const ast.Expr, writer: anytype) std.fs.File.WriteErro
                 try writeExpression(element, writer);
             }
         },
-        .Tuple => |elements| {
-            try writer.print("tuple_elements_count:{d}\n", .{elements.len});
-            for (elements, 0..) |element, i| {
-                try writer.print("tuple_element_{d}:\n", .{i});
-                try writeExpression(element, writer);
-            }
-        },
         .StructLiteral => |struct_lit| {
             try writer.print("struct_name:{s}\n", .{struct_lit.name.lexeme});
             try writer.print("struct_fields_count:{d}\n", .{struct_lit.fields.len});

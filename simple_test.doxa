@@ -118,5 +118,3 @@
 // var explicit_sized_tetra_array :: array[3] tetra is [both, false, true];
 // var implicit_tetra_array is [true, false, both];
 // var unit_tetra_array :: array[] tetra; // []
-
-var homo_tuple :: (: int, int, int :) is (: 1, 2, 3 :);

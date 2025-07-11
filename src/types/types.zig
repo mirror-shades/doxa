@@ -90,7 +90,6 @@ pub const Environment = struct {
                 .Enum => TokenType.ENUM,
                 .Map => TokenType.MAP,
                 .Nothing => TokenType.NOTHING,
-                .Tuple => TokenType.TUPLE,
                 .Custom => TokenType.ENUM_TYPE,
                 .Tetra => TokenType.TETRA,
                 else => unreachable,
@@ -186,7 +185,6 @@ pub const TokenLiteral = union(enum) {
         fields: []StructField,
         path: ?[]const u8 = @as(?[]const u8, null),
     },
-    tuple: []TokenLiteral,
     map: std.StringHashMap(TokenLiteral),
     function: struct {
         params: []FunctionParam,

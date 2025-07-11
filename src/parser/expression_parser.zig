@@ -1114,7 +1114,6 @@ pub fn functionExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast
                 .STRING_TYPE => .String,
                 .TETRA_TYPE => .Tetra,
                 .ARRAY_TYPE => .Array,
-                .TUPLE_TYPE => .Tuple,
                 else => return error.InvalidType,
             };
 
@@ -1231,7 +1230,6 @@ pub fn grouping(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
 
     if (self.peek().type != .RIGHT_PAREN) {
         std.debug.print("Expected right parenthesis, got {s}\n", .{@tagName(self.peek().type)});
-        std.debug.print("If this was a tuple, remember the explicit smiley face syntax (: 1, \"2\", true :)\n", .{});
         return error.ExpectedRightParen;
     }
     self.advance(); // consume )
@@ -1465,7 +1463,6 @@ pub fn inferType(expr: *ast.Expr) !ast.TypeInfo {
                 .tetra => return .{ .base = .Tetra, .is_mutable = false },
                 .nothing => return .{ .base = .Nothing, .is_mutable = false },
                 .array => return .{ .base = .Array, .is_mutable = false },
-                .tuple => return .{ .base = .Tuple, .is_mutable = false },
                 .map => return .{ .base = .Map, .is_mutable = false },
                 .enum_variant => return .{ .base = .Enum, .is_mutable = false },
                 .struct_value => return .{ .base = .Struct, .is_mutable = false },
@@ -1473,7 +1470,6 @@ pub fn inferType(expr: *ast.Expr) !ast.TypeInfo {
             }
         },
         .Array => return .{ .base = .Array, .is_mutable = false },
-        .Tuple => return .{ .base = .Tuple, .is_mutable = false },
         .Map => return .{ .base = .Map, .is_mutable = false },
         .StructLiteral => return .{ .base = .Struct, .is_mutable = false },
         else => return .{ .base = .Nothing, .is_mutable = false },
