@@ -1,6 +1,6 @@
-# Doxa Programming Language [[Docs]](https://mirror-shades.github.io/doxa/)[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/mirror-shades/doxa)  
+# Doxa Programming Language [[Docs]](https://mirror-shades.github.io/doxa/)[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/mirror-shades/doxa)
 
-Doxa is inspired by Nagarjuna's four cornered logic, known as Catuṣkoṭi. Doxa does not use bools but instead tetras. A tetra (short for tetralemma) is a logical value with four possible states or corners:  
+Doxa is inspired by Nagarjuna's four cornered logic, known as Catuṣkoṭi. Doxa does not use bools but instead tetras. A tetra (short for tetralemma) is a logical value with four possible states or corners:
 
 ```
 P (true)
@@ -8,7 +8,8 @@ P (true)
 P ∧ ¬ P (both)
 ¬ ( P ∨ ¬ P ) (neither)
 ```
-See documentation for a more detailed explaination of how this works.  
+
+See documentation for a more detailed explaination of how this works.
 
 ## Components
 
@@ -22,7 +23,7 @@ See documentation for a more detailed explaination of how this works.
 
 ## Memory management
 
-Memory is managed but not via garbage collection. Doxa uses an automated refence counter much like Swift but with some unique changes which leverage the power of the Zig language allocation system. Without getting overly technical, each scope is allocated as an arena which is cleaned up when that scope is exited. Combined with traditional refrence counting this provides an extremely robust and *predictable* form of automatic memory management which avoids many of the pitfalls of garbage collection while remaining totally automatic.
+Memory is managed but not via garbage collection. Doxa uses an automated refence counter much like Swift but with some unique changes which leverage the power of the Zig language allocation system. Without getting overly technical, each scope is allocated as an arena which is cleaned up when that scope is exited. Combined with traditional refrence counting this provides an extremely robust and _predictable_ form of automatic memory management which avoids many of the pitfalls of garbage collection while remaining totally automatic.
 
 ## Usage
 
@@ -37,24 +38,31 @@ zig build
 - 🚧 **Soxa VM**: currently implementing stack based HIR and VM
 - ❌ **LLVM IR**: Minimal prototyping, many features missing, future
 
-## Core Concepts
+## Value Types
 
-### Value Types
+### Atomic
 
-- int (32 bit integer)
-- float (64 bit float)
-- byte (8 bit uint hex literal)
+- int (32-bit integer)
+- float (64-bit float)
+- byte (8-bit uint hex literal)
 - string
-- tetra
-- array (homogenous)
-- tuple (heterogenus)
+- tetra (four-value logic unit)
+- nothing (void/null type)
+- alias (pass-by-reference for mutation)
+
+### Molecular
+
+- array (homogeneous)
 - map
 - struct
 - enum
+- union
+- function
+- intrinsic (@length, @cast, etc.)
 
 ## Example
 
-``` solidity
+```solidity
 // a brainfuck interpreter implemented in doxa
 // mirror-shades
 
@@ -69,7 +77,7 @@ function getInput() returns(u8) {
 }
 
 function startLoop() {
-    if loopSpot.length equals loops 
+    if loopSpot.length equals loops
     then {
         loopSpot.push(ip);
     } else {
@@ -79,9 +87,9 @@ function startLoop() {
 }
 
 function endLoop() {
-    if loops >= 0 
+    if loops >= 0
     then {
-        if tape[tp] equals 0 
+        if tape[tp] equals 0
         then {
             loops -= 1;
         } else {
@@ -139,4 +147,3 @@ function interpret(scan :: string) {
     interpret(",+.");
 }
 ```
-

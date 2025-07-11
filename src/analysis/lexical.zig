@@ -106,9 +106,6 @@ pub const LexicalAnalyzer = struct {
         try self.keywords.put("enum", .ENUM);
         try self.keywords.put("async", .ASYNC);
         try self.keywords.put("await", .AWAIT);
-        try self.keywords.put("typeof", .TYPEOF);
-        try self.keywords.put("lengthof", .LENGTHOF);
-        try self.keywords.put("bytesof", .BYTESOF);
         try self.keywords.put("is", .ASSIGN);
         try self.keywords.put("as", .AS);
         try self.keywords.put("from", .FROM);
@@ -132,6 +129,16 @@ pub const LexicalAnalyzer = struct {
         try self.keywords.put("nor", .NOR);
         try self.keywords.put("not", .NOT);
         try self.keywords.put("in", .IN);
+        try self.keywords.put("typeof", .TYPEOF);
+        try self.keywords.put("length", .LENGTH);
+        try self.keywords.put("bytes", .BYTES);
+        try self.keywords.put("substring", .SUBSTRING);
+        try self.keywords.put("concat", .CONCAT);
+        try self.keywords.put("slice", .SLICE);
+        try self.keywords.put("reverse", .REVERSE);
+        try self.keywords.put("istype", .ISTYPE);
+        try self.keywords.put("cast", .CAST);
+        try self.keywords.put("clone", .CLONE);
         try self.keywords.put("∃", .EXISTS);
         try self.keywords.put("∀", .FORALL);
         try self.keywords.put("∈", .IN);
@@ -349,6 +356,9 @@ pub const LexicalAnalyzer = struct {
                 } else {
                     try self.addMinimalToken(.MINUS);
                 }
+            },
+            '@' => {
+                try self.internalMethod();
             },
             '0'...'9' => try self.number(),
 
@@ -729,6 +739,47 @@ pub const LexicalAnalyzer = struct {
         const lexeme = self.source[self.start..self.current];
         const string_content = try result.toOwnedSlice();
         try self.addLongToken(.STRING, .{ .string = string_content }, lexeme);
+    }
+
+    fn internalMethod(self: *LexicalAnalyzer) !void {
+        const method_name = self.getMethodName(); // Get full name like "typeof"
+
+        if (std.mem.eql(u8, method_name, "typeof")) {
+            try self.addToken(.TYPEOF, .nothing);
+        } else if (std.mem.eql(u8, method_name, "lengthof")) {
+            try self.addToken(.LENGTH, .nothing);
+        } else if (std.mem.eql(u8, method_name, "bytesof")) {
+            try self.addToken(.BYTES, .nothing);
+        } else if (std.mem.eql(u8, method_name, "substring")) {
+            try self.addToken(.SUBSTRING, .nothing);
+        } else if (std.mem.eql(u8, method_name, "concat")) {
+            try self.addToken(.CONCAT, .nothing);
+        } else if (std.mem.eql(u8, method_name, "slice")) {
+            try self.addToken(.SLICE, .nothing);
+        } else if (std.mem.eql(u8, method_name, "reverse")) {
+            try self.addToken(.REVERSE, .nothing);
+        } else if (std.mem.eql(u8, method_name, "istype")) {
+            try self.addToken(.ISTYPE, .nothing);
+        } else if (std.mem.eql(u8, method_name, "cast")) {
+            try self.addToken(.CAST, .nothing);
+        } else if (std.mem.eql(u8, method_name, "clone")) {
+            try self.addToken(.CLONE, .nothing);
+        } else {
+            return error.InvalidInternalMethod;
+        }
+    }
+
+    fn getMethodName(self: *LexicalAnalyzer) []const u8 {
+        var buffer: [20]u8 = undefined; // Max method name length
+        var i: usize = 0;
+
+        while (!self.isAtEnd() and self.peekAt(0) != '(' and self.peekAt(0) != ' ' and i < buffer.len) {
+            buffer[i] = self.peekAt(0);
+            self.advance();
+            i += 1;
+        }
+
+        return buffer[0..i];
     }
 
     //======================================================================

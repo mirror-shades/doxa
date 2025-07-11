@@ -198,10 +198,10 @@ pub const rules = blk: {
     r.set(.TYPEOF, .{ .prefix = typeofExpr, .precedence = .CALL }); // Added precedence
 
     // Add lengthof support
-    r.set(.LENGTHOF, .{ .prefix = lengthofExpr, .precedence = .CALL });
+    r.set(.LENGTH, .{ .prefix = lengthofExpr, .precedence = .CALL });
 
     // Add bytesof support
-    r.set(.BYTESOF, .{ .prefix = bytesofExpr, .precedence = .CALL });
+    r.set(.BYTES, .{ .prefix = bytesofExpr, .precedence = .CALL });
 
     // Add input support
     r.set(.INPUT, .{ .prefix = Parser.input, .precedence = .PRIMARY });

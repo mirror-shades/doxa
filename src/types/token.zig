@@ -69,9 +69,20 @@ pub const TokenType = enum {
     IMPLIES, // →
     ASYNC, // async
     AWAIT, // await
+
+    // compiler level methods
     TYPEOF, // typeof
-    LENGTHOF, // lengthof
-    BYTESOF, // bytesof
+    LENGTH, // length
+    BYTES, // bytes
+    SUBSTRING, // substring
+    CONCAT, // concat
+    SLICE, // slice
+    REVERSE, // reverse
+    ISTYPE, // istype
+    CAST, // cast
+    CLONE, // clone
+
+    // directives
     GUIDE, // guide
     SAFE, // safe
     NORMAL, // normal
@@ -79,7 +90,6 @@ pub const TokenType = enum {
     // keywords with alternate tokens
     AND, // and ∧
     OR, // or ∨
-    FUNCTION, // fn
     WHERE, // where
     EQUALITY, // ==
     ASSIGN, // is
@@ -95,31 +105,44 @@ pub const TokenType = enum {
     // literals
     IDENTIFIER, // identifier
     SPREAD, // ...
+
+    // atomic types
     INT, // integer
     BYTE, // hex literal u8
     FLOAT, // float
     STRING, // string
-    ARRAY, // array
     TETRA, // tetra
-    LOGIC, // logic
-    STRUCT, // struct
-    ENUM, // enum
-    MAP, // map
-    CUSTOM, // custom
-    REFERENCE, // reference
-    UNION, // union
-
-    // Type keywords
+    ALIAS, // reference
+    NOTHING, // nothing
     INT_TYPE, // int type declaration
     BYTE_TYPE, // 8-bit unsigned integer type declaration
     FLOAT_TYPE, // float type declaration
     STRING_TYPE, // string type declaration
     TETRA_TYPE, // tetra type declaration
+    ALIAS_TYPE, // reference type declaration
+    NOTHING_TYPE, // nothing type declaration
+
+    // molecular types
+    STRUCT, // struct
+    ENUM, // enum
+    MAP, // map
+    UNION, // union
+    ARRAY, // array
+    FUNCTION, // function
+    INTRINSIC, // intrinsic
     ARRAY_TYPE, // array type declaration
     STRUCT_TYPE, // struct type declaration
     ENUM_TYPE, // enum type declaration
     MAP_TYPE, // map type declaration
-    NOTHING, // nothing
+    UNION_TYPE, // union type declaration
+    FUNCTION_TYPE, // function type declaration
+    INTRINSIC_TYPE, // intrinsic type declaration
+
+    // type helpers
+    LOGIC, // logic
+    CUSTOM, // custom
+
+    // Type keywords
 
     EOF, // end of file
 };
