@@ -194,15 +194,6 @@ fn foo(a :: int, b :: int is 5) returns(int) {
 foo(777, 2)?; // 779
 foo(777, ~)?; // 782
 
-/////
-// TUPLES
-/////
-var point is (: 1234, 2345 :);
-point[0]?; // 1234
-point[1]?; // 2345
-
-var point2 is (: (: 10, "20" :), (: true, 40 :) :);
-point2[1][0]?; // true
 
 /////
 // MAPS

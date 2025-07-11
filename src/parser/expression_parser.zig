@@ -1471,7 +1471,7 @@ pub fn inferType(expr: *ast.Expr) !ast.TypeInfo {
         },
         .Array => return .{ .base = .Array, .is_mutable = false },
         .Map => return .{ .base = .Map, .is_mutable = false },
-        .StructLiteral => return .{ .base = .Struct, .is_mutable = false },
+        .StructLiteral => |struct_lit| return .{ .base = .Custom, .custom_type = struct_lit.name.lexeme, .is_mutable = false },
         else => return .{ .base = .Nothing, .is_mutable = false },
     }
 }

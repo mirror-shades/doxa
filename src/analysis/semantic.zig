@@ -71,8 +71,8 @@ pub const SemanticAnalyzer = struct {
                     errdefer self.allocator.destroy(type_info);
 
                     if (decl.type_info.base != .Nothing) {
-                        // Use explicit type
-                        type_info.* = decl.type_info;
+                        // Use explicit type, but resolve custom types
+                        type_info.* = try self.resolveTypeInfo(decl.type_info);
                     } else if (decl.initializer) |init_expr| {
                         // Infer from initializer
                         const inferred = try self.inferTypeFromExpr(init_expr);
@@ -131,6 +131,7 @@ pub const SemanticAnalyzer = struct {
                 .Block => |block_stmts| {
                     const block_scope = try self.memory.scope_manager.createScope(scope);
                     try self.collectDeclarations(block_stmts, block_scope);
+                    block_scope.deinit();
                 },
                 .FunctionDecl => |func| {
                     // Create function type
@@ -169,44 +170,69 @@ pub const SemanticAnalyzer = struct {
                             return err;
                         }
                     };
+                },
+                .EnumDecl => |enum_decl| {
+                    // Register the enum type in the current scope
+                    const enum_type_info = try self.allocator.create(ast.TypeInfo);
+                    enum_type_info.* = .{ .base = .Enum, .custom_type = enum_decl.name.lexeme, .is_mutable = false };
 
-                    // Create function scope and analyze body
-                    const func_scope = try self.memory.scope_manager.createScope(scope);
-                    // Add parameters to function scope
-                    for (func.params) |param| {
-                        const param_type = if (param.type_expr) |type_expr|
-                            try self.typeExprToTypeInfo(type_expr)
-                        else
-                            try self.allocator.create(ast.TypeInfo); // Infer from default value
+                    // Create a placeholder value for the enum type
+                    const enum_value = TokenLiteral{ .string = enum_decl.name.lexeme };
 
-                        if (param.default_value) |default| {
-                            const inferred = try self.inferTypeFromExpr(default);
-                            param_type.* = inferred.*;
+                    _ = scope.createValueBinding(
+                        enum_decl.name.lexeme,
+                        enum_value,
+                        .ENUM,
+                        enum_type_info.*,
+                        true, // Enum types are constants
+                    ) catch |err| {
+                        if (err == error.DuplicateVariableName) {
+                            self.reporter.reportCompileError(
+                                stmt.base.span.start,
+                                "Duplicate enum name '{s}' in current scope",
+                                .{enum_decl.name.lexeme},
+                            );
+                            self.fatal_error = true;
+                            continue;
                         } else {
-                            param_type.* = .{ .base = .Nothing };
+                            return err;
                         }
+                    };
+                },
 
-                        _ = func_scope.createValueBinding(
-                            param.name.lexeme,
-                            TokenLiteral{ .nothing = {} },
-                            self.convertTypeToTokenType(param_type.base),
-                            param_type.*,
-                            true, // Parameters are mutable by default
-                        ) catch |err| {
-                            if (err == error.DuplicateVariableName) {
-                                self.reporter.reportCompileError(
-                                    stmt.base.span.start,
-                                    "Duplicate parameter name '{s}' in function '{s}'",
-                                    .{ param.name.lexeme, func.name.lexeme },
-                                );
-                                self.fatal_error = true;
-                                continue;
-                            } else {
-                                return err;
-                            }
-                        };
+                .Expression => |maybe_expr| {
+                    if (maybe_expr) |expr| {
+                        // Handle struct declarations that are expressions
+                        if (expr.data == .StructDecl) {
+                            const struct_decl = expr.data.StructDecl;
+                            // Register the struct type in the current scope
+                            const struct_type_info = try self.allocator.create(ast.TypeInfo);
+                            struct_type_info.* = .{ .base = .Struct, .custom_type = struct_decl.name.lexeme, .is_mutable = false };
+
+                            // Create a placeholder value for the struct type
+                            const struct_value = TokenLiteral{ .string = struct_decl.name.lexeme };
+
+                            _ = scope.createValueBinding(
+                                struct_decl.name.lexeme,
+                                struct_value,
+                                .STRUCT,
+                                struct_type_info.*,
+                                true, // Struct types are constants
+                            ) catch |err| {
+                                if (err == error.DuplicateVariableName) {
+                                    self.reporter.reportCompileError(
+                                        stmt.base.span.start,
+                                        "Duplicate struct name '{s}' in current scope",
+                                        .{struct_decl.name.lexeme},
+                                    );
+                                    self.fatal_error = true;
+                                    continue;
+                                } else {
+                                    return err;
+                                }
+                            };
+                        }
                     }
-                    try self.validateStatements(func.body);
                 },
                 // TODO: Handle other declarations...
                 else => {},
@@ -242,8 +268,9 @@ pub const SemanticAnalyzer = struct {
                         const init_type = try self.inferTypeFromExpr(init_expr);
                         if (decl.type_info.base != .Nothing) {
                             // Check initializer matches declared type
-                            // Create a mutable copy for unifyTypes
-                            var decl_type_copy = decl.type_info;
+                            // Resolve the declared type first, then create a mutable copy for unifyTypes
+                            const resolved_type = try self.resolveTypeInfo(decl.type_info);
+                            var decl_type_copy = resolved_type;
                             try self.unifyTypes(&decl_type_copy, init_type, stmt.base.span);
                         }
                     }
@@ -277,6 +304,14 @@ pub const SemanticAnalyzer = struct {
             }
             if (expected.base == .Int and actual.base == .Byte) {
                 return; // Allow byte to int conversion (always safe)
+            }
+            // Allow enum variant literals (Enum) to be assigned to variables of enum types (Custom)
+            if (expected.base == .Custom and actual.base == .Enum) {
+                return; // Allow enum variant literals to be assigned to enum type variables
+            }
+            // Allow struct literals (Custom) to be assigned to variables of struct types (Custom)
+            if (expected.base == .Custom and actual.base == .Custom) {
+                return; // Allow struct literals to be assigned to struct type variables
             }
 
             self.reporter.reportCompileError(
@@ -1038,7 +1073,51 @@ pub const SemanticAnalyzer = struct {
             },
             .Exists => |exists| {
                 const array_type = try self.inferTypeFromExpr(exists.array);
+
+                // Create a temporary scope for the bound variable
+                const quantifier_scope = try self.memory.scope_manager.createScope(self.current_scope);
+
+                // Add the bound variable to the quantifier scope
+                // Infer the type from the array element type
+                const bound_var_type = if (array_type.array_type) |elem_type|
+                    elem_type.*
+                else
+                    ast.TypeInfo{ .base = .Int }; // Default to int if we can't infer
+
+                _ = quantifier_scope.createValueBinding(
+                    exists.variable.lexeme, // "e"
+                    TokenLiteral{ .nothing = {} },
+                    self.convertTypeToTokenType(bound_var_type.base),
+                    bound_var_type,
+                    true, // Bound variables are mutable
+                ) catch |err| {
+                    if (err == error.DuplicateVariableName) {
+                        self.reporter.reportCompileError(
+                            expr.base.span.start,
+                            "Duplicate bound variable name '{s}' in exists quantifier",
+                            .{exists.variable.lexeme},
+                        );
+                        self.fatal_error = true;
+                        type_info.base = .Nothing;
+                        quantifier_scope.deinit();
+                        return type_info;
+                    } else {
+                        quantifier_scope.deinit();
+                        return err;
+                    }
+                };
+
+                // Temporarily set current scope to quantifier scope for condition analysis
+                const prev_scope = self.current_scope;
+                self.current_scope = quantifier_scope;
+
                 const condition_type = try self.inferTypeFromExpr(exists.condition);
+
+                // Restore previous scope
+                self.current_scope = prev_scope;
+
+                // Clean up the quantifier scope
+                quantifier_scope.deinit();
 
                 if (array_type.base != .Array) {
                     self.reporter.reportCompileError(
@@ -1066,7 +1145,51 @@ pub const SemanticAnalyzer = struct {
             },
             .ForAll => |for_all| {
                 const array_type = try self.inferTypeFromExpr(for_all.array);
+
+                // Create a temporary scope for the bound variable
+                const quantifier_scope = try self.memory.scope_manager.createScope(self.current_scope);
+
+                // Add the bound variable to the quantifier scope
+                // Infer the type from the array element type
+                const bound_var_type = if (array_type.array_type) |elem_type|
+                    elem_type.*
+                else
+                    ast.TypeInfo{ .base = .Int }; // Default to int if we can't infer
+
+                _ = quantifier_scope.createValueBinding(
+                    for_all.variable.lexeme, // "u"
+                    TokenLiteral{ .nothing = {} },
+                    self.convertTypeToTokenType(bound_var_type.base),
+                    bound_var_type,
+                    true, // Bound variables are mutable
+                ) catch |err| {
+                    if (err == error.DuplicateVariableName) {
+                        self.reporter.reportCompileError(
+                            expr.base.span.start,
+                            "Duplicate bound variable name '{s}' in forall quantifier",
+                            .{for_all.variable.lexeme},
+                        );
+                        self.fatal_error = true;
+                        type_info.base = .Nothing;
+                        quantifier_scope.deinit();
+                        return type_info;
+                    } else {
+                        quantifier_scope.deinit();
+                        return err;
+                    }
+                };
+
+                // Temporarily set current scope to quantifier scope for condition analysis
+                const prev_scope = self.current_scope;
+                self.current_scope = quantifier_scope;
+
                 const condition_type = try self.inferTypeFromExpr(for_all.condition);
+
+                // Restore previous scope
+                self.current_scope = prev_scope;
+
+                // Clean up the quantifier scope
+                quantifier_scope.deinit();
 
                 if (array_type.base != .Array) {
                     self.reporter.reportCompileError(
@@ -1107,13 +1230,41 @@ pub const SemanticAnalyzer = struct {
 
                 type_info.* = .{ .base = .Nothing }; // Assert has no return value
             },
-            .StructDecl => {
+            .StructDecl => |struct_decl| {
+                // Register the struct type in the current scope
+                if (self.current_scope) |scope| {
+                    const struct_type_info = try self.allocator.create(ast.TypeInfo);
+                    struct_type_info.* = .{ .base = .Struct, .custom_type = struct_decl.name.lexeme, .is_mutable = false };
+
+                    // Create a placeholder value for the struct type
+                    const struct_value = TokenLiteral{ .string = struct_decl.name.lexeme };
+
+                    _ = scope.createValueBinding(
+                        struct_decl.name.lexeme,
+                        struct_value,
+                        .STRUCT,
+                        struct_type_info.*,
+                        true, // Struct types are constants
+                    ) catch |err| {
+                        if (err == error.DuplicateVariableName) {
+                            self.reporter.reportCompileError(
+                                expr.base.span.start,
+                                "Duplicate struct name '{s}' in current scope",
+                                .{struct_decl.name.lexeme},
+                            );
+                            self.fatal_error = true;
+                        } else {
+                            return err;
+                        }
+                    };
+                }
+
                 type_info.* = .{ .base = .Struct };
             },
-            .StructLiteral => {
-                // Look up the struct type by name
-                // For now, assume it's a valid struct type
-                type_info.* = .{ .base = .Struct };
+            .StructLiteral => |struct_lit| {
+                // Struct literals should be Custom type with the struct type name
+                // This is similar to how enum variant literals are Enum type
+                type_info.* = .{ .base = .Custom, .custom_type = struct_lit.name.lexeme };
             },
             .EnumDecl => {
                 type_info.* = .{ .base = .Enum };
@@ -1135,6 +1286,23 @@ pub const SemanticAnalyzer = struct {
 
         // Cache the result
         try self.type_cache.put(expr.base.id, type_info);
+        return type_info;
+    }
+
+    fn resolveTypeInfo(self: *SemanticAnalyzer, type_info: ast.TypeInfo) !ast.TypeInfo {
+        // If this is a custom type, check if it refers to a declared struct or enum type
+        if (type_info.base == .Custom) {
+            if (type_info.custom_type) |custom_type_name| {
+                if (self.lookupVariable(custom_type_name)) |variable| {
+                    if (self.memory.scope_manager.value_storage.get(variable.storage_id)) |_| {
+                        // If the custom type refers to a struct or enum declaration, keep it as Custom
+                        // This is the correct behavior - variables of struct/enum types should be Custom
+                        return type_info;
+                    }
+                }
+            }
+        }
+        // Return the original type info if no resolution needed
         return type_info;
     }
 
@@ -1168,6 +1336,8 @@ pub const SemanticAnalyzer = struct {
                 } };
             },
             .Custom => |custom| {
+                // Variables of enum types should remain as Custom type with the enum type name
+                // Only enum declarations themselves should be Enum base type
                 type_info.* = .{ .base = .Custom, .custom_type = custom.lexeme };
             },
             .Array => |array| {
@@ -1430,5 +1600,28 @@ pub const SemanticAnalyzer = struct {
             },
             else => value, // No conversion needed for other types
         };
+    }
+
+    fn handleTypeOf(self: *SemanticAnalyzer, expr: *ast.Expr) !TokenLiteral {
+        const type_info = try self.inferTypeFromExpr(expr);
+        defer self.allocator.destroy(type_info);
+
+        const type_string = switch (type_info.base) {
+            .Int => "int",
+            .Float => "float",
+            .Byte => "byte",
+            .String => "string",
+            .Tetra => "tetra",
+            .Array => "array",
+            .Function => "function",
+            .Struct => "struct",
+            .Map => "map",
+            .Enum => "enum",
+            .Union => "union",
+            .Nothing => "nothing",
+            else => "unknown",
+        };
+
+        return TokenLiteral{ .string = type_string };
     }
 };
