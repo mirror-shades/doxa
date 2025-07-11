@@ -237,12 +237,17 @@ fn compileDoxaToSoxa(memoryManager: *MemoryManager, source_path: []const u8, sox
     // Parsing phase
     var parser = Parser.init(memoryManager.getAllocator(), tokens.items, source_path, reporter.is_debug, reporter);
     defer parser.deinit();
-    var statements = try parser.execute();
+    const statements = try parser.execute();
+
+    // Semantic analysis
+    var semantic_analyzer = SemanticAnalyzer.init(memoryManager.getAllocator(), reporter);
+    defer semantic_analyzer.deinit();
+    const analyzed_statements = try semantic_analyzer.analyze(statements);
 
     // Constant folding optimization pass
     var constant_folder = ConstantFolder.init(memoryManager.getAllocator());
-    for (statements, 0..) |*stmt, i| {
-        statements[i] = try constant_folder.foldStmt(stmt);
+    for (analyzed_statements, 0..) |*stmt, i| {
+        analyzed_statements[i] = try constant_folder.foldStmt(stmt);
     }
 
     reporter.debug(">> Constant folding applied: {} optimizations\n", .{constant_folder.getOptimizationCount()});
