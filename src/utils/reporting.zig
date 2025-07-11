@@ -129,6 +129,7 @@ pub const ErrorList = error{
     MultipleExponents,
     InvalidExponent,
     ByteValueTooLarge,
+    InvalidInternalMethod,
 
     // Unicode & UTF-8 Handling
     Utf8InvalidStartByte,

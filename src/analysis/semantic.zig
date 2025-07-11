@@ -254,7 +254,7 @@ pub const SemanticAnalyzer = struct {
             .Nothing => .NOTHING,
             .Map => .MAP,
             .Custom => .CUSTOM,
-            .Reference => .REFERENCE,
+            .Alias => .ALIAS,
             .Enum => .ENUM,
             .Union => .UNION,
         };

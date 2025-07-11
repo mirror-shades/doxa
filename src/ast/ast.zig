@@ -828,7 +828,7 @@ pub const Type = enum {
     Custom,
     Map,
     Nothing,
-    Reference,
+    Alias,
     Union,
 };
 
@@ -842,7 +842,7 @@ pub const TypeInfo = struct {
     element_type: ?Type = null,
     variants: ?[][]const u8 = null,
     array_size: ?usize = null,
-    referenced_type: ?*TypeInfo = null,
+    alias_type: ?*TypeInfo = null,
     union_type: ?*UnionType = null,
 
     pub fn deinit(self: *TypeInfo, allocator: std.mem.Allocator) void {
