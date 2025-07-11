@@ -1,5 +1,6 @@
 const std = @import("std");
-const Lexer = @import("./analysis/lexical.zig").Lexer;
+const LexicalAnalyzer = @import("./analysis/lexical.zig").LexicalAnalyzer;
+const SemanticAnalyzer = @import("./analysis/semantic.zig").SemanticAnalyzer;
 const Parser = @import("./parser/parser_types.zig").Parser;
 const Reporting = @import("./utils/reporting.zig");
 const Reporter = Reporting.Reporter;
@@ -201,7 +202,7 @@ fn processFile(memoryManager: *MemoryManager, path: []const u8, cli_options: CLI
     defer memoryManager.getAllocator().free(source);
 
     // Lexical analysis
-    var lexer = Lexer.init(memoryManager.getAllocator(), source, path, reporter);
+    var lexer = LexicalAnalyzer.init(memoryManager.getAllocator(), source, path, reporter);
     defer lexer.deinit();
     try lexer.initKeywords();
     const tokens = try lexer.lexTokens();
@@ -228,7 +229,7 @@ fn compileDoxaToSoxa(memoryManager: *MemoryManager, source_path: []const u8, sox
     defer memoryManager.getAllocator().free(source);
 
     // Lexical analysis
-    var lexer = Lexer.init(memoryManager.getAllocator(), source, source_path, reporter);
+    var lexer = LexicalAnalyzer.init(memoryManager.getAllocator(), source, source_path, reporter);
     defer lexer.deinit();
     try lexer.initKeywords();
     const tokens = try lexer.lexTokens();
