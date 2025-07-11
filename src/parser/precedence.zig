@@ -21,7 +21,6 @@ const assignment = Parser.assignment;
 const fieldAccess = Parser.fieldAccess;
 const print = Parser.print;
 const braceExpr = expr_parser.braceExpr;
-const parseTuple = Parser.parseTuple;
 
 const functionExpr = expr_parser.functionExpr;
 const parseStructDecl = decl_parser.parseStructDecl;
@@ -137,7 +136,6 @@ pub const rules = blk: {
     // Grouping
     r.set(.LEFT_PAREN, .{ .prefix = grouping, .infix = call, .precedence = .CALL });
     r.set(.LEFT_BRACKET, .{ .prefix = parseArrayLiteral, .infix = index, .precedence = .CALL });
-    r.set(.LEFT_TUPLE, .{ .prefix = parseTuple, .precedence = .CALL });
 
     // Variables and assignment
     r.set(.VAR, .{ .prefix = variable });

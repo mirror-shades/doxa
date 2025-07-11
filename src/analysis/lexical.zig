@@ -121,7 +121,6 @@ pub const LexicalAnalyzer = struct {
         try self.keywords.put("array", .ARRAY_TYPE);
         try self.keywords.put("struct", .STRUCT_TYPE);
         try self.keywords.put("enum", .ENUM_TYPE);
-        try self.keywords.put("tuple", .TUPLE_TYPE);
         try self.keywords.put("map", .MAP_TYPE);
         try self.keywords.put("xor", .XOR);
         try self.keywords.put("exists", .EXISTS);
@@ -236,12 +235,7 @@ pub const LexicalAnalyzer = struct {
             },
 
             '(' => {
-                if (self.peekAt(0) == ':') {
-                    self.advance();
-                    try self.addMinimalToken(.LEFT_TUPLE);
-                } else {
-                    try self.parenthesis();
-                }
+                try self.parenthesis();
             },
             ')' => try self.addMinimalToken(.RIGHT_PAREN),
             '{' => try self.addMinimalToken(.LEFT_BRACE),
@@ -272,8 +266,6 @@ pub const LexicalAnalyzer = struct {
             ':' => {
                 if (self.match(':')) {
                     try self.addMinimalToken(.TYPE_SYMBOL);
-                } else if (self.match(')')) {
-                    try self.addMinimalToken(.RIGHT_TUPLE);
                 } else {
                     try self.addMinimalToken(.WHERE);
                 }

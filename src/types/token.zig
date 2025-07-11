@@ -42,8 +42,6 @@ pub const TokenType = enum {
     TYPE_SYMBOL, // ::
     LEFT_PAREN, // (
     RIGHT_PAREN, // )
-    LEFT_TUPLE, // (:
-    RIGHT_TUPLE, // :)
 
     // keywords
     VAR, // var
@@ -106,7 +104,6 @@ pub const TokenType = enum {
     LOGIC, // logic
     STRUCT, // struct
     ENUM, // enum
-    TUPLE, // tuple
     MAP, // map
     CUSTOM, // custom
     REFERENCE, // reference
@@ -121,7 +118,6 @@ pub const TokenType = enum {
     ARRAY_TYPE, // array type declaration
     STRUCT_TYPE, // struct type declaration
     ENUM_TYPE, // enum type declaration
-    TUPLE_TYPE, // tuple type declaration
     MAP_TYPE, // map type declaration
     NOTHING, // nothing
 

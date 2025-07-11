@@ -419,7 +419,6 @@ pub const Expr = struct {
             value: ?*Expr,
         },
         Array: []const *Expr,
-        Tuple: []const *Expr,
         Struct: []*StructLiteralField,
         Index: Index,
         IndexAssign: struct {
@@ -743,13 +742,6 @@ pub const Expr = struct {
                 expr.deinit(allocator);
                 allocator.destroy(expr);
             },
-            .Tuple => |elements| {
-                for (elements) |element| {
-                    element.deinit(allocator);
-                    allocator.destroy(element);
-                }
-                allocator.free(elements);
-            },
             .Map => |entries| {
                 for (entries) |entry| {
                     entry.key.deinit(allocator);
@@ -830,7 +822,6 @@ pub const Type = enum {
     String,
     Tetra,
     Array,
-    Tuple,
     Function,
     Struct,
     Enum,
@@ -904,7 +895,6 @@ pub const TypeInfo = struct {
             .struct_value => .Struct,
             .function => .Function,
             .enum_variant => .Enum,
-            .tuple => .Tuple,
             .map => .Map,
         };
     }

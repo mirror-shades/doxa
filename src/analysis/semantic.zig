@@ -226,7 +226,6 @@ pub const SemanticAnalyzer = struct {
             .Function => .FUNCTION,
             .Struct => .STRUCT,
             .Nothing => .NOTHING,
-            .Tuple => .TUPLE,
             .Map => .MAP,
             .Custom => .CUSTOM,
             .Reference => .REFERENCE,
@@ -599,19 +598,6 @@ pub const SemanticAnalyzer = struct {
                     const array_type = try self.allocator.create(ast.TypeInfo);
                     array_type.* = first_type.*;
                     type_info.* = .{ .base = .Array, .array_type = array_type };
-                }
-            },
-            .Tuple => |elements| {
-                if (elements.len == 0) {
-                    type_info.* = .{ .base = .Tuple };
-                } else {
-                    const tuple_types = try self.allocator.alloc(ast.TypeInfo, elements.len);
-                    for (elements, tuple_types) |element, *tuple_type| {
-                        const element_type = try self.inferTypeFromExpr(element);
-                        tuple_type.* = element_type.*;
-                    }
-                    type_info.* = .{ .base = .Tuple, .element_type = .Tuple };
-                    // Note: You might want to store tuple_types somewhere in TypeInfo
                 }
             },
             .Struct => |fields| {
