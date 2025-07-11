@@ -191,6 +191,7 @@ pub const ErrorList = error{
     EndOfStream,
     StreamTooLong,
     InternalParserError,
+    SemanticError,
     RuntimeError,
 
     // Safe Mode

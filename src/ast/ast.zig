@@ -904,7 +904,8 @@ pub const TypeInfo = struct {
             .struct_value => .Struct,
             .function => .Function,
             .enum_variant => .Enum,
-            .bytes => .Bytes,
+            .tuple => .Tuple,
+            .map => .Map,
         };
     }
 };

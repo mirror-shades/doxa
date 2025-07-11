@@ -224,6 +224,8 @@ fn processFile(memoryManager: *MemoryManager, path: []const u8, cli_options: CLI
 /// Compile DOXA to SOXA (HIR)
 ///==========================================================================
 fn compileDoxaToSoxa(memoryManager: *MemoryManager, source_path: []const u8, soxa_path: []const u8, reporter: *Reporter) !void {
+    //_ = soxa_path;
+
     // Read and parse the .doxa file
     const source = try std.fs.cwd().readFileAlloc(memoryManager.getAllocator(), source_path, MAX_FILE_SIZE);
     defer memoryManager.getAllocator().free(source);
@@ -239,15 +241,15 @@ fn compileDoxaToSoxa(memoryManager: *MemoryManager, source_path: []const u8, sox
     defer parser.deinit();
     const statements = try parser.execute();
 
-    // Semantic analysis
-    var semantic_analyzer = SemanticAnalyzer.init(memoryManager.getAllocator(), reporter);
-    defer semantic_analyzer.deinit();
-    const analyzed_statements = try semantic_analyzer.analyze(statements);
+    // // Semantic analysis
+    // var semantic_analyzer = SemanticAnalyzer.init(memoryManager.getAllocator(), reporter, memoryManager);
+    // defer semantic_analyzer.deinit();
+    // try semantic_analyzer.analyze(statements);
 
     // Constant folding optimization pass
     var constant_folder = ConstantFolder.init(memoryManager.getAllocator());
-    for (analyzed_statements, 0..) |*stmt, i| {
-        analyzed_statements[i] = try constant_folder.foldStmt(stmt);
+    for (statements, 0..) |*stmt, i| {
+        statements[i] = try constant_folder.foldStmt(stmt);
     }
 
     reporter.debug(">> Constant folding applied: {} optimizations\n", .{constant_folder.getOptimizationCount()});

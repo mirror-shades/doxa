@@ -108,6 +108,9 @@ pub const TokenType = enum {
     ENUM, // enum
     TUPLE, // tuple
     MAP, // map
+    CUSTOM, // custom
+    REFERENCE, // reference
+    UNION, // union
 
     // Type keywords
     INT_TYPE, // int type declaration
