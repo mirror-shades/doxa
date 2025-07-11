@@ -1,8 +1,18 @@
-var my_array :: int[] is [1, 2, 3, 4, 5];
+// 
+var no_type_possible; // ERROR
 
-var bs :: byte[] is bytesof "hello";
-
-bs?;
-bs[0]?;
-bs[0] += 1;
-bs[0]?;
+var explicit_int :: int is 1;
+var implicit_int is 2;
+var unit_int :: int; // 0
+var explicit_byte :: byte is 0x03;
+var implicit_byte is 0x04;
+var unit_byte :: byte; // 0x00
+var explicit_float :: float is 1.0;
+var implicit_float is 2.0;
+var unit_float :: float; // 0.0
+var explicit_tetra :: tetra is both;
+var explicit_tetra is true;
+var unit_tetra :: tetra; // false
+var explicit_string :: string is "foo";
+var implicit_string is "bar";
+var unit_string :: string; // ""
