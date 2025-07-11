@@ -1,6 +1,6 @@
 const std = @import("std");
 const ast = @import("../ast/ast.zig");
-const token = @import("../lexer/token.zig");
+const token = @import("../types/token.zig");
 const parser_types = @import("parser_types.zig");
 const Reporting = @import("../utils/reporting.zig");
 const Reporter = Reporting.Reporter;

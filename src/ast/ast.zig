@@ -1,5 +1,5 @@
 const std = @import("std");
-const Token = @import("../lexer/token.zig").Token;
+const Token = @import("../types/token.zig").Token;
 const TokenLiteral = @import("../types/types.zig").TokenLiteral;
 const Reporting = @import("../utils/reporting.zig");
 const HIRType = @import("../codegen/hir/soxa_types.zig").HIRType;

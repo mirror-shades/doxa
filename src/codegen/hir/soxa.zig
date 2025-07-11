@@ -1,6 +1,6 @@
 const std = @import("std");
 const ast = @import("../../ast/ast.zig");
-const Token = @import("../../lexer/token.zig").Token;
+const Token = @import("../../types/token.zig").Token;
 const TokenLiteral = @import("../../types/types.zig").TokenLiteral;
 const instructions = @import("../../interpreter/instructions.zig");
 const reporting = @import("../../utils/reporting.zig");

@@ -2,17 +2,17 @@ const std = @import("std");
 const Reporting = @import("../utils/reporting.zig");
 const Reporter = Reporting.Reporter;
 
-const Token = @import("token.zig").Token;
-const TokenType = @import("token.zig").TokenType;
+const TokenImport = @import("../types/token.zig");
+const Token = TokenImport.Token;
+const TokenType = TokenImport.TokenType;
+
 const TypesImport = @import("../types/types.zig");
 const Tetra = TypesImport.Tetra;
 const TokenLiteral = TypesImport.TokenLiteral;
 
-pub const Lexer = struct {
-    //======================================================================
-    // Fields
-    //======================================================================
+//======================================================================
 
+pub const Lexer = struct {
     keywords: std.StringHashMap(TokenType),
     tokens: std.ArrayList(Token),
     source: []const u8,

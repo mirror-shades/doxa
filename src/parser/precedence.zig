@@ -1,5 +1,5 @@
 const std = @import("std");
-const token = @import("../lexer/token.zig");
+const token = @import("../types/token.zig");
 const Parser = @import("./parser_types.zig").Parser;
 const expr_parser = @import("./expression_parser.zig");
 const decl_parser = @import("./declaration_parser.zig");

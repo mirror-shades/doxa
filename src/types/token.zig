@@ -1,6 +1,6 @@
 const std = @import("std");
 const ast = @import("../ast/ast.zig");
-const TokenLiteral = @import("../types/types.zig").TokenLiteral;
+const TokenLiteral = @import("./types.zig").TokenLiteral;
 
 pub const TokenType = enum {
     // single-character tokens
