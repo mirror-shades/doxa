@@ -40,11 +40,8 @@ pub const SemanticAnalyzer = struct {
     }
 
     pub fn deinit(self: *SemanticAnalyzer) void {
-        var it = self.type_cache.valueIterator();
-        while (it.next()) |type_info| {
-            type_info.*.deinit(self.allocator);
-            self.allocator.destroy(type_info.*);
-        }
+        // Just clear the cache - the TypeInfo instances are owned by the AST
+        // or will be cleaned up by the memory manager
         self.type_cache.deinit();
     }
 

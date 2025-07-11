@@ -652,8 +652,58 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
                 .Basic = basic,
             },
         };
+    } else if (type_token.type == .ARRAY_TYPE) {
+        // 2. Check for Array Type Syntax
+        if (self.debug_enabled) {
+            std.debug.print("Recognized array type syntax\n", .{});
+        }
+        self.advance(); // consume 'array'
+        consumed_token = true;
+
+        if (self.peek().type != .LEFT_BRACKET) return error.ExpectedLeftBracket;
+        self.advance(); // consume [
+
+        // Check for optional size specification
+        var size: ?*ast.Expr = null;
+        if (self.peek().type == .INT) {
+            const size_expr = try self.allocator.create(ast.Expr);
+            size_expr.* = .{
+                .base = .{
+                    .id = ast.generateNodeId(),
+                    .span = ast.SourceSpan.fromToken(self.peek()),
+                },
+                .data = .{
+                    .Literal = self.peek().literal,
+                },
+            };
+            size = size_expr;
+            self.advance(); // consume the integer
+        }
+
+        if (self.peek().type != .RIGHT_BRACKET) return error.ExpectedRightBracket;
+        self.advance(); // consume ]
+
+        // Parse element type (comes after the brackets)
+        if (self.debug_enabled) {
+            std.debug.print("Parsing element type after brackets, current token: {s}\n", .{@tagName(self.peek().type)});
+        }
+        const element_type = try parseTypeExpr(self) orelse return error.ExpectedType;
+
+        base_type_expr = try self.allocator.create(ast.TypeExpr);
+        base_type_expr.?.* = .{
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(self.peek()),
+            },
+            .data = .{
+                .Array = .{
+                    .element_type = element_type,
+                    .size = size, // Use the parsed size (null for dynamic arrays)
+                },
+            },
+        };
     } else if (type_token.type == .STRUCT_TYPE) {
-        // 2. Check for Struct Type Syntax
+        // 3. Check for Struct Type Syntax
         if (self.debug_enabled) {
             std.debug.print("Recognized struct type syntax\n", .{});
         }
@@ -709,7 +759,7 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
             },
         };
     } else if (type_token.type == .IDENTIFIER) {
-        // 3. Check for Declared or Imported Custom Types
+        // 4. Check for Declared or Imported Custom Types
         var is_known_custom = false;
         if (self.declared_types.contains(type_name)) {
             is_known_custom = true;
@@ -746,7 +796,7 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
                 },
             };
         } else {
-            // 4. Unknown Identifier -> Error
+            // 5. Unknown Identifier -> Error
             if (self.debug_enabled) {
                 std.debug.print("Unknown type identifier: {s}\n", .{type_name});
             }
@@ -755,7 +805,7 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
             return error.UnknownType;
         }
     } else {
-        // 5. Not a basic type, not struct syntax, not an identifier -> Error
+        // 6. Not a basic type, not array syntax, not struct syntax, not an identifier -> Error
         if (self.debug_enabled) {
             std.debug.print("Invalid token for type expression: {s}\n", .{@tagName(type_token.type)});
         }

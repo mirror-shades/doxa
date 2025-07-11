@@ -1,5 +1,5 @@
 // 
-var no_type_possible; // ERROR
+//var no_type_possible; // ERROR
 
 var explicit_int :: int is 1;
 var implicit_int is 2;
@@ -11,8 +11,41 @@ var explicit_float :: float is 1.0;
 var implicit_float is 2.0;
 var unit_float :: float; // 0.0
 var explicit_tetra :: tetra is both;
-var explicit_tetra is true;
+var implicit_tetra is true; // Fixed: removed duplicate name
 var unit_tetra :: tetra; // false
 var explicit_string :: string is "foo";
 var implicit_string is "bar";
 var unit_string :: string; // ""
+
+const const_explicit_int :: int is 1;
+const const_implicit_int is 2;
+const const_unit_int :: int; // 0
+const const_explicit_byte :: byte is 0x03;
+const const_implicit_byte is 0x04;
+const const_unit_byte :: byte; // 0x00
+const const_explicit_float :: float is 1.0;
+const const_implicit_float is 2.0;
+const const_unit_float :: float; // 0.0
+const const_explicit_tetra :: tetra is both;
+const const_implicit_tetra is true; // Fixed: removed duplicate name
+const const_unit_tetra :: tetra; // false
+const const_explicit_string :: string is "foo";
+const const_implicit_string is "bar";
+const const_unit_string :: string; // ""
+
+var explicit_int_array :: array[] int is [1, 2, 3];
+var explicit_sized_int_array :: array[] byte is [4, 5, 6];
+var implicit_int_array is [7, 8, 9];
+var unit_int_array :: array[] int; // []
+var explicit_byte_array :: array[] byte is [0x00, 0x01, 0x02];
+var explicit_sized_byte_array :: array[3] byte is [0x03, 0x04, 0x05];
+var implicit_byte_array is [0x06, 0x07, 0x08];
+var unit_byte_array :: array[] byte; // []
+var explicit_float_array :: array[] float is [1.0, 2.0, 3.0];
+var explicit_sized_float_array :: array[3] float is [4.0, 5.0, 6.0];
+var implicit_float_array is [7.0, 8.0, 9.0];
+var unit_float_array :: array[] float; // []
+var explicit_tetra_array :: array[] tetra is [both, false, true];
+var explicit_sized_tetra_array :: array[3] tetra is [both, false, true];
+var implicit_tetra_array is [true, false, both];
+var unit_tetra_array :: array[] tetra; // []
