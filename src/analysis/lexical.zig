@@ -12,7 +12,7 @@ const TokenLiteral = TypesImport.TokenLiteral;
 
 //======================================================================
 
-pub const Lexer = struct {
+pub const LexicalAnalyzer = struct {
     keywords: std.StringHashMap(TokenType),
     tokens: std.ArrayList(Token),
     source: []const u8,
@@ -33,7 +33,7 @@ pub const Lexer = struct {
     // Initialization
     //======================================================================
 
-    pub fn init(allocator: std.mem.Allocator, source: []const u8, file_path: []const u8, reporter: *Reporter) Lexer {
+    pub fn init(allocator: std.mem.Allocator, source: []const u8, file_path: []const u8, reporter: *Reporter) LexicalAnalyzer {
         return .{
             .source = source,
             .start = 0,
@@ -53,7 +53,7 @@ pub const Lexer = struct {
         };
     }
 
-    pub fn deinit(self: *Lexer) void {
+    pub fn deinit(self: *LexicalAnalyzer) void {
         // Free all allocated strings
         for (self.allocated_strings.items) |str| {
             self.allocator.free(str);
@@ -71,7 +71,7 @@ pub const Lexer = struct {
         self.keywords.deinit();
     }
 
-    pub fn initKeywords(self: *Lexer) !void {
+    pub fn initKeywords(self: *LexicalAnalyzer) !void {
         try self.keywords.put("safe", .SAFE);
         try self.keywords.put("normal", .NORMAL);
         try self.keywords.put("guide", .GUIDE);
@@ -152,7 +152,7 @@ pub const Lexer = struct {
     // Public Interface
     //======================================================================
 
-    pub fn lexTokens(self: *Lexer) !std.ArrayList(Token) {
+    pub fn lexTokens(self: *LexicalAnalyzer) !std.ArrayList(Token) {
         while (!self.isAtEnd()) {
             try self.getNextToken();
         }
@@ -161,7 +161,7 @@ pub const Lexer = struct {
     }
 
     // lexes the next token
-    fn getNextToken(self: *Lexer) (Reporting.ErrorList || std.mem.Allocator.Error)!void {
+    fn getNextToken(self: *LexicalAnalyzer) (Reporting.ErrorList || std.mem.Allocator.Error)!void {
         // Skip whitespace
         while (!self.isAtEnd() and (self.peekAt(0) == ' ' or self.peekAt(0) == '\r' or self.peekAt(0) == '\t' or self.peekAt(0) == '\n')) {
             self.advance();
@@ -389,15 +389,15 @@ pub const Lexer = struct {
     // Token Generation
     //======================================================================
 
-    fn addMinimalToken(self: *Lexer, token_type: TokenType) !void {
+    fn addMinimalToken(self: *LexicalAnalyzer, token_type: TokenType) !void {
         try self.addToken(token_type, .nothing);
     }
 
-    fn addToken(self: *Lexer, token_type: TokenType, literal: TokenLiteral) !void {
+    fn addToken(self: *LexicalAnalyzer, token_type: TokenType, literal: TokenLiteral) !void {
         try self.addLongToken(token_type, literal, self.source[self.start..self.current]);
     }
 
-    fn addLongToken(self: *Lexer, token_type: TokenType, literal: TokenLiteral, lexeme: []const u8) !void {
+    fn addLongToken(self: *LexicalAnalyzer, token_type: TokenType, literal: TokenLiteral, lexeme: []const u8) !void {
         // For string literals, we need to track the allocated memory
         var tracked_literal = literal;
         if (literal == .string) {
@@ -423,10 +423,10 @@ pub const Lexer = struct {
     }
 
     //======================================================================
-    // Lexer State Management
+    // LexicalAnalyzer State Management
     //======================================================================
 
-    fn peekAt(self: *Lexer, offset: i32) u8 {
+    fn peekAt(self: *LexicalAnalyzer, offset: i32) u8 {
         // For negative offsets, check if we'd go before start of string
         if (offset < 0) {
             const abs_offset = @abs(offset);
@@ -444,11 +444,11 @@ pub const Lexer = struct {
         return 0;
     }
 
-    fn isAtEnd(self: *Lexer) bool {
+    fn isAtEnd(self: *LexicalAnalyzer) bool {
         return self.current >= self.source.len;
     }
 
-    fn advance(self: *Lexer) void {
+    fn advance(self: *LexicalAnalyzer) void {
         if (self.current < self.source.len) {
             if (self.source[self.current] == '\n') {
                 self.line += 1;
@@ -461,7 +461,7 @@ pub const Lexer = struct {
         }
     }
 
-    fn match(self: *Lexer, expected: u8) bool {
+    fn match(self: *LexicalAnalyzer, expected: u8) bool {
         if (self.isAtEnd()) return false;
         if (self.source[self.current] != expected) return false;
         self.advance();
@@ -507,7 +507,7 @@ pub const Lexer = struct {
     // Token Handlers
     //======================================================================
 
-    fn identifier(self: *Lexer) !void {
+    fn identifier(self: *LexicalAnalyzer) !void {
         // Check for special symbols at the start
         const identifier_text = self.source[self.start..self.current];
         if (std.mem.eql(u8, identifier_text, "∃") or
@@ -594,15 +594,15 @@ pub const Lexer = struct {
         }
     }
 
-    fn tetra(self: *Lexer) !void {
+    fn tetra(self: *LexicalAnalyzer) !void {
         try self.addToken(.TETRA, .{ .tetra = self.source[self.start..self.current] });
     }
 
-    fn parenthesis(self: *Lexer) !void {
+    fn parenthesis(self: *LexicalAnalyzer) !void {
         try self.addMinimalToken(.LEFT_PAREN);
     }
 
-    fn array(self: *Lexer) !void {
+    fn array(self: *LexicalAnalyzer) !void {
         try self.addMinimalToken(.LEFT_BRACKET);
 
         while (!self.isAtEnd() and self.peekAt(0) != ']') {
@@ -643,7 +643,7 @@ pub const Lexer = struct {
     // String Handling
     //======================================================================
 
-    fn string(self: *Lexer) !void {
+    fn string(self: *LexicalAnalyzer) !void {
         var result = std.ArrayList(u8).init(self.allocator);
         errdefer result.deinit();
 
@@ -713,7 +713,7 @@ pub const Lexer = struct {
         try self.addLongToken(.STRING, .{ .string = string_content }, lexeme);
     }
 
-    fn rawString(self: *Lexer) !void {
+    fn rawString(self: *LexicalAnalyzer) !void {
         self.advance(); // Consume the 'r'
         self.advance(); // Consume the opening quote
         var result = std.ArrayList(u8).init(self.allocator);
@@ -743,7 +743,7 @@ pub const Lexer = struct {
     // Number Handling
     //======================================================================
 
-    fn number(self: *Lexer) !void {
+    fn number(self: *LexicalAnalyzer) !void {
         var has_digits = false;
         var has_decimal = false;
         var has_exponent = false;
@@ -893,7 +893,7 @@ pub const Lexer = struct {
         }
     }
 
-    fn handleHex(self: *Lexer, is_negative: bool) !void {
+    fn handleHex(self: *LexicalAnalyzer, is_negative: bool) !void {
         if (is_negative) return error.InvalidNumber; // Bytes can't be negative
 
         var digits_start: usize = self.current;
@@ -938,7 +938,7 @@ pub const Lexer = struct {
         try self.addToken(.BYTE, .{ .byte = byte_val });
     }
 
-    fn handleBinary(self: *Lexer, is_negative: bool) !void {
+    fn handleBinary(self: *LexicalAnalyzer, is_negative: bool) !void {
         // If we're at 'b', back up to include the '0'
         if (self.source[self.current] == 'b') {
             self.current -= 1;
@@ -980,7 +980,7 @@ pub const Lexer = struct {
         try self.addToken(.INT, .{ .int = int_val });
     }
 
-    fn handleOctal(self: *Lexer, is_negative: bool) !void {
+    fn handleOctal(self: *LexicalAnalyzer, is_negative: bool) !void {
         // If we're at 'o', back up to include the '0'
         if (self.source[self.current] == 'o') {
             self.current -= 1;
@@ -1020,7 +1020,7 @@ pub const Lexer = struct {
     // Utilities
     //======================================================================
 
-    fn removeUnderscores(self: *Lexer, input: []const u8) ![]const u8 {
+    fn removeUnderscores(self: *LexicalAnalyzer, input: []const u8) ![]const u8 {
         var result = std.ArrayList(u8).init(self.allocator);
         errdefer result.deinit();
 
@@ -1084,7 +1084,7 @@ pub const Lexer = struct {
         if (!has_digit) return error.InvalidNumber;
     }
 
-    fn handleExponent(self: *Lexer) !void {
+    fn handleExponent(self: *LexicalAnalyzer) !void {
         self.advance(); // consume 'e' or 'E'
 
         // Handle optional sign
@@ -1117,7 +1117,7 @@ pub const Lexer = struct {
         return exp_value;
     }
 
-    fn validateBasePrefix(self: *Lexer) !enum { Decimal, Hex, Binary, Octal } {
+    fn validateBasePrefix(self: *LexicalAnalyzer) !enum { Decimal, Hex, Binary, Octal } {
         if (self.peekAt(0) != '0') return .Decimal;
 
         const next_char = self.peekAt(1);
@@ -1139,19 +1139,19 @@ pub const Lexer = struct {
         }
     }
 
-    pub fn addString(self: *Lexer, str: []const u8) ![]const u8 {
+    pub fn addString(self: *LexicalAnalyzer, str: []const u8) ![]const u8 {
         const owned = try self.allocator.dupe(u8, str);
         try self.allocated_strings.append(owned);
         return owned;
     }
 
-    pub fn addArray(self: *Lexer, arr: []const TokenLiteral) ![]const TokenLiteral {
+    pub fn addArray(self: *LexicalAnalyzer, arr: []const TokenLiteral) ![]const TokenLiteral {
         const owned = try self.allocator.dupe(TokenLiteral, arr);
         try self.allocated_arrays.append(owned);
         return owned;
     }
 
-    fn countLines(self: *Lexer, start: usize, end: usize) struct { line: i32, column: usize } {
+    fn countLines(self: *LexicalAnalyzer, start: usize, end: usize) struct { line: i32, column: usize } {
         var line: i32 = 1;
         var last_newline: usize = 0;
 

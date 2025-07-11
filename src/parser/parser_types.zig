@@ -1,16 +1,20 @@
 const std = @import("std");
-const ast = @import("../ast/ast.zig");
-const ModuleInfo = ast.ModuleInfo;
 const token = @import("../types/token.zig");
 const declaration_parser = @import("declaration_parser.zig");
 const expression_parser = @import("expression_parser.zig");
 const statement_parser = @import("statement_parser.zig");
+const Precedence = @import("./precedence.zig").Precedence;
+const LexicalAnalyzer = @import("../analysis/lexical.zig").LexicalAnalyzer;
+const import_parser = @import("import_parser.zig");
+
+const ast = @import("../ast/ast.zig");
+const ModuleInfo = ast.ModuleInfo;
+
 const Reporting = @import("../utils/reporting.zig");
 const ErrorList = Reporting.ErrorList;
 const Reporter = Reporting.Reporter;
-const Precedence = @import("./precedence.zig").Precedence;
-const Lexer = @import("../analysis/lexical.zig").Lexer;
-const import_parser = @import("import_parser.zig");
+
+//======================================================================
 
 const TokenStyle = enum {
     Keyword,
@@ -65,7 +69,8 @@ pub const Parser = struct {
     imported_symbols: ?std.StringHashMap(import_parser.ImportedSymbol) = null,
 
     // Add lexer field
-    lexer: Lexer,
+    // TODO: Remove this field
+    lexer: LexicalAnalyzer,
 
     declared_types: std.StringHashMap(void),
 
@@ -85,7 +90,7 @@ pub const Parser = struct {
             .module_namespaces = std.StringHashMap(ModuleInfo).init(allocator),
             .module_imports = std.StringHashMap(std.StringHashMap([]const u8)).init(allocator),
             .imported_symbols = std.StringHashMap(import_parser.ImportedSymbol).init(allocator),
-            .lexer = Lexer.init(allocator, "", current_file, reporter),
+            .lexer = LexicalAnalyzer.init(allocator, "", current_file, reporter),
             .declared_types = std.StringHashMap(void).init(allocator),
             .module_resolution_status = std.StringHashMap(ModuleResolutionStatus).init(allocator),
             .import_stack = std.ArrayList(ImportStackEntry).init(allocator),
@@ -1417,7 +1422,7 @@ pub const Parser = struct {
             return err;
         };
 
-        var module_lexer = Lexer.init(self.allocator, module_data.source, module_name, self.reporter);
+        var module_lexer = LexicalAnalyzer.init(self.allocator, module_data.source, module_name, self.reporter);
         defer module_lexer.deinit();
 
         try module_lexer.initKeywords();
