@@ -1,0 +1,26 @@
+// Test union type checking and error cases
+
+// This should work - int is in the union
+var x :: (: int, float :);
+x is 42;
+
+// This should work - float is in the union  
+var y :: (: int, float :);
+y is 3.14;
+
+// This should work - string is in the union
+var z :: (: string, int :);
+z is "hello";
+
+// This should cause a type error - bool is not in the union
+// var w :: (: int, float :);
+// w is true; // ERROR: Type mismatch
+
+// This should work - reassigning to a different type in the union
+var v :: (: int, string :);
+v is 100;
+v is "world"; // Valid - string is in the union
+
+// This should work - default to first type (int = 0)
+var defaulted :: (: int, float :);
+defaulted?; // Should print 0 

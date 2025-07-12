@@ -283,6 +283,4 @@ typeof(mike)?; // Employee
 typeof(Color)?; // enum
 typeof(Color.Blue)?; // Color
 
-typeof(point)?; // tuple
-
 typeof(Map)?; // map

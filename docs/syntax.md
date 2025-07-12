@@ -2,6 +2,37 @@
 
 ## Core Language Features
 
+### Primitive Types
+
+Types in Doxa are grouped in three ways, atomic, molecular, and meta. All together there are 14 of these primitive types to represent data in Doxa.
+
+### Atomic
+
+Atomic types are the most basic units of data. Currently Doxa has 3 default number types, with plans for optional dynamic number sizing in the future.
+
+int - i32
+float - f64
+byte - u8 hex literal
+string
+tetra - logical value, see page on tetras for more info
+nothing - empty type
+
+### Molecular
+
+Molecular types are constructed out of atomic types. They are
+
+array - must be homogenous
+struct - no classes, no inheretance, only composition
+enum
+map
+function - user functions, library functions, etc
+union - can be handled with the collapse operator, see page on unions for more info
+
+### Meta
+
+intrinsic - reserved for type names, language level methods, @length, @concat, ect.
+alias - refrence-like modifier, see page on alias for more info
+
 ### Basic Composition Example
 
 ```doxa

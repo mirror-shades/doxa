@@ -154,6 +154,7 @@ pub const ErrorList = error{
     ExpectedLeftBracket,
     ExpectedLeftBrace,
     ExpectedRightBrace,
+    ExpectedRightUnion,
     ExpectedThen,
     ExpectedElse,
     ExpectedColon,

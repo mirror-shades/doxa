@@ -431,12 +431,6 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
         break :blk n;
     };
 
-    // Check specifically for '=' where 'is' or '::' is expected
-    if (std.mem.eql(u8, self.peek().lexeme, "=")) {
-        std.debug.print("The equal sign '=' is not used for variable declarations, use 'is' instead", .{});
-        return error.UseIsForAssignment;
-    }
-
     if (self.peek().type == .WHERE) {
         const location = Reporter.Location{
             .file = self.current_file,
@@ -450,15 +444,50 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
     // Handle type annotation (only if not already parsed above)
     if (self.peek().type == .TYPE_SYMBOL and type_info.base == .Nothing) {
         self.advance(); // consume ::
-        const type_expr = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
 
-        // Use the typeInfoFromExpr function to properly convert TypeExpr to TypeInfo
-        const type_info_ptr = try ast.typeInfoFromExpr(self.allocator, type_expr);
-        type_info = type_info_ptr.*;
-        self.allocator.destroy(type_info_ptr); // Free the pointer since we copied the struct
+        // Check if this is a union type using pipe syntax (int | float | ErrorEnum)
+        if (self.peek().type == .PIPE or self.peekAhead(1).type == .PIPE) {
+            var types = std.ArrayList(*ast.TypeInfo).init(self.allocator);
+            defer types.deinit();
 
-        // Preserve mutability from our original type_info
-        type_info.is_mutable = !is_const;
+            // Parse the first type
+            const first_type_expr = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
+            const first_type_info = try ast.typeInfoFromExpr(self.allocator, first_type_expr);
+            try types.append(first_type_info);
+
+            // Parse additional types separated by pipes
+            while (self.peek().type == .PIPE) {
+                self.advance(); // consume |
+                const type_expr = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
+                const next_type_info = try ast.typeInfoFromExpr(self.allocator, type_expr);
+                try types.append(next_type_info);
+            }
+
+            // Create union type
+            const union_type = try self.allocator.create(ast.UnionType);
+            union_type.* = .{
+                .types = try types.toOwnedSlice(),
+                .current_type_index = 0, // Default to first type
+            };
+
+            // The memory manager will handle this type_info through ValueStorage
+            type_info = .{
+                .base = .Union,
+                .union_type = union_type,
+                .is_mutable = !is_const,
+            };
+        } else {
+            // Regular type annotation
+            const type_expr = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
+
+            // Use the typeInfoFromExpr function to properly convert TypeExpr to TypeInfo
+            const type_info_ptr = try ast.typeInfoFromExpr(self.allocator, type_expr);
+            type_info = type_info_ptr.*;
+            self.allocator.destroy(type_info_ptr); // Free the pointer since we copied the struct
+
+            // Preserve mutability from our original type_info
+            type_info.is_mutable = !is_const;
+        }
     }
 
     var initializer: ?*ast.Expr = null;
@@ -504,35 +533,6 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
         if (initializer == null) {
             return error.ExpectedExpression;
         }
-    } else if (self.peek().type == .OR) { // union type
-        var types = std.ArrayList(*ast.TypeInfo).init(self.allocator);
-        defer types.deinit();
-
-        // Add the first type we already have
-        const first_type = try self.allocator.create(ast.TypeInfo);
-        first_type.* = type_info;
-        try types.append(first_type);
-
-        while (self.peek().type == .OR) {
-            self.advance(); // consume 'or'
-            const type_expr = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
-            const next_type_info = try ast.typeInfoFromExpr(self.allocator, type_expr);
-            try types.append(next_type_info);
-        }
-
-        // Create union type
-        const union_type = try self.allocator.create(ast.UnionType);
-        union_type.* = .{
-            .types = try types.toOwnedSlice(),
-            .current_type_index = null,
-        };
-
-        // The memory manager will handle this type_info through ValueStorage
-        type_info = .{
-            .base = .Union,
-            .union_type = union_type,
-            .is_mutable = !is_const,
-        };
     }
 
     if (self.peek().type != .SEMICOLON) {
@@ -543,10 +543,28 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
     }
     self.advance();
 
-    // Remove Auto type handling since Auto is no longer in the Type enum
-    // If no type was explicitly specified and we have an initializer, infer the type
-    if (type_info.base == .Nothing and initializer != null) {
-        // infer type from initializer
+    // Handle type inference and union initialization
+    if (type_info.base == .Union and initializer != null) {
+        // For unions, we need to determine which type the initializer matches
+        const union_type = type_info.union_type orelse return error.TypeMismatch;
+        const inferred_type = try expression_parser.inferType(initializer.?);
+
+        // Find which type in the union matches the initializer
+        var found_match = false;
+        for (union_type.types, 0..) |union_member_type, i| {
+            if (union_member_type.base == inferred_type.base) {
+                union_type.setCurrentType(@intCast(i));
+                found_match = true;
+                break;
+            }
+        }
+
+        if (!found_match) {
+            // TODO: Add better error reporting for union type mismatch
+            return error.TypeMismatch;
+        }
+    } else if (type_info.base == .Nothing and initializer != null) {
+        // infer type from initializer for non-union types
         const inferred_type = try expression_parser.inferType(initializer.?);
         // Preserve mutability from the original declaration (var vs const)
         const original_mutability = type_info.is_mutable;
