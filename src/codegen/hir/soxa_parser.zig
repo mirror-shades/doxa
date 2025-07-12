@@ -427,7 +427,7 @@ pub const SoxaTextParser = struct {
                 // Has quoted name, get type from next token
                 name = try self.parseQuotedString(name_or_type);
                 const type_str = tokens.next() orelse "String";
-                value_type = if (std.mem.eql(u8, type_str, "Int")) HIRType.Int else if (std.mem.eql(u8, type_str, "Float")) HIRType.Float else if (std.mem.eql(u8, type_str, "String")) HIRType.String else if (std.mem.eql(u8, type_str, "Tetra")) HIRType.Tetra else if (std.mem.eql(u8, type_str, "Array")) HIRType.Array else if (std.mem.eql(u8, type_str, "Tuple")) HIRType.Tuple else if (std.mem.eql(u8, type_str, "Map")) HIRType.Map else if (std.mem.eql(u8, type_str, "Struct")) blk: {
+                value_type = if (std.mem.eql(u8, type_str, "Int")) HIRType.Int else if (std.mem.eql(u8, type_str, "Float")) HIRType.Float else if (std.mem.eql(u8, type_str, "String")) HIRType.String else if (std.mem.eql(u8, type_str, "Tetra")) HIRType.Tetra else if (std.mem.eql(u8, type_str, "Array")) HIRType.Array else if (std.mem.eql(u8, type_str, "Map")) HIRType.Map else if (std.mem.eql(u8, type_str, "Struct")) blk: {
                     // For structs, we need to collect field information
                     struct_name = if (path_builder.items.len > 0)
                         try self.allocator.dupe(u8, path_builder.items)
@@ -443,7 +443,7 @@ pub const SoxaTextParser = struct {
                 }
             } else {
                 // Similar logic for non-quoted case...
-                value_type = if (std.mem.eql(u8, name_or_type, "Int")) HIRType.Int else if (std.mem.eql(u8, name_or_type, "Float")) HIRType.Float else if (std.mem.eql(u8, name_or_type, "String")) HIRType.String else if (std.mem.eql(u8, name_or_type, "Tetra")) HIRType.Tetra else if (std.mem.eql(u8, name_or_type, "Array")) HIRType.Array else if (std.mem.eql(u8, name_or_type, "Tuple")) HIRType.Tuple else if (std.mem.eql(u8, name_or_type, "Map")) HIRType.Map else if (std.mem.eql(u8, name_or_type, "Struct")) blk: {
+                value_type = if (std.mem.eql(u8, name_or_type, "Int")) HIRType.Int else if (std.mem.eql(u8, name_or_type, "Float")) HIRType.Float else if (std.mem.eql(u8, name_or_type, "String")) HIRType.String else if (std.mem.eql(u8, name_or_type, "Tetra")) HIRType.Tetra else if (std.mem.eql(u8, name_or_type, "Array")) HIRType.Map else if (std.mem.eql(u8, name_or_type, "Struct")) blk: {
                     struct_name = if (path_builder.items.len > 0)
                         try self.allocator.dupe(u8, path_builder.items)
                     else
@@ -530,14 +530,6 @@ pub const SoxaTextParser = struct {
             try self.instructions.append(HIRInstruction.ArrayLen);
         } else if (std.mem.eql(u8, op, "ArrayConcat")) {
             try self.instructions.append(HIRInstruction.ArrayConcat);
-        } else if (std.mem.eql(u8, op, "TupleNew")) {
-            const count_str = tokens.next() orelse return;
-            const element_count = std.fmt.parseInt(u32, count_str, 10) catch return;
-            try self.instructions.append(HIRInstruction{ .TupleNew = .{ .element_count = element_count } });
-        } else if (std.mem.eql(u8, op, "TupleGet")) {
-            const index_str = tokens.next() orelse return;
-            const index = std.fmt.parseInt(u32, index_str, 10) catch return;
-            try self.instructions.append(HIRInstruction{ .TupleGet = .{ .index = index } });
         } else if (std.mem.eql(u8, op, "Map")) {
             const count_str = tokens.next() orelse return;
             const key_type_str = tokens.next() orelse return;

@@ -110,15 +110,6 @@ pub fn parse(self: *Parser, reporter: *Reporter) ErrorList![]ast.Stmt {
                 // Skip return type if present
                 if (self.peek().type == .RETURNS) {
                     self.advance(); // consume 'returns'
-                    if (self.peek().type == .LEFT_TUPLE) {
-                        self.advance(); // consume '('
-                        var tuple_count: usize = 1;
-                        while (tuple_count > 0 and self.peek().type != .EOF) {
-                            if (self.peek().type == .LEFT_TUPLE) tuple_count += 1;
-                            if (self.peek().type == .RIGHT_TUPLE) tuple_count -= 1;
-                            self.advance();
-                        }
-                    }
                 }
                 // Skip function body
                 if (self.peek().type == .LEFT_BRACE) {

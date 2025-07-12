@@ -470,18 +470,28 @@ pub const HIRGenerator = struct {
                             enum_type_name = decl.type_info.custom_type;
                             break :blk .Enum;
                         },
+                        .Struct => blk: {
+                            // Extract the actual struct type name from the custom_type field
+                            enum_type_name = decl.type_info.custom_type;
+                            break :blk .Struct;
+                        },
                         .Custom => blk: {
-                            // CRITICAL FIX: Handle Custom type - check if it's an enum
+                            // CRITICAL FIX: Handle Custom type - check if it's an enum or struct
                             if (decl.type_info.custom_type) |custom_type_name| {
                                 // Check if this custom type is a registered enum
                                 if (self.custom_types.get(custom_type_name)) |custom_type| {
                                     if (custom_type.kind == .Enum) {
                                         enum_type_name = custom_type_name;
                                         break :blk .Enum;
-                                    } else {
-                                        break :blk .Struct; // It's a struct
+                                    } else if (custom_type.kind == .Struct) {
+                                        // Track the struct type name for instances
+                                        try self.trackVariableCustomType(decl.name.lexeme, custom_type_name);
+                                        break :blk .Struct;
                                     }
                                 }
+                                // If not found in custom_types, assume it's a struct and track it
+                                try self.trackVariableCustomType(decl.name.lexeme, custom_type_name);
+                                break :blk .Struct;
                             }
                             // If we can't determine the custom type, it's unknown
                             break :blk .Nothing; // Unknown custom type
@@ -1262,7 +1272,7 @@ pub const HIRGenerator = struct {
                 // Generate array/map expression
                 try self.generateExpression(index.array, true);
 
-                // Determine if we're accessing an array, map, or tuple
+                // Determine if we're accessing an array, map
                 const container_type = self.inferTypeFromExpression(index.array);
                 switch (container_type) {
                     .Map => {
@@ -1282,19 +1292,6 @@ pub const HIRGenerator = struct {
 
                         // Array access - use ArrayGet
                         try self.instructions.append(.{ .ArrayGet = .{ .bounds_check = true } });
-                    },
-                    .Tuple => {
-                        // For tuples, we need to extract the compile-time constant index
-                        // Check if the index is a compile-time constant
-                        if (index.index.data == .Literal and index.index.data.Literal == .int) {
-                            const tuple_index = @as(u32, @intCast(index.index.data.Literal.int));
-                            // Generate TupleGet instruction with compile-time index
-                            try self.instructions.append(.{ .TupleGet = .{ .index = tuple_index } });
-                        } else {
-                            // For non-constant indices, fall back to ArrayGet (runtime bounds checking)
-                            try self.generateExpression(index.index, true);
-                            try self.instructions.append(.{ .ArrayGet = .{ .bounds_check = true } });
-                        }
                     },
                     else => {
                         // Generate index expression
@@ -1340,17 +1337,6 @@ pub const HIRGenerator = struct {
                         .expected_type = expected_type,
                     } });
                 }
-            },
-
-            .Tuple => |elements| {
-
-                // Generate each element FIRST (they get pushed to stack)
-                for (elements) |element| {
-                    try self.generateExpression(element, true);
-                }
-
-                // Generate TupleNew instruction AFTER elements are on stack
-                try self.instructions.append(.{ .TupleNew = .{ .element_count = @intCast(elements.len) } });
             },
 
             .Grouping => |grouping| {
@@ -1842,7 +1828,6 @@ pub const HIRGenerator = struct {
                         }
                         break :blk "struct"; // Generic struct type
                     },
-                    .Tuple => "tuple",
                     .Map => "map",
                     .Enum => blk: {
                         if (expr_to_check.data == .Variable) {
@@ -2435,14 +2420,12 @@ pub const HIRGenerator = struct {
                 };
             },
             .Array => .Array,
-            .Tuple => .Tuple,
             .Index => |index| {
                 // Array/string indexing returns the element type
                 const container_type = self.inferTypeFromExpression(index.array);
                 return switch (container_type) {
                     .Array => .String, // Most arrays in bigfile.doxa are int arrays, but for simplicity return String
                     .String => .String, // String indexing returns single character (still string in our system)
-                    .Tuple => .String, // Tuples can have mixed types, return String for simplicity
                     .Map => .Int, // Map values are integers in our test case
                     else => .String, // Default to String for most index operations
                 };

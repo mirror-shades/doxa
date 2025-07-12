@@ -64,7 +64,6 @@ pub fn define(self: *Environment, key: []const u8, value: TokenLiteral, type_inf
             .Map => TokenType.MAP,
             .Nothing => TokenType.NOTHING,
             .Auto => TokenType.AUTO,
-            .Tuple => TokenType.TUPLE,
             .Custom => TokenType.ENUM_TYPE,
             .Tetra => TokenType.TETRA,
             else => unreachable,

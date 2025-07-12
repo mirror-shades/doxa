@@ -6,7 +6,6 @@ const hir_types = @import("../codegen/hir/soxa_types.zig");
 const HIRInstruction = hir_instructions.HIRInstruction;
 const HIRValue = hir_values.HIRValue;
 const HIRArray = hir_values.HIRArray;
-const HIRTuple = hir_values.HIRTuple;
 const HIRMap = hir_values.HIRMap;
 const HIRMapEntry = hir_values.HIRMapEntry;
 const HIRStruct = hir_values.HIRStruct;
@@ -319,21 +318,6 @@ pub const HIRVM = struct {
     string_interner: *StringInterner,
 
     pub fn tokenLiteralToHIRValueWithType(self: *HIRVM, token_literal: TokenLiteral, type_info: TypeInfo) HIRValue {
-        // If the type info indicates this should be a tuple, convert arrays to tuples
-        if (type_info.base == .Tuple and token_literal == .array) {
-            const arr = token_literal.array;
-            var hir_elements = self.allocator.alloc(HIRValue, arr.len) catch return HIRValue.nothing;
-
-            for (arr, 0..) |element, i| {
-                hir_elements[i] = self.tokenLiteralToHIRValue(element);
-            }
-
-            return HIRValue{ .tuple = .{
-                .elements = hir_elements,
-                .path = null,
-            } };
-        }
-
         // Handle enum types with proper type information
         if (type_info.base == .Enum and token_literal == .enum_variant) {
             const variant_name = token_literal.enum_variant;
@@ -483,14 +467,6 @@ pub const HIRVM = struct {
                 }
                 break :blk TokenLiteral{ .array = token_elements };
             },
-            .tuple => |t| blk: {
-                // Convert HIRTuple to TokenLiteral array (tuples are stored as arrays)
-                var token_elements = self.allocator.alloc(TokenLiteral, t.elements.len) catch break :blk TokenLiteral{ .nothing = {} };
-                for (t.elements, 0..) |element, i| {
-                    token_elements[i] = self.hirValueToTokenLiteral(element);
-                }
-                break :blk TokenLiteral{ .array = token_elements };
-            },
             .struct_instance => |s| blk: {
                 // Convert HIRStructField array to StructField array
                 var token_fields = self.allocator.alloc(StructField, s.fields.len) catch break :blk TokenLiteral{ .nothing = {} };
@@ -538,7 +514,6 @@ pub const HIRVM = struct {
             // Complex types - map to closest TokenType
             .array => .ARRAY,
             .struct_instance => .IDENTIFIER, // Structs represented as identifiers
-            .tuple => .ARRAY, // Tuples similar to arrays
             .map => .ARRAY, // Maps similar to arrays
             .enum_variant => .IDENTIFIER, // Enums represented as identifiers
         };
@@ -556,7 +531,6 @@ pub const HIRVM = struct {
             // Complex types - map to appropriate TypeInfo
             .array => TypeInfo{ .base = .Array, .is_mutable = true },
             .struct_instance => TypeInfo{ .base = .Struct, .is_mutable = true }, // Struct types need resolution
-            .tuple => TypeInfo{ .base = .Tuple, .is_mutable = true },
             .map => TypeInfo{ .base = .Map, .is_mutable = true },
             .enum_variant => |e| TypeInfo{ .base = .Enum, .is_mutable = true, .custom_type = e.type_name }, // Preserve enum type name
         };
@@ -1369,15 +1343,6 @@ pub const HIRVM = struct {
                         const char_str = s[index_val .. index_val + 1];
                         try self.stack.push(HIRFrame.initFromHIRValue(HIRValue{ .string = char_str }));
                     },
-                    .tuple => |t| {
-                        // GRACEFUL: Allow tuple indexing
-                        if (index_val >= t.elements.len) {
-                            try self.stack.push(HIRFrame.initFromHIRValue(HIRValue.nothing));
-                            return;
-                        }
-                        const element = t.elements[index_val];
-                        try self.stack.push(HIRFrame.initFromHIRValue(element));
-                    },
                     else => {
                         try self.stack.push(HIRFrame.initFromHIRValue(HIRValue.nothing));
                     },
@@ -2177,58 +2142,6 @@ pub const HIRVM = struct {
                 }
             },
 
-            .TupleNew => |tuple_new| {
-                // Create a new tuple with the specified number of elements
-                var elements = try self.allocator.alloc(HIRValue, tuple_new.element_count);
-
-                // Pop elements from the stack in reverse order
-                var i: usize = tuple_new.element_count;
-                while (i > 0) {
-                    i -= 1;
-                    const frame = try self.stack.pop();
-                    elements[i] = frame.value;
-                }
-
-                // Create the tuple value
-                const tuple_value = HIRValue{ .tuple = HIRTuple{
-                    .elements = elements,
-                } };
-
-                // Push the tuple onto the stack
-                try self.stack.push(HIRFrame.initFromHIRValue(tuple_value));
-            },
-
-            .TupleGet => |tuple_get| {
-                if (self.debug_enabled) {
-                    std.debug.print("DoxVM: Debug: TupleGet {} - Stack size before: {}\n", .{ tuple_get.index, self.stack.size() });
-                }
-
-                // Get the tuple from the stack
-                const frame = try self.stack.pop();
-                if (frame.value != .tuple) {
-                    if (self.debug_enabled) {
-                        std.debug.print("DoxVM: Debug: TupleGet error - expected tuple, got {s}\n", .{@tagName(frame.value)});
-                    }
-                    return ErrorList.TypeError;
-                }
-
-                // Get the element at the specified index
-                const tuple = frame.value.tuple;
-                if (tuple_get.index >= tuple.elements.len) {
-                    if (self.debug_enabled) {
-                        std.debug.print("DoxVM: Debug: TupleGet error - index {} out of bounds (tuple has {} elements)\n", .{ tuple_get.index, tuple.elements.len });
-                    }
-                    return ErrorList.IndexOutOfBounds;
-                }
-
-                // Push the element onto the stack
-                try self.stack.push(HIRFrame.initFromHIRValue(tuple.elements[tuple_get.index]));
-
-                if (self.debug_enabled) {
-                    std.debug.print("DoxVM: Debug: TupleGet {} - Stack size after: {}, value: {s}\n", .{ tuple_get.index, self.stack.size(), @tagName(tuple.elements[tuple_get.index]) });
-                }
-            },
-
             .Map => |map| {
                 // Create a new map by popping key-value pairs from the stack
                 if (self.debug_enabled) {
@@ -2837,7 +2750,7 @@ pub const HIRVM = struct {
                 else => false,
             },
             // Complex types - basic equality for now
-            .array, .struct_instance, .tuple, .map => false, // Complex equality not implemented yet
+            .array, .struct_instance, .map => false, // Complex equality not implemented yet
         };
     }
 
@@ -2862,7 +2775,7 @@ pub const HIRVM = struct {
                 else => ErrorList.TypeError,
             },
             // Complex types don't support comparison
-            .tetra, .string, .nothing, .array, .struct_instance, .tuple, .map, .enum_variant => ErrorList.TypeError,
+            .tetra, .string, .nothing, .array, .struct_instance, .map, .enum_variant => ErrorList.TypeError,
         };
     }
 
@@ -2887,7 +2800,7 @@ pub const HIRVM = struct {
                 else => ErrorList.TypeError,
             },
             // Complex types don't support comparison
-            .tetra, .string, .nothing, .array, .struct_instance, .tuple, .map, .enum_variant => ErrorList.TypeError,
+            .tetra, .string, .nothing, .array, .struct_instance, .map, .enum_variant => ErrorList.TypeError,
         };
     }
 
@@ -2921,7 +2834,6 @@ pub const HIRVM = struct {
                 }
                 std.debug.print(" }}", .{}); // Fix closing bracket
             },
-            .tuple => std.debug.print("(tuple)", .{}),
             .map => std.debug.print("{{map}}", .{}),
             .enum_variant => |e| std.debug.print(".{s}", .{e.variant_name}),
         }
@@ -2949,7 +2861,6 @@ pub const HIRVM = struct {
                 else => unreachable,
             },
             .struct_instance => |s| s.type_name,
-            .tuple => "tuple",
             .map => "map",
             .enum_variant => |e| e.type_name,
         };
