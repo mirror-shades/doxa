@@ -455,7 +455,7 @@ pub const HIRGenerator = struct {
                 }
 
                 // FIXED: Prioritize explicit type annotation over inference
-                var enum_type_name: ?[]const u8 = null;
+                var custom_type_name: ?[]const u8 = null;
                 if (decl.type_info.base != .Nothing) {
                     // Use explicit type annotation first
                     var_type = switch (decl.type_info.base) {
@@ -467,30 +467,30 @@ pub const HIRGenerator = struct {
                         .Array => .Array, // Add missing Array case
                         .Enum => blk: {
                             // Extract the actual enum type name from the custom_type field
-                            enum_type_name = decl.type_info.custom_type;
+                            custom_type_name = decl.type_info.custom_type;
                             break :blk .Enum;
                         },
                         .Struct => blk: {
                             // Extract the actual struct type name from the custom_type field
-                            enum_type_name = decl.type_info.custom_type;
+                            custom_type_name = decl.type_info.custom_type;
                             break :blk .Struct;
                         },
                         .Custom => blk: {
                             // CRITICAL FIX: Handle Custom type - check if it's an enum or struct
-                            if (decl.type_info.custom_type) |custom_type_name| {
+                            if (decl.type_info.custom_type) |type_name| {
                                 // Check if this custom type is a registered enum
-                                if (self.custom_types.get(custom_type_name)) |custom_type| {
+                                if (self.custom_types.get(type_name)) |custom_type| {
                                     if (custom_type.kind == .Enum) {
-                                        enum_type_name = custom_type_name;
+                                        custom_type_name = type_name;
                                         break :blk .Enum;
                                     } else if (custom_type.kind == .Struct) {
                                         // Track the struct type name for instances
-                                        try self.trackVariableCustomType(decl.name.lexeme, custom_type_name);
+                                        try self.trackVariableCustomType(decl.name.lexeme, type_name);
                                         break :blk .Struct;
                                     }
                                 }
                                 // If not found in custom_types, assume it's a struct and track it
-                                try self.trackVariableCustomType(decl.name.lexeme, custom_type_name);
+                                try self.trackVariableCustomType(decl.name.lexeme, type_name);
                                 break :blk .Struct;
                             }
                             // If we can't determine the custom type, it's unknown
@@ -509,12 +509,12 @@ pub const HIRGenerator = struct {
                 if (decl.initializer) |init_expr| {
                     // Set enum type context if we're declaring an enum variable
                     const old_enum_context = self.current_enum_type;
-                    if (enum_type_name != null) {
-                        self.current_enum_type = enum_type_name;
+                    if (custom_type_name != null) {
+                        self.current_enum_type = custom_type_name;
 
                         // DEBUG: Print enum context setting
                         if (self.debug_enabled) {
-                            std.debug.print("HIR: Setting enum context to {s} for variable {s}\n", .{ enum_type_name.?, decl.name.lexeme });
+                            std.debug.print("HIR: Setting enum context to {s} for variable {s}\n", .{ custom_type_name.?, decl.name.lexeme });
                         }
                     }
 
@@ -591,7 +591,7 @@ pub const HIRGenerator = struct {
                 try self.trackVariableType(decl.name.lexeme, var_type);
 
                 // NEW: Track custom type name for enums/structs
-                if (enum_type_name) |custom_type| {
+                if (custom_type_name) |custom_type| {
                     try self.trackVariableCustomType(decl.name.lexeme, custom_type);
                 }
 
