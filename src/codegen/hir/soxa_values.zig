@@ -5,12 +5,11 @@ pub const HIRValue = union(enum(u8)) {
     byte: u8,
     float: f64,
     string: []const u8,
-    tetra: u8, // NEW: Direct u8 storage for tetras
+    tetra: u8, // Direct u8 storage for tetras, 0 is false, 1 is true, 2 is both, 3 is neither
     nothing,
     // Phase 1: Complex data types
     array: HIRArray,
     struct_instance: HIRStruct,
-    tuple: HIRTuple,
     map: HIRMap,
     enum_variant: HIREnum,
 };
@@ -33,11 +32,6 @@ pub const HIRStructField = struct {
     name: []const u8,
     value: HIRValue,
     field_type: HIRType,
-    path: ?[]const u8 = @as(?[]const u8, null),
-};
-
-pub const HIRTuple = struct {
-    elements: []HIRValue,
     path: ?[]const u8 = @as(?[]const u8, null),
 };
 

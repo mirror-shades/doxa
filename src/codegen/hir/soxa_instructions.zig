@@ -370,24 +370,6 @@ pub const HIRInstruction = union(enum) {
     },
 
     //==================================================================
-    // TUPLE OPERATIONS (Phase 1)
-    //==================================================================
-
-    /// Create new tuple
-    /// VM: Allocate tuple storage
-    /// LLVM: Struct with heterogeneous types
-    TupleNew: struct {
-        element_count: u32,
-    },
-
-    /// Get tuple element by index
-    /// VM: Direct index access (compile-time bounds check)
-    /// LLVM: LLVMBuildExtractValue
-    TupleGet: struct {
-        index: u32,
-    },
-
-    //==================================================================
     // ENUM OPERATIONS (Phase 1)
     //==================================================================
 
@@ -454,4 +436,3 @@ pub const HIRInstruction = union(enum) {
         has_message: bool,
     },
 };
-

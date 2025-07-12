@@ -115,10 +115,6 @@ pub fn translateToVMBytecode(program: *HIRProgram, allocator: std.mem.Allocator,
             .Pop => {
                 try bytecode.append(@intFromEnum(instructions.OpCode.OP_POP));
             },
-            .TupleGet => |t| {
-                try bytecode.append(@intFromEnum(instructions.OpCode.OP_ARRAY_GET));
-                try bytecode.append(@intCast(t.index));
-            },
             .Peek => |_| {
                 // For peek, we can use existing VM peekion mechanism
                 // The VM will handle the printing based on the top stack value
@@ -149,7 +145,6 @@ pub fn translateToVMBytecode(program: *HIRProgram, allocator: std.mem.Allocator,
 fn getBytecodeSize(instruction: HIRInstruction) u32 {
     return switch (instruction) {
         .Const, .LoadVar, .StoreVar, .Jump, .JumpCond, .Call, .TailCall => 2, // opcode + operand
-        .TupleGet => 2, // opcode + index
         .IntArith, .Compare, .Return, .Dup, .Pop, .Swap, .Peek, .Halt, .AssertFail => 1, // opcode only
         .Label => 0, // No bytecode generated
         else => 1, // Default to 1 byte
@@ -348,10 +343,6 @@ fn writeHIRValue(writer: anytype, value: HIRValue) !void {
             try writer.writeByte(7); // Type tag for struct
             // TODO: Implement struct serialization when needed
         },
-        .tuple => {
-            try writer.writeByte(8); // Type tag for tuple
-            // TODO: Implement tuple serialization when needed
-        },
         .map => {
             try writer.writeByte(9); // Type tag for map
             // TODO: Implement map serialization when needed
@@ -409,14 +400,10 @@ fn readHIRValue(reader: anytype, allocator: std.mem.Allocator) !HIRValue {
             return HIRValue.nothing; // TODO: Implement proper struct deserialization
         },
         8 => {
-            // Tuple - return placeholder for now
-            return HIRValue.nothing; // TODO: Implement proper tuple deserialization
-        },
-        9 => {
             // Map - return placeholder for now
             return HIRValue.nothing; // TODO: Implement proper map deserialization
         },
-        10 => {
+        9 => {
             // Enum variant deserialization
             const type_name_len = try reader.readInt(u32, .little);
             const type_name = try allocator.alloc(u8, type_name_len);
@@ -743,7 +730,6 @@ fn writeHIRValueText(writer: anytype, value: HIRValue) !void {
         .nothing => try writer.print("nothing", .{}),
         .array => |arr| try writer.print("array[{s}] capacity:{}", .{ @tagName(arr.element_type), arr.capacity }),
         .struct_instance => try writer.print("struct", .{}),
-        .tuple => try writer.print("tuple", .{}),
         .map => try writer.print("map", .{}),
         .enum_variant => |variant| try writer.print("enum_variant {s}.{s}", .{ variant.type_name, variant.variant_name }),
     }
@@ -808,8 +794,6 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
         .ArrayLen => try writer.print("    ArrayLen                    ; Get array length\n", .{}),
         .ArrayConcat => try writer.print("    ArrayConcat                 ; Concatenate arrays\n", .{}),
 
-        .TupleNew => |t| try writer.print("    TupleNew {}                 ; Create tuple with {} elements\n", .{ t.element_count, t.element_count }),
-        .TupleGet => |t| try writer.print("    TupleGet {}                 ; Get tuple element at index {}\n", .{ t.index, t.index }),
         .Map => |m| try writer.print("    Map {} {s}                   ; Create map with {} entries\n", .{ m.entries.len, @tagName(m.key_type), m.entries.len }),
         .MapGet => |m| try writer.print("    MapGet {s}                   ; Get map value by key\n", .{@tagName(m.key_type)}),
 

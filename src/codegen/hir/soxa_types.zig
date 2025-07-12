@@ -15,7 +15,6 @@ pub const HIRType = enum {
     Nothing,
     Array,
     Struct,
-    Tuple,
     Map,
     Enum,
     Function,
@@ -37,10 +36,6 @@ pub const StructFieldInfo = struct {
     name: []const u8,
     field_type: HIRType,
     offset: u32, // Byte offset for efficient access
-};
-
-pub const TupleTypeInfo = struct {
-    element_types: []HIRType,
 };
 
 pub const MapTypeInfo = struct {
