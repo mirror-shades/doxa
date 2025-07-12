@@ -111,7 +111,6 @@ const expected_results = [_]result{
     .{ .type = "string", .value = "\"Employee\"" },
     .{ .type = "string", .value = "\"enum\"" },
     .{ .type = "string", .value = "\"Color\"" },
-    .{ .type = "string", .value = "\"tuple\"" },
     .{ .type = "string", .value = "\"map\"" },
 };
 

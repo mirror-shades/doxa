@@ -87,7 +87,7 @@ pub const LexicalAnalyzer = struct {
         try self.keywords.put("else", .ELSE);
         try self.keywords.put("while", .WHILE);
         try self.keywords.put("for", .FOR);
-        try self.keywords.put("foreach", .FOREACH);
+        try self.keywords.put("each", .EACH);
         try self.keywords.put("fn", .FUNCTION);
         try self.keywords.put("function", .FUNCTION);
         try self.keywords.put("return", .RETURN);
@@ -242,7 +242,14 @@ pub const LexicalAnalyzer = struct {
             },
 
             '(' => {
-                try self.parenthesis();
+                try self.addMinimalToken(.LEFT_PAREN);
+            },
+            ':' => {
+                if (self.match(':')) {
+                    try self.addMinimalToken(.TYPE_SYMBOL);
+                } else {
+                    try self.addMinimalToken(.WHERE);
+                }
             },
             ')' => try self.addMinimalToken(.RIGHT_PAREN),
             '{' => try self.addMinimalToken(.LEFT_BRACE),
@@ -270,13 +277,6 @@ pub const LexicalAnalyzer = struct {
             '#' => try self.addMinimalToken(.HASH),
 
             '&' => try self.addMinimalToken(.AMPERSAND),
-            ':' => {
-                if (self.match(':')) {
-                    try self.addMinimalToken(.TYPE_SYMBOL);
-                } else {
-                    try self.addMinimalToken(.WHERE);
-                }
-            },
             '*' => {
                 if (self.match('*')) {
                     if (self.match('=')) {
@@ -297,6 +297,7 @@ pub const LexicalAnalyzer = struct {
                     try self.addMinimalToken(.BANG);
                 }
             },
+            '|' => try self.addMinimalToken(.PIPE),
             '=' => {
                 if (self.match('=')) {
                     try self.addMinimalToken(.EQUALITY);

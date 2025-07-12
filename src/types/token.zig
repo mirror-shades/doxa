@@ -14,6 +14,7 @@ pub const TokenType = enum {
     HASH, // #
     TILDE, // ~
     PEEK, // ?
+    PIPE, // |
 
     //one or two character tokens
     DOT, // .
@@ -57,13 +58,14 @@ pub const TokenType = enum {
     MATCH, // match
     WHILE, // while
     FOR, // for
-    FOREACH, // foreach
+    EACH, // each
+    IN, // in
+    AT, // at
     XOR, // xor
     NOT_PARADOXICAL, // ⊖
     EXISTS, // exists ∃
     FORALL, // forall ∀
     FROM, // from
-    IN, // in
     AS, // as
     NOT, // not ¬
     IMPLIES, // →
