@@ -1480,6 +1480,12 @@ pub const SemanticAnalyzer = struct {
                     type_info.* = .{ .base = .Nothing };
                 }
             },
+            .TypeExpr => |type_expr| {
+                // Convert TypeExpr to TypeInfo
+                const type_info_ptr = try ast.typeInfoFromExpr(self.allocator, type_expr);
+                type_info.* = type_info_ptr.*;
+                self.allocator.destroy(type_info_ptr);
+            },
         }
 
         // Cache the result

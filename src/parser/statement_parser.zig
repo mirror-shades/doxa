@@ -172,7 +172,7 @@ pub fn parseExpressionStmt(self: *Parser) ErrorList!ast.Stmt {
         .If => false, // If expressions don't need semicolons
         .While => false,
         .For => false,
-        .ForEach => false,
+        .ForEach => false, // Make sure this is false
         .Peek => true,
         .Match => false,
         .Index => true,
@@ -278,6 +278,7 @@ pub fn parseStatement(self: *Parser) ErrorList!ast.Stmt {
         .RETURN => parseReturnStmt(self),
         .CONTINUE => parseContinueStmt(self),
         .BREAK => parseBreakStmt(self),
+        .EACH => parseEachStmt(self), // Add this line
         .LEFT_BRACE => blk: {
             const block_expr = if (try Parser.block(self, null, .NONE)) |expr|
                 ast.Stmt{ .base = .{
@@ -418,6 +419,74 @@ pub fn parseBreakStmt(self: *Parser) ErrorList!ast.Stmt {
         },
         .data = .{
             .Break = {},
+        },
+    };
+}
+
+pub fn parseEachStmt(self: *Parser) ErrorList!ast.Stmt {
+    self.advance(); // consume 'each'
+
+    // Parse item name
+    if (self.peek().type != .IDENTIFIER) {
+        return error.ExpectedIdentifier;
+    }
+    const item_name = self.peek();
+    self.advance();
+
+    // Check for optional index variable
+    var index_name: ?token.Token = null;
+    if (self.peek().type == .AT) {
+        self.advance(); // consume 'at'
+
+        if (self.peek().type != .IDENTIFIER) {
+            return error.ExpectedIdentifier;
+        }
+        index_name = self.peek();
+        self.advance();
+    }
+
+    // Parse 'in' keyword
+    if (self.peek().type != .IN) {
+        return error.ExpectedInKeyword;
+    }
+    self.advance();
+
+    // Parse array expression
+    const array_expr = try expression_parser.parseExpression(self);
+    if (array_expr == null) {
+        return error.ExpectedExpression;
+    }
+
+    // Parse body as a block
+    if (self.peek().type != .LEFT_BRACE) {
+        return error.ExpectedLeftBrace;
+    }
+    const body = try parseBlockStmt(self);
+
+    // Create ForEach expression
+    const foreach_expr = try self.allocator.create(ast.Expr);
+    foreach_expr.* = .{
+        .base = .{
+            .id = ast.generateNodeId(),
+            .span = ast.SourceSpan.fromToken(self.previous()),
+        },
+        .data = .{
+            .ForEach = .{
+                .item_name = item_name,
+                .index_name = index_name,
+                .array = array_expr.?,
+                .body = body,
+            },
+        },
+    };
+
+    return ast.Stmt{
+        .base = .{
+            .id = ast.generateNodeId(),
+            .span = ast.SourceSpan.fromToken(self.previous()),
+        },
+        .data = .{
+            .Expression = foreach_expr,
         },
     };
 }

@@ -1,0 +1,6 @@
+fn test_union(c :: int | float) returns(string) {
+    return match c {
+        int => "integer",
+        float => "float",
+    };
+} 
