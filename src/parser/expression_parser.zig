@@ -1333,13 +1333,7 @@ pub fn variable(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Exp
         }
     }
 
-    // Check if this is a struct literal (identifier followed by {)
-    if (self.peek().type == .LEFT_BRACE) {
-        // This is a struct literal, parse it using parseStructInit
-        // We need to reset the position to before the identifier so parseStructInit can consume it
-        self.current -= 1; // Go back to the identifier
-        return self.parseStructInit();
-    }
+    // Note: Struct literal parsing is handled separately to avoid conflicts with match expressions
 
     // Create variable expression or enum member expression
     const var_expr = try self.allocator.create(ast.Expr);
@@ -1526,5 +1520,45 @@ pub fn inferType(expr: *ast.Expr) !ast.TypeInfo {
         .Map => return .{ .base = .Map, .is_mutable = false },
         .StructLiteral => |struct_lit| return .{ .base = .Custom, .custom_type = struct_lit.name.lexeme, .is_mutable = false },
         else => return .{ .base = .Nothing, .is_mutable = false },
+    }
+}
+
+pub fn parseStructOrMatch(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+    if (self.debug_enabled) {
+        std.debug.print("\nParsing struct or match expression...\n", .{});
+    }
+
+    // We should be at an identifier
+    if (self.peek().type != .IDENTIFIER) {
+        return null;
+    }
+
+    const start_pos = self.current;
+    self.advance(); // consume identifier
+
+    // Check if next token is a brace
+    if (self.peek().type != .LEFT_BRACE) {
+        // Not a struct literal or match expression, reset and fall back to variable parser
+        self.current = start_pos;
+        return variable(self, null, .NONE);
+    }
+
+    // Look ahead to determine if this is a struct literal or match expression
+    // Struct literals have: IDENTIFIER { FIELD_NAME is VALUE, ... }
+    // Match expressions have: IDENTIFIER { .VARIANT => EXPRESSION, ... }
+
+    self.advance(); // consume '{'
+
+    // Check the first token after the brace
+    const first_token_after_brace = self.peek();
+
+    if (first_token_after_brace.type == .IDENTIFIER) {
+        // This is likely a struct literal (starts with field name)
+        self.current = start_pos; // Reset to before identifier
+        return Parser.parseStructInit(self);
+    } else {
+        // This might be a match expression or something else, reset and fall back to variable parser
+        self.current = start_pos;
+        return variable(self, null, .NONE);
     }
 }
