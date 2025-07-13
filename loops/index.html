@@ -413,26 +413,33 @@
 
 
 <h1 id="loops">Loops</h1>
+<p>Doxa provides three types of loops: <code>while</code>, <code>for</code>, and <code>each</code>. While <code>while</code> and <code>for</code> work like traditional loops in most languages, <code>each</code> offers a more modern, collection-focused approach.</p>
 <h2 id="while">While</h2>
-<p>var currentNumber is 0;
+<p>The <code>while</code> loop continues executing as long as a condition remains true:</p>
+<div class="highlight"><pre><span></span><code>var currentNumber is 0;
 while currentNumber &lt;= 100 {
-currentNumber += 1;
-}</p>
+    currentNumber += 1;
+}
+</code></pre></div>
 <h2 id="for">For</h2>
+<p>The <code>for</code> loop uses traditional C-style syntax with initialization, condition, and increment:</p>
 <div class="highlight"><pre><span></span><code>for (var i is 0; i &lt; x; i++) {
     doSomething(myArray[i]);
 }
 </code></pre></div>
 <h2 id="each">Each</h2>
+<p>The <code>each</code> loop is Doxa's modern iteration construct for collections. It's cleaner and safer than indexed loops:</p>
 <div class="highlight"><pre><span></span><code>each x in arr {
     doSomething(x);
 }
-
-// at specifies an index
-    each x at i in arr {
+</code></pre></div>
+<h3 id="each-with-index">Each with Index</h3>
+<p>You can also access the index using the <code>at</code> keyword:</p>
+<div class="highlight"><pre><span></span><code>each x at i in arr {
     if i &lt; 3 then doSomething(x);
 }
 </code></pre></div>
+<p>The <code>each</code> loop eliminates the need for manual index management and reduces the risk of off-by-one errors that are common with traditional <code>for</code> loops.</p>
 
 
 
