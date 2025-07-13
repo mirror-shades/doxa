@@ -28,11 +28,6 @@ map
 function - user functions, library functions, etc
 union - can be handled with the collapse operator, see page on unions for more info
 
-### Meta
-
-intrinsic - reserved for type names, language level methods, @length, @concat, ect.
-alias - refrence-like modifier, see page on alias for more info
-
 ### Basic Composition Example
 
 ```doxa
