@@ -521,44 +521,109 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
             });
         }
 
-        // Try parsing array literal first
-        if (self.peek().type == .LEFT_BRACKET) {
+        // Check if this looks like a union type (type | type | type)
+        const current_token = self.peek();
+        const next_token = if (self.current + 1 < self.tokens.len) self.tokens[self.current + 1] else null;
+        const is_union_type = (current_token.type == .INT_TYPE or
+            current_token.type == .FLOAT_TYPE or
+            current_token.type == .STRING_TYPE or
+            current_token.type == .BYTE_TYPE or
+            current_token.type == .TETRA_TYPE or
+            current_token.type == .NOTHING_TYPE or
+            current_token.type == .IDENTIFIER) and
+            (next_token != null and next_token.?.type == .PIPE);
+
+        if (is_union_type) {
             if (self.debug_enabled) {
-                std.debug.print("About to parse array literal. Current token: {s} ('{s}')\n", .{ @tagName(self.peek().type), self.peek().lexeme });
+                std.debug.print("Detected union type in initializer\n", .{});
             }
-            initializer = try expression_parser.parseArrayLiteral(self, null, .NONE);
-            if (self.debug_enabled) {
-                std.debug.print("After parsing array literal. Current token: {s} ('{s}')\n", .{ @tagName(self.peek().type), self.peek().lexeme });
+
+            // Parse the entire union type expression
+            var types = std.ArrayList(*ast.TypeExpr).init(self.allocator);
+            errdefer {
+                for (types.items) |type_expr| {
+                    type_expr.deinit(self.allocator);
+                    self.allocator.destroy(type_expr);
+                }
+                types.deinit();
             }
-        } else if (self.peek().type == .INPUT) {
-            // Handle input expression
-            initializer = try Parser.input(self, null, .NONE);
-        } else if (self.peek().type == .IDENTIFIER) {
-            // Try struct initialization
-            if (try Parser.parseStructInit(self)) |struct_init| {
-                initializer = struct_init;
-            } else {
-                // If not a struct init, try regular expression
+
+            // Parse the first type
+            const first_type = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
+            try types.append(first_type);
+
+            // Parse subsequent types separated by pipes
+            while (self.peek().type == .PIPE) {
+                self.advance(); // consume |
+                const next_type = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
+                try types.append(next_type);
+            }
+
+            // Create union type expression
+            const union_type_expr = try self.allocator.create(ast.TypeExpr);
+            union_type_expr.* = .{
+                .base = .{
+                    .id = ast.generateNodeId(),
+                    .span = ast.SourceSpan.fromToken(current_token),
+                },
+                .data = .{
+                    .Union = try types.toOwnedSlice(),
+                },
+            };
+
+            // Convert union type expression to a literal expression
+            const union_literal = try self.allocator.create(ast.Expr);
+            union_literal.* = .{
+                .base = .{
+                    .id = ast.generateNodeId(),
+                    .span = ast.SourceSpan.fromToken(current_token),
+                },
+                .data = .{
+                    .TypeExpr = union_type_expr,
+                },
+            };
+            initializer = union_literal;
+        } else {
+            // Try parsing array literal first
+            if (self.peek().type == .LEFT_BRACKET) {
                 if (self.debug_enabled) {
-                    std.debug.print("\n[DEBUG] About to parse initializer expression at position {}, token: {s} ('{s}')\n", .{ self.current, @tagName(self.peek().type), self.peek().lexeme });
-                    if (self.current + 1 < self.tokens.len) {
-                        std.debug.print("[DEBUG] Next token: {s} ('{s}')\n", .{ @tagName(self.tokens[self.current + 1].type), self.tokens[self.current + 1].lexeme });
+                    std.debug.print("About to parse array literal. Current token: {s} ('{s}')\n", .{ @tagName(self.peek().type), self.peek().lexeme });
+                }
+                initializer = try expression_parser.parseArrayLiteral(self, null, .NONE);
+                if (self.debug_enabled) {
+                    std.debug.print("After parsing array literal. Current token: {s} ('{s}')\n", .{ @tagName(self.peek().type), self.peek().lexeme });
+                }
+            } else if (self.peek().type == .INPUT) {
+                // Handle input expression
+                initializer = try Parser.input(self, null, .NONE);
+            } else if (self.peek().type == .IDENTIFIER) {
+                // Try struct initialization
+                if (try Parser.parseStructInit(self)) |struct_init| {
+                    initializer = struct_init;
+                } else {
+                    // If not a struct init, try regular expression
+                    if (self.debug_enabled) {
+                        std.debug.print("\n[DEBUG] About to parse initializer expression at position {}, token: {s} ('{s}')\n", .{ self.current, @tagName(self.peek().type), self.peek().lexeme });
+                        if (self.current + 1 < self.tokens.len) {
+                            std.debug.print("[DEBUG] Next token: {s} ('{s}')\n", .{ @tagName(self.tokens[self.current + 1].type), self.tokens[self.current + 1].lexeme });
+                        }
                     }
+                    initializer = try expression_parser.parseExpression(self);
+                    if (self.debug_enabled) {
+                        std.debug.print("[DEBUG] Finished parsing initializer expression. Next token: {s} ('{s}')\n", .{ @tagName(self.peek().type), self.peek().lexeme });
+                    }
+                }
+            } else {
+                if (self.debug_enabled) {
+                    std.debug.print("\n[DEBUG] About to parse initializer expression at position {}, token: {s}\n", .{ self.current, @tagName(self.peek().type) });
                 }
                 initializer = try expression_parser.parseExpression(self);
                 if (self.debug_enabled) {
-                    std.debug.print("[DEBUG] Finished parsing initializer expression. Next token: {s} ('{s}')\n", .{ @tagName(self.peek().type), self.peek().lexeme });
+                    std.debug.print("[DEBUG] Finished parsing initializer expression. Next token: {s}\n", .{@tagName(self.peek().type)});
                 }
             }
-        } else {
-            if (self.debug_enabled) {
-                std.debug.print("\n[DEBUG] About to parse initializer expression at position {}, token: {s}\n", .{ self.current, @tagName(self.peek().type) });
-            }
-            initializer = try expression_parser.parseExpression(self);
-            if (self.debug_enabled) {
-                std.debug.print("[DEBUG] Finished parsing initializer expression. Next token: {s}\n", .{@tagName(self.peek().type)});
-            }
         }
+
         if (initializer == null) {
             return error.ExpectedExpression;
         }

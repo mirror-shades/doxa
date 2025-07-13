@@ -367,8 +367,19 @@ pub const ForExpr = struct {
 
 pub const ForEachExpr = struct {
     item_name: Token,
+    index_name: ?Token, // Add this field
     array: *Expr,
     body: []Stmt,
+
+    pub fn deinit(self: *ForEachExpr, allocator: std.mem.Allocator) void {
+        self.array.deinit(allocator);
+        allocator.destroy(self.array);
+
+        for (self.body) |*stmt| {
+            stmt.deinit(allocator);
+        }
+        allocator.free(self.body);
+    }
 };
 
 pub const PeekExpr = struct {
@@ -512,6 +523,7 @@ pub const Expr = struct {
         ReturnExpr: struct {
             value: ?*Expr,
         },
+        TypeExpr: *TypeExpr,
     };
 
     pub fn getBase(self: *Expr) *Base {
@@ -803,6 +815,10 @@ pub const Expr = struct {
                     allocator.destroy(value);
                 }
             },
+            .TypeExpr => |type_expr| {
+                type_expr.deinit(allocator);
+                allocator.destroy(type_expr);
+            },
             .PeekStruct => |peek| {
                 peek.expr.deinit(allocator);
                 allocator.destroy(peek.expr);
@@ -942,6 +958,7 @@ pub const TypeExpr = struct {
         Array: ArrayType,
         Struct: []*StructField,
         Enum: []const []const u8,
+        Union: []*TypeExpr,
     };
 
     pub fn getBase(self: *TypeExpr) *Base {
@@ -968,6 +985,13 @@ pub const TypeExpr = struct {
             },
             .Enum => |variants| {
                 allocator.free(variants);
+            },
+            .Union => |types| {
+                for (types) |type_expr| {
+                    type_expr.deinit(allocator);
+                    allocator.destroy(type_expr);
+                }
+                allocator.free(types);
             },
             else => {},
         }
@@ -1110,6 +1134,25 @@ pub fn typeInfoFromExpr(allocator: std.mem.Allocator, type_expr: ?*TypeExpr) !*T
         },
         .Custom => |custom_token| TypeInfo{ .base = .Custom, .custom_type = custom_token.lexeme },
         .Enum => TypeInfo{ .base = .Nothing },
+        .Union => |types| blk: {
+            var union_types = try allocator.alloc(*TypeInfo, types.len);
+            errdefer allocator.free(union_types);
+
+            for (types, 0..) |union_type_expr, i| {
+                union_types[i] = try typeInfoFromExpr(allocator, union_type_expr);
+            }
+
+            const union_type = try allocator.create(UnionType);
+            union_type.* = .{
+                .types = union_types,
+                .current_type_index = 0, // Default to first type
+            };
+
+            break :blk TypeInfo{
+                .base = .Union,
+                .union_type = union_type,
+            };
+        },
     };
 
     return type_info;

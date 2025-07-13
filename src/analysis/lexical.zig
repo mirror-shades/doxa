@@ -129,6 +129,7 @@ pub const LexicalAnalyzer = struct {
         try self.keywords.put("nor", .NOR);
         try self.keywords.put("not", .NOT);
         try self.keywords.put("in", .IN);
+        try self.keywords.put("at", .AT);
         try self.keywords.put("typeof", .TYPEOF);
         try self.keywords.put("length", .LENGTH);
         try self.keywords.put("bytes", .BYTES);

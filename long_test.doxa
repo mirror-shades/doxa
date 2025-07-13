@@ -138,10 +138,10 @@
 // var mixed_enum_array is [Color.Red, Stoplight.Yellow, Color.Blue];
 // const const_mixed_enum_array is [Color.Red, Stoplight.Yellow, Color.Blue];
 
-// struct Person {
-//     name :: string,
-//     age :: int,
-// }
+struct Person {
+    name :: string,
+    age :: int,
+}
 
 // var explicit_struct_array :: Person[] is [
 //     Person { name is "Alice", age is 25 },
@@ -206,16 +206,180 @@
 // var empty_enum_array :: Color[] is [];
 
 
-fn foo_min() { return 0; }
-foo_min();
+// fn foo_min() { return 0; }
+// fn foo_no_input() { return 1; }
+// fn foo_implicit_output(a :: int, b :: int) { return a + b; }
+// fn foo_explicit_output_struct(name :: string, age :: int) returns(Person) { 
+//     const return_person is Person { name is name, age is age }; 
+//     return return_person; 
+// }
+// fn foo_explicit_input_struct(person :: Person) returns(string) { 
+//     return person.name; 
+// }
 
-fn foo_no_input() { return 1; }
-foo_no_input();
+// // Function tests with enums
+// fn get_color_name(color :: Color) returns(string) {
+//     return match color {
+//         .Red => "red",
+//         .Green => "green",
+//         .Blue => "blue",
+//     };
+// }
 
-fn foo_implicit_output(a :: int, b :: int) { return a + b; }
-foo_implicit_output(1, 2);
+// fn get_stoplight_action(stoplight :: Stoplight) returns(string) {
+//     return match stoplight {
+//         .Red => "stop",
+//         .Yellow => "slow",
+//         .Green => "go",
+//     };
+// }
+
+// fn color_to_rgb(color :: Color) returns(byte) {
+//     return match color {
+//         .Red => 0xFF,
+//         .Green => 0x00,
+//         .Blue => 0x0F,
+//     };
+// }
+
+// fn is_warm_color(color :: Color) returns(tetra) {
+//     return match color {
+//         .Red => true,
+//         .Green => false,
+//         .Blue => false,
+//     };
+// }
+
+// fn get_next_stoplight(current :: Stoplight) returns(Stoplight) {
+//     return match current {
+//         .Red => .Green,
+//         .Yellow => .Red,
+//         .Green => .Yellow,
+//     };
+// }
+
+// fn enum_array_each(colors :: Color[]) returns(int) {
+//     var count is 0;
+//     each color in colors {
+//         if color == .Red {
+//             count is count + 1;
+//         }
+//     }
+//     return count;
+// }
+
+// fn enum_array_each_index(colors :: Color[]) returns(int) {
+//     var count is 0;
+//     each color at index in colors {
+//         if color == .Red {
+//             count is index;
+//         }
+//     }
+//     return count;
+// }
+
+// fn create_color_array() returns(Color[]) {
+//     return [.Red, .Green, .Blue];
+// }
+
+// fn get_enum_from_int(value :: int) returns(Color) {
+//     return match value {
+//         0 => .Red,
+//         1 => .Green,
+//         2 => .Blue,
+//         else => .Red,
+//     };
+// }
+
+// Union tests
+var union_decl_int_float is int | float;
+var union_decl_string_int_float is string | int | float;
+var union_decl_string_nothing is string | nothing;
+var union_decl_person_nothing is Person | nothing;
+var union_decl_int_float_string is int | float | string;
+var union_decl_int_float_string_nothing is int | float | string | nothing;
+var union_decl_int_float_string_nothing_person is int | float | string | nothing | Person;
 
 
-fn foo_explicit_output_bracket(a :: int, b :: int) returns(int) { return a + b; }
-foo_explicit_output_bracket(1, 2);
+fn create_number_union() returns(int | float) {
+    return 42;
+}
+
+fn create_string_number_union() returns(string | int | float) {
+    return "hello";
+}
+
+fn union_with_nothing() returns(string | nothing) {
+    return "has value";
+}
+
+fn union_with_nothing_none() returns(string | nothing) {
+    return nothing;
+}
+
+fn process_number_union(value :: int | float) returns(string) {
+    return match value {
+        int => "integer",
+        float => "float",
+    };
+}
+
+fn process_string_number_union(value :: string | int | float) returns(string) {
+    return match value {
+        string => "string",
+        int => "integer", 
+        float => "float",
+    };
+}
+
+fn process_optional_string(value :: string | nothing) returns(string) {
+    return match value {
+        string => "has value",
+        nothing => "no value",
+    };
+}
+
+fn safe_extract_int(value :: int | string) returns(int) {
+    return value as int else {
+        return 0;
+    };
+}
+
+fn safe_extract_string(value :: int | string) returns(string) {
+    return value as string else {
+        return "default";
+    };
+}
+
+fn union_to_enum_converter(value :: int | string) returns(Color) {
+    return match value {
+        int => .Red,
+        string => .Blue,
+    };
+}
+
+fn enum_to_union_converter(color :: Color) returns(int | string) {
+    return match color {
+        .Red => 0,
+        .Green => "green",
+        .Blue => 2,
+    };
+}
+
+
+fn union_with_struct() returns(Person | nothing) {
+    return Person { name is "Alice", age is 25 };
+}
+
+fn union_with_struct_none() returns(Person | nothing) {
+    return nothing;
+}
+
+fn process_person_union(value :: Person | nothing) returns(string) {
+    return match value {
+        Person => "has person",
+        nothing => "no person",
+    };
+}
+
 

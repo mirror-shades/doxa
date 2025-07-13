@@ -236,8 +236,24 @@ pub fn parseMatchExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*a
 
     self.advance(); // consume 'match' keyword
 
-    // Parse the value to match on
-    const value = try parseExpression(self) orelse return error.ExpectedExpression;
+    // Parse the value to match on - parse as a simple variable expression to avoid recursion
+    if (self.peek().type != .IDENTIFIER) {
+        return error.ExpectedIdentifier;
+    }
+
+    const match_value = self.peek();
+    self.advance(); // consume identifier
+
+    const value = try self.allocator.create(ast.Expr);
+    value.* = .{
+        .base = .{
+            .id = ast.generateNodeId(),
+            .span = ast.SourceSpan.fromToken(match_value),
+        },
+        .data = .{
+            .Variable = match_value,
+        },
+    };
 
     // Expect opening brace
     if (self.peek().type != .LEFT_BRACE) {
@@ -266,7 +282,7 @@ pub fn parseMatchExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*a
             const body = try parseExpression(self) orelse return error.ExpectedExpression;
 
             try cases.append(.{
-                .pattern = token.Token.initWithFile(.ELSE, "else", .{ .nothing = {} }, self.peek().line, self.peek().column, self.current_file),
+                .pattern = self.previous(), // Use the 'else' token we just consumed
                 .body = body,
             });
 
@@ -279,17 +295,8 @@ pub fn parseMatchExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*a
             continue;
         }
 
-        // Parse pattern (enum variant)
-        if (self.peek().type != .DOT) {
-            return error.ExpectedDot;
-        }
-        self.advance();
-
-        if (self.peek().type != .IDENTIFIER) {
-            return error.ExpectedIdentifier;
-        }
-        const pattern = self.peek();
-        self.advance();
+        // Parse pattern (enum variant, type, or custom type)
+        const pattern = try parseMatchPattern(self) orelse return error.ExpectedPattern;
 
         // Parse arrow
         if (self.peek().type != .ARROW) {
@@ -312,24 +319,8 @@ pub fn parseMatchExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*a
     }
     self.advance(); // consume right brace
 
-    // If there's no else case, we need to verify that all variants are covered
+    // For enums, you may want to check all variants are covered. For unions, partial is fine.
     if (!has_else_case) {
-        // Get the enum type from the value expression
-        const enum_type = switch (value.data) {
-            .Variable => |v| v.lexeme,
-            .EnumMember => |m| m.lexeme,
-            else => return error.ExpectedEnumValue,
-        };
-
-        _ = enum_type;
-
-        // Find the enum declaration in the current scope
-        // This would require tracking declarations in scope, which might need additional infrastructure
-        // For now, we'll just enforce that the number of cases matches the number of variants
-        // A more complete solution would verify each specific variant is covered
-
-        // TODO: Add proper enum variant tracking
-        // For now, just ensure we have at least one case
         if (cases.items.len == 0) {
             return error.EmptyMatch;
         }
@@ -885,6 +876,48 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
     // If no array brackets, return the base type expression
     if (self.debug_enabled) {
         std.debug.print("Successfully parsed non-array type\n", .{});
+    }
+
+    // --- Check for Union Type ---
+    if (self.peek().type == .PIPE) {
+        if (self.debug_enabled) {
+            std.debug.print("Found union type syntax\n", .{});
+        }
+
+        var types = std.ArrayList(*ast.TypeExpr).init(self.allocator);
+        errdefer {
+            for (types.items) |type_expr| {
+                type_expr.deinit(self.allocator);
+                self.allocator.destroy(type_expr);
+            }
+            types.deinit();
+        }
+
+        // Add the first type we already parsed
+        try types.append(base_type_expr.?);
+
+        // Parse additional types separated by pipes
+        while (self.peek().type == .PIPE) {
+            self.advance(); // consume |
+            const next_type = try parseTypeExpr(self) orelse return error.ExpectedType;
+            try types.append(next_type);
+        }
+
+        const union_type_expr = try self.allocator.create(ast.TypeExpr);
+        union_type_expr.* = .{
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(self.peek()),
+            },
+            .data = .{
+                .Union = try types.toOwnedSlice(),
+            },
+        };
+        base_type_expr = union_type_expr;
+
+        if (self.debug_enabled) {
+            std.debug.print("Successfully parsed union type\n", .{});
+        }
     }
 
     return base_type_expr;
@@ -1543,22 +1576,193 @@ pub fn parseStructOrMatch(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList
         return variable(self, null, .NONE);
     }
 
-    // Look ahead to determine if this is a struct literal or match expression
-    // Struct literals have: IDENTIFIER { FIELD_NAME is VALUE, ... }
-    // Match expressions have: IDENTIFIER { .VARIANT => EXPRESSION, ... }
-
     self.advance(); // consume '{'
 
     // Check the first token after the brace
     const first_token_after_brace = self.peek();
 
-    if (first_token_after_brace.type == .IDENTIFIER) {
+    // Check if this looks like a match expression pattern
+    const is_match_pattern = (first_token_after_brace.type == .DOT) or // .Red
+        (first_token_after_brace.type == .INT_TYPE) or // int
+        (first_token_after_brace.type == .FLOAT_TYPE) or // float
+        (first_token_after_brace.type == .STRING_TYPE) or // string
+        (first_token_after_brace.type == .BYTE_TYPE) or // byte
+        (first_token_after_brace.type == .TETRA_TYPE) or // tetra
+        (first_token_after_brace.type == .NOTHING_TYPE) or // nothing
+        (first_token_after_brace.type == .INT) or // 0, 1, 2, etc.
+        (first_token_after_brace.type == .ELSE) or // else
+        (first_token_after_brace.type == .IDENTIFIER and self.declared_types.contains(first_token_after_brace.lexeme));
+
+    if (is_match_pattern) {
+        // This is a match expression - parse it directly without recursion
+        self.current = start_pos; // Reset to before identifier
+
+        // Parse the match expression directly
+        if (self.debug_enabled) {
+            std.debug.print("\nParsing match expression directly...\n", .{});
+        }
+
+        // We should be at an identifier (the match value)
+        if (self.peek().type != .IDENTIFIER) {
+            return null;
+        }
+
+        const match_value = self.peek();
+        self.advance(); // consume identifier
+
+        // Expect opening brace
+        if (self.peek().type != .LEFT_BRACE) {
+            return error.ExpectedLeftBrace;
+        }
+        self.advance();
+
+        // Parse match cases
+        var cases = std.ArrayList(ast.MatchCase).init(self.allocator);
+        errdefer cases.deinit();
+
+        var has_else_case = false;
+
+        while (self.peek().type != .RIGHT_BRACE) {
+            if (self.peek().type == .ELSE) {
+                // Handle else case
+                self.advance(); // consume 'else'
+
+                // Parse arrow
+                if (self.peek().type != .ARROW) {
+                    return error.ExpectedArrow;
+                }
+                self.advance();
+
+                // Parse body expression
+                const body = try parseExpression(self) orelse return error.ExpectedExpression;
+
+                try cases.append(.{
+                    .pattern = self.previous(), // Use the 'else' token we just consumed
+                    .body = body,
+                });
+
+                has_else_case = true;
+
+                // Handle optional comma
+                if (self.peek().type == .COMMA) {
+                    self.advance();
+                }
+                continue;
+            }
+
+            // Parse pattern (enum variant, type, or custom type)
+            const pattern = try parseMatchPattern(self) orelse return error.ExpectedPattern;
+
+            // Parse arrow
+            if (self.peek().type != .ARROW) {
+                return error.ExpectedArrow;
+            }
+            self.advance();
+
+            // Parse body expression
+            const body = try parseExpression(self) orelse return error.ExpectedExpression;
+
+            try cases.append(.{
+                .pattern = pattern,
+                .body = body,
+            });
+
+            // Handle optional comma
+            if (self.peek().type == .COMMA) {
+                self.advance();
+            }
+        }
+        self.advance(); // consume right brace
+
+        // For enums, you may want to check all variants are covered. For unions, partial is fine.
+        if (!has_else_case) {
+            if (cases.items.len == 0) {
+                return error.EmptyMatch;
+            }
+        }
+
+        // Create variable expression for the match value
+        const value_expr = try self.allocator.create(ast.Expr);
+        value_expr.* = .{
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(match_value),
+            },
+            .data = .{
+                .Variable = match_value,
+            },
+        };
+
+        const match_expr = try self.allocator.create(ast.Expr);
+        match_expr.* = .{
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(self.previous()),
+            },
+            .data = .{
+                .Match = .{
+                    .value = value_expr,
+                    .cases = try cases.toOwnedSlice(),
+                },
+            },
+        };
+        return match_expr;
+    } else if (first_token_after_brace.type == .IDENTIFIER) {
         // This is likely a struct literal (starts with field name)
         self.current = start_pos; // Reset to before identifier
         return Parser.parseStructInit(self);
     } else {
-        // This might be a match expression or something else, reset and fall back to variable parser
+        // This might be something else, reset and fall back to variable parser
         self.current = start_pos;
         return variable(self, null, .NONE);
+    }
+}
+
+fn parseMatchPattern(self: *Parser) ErrorList!?token.Token {
+    const current = self.peek();
+
+    if (self.debug_enabled) {
+        std.debug.print("parseMatchPattern: token type = {s}, lexeme = '{s}'\n", .{ @tagName(current.type), current.lexeme });
+    }
+
+    switch (current.type) {
+        .DOT => {
+            // Enum variant pattern: .Red
+            self.advance(); // consume '.'
+            if (self.peek().type != .IDENTIFIER) {
+                return error.ExpectedIdentifier;
+            }
+            const variant = self.peek();
+            self.advance();
+            return variant;
+        },
+        .INT => {
+            // Integer literal pattern: 0, 1, 2, etc.
+            const int_token = self.peek();
+            self.advance();
+            return int_token;
+        },
+        .INT_TYPE, .FLOAT_TYPE, .STRING_TYPE, .BYTE_TYPE, .TETRA_TYPE, .NOTHING_TYPE, .NOTHING => {
+            // Type patterns for union matching: int, float, string, etc.
+            // Also handle .NOTHING for the literal 'nothing' when used as a type pattern
+            const type_token = self.peek();
+            self.advance();
+            return type_token;
+        },
+        .IDENTIFIER => {
+            // Check if it's "else" or a custom type name
+            if (std.mem.eql(u8, current.lexeme, "else")) {
+                self.advance();
+                return current;
+            }
+            // Check if it's a known custom type (struct, enum, etc.)
+            if (self.declared_types.contains(current.lexeme)) {
+                const type_token = self.peek();
+                self.advance();
+                return type_token;
+            }
+            return null; // Not a valid pattern
+        },
+        else => return null, // Not a valid pattern
     }
 }
