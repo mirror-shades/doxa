@@ -1,0 +1,151 @@
+// // 
+// //var no_type_possible; // ERROR
+
+var explicit_int :: int is 1;
+var implicit_int is 2;
+var unit_int :: int; // 0
+var explicit_byte :: byte is 0x03;
+var implicit_byte is 0x04;
+var unit_byte :: byte; // 0x00
+var explicit_float :: float is 1.0;
+var implicit_float is 2.0;
+var unit_float :: float; // 0.0
+var explicit_tetra :: tetra is both;
+var implicit_tetra is true; // Fixed: removed duplicate name
+var unit_tetra :: tetra; // false
+var explicit_string :: string is "foo";
+var implicit_string is "bar";
+var unit_string :: string; // ""
+
+const const_explicit_int :: int is 1;
+const const_implicit_int is 2;
+const const_unit_int :: int; // 0
+const const_explicit_byte :: byte is 0x03;
+const const_implicit_byte is 0x04;
+const const_unit_byte :: byte; // 0x00
+const const_explicit_float :: float is 1.0;
+const const_implicit_float is 2.0;
+const const_unit_float :: float; // 0.0
+const const_explicit_tetra :: tetra is both;
+const const_implicit_tetra is true; // Fixed: removed duplicate name
+const const_unit_tetra :: tetra; // false
+const const_explicit_string :: string is "foo";
+const const_implicit_string is "bar";
+const const_unit_string :: string; // ""
+
+// Nothing type tests
+var explicit_nothing :: nothing is nothing;
+var implicit_nothing is nothing;
+var unit_nothing :: nothing; // nothing (no value)
+
+const const_explicit_nothing :: nothing is nothing;
+const const_implicit_nothing is nothing;
+const const_unit_nothing :: nothing; // nothing (no value)
+
+
+var int_arith is 1 + 2;
+var byte_arith is 0x01 + 0x02;
+var float_arith is 1.0 + 2.0;
+
+var float_add_int is 1.0 + 2;
+var int_add_float is 1 + 2.0;
+var float_add_byte is 1.0 + 0x02;
+var byte_add_float is 0x01 + 2.0;
+var byte_add_int is 0x01 + 2;
+var int_add_byte is 1 + 0x02;
+
+var float_minus_int is 1.0 - 2;
+var int_minus_float is 1 - 2.0;
+var float_minus_byte is 1.0 - 0x02;
+var byte_minus_float is 0x01 - 2.0;
+var byte_minus_int is 0x01 - 2;
+var int_minus_byte is 1 - 0x02;
+
+var float_mul_int is 1.0 * 2;
+var int_mul_float is 1 * 2.0;
+var float_mul_byte is 1.0 * 0x02;
+var byte_mul_float is 0x01 * 2.0;
+var byte_mul_int is 0x01 * 2;
+var int_mul_byte is 1 * 0x02;
+
+var float_div_int is 1.0 / 2;
+var int_div_float is 1 / 2.0;
+var byte_div_float is 0x01 / 2.0;
+var byte_div_int is 0x01 / 2;
+var int_div_byte is 1 / 0x02;
+var int_div_int is 10 / 3;
+
+// Modulo (should only work with integers)
+var int_mod_int is 10 % 3;
+var byte_mod_byte is 0x10 % 0x03;
+
+// Power/Exponentiation (should return float)
+var int_power_int is 2 ** 3;
+var float_power_int is 2.0 ** 3;
+var int_power_float is 2 ** 3.0;
+var float_power_float is 2.0 ** 3.0;
+
+// Comparison operators (should return tetra/boolean)
+var int_less_than is 5 < 10;
+var float_greater_than is 3.14 > 2.71;
+var byte_less_equal is 0x05 <= 0x10;
+var int_greater_equal is 100 >= 50;
+var string_equality is "hello" == "world";
+var int_not_equal is 42 != 24;
+
+// Logical operators (should work with tetra/boolean)
+var logical_and is true and false;
+var logical_or is true or false;
+var logical_not is not true;
+
+// Mixed type comparisons
+var int_float_compare is 5 < 5.5;
+var byte_int_compare is 0x10 > 15;
+var float_byte_compare is 3.14 >= 0x03;
+
+// number type conversions
+var int_as_float :: float is 1;
+// var float_as_int :: int is 1.0; // ERROR
+var byte_as_int :: int is 0x01;
+var int_as_byte :: byte is 1;
+// var float_as_byte :: byte is 1.0; // ERROR
+var byte_as_float :: float is 0x01;
+
+// Boundary values and edge cases
+var max_int :: int is 2147483647;
+var min_int :: int is -2147483648;
+var max_byte :: byte is 0xFF;
+var min_byte :: byte is 0x00;
+
+// Special tetra values
+var tetra_both :: tetra is both;
+var tetra_false :: tetra is false;
+var tetra_true :: tetra is true;
+
+// String edge cases
+var empty_string :: string is "";
+var unicode_string :: string is "Hello 世界";
+var escape_string :: string is "Hello\nWorld\tTab";
+
+
+// var explicit_int_array :: array[] int is [1, 2, 3];
+// var explicit_sized_int_array :: array[] int is [4, 5, 6];
+// var implicit_int_array is [7, 8, 9];
+// var unit_int_array :: array[] int; // []
+// var explicit_byte_array :: array[] byte is [0x00, 0x01, 0x02];
+// var explicit_sized_byte_array :: array[3] byte is [0x03, 0x04, 0x05];
+// var implicit_byte_array is [0x06, 0x07, 0x08];
+// var unit_byte_array :: array[] byte; // []
+// var explicit_float_array :: array[] float is [1.0, 2.0, 3.0];
+// var explicit_sized_float_array :: array[3] float is [4.0, 5.0, 6.0];
+// var implicit_float_array is [7.0, 8.0, 9.0];
+// var unit_float_array :: array[] float; // []
+// var explicit_tetra_array :: array[] tetra is [both, false, true];
+// var explicit_sized_tetra_array :: array[3] tetra is [both, false, true];
+// var implicit_tetra_array is [true, false, both];
+// var unit_tetra_array :: array[] tetra; // []
+
+
+// Note: nothing type cannot have initializers since it represents "no value"
+// var implicit_nothing is ???; // This would be an error - nothing has no value to infer from
+// const const_implicit_nothing is ???; // This would be an error - nothing has no value to infer from

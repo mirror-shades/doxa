@@ -623,6 +623,7 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
             .FLOAT_TYPE => break :blk ast.BasicType.Float,
             .STRING_TYPE => break :blk ast.BasicType.String,
             .TETRA_TYPE => break :blk ast.BasicType.Tetra,
+            .NOTHING_TYPE => break :blk ast.BasicType.Nothing,
             else => {
                 // For backward compatibility, also check lexemes
                 if (std.mem.eql(u8, type_name, "int")) break :blk ast.BasicType.Integer;
@@ -630,6 +631,7 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
                 if (std.mem.eql(u8, type_name, "float")) break :blk ast.BasicType.Float;
                 if (std.mem.eql(u8, type_name, "string")) break :blk ast.BasicType.String;
                 if (std.mem.eql(u8, type_name, "tetra")) break :blk ast.BasicType.Tetra;
+                if (std.mem.eql(u8, type_name, "nothing")) break :blk ast.BasicType.Nothing;
                 break :blk null;
             },
         }
@@ -1434,6 +1436,7 @@ fn parseBasicType(self: *Parser) ErrorList!?*ast.TypeExpr {
         .FLOAT_TYPE => ast.BasicType.Float,
         .STRING_TYPE => ast.BasicType.String,
         .TETRA_TYPE => ast.BasicType.Tetra,
+        .NOTHING_TYPE => ast.BasicType.Nothing,
         else => return null,
     };
 

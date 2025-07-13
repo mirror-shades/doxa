@@ -70,25 +70,44 @@ pub const SemanticAnalyzer = struct {
                     const type_info = try self.allocator.create(ast.TypeInfo);
                     errdefer self.allocator.destroy(type_info);
 
+                    // Check if we have an explicit type annotation
                     if (decl.type_info.base != .Nothing) {
                         // Use explicit type, but resolve custom types
                         type_info.* = try self.resolveTypeInfo(decl.type_info);
+                        if (self.reporter.is_debug) {
+                            std.debug.print("DEBUG: Variable '{s}' has explicit type: {s}\n", .{ decl.name.lexeme, @tagName(type_info.base) });
+                        }
                     } else if (decl.initializer) |init_expr| {
                         // Infer from initializer
                         const inferred = try self.inferTypeFromExpr(init_expr);
                         type_info.* = inferred.*;
+                        if (self.reporter.is_debug) {
+                            std.debug.print("DEBUG: Variable '{s}' inferred type: {s}\n", .{ decl.name.lexeme, @tagName(type_info.base) });
+                        }
                     } else {
-                        self.reporter.reportCompileError(
-                            stmt.base.span.start,
-                            "Variable declaration requires either type annotation or initializer",
-                            .{},
-                        );
-                        self.fatal_error = true;
-                        continue;
+                        // Check if this is an explicit nothing type (no initializer but type is Nothing)
+                        // This is a special case for nothing type variables
+                        if (decl.type_info.base == .Nothing) {
+                            type_info.* = decl.type_info;
+                            if (self.reporter.is_debug) {
+                                std.debug.print("DEBUG: Variable '{s}' has explicit nothing type\n", .{decl.name.lexeme});
+                            }
+                        } else {
+                            self.reporter.reportCompileError(
+                                stmt.base.span.start,
+                                "Variable declaration requires either type annotation or initializer",
+                                .{},
+                            );
+                            self.fatal_error = true;
+                            continue;
+                        }
                     }
 
                     // Convert TypeInfo to TokenType
                     const token_type = self.convertTypeToTokenType(type_info.base);
+                    if (self.reporter.is_debug) {
+                        std.debug.print("DEBUG: Variable '{s}' token_type: {s}\n", .{ decl.name.lexeme, @tagName(token_type) });
+                    }
 
                     // Get the actual value from initializer or use default for uninitialized variables
                     var value = if (decl.initializer) |init_expr|
