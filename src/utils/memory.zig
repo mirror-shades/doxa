@@ -153,6 +153,9 @@ pub const ScopeManager = struct {
             while (storage_it.next()) |entry| {
                 const key = entry.key_ptr.*;
                 const value = entry.value_ptr.*;
+                if (self.is_debug) {
+                    std.debug.print("DEBUG: Storage [{d}] - type: {s}, type_info.base: {s}\n", .{ key, @tagName(value.type), @tagName(value.type_info.base) });
+                }
                 std.debug.print("  [{d}]: type={}, aliases={d}, constant={}\n", .{ key, value.type, value.alias_count, value.constant });
             }
         } else {
@@ -233,6 +236,10 @@ pub const Scope = struct {
         // Check for duplicate variable name in current scope
         if (self.name_map.contains(name)) {
             return error.DuplicateVariableName;
+        }
+
+        if (self.is_debug) {
+            std.debug.print("DEBUG: createValueBinding - name: '{s}', vtype: {s}, type_info.base: {s}\n", .{ name, @tagName(vtype), @tagName(type_info.base) });
         }
 
         const storage_id = self.manager.next_storage_id;

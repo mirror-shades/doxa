@@ -535,6 +535,17 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
         }
     }
 
+    // Validate that const declarations must have initializers
+    if (is_const and initializer == null) {
+        const location = Reporter.Location{
+            .file = self.current_file,
+            .line = name.line,
+            .column = name.column,
+        };
+        self.reporter.reportCompileError(location, "Const declarations must have initializers", .{});
+        return error.ConstMustHaveInitializer;
+    }
+
     if (self.peek().type != .SEMICOLON) {
         if (self.debug_enabled) {
             std.debug.print("Expected semicolon, but found: {s}\n", .{@tagName(self.peek().type)});

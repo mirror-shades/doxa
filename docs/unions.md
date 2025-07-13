@@ -6,7 +6,7 @@ Unions are a special type which can represent one type or another. For instance,
 
 ## Syntax
 
-Unions are declared using the smiley face `(: ... :)` syntax:
+Unions are declared using pipes:
 
 ```doxa
 var x :: int | float;
@@ -24,7 +24,7 @@ number is 42;     // Valid - integer
 number is 3.14;   // Valid - float
 
 // A union that can be a string, integer, or float
-var value :: string | int| float;
+var value :: string | int | float;
 value is "hello"; // Valid - string
 value is 100;     // Valid - integer
 value is 2.718;   // Valid - float
@@ -43,6 +43,7 @@ When a union is declared without initialization, it defaults to the **first type
 
 - `int` defaults to `0`
 - `float` defaults to `0.0`
+- `byte` defaults to `0x00`
 - `string` defaults to `""`
 - `tetra` defaults to `false`
 - `nothing` defaults to `nothing`
@@ -55,15 +56,15 @@ A common use case for unions is representing optional values using `nothing`:
 
 ```doxa
 // Optional integer
-var maybe_int :: (: int, nothing :);
-maybe_int is 42;     // Has a value
-maybe_int is nothing; // No value
+var maybe_name :: string | nothing;
+maybe_name is "Alice";     // Has a value
+maybe_name is nothing; // No value
 
 // Function that might not return a value
-function findValue(arr :: array, target :: int) :: (: int, nothing :) {
-    for (arr) |item| {
-        if (item == target) {
-            return item;
+function findValue(arr :: MyObject[], target :: string) returns(int | nothing) {
+    each x in arr {
+        if (x.name equals target) then {
+            return x;
         }
     }
     return nothing; // Not found
@@ -76,7 +77,7 @@ Unions are particularly useful when:
 
 - A function can return different types depending on the input
 - A variable needs to hold different types at different times
-- You want to represent optional values (like `(: T, nothing :)`)
+- You want to represent optional values (like `T | nothing`)
 - You're working with data that can have multiple valid representations
 
 ## Error Handling
@@ -98,10 +99,10 @@ function handleError(err :: ErrorList) {
 }
 
 // Function returns a union - we won't know if the value is a number or one of our errors until we check
-function addLimit(a :: int, b :: int) returns(: int, ErrorList :) {
+function addLimit(a :: int, b :: int) returns( int | ErrorList ) {
     const result is a + b;
-    if result > 255 return ErrorList.Overflow;
-    if result < 0 return ErrorList.Underflow;
+    if result > 255 then return ErrorList.Overflow;
+    if result < 0 then return ErrorList.Underflow;
     return result;
 }
 
@@ -124,10 +125,60 @@ const myInt = unknownRightResult as int else {
 };
 onlyUsesInts(myInt);
 
-// Approach 3: Check then extract
-if unknownRightResult @istype int {
-    onlyUsesInts(unknownRightResult);
-} else if unknownRightResult @istype ErrorList {
-    handleError(unknownRightResult);
+// Note type checking in control flow doesn't implicitly cast unlike match case which is exhaustive
+// this can be done by casting bt it is not as ergonomic as match case
+if unknownRightResult @istype int then {
+    onlyUsesInts(unknownRightResult) as int else{};
+} else if unknownRightResult @istype ErrorList then {
+    handleError(unknownRightResult) as ErrorList else{};
 }
 ```
+
+## Type Casting with `as`
+
+The `as` keyword attempts to cast a union to a specific type. If the cast fails, the `else` block is executed:
+
+```doxa
+var value :: int | string;
+value is "hello";
+
+// This will execute the else block since value is currently a string
+const number = value as int else {
+    return error.ExpectedInteger;
+};
+
+// This will succeed since value is now an int
+value is 42;
+const doubled = value as int else {
+    return error.ExpectedInteger;
+}; // doubled is 84
+```
+
+### Common Patterns
+
+**Safe extraction with default:**
+
+```doxa
+const result = someUnion as int else {
+    return 0; // Default value if not an int
+};
+```
+
+**Error handling:**
+
+```doxa
+const number = value as int else {
+    @panic("This should never happen in production!");
+};
+```
+
+**Conditional processing:**
+
+```doxa
+const processed = value as string else {
+    // Handle non-string case
+    return "default";
+};
+```
+
+The `as` keyword is essential for safely working with unions when you need to extract a specific type.
