@@ -602,38 +602,42 @@ pub const SemanticAnalyzer = struct {
             },
             .FieldAccess => |field| {
                 const object_type = try self.inferTypeFromExpr(field.object);
-                if (object_type.base != .Struct) {
-                    self.reporter.reportCompileError(
-                        expr.base.span.start,
-                        "Cannot access field on non-struct type {s}",
-                        .{@tagName(object_type.base)},
-                    );
-                    self.fatal_error = true;
-                    type_info.base = .Nothing;
-                    return type_info;
-                }
-
-                if (object_type.struct_fields) |fields| {
-                    for (fields) |struct_field| {
-                        if (std.mem.eql(u8, struct_field.name, field.field.lexeme)) {
-                            type_info.* = struct_field.type_info.*;
-                            break;
+                if (object_type.base == .Struct) {
+                    if (object_type.struct_fields) |fields| {
+                        for (fields) |struct_field| {
+                            if (std.mem.eql(u8, struct_field.name, field.field.lexeme)) {
+                                type_info.* = struct_field.type_info.*;
+                                break;
+                            }
+                        } else {
+                            self.reporter.reportCompileError(
+                                expr.base.span.start,
+                                "Field '{s}' not found in struct",
+                                .{field.field.lexeme},
+                            );
+                            self.fatal_error = true;
+                            type_info.base = .Nothing;
+                            return type_info;
                         }
                     } else {
                         self.reporter.reportCompileError(
                             expr.base.span.start,
-                            "Field '{s}' not found in struct",
-                            .{field.field.lexeme},
+                            "Struct has no fields defined",
+                            .{},
                         );
                         self.fatal_error = true;
                         type_info.base = .Nothing;
                         return type_info;
                     }
+                } else if (object_type.base == .Enum or object_type.base == .Custom) {
+                    // Allow enum variant access: Color.Red
+                    // You may want to check if the variant exists, but for now just return Enum type
+                    type_info.* = .{ .base = .Enum };
                 } else {
                     self.reporter.reportCompileError(
                         expr.base.span.start,
-                        "Struct has no fields defined",
-                        .{},
+                        "Cannot access field on non-struct type {s}",
+                        .{@tagName(object_type.base)},
                     );
                     self.fatal_error = true;
                     type_info.base = .Nothing;
