@@ -49,6 +49,78 @@ enum Stoplight {
     Green,
 }
 
+const const_enum_red :: Color is .Red;
+const const_enum_green :: Color is .Green;
+const const_enum_blue :: Color is .Blue;
+
+// Test match expressions with different enum values
+var int_from_map is match const_enum_red {
+    .Red => "one",
+    .Green => "two",
+    .Blue => "three",
+}
+
+var int_from_map_green is match const_enum_green {
+    .Red => "one",
+    .Green => "two",
+    .Blue => "three",
+}
+
+var int_from_map_blue is match const_enum_blue {
+    .Red => "one",
+    .Green => "two",
+    .Blue => "three",
+}
+
+// Test match with different return types
+var string_from_map is match const_enum_red {
+    .Red => "red",
+    .Green => "green", 
+    .Blue => "blue",
+}
+
+var number_from_map is match const_enum_green {
+    .Red => 1,
+    .Green => 2,
+    .Blue => 3,
+}
+
+var else_int_from_map is match const_enum_green {
+    .Red => 1,
+    .Green => 2,
+    else => 3,
+}
+
+var else_string_from_map is match const_enum_green {
+    .Red => "one",
+    else => "two or three",
+}
+
+
+
+// Test match with Stoplight enum
+const stoplight_red :: Stoplight is .Red;
+const stoplight_yellow :: Stoplight is .Yellow;
+const stoplight_green :: Stoplight is .Green;
+
+var stoplight_action is match stoplight_red {
+    .Red => "stop",
+    .Yellow => "slow",
+    .Green => "go",
+}
+
+var stoplight_action_yellow is match stoplight_yellow {
+    .Red => "stop",
+    .Yellow => "slow", 
+    .Green => "go",
+}
+
+var stoplight_action_green is match stoplight_green {
+    .Red => "stop",
+    .Yellow => "slow",
+    .Green => "go",
+}
+
 // When type is explicitly specified, short form works
 var explicit_enum_array :: Color[] is [.Red, .Green, .Blue];
 var explicit_sized_enum_array :: Color[3] is [.Blue, .Red, .Green];
@@ -132,4 +204,3 @@ var empty_int_array :: int[] is [];
 var empty_string_array :: string[] is [];
 var empty_struct_array :: Person[] is [];
 var empty_enum_array :: Color[] is [];
-

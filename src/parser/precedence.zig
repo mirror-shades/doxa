@@ -31,6 +31,7 @@ const parseIfExpr = expr_parser.parseIfExpr;
 const whileExpr = expr_parser.whileExpr;
 const forExpr = expr_parser.forExpr;
 const parseMatchExpr = expr_parser.parseMatchExpr;
+const parseStructOrMatch = expr_parser.parseStructOrMatch;
 const returnExpr = expr_parser.returnExpr;
 
 const arrayType = expr_parser.arrayType;
@@ -172,7 +173,7 @@ pub const rules = blk: {
     r.set(.STRUCT_TYPE, .{ .prefix = parseStructDecl });
 
     // Add struct instantiation support
-    r.set(.IDENTIFIER, .{ .prefix = variable, .infix = fieldAccess });
+    r.set(.IDENTIFIER, .{ .prefix = parseStructOrMatch, .infix = fieldAccess });
     r.set(.DOT, .{ .infix = fieldAccess, .precedence = .CALL });
 
     // Add quantifier operators
