@@ -403,6 +403,33 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#primitive-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      Primitive Types
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#atomic" class="md-nav__link">
+    <span class="md-ellipsis">
+      Atomic
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#molecular" class="md-nav__link">
+    <span class="md-ellipsis">
+      Molecular
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#basic-composition-example" class="md-nav__link">
     <span class="md-ellipsis">
       Basic Composition Example
@@ -636,6 +663,24 @@
 
 <h1 id="doxa-language-reference">Doxa Language Reference</h1>
 <h2 id="core-language-features">Core Language Features</h2>
+<h3 id="primitive-types">Primitive Types</h3>
+<p>Types in Doxa are grouped in three ways, atomic, molecular, and meta. All together there are 14 of these primitive types to represent data in Doxa.</p>
+<h3 id="atomic">Atomic</h3>
+<p>Atomic types are the most basic units of data. Currently Doxa has 3 default number types, with plans for optional dynamic number sizing in the future.</p>
+<p>int - i32
+float - f64
+byte - u8 hex literal
+string
+tetra - logical value, see page on tetras for more info
+nothing - empty type</p>
+<h3 id="molecular">Molecular</h3>
+<p>Molecular types are constructed out of atomic types. They are</p>
+<p>array - must be homogenous
+struct - no classes, no inheretance, only composition
+enum
+map
+function - user functions, library functions, etc
+union - can be handled with the collapse operator, see page on unions for more info</p>
 <h3 id="basic-composition-example">Basic Composition Example</h3>
 <div class="highlight"><pre><span></span><code>struct Animal {
     name: string
