@@ -212,6 +212,10 @@ fn writeExpression(expr: *const ast.Expr, writer: anytype) std.fs.File.WriteErro
             }
             try writeStatements(func.body, writer);
         },
+        .Cast => |_| {
+            try writer.print("cast_expression\n", .{});
+            // Optionally, print more details about the cast
+        },
         else => {
             // For other expression types, just write their tag name
             // Add more specific serialization as needed

@@ -177,6 +177,7 @@ pub fn parseExpressionStmt(self: *Parser) ErrorList!ast.Stmt {
         .Match => false,
         .Index => true,
         .Assignment => true,
+        .Cast => true, // Cast expressions need semicolons
         .Assert => true,
         else => true,
     } else true;

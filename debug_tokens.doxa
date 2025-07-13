@@ -1,0 +1,3 @@
+var value :: int | string;
+
+var result is value as int else {}

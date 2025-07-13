@@ -606,6 +606,10 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
     const type_token = self.peek();
     const type_name = type_token.lexeme;
 
+    if (self.debug_enabled) {
+        std.debug.print("parseTypeExpr: starting with token {s} ('{s}')\n", .{ @tagName(type_token.type), type_name });
+    }
+
     var base_type_expr: ?*ast.TypeExpr = null;
     var consumed_token = false;
 
@@ -1255,6 +1259,82 @@ pub fn literal(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr
     return expr;
 }
 
+pub fn castExpr(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+    if (left == null) return error.ExpectedLeftOperand;
+
+    if (self.debug_enabled) {
+        std.debug.print("\nParsing cast expression...\n", .{});
+        std.debug.print("Current token: {s} ('{s}')\n", .{ @tagName(self.peek().type), self.peek().lexeme });
+    }
+
+    // The 'as' token has already been consumed by the precedence parser
+    // We should now be at the target type token
+
+    // Parse the target type
+    const target_type = try parseTypeExpr(self) orelse return error.ExpectedType;
+
+    if (self.debug_enabled) {
+        std.debug.print("After parsing target type, current token: {s}\n", .{@tagName(self.peek().type)});
+    }
+
+    // Check for optional else branch
+    var else_branch: ?*ast.Expr = null;
+    if (self.peek().type == .ELSE) {
+        if (self.debug_enabled) {
+            std.debug.print("Found else branch\n", .{});
+        }
+        self.advance(); // consume 'else'
+
+        // Parse the else branch as a block
+        if (self.peek().type == .LEFT_BRACE) {
+            if (self.debug_enabled) {
+                std.debug.print("Parsing else branch as block\n", .{});
+            }
+            const block_stmts = try statement_parser.parseBlockStmt(self);
+            const block_expr = try self.allocator.create(ast.Expr);
+            block_expr.* = .{
+                .base = .{
+                    .id = ast.generateNodeId(),
+                    .span = ast.SourceSpan.fromToken(self.previous()),
+                },
+                .data = .{
+                    .Block = .{
+                        .statements = block_stmts,
+                        .value = null,
+                    },
+                },
+            };
+            else_branch = block_expr;
+        } else {
+            // Single expression else branch
+            if (self.debug_enabled) {
+                std.debug.print("Parsing else branch as single expression\n", .{});
+            }
+            else_branch = try parseExpression(self);
+        }
+    }
+
+    if (self.debug_enabled) {
+        std.debug.print("Finished parsing cast expression, current token: {s}\n", .{@tagName(self.peek().type)});
+    }
+
+    const cast_expr = try self.allocator.create(ast.Expr);
+    cast_expr.* = .{
+        .base = .{
+            .id = ast.generateNodeId(),
+            .span = ast.SourceSpan.fromToken(self.previous()),
+        },
+        .data = .{
+            .Cast = .{
+                .value = left.?,
+                .target_type = target_type,
+                .else_branch = else_branch,
+            },
+        },
+    };
+    return cast_expr;
+}
+
 pub fn grouping(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     self.advance(); // consume (
 
@@ -1552,6 +1632,7 @@ pub fn inferType(expr: *ast.Expr) !ast.TypeInfo {
         .Array => return .{ .base = .Array, .is_mutable = false },
         .Map => return .{ .base = .Map, .is_mutable = false },
         .StructLiteral => |struct_lit| return .{ .base = .Custom, .custom_type = struct_lit.name.lexeme, .is_mutable = false },
+        .Cast => return .{ .base = .Nothing, .is_mutable = false },
         else => return .{ .base = .Nothing, .is_mutable = false },
     }
 }
