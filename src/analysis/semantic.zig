@@ -126,6 +126,17 @@ pub const SemanticAnalyzer = struct {
                     // Convert value to match the declared type
                     value = try self.convertValueToType(value, type_info.base);
 
+                    // ENFORCE: nothing types must be const
+                    if (type_info.base == .Nothing and type_info.is_mutable) {
+                        self.reporter.reportCompileError(
+                            stmt.base.span.start,
+                            "Nothing type variables must be declared as 'const'",
+                            .{},
+                        );
+                        self.fatal_error = true;
+                        continue;
+                    }
+
                     // Add to scope
                     _ = scope.createValueBinding(
                         decl.name.lexeme,
