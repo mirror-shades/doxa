@@ -238,6 +238,16 @@ pub const Parser = struct {
 
             // Use a specific parser based on the *next* token (after modifiers)
             const stmt_token_type = self.peek().type;
+            if (self.debug_enabled) {
+                std.debug.print("Parsing statement, token type: {s} ('{s}')\n", .{ @tagName(stmt_token_type), self.peek().lexeme });
+                // Show next few tokens for debugging
+                for (0..5) |i| {
+                    if (self.current + i < self.tokens.len) {
+                        const next_token = self.tokens[self.current + i];
+                        std.debug.print("  Token {}: {s} ('{s}')\n", .{ i, @tagName(next_token.type), next_token.lexeme });
+                    }
+                }
+            }
             switch (stmt_token_type) {
                 .VAR, .CONST => {
                     var decl = try declaration_parser.parseVarDecl(self);

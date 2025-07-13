@@ -166,9 +166,23 @@ fn compileDoxaToSoxa(memoryManager: *MemoryManager, source_path: []const u8, sox
 
     reporter.debug(">> Constant folding applied: {} optimizations\n", .{constant_folder.getOptimizationCount()});
 
+    // NEW: Semantic analysis phase
+    var semantic_analyzer = SemanticAnalyzer.init(memoryManager.getAllocator(), reporter, memoryManager);
+    defer semantic_analyzer.deinit();
+    try semantic_analyzer.analyze(statements);
+
+    // NEW: Pass custom type information to HIR generator
     var hir_generator = HIRGenerator.init(memoryManager.getAllocator(), reporter, parser.module_namespaces);
     hir_generator.debug_enabled = reporter.is_debug; // Enable debug output if --debug flag is set
     defer hir_generator.deinit();
+
+    // NEW: Import custom types from semantic analysis
+    const custom_types = semantic_analyzer.getCustomTypes();
+    var custom_types_iter = custom_types.iterator();
+    while (custom_types_iter.next()) |entry| {
+        const custom_type = entry.value_ptr.*;
+        try hir_generator.custom_types.put(custom_type.name, custom_type);
+    }
 
     var hir_program = try hir_generator.generateProgram(statements);
     defer hir_program.deinit();
