@@ -1,0 +1,24 @@
+enum Color {
+    Red,
+    Green,
+    Blue,
+}
+
+
+// Array of enum variants (short form)
+var colors1 :: Color[] is [.Red, .Green, .Blue];
+var colors2 :: Color[3] is [.Blue, .Red, .Green];
+
+// Array of enum variants (full form)
+var colors3 :: Color[] is [Color.Red, Color.Green, Color.Blue];
+var colors4 :: Color[3] is [Color.Blue, Color.Red, Color.Green];
+
+// Mixed arrays (should work)
+var mixed_colors is [.Red, Color.Green, .Blue];
+
+// Empty enum array
+var empty_colors :: Color[] is [];
+
+// Const enum arrays
+const const_colors1 :: Color[] is [.Red, .Green, .Blue];
+const const_colors2 :: Color[3] is [Color.Blue, Color.Red, Color.Green]; 

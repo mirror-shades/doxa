@@ -525,10 +525,25 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
                 initializer = struct_init;
             } else {
                 // If not a struct init, try regular expression
+                if (self.debug_enabled) {
+                    std.debug.print("\n[DEBUG] About to parse initializer expression at position {}, token: {s} ('{s}')\n", .{ self.current, @tagName(self.peek().type), self.peek().lexeme });
+                    if (self.current + 1 < self.tokens.len) {
+                        std.debug.print("[DEBUG] Next token: {s} ('{s}')\n", .{ @tagName(self.tokens[self.current + 1].type), self.tokens[self.current + 1].lexeme });
+                    }
+                }
                 initializer = try expression_parser.parseExpression(self);
+                if (self.debug_enabled) {
+                    std.debug.print("[DEBUG] Finished parsing initializer expression. Next token: {s} ('{s}')\n", .{ @tagName(self.peek().type), self.peek().lexeme });
+                }
             }
         } else {
+            if (self.debug_enabled) {
+                std.debug.print("\n[DEBUG] About to parse initializer expression at position {}, token: {s}\n", .{ self.current, @tagName(self.peek().type) });
+            }
             initializer = try expression_parser.parseExpression(self);
+            if (self.debug_enabled) {
+                std.debug.print("[DEBUG] Finished parsing initializer expression. Next token: {s}\n", .{@tagName(self.peek().type)});
+            }
         }
         if (initializer == null) {
             return error.ExpectedExpression;

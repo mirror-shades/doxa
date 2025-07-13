@@ -1020,8 +1020,8 @@ pub const Parser = struct {
         }
 
         // Handle regular field access
-        if (current_token.type == .IDENTIFIER) {
-            self.advance(); // consume identifier
+        if (current_token.type == .IDENTIFIER or current_token.type == .FIELD_ACCESS) {
+            self.advance(); // consume identifier or enum variant
 
             const field_access = try self.allocator.create(ast.Expr);
             field_access.* = .{

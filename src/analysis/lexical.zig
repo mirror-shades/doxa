@@ -268,6 +268,15 @@ pub const LexicalAnalyzer = struct {
                     self.current -= 1; // back up to include the dot
                     self.start = self.current;
                     try self.number();
+                } else if (isAlpha(self.peekAt(0))) {
+                    // Standard: emit DOT, then IDENTIFIER
+                    try self.addMinimalToken(.DOT);
+                    self.start = self.current; // Start of identifier
+                    while (!self.isAtEnd() and (isAlpha(self.peekAt(0)) or isDigit(self.peekAt(0)) or self.peekAt(0) == '_')) {
+                        self.advance();
+                    }
+                    const lexeme = self.source[self.start..self.current];
+                    try self.addToken(.IDENTIFIER, .{ .string = lexeme });
                 } else {
                     try self.addMinimalToken(.DOT);
                 }
@@ -365,7 +374,7 @@ pub const LexicalAnalyzer = struct {
 
             '"' => try self.string(),
             //arrays
-            '[' => try self.array(),
+            '[' => try self.addMinimalToken(.LEFT_BRACKET),
             ']' => try self.addMinimalToken(.RIGHT_BRACKET),
             //whitespace
             ' ', '\r', '\t' => {}, // Skip whitespace without creating tokens
@@ -603,43 +612,6 @@ pub const LexicalAnalyzer = struct {
 
     fn parenthesis(self: *LexicalAnalyzer) !void {
         try self.addMinimalToken(.LEFT_PAREN);
-    }
-
-    fn array(self: *LexicalAnalyzer) !void {
-        try self.addMinimalToken(.LEFT_BRACKET);
-
-        while (!self.isAtEnd() and self.peekAt(0) != ']') {
-            // Skip whitespace
-            while (!self.isAtEnd() and (self.peekAt(0) == ' ' or self.peekAt(0) == '\r' or self.peekAt(0) == '\t' or self.peekAt(0) == '\n')) {
-                self.advance();
-            }
-
-            if (self.peekAt(0) == ']') break;
-
-            try self.getNextToken();
-
-            // Skip whitespace after element
-            while (!self.isAtEnd() and (self.peekAt(0) == ' ' or self.peekAt(0) == '\r' or self.peekAt(0) == '\t' or self.peekAt(0) == '\n')) {
-                self.advance();
-            }
-
-            // Check for comma or end of array
-            if (self.peekAt(0) == ',') {
-                self.start = self.current; // Set start position
-                self.advance(); // Advance past the comma
-                try self.addMinimalToken(.COMMA); // Add token after advancing
-            } else if (self.peekAt(0) != ']') {
-                return error.ExpectedCommaOrClosingBracket;
-            }
-        }
-
-        if (self.isAtEnd()) {
-            return error.UnterminatedArray;
-        }
-
-        self.start = self.current; // Set start position to current before consuming right bracket
-        self.advance(); // consume closing bracket
-        try self.addMinimalToken(.RIGHT_BRACKET);
     }
 
     //======================================================================

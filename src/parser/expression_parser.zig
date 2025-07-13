@@ -11,6 +11,9 @@ const Reporter = Reporting.Reporter;
 const ErrorList = Reporting.ErrorList;
 const printTemp = std.debug.print;
 pub fn parseExpression(self: *Parser) ErrorList!?*ast.Expr {
+    if (self.debug_enabled) {
+        std.debug.print("[DEBUG] parseExpression: starting at token {s} ('{s}')\n", .{ @tagName(self.peek().type), self.peek().lexeme });
+    }
 
     // Special handling for array type expressions
     if (self.peek().type == .ARRAY_TYPE) {
@@ -1330,17 +1333,31 @@ pub fn variable(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Exp
         }
     }
 
-    // Create variable expression
+    // Create variable expression or enum member expression
     const var_expr = try self.allocator.create(ast.Expr);
-    var_expr.* = .{
-        .base = .{
-            .id = ast.generateNodeId(),
-            .span = ast.SourceSpan.fromToken(name),
-        },
-        .data = .{
-            .Variable = name,
-        },
-    };
+    if (name.type == .FIELD_ACCESS) {
+        // This is an enum member (e.g., .Red, .Green)
+        var_expr.* = .{
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(name),
+            },
+            .data = .{
+                .EnumMember = name,
+            },
+        };
+    } else {
+        // This is a regular variable
+        var_expr.* = .{
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(name),
+            },
+            .data = .{
+                .Variable = name,
+            },
+        };
+    }
 
     // Check for indexing operation
     if (self.peek().type == .LEFT_BRACKET) {

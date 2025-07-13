@@ -124,7 +124,7 @@ pub const TokenType = enum {
     ALIAS_TYPE, // alias type declaration
     NOTHING_TYPE, // nothing type declaration
 
-    // molecular typeslia
+    // molecular types
     STRUCT, // struct
     ENUM, // enum
     MAP, // map
@@ -141,6 +141,7 @@ pub const TokenType = enum {
     INTRINSIC_TYPE, // intrinsic type declaration
 
     // type helpers
+    FIELD_ACCESS, // field access
     LOGIC, // logic
     CUSTOM, // custom
 

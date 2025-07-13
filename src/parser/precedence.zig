@@ -206,6 +206,12 @@ pub const rules = blk: {
     // Add input support
     r.set(.INPUT, .{ .prefix = Parser.input, .precedence = .PRIMARY });
 
+    // Add field access support
+    r.set(.FIELD_ACCESS, .{ .prefix = variable, .precedence = .PRIMARY });
+
+    // Add field access support
+    r.set(.FIELD_ACCESS, .{ .prefix = variable, .precedence = .PRIMARY });
+
     break :blk r;
 };
 

@@ -37,37 +37,35 @@
 // const const_explicit_sized_string_array :: string[3] is ["qux", "quux", "quuz"];
 // const const_implicit_string_array is ["hello", "world", "test"];
 
-const unit_string_array :: string[]; // []
+// Enum array tests
+enum Color {
+    Red,
+    Green,
+    Blue,
+}
 
-// // Enum array tests
-// enum Color {
-//     Red,
-//     Green,
-//     Blue,
-// }
+enum Stoplight {
+    Red,
+    Yellow,
+    Green,
+}
 
-// enum Stoplight {
-//     Red,
-//     Yellow,
-//     Green,
-// }
+// When type is explicitly specified, short form works
+var explicit_enum_array :: Color[] is [.Red, .Green, .Blue];
+var explicit_sized_enum_array :: Color[3] is [.Blue, .Red, .Green];
+var unit_enum_array :: Color[]; // []
 
-// // When type is explicitly specified, short form works
-// var explicit_enum_array :: Color[] is [.Red, .Green, .Blue];
-// var explicit_sized_enum_array :: Color[3] is [.Blue, .Red, .Green];
-// var unit_enum_array :: Color[]; // []
+// When type is not specified, full qualification needed
+var implicit_enum_array is [Color.Green, Color.Blue, Color.Red];
 
-// // When type is not specified, full qualification needed
-// var implicit_enum_array is [Color.Green, Color.Blue, Color.Red];
+// Const versions - unit arrays get default empty array
+const const_explicit_enum_array :: Color[] is [.Red, .Green, .Blue];
+const const_explicit_sized_enum_array :: Color[3] is [.Blue, .Red, .Green];
+const const_implicit_enum_array is [Color.Green, Color.Blue, Color.Red];
 
-// // Const versions - unit arrays get default empty array
-// const const_explicit_enum_array :: Color[] is [.Red, .Green, .Blue];
-// const const_explicit_sized_enum_array :: Color[3] is [.Blue, .Red, .Green];
-// const const_implicit_enum_array is [Color.Green, Color.Blue, Color.Red];
-
-// // Mixed enum arrays (need full qualification)
-// var mixed_enum_array is [Color.Red, Stoplight.Yellow, Color.Blue];
-// const const_mixed_enum_array is [Color.Red, Stoplight.Yellow, Color.Blue];
+// Mixed enum arrays (need full qualification)
+var mixed_enum_array is [Color.Red, Stoplight.Yellow, Color.Blue];
+const const_mixed_enum_array is [Color.Red, Stoplight.Yellow, Color.Blue];
 
 // var explicit_struct_array :: Person[] is [
 //     Person { name is "Alice", age is 25 },
