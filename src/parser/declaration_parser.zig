@@ -490,7 +490,15 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
         }
     }
 
+    if (self.debug_enabled) {
+        std.debug.print("After parsing type annotation. Current token: {s} ('{s}') at position {}\n", .{ @tagName(self.peek().type), self.peek().lexeme, self.current });
+    }
+
     var initializer: ?*ast.Expr = null;
+
+    if (self.debug_enabled) {
+        std.debug.print("Before checking for initializer. Current token: {s} ('{s}')\n", .{ @tagName(self.peek().type), self.peek().lexeme });
+    }
 
     // Check if the next token is INPUT, which is a special case
     if (self.peek().type == .INPUT) {
@@ -515,7 +523,13 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
 
         // Try parsing array literal first
         if (self.peek().type == .LEFT_BRACKET) {
+            if (self.debug_enabled) {
+                std.debug.print("About to parse array literal. Current token: {s} ('{s}')\n", .{ @tagName(self.peek().type), self.peek().lexeme });
+            }
             initializer = try expression_parser.parseArrayLiteral(self, null, .NONE);
+            if (self.debug_enabled) {
+                std.debug.print("After parsing array literal. Current token: {s} ('{s}')\n", .{ @tagName(self.peek().type), self.peek().lexeme });
+            }
         } else if (self.peek().type == .INPUT) {
             // Handle input expression
             initializer = try Parser.input(self, null, .NONE);
@@ -561,13 +575,19 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
         return error.ConstMustHaveInitializer;
     }
 
-    if (self.peek().type != .SEMICOLON) {
+    // Make semicolons optional - consume if present, but don't require them
+    if (self.peek().type == .SEMICOLON) {
+        self.advance(); // Consume the semicolon if present
+    } else {
         if (self.debug_enabled) {
-            std.debug.print("Expected semicolon, but found: {s}\n", .{@tagName(self.peek().type)});
+            std.debug.print("No semicolon found, continuing. Next token: {s}\n", .{@tagName(self.peek().type)});
         }
-        return error.ExpectedSemicolon;
+        // Continue without semicolon
     }
-    self.advance();
+
+    if (self.debug_enabled) {
+        std.debug.print("Finished parsing variable declaration. Current token: {s} ('{s}')\n", .{ @tagName(self.peek().type), self.peek().lexeme });
+    }
 
     // Handle type inference and union initialization
     if (type_info.base == .Union and initializer != null) {

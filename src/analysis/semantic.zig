@@ -19,6 +19,9 @@ const TokenType = TokenImport.TokenType;
 // Fix the import at the top to make Token public
 const Token = @import("../types/token.zig").Token;
 
+// Import HIRType for custom type tracking
+const HIRType = @import("../codegen/hir/soxa_types.zig").HIRType;
+
 //======================================================================
 
 const NodeId = u32; // Or whatever your AST uses
@@ -31,6 +34,9 @@ pub const SemanticAnalyzer = struct {
     current_scope: ?*Scope,
     type_cache: std.AutoHashMap(NodeId, *ast.TypeInfo),
 
+    // NEW: Track custom types for HIR generation
+    custom_types: std.StringHashMap(CustomTypeInfo),
+
     pub fn init(allocator: std.mem.Allocator, reporter: *Reporter, memory: *MemoryManager) SemanticAnalyzer {
         return .{
             .allocator = allocator,
@@ -39,14 +45,89 @@ pub const SemanticAnalyzer = struct {
             .fatal_error = false,
             .current_scope = null,
             .type_cache = std.AutoHashMap(NodeId, *ast.TypeInfo).init(allocator),
+            .custom_types = std.StringHashMap(CustomTypeInfo).init(allocator),
         };
     }
 
     pub fn deinit(self: *SemanticAnalyzer) void {
-        // Just clear the cache - the TypeInfo instances are owned by the AST
-        // or will be cleaned up by the memory manager
         self.type_cache.deinit();
+        self.custom_types.deinit();
     }
+
+    // NEW: Export custom type information for HIR generation
+    pub fn getCustomTypes(self: *SemanticAnalyzer) std.StringHashMap(CustomTypeInfo) {
+        return self.custom_types;
+    }
+
+    // NEW: Register a custom type during semantic analysis
+    fn registerCustomType(self: *SemanticAnalyzer, type_name: []const u8, kind: CustomTypeInfo.CustomTypeKind) !void {
+        const custom_type = CustomTypeInfo{
+            .name = try self.allocator.dupe(u8, type_name),
+            .kind = kind,
+        };
+        try self.custom_types.put(type_name, custom_type);
+    }
+
+    // NEW: Register enum with variants
+    fn registerEnumType(self: *SemanticAnalyzer, enum_name: []const u8, variants: []const []const u8) !void {
+        var enum_variants = try self.allocator.alloc(CustomTypeInfo.EnumVariant, variants.len);
+        for (variants, 0..) |variant_name, index| {
+            enum_variants[index] = CustomTypeInfo.EnumVariant{
+                .name = try self.allocator.dupe(u8, variant_name),
+                .index = @intCast(index),
+            };
+        }
+
+        const custom_type = CustomTypeInfo{
+            .name = try self.allocator.dupe(u8, enum_name),
+            .kind = .Enum,
+            .enum_variants = enum_variants,
+        };
+        try self.custom_types.put(enum_name, custom_type);
+    }
+
+    // NEW: Register struct with fields
+    fn registerStructType(self: *SemanticAnalyzer, struct_name: []const u8, fields: []const ast.StructFieldType) !void {
+        var struct_fields = try self.allocator.alloc(CustomTypeInfo.StructField, fields.len);
+        for (fields, 0..) |field, index| {
+            struct_fields[index] = CustomTypeInfo.StructField{
+                .name = try self.allocator.dupe(u8, field.name),
+                .field_type = .Auto, // Will be resolved during HIR generation
+                .index = @intCast(index),
+            };
+        }
+
+        const custom_type = CustomTypeInfo{
+            .name = try self.allocator.dupe(u8, struct_name),
+            .kind = .Struct,
+            .struct_fields = struct_fields,
+        };
+        try self.custom_types.put(struct_name, custom_type);
+    }
+
+    // NEW: Custom type info structure (matching HIR generator)
+    pub const CustomTypeInfo = struct {
+        name: []const u8,
+        kind: CustomTypeKind,
+        enum_variants: ?[]EnumVariant = null,
+        struct_fields: ?[]StructField = null,
+
+        pub const CustomTypeKind = enum {
+            Struct,
+            Enum,
+        };
+
+        pub const EnumVariant = struct {
+            name: []const u8,
+            index: u32,
+        };
+
+        pub const StructField = struct {
+            name: []const u8,
+            field_type: HIRType,
+            index: u32,
+        };
+    };
 
     pub fn analyze(self: *SemanticAnalyzer, statements: []ast.Stmt) ErrorList!void {
         const root_scope = try self.memory.scope_manager.createScope(null);
@@ -228,6 +309,14 @@ pub const SemanticAnalyzer = struct {
                             return err;
                         }
                     };
+
+                    // NEW: Register enum type for HIR generation
+                    const variants = enum_decl.variants;
+                    const variant_names = try self.allocator.alloc([]const u8, variants.len);
+                    for (variants, variant_names) |variant, *name| {
+                        name.* = variant.lexeme;
+                    }
+                    try self.registerEnumType(enum_decl.name.lexeme, variant_names);
                 },
 
                 .Expression => |maybe_expr| {
@@ -235,9 +324,20 @@ pub const SemanticAnalyzer = struct {
                         // Handle struct declarations that are expressions
                         if (expr.data == .StructDecl) {
                             const struct_decl = expr.data.StructDecl;
+
+                            // Convert struct fields to TypeInfo format
+                            const struct_fields = try self.allocator.alloc(ast.StructFieldType, struct_decl.fields.len);
+                            for (struct_decl.fields, struct_fields) |field, *struct_field| {
+                                const field_type_info = try ast.typeInfoFromExpr(self.allocator, field.type_expr);
+                                struct_field.* = .{
+                                    .name = field.name.lexeme,
+                                    .type_info = field_type_info,
+                                };
+                            }
+
                             // Register the struct type in the current scope
                             const struct_type_info = try self.allocator.create(ast.TypeInfo);
-                            struct_type_info.* = .{ .base = .Struct, .custom_type = struct_decl.name.lexeme, .is_mutable = false };
+                            struct_type_info.* = .{ .base = .Struct, .custom_type = struct_decl.name.lexeme, .struct_fields = struct_fields, .is_mutable = false };
 
                             // Create a placeholder value for the struct type
                             const struct_value = TokenLiteral{ .string = struct_decl.name.lexeme };
@@ -261,6 +361,9 @@ pub const SemanticAnalyzer = struct {
                                     return err;
                                 }
                             };
+
+                            // NEW: Register struct type for HIR generation
+                            try self.registerStructType(struct_decl.name.lexeme, struct_fields);
                         }
                     }
                 },
@@ -640,7 +743,68 @@ pub const SemanticAnalyzer = struct {
                         type_info.base = .Nothing;
                         return type_info;
                     }
-                } else if (object_type.base == .Enum or object_type.base == .Custom) {
+                } else if (object_type.base == .Custom) {
+                    // Check if this is a struct type by looking up the variable
+                    if (object_type.custom_type) |custom_type_name| {
+                        if (self.lookupVariable(custom_type_name)) |variable| {
+                            if (self.memory.scope_manager.value_storage.get(variable.storage_id)) |storage| {
+                                if (storage.type_info.base == .Struct) {
+                                    // This is a struct, handle field access
+                                    if (storage.type_info.struct_fields) |fields| {
+                                        for (fields) |struct_field| {
+                                            if (std.mem.eql(u8, struct_field.name, field.field.lexeme)) {
+                                                type_info.* = struct_field.type_info.*;
+                                                break;
+                                            }
+                                        } else {
+                                            self.reporter.reportCompileError(
+                                                expr.base.span.start,
+                                                "Field '{s}' not found in struct '{s}'",
+                                                .{ field.field.lexeme, custom_type_name },
+                                            );
+                                            self.fatal_error = true;
+                                            type_info.base = .Nothing;
+                                            return type_info;
+                                        }
+                                    } else {
+                                        self.reporter.reportCompileError(
+                                            expr.base.span.start,
+                                            "Struct '{s}' has no fields defined",
+                                            .{custom_type_name},
+                                        );
+                                        self.fatal_error = true;
+                                        type_info.base = .Nothing;
+                                        return type_info;
+                                    }
+                                } else {
+                                    // Not a struct, treat as enum variant access
+                                    type_info.* = .{ .base = .Enum };
+                                }
+                            } else {
+                                self.reporter.reportCompileError(
+                                    expr.base.span.start,
+                                    "Internal error: Variable storage not found for '{s}'",
+                                    .{custom_type_name},
+                                );
+                                self.fatal_error = true;
+                                type_info.base = .Nothing;
+                                return type_info;
+                            }
+                        } else {
+                            self.reporter.reportCompileError(
+                                expr.base.span.start,
+                                "Undefined type '{s}'",
+                                .{custom_type_name},
+                            );
+                            self.fatal_error = true;
+                            type_info.base = .Nothing;
+                            return type_info;
+                        }
+                    } else {
+                        // No custom type name, treat as enum variant access
+                        type_info.* = .{ .base = .Enum };
+                    }
+                } else if (object_type.base == .Enum) {
                     // Allow enum variant access: Color.Red
                     // You may want to check if the variant exists, but for now just return Enum type
                     type_info.* = .{ .base = .Enum };

@@ -1,43 +1,42 @@
-// // Atomic type arrays
-// var explicit_int_array :: int[] is [1, 2, 3];
-// var explicit_sized_int_array :: int[3] is [4, 5, 6];
-// var implicit_int_array is [7, 8, 9];
-// var unit_int_array :: int[]; // []
-// var explicit_byte_array :: byte[] is [0x00, 0x01, 0x02];
-// var explicit_sized_byte_array :: byte[3] is [0x03, 0x04, 0x05];
-// var implicit_byte_array is [0x06, 0x07, 0x08];
-// var unit_byte_array :: byte[]; // []
-// var explicit_float_array :: float[] is [1.0, 2.0, 3.0];
-// var explicit_sized_float_array :: float[3] is [4.0, 5.0, 6.0];
-// var implicit_float_array is [7.0, 8.0, 9.0];
-// var unit_float_array :: float[]; // []
-// var explicit_tetra_array :: tetra[] is [both, false, true];
-// var explicit_sized_tetra_array :: tetra[3] is [both, false, true];
-// var implicit_tetra_array is [true, false, both];
-// var unit_tetra_array :: tetra[]; // []
-// var explicit_string_array :: string[] is ["foo", "bar", "baz"];
-// var explicit_sized_string_array :: string[3] is ["qux", "quux", "quuz"];
-// var implicit_string_array is ["hello", "world", "test"];
-// var unit_string_array :: string[]; // []
+// Atomic type arrays
+var explicit_int_array :: int[] is [1, 2, 3];
+var explicit_sized_int_array :: int[3] is [4, 5, 6];
+var implicit_int_array is [7, 8, 9];
+var unit_int_array :: int[]; // []
+var explicit_byte_array :: byte[] is [0x00, 0x01, 0x02];
+var explicit_sized_byte_array :: byte[3] is [0x03, 0x04, 0x05];
+var implicit_byte_array is [0x06, 0x07, 0x08];
+var unit_byte_array :: byte[]; // []
+var explicit_float_array :: float[] is [1.0, 2.0, 3.0];
+var explicit_sized_float_array :: float[3] is [4.0, 5.0, 6.0];
+var implicit_float_array is [7.0, 8.0, 9.0];
+var unit_float_array :: float[]; // []
+var explicit_tetra_array :: tetra[] is [both, false, true];
+var explicit_sized_tetra_array :: tetra[3] is [both, false, true];
+var implicit_tetra_array is [true, false, both];
+var unit_tetra_array :: tetra[]; // []
+var explicit_string_array :: string[] is ["foo", "bar", "baz"];
+var explicit_sized_string_array :: string[3] is ["qux", "quux", "quuz"];
+var implicit_string_array is ["hello", "world", "test"];
+var unit_string_array :: string[]; // []
 
-// // Const atomic array tests
-// const const_explicit_int_array :: int[] is [1, 2, 3];
-// const const_explicit_sized_int_array :: int[3] is [4, 5, 6];
-// const const_implicit_int_array is [7, 8, 9];
-// const const_explicit_byte_array :: byte[] is [0x00, 0x01, 0x02];
-// const const_explicit_sized_byte_array :: byte[3] is [0x03, 0x04, 0x05];
-// const const_implicit_byte_array is [0x06, 0x07, 0x08];
-// const const_explicit_float_array :: float[] is [1.0, 2.0, 3.0];
-// const const_explicit_sized_float_array :: float[3] is [4.0, 5.0, 6.0];
-// const const_implicit_float_array is [7.0, 8.0, 9.0];
-// const const_explicit_tetra_array :: tetra[] is [both, false, true];
-// const const_explicit_sized_tetra_array :: tetra[3] is [both, false, true];
-// const const_implicit_tetra_array is [true, false, both];
-// const const_explicit_string_array :: string[] is ["foo", "bar", "baz"];
-// const const_explicit_sized_string_array :: string[3] is ["qux", "quux", "quuz"];
-// const const_implicit_string_array is ["hello", "world", "test"];
+// Const atomic array tests
+const const_explicit_int_array :: int[] is [1, 2, 3];
+const const_explicit_sized_int_array :: int[3] is [4, 5, 6];
+const const_implicit_int_array is [7, 8, 9];
+const const_explicit_byte_array :: byte[] is [0x00, 0x01, 0x02];
+const const_explicit_sized_byte_array :: byte[3] is [0x03, 0x04, 0x05];
+const const_implicit_byte_array is [0x06, 0x07, 0x08];
+const const_explicit_float_array :: float[] is [1.0, 2.0, 3.0];
+const const_explicit_sized_float_array :: float[3] is [4.0, 5.0, 6.0];
+const const_implicit_float_array is [7.0, 8.0, 9.0];
+const const_explicit_tetra_array :: tetra[] is [both, false, true];
+const const_explicit_sized_tetra_array :: tetra[3] is [both, false, true];
+const const_implicit_tetra_array is [true, false, both];
+const const_explicit_string_array :: string[] is ["foo", "bar", "baz"];
+const const_explicit_sized_string_array :: string[3] is ["qux", "quux", "quuz"];
+const const_implicit_string_array is ["hello", "world", "test"];
 
-// Enum array tests
 enum Color {
     Red,
     Green,
@@ -67,62 +66,70 @@ const const_implicit_enum_array is [Color.Green, Color.Blue, Color.Red];
 var mixed_enum_array is [Color.Red, Stoplight.Yellow, Color.Blue];
 const const_mixed_enum_array is [Color.Red, Stoplight.Yellow, Color.Blue];
 
-// var explicit_struct_array :: Person[] is [
-//     Person { name is "Alice", age is 25 },
-//     Person { name is "Bob", age is 30 },
-//     Person { name is "Charlie", age is 35 }
-// ];
-// var explicit_sized_struct_array :: Person[3] is [
-//     Person { name is "David", age is 40 },
-//     Person { name is "Eve", age is 45 },
-//     Person { name is "Frank", age is 50 }
-// ];
-// var implicit_struct_array is [
-//     Person { name is "Grace", age is 55 },
-//     Person { name is "Henry", age is 60 },
-//     Person { name is "Ivy", age is 65 }
-// ];
-// var unit_struct_array :: Person[]; // []
+struct Person {
+    name :: string,
+    age :: int,
+}
 
-// const const_explicit_struct_array :: Person[] is [
-//     Person { name is "Alice", age is 25 },
-//     Person { name is "Bob", age is 30 },
-//     Person { name is "Charlie", age is 35 }
-// ];
-// const const_explicit_sized_struct_array :: Person[3] is [
-//     Person { name is "David", age is 40 },
-//     Person { name is "Eve", age is 45 },
-//     Person { name is "Frank", age is 50 }
-// ];
-// const const_implicit_struct_array is [
-//     Person { name is "Grace", age is 55 },
-//     Person { name is "Henry", age is 60 },
-//     Person { name is "Ivy", age is 65 }
-// ];
-// const const_unit_struct_array :: Person[]; // []
+var explicit_struct_array :: Person[] is [
+    Person { name is "Alice", age is 25 },
+    Person { name is "Bob", age is 30 },
+    Person { name is "Charlie", age is 35 }
+];
+var explicit_sized_struct_array :: Person[3] is [
+    Person { name is "David", age is 40 },
+    Person { name is "Eve", age is 45 },
+    Person { name is "Frank", age is 50 }
+];
+var implicit_struct_array is [
+    Person { name is "Grace", age is 55 },
+    Person { name is "Henry", age is 60 },
+    Person { name is "Ivy", age is 65 }
+];
+var unit_struct_array :: Person[]; // []
 
-// // Mixed type arrays (heterogeneous arrays)
-// var mixed_array is [1, "hello", true, 3.14, .Red];
-// var mixed_array_with_struct is [1, Person { name is "Test", age is 25 }, "world", false];
+const const_explicit_struct_array :: Person[] is [
+    Person { name is "Alice", age is 25 },
+    Person { name is "Bob", age is 30 },
+    Person { name is "Charlie", age is 35 }
+];
+const const_explicit_sized_struct_array :: Person[3] is [
+    Person { name is "David", age is 40 },
+    Person { name is "Eve", age is 45 },
+    Person { name is "Frank", age is 50 }
+];
+const const_implicit_struct_array is [
+    Person { name is "Grace", age is 55 },
+    Person { name is "Henry", age is 60 },
+    Person { name is "Ivy", age is 65 }
+];
 
-// const const_mixed_array is [1, "hello", true, 3.14, .Red];
-// const const_mixed_array_with_struct is [1, Person { name is "Test", age is 25 }, "world", false];
+var Bob is Person { name is "Bob", age is 25 };
 
-// // Nested arrays (arrays of arrays)
-// var nested_int_array :: int[][] is [[1, 2, 3], [4, 5, 6], [7, 8, 9]];
-// var nested_mixed_array is [["hello", "world"], [1, 2, 3], [true, false, both]];
+var int_struct_array is [1, 2, Bob.age];
 
-// const const_nested_int_array :: int[][] is [[1, 2, 3], [4, 5, 6], [7, 8, 9]];
-// const const_nested_mixed_array is [["hello", "world"], [1, 2, 3], [true, false, both]];
+var struct_array is [
+    Person { name is "Grace", age is 55 },
+    Bob
+];
 
-// // Empty arrays of different types
-// var empty_int_array :: int[] is [];
-// var empty_string_array :: string[] is [];
-// var empty_struct_array :: Person[] is [];
-// var empty_enum_array :: Color[] is [];
+// Nested arrays (arrays of arrays)
+var nested_int_array :: int[][] is [[1, 2, 3], [4, 5, 6], [7, 8, 9]];
+var nested_string_array :: string[][] is [["hello", "world"], ["foo", "bar"]];
+var nested_tetra_array :: tetra[][] is [[true, false, both], [false, true, both]];
+var nested_float_array :: float[][] is [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];
+var nested_byte_array :: byte[][] is [[0x00, 0x01, 0x02], [0x03, 0x04, 0x05]];
+var nested_enum_array :: Color[][] is [[.Red, .Green], [.Blue, .Red]];
+var nested_struct_array :: Person[][] is [
+    [Person { name is "Grace", age is 55 }, Person { name is "Henry", age is 60 }],
+    [Bob]
+];
 
-// const const_empty_int_array :: int[] is [];
-// const const_empty_string_array :: string[] is [];
-// const const_empty_struct_array :: Person[] is [];
-// const const_empty_enum_array :: Color[] is [];
+const const_nested_int_array :: int[][] is [[1, 2, 3], [4, 5, 6], [7, 8, 9]];
+
+// Empty arrays of different types
+var empty_int_array :: int[] is [];
+var empty_string_array :: string[] is [];
+var empty_struct_array :: Person[] is [];
+var empty_enum_array :: Color[] is [];
 

@@ -828,7 +828,7 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
     if (base_type_expr == null) return error.ExpectedType;
 
     // --- Check for Array Type ---
-    if (self.peek().type == .LEFT_BRACKET) {
+    while (self.peek().type == .LEFT_BRACKET) {
         if (self.debug_enabled) {
             std.debug.print("Found array brackets after base type\n", .{});
         }
@@ -876,10 +876,10 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
                 },
             },
         };
+        base_type_expr = array_type_expr;
         if (self.debug_enabled) {
             std.debug.print("Successfully parsed array type\n", .{});
         }
-        return array_type_expr;
     }
 
     // If no array brackets, return the base type expression
@@ -1333,6 +1333,14 @@ pub fn variable(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Exp
         }
     }
 
+    // Check if this is a struct literal (identifier followed by {)
+    if (self.peek().type == .LEFT_BRACE) {
+        // This is a struct literal, parse it using parseStructInit
+        // We need to reset the position to before the identifier so parseStructInit can consume it
+        self.current -= 1; // Go back to the identifier
+        return self.parseStructInit();
+    }
+
     // Create variable expression or enum member expression
     const var_expr = try self.allocator.create(ast.Expr);
     if (name.type == .FIELD_ACCESS) {
@@ -1401,7 +1409,13 @@ pub fn parseArrayLiteral(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!
         std.debug.print("\nParsing array literal\n", .{});
     }
 
+    if (self.debug_enabled) {
+        std.debug.print("Before consuming '[', current token: {s} ('{s}')\n", .{ @tagName(self.peek().type), self.peek().lexeme });
+    }
     self.advance(); // consume '['
+    if (self.debug_enabled) {
+        std.debug.print("After consuming '[', current token: {s} ('{s}')\n", .{ @tagName(self.peek().type), self.peek().lexeme });
+    }
 
     var elements = std.ArrayList(*ast.Expr).init(self.allocator);
     errdefer {
@@ -1414,16 +1428,31 @@ pub fn parseArrayLiteral(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!
 
     // Parse first element to establish the type
     if (self.peek().type != .RIGHT_BRACKET) {
+        if (self.debug_enabled) {
+            std.debug.print("About to parse first element, current token: {s} ('{s}')\n", .{ @tagName(self.peek().type), self.peek().lexeme });
+        }
         const first_element = try parseExpression(self) orelse return error.ExpectedExpression;
         try elements.append(first_element);
+
+        if (self.debug_enabled) {
+            std.debug.print("After parsing first element, current token: {s} ('{s}')\n", .{ @tagName(self.peek().type), self.peek().lexeme });
+        }
 
         // Parse remaining elements without type checking
         while (self.peek().type == .COMMA) {
             self.advance(); // consume comma
             if (self.peek().type == .RIGHT_BRACKET) break;
 
+            if (self.debug_enabled) {
+                std.debug.print("Parsing next element, current token: {s} ('{s}')\n", .{ @tagName(self.peek().type), self.peek().lexeme });
+            }
+
             const element = try parseExpression(self) orelse return error.ExpectedExpression;
             try elements.append(element);
+
+            if (self.debug_enabled) {
+                std.debug.print("After parsing element, current token: {s} ('{s}')\n", .{ @tagName(self.peek().type), self.peek().lexeme });
+            }
         }
     }
 
@@ -1431,6 +1460,10 @@ pub fn parseArrayLiteral(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!
         return error.ExpectedRightBracket;
     }
     self.advance(); // consume ']'
+
+    if (self.debug_enabled) {
+        std.debug.print("Finished parsing array literal. Current token: {s} ('{s}')\n", .{ @tagName(self.peek().type), self.peek().lexeme });
+    }
 
     const array_expr = try self.allocator.create(ast.Expr);
     array_expr.* = .{
