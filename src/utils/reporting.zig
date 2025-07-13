@@ -111,6 +111,7 @@ pub const ErrorList = error{
     NoTryBlock,
     ExpectedInKeyword,
     ExpectedTypeAnnotation,
+    ExpectedTypeAnnotationOrInitializer,
     NoCatchWithoutTry,
     NoTryBlockToEnd,
     UncaughtError,

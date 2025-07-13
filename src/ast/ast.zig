@@ -222,6 +222,11 @@ pub const Stmt = struct {
             location: Reporting.Reporter.Location,
             message: ?*Expr = null,
         },
+        Cast: struct {
+            value: *Expr,
+            target_type: *TypeExpr,
+            else_branch: ?*Expr,
+        },
     };
 
     pub fn getBase(self: *Stmt) *Base {
@@ -300,6 +305,16 @@ pub const Stmt = struct {
             .Path => {},
             .Continue => {},
             .Break => {},
+            .Cast => |*c| {
+                c.value.deinit(allocator);
+                allocator.destroy(c.value);
+                c.target_type.deinit(allocator);
+                allocator.destroy(c.target_type);
+                if (c.else_branch) |else_expr| {
+                    else_expr.deinit(allocator);
+                    allocator.destroy(else_expr);
+                }
+            },
         }
     }
 };
@@ -519,6 +534,11 @@ pub const Expr = struct {
             condition: *Expr,
             location: Reporting.Reporter.Location,
             message: ?*Expr = null,
+        },
+        Cast: struct {
+            value: *Expr,
+            target_type: *TypeExpr,
+            else_branch: ?*Expr,
         },
         ReturnExpr: struct {
             value: ?*Expr,
@@ -822,6 +842,16 @@ pub const Expr = struct {
             .PeekStruct => |peek| {
                 peek.expr.deinit(allocator);
                 allocator.destroy(peek.expr);
+            },
+            .Cast => |*c| {
+                c.value.deinit(allocator);
+                allocator.destroy(c.value);
+                c.target_type.deinit(allocator);
+                allocator.destroy(c.target_type);
+                if (c.else_branch) |else_expr| {
+                    else_expr.deinit(allocator);
+                    allocator.destroy(else_expr);
+                }
             },
         }
     }
@@ -1140,6 +1170,8 @@ pub fn typeInfoFromExpr(allocator: std.mem.Allocator, type_expr: ?*TypeExpr) !*T
 
             for (types, 0..) |union_type_expr, i| {
                 union_types[i] = try typeInfoFromExpr(allocator, union_type_expr);
+                // Debug: Print the type of each union member
+                std.debug.print("DEBUG: Union member {} has type: {s}\n", .{ i, @tagName(union_types[i].base) });
             }
 
             const union_type = try allocator.create(UnionType);

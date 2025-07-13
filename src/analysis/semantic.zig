@@ -166,22 +166,14 @@ pub const SemanticAnalyzer = struct {
                             std.debug.print("DEBUG: Variable '{s}' inferred type: {s}\n", .{ decl.name.lexeme, @tagName(type_info.base) });
                         }
                     } else {
-                        // Check if this is an explicit nothing type (no initializer but type is Nothing)
-                        // This is a special case for nothing type variables
-                        if (decl.type_info.base == .Nothing) {
-                            type_info.* = decl.type_info;
-                            if (self.reporter.is_debug) {
-                                std.debug.print("DEBUG: Variable '{s}' has explicit nothing type\n", .{decl.name.lexeme});
-                            }
-                        } else {
-                            self.reporter.reportCompileError(
-                                stmt.base.span.start,
-                                "Variable declaration requires either type annotation or initializer",
-                                .{},
-                            );
-                            self.fatal_error = true;
-                            continue;
-                        }
+                        // No type annotation and no initializer - this is invalid
+                        self.reporter.reportCompileError(
+                            stmt.base.span.start,
+                            "Variable declaration requires either type annotation (::) or initializer",
+                            .{},
+                        );
+                        self.fatal_error = true;
+                        continue;
                     }
 
                     // Convert TypeInfo to TokenType
@@ -417,7 +409,12 @@ pub const SemanticAnalyzer = struct {
                     }
                     try self.validateStatements(block_stmts);
                 },
-
+                .Expression => |expr| {
+                    if (expr) |expression| {
+                        // Validate the expression, which will trigger type checking for assignments
+                        _ = try self.inferTypeFromExpr(expression);
+                    }
+                },
                 // TODO: Handle other statements...
                 else => {},
             }
@@ -425,6 +422,52 @@ pub const SemanticAnalyzer = struct {
     }
 
     fn unifyTypes(self: *SemanticAnalyzer, expected: *ast.TypeInfo, actual: *ast.TypeInfo, span: ast.SourceSpan) !void {
+        // Handle union types first - check if actual type is one of the union's member types
+        if (expected.base == .Union) {
+            if (expected.union_type) |union_type| {
+                if (self.reporter.is_debug) {
+                    std.debug.print("DEBUG: Checking union type compatibility\n", .{});
+                    std.debug.print("DEBUG: Expected union has {} member types\n", .{union_type.types.len});
+                    std.debug.print("DEBUG: Actual type is: {s}\n", .{@tagName(actual.base)});
+                }
+
+                var found_match = false;
+                for (union_type.types, 0..) |member_type, i| {
+                    if (self.reporter.is_debug) {
+                        std.debug.print("DEBUG: Checking member {}: {s}\n", .{ i, @tagName(member_type.base) });
+                    }
+                    if (member_type.base == actual.base) {
+                        found_match = true;
+                        if (self.reporter.is_debug) {
+                            std.debug.print("DEBUG: Found match!\n", .{});
+                        }
+                        break;
+                    }
+                }
+
+                if (found_match) {
+                    return; // Type is compatible with union
+                } else {
+                    // Build a list of allowed types for the error message
+                    var type_list = std.ArrayList(u8).init(self.allocator);
+                    defer type_list.deinit();
+
+                    for (union_type.types, 0..) |member_type, i| {
+                        if (i > 0) try type_list.appendSlice(" | ");
+                        try type_list.appendSlice(@tagName(member_type.base));
+                    }
+
+                    self.reporter.reportCompileError(
+                        span.start,
+                        "Type mismatch: expected union ({s}), got {s}",
+                        .{ type_list.items, @tagName(actual.base) },
+                    );
+                    self.fatal_error = true;
+                    return;
+                }
+            }
+        }
+
         if (expected.base != actual.base) {
             // Special cases for type conversions
             if (expected.base == .Float and (actual.base == .Int or actual.base == .Byte)) {
@@ -1486,6 +1529,12 @@ pub const SemanticAnalyzer = struct {
                 type_info.* = type_info_ptr.*;
                 self.allocator.destroy(type_info_ptr);
             },
+            .Cast => |cast| {
+                // TODO: Implement type inference for cast expressions
+                // For now, just infer the target type
+                const target_type_info = try self.inferTypeFromExpr(cast.value);
+                type_info.* = target_type_info.*;
+            },
         }
 
         // Cache the result
@@ -1506,6 +1555,52 @@ pub const SemanticAnalyzer = struct {
                 }
             }
         }
+
+        // Handle union types - resolve and flatten each member type
+        if (type_info.base == .Union) {
+            if (type_info.union_type) |union_type| {
+                if (self.reporter.is_debug) {
+                    std.debug.print("DEBUG: Resolving/flattening union type with {} members\n", .{union_type.types.len});
+                }
+
+                // Collect all non-union members recursively
+                var flat_types = std.ArrayList(*ast.TypeInfo).init(self.allocator);
+                defer flat_types.deinit();
+
+                for (union_type.types) |member_type| {
+                    const resolved_member = try self.resolveTypeInfo(member_type.*);
+                    if (resolved_member.base == .Union) {
+                        if (resolved_member.union_type) |nested_union| {
+                            for (nested_union.types) |nested_member| {
+                                try flat_types.append(nested_member);
+                            }
+                        }
+                    } else {
+                        // Allocate a new TypeInfo for each non-union member
+                        const new_member = try self.allocator.create(ast.TypeInfo);
+                        new_member.* = resolved_member;
+                        try flat_types.append(new_member);
+                    }
+                }
+
+                const resolved_union_type = try self.allocator.create(ast.UnionType);
+                resolved_union_type.* = .{
+                    .types = try flat_types.toOwnedSlice(),
+                    .current_type_index = union_type.current_type_index,
+                };
+
+                if (self.reporter.is_debug) {
+                    std.debug.print("DEBUG: Created flattened union with {} members\n", .{resolved_union_type.types.len});
+                }
+
+                return ast.TypeInfo{
+                    .base = .Union,
+                    .union_type = resolved_union_type,
+                    .is_mutable = type_info.is_mutable,
+                };
+            }
+        }
+
         // Return the original type info if no resolution needed
         return type_info;
     }
@@ -1599,6 +1694,11 @@ pub const SemanticAnalyzer = struct {
                 }
                 // Return default value if variable not found (shouldn't happen in well-formed code)
                 return TokenLiteral{ .nothing = {} };
+            },
+            .Cast => |cast| {
+                // TODO: Implement evaluation for cast expressions
+                // For now, just evaluate the value
+                return try self.evaluateExpression(cast.value);
             },
             else => {
                 // For complex expressions that can't be evaluated at compile time,

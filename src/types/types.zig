@@ -92,6 +92,7 @@ pub const Environment = struct {
                 .Nothing => TokenType.NOTHING,
                 .Custom => TokenType.ENUM_TYPE,
                 .Tetra => TokenType.TETRA,
+                .Union => TokenType.UNION,
                 else => unreachable,
             };
 

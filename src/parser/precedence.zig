@@ -173,7 +173,7 @@ pub const rules = blk: {
     r.set(.STRUCT_TYPE, .{ .prefix = parseStructDecl });
 
     // Add struct instantiation support
-    r.set(.IDENTIFIER, .{ .prefix = parseStructOrMatch, .infix = fieldAccess });
+    r.set(.IDENTIFIER, .{ .prefix = parseStructOrMatch });
     r.set(.DOT, .{ .infix = fieldAccess, .precedence = .CALL });
 
     // Add quantifier operators
@@ -203,6 +203,9 @@ pub const rules = blk: {
 
     // Add bytesof support
     r.set(.BYTES, .{ .prefix = bytesofExpr, .precedence = .CALL });
+
+    // Add cast operator support
+    r.set(.AS, .{ .infix = expr_parser.castExpr, .precedence = .CALL });
 
     // Add input support
     r.set(.INPUT, .{ .prefix = Parser.input, .precedence = .PRIMARY });
