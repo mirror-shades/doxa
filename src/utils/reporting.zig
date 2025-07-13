@@ -286,6 +286,7 @@ pub const ErrorList = error{
 
     // memory
     DuplicateVariableName,
+    NothingTypeMustBeConst,
 };
 
 /// Reporting provides structured error handling and reporting capabilities

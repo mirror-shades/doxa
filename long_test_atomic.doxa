@@ -19,29 +19,18 @@ var unit_string :: string; // ""
 
 const const_explicit_int :: int is 1;
 const const_implicit_int is 2;
-const const_unit_int :: int; // 0
 const const_explicit_byte :: byte is 0x03;
 const const_implicit_byte is 0x04;
-const const_unit_byte :: byte; // 0x00
 const const_explicit_float :: float is 1.0;
 const const_implicit_float is 2.0;
-const const_unit_float :: float; // 0.0
 const const_explicit_tetra :: tetra is both;
 const const_implicit_tetra is true; // Fixed: removed duplicate name
-const const_unit_tetra :: tetra; // false
 const const_explicit_string :: string is "foo";
 const const_implicit_string is "bar";
-const const_unit_string :: string; // ""
 
-// Nothing type tests
-var explicit_nothing :: nothing is nothing;
-var implicit_nothing is nothing;
-var unit_nothing :: nothing; // nothing (no value)
-
-const const_explicit_nothing :: nothing is nothing;
-const const_implicit_nothing is nothing;
-const const_unit_nothing :: nothing; // nothing (no value)
-
+// Nothing type tests (must be const)
+const explicit_nothing :: nothing is nothing;
+const implicit_nothing is nothing;
 
 var int_arith is 1 + 2;
 var byte_arith is 0x01 + 0x02;
@@ -145,7 +134,3 @@ var escape_string :: string is "Hello\nWorld\tTab";
 // var implicit_tetra_array is [true, false, both];
 // var unit_tetra_array :: array[] tetra; // []
 
-
-// Note: nothing type cannot have initializers since it represents "no value"
-// var implicit_nothing is ???; // This would be an error - nothing has no value to infer from
-// const const_implicit_nothing is ???; // This would be an error - nothing has no value to infer from
