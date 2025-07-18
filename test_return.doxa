@@ -1,0 +1,103 @@
+// Test file for return type inference and union subtyping
+
+// Test 1: Function with no explicit return type, all returns same type
+fn test1(x :: int) {
+    if x > 0 then {
+        return x + 1;
+    } else {
+        return x - 1;
+    }
+}
+
+// Test 2: Function with no explicit return type, different return types -> should infer union
+fn test2(x :: int) {
+    if x > 0 then {
+        return x;  // int
+    } else {
+        return "negative";  // string
+    // }
+}
+
+// Test 3: Function with explicit union return type
+fn test3(x :: int) returns(int | string) {
+    if x > 0 then {
+        return x;  // int - should be compatible
+    } else {
+        return "negative";  // string - should be compatible
+    }
+}
+
+// Test 4: Function with explicit union return type, returning smaller union
+fn test4(x :: int) returns(int | string | float) {
+    if x > 0 then {
+        return x;  // int - should be compatible
+    } else {
+        return "negative";  // string - should be compatible
+    }
+}
+
+// // Test 5: Function with no return statements -> should infer Nothing
+// fn test5(x :: int) {
+//     print(x);
+// }
+
+// Test 6: Function with explicit return type, returning incompatible type
+fn test6(x :: int) returns(int) {
+    if x > 0 then {
+        return x;  // int - should be compatible
+    } else {
+        return "negative";  // string - should cause error
+    }
+}
+
+// // Test 7: Function returning union to union assignment
+// fn test7(x :: int) returns(int | string) {
+//     if x > 0 then {
+//         return x;
+//     } else {
+//         return "negative";
+//     }
+// }
+
+// fn test7_caller() {
+//     const result is test7(5);  // result should be int | string
+//     print(result);
+// }
+
+// // Test 8: Nested union flattening
+// fn test8(x :: int) returns(int | string | float) {
+//     if x > 0 then {
+//         return x;
+//     } else if x equals 0 {
+//         return "zero";
+//     } else {
+//         return 3.14;
+//     }
+// }
+
+// // Test 9: Function with mixed return types including Nothing
+// fn test9(x :: int) {
+//     if x > 0 then {
+//         return x;
+//     } else if x equals 0 {
+//         return "zero";
+//     }
+//     // No return for x < 0 -> should infer int | string | Nothing
+// }
+
+// // Test 10: Complex nested if expressions
+// fn test10(x :: int) {
+//     if x > 0 then {
+//         if x > 10 then {
+//             return x * 2;
+//         } else {
+//             return x;
+//         }
+//     } else {
+//         if x < -10 then {
+//             return "very negative";
+//         } else {
+//             return "negative";
+//         }
+//     }
+// }
