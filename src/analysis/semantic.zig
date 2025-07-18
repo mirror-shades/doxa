@@ -37,6 +37,11 @@ pub const SemanticAnalyzer = struct {
     // NEW: Track custom types for HIR generation
     custom_types: std.StringHashMap(CustomTypeInfo),
 
+    // NEW: Track function return types for inference
+    function_return_types: std.AutoHashMap(NodeId, *ast.TypeInfo),
+    // NEW: Track return statements in current function for inference
+    current_function_returns: std.ArrayList(*ast.TypeInfo),
+
     pub fn init(allocator: std.mem.Allocator, reporter: *Reporter, memory: *MemoryManager) SemanticAnalyzer {
         return .{
             .allocator = allocator,
@@ -46,17 +51,130 @@ pub const SemanticAnalyzer = struct {
             .current_scope = null,
             .type_cache = std.AutoHashMap(NodeId, *ast.TypeInfo).init(allocator),
             .custom_types = std.StringHashMap(CustomTypeInfo).init(allocator),
+            .function_return_types = std.AutoHashMap(NodeId, *ast.TypeInfo).init(allocator),
+            .current_function_returns = std.ArrayList(*ast.TypeInfo).init(allocator),
         };
     }
 
     pub fn deinit(self: *SemanticAnalyzer) void {
         self.type_cache.deinit();
         self.custom_types.deinit();
+        self.function_return_types.deinit();
+        self.current_function_returns.deinit();
     }
 
     // NEW: Export custom type information for HIR generation
     pub fn getCustomTypes(self: *SemanticAnalyzer) std.StringHashMap(CustomTypeInfo) {
         return self.custom_types;
+    }
+
+    // NEW: Flatten union types to ensure no nested unions
+    fn flattenUnionType(self: *SemanticAnalyzer, union_type: *ast.UnionType) !*ast.UnionType {
+        var flat_types = std.ArrayList(*ast.TypeInfo).init(self.allocator);
+        defer flat_types.deinit();
+
+        for (union_type.types) |member_type| {
+            if (member_type.base == .Union) {
+                if (member_type.union_type) |nested_union| {
+                    // Recursively flatten nested union
+                    const flattened_nested = try self.flattenUnionType(nested_union);
+                    for (flattened_nested.types) |nested_member| {
+                        // Check for duplicates before adding
+                        var is_duplicate = false;
+                        for (flat_types.items) |existing_type| {
+                            if (existing_type.base == nested_member.base) {
+                                is_duplicate = true;
+                                break;
+                            }
+                        }
+                        if (!is_duplicate) {
+                            try flat_types.append(nested_member);
+                        }
+                    }
+                }
+            } else {
+                // Check for duplicates before adding
+                var is_duplicate = false;
+                for (flat_types.items) |existing_type| {
+                    if (existing_type.base == member_type.base) {
+                        is_duplicate = true;
+                        break;
+                    }
+                }
+                if (!is_duplicate) {
+                    try flat_types.append(member_type);
+                }
+            }
+        }
+
+        const flattened_union = try self.allocator.create(ast.UnionType);
+        flattened_union.* = .{
+            .types = try flat_types.toOwnedSlice(),
+            .current_type_index = union_type.current_type_index,
+        };
+
+        return flattened_union;
+    }
+
+    // NEW: Create a union type from multiple types
+    fn createUnionType(self: *SemanticAnalyzer, types: []*ast.TypeInfo) !*ast.TypeInfo {
+        // Flatten any existing unions in the input types
+        var flat_types = std.ArrayList(*ast.TypeInfo).init(self.allocator);
+        defer flat_types.deinit();
+
+        for (types) |type_info| {
+            if (type_info.base == .Union) {
+                if (type_info.union_type) |union_type| {
+                    const flattened = try self.flattenUnionType(union_type);
+                    for (flattened.types) |member| {
+                        // Check for duplicates
+                        var is_duplicate = false;
+                        for (flat_types.items) |existing| {
+                            if (existing.base == member.base) {
+                                is_duplicate = true;
+                                break;
+                            }
+                        }
+                        if (!is_duplicate) {
+                            try flat_types.append(member);
+                        }
+                    }
+                }
+            } else {
+                // Check for duplicates
+                var is_duplicate = false;
+                for (flat_types.items) |existing| {
+                    if (existing.base == type_info.base) {
+                        is_duplicate = true;
+                        break;
+                    }
+                }
+                if (!is_duplicate) {
+                    try flat_types.append(type_info);
+                }
+            }
+        }
+
+        // If only one type remains, return it directly (no need for union)
+        if (flat_types.items.len == 1) {
+            return flat_types.items[0];
+        }
+
+        // Create union type
+        const union_type = try self.allocator.create(ast.UnionType);
+        union_type.* = .{
+            .types = try flat_types.toOwnedSlice(),
+            .current_type_index = 0,
+        };
+
+        const type_info = try self.allocator.create(ast.TypeInfo);
+        type_info.* = .{
+            .base = .Union,
+            .union_type = union_type,
+            .is_mutable = false,
+        };
+
+        return type_info;
     }
 
     // NEW: Register a custom type during semantic analysis
@@ -211,6 +329,9 @@ pub const SemanticAnalyzer = struct {
                     }
 
                     // Add to scope
+                    if (self.reporter.is_debug) {
+                        std.debug.print("DEBUG: Adding variable '{s}' to scope\n", .{decl.name.lexeme});
+                    }
                     _ = scope.createValueBinding(
                         decl.name.lexeme,
                         value,
@@ -230,6 +351,9 @@ pub const SemanticAnalyzer = struct {
                             return err;
                         }
                     };
+                    if (self.reporter.is_debug) {
+                        std.debug.print("DEBUG: Successfully added variable '{s}' to scope\n", .{decl.name.lexeme});
+                    }
                 },
                 .Block => |block_stmts| {
                     const block_scope = try self.memory.scope_manager.createScope(scope);
@@ -237,12 +361,46 @@ pub const SemanticAnalyzer = struct {
                     block_scope.deinit();
                 },
                 .FunctionDecl => |func| {
+                    // NEW: Start collecting return types for this function
+                    self.current_function_returns.clearRetainingCapacity();
+
                     // Create function type
                     const func_type = try self.allocator.create(ast.FunctionType);
-                    // Set up parameter types and return type
+
+                    // NEW: Infer return type if not explicitly provided
+                    var inferred_return_type = func.return_type_info;
+                    if (func.return_type_info.base == .Nothing) {
+                        // No explicit return type - infer from function body
+                        const inferred = try self.inferFunctionReturnType(func);
+                        inferred_return_type = inferred.*;
+                        if (self.reporter.is_debug) {
+                            std.debug.print("DEBUG: Function '{s}' inferred return type: {s}\n", .{ func.name.lexeme, @tagName(inferred_return_type.base) });
+                        }
+                    } else {
+                        // Explicit return type - flatten if it's a union
+                        if (func.return_type_info.base == .Union) {
+                            if (func.return_type_info.union_type) |union_type| {
+                                const flattened = try self.flattenUnionType(union_type);
+                                inferred_return_type = ast.TypeInfo{
+                                    .base = .Union,
+                                    .union_type = flattened,
+                                    .is_mutable = false,
+                                };
+                            }
+                        }
+                    }
+
+                    // Set up function type with inferred return type
+                    func_type.* = .{
+                        .params = &.{}, // TODO: Add parameter types
+                        .return_type = try self.allocator.create(ast.TypeInfo),
+                    };
+                    func_type.return_type.* = inferred_return_type;
+
                     // Add function to current scope
                     const func_type_info = try self.allocator.create(ast.TypeInfo);
                     func_type_info.* = .{ .base = .Function, .function_type = func_type };
+
                     var env = @import("../interpreter/environment.zig").init(
                         self.allocator,
                         null, // no enclosing environment for function declarations
@@ -273,6 +431,12 @@ pub const SemanticAnalyzer = struct {
                             return err;
                         }
                     };
+
+                    // Store the inferred return type for this function
+                    try self.function_return_types.put(stmt.base.id, func_type.return_type);
+
+                    // NEW: Validate function body with inferred return type
+                    try self.validateFunctionBody(func, stmt.base.span, inferred_return_type);
                 },
                 .EnumDecl => |enum_decl| {
                     // Register the enum type in the current scope
@@ -359,6 +523,10 @@ pub const SemanticAnalyzer = struct {
                         }
                     }
                 },
+                .Import => |import_info| {
+                    // NEW: Validate import
+                    try self.validateImport(import_info, stmt.base.span);
+                },
                 // TODO: Handle other declarations...
                 else => {},
             }
@@ -389,6 +557,85 @@ pub const SemanticAnalyzer = struct {
         for (statements) |stmt| {
             switch (stmt.data) {
                 .VarDecl => |decl| {
+                    // For function bodies, we need to add local variables to the function scope
+                    // For global scope, variables are already added during collectDeclarations
+                    if (self.current_scope) |scope| {
+                        // Check if this variable is already in the scope (from collectDeclarations)
+                        if (scope.lookupVariable(decl.name.lexeme) == null) {
+                            // This is a local variable in a function body that wasn't added during collection
+                            // Create TypeInfo for the variable
+                            const type_info = try self.allocator.create(ast.TypeInfo);
+                            errdefer self.allocator.destroy(type_info);
+
+                            // Check if we have an explicit type annotation
+                            if (decl.type_info.base != .Nothing) {
+                                // Use explicit type, but resolve custom types
+                                type_info.* = try self.resolveTypeInfo(decl.type_info);
+                            } else if (decl.initializer) |init_expr| {
+                                // Infer from initializer
+                                const inferred = try self.inferTypeFromExpr(init_expr);
+                                type_info.* = inferred.*;
+                            } else {
+                                // No type annotation and no initializer - this is invalid
+                                self.reporter.reportCompileError(
+                                    stmt.base.span.start,
+                                    "Variable declaration requires either type annotation (::) or initializer",
+                                    .{},
+                                );
+                                self.fatal_error = true;
+                                continue;
+                            }
+
+                            // Convert TypeInfo to TokenType
+                            const token_type = self.convertTypeToTokenType(type_info.base);
+
+                            // Get the actual value from initializer or use default for uninitialized variables
+                            var value = if (decl.initializer) |init_expr|
+                                try self.evaluateExpression(init_expr)
+                            else
+                                // Only use defaults for uninitialized variables
+                                switch (type_info.base) {
+                                    .Int => TokenLiteral{ .int = 0 },
+                                    .Float => TokenLiteral{ .float = 0.0 },
+                                    .String => TokenLiteral{ .string = "" },
+                                    .Tetra => TokenLiteral{ .tetra = .false },
+                                    .Byte => TokenLiteral{ .byte = 0 },
+                                    else => TokenLiteral{ .nothing = {} },
+                                };
+
+                            // Convert value to match the declared type
+                            value = try self.convertValueToType(value, type_info.base);
+
+                            // Add to current scope
+                            if (self.reporter.is_debug) {
+                                std.debug.print("DEBUG: Adding local variable '{s}' to function scope during validation\n", .{decl.name.lexeme});
+                            }
+                            _ = scope.createValueBinding(
+                                decl.name.lexeme,
+                                value,
+                                token_type,
+                                type_info.*,
+                                !type_info.is_mutable,
+                            ) catch |err| {
+                                if (err == error.DuplicateVariableName) {
+                                    self.reporter.reportCompileError(
+                                        stmt.base.span.start,
+                                        "Duplicate variable name '{s}' in current scope",
+                                        .{decl.name.lexeme},
+                                    );
+                                    self.fatal_error = true;
+                                    continue;
+                                } else {
+                                    return err;
+                                }
+                            };
+                            if (self.reporter.is_debug) {
+                                std.debug.print("DEBUG: Successfully added local variable '{s}' to function scope during validation\n", .{decl.name.lexeme});
+                            }
+                        }
+                    }
+
+                    // Type checking
                     if (decl.initializer) |init_expr| {
                         const init_type = try self.inferTypeFromExpr(init_expr);
                         if (decl.type_info.base != .Nothing) {
@@ -411,8 +658,29 @@ pub const SemanticAnalyzer = struct {
                 },
                 .Expression => |expr| {
                     if (expr) |expression| {
-                        // Validate the expression, which will trigger type checking for assignments
-                        _ = try self.inferTypeFromExpr(expression);
+                        // Check if this is a ForEach expression that needs special handling
+                        if (expression.data == .ForEach) {
+                            try self.validateForEachExpression(expression.data.ForEach, stmt.base.span);
+                        } else {
+                            // Validate the expression, which will trigger type checking for assignments
+                            _ = try self.inferTypeFromExpr(expression);
+                        }
+                    }
+                },
+                .Return => |return_stmt| {
+                    if (return_stmt.value) |value| {
+                        // Validate return value type
+                        _ = try self.inferTypeFromExpr(value);
+                    }
+                },
+                .FunctionDecl => |func| {
+                    // Function declarations are already validated in collectDeclarations
+                    // Just validate the body here with the stored return type
+                    if (self.function_return_types.get(stmt.base.id)) |return_type| {
+                        try self.validateFunctionBody(func, stmt.base.span, return_type.*);
+                    } else {
+                        // Fallback to original return type if not found
+                        try self.validateFunctionBody(func, stmt.base.span, func.return_type_info);
                     }
                 },
                 // TODO: Handle other statements...
@@ -421,7 +689,7 @@ pub const SemanticAnalyzer = struct {
         }
     }
 
-    fn unifyTypes(self: *SemanticAnalyzer, expected: *ast.TypeInfo, actual: *ast.TypeInfo, span: ast.SourceSpan) !void {
+    fn unifyTypes(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual: *ast.TypeInfo, span: ast.SourceSpan) !void {
         // Handle union types first - check if actual type is one of the union's member types
         if (expected.base == .Union) {
             if (expected.union_type) |union_type| {
@@ -654,6 +922,11 @@ pub const SemanticAnalyzer = struct {
                         type_info.* = .{ .base = .Tetra };
                     } else if (left_type.base == right_type.base) {
                         // Same type - allow comparison
+                        type_info.* = .{ .base = .Tetra };
+                    } else if ((left_type.base == .Custom and right_type.base == .Enum) or
+                        (left_type.base == .Enum and right_type.base == .Custom))
+                    {
+                        // Allow enum variable (Custom) to be compared with enum literal (Enum)
                         type_info.* = .{ .base = .Tetra };
                     } else {
                         // Incompatible types for comparison
@@ -971,24 +1244,117 @@ pub const SemanticAnalyzer = struct {
                     return type_info;
                 }
 
-                // Analyze the body statements
+                // Create a scope for the loop variables
+                const loop_scope = try self.memory.scope_manager.createScope(self.current_scope);
+
+                // Infer the element type from the array type
+                var element_type = ast.TypeInfo{ .base = .Nothing, .is_mutable = false };
+                if (array_type.array_type) |element_type_info| {
+                    element_type = element_type_info.*;
+                }
+
+                // Add the item variable to the loop scope
+                _ = loop_scope.createValueBinding(
+                    foreach_expr.item_name.lexeme,
+                    TokenLiteral{ .nothing = {} }, // Will be set at runtime
+                    self.convertTypeToTokenType(element_type.base),
+                    element_type,
+                    false, // Loop variables are mutable
+                ) catch |err| {
+                    if (err == error.DuplicateVariableName) {
+                        self.reporter.reportCompileError(
+                            expr.base.span.start,
+                            "Duplicate loop variable name '{s}'",
+                            .{foreach_expr.item_name.lexeme},
+                        );
+                        self.fatal_error = true;
+                        type_info.base = .Nothing;
+                        loop_scope.deinit();
+                        return type_info;
+                    } else {
+                        loop_scope.deinit();
+                        return err;
+                    }
+                };
+
+                // Add the index variable to the loop scope if present
+                if (foreach_expr.index_name) |index_name| {
+                    _ = loop_scope.createValueBinding(
+                        index_name.lexeme,
+                        TokenLiteral{ .nothing = {} }, // Will be set at runtime
+                        .INT, // Index is always an integer
+                        ast.TypeInfo{ .base = .Int, .is_mutable = false },
+                        false, // Loop variables are mutable
+                    ) catch |err| {
+                        if (err == error.DuplicateVariableName) {
+                            self.reporter.reportCompileError(
+                                expr.base.span.start,
+                                "Duplicate loop variable name '{s}'",
+                                .{index_name.lexeme},
+                            );
+                            self.fatal_error = true;
+                            type_info.base = .Nothing;
+                            loop_scope.deinit();
+                            return type_info;
+                        } else {
+                            loop_scope.deinit();
+                            return err;
+                        }
+                    };
+                }
+
+                // Temporarily set current scope to loop scope
+                const prev_scope = self.current_scope;
+                self.current_scope = loop_scope;
+
+                // Analyze the body statements in the loop scope
                 for (foreach_expr.body) |stmt| {
                     try self.validateStatements(&[_]ast.Stmt{stmt});
                 }
+
+                // Restore previous scope and clean up loop scope
+                self.current_scope = prev_scope;
+                loop_scope.deinit();
 
                 type_info.* = .{ .base = .Nothing }; // ForEach expressions have no value
             },
             .Match => |match_expr| {
                 _ = try self.inferTypeFromExpr(match_expr.value);
 
-                // Analyze all cases and ensure they have compatible types
+                // Analyze all cases and create a union type if they have different types
                 if (match_expr.cases.len > 0) {
                     const first_case_type = try self.inferTypeFromExpr(match_expr.cases[0].body);
+
+                    // Check if all cases have the same type
+                    var all_same_type = true;
+                    var union_types = std.ArrayList(*ast.TypeInfo).init(self.allocator);
+                    defer union_types.deinit();
+
+                    try union_types.append(first_case_type);
+
                     for (match_expr.cases[1..]) |case| {
                         const case_type = try self.inferTypeFromExpr(case.body);
-                        try self.unifyTypes(first_case_type, case_type, expr.base.span);
+                        if (case_type.base != first_case_type.base) {
+                            all_same_type = false;
+                        }
+                        try union_types.append(case_type);
                     }
-                    type_info.* = first_case_type.*;
+
+                    if (all_same_type) {
+                        // All cases have the same type
+                        type_info.* = first_case_type.*;
+                    } else {
+                        // Create a union type from all case types
+                        const union_type_array = try self.allocator.alloc(*ast.TypeInfo, union_types.items.len);
+                        for (union_types.items, union_type_array) |item, *dest| {
+                            dest.* = item;
+                        }
+
+                        const union_type = try self.allocator.create(ast.UnionType);
+                        union_type.* = .{ .types = union_type_array };
+
+                        type_info.* = .{ .base = .Union, .union_type = union_type };
+                    }
                 } else {
                     type_info.* = .{ .base = .Nothing };
                 }
@@ -1471,40 +1837,10 @@ pub const SemanticAnalyzer = struct {
 
                 type_info.* = .{ .base = .Nothing }; // Assert has no return value
             },
-            .StructDecl => |struct_decl| {
-                // Register the struct type in the current scope
-                if (self.current_scope) |scope| {
-                    const struct_type_info = try self.allocator.create(ast.TypeInfo);
-                    struct_type_info.* = .{ .base = .Struct, .custom_type = struct_decl.name.lexeme, .is_mutable = false };
-
-                    // Create a placeholder value for the struct type
-                    const struct_value = TokenLiteral{ .string = struct_decl.name.lexeme };
-
-                    _ = scope.createValueBinding(
-                        struct_decl.name.lexeme,
-                        struct_value,
-                        .STRUCT,
-                        struct_type_info.*,
-                        true, // Struct types are constants
-                    ) catch |err| {
-                        if (err == error.DuplicateVariableName) {
-                            self.reporter.reportCompileError(
-                                expr.base.span.start,
-                                "Duplicate struct name '{s}' in current scope",
-                                .{struct_decl.name.lexeme},
-                            );
-                            self.fatal_error = true;
-                        } else {
-                            return err;
-                        }
-                    };
-                }
-
+            .StructDecl => {
                 type_info.* = .{ .base = .Struct };
             },
             .StructLiteral => |struct_lit| {
-                // Struct literals should be Custom type with the struct type name
-                // This is similar to how enum variant literals are Enum type
                 type_info.* = .{ .base = .Custom, .custom_type = struct_lit.name.lexeme };
             },
             .EnumDecl => {
@@ -1530,10 +1866,23 @@ pub const SemanticAnalyzer = struct {
                 self.allocator.destroy(type_info_ptr);
             },
             .Cast => |cast| {
-                // TODO: Implement type inference for cast expressions
-                // For now, just infer the target type
-                const target_type_info = try self.inferTypeFromExpr(cast.value);
+                // For cast expressions (value as Type), the result type is the target type
+                // Parse the target type from the cast expression
+                const target_type_info = try self.typeExprToTypeInfo(cast.target_type);
                 type_info.* = target_type_info.*;
+
+                // Also validate that the value being cast is a union type
+                const value_type = try self.inferTypeFromExpr(cast.value);
+                if (value_type.base != .Union) {
+                    self.reporter.reportCompileError(
+                        expr.base.span.start,
+                        "Type casting 'as' can only be used with union types, got {s}",
+                        .{@tagName(value_type.base)},
+                    );
+                    self.fatal_error = true;
+                    type_info.base = .Nothing;
+                    return type_info;
+                }
             },
         }
 
@@ -1563,39 +1912,12 @@ pub const SemanticAnalyzer = struct {
                     std.debug.print("DEBUG: Resolving/flattening union type with {} members\n", .{union_type.types.len});
                 }
 
-                // Collect all non-union members recursively
-                var flat_types = std.ArrayList(*ast.TypeInfo).init(self.allocator);
-                defer flat_types.deinit();
-
-                for (union_type.types) |member_type| {
-                    const resolved_member = try self.resolveTypeInfo(member_type.*);
-                    if (resolved_member.base == .Union) {
-                        if (resolved_member.union_type) |nested_union| {
-                            for (nested_union.types) |nested_member| {
-                                try flat_types.append(nested_member);
-                            }
-                        }
-                    } else {
-                        // Allocate a new TypeInfo for each non-union member
-                        const new_member = try self.allocator.create(ast.TypeInfo);
-                        new_member.* = resolved_member;
-                        try flat_types.append(new_member);
-                    }
-                }
-
-                const resolved_union_type = try self.allocator.create(ast.UnionType);
-                resolved_union_type.* = .{
-                    .types = try flat_types.toOwnedSlice(),
-                    .current_type_index = union_type.current_type_index,
-                };
-
-                if (self.reporter.is_debug) {
-                    std.debug.print("DEBUG: Created flattened union with {} members\n", .{resolved_union_type.types.len});
-                }
+                // Use the new flattening function
+                const flattened_union = try self.flattenUnionType(union_type);
 
                 return ast.TypeInfo{
                     .base = .Union,
-                    .union_type = resolved_union_type,
+                    .union_type = flattened_union,
                     .is_mutable = type_info.is_mutable,
                 };
             }
@@ -1607,7 +1929,21 @@ pub const SemanticAnalyzer = struct {
 
     fn lookupVariable(self: *SemanticAnalyzer, name: []const u8) ?*Variable {
         if (self.current_scope) |scope| {
-            return scope.lookupVariable(name);
+            if (self.reporter.is_debug) {
+                std.debug.print("DEBUG: Looking up variable '{s}' in scope\n", .{name});
+            }
+            const result = scope.lookupVariable(name);
+            if (self.reporter.is_debug) {
+                if (result) |variable| {
+                    std.debug.print("DEBUG: Found variable '{s}' with storage_id {}\n", .{ name, variable.storage_id });
+                } else {
+                    std.debug.print("DEBUG: Variable '{s}' not found\n", .{name});
+                }
+            }
+            return result;
+        }
+        if (self.reporter.is_debug) {
+            std.debug.print("DEBUG: No current scope available for variable lookup '{s}'\n", .{name});
         }
         return null;
     }
@@ -1635,8 +1971,6 @@ pub const SemanticAnalyzer = struct {
                 } };
             },
             .Custom => |custom| {
-                // Variables of enum types should remain as Custom type with the enum type name
-                // Only enum declarations themselves should be Enum base type
                 type_info.* = .{ .base = .Custom, .custom_type = custom.lexeme };
             },
             .Array => |array| {
@@ -1644,18 +1978,30 @@ pub const SemanticAnalyzer = struct {
                 type_info.* = .{ .base = .Array, .array_type = element_type };
             },
             .Struct => |fields| {
-                const struct_fields = try self.allocator.alloc(ast.StructFieldType, fields.len);
-                for (fields, struct_fields) |field, *struct_field| {
+                var struct_fields = try self.allocator.alloc(ast.StructFieldType, fields.len);
+                for (fields, 0..) |field, i| {
                     const field_type = try self.typeExprToTypeInfo(field.type_expr);
-                    struct_field.* = .{
+                    struct_fields[i] = .{
                         .name = field.name.lexeme,
                         .type_info = field_type,
                     };
                 }
                 type_info.* = .{ .base = .Struct, .struct_fields = struct_fields };
             },
-            .Enum => |variants| {
-                type_info.* = .{ .base = .Enum, .variants = @constCast(variants) };
+            .Enum => |_| {
+                type_info.* = .{ .base = .Nothing };
+            },
+            .Union => |types| {
+                var union_types = try self.allocator.alloc(*ast.TypeInfo, types.len);
+                for (types, 0..) |union_type_expr, i| {
+                    union_types[i] = try self.typeExprToTypeInfo(union_type_expr);
+                }
+                const union_type = try self.allocator.create(ast.UnionType);
+                union_type.* = .{
+                    .types = union_types,
+                    .current_type_index = 0,
+                };
+                type_info.* = .{ .base = .Union, .union_type = union_type };
             },
         }
 
@@ -1927,5 +2273,615 @@ pub const SemanticAnalyzer = struct {
         };
 
         return TokenLiteral{ .string = type_string };
+    }
+
+    // NEW: Function body validation
+    fn validateFunctionBody(self: *SemanticAnalyzer, func: anytype, func_span: ast.SourceSpan, expected_return_type: ast.TypeInfo) !void {
+        // Create function scope with parameters
+        const func_scope = try self.memory.scope_manager.createScope(self.current_scope);
+        defer func_scope.deinit();
+
+        // Add parameters to function scope
+        for (func.params) |param| {
+            const param_type_info = if (param.type_expr) |type_expr|
+                try ast.typeInfoFromExpr(self.allocator, type_expr)
+            else
+                try self.allocator.create(ast.TypeInfo);
+
+            if (param.type_expr == null) {
+                param_type_info.* = .{ .base = .Nothing }; // Default to nothing if no type specified
+            }
+
+            _ = func_scope.createValueBinding(
+                param.name.lexeme,
+                TokenLiteral{ .nothing = {} }, // Parameters get their values at call time
+                self.convertTypeToTokenType(param_type_info.base),
+                param_type_info.*,
+                false, // Parameters are mutable
+            ) catch |err| {
+                if (err == error.DuplicateVariableName) {
+                    self.reporter.reportCompileError(
+                        func_span.start,
+                        "Duplicate parameter name '{s}' in function '{s}'",
+                        .{ param.name.lexeme, func.name.lexeme },
+                    );
+                    self.fatal_error = true;
+                    return;
+                } else {
+                    return err;
+                }
+            };
+        }
+
+        // Temporarily set current scope to function scope
+        const prev_scope = self.current_scope;
+        self.current_scope = func_scope;
+
+        // Validate function body statements
+        try self.validateStatements(func.body);
+
+        // NEW: Return path analysis with enhanced union subtyping
+        _ = try self.validateReturnPaths(func.body, expected_return_type, func_span);
+
+        // Restore previous scope
+        self.current_scope = prev_scope;
+    }
+
+    // NEW: Return path analysis with enhanced union subtyping
+    fn validateReturnPaths(self: *SemanticAnalyzer, body: []ast.Stmt, expected_return_type: ast.TypeInfo, func_span: ast.SourceSpan) !bool {
+        var has_return = false;
+        var has_return_with_value = false;
+        var has_return_without_value = false;
+        var all_paths_return = true;
+
+        if (self.reporter.is_debug) {
+            std.debug.print("DEBUG: validateReturnPaths: Processing {} statements\n", .{body.len});
+        }
+
+        for (body) |stmt| {
+            if (self.reporter.is_debug) {
+                std.debug.print("DEBUG: validateReturnPaths: Statement type: {s}\n", .{@tagName(stmt.data)});
+            }
+            switch (stmt.data) {
+                .Return => |return_stmt| {
+                    if (self.reporter.is_debug) {
+                        std.debug.print("DEBUG: validateReturnPaths: Found Return statement\n", .{});
+                    }
+                    has_return = true;
+                    if (return_stmt.value) |value| {
+                        has_return_with_value = true;
+                        const return_type = try self.inferTypeFromExpr(value);
+                        try self.validateReturnTypeCompatibility(&expected_return_type, return_type, stmt.base.span);
+                    } else {
+                        has_return_without_value = true;
+                        if (expected_return_type.base != .Nothing) {
+                            self.reporter.reportCompileError(
+                                stmt.base.span.start,
+                                "Function expects return value of type {s}, but return statement has no value",
+                                .{@tagName(expected_return_type.base)},
+                            );
+                            self.fatal_error = true;
+                        }
+                    }
+                },
+                .Block => |block_stmts| {
+                    // Recursively check blocks for return statements
+                    const block_returns = try self.validateReturnPaths(block_stmts, expected_return_type, func_span);
+                    if (block_returns) {
+                        has_return = true;
+                        has_return_with_value = true; // Assume blocks with returns have values
+                    } else {
+                        all_paths_return = false;
+                    }
+                },
+                .Expression => |expr| {
+                    if (expr) |expression| {
+                        if (self.reporter.is_debug) {
+                            std.debug.print("DEBUG: validateReturnPaths: Expression type: {s}\n", .{@tagName(expression.data)});
+                        }
+                        // Check if this is an if expression that might return
+                        if (expression.data == .If) {
+                            if (self.reporter.is_debug) {
+                                std.debug.print("DEBUG: validateReturnPaths: Found If expression\n", .{});
+                            }
+                            const if_returns = try self.validateIfExpressionReturns(expression, expected_return_type, func_span);
+                            if (if_returns) {
+                                has_return = true;
+                                has_return_with_value = true; // If expressions that return have values
+                            } else {
+                                all_paths_return = false;
+                            }
+                        }
+                    }
+                },
+                else => {},
+            }
+        }
+
+        // Check for missing return statements
+        if (expected_return_type.base != .Nothing and !has_return_with_value) {
+            if (self.reporter.is_debug) {
+                std.debug.print("DEBUG: validateReturnPaths: Missing return with value. has_return={}, has_return_with_value={}, all_paths_return={}\n", .{ has_return, has_return_with_value, all_paths_return });
+            }
+            self.reporter.reportCompileError(
+                func_span.start,
+                "Function expects return value of type {s}, but no return statement with value found",
+                .{@tagName(expected_return_type.base)},
+            );
+            self.fatal_error = true;
+        }
+
+        if (expected_return_type.base == .Nothing and has_return_with_value) {
+            self.reporter.reportCompileError(
+                func_span.start,
+                "Function expects no return value, but return statement has value",
+                .{},
+            );
+            self.fatal_error = true;
+        }
+
+        return has_return or all_paths_return;
+    }
+
+    // NEW: Validate if expressions for return paths
+    fn validateIfExpressionReturns(self: *SemanticAnalyzer, if_expr: *ast.Expr, expected_return_type: ast.TypeInfo, func_span: ast.SourceSpan) ErrorList!bool {
+        const if_data = if_expr.data.If;
+
+        // Check then branch
+        const then_returns = if (if_data.then_branch) |then_branch|
+            try self.validateExpressionReturns(then_branch, expected_return_type, func_span)
+        else
+            false;
+
+        // Check else branch
+        const else_returns = if (if_data.else_branch) |else_branch|
+            try self.validateExpressionReturns(else_branch, expected_return_type, func_span)
+        else
+            false;
+
+        // Both branches must return for the if to guarantee a return
+        return then_returns and else_returns;
+    }
+
+    // NEW: Validate ForEach expressions with proper scope management
+    fn validateForEachExpression(self: *SemanticAnalyzer, foreach_expr: ast.ForEachExpr, span: ast.SourceSpan) ErrorList!void {
+        // Validate the array expression
+        const array_type = try self.inferTypeFromExpr(foreach_expr.array);
+        if (array_type.base != .Array) {
+            self.reporter.reportCompileError(
+                span.start,
+                "ForEach requires array type, got {s}",
+                .{@tagName(array_type.base)},
+            );
+            self.fatal_error = true;
+            return;
+        }
+
+        // Create a scope for the loop variables
+        const loop_scope = try self.memory.scope_manager.createScope(self.current_scope);
+
+        // Infer the element type from the array type
+        var element_type = ast.TypeInfo{ .base = .Nothing, .is_mutable = false };
+        if (array_type.array_type) |element_type_info| {
+            element_type = element_type_info.*;
+        }
+
+        // Add the item variable to the loop scope
+        _ = loop_scope.createValueBinding(
+            foreach_expr.item_name.lexeme,
+            TokenLiteral{ .nothing = {} }, // Will be set at runtime
+            self.convertTypeToTokenType(element_type.base),
+            element_type,
+            false, // Loop variables are mutable
+        ) catch |err| {
+            if (err == error.DuplicateVariableName) {
+                self.reporter.reportCompileError(
+                    span.start,
+                    "Duplicate loop variable name '{s}'",
+                    .{foreach_expr.item_name.lexeme},
+                );
+                self.fatal_error = true;
+                loop_scope.deinit();
+                return;
+            } else {
+                loop_scope.deinit();
+                return err;
+            }
+        };
+
+        // Add the index variable to the loop scope if present
+        if (foreach_expr.index_name) |index_name| {
+            _ = loop_scope.createValueBinding(
+                index_name.lexeme,
+                TokenLiteral{ .nothing = {} }, // Will be set at runtime
+                .INT, // Index is always an integer
+                ast.TypeInfo{ .base = .Int, .is_mutable = false },
+                false, // Loop variables are mutable
+            ) catch |err| {
+                if (err == error.DuplicateVariableName) {
+                    self.reporter.reportCompileError(
+                        span.start,
+                        "Duplicate loop variable name '{s}'",
+                        .{index_name.lexeme},
+                    );
+                    self.fatal_error = true;
+                    loop_scope.deinit();
+                    return;
+                } else {
+                    loop_scope.deinit();
+                    return err;
+                }
+            };
+        }
+
+        // Temporarily set current scope to loop scope
+        const prev_scope = self.current_scope;
+        self.current_scope = loop_scope;
+
+        // Validate the body statements in the loop scope
+        try self.validateStatements(foreach_expr.body);
+
+        // Restore previous scope and clean up loop scope
+        self.current_scope = prev_scope;
+        loop_scope.deinit();
+    }
+
+    // NEW: Validate if an expression returns a value
+    fn validateExpressionReturns(self: *SemanticAnalyzer, expr: *ast.Expr, expected_return_type: ast.TypeInfo, func_span: ast.SourceSpan) ErrorList!bool {
+        switch (expr.data) {
+            .ReturnExpr => |return_expr| {
+                if (return_expr.value) |value| {
+                    const return_type = try self.inferTypeFromExpr(value);
+                    try self.validateReturnTypeCompatibility(&expected_return_type, return_type, expr.base.span);
+                    return true;
+                } else {
+                    return expected_return_type.base == .Nothing;
+                }
+            },
+            .If => {
+                return self.validateIfExpressionReturns(expr, expected_return_type, func_span);
+            },
+            .Block => |block| {
+                // Check statements in the block for return statements
+                const block_returns = try self.validateReturnPaths(block.statements, expected_return_type, func_span);
+
+                // Also check the final value expression if present
+                if (block.value) |value| {
+                    const value_returns = try self.validateExpressionReturns(value, expected_return_type, func_span);
+                    return block_returns or value_returns;
+                } else {
+                    return block_returns;
+                }
+            },
+            else => {
+                // Other expressions don't return values in the control flow sense
+                return false;
+            },
+        }
+    }
+
+    // NEW: Import validation
+    fn validateImport(self: *SemanticAnalyzer, import_info: ast.ImportInfo, import_span: ast.SourceSpan) !void {
+        // Check if module file exists
+        const module_exists = self.checkModuleExists(import_info.module_path);
+        if (!module_exists) {
+            self.reporter.reportCompileError(
+                import_span.start,
+                "Module file not found: '{s}'",
+                .{import_info.module_path},
+            );
+            self.fatal_error = true;
+            return;
+        }
+
+        // Check for circular imports
+        if (self.isCircularImport(import_info.module_path)) {
+            self.reporter.reportCompileError(
+                import_span.start,
+                "Circular import detected: '{s}'",
+                .{import_info.module_path},
+            );
+            self.fatal_error = true;
+            return;
+        }
+
+        // If specific symbol is requested, validate it exists
+        if (import_info.specific_symbol) |symbol_name| {
+            const symbol_exists = self.checkSymbolExists(import_info.module_path, symbol_name);
+            if (!symbol_exists) {
+                self.reporter.reportCompileError(
+                    import_span.start,
+                    "Symbol '{s}' not found in module '{s}'",
+                    .{ symbol_name, import_info.module_path },
+                );
+                self.fatal_error = true;
+                return;
+            }
+        }
+    }
+
+    // Helper: Check if module file exists
+    fn checkModuleExists(_: *SemanticAnalyzer, _: []const u8) bool {
+        // TODO: Implement actual file system check
+        // For now, assume all modules exist (they should be validated during parsing)
+        return true;
+    }
+
+    // Helper: Check for circular imports
+    fn isCircularImport(_: *SemanticAnalyzer, _: []const u8) bool {
+        // TODO: Implement circular import detection
+        // This would require tracking the import chain
+        return false;
+    }
+
+    // Helper: Check if symbol exists in module
+    fn checkSymbolExists(_: *SemanticAnalyzer, _: []const u8, _: []const u8) bool {
+        // TODO: Implement symbol existence check
+        // This would require loading the module and checking its public symbols
+        return true;
+    }
+
+    // NEW: Infer return type from function body
+    fn inferFunctionReturnType(self: *SemanticAnalyzer, func: anytype) ErrorList!*ast.TypeInfo {
+        var return_types = std.ArrayList(*ast.TypeInfo).init(self.allocator);
+        defer return_types.deinit();
+
+        // Create function scope with parameters for return type inference
+        const func_scope = try self.memory.scope_manager.createScope(self.current_scope);
+        defer func_scope.deinit();
+
+        // Add parameters to function scope
+        for (func.params) |param| {
+            const param_type_info = if (param.type_expr) |type_expr|
+                try ast.typeInfoFromExpr(self.allocator, type_expr)
+            else
+                try self.allocator.create(ast.TypeInfo);
+
+            if (param.type_expr == null) {
+                param_type_info.* = .{ .base = .Nothing }; // Default to nothing if no type specified
+            }
+
+            _ = func_scope.createValueBinding(
+                param.name.lexeme,
+                TokenLiteral{ .nothing = {} }, // Parameters get their values at call time
+                self.convertTypeToTokenType(param_type_info.base),
+                param_type_info.*,
+                false, // Parameters are mutable
+            ) catch |err| {
+                if (err == error.DuplicateVariableName) {
+                    // This shouldn't happen during inference, but handle gracefully
+                    continue;
+                } else {
+                    return err;
+                }
+            };
+        }
+
+        // Temporarily set current scope to function scope for return type inference
+        const prev_scope = self.current_scope;
+        self.current_scope = func_scope;
+
+        // Collect all return statement types
+        try self.collectReturnTypes(func.body, &return_types);
+
+        // Restore previous scope
+        self.current_scope = prev_scope;
+
+        if (self.reporter.is_debug) {
+            std.debug.print("DEBUG: Collected {} return types\n", .{return_types.items.len});
+            for (return_types.items, 0..) |return_type, i| {
+                std.debug.print("DEBUG: Return type {}: {s}\n", .{ i, @tagName(return_type.base) });
+            }
+        }
+
+        if (return_types.items.len == 0) {
+            // No return statements - function returns Nothing
+            const type_info = try self.allocator.create(ast.TypeInfo);
+            type_info.* = .{ .base = .Nothing, .is_mutable = false };
+            return type_info;
+        }
+
+        if (return_types.items.len == 1) {
+            // Single return type - return it directly
+            return return_types.items[0];
+        }
+
+        // Multiple return types - create a union
+        return try self.createUnionType(return_types.items);
+    }
+
+    // NEW: Collect return types from function body
+    fn collectReturnTypes(self: *SemanticAnalyzer, statements: []ast.Stmt, return_types: *std.ArrayList(*ast.TypeInfo)) ErrorList!void {
+        if (self.reporter.is_debug) {
+            std.debug.print("DEBUG: Processing {} statements for return types\n", .{statements.len});
+        }
+        for (statements) |stmt| {
+            if (self.reporter.is_debug) {
+                std.debug.print("DEBUG: Statement type: {s}\n", .{@tagName(stmt.data)});
+            }
+            switch (stmt.data) {
+                .Return => |return_stmt| {
+                    if (self.reporter.is_debug) {
+                        std.debug.print("DEBUG: Found Return statement\n", .{});
+                    }
+                    if (return_stmt.value) |value| {
+                        const return_type = try self.inferTypeFromExpr(value);
+                        try return_types.append(return_type);
+                    } else {
+                        // Return without value - add Nothing type
+                        const nothing_type = try self.allocator.create(ast.TypeInfo);
+                        nothing_type.* = .{ .base = .Nothing, .is_mutable = false };
+                        try return_types.append(nothing_type);
+                    }
+                },
+                .Block => |block_stmts| {
+                    if (self.reporter.is_debug) {
+                        std.debug.print("DEBUG: Found Block statement with {} sub-statements\n", .{block_stmts.len});
+                    }
+                    try self.collectReturnTypes(block_stmts, return_types);
+                },
+                .Expression => |expr| {
+                    if (self.reporter.is_debug) {
+                        std.debug.print("DEBUG: Found Expression statement\n", .{});
+                    }
+                    if (expr) |expression| {
+                        if (self.reporter.is_debug) {
+                            std.debug.print("DEBUG: Expression type: {s}\n", .{@tagName(expression.data)});
+                        }
+                        // Check if this is a return expression
+                        if (expression.data == .ReturnExpr) {
+                            if (self.reporter.is_debug) {
+                                std.debug.print("DEBUG: Found ReturnExpr\n", .{});
+                            }
+                            const return_expr = expression.data.ReturnExpr;
+                            if (return_expr.value) |value| {
+                                const return_type = try self.inferTypeFromExpr(value);
+                                try return_types.append(return_type);
+                            } else {
+                                // Return without value - add Nothing type
+                                const nothing_type = try self.allocator.create(ast.TypeInfo);
+                                nothing_type.* = .{ .base = .Nothing, .is_mutable = false };
+                                try return_types.append(nothing_type);
+                            }
+                        }
+                        // Check if this is an if expression that might return
+                        else if (expression.data == .If) {
+                            if (self.reporter.is_debug) {
+                                std.debug.print("DEBUG: Found If expression\n", .{});
+                            }
+                            try self.collectReturnTypesFromIf(expression, return_types);
+                        }
+                        // Check if this is a block expression
+                        else if (expression.data == .Block) {
+                            if (self.reporter.is_debug) {
+                                std.debug.print("DEBUG: Found Block expression\n", .{});
+                            }
+                            const block_expr = expression.data.Block;
+                            if (block_expr.value) |value| {
+                                try self.collectReturnTypesFromExpr(value, return_types);
+                            }
+                        }
+                    }
+                },
+                else => {},
+            }
+        }
+    }
+
+    // NEW: Collect return types from if expressions
+    fn collectReturnTypesFromIf(self: *SemanticAnalyzer, if_expr: *ast.Expr, return_types: *std.ArrayList(*ast.TypeInfo)) ErrorList!void {
+        const if_data = if_expr.data.If;
+
+        // Check then branch
+        if (if_data.then_branch) |then_branch| {
+            try self.collectReturnTypesFromExpr(then_branch, return_types);
+        }
+
+        // Check else branch
+        if (if_data.else_branch) |else_branch| {
+            try self.collectReturnTypesFromExpr(else_branch, return_types);
+        }
+    }
+
+    // NEW: Collect return types from expressions
+    fn collectReturnTypesFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr, return_types: *std.ArrayList(*ast.TypeInfo)) ErrorList!void {
+        switch (expr.data) {
+            .ReturnExpr => |return_expr| {
+                if (return_expr.value) |value| {
+                    const return_type = try self.inferTypeFromExpr(value);
+                    try return_types.append(return_type);
+                } else {
+                    const nothing_type = try self.allocator.create(ast.TypeInfo);
+                    nothing_type.* = .{ .base = .Nothing, .is_mutable = false };
+                    try return_types.append(nothing_type);
+                }
+            },
+            .If => {
+                try self.collectReturnTypesFromIf(expr, return_types);
+            },
+            .Block => |block| {
+                // Check statements in the block for return statements
+                try self.collectReturnTypes(block.statements, return_types);
+
+                // Also check the final value expression if present
+                if (block.value) |value| {
+                    try self.collectReturnTypesFromExpr(value, return_types);
+                }
+            },
+            else => {
+                // Other expressions don't return values in the control flow sense
+            },
+        }
+    }
+
+    // NEW: Validate return type compatibility with union subtyping
+    fn validateReturnTypeCompatibility(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual: *ast.TypeInfo, span: ast.SourceSpan) !void {
+        // Handle union types for return type checking
+        if (expected.base == .Union) {
+            if (expected.union_type) |union_type| {
+                if (self.reporter.is_debug) {
+                    std.debug.print("DEBUG: Checking return type compatibility with union\n", .{});
+                    std.debug.print("DEBUG: Expected union has {} member types\n", .{union_type.types.len});
+                    std.debug.print("DEBUG: Actual return type is: {s}\n", .{@tagName(actual.base)});
+                }
+
+                // Check if actual type is a union
+                if (actual.base == .Union) {
+                    if (actual.union_type) |actual_union| {
+                        // Check that every member of the actual union is compatible with the expected union
+                        for (actual_union.types) |actual_member| {
+                            var found_match = false;
+                            for (union_type.types) |expected_member| {
+                                if (actual_member.base == expected_member.base) {
+                                    found_match = true;
+                                    break;
+                                }
+                            }
+                            if (!found_match) {
+                                self.reporter.reportCompileError(
+                                    span.start,
+                                    "Return type {s} is not compatible with function's union return type",
+                                    .{@tagName(actual_member.base)},
+                                );
+                                self.fatal_error = true;
+                                return;
+                            }
+                        }
+                        return; // All members are compatible
+                    }
+                } else {
+                    // Single type - check if it's a member of the expected union
+                    var found_match = false;
+                    for (union_type.types) |member_type| {
+                        if (member_type.base == actual.base) {
+                            found_match = true;
+                            break;
+                        }
+                    }
+
+                    if (!found_match) {
+                        // Build a list of allowed types for the error message
+                        var type_list = std.ArrayList(u8).init(self.allocator);
+                        defer type_list.deinit();
+
+                        for (union_type.types, 0..) |member_type, i| {
+                            if (i > 0) try type_list.appendSlice(" | ");
+                            try type_list.appendSlice(@tagName(member_type.base));
+                        }
+
+                        self.reporter.reportCompileError(
+                            span.start,
+                            "Return type {s} is not compatible with function's union return type ({s})",
+                            .{ @tagName(actual.base), type_list.items },
+                        );
+                        self.fatal_error = true;
+                        return;
+                    }
+                }
+            }
+        } else {
+            // Non-union expected type - use regular type unification
+            try self.unifyTypes(expected, actual, span);
+        }
     }
 };

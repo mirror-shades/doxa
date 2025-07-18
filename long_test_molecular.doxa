@@ -300,8 +300,6 @@ var union_decl_int_float_string :: int | float | string;
 var union_decl_int_float_string_nothing :: int | float | string | nothing;
 var union_decl_int_float_string_nothing_person :: int | float | string | nothing | Person;
 
-union_decl_int_float is "hello";
-
 fn create_number_union() returns(int | float) {
     return 42;
 }
