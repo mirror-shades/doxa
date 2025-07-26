@@ -11,31 +11,14 @@ Unions are declared using pipes:
 ```doxa
 var x :: int | float;
 var y :: string | int | float;
-```
 
-The pipe's only usage in Doxa is to specify a typed union.
-
-## Examples
-
-```doxa
-// A union that can be either an integer or a float
 var number :: int | float;
 number is 42;     // Valid - integer
 number is 3.14;   // Valid - float
-
-// A union that can be a string, integer, or float
-var value :: string | int | float;
-value is "hello"; // Valid - string
-value is 100;     // Valid - integer
-value is 2.718;   // Valid - float
-
-// Unions default to the first type when not initialized
-var defaulted :: int | float;
-defaulted?;       // Prints 0 (default int value)
-
-var float_first :: float | int;
-float_first?;     // Prints 0.0 (default float value)
+number is "six";  // Invalid! 
 ```
+
+The pipe's only usage in Doxa is to specify a typed union.
 
 ## Default Behavior
 
@@ -48,7 +31,12 @@ When a union is declared without initialization, it defaults to the **first type
 - `tetra` defaults to `false`
 - `nothing` defaults to `nothing`
 
-This ensures that unions always have a well-defined state and the compiler knows which type is currently active.
+```doxa
+var x :: int | float; // current value is int, 0
+var x :: float | int; // current value is float, 0.0
+```
+
+This ensures that unions are always provided a predictable state for the compiler.
 
 ## Optional Values
 
@@ -79,10 +67,63 @@ Unions are particularly useful when:
 - A variable needs to hold different types at different times
 - You want to represent optional values (like `T | nothing`)
 - You're working with data that can have multiple valid representations
+- You want explicit error handling
+
+## Type Casting with `as`
+
+The `as` keyword attempts to cast a union to a specific type. If the cast fails, the `else` block is executed:
+
+```doxa
+var value :: int | string;
+value is "hello";
+
+// This will execute the else block since value is currently a string
+const number = value as int else {
+    return error.ExpectedInteger;
+};
+
+// This will succeed since value is now an int
+value is 42;
+const doubled = value as int else {
+    return error.ExpectedInteger;
+}; // doubled is 84
+```
+
+### Common Patterns
+
+**Safe extraction with default:**
+
+```doxa
+const result = someUnion as int else {
+    return 0; // Default value if not an int
+};
+```
+
+**Type assertions:**
+
+```doxa
+const number = value as int else {
+    @panic("This should never happen in production!");
+};
+```
+
+**Conditional processing:**
+
+```doxa
+const processed = value as string else {
+    // Handle non-string case
+    return "default";
+};
+```
+
+The `as` keyword is useful for safely working with unions when you need to extract a specific type.
+
 
 ## Error Handling
 
-Here is a robust example of how error handling can be done using Doxa. Note that none of this handling is specific to _errors_, it is a general return pattern which relies on normal values making semanitcs extremely clear and flexible. This relies on the `as` keyword which attempts to narrow a value into another type.
+Possibly the most powerful usage of typed unions is the ability to create robust error handling using only primitive types. Doxa doesn't have error typing, it embraces the idea that errors are values.
+
+Here is a robust example of how error handling can be done using Doxa. Note that none of this handling is specific to _errors_, it is a general return pattern which relies on normal values making semanitcs extremely clear and flexible. Unions can take advantage of the `as` keyword which attempts to narrow a value into another type.
 
 ```doxa
 enum ErrorList {
@@ -126,7 +167,7 @@ const myInt = unknownRightResult as int else {
 onlyUsesInts(myInt);
 
 // Note type checking in control flow doesn't implicitly cast unlike match case which is exhaustive
-// this can be done by casting bt it is not as ergonomic as match case
+// this means explicit casting must still be done to values if used inside if/else
 if unknownRightResult @istype int then {
     onlyUsesInts(unknownRightResult) as int else{};
 } else if unknownRightResult @istype ErrorList then {
@@ -134,51 +175,3 @@ if unknownRightResult @istype int then {
 }
 ```
 
-## Type Casting with `as`
-
-The `as` keyword attempts to cast a union to a specific type. If the cast fails, the `else` block is executed:
-
-```doxa
-var value :: int | string;
-value is "hello";
-
-// This will execute the else block since value is currently a string
-const number = value as int else {
-    return error.ExpectedInteger;
-};
-
-// This will succeed since value is now an int
-value is 42;
-const doubled = value as int else {
-    return error.ExpectedInteger;
-}; // doubled is 84
-```
-
-### Common Patterns
-
-**Safe extraction with default:**
-
-```doxa
-const result = someUnion as int else {
-    return 0; // Default value if not an int
-};
-```
-
-**Error handling:**
-
-```doxa
-const number = value as int else {
-    @panic("This should never happen in production!");
-};
-```
-
-**Conditional processing:**
-
-```doxa
-const processed = value as string else {
-    // Handle non-string case
-    return "default";
-};
-```
-
-The `as` keyword is essential for safely working with unions when you need to extract a specific type.

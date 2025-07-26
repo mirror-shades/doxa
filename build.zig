@@ -14,6 +14,12 @@ pub fn build(b: *std.Build) void {
     // Install the executable first
     b.installArtifact(exe);
 
+    // Add run step that passes through command line arguments
+    const run_cmd = b.addRunArtifact(exe);
+    if (b.args) |args| {
+        run_cmd.addArgs(args);
+    }
+
     // Add test steps
     const test_run = b.addTest(.{
         .name = "test_run",
@@ -27,6 +33,10 @@ pub fn build(b: *std.Build) void {
     // Make default step just build the executable
     const build_step = b.step("default", "Build the Doxa compiler");
     build_step.dependOn(&exe.step);
+
+    // Add run step
+    const run_step = b.step("run", "Run the Doxa compiler");
+    run_step.dependOn(&run_cmd.step);
 
     // Keep the separate test step
     const test_step = b.step("test", "Run all tests");

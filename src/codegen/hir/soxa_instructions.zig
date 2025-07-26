@@ -5,7 +5,7 @@ const ScopeKind = @import("soxa_types.zig").ScopeKind;
 const CallKind = @import("soxa_types.zig").CallKind;
 const Reporting = @import("../../utils/reporting.zig");
 
-pub const ArithOp = enum { Add, Sub, Mul, Div, Mod };
+pub const ArithOp = enum { Add, Sub, Mul, Div, Mod, Pow };
 
 pub const CompareOp = enum { Eq, Ne, Lt, Le, Gt, Ge };
 

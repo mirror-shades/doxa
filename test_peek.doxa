@@ -1,0 +1,9 @@
+// Simple test for the ? operator
+var x is 42;
+x?; // Should print 42
+
+var y is "hello";
+y?; // Should print "hello"
+
+var z is true;
+z?; // Should print true 

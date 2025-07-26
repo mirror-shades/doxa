@@ -1323,7 +1323,8 @@ pub const Parser = struct {
         }
 
         // Mark this module as being processed
-        try self.module_resolution_status.put(normalized_path, .IN_PROGRESS);
+        const status_key = try self.allocator.dupe(u8, normalized_path);
+        try self.module_resolution_status.put(status_key, .IN_PROGRESS);
 
         // Add to import stack for tracking
         const current_file_copy = try self.allocator.dupe(u8, self.current_file);
@@ -1340,7 +1341,7 @@ pub const Parser = struct {
         // Load and parse module file - get both source and resolved path
         const module_data = self.loadModuleSourceWithPath(module_name) catch |err| {
             // Mark as not started since we failed to load
-            _ = self.module_resolution_status.remove(normalized_path);
+            _ = self.module_resolution_status.remove(status_key);
             return err;
         };
 
@@ -1350,20 +1351,21 @@ pub const Parser = struct {
         try module_lexer.initKeywords();
         const tokens = module_lexer.lexTokens() catch |err| {
             // Mark as not started since we failed to lex
-            _ = self.module_resolution_status.remove(normalized_path);
+            _ = self.module_resolution_status.remove(status_key);
             return err;
         };
 
         var new_parser = Parser.init(self.allocator, tokens.items, module_data.resolved_path, self.debug_enabled, self.reporter);
 
-        // Copy the resolution status and import stack to the new parser
+        // Copy the resolution status, import stack, and module cache to the new parser
         new_parser.module_resolution_status = try self.module_resolution_status.clone();
         new_parser.import_stack = try self.import_stack.clone();
+        new_parser.module_cache = try self.module_cache.clone();
 
         // Parse the module file
         const module_statements = new_parser.execute() catch |err| {
             // Mark as not started since we failed to parse
-            _ = self.module_resolution_status.remove(normalized_path);
+            _ = self.module_resolution_status.remove(status_key);
             return err;
         };
 
@@ -1386,8 +1388,24 @@ pub const Parser = struct {
         const info = try self.extractModuleInfoWithParser(module_block, normalized_path, null, &new_parser);
 
         // Mark as completed and cache the result
-        try self.module_resolution_status.put(normalized_path, .COMPLETED);
-        try self.module_cache.put(normalized_path, info);
+        // Duplicate the key to ensure it survives after normalized_path is freed
+        const cache_key = try self.allocator.dupe(u8, normalized_path);
+        try self.module_resolution_status.put(cache_key, .COMPLETED);
+        try self.module_cache.put(cache_key, info);
+
+        if (self.debug_enabled) {
+            std.debug.print("Cached module: {s}\n", .{normalized_path});
+        }
+
+        // Merge any modules that were loaded by the new_parser back into our cache
+        var new_cache_iter = new_parser.module_cache.iterator();
+        while (new_cache_iter.next()) |entry| {
+            const key = entry.key_ptr.*;
+            const value = entry.value_ptr.*;
+            if (!self.module_cache.contains(key)) {
+                try self.module_cache.put(key, value);
+            }
+        }
 
         return info;
     }
@@ -1508,38 +1526,7 @@ pub const Parser = struct {
         // Try several file locations in order
         var err: anyerror = error.FileNotFound;
 
-        // 1. First try directly with the given name (possibly including extension)
-        if (has_extension) {
-            var direct_path = std.ArrayList(u8).init(self.allocator);
-            defer direct_path.deinit();
-            try direct_path.appendSlice(clean_name);
-
-            if (readFileContentsWithPath(self.allocator, direct_path.items, debug_enabled)) |data| {
-                return data;
-            } else |e| {
-                err = e;
-                if (self.debug_enabled) {
-                    std.debug.print("Failed to open {s} with existing extension: {}\n", .{ direct_path.items, e });
-                }
-            }
-        }
-
-        // 2. Try in CWD with .doxa extension
-        var cwd_doxa_path = std.ArrayList(u8).init(self.allocator);
-        defer cwd_doxa_path.deinit();
-        try cwd_doxa_path.appendSlice(clean_name);
-        if (!has_extension) try cwd_doxa_path.appendSlice(".doxa");
-
-        if (readFileContentsWithPath(self.allocator, cwd_doxa_path.items, debug_enabled)) |data| {
-            return data;
-        } else |e| {
-            err = e;
-            if (self.debug_enabled) {
-                std.debug.print("Failed to open {s} in current working directory: {}\n", .{ cwd_doxa_path.items, e });
-            }
-        }
-
-        // 3. Try in the same directory as the current file with potential existing extension
+        // 1. Try in the same directory as the current file with potential existing extension
         if (has_extension) {
             var same_dir_exact_path = std.ArrayList(u8).init(self.allocator);
             defer same_dir_exact_path.deinit();
@@ -1557,7 +1544,7 @@ pub const Parser = struct {
             }
         }
 
-        // 4. Try in the same directory as the current file with .doxa extension
+        // 2. Try in the same directory as the current file with .doxa extension
         var same_dir_path = std.ArrayList(u8).init(self.allocator);
         defer same_dir_path.deinit();
         try same_dir_path.appendSlice(current_dir);
@@ -1575,6 +1562,37 @@ pub const Parser = struct {
             err = e;
             if (self.debug_enabled) {
                 std.debug.print("Failed to open {s}: {}\n", .{ same_dir_path.items, e });
+            }
+        }
+
+        // 3. Try directly with the given name (possibly including extension) - fallback for absolute paths
+        if (has_extension) {
+            var direct_path = std.ArrayList(u8).init(self.allocator);
+            defer direct_path.deinit();
+            try direct_path.appendSlice(clean_name);
+
+            if (readFileContentsWithPath(self.allocator, direct_path.items, debug_enabled)) |data| {
+                return data;
+            } else |e| {
+                err = e;
+                if (self.debug_enabled) {
+                    std.debug.print("Failed to open {s} with existing extension: {}\n", .{ direct_path.items, e });
+                }
+            }
+        }
+
+        // 4. Try in CWD with .doxa extension - fallback for global modules
+        var cwd_doxa_path = std.ArrayList(u8).init(self.allocator);
+        defer cwd_doxa_path.deinit();
+        try cwd_doxa_path.appendSlice(clean_name);
+        if (!has_extension) try cwd_doxa_path.appendSlice(".doxa");
+
+        if (readFileContentsWithPath(self.allocator, cwd_doxa_path.items, debug_enabled)) |data| {
+            return data;
+        } else |e| {
+            err = e;
+            if (self.debug_enabled) {
+                std.debug.print("Failed to open {s} in current working directory: {}\n", .{ cwd_doxa_path.items, e });
             }
         }
 
@@ -1610,6 +1628,22 @@ pub const Parser = struct {
             err = e;
             if (self.debug_enabled) {
                 std.debug.print("Failed to open {s}: {}\n", .{ modules_path.items, e });
+            }
+        }
+
+        // 7. Try relative to the project root (where build.zig is located)
+        var root_path = std.ArrayList(u8).init(self.allocator);
+        defer root_path.deinit();
+        try root_path.appendSlice("./");
+        try root_path.appendSlice(clean_name);
+        if (!has_extension) try root_path.appendSlice(".doxa");
+
+        if (readFileContentsWithPath(self.allocator, root_path.items, debug_enabled)) |data| {
+            return data;
+        } else |e| {
+            err = e;
+            if (self.debug_enabled) {
+                std.debug.print("Failed to open {s}: {}\n", .{ root_path.items, e });
             }
         }
 
@@ -2475,12 +2509,26 @@ pub const Parser = struct {
 
                     // Load the imported module only if not already loaded
                     if (!self.module_namespaces.contains(alias)) {
-                        // Check if the module is already in the cache
-                        if (self.module_cache.contains(import.module_path)) {
+                        // Check if the module is already in the cache (use normalized path)
+                        const normalized_import_path = try self.normalizeModulePath(import.module_path);
+                        defer self.allocator.free(normalized_import_path);
+
+                        if (self.debug_enabled) {
+                            std.debug.print("Checking cache for module: {s} (normalized: {s})\n", .{ import.module_path, normalized_import_path });
+                            std.debug.print("Cache contains {} modules\n", .{self.module_cache.count()});
+                        }
+
+                        if (self.module_cache.contains(normalized_import_path)) {
+                            if (self.debug_enabled) {
+                                std.debug.print("Found module {s} in cache\n", .{normalized_import_path});
+                            }
                             // Get it from cache and add to namespaces
-                            const cached_module = self.module_cache.get(import.module_path).?;
+                            const cached_module = self.module_cache.get(normalized_import_path).?;
                             try self.module_namespaces.put(alias, cached_module);
                         } else {
+                            if (self.debug_enabled) {
+                                std.debug.print("Module {s} not in cache, loading...\n", .{normalized_import_path});
+                            }
                             // Only try to load if not in cache either
                             try self.loadAndRegisterModule(import.module_path, alias, import.specific_symbol);
                         }

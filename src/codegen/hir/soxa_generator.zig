@@ -13,6 +13,9 @@ const HIRType = SoxaTypes.HIRType;
 const CallKind = SoxaTypes.CallKind;
 const HIRProgram = SoxaTypes.HIRProgram;
 
+// Import shared CustomTypeInfo
+const CustomTypeInfo = @import("../../types/custom_types.zig").CustomTypeInfo;
+
 pub const HIRGenerator = struct {
     allocator: std.mem.Allocator,
     instructions: std.ArrayList(HIRInstruction),
@@ -93,55 +96,6 @@ pub const HIRGenerator = struct {
         field_count: u32,
         field_names: [][]const u8,
         field_types: []HIRType,
-    };
-
-    pub const CustomTypeInfo = struct {
-        name: []const u8,
-        kind: CustomTypeKind,
-        // NEW: Enhanced enum support
-        enum_variants: ?[]EnumVariant = null,
-        // NEW: Enhanced struct support
-        struct_fields: ?[]StructField = null,
-
-        pub const CustomTypeKind = enum {
-            Struct,
-            Enum,
-        };
-
-        pub const EnumVariant = struct {
-            name: []const u8,
-            index: u32,
-        };
-
-        pub const StructField = struct {
-            name: []const u8,
-            field_type: HIRType,
-            index: u32,
-        };
-
-        /// Get the index of an enum variant by name
-        pub fn getEnumVariantIndex(self: *const CustomTypeInfo, variant_name: []const u8) ?u32 {
-            if (self.kind != .Enum or self.enum_variants == null) return null;
-
-            for (self.enum_variants.?) |variant| {
-                if (std.mem.eql(u8, variant.name, variant_name)) {
-                    return variant.index;
-                }
-            }
-            return null;
-        }
-
-        /// Get the index of a struct field by name
-        pub fn getStructFieldIndex(self: *const CustomTypeInfo, field_name: []const u8) ?u32 {
-            if (self.kind != .Struct or self.struct_fields == null) return null;
-
-            for (self.struct_fields.?) |field| {
-                if (std.mem.eql(u8, field.name, field_name)) {
-                    return field.index;
-                }
-            }
-            return null;
-        }
     };
 
     pub fn init(allocator: std.mem.Allocator, reporter: *reporting.Reporter, module_namespaces: std.StringHashMap(ast.ModuleInfo)) HIRGenerator {
@@ -856,6 +810,7 @@ pub const HIRGenerator = struct {
                     .GREATER => try self.instructions.append(.{ .Compare = .{ .op = .Gt, .operand_type = .Int } }),
                     .LESS_EQUAL => try self.instructions.append(.{ .Compare = .{ .op = .Le, .operand_type = .Int } }),
                     .GREATER_EQUAL => try self.instructions.append(.{ .Compare = .{ .op = .Ge, .operand_type = .Int } }),
+                    .POWER => try self.instructions.append(.{ .FloatArith = .{ .op = .Pow, .exception_behavior = .NaN } }), // Power operation returns float
                     else => {
                         self.reporter.reportError("Unsupported binary operator: {}", .{bin.operator.type});
                         return reporting.ErrorList.UnsupportedOperator;

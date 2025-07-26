@@ -30,14 +30,6 @@ const types = @import("../types/types.zig");
 
 const STACK_SIZE: u32 = 1024 * 1024;
 
-/// Hot variable cache entry for ultra-fast variable lookup
-const HotVar = struct {
-    name: []const u8,
-    storage_id: u32,
-};
-
-/// Simple cache that fully trusts and integrates with the memory module
-/// Cache var_name -> storage_id, but invalidate on scope changes to maintain correctness
 /// HIR-based VM Frame - simplified to work with memory management
 pub const HIRFrame = struct {
     value: HIRValue,
@@ -299,15 +291,6 @@ pub const HIRVM = struct {
     // Label resolution
     label_map: std.StringHashMap(u32), // label_name -> instruction index
 
-    // Performance optimizations
-    var_cache: std.StringHashMap(u32), // Cache var_name → storage_id (invalidated on scope changes)
-    fast_mode: bool = true, // Enable optimizations for computational workloads
-    turbo_mode: bool = true, // Ultra-aggressive optimizations for pure computational loops
-
-    // Hot variable cache - direct storage for most accessed variables
-    hot_vars: [4]?HotVar = [_]?HotVar{null} ** 4,
-    hot_var_count: u8 = 0,
-
     // Tail call optimization: flag to skip scope creation on next EnterScope
     skip_next_enter_scope: bool = false,
 
@@ -541,7 +524,10 @@ pub const HIRVM = struct {
 
         // Create a new execution scope for this HIR VM run
         // This allows proper cleanup and isolation
-        const execution_scope = try memory_manager.scope_manager.createScope(memory_manager.scope_manager.root_scope);
+        const execution_scope = try memory_manager.createScope(memory_manager.getRootScope());
+
+        // Set the execution scope as the current scope in the memory manager
+        memory_manager.current_scope = execution_scope;
 
         const string_interner = try allocator.create(StringInterner);
         string_interner.* = StringInterner.init(allocator);
@@ -555,12 +541,9 @@ pub const HIRVM = struct {
             .call_stack = try CallStack.init(allocator), // Use the passed allocator
             .current_scope = execution_scope,
             .label_map = std.StringHashMap(u32).init(allocator), // Use the passed allocator
-            .var_cache = std.StringHashMap(u32).init(allocator), // Use the passed allocator
-            .fast_mode = true,
-            .turbo_mode = true,
-            .hot_vars = [_]?HotVar{null} ** 4,
-            .hot_var_count = 0,
             .debug_enabled = debug_enabled,
+            .skip_next_enter_scope = false,
+            .current_catch_target = null,
             .string_interner = string_interner,
         };
 
@@ -570,9 +553,8 @@ pub const HIRVM = struct {
         return vm;
     }
 
-    pub fn deinit(self: *HIRVM) void {
+    pub fn deinit(_: *HIRVM) void {
         // Clean up the execution scope
-        self.current_scope.deinit();
 
         // Note: stack, call_stack, label_map, and var_cache are allocated with
         // the memory manager's arena allocator, so they'll be cleaned up automatically
@@ -709,63 +691,10 @@ pub const HIRVM = struct {
                     std.debug.print("DoxVM: Debug: LoadVar {} \"{s}\" - Stack size before: {}\n", .{ v.var_index, v.var_name, self.stack.size() });
                 }
 
-                if (self.turbo_mode) {
-                    // TURBO: Check hot variable cache first (array lookup - fastest possible)
-                    for (self.hot_vars[0..self.hot_var_count]) |hot_var| {
-                        if (hot_var != null and std.mem.eql(u8, hot_var.?.name, v.var_name)) {
-                            if (self.memory_manager.scope_manager.value_storage.get(hot_var.?.storage_id)) |storage| {
-                                const hir_value = self.tokenLiteralToHIRValueWithType(storage.value, storage.type_info);
-                                try self.stack.push(HIRFrame.initFromHIRValue(hir_value));
-                                return; // Ultra-fast path
-                            }
-                            break;
-                        }
-                    }
-                }
-
-                // PERFORMANCE: Fast cache that fully integrates with memory module
-                if (self.fast_mode) {
-                    // Check cache first - trust storage_id if valid
-                    if (self.var_cache.get(v.var_name)) |cached_storage_id| {
-                        if (self.memory_manager.scope_manager.value_storage.get(cached_storage_id)) |storage| {
-                            const hir_value = self.tokenLiteralToHIRValueWithType(storage.value, storage.type_info);
-
-                            try self.stack.push(HIRFrame.initFromHIRValue(hir_value));
-                            return; // Ultra-fast cached path
-                        } else {
-                            _ = self.var_cache.remove(v.var_name);
-                        }
-                    }
-                }
-
-                // FALLBACK: Standard variable lookup (populate cache for next time)
+                // SIMPLIFIED: Direct variable lookup using semantic analysis results
                 if (self.current_scope.lookupVariable(v.var_name)) |variable| {
-                    if (self.memory_manager.scope_manager.value_storage.get(variable.storage_id)) |storage| {
-                        // PERFORMANCE: Cache the storage_id from memory module's authoritative lookup
-                        if (self.fast_mode) {
-                            // Cache the result from the memory module for next time
-                            self.var_cache.put(v.var_name, variable.storage_id) catch {};
-                        }
-
-                        const hir_value = self.tokenLiteralToHIRValueWithType(storage.value, storage.type_info);
-
-                        try self.stack.push(HIRFrame.initFromHIRValue(hir_value));
-
-                        if (self.debug_enabled) {
-                            std.debug.print("DoxVM: Debug: LoadVar {} \"{s}\" - Stack size after: {}, loaded value: {s}\n", .{ v.var_index, v.var_name, self.stack.size(), @tagName(hir_value) });
-                            if (std.mem.eql(u8, v.var_name, "tape")) {
-                                std.debug.print("DoxVM: Debug: *** TAPE VARIABLE LOADED - Type: {s} ***\n", .{@tagName(hir_value)});
-                                if (hir_value != .array) {
-                                    std.debug.print("DoxVM: Debug: *** ERROR: TAPE SHOULD BE ARRAY BUT IS {s} ***\n", .{@tagName(hir_value)});
-                                }
-                            }
-                        }
-                    } else {
-                        // Propagate error so VM halts execution immediately
-                        return self.reporter.throwError("Variable storage not found for: {s}", .{v.var_name}, ErrorList.VariableNotFound);
-                    }
+                    try self.stack.push(HIRFrame.initFromHIRValue(self.tokenLiteralToHIRValue(variable.value)));
                 } else {
-                    // Propagate undefined variable error
                     return self.reporter.throwError("Undefined variable: {s}", .{v.var_name}, ErrorList.UndefinedVariable);
                 }
             },
@@ -781,31 +710,17 @@ pub const HIRVM = struct {
                 const token_type = self.hirValueToTokenType(coerced_value);
                 const type_info = self.hirValueToTypeInfo(coerced_value);
 
-                // PERFORMANCE: Update cache after storing to keep it synchronized with memory module
-                if (self.fast_mode) {
-                    // Update cache with the current variable's storage_id
-                    if (self.current_scope.name_map.get(v.var_name)) |variable| {
-                        self.var_cache.put(v.var_name, variable.storage_id) catch {};
+                // SIMPLIFIED: Direct variable storage using semantic analysis results
+                if (self.memory_manager.lookupVariable(self.current_scope, v.var_name)) |variable| {
+                    if (variable.is_constant) {
+                        return self.reporter.reportError("Cannot modify constant variable: {s}", .{v.var_name});
                     }
-                }
 
-                // CRITICAL FIX: Check if variable exists in CURRENT scope only
-                // Function parameters must create NEW storage in each scope, never reuse parent storage
-                if (self.current_scope.name_map.get(v.var_name)) |variable| {
-                    // Variable exists in current scope - update its storage
-                    if (self.memory_manager.scope_manager.value_storage.getPtr(variable.storage_id)) |storage| {
-                        if (storage.*.constant) {
-                            return self.reporter.reportError("Cannot modify constant variable: {s}", .{v.var_name});
-                        }
-
-                        storage.*.value = token_literal;
-                        storage.*.type = token_type;
-                        storage.*.type_info = type_info;
-                    } else {
-                        return self.reporter.reportError("Variable storage not found for: {s}", .{v.var_name});
-                    }
+                    variable.value = token_literal;
+                    variable.vtype = token_type;
+                    variable.type_info = type_info;
                 } else {
-                    _ = self.current_scope.createValueBinding(v.var_name, token_literal, token_type, type_info, false) catch |err| {
+                    _ = self.memory_manager.createVariable(v.var_name, token_literal, token_type, type_info, false, .{ .file = "vm.zig", .line = 0 }) catch |err| {
                         return self.reporter.reportError("Failed to create variable {s}: {}", .{ v.var_name, err });
                     };
                 }
@@ -858,6 +773,7 @@ pub const HIRVM = struct {
                         return ErrorList.DivisionByZero;
                     } else @divTrunc(a_int, b_int),
                     .Mod => try self.fastIntMod(a_int, b_int), // Use optimized modulo
+                    .Pow => @as(i32, @intFromFloat(std.math.pow(f64, @as(f64, @floatFromInt(a_int)), @as(f64, @floatFromInt(b_int))))),
                 };
 
                 // CRITICAL FIX: Preserve the original type when possible
@@ -886,6 +802,7 @@ pub const HIRVM = struct {
                         return ErrorList.DivisionByZero;
                     } else a_float / b_float,
                     .Mod => return ErrorList.UnsupportedOperator, // Float modulo not supported
+                    .Pow => std.math.pow(f64, a_float, b_float),
                 };
 
                 try self.stack.push(HIRFrame.initFloat(result));
@@ -1081,28 +998,17 @@ pub const HIRVM = struct {
                 // TAIL CALL FIX: Skip scope creation if this is a tail call
                 if (self.skip_next_enter_scope) {
                     self.skip_next_enter_scope = false; // Reset flag
-
                     return; // Skip scope creation entirely
                 }
 
                 // Create new scope - the memory module handles all the complexity
-                const new_scope = try self.memory_manager.scope_manager.createScope(self.current_scope);
+                const new_scope = try self.memory_manager.createScope(self.current_scope);
                 self.current_scope = new_scope;
-
-                // PERFORMANCE: Clear cache when entering new scope to prevent stale data
-                // This is fast because we're using arena allocator
-                if (self.fast_mode) {
-                    self.var_cache.clearRetainingCapacity();
-                }
             },
 
             .ExitScope => {
                 if (self.current_scope.parent) |parent_scope| {
-                    const old_scope = self.current_scope;
                     self.current_scope = parent_scope;
-
-                    // Clean up the old scope
-                    old_scope.deinit();
                 }
             },
 
@@ -1545,10 +1451,7 @@ pub const HIRVM = struct {
                         // TAIL CALL FIX: Use start_label to include parameter setup, but we need to handle the scope issue
                         const target_label = function.start_label;
 
-                        // TAIL CALL FIX: Clear variable cache and set flag to skip scope creation
-                        if (self.fast_mode) {
-                            self.var_cache.clearRetainingCapacity();
-                        }
+                        // TAIL CALL FIX: Set flag to skip scope creation
                         self.skip_next_enter_scope = true; // Skip scope creation when we jump to function start
 
                         // Jump to function start (including parameter setup) without call stack modification
@@ -1816,7 +1719,32 @@ pub const HIRVM = struct {
                     },
                     .ModuleFunction => {
                         // Module function call - handle known module functions for now
-                        if (std.mem.eql(u8, c.qualified_name, "safeMath.safeAdd")) {
+                        if (std.mem.eql(u8, c.qualified_name, "math.add")) {
+                            // Simple addition from math.doxa
+                            const b = try self.stack.pop();
+                            const a = try self.stack.pop();
+
+                            const a_int = switch (a.value) {
+                                .int => |i| i,
+                                .byte => |u| @as(i32, u),
+                                else => return self.reporter.reportError("math.add: first argument must be integer", .{}),
+                            };
+
+                            const b_int = switch (b.value) {
+                                .int => |i| i,
+                                .byte => |u| @as(i32, u),
+                                else => return self.reporter.reportError("math.add: second argument must be integer", .{}),
+                            };
+
+                            // Simple addition
+                            const result = std.math.add(i32, a_int, b_int) catch {
+                                // Integer overflow in addition - return -1
+                                try self.stack.push(HIRFrame.initInt(-1));
+                                return;
+                            };
+
+                            try self.stack.push(HIRFrame.initInt(result));
+                        } else if (std.mem.eql(u8, c.qualified_name, "safeMath.safeAdd")) {
                             // Safe addition with overflow/underflow checking (from safeMath.doxa)
                             const b = try self.stack.pop();
                             const a = try self.stack.pop();
@@ -1881,15 +1809,7 @@ pub const HIRVM = struct {
                 } else {
                     // Auto-exit current scope before returning to restore caller's scope
                     if (self.current_scope.parent) |parent_scope| {
-                        const old_scope = self.current_scope;
                         self.current_scope = parent_scope;
-
-                        // PERFORMANCE: Clear cache on scope change for correctness
-                        if (self.fast_mode) {
-                            self.var_cache.clearRetainingCapacity();
-                        }
-
-                        old_scope.deinit();
                     }
 
                     // Returning from function call - pop call frame and return to caller
@@ -1910,11 +1830,8 @@ pub const HIRVM = struct {
 
             .TryBegin => |t| {
                 // Create a new scope for the try block
-                const new_scope = try self.memory_manager.scope_manager.createScope(self.current_scope);
+                const new_scope = try self.memory_manager.createScope(self.current_scope);
                 self.current_scope = new_scope;
-                if (self.fast_mode) {
-                    self.var_cache.clearRetainingCapacity();
-                }
 
                 // Store the catch label for later use
                 if (self.label_map.get(t.catch_label)) |target_ip| {
@@ -1928,20 +1845,12 @@ pub const HIRVM = struct {
             .TryCatch => |t| {
                 // Exit the try block scope and create a new scope for the catch block
                 if (self.current_scope.parent) |parent_scope| {
-                    const old_scope = self.current_scope;
                     self.current_scope = parent_scope;
-                    if (self.fast_mode) {
-                        self.var_cache.clearRetainingCapacity();
-                    }
-                    old_scope.deinit();
                 }
 
                 // Create new scope for catch block
-                const catch_scope = try self.memory_manager.scope_manager.createScope(self.current_scope);
+                const catch_scope = try self.memory_manager.createScope(self.current_scope);
                 self.current_scope = catch_scope;
-                if (self.fast_mode) {
-                    self.var_cache.clearRetainingCapacity();
-                }
 
                 // If there's an exception type, we could store it for type checking
                 _ = t.exception_type;
@@ -2781,22 +2690,32 @@ pub const HIRVM = struct {
 
     /// Enhanced greater-than with mixed int/float support from old VM
     fn compareGreater(self: *HIRVM, a: HIRFrame, b: HIRFrame) !bool {
-        _ = self;
+        if (self.debug_enabled) {
+            std.debug.print("DEBUG: compareGreater - a: {s}, b: {s}\n", .{ @tagName(a.value), @tagName(b.value) });
+        }
         return switch (a.value) {
             .int => |a_val| switch (b.value) {
                 .int => |b_val| a_val > b_val,
                 // Mixed int/float comparison (from old VM)
                 .float => |b_val| @as(f64, @floatFromInt(a_val)) > b_val,
+                // Mixed int/byte comparison
+                .byte => |b_val| a_val > @as(i32, @intCast(b_val)),
                 else => ErrorList.TypeError,
             },
             .float => |a_val| switch (b.value) {
                 .float => |b_val| a_val > b_val,
                 // Mixed float/int comparison (from old VM)
                 .int => |b_val| a_val > @as(f64, @floatFromInt(b_val)),
+                // Mixed float/byte comparison
+                .byte => |b_val| a_val > @as(f64, @floatFromInt(b_val)),
                 else => ErrorList.TypeError,
             },
             .byte => |a_val| switch (b.value) {
                 .byte => |b_val| a_val > b_val,
+                // Mixed byte/float comparison
+                .float => |b_val| @as(f64, @floatFromInt(a_val)) > b_val,
+                // Mixed byte/int comparison
+                .int => |b_val| a_val > @as(u8, @intCast(b_val)),
                 else => ErrorList.TypeError,
             },
             // Complex types don't support comparison

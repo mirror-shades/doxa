@@ -17,7 +17,7 @@ pub fn init(allocator: std.mem.Allocator, enclosing: ?*Environment, debug_enable
     // If we have an enclosing environment, its scope should be the parent of our new scope
     var parent_scope: ?*Scope = null;
     if (enclosing != null) {
-        parent_scope = memory_manager.scope_manager.root_scope;
+        parent_scope = memory_manager.getRootScope();
     }
     return .{
         .values = std.StringHashMap(TokenLiteral).init(allocator),
@@ -45,8 +45,8 @@ pub fn deinit(self: *Environment) void {
 }
 
 pub fn define(self: *Environment, key: []const u8, value: TokenLiteral, type_info: ast.TypeInfo) !void {
-    if (self.memory_manager.scope_manager.root_scope) |root_scope| {
-        // Use createValueBinding instead of the undefined defineVariable
+    if (self.memory_manager.getRootScope()) |root_scope| {
+        // Use createVariable instead of createValueBinding
         // Use the mutability information from type_info to determine if this is constant
         const is_constant = !type_info.is_mutable;
 
@@ -69,19 +69,17 @@ pub fn define(self: *Environment, key: []const u8, value: TokenLiteral, type_inf
             else => unreachable,
         };
 
-        // Create value binding
-        _ = try root_scope.createValueBinding(key, value, token_type, type_info, is_constant);
+        // Create variable
+        _ = try root_scope.createVariable(self.allocator, key, value, token_type, type_info, is_constant);
         return;
     }
     return error.NoRootScope;
 }
 
 pub fn get(self: *Environment, name: []const u8) ErrorList!?TokenLiteral {
-    if (self.memory_manager.scope_manager.root_scope) |root_scope| {
+    if (self.memory_manager.getRootScope()) |root_scope| {
         if (root_scope.lookupVariable(name)) |variable| {
-            if (self.memory_manager.scope_manager.value_storage.get(variable.storage_id)) |storage| {
-                return storage.value;
-            }
+            return variable.value;
         }
     }
 
@@ -96,23 +94,18 @@ pub fn get(self: *Environment, name: []const u8) ErrorList!?TokenLiteral {
 pub fn assign(self: *Environment, name: []const u8, value: TokenLiteral) !void {
 
     // Look up variable from root scope
-    if (self.memory_manager.scope_manager.root_scope) |root_scope| {
+    if (self.memory_manager.getRootScope()) |root_scope| {
         // Use lookupVariable to find the variable in any accessible scope
         if (root_scope.lookupVariable(name)) |variable| {
-            // Get the storage location for this variable
-            if (self.memory_manager.scope_manager.value_storage.get(variable.storage_id)) |storage| {
-                // Check if the variable is constant
-                if (storage.constant) {
-                    return error.CannotAssignToConstant;
-                }
-
-                // Update the value in storage
-                storage.value = value;
-
-                return;
-            } else {
-                return error.StorageNotFound;
+            // Check if the variable is constant
+            if (variable.is_constant) {
+                return error.CannotAssignToConstant;
             }
+
+            // Update the value directly
+            variable.value = value;
+
+            return;
         }
     }
 
@@ -120,11 +113,9 @@ pub fn assign(self: *Environment, name: []const u8, value: TokenLiteral) !void {
 }
 
 pub fn getTypeInfo(self: *Environment, name: []const u8) ErrorList!TypeInfo {
-    if (self.memory_manager.scope_manager.root_scope) |root_scope| {
+    if (self.memory_manager.getRootScope()) |root_scope| {
         if (root_scope.lookupVariable(name)) |variable| {
-            if (self.memory_manager.scope_manager.value_storage.get(variable.storage_id)) |storage| {
-                return storage.type_info;
-            }
+            return variable.type_info;
         }
     }
     if (self.enclosing) |enclosing| {

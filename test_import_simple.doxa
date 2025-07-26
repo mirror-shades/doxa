@@ -1,0 +1,8 @@
+import "./test/misc/math.doxa" as math;
+import "./test/misc/safeMath.doxa" as safeMath;
+
+var result1 is math.add(5, 3);
+var result2 is safeMath.safeAdd(10, 20);
+
+result1?;
+result2?; 
