@@ -1,0 +1,6 @@
+function simple(x:: int) {
+    var y is x + 1;
+    y?;
+}
+
+simple(5); 

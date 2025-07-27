@@ -1,0 +1,10 @@
+fn fber(x:: int, limit:: int) {
+    if x % 3 equals 0 and x % 5 equals 0 then "fizzbuzzer"?;
+    else if x % 3 equals 0 then "fizzer"?;
+    else if x % 5 equals 0 then "buzzer"?;
+    else x?;
+
+    if x < limit then fber(x + 1, limit);
+}
+
+fber(1000, 1015); 

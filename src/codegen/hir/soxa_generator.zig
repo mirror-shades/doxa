@@ -16,6 +16,9 @@ const HIRProgram = SoxaTypes.HIRProgram;
 // Import shared CustomTypeInfo
 const CustomTypeInfo = @import("../../types/custom_types.zig").CustomTypeInfo;
 
+// Import StringInterner for label management
+const StringInterner = @import("../../utils/memory.zig").StringInterner;
+
 pub const HIRGenerator = struct {
     allocator: std.mem.Allocator,
     instructions: std.ArrayList(HIRInstruction),
@@ -29,6 +32,7 @@ pub const HIRGenerator = struct {
     variable_count: u32,
     label_count: u32,
     reporter: *reporting.Reporter, // NEW: Proper error reporting
+    label_interner: StringInterner, // NEW: String interner for label management
 
     variable_types: std.StringHashMap(HIRType), // Track inferred types of variables
     variable_custom_types: std.StringHashMap([]const u8), // Track custom type names for variables
@@ -47,6 +51,8 @@ pub const HIRGenerator = struct {
     module_namespaces: std.StringHashMap(ast.ModuleInfo), // Track module namespaces for function call resolution
 
     current_enum_type: ?[]const u8 = null,
+
+    in_loop_body: bool = false, // Track if we're currently generating a loop body
 
     pub const FunctionInfo = struct {
         name: []const u8,
@@ -111,6 +117,7 @@ pub const HIRGenerator = struct {
             .variable_count = 0,
             .label_count = 0,
             .reporter = reporter,
+            .label_interner = StringInterner.init(allocator),
             .variable_types = std.StringHashMap(HIRType).init(allocator),
             .variable_custom_types = std.StringHashMap([]const u8).init(allocator),
             .custom_types = std.StringHashMap(CustomTypeInfo).init(allocator),
@@ -122,6 +129,7 @@ pub const HIRGenerator = struct {
             .module_namespaces = module_namespaces,
             .current_enum_type = null,
             .stats = HIRStats.init(allocator),
+            .in_loop_body = false,
         };
     }
 
@@ -137,6 +145,7 @@ pub const HIRGenerator = struct {
         self.function_signatures.deinit();
         self.function_bodies.deinit();
         self.function_calls.deinit();
+        self.label_interner.deinit();
         // Note: module_namespaces is not owned by HIRGenerator, so we don't deinit it
     }
 
@@ -154,6 +163,13 @@ pub const HIRGenerator = struct {
 
         // Pass 4: Build function table
         const function_table = try self.buildFunctionTable();
+
+        if (self.debug_enabled) {
+            std.debug.print("DEBUG: Final string pool has {} items\n", .{self.string_pool.items.len});
+            for (self.string_pool.items, 0..) |str, i| {
+                std.debug.print("DEBUG: String pool [{}]: '{s}' (len: {})\n", .{ i, str, str.len });
+            }
+        }
 
         return HIRProgram{
             .instructions = try self.instructions.toOwnedSlice(),
@@ -926,6 +942,141 @@ pub const HIRGenerator = struct {
                 try self.instructions.append(.{ .Label = .{ .name = end_label, .vm_address = 0 } });
             },
 
+            .Match => |match_expr| {
+                // Determine the enum type from the match value
+                var match_enum_type: ?[]const u8 = null;
+                if (match_expr.value.data == .Variable) {
+                    const var_name = match_expr.value.data.Variable.lexeme;
+                    if (self.variable_custom_types.get(var_name)) |custom_type_name| {
+                        // Check if this is an enum type
+                        if (self.custom_types.get(custom_type_name)) |type_info| {
+                            if (type_info.kind == .Enum) {
+                                match_enum_type = custom_type_name;
+                            }
+                        }
+                    }
+                }
+
+                // Set the enum context for pattern matching
+                const old_enum_context = self.current_enum_type;
+                if (match_enum_type) |enum_type| {
+                    self.current_enum_type = enum_type;
+                }
+
+                // Generate the match value (pushes to stack)
+                try self.generateExpression(match_expr.value, true);
+
+                const end_label = try self.generateLabel("match_end");
+
+                // Generate each case as a complete unit: comparison + jump + body
+                for (match_expr.cases, 0..) |case, i| {
+                    const case_label = try self.generateLabel("match_case");
+                    const next_comparison_label = if (i + 1 < match_expr.cases.len)
+                        try self.generateLabel("next_comparison")
+                    else
+                        end_label;
+
+                    // Duplicate the match value for comparison
+                    try self.instructions.append(.Dup);
+
+                    if (self.debug_enabled) {
+                        std.debug.print("DEBUG: Checking case pattern: '{s}' (type: {s})\n", .{ case.pattern.lexeme, @tagName(case.pattern.type) });
+                    }
+
+                    if (std.mem.eql(u8, case.pattern.lexeme, "else")) {
+                        if (self.debug_enabled) {
+                            std.debug.print("DEBUG: Found else case, generating direct jump\n", .{});
+                        }
+                        // Else case - always matches, so jump to case body
+                        try self.instructions.append(.Pop); // Remove the duplicated value
+                        try self.instructions.append(.{ .Jump = .{ .label = case_label, .vm_offset = 0 } });
+                    } else {
+                        // Regular pattern - generate pattern value and compare
+                        var pattern_value: HIRValue = undefined;
+                        var operand_type: SoxaTypes.HIRType = undefined;
+
+                        // Check if this is an enum variant pattern
+                        if (case.pattern.type == .IDENTIFIER and self.current_enum_type != null) {
+                            // This is an enum variant pattern - create enum variant value
+                            // Find the variant index
+                            var variant_index: u32 = 0;
+                            if (self.custom_types.get(self.current_enum_type.?)) |type_info| {
+                                if (type_info.enum_variants) |variants| {
+                                    for (variants, 0..) |variant, idx| {
+                                        if (std.mem.eql(u8, variant.name, case.pattern.lexeme)) {
+                                            variant_index = @intCast(idx);
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+
+                            pattern_value = HIRValue{ .enum_variant = HIREnum{
+                                .type_name = self.current_enum_type.?,
+                                .variant_name = case.pattern.lexeme,
+                                .variant_index = variant_index,
+                            } };
+                            operand_type = .Enum;
+                        } else {
+                            // This is a string pattern
+                            pattern_value = HIRValue{ .string = case.pattern.lexeme };
+                            operand_type = .String;
+                        }
+
+                        const pattern_idx = try self.addConstant(pattern_value);
+                        try self.instructions.append(.{ .Const = .{ .value = pattern_value, .constant_id = pattern_idx } });
+
+                        // Compare match value with pattern
+                        try self.instructions.append(.{ .Compare = .{ .op = .Eq, .operand_type = operand_type } });
+
+                        // Jump to case body if match, continue to next comparison if no match
+                        if (self.debug_enabled) {
+                            std.debug.print("DEBUG: Adding JumpCond instruction - label_true='{s}' (len: {}), label_false='{s}' (len: {})\n", .{ case_label, case_label.len, next_comparison_label, next_comparison_label.len });
+                        }
+                        try self.instructions.append(.{
+                            .JumpCond = .{
+                                .label_true = case_label, // If match, jump to case body
+                                .label_false = next_comparison_label, // If no match, continue to next comparison
+                                .vm_offset = 0,
+                                .condition_type = .Tetra,
+                            },
+                        });
+                    }
+
+                    // Case body label
+                    if (self.debug_enabled) {
+                        std.debug.print("DEBUG: Adding Label instruction with name '{s}' (len: {})\n", .{ case_label, case_label.len });
+                    }
+                    try self.instructions.append(.{ .Label = .{ .name = case_label, .vm_address = 0 } });
+
+                    // Pop the original match value (no longer needed)
+                    try self.instructions.append(.Pop);
+
+                    // Generate case body
+                    try self.generateExpression(case.body, true);
+
+                    // Jump to end
+                    try self.instructions.append(.{ .Jump = .{ .label = end_label, .vm_offset = 0 } });
+
+                    // If this isn't the last case, add the next comparison label
+                    if (i + 1 < match_expr.cases.len) {
+                        if (self.debug_enabled) {
+                            std.debug.print("DEBUG: Adding Next Comparison Label instruction with name '{s}' (len: {})\n", .{ next_comparison_label, next_comparison_label.len });
+                        }
+                        try self.instructions.append(.{ .Label = .{ .name = next_comparison_label, .vm_address = 0 } });
+                    }
+                }
+
+                // End label
+                if (self.debug_enabled) {
+                    std.debug.print("DEBUG: Adding Match End Label instruction with name '{s}' (len: {})\n", .{ end_label, end_label.len });
+                }
+                try self.instructions.append(.{ .Label = .{ .name = end_label, .vm_address = 0 } });
+
+                // Restore the enum context
+                self.current_enum_type = old_enum_context;
+            },
+
             .While => |while_expr| {
                 const loop_start_label = try self.generateLabel("while_start");
                 const loop_body_label = try self.generateLabel("while_body");
@@ -950,8 +1101,15 @@ pub const HIRGenerator = struct {
                 // Loop body label (where TRUE condition jumps to)
                 try self.instructions.append(.{ .Label = .{ .name = loop_body_label, .vm_address = 0 } });
 
+                // Set flag to indicate we're generating a loop body
+                const was_in_loop_body = self.in_loop_body;
+                self.in_loop_body = true;
+
                 // Generate body
                 try self.generateExpression(while_expr.body, false);
+
+                // Restore flag
+                self.in_loop_body = was_in_loop_body;
 
                 // Jump back to start
                 try self.instructions.append(.{ .Jump = .{ .label = loop_start_label, .vm_offset = 0 } });
@@ -1306,8 +1464,14 @@ pub const HIRGenerator = struct {
             },
 
             .Block => |block| {
+                // Don't create new scope for loop bodies - variables should be in function scope
+                if (!self.in_loop_body) {
+                    // Enter new scope for block
+                    const scope_id = self.label_count + 2000;
+                    try self.instructions.append(.{ .EnterScope = .{ .scope_id = scope_id, .var_count = 0 } });
+                }
 
-                // Generate all block statements without creating scopes for simple blocks
+                // Generate all block statements
                 for (block.statements) |stmt| {
                     try self.generateStatement(stmt);
                 }
@@ -1320,6 +1484,13 @@ pub const HIRGenerator = struct {
                     // Block without value - push nothing
                     const nothing_idx = try self.addConstant(HIRValue.nothing);
                     try self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } });
+                }
+
+                // Don't exit scope for loop bodies
+                if (!self.in_loop_body) {
+                    // Exit block scope
+                    const scope_id = self.label_count + 2000;
+                    try self.instructions.append(.{ .ExitScope = .{ .scope_id = scope_id } });
                 }
             },
 
@@ -1469,112 +1640,6 @@ pub const HIRGenerator = struct {
                         .return_type = .Tetra,
                     },
                 });
-            },
-
-            .Match => |match_expr| {
-                // Extract enum type context from the match value if it's a variable
-                var match_enum_type: ?[]const u8 = null;
-                if (match_expr.value.data == .Variable) {
-                    const var_name = match_expr.value.data.Variable.lexeme;
-                    if (self.variable_types.get(var_name)) |var_type| {
-                        if (var_type == .Enum) {
-                            // Look up the actual enum type name from tracked custom types
-                            match_enum_type = self.variable_custom_types.get(var_name);
-                        }
-                    }
-                }
-
-                // Generate the value to match on
-                try self.generateExpression(match_expr.value, true);
-
-                // Create labels for each case body and the end
-                const end_label = try self.generateLabel("match_end");
-                var case_labels = std.ArrayList([]const u8).init(self.allocator);
-                defer case_labels.deinit();
-                var check_labels = std.ArrayList([]const u8).init(self.allocator);
-                defer check_labels.deinit();
-
-                // Generate labels for each case body and case check
-                for (match_expr.cases, 0..) |_, i| {
-                    const case_label = try self.generateLabel("match_case");
-                    try case_labels.append(case_label);
-
-                    // Create check labels for all but the first case (first case starts immediately)
-                    if (i > 0) {
-                        const check_label = try self.generateLabel("match_check");
-                        try check_labels.append(check_label);
-                    }
-                }
-
-                // Generate comparison and jumps for each case
-                for (match_expr.cases, 0..) |case, i| {
-                    // Add check label for cases after the first
-                    if (i > 0) {
-                        try self.instructions.append(.{ .Label = .{ .name = check_labels.items[i - 1], .vm_address = 0 } });
-                    }
-
-                    // Duplicate the match value for comparison
-                    try self.instructions.append(.Dup);
-
-                    if (case.pattern.type == .ELSE) {
-                        // Else case - always matches, pop the duplicated value
-                        try self.instructions.append(.Pop);
-                        try self.instructions.append(.{ .Jump = .{ .label = case_labels.items[i], .vm_offset = 0 } });
-                    } else {
-                        // Generate the pattern value (enum member with proper context)
-                        const pattern_value = if (match_enum_type) |enum_type_name| blk: {
-                            // Look up the actual variant index from registered enum type
-                            const variant_index = if (self.custom_types.get(enum_type_name)) |custom_type|
-                                custom_type.getEnumVariantIndex(case.pattern.lexeme) orelse 0
-                            else
-                                0;
-
-                            break :blk HIRValue{
-                                .enum_variant = HIREnum{
-                                    .type_name = enum_type_name,
-                                    .variant_name = case.pattern.lexeme,
-                                    .variant_index = variant_index,
-                                    .path = null,
-                                },
-                            };
-                        } else HIRValue{ .string = case.pattern.lexeme };
-
-                        const pattern_idx = try self.addConstant(pattern_value);
-                        try self.instructions.append(.{ .Const = .{ .value = pattern_value, .constant_id = pattern_idx } });
-
-                        // Compare and jump if equal (use appropriate operand type)
-                        const operand_type: HIRType = if (match_enum_type != null) .Enum else .String;
-                        try self.instructions.append(.{ .Compare = .{ .op = .Eq, .operand_type = operand_type } });
-
-                        // FIXED: When condition is false, continue to next case check instead of jumping to end
-                        const false_label = if (i < match_expr.cases.len - 1)
-                            check_labels.items[i] // Jump to next case check
-                        else
-                            end_label; // Last case - jump to end if no match
-                        try self.instructions.append(.{ .JumpCond = .{ .label_true = case_labels.items[i], .label_false = false_label, .vm_offset = 0, .condition_type = .Tetra } });
-                    }
-                }
-
-                // Generate case bodies with enum context
-                for (match_expr.cases, 0..) |case, i| {
-                    try self.instructions.append(.{ .Label = .{ .name = case_labels.items[i], .vm_address = 0 } });
-
-                    // Set enum context for case body generation if needed
-                    const old_enum_context = self.current_enum_type;
-                    if (match_enum_type) |enum_type_name| {
-                        self.current_enum_type = enum_type_name;
-                    }
-
-                    try self.generateExpression(case.body, true);
-
-                    // Restore previous enum context
-                    self.current_enum_type = old_enum_context;
-
-                    try self.instructions.append(.{ .Jump = .{ .label = end_label, .vm_offset = 0 } });
-                }
-
-                // End label
-                try self.instructions.append(.{ .Label = .{ .name = end_label, .vm_address = 0 } });
             },
 
             .EnumMember => |member| {
@@ -2186,7 +2251,15 @@ pub const HIRGenerator = struct {
     }
 
     fn generateLabel(self: *HIRGenerator, prefix: []const u8) ![]const u8 {
-        const label = try std.fmt.allocPrint(self.allocator, "{s}_{d}", .{ prefix, self.label_count });
+        const label_name = try std.fmt.allocPrint(self.allocator, "{s}_{d}", .{ prefix, self.label_count });
+
+        // Store the label directly in the string pool (don't free label_name)
+        try self.string_pool.append(label_name);
+        const label = self.string_pool.items[self.string_pool.items.len - 1];
+
+        if (self.debug_enabled) {
+            std.debug.print("DEBUG: Generated label '{s}' (len: {})\n", .{ label, label.len });
+        }
         self.label_count += 1;
         return label;
     }

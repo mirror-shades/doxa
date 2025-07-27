@@ -1,0 +1,10 @@
+function test_scope() {
+    var x is 1;
+    {
+        var x is 2;
+        x?;
+    }
+    x?;
+}
+
+test_scope(); 

@@ -1,0 +1,8 @@
+function test_fber(x:: int, limit:: int) {
+    if x % 5 equals 0 then "buzz"?;
+    else x?;
+
+    if x < limit then test_fber(x + 1, limit);
+}
+
+test_fber(1000, 1015); 

@@ -271,6 +271,11 @@ pub fn parseMatchExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*a
         if (self.peek().type == .ELSE) {
             // Handle else case
             self.advance(); // consume 'else'
+            const else_token = self.previous(); // Store the 'else' token immediately
+
+            if (self.debug_enabled) {
+                std.debug.print("DEBUG: Found ELSE token, stored token: type={s}, lexeme='{s}'\n", .{ @tagName(else_token.type), else_token.lexeme });
+            }
 
             // Parse arrow
             if (self.peek().type != .ARROW) {
@@ -281,8 +286,12 @@ pub fn parseMatchExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*a
             // Parse body expression
             const body = try parseExpression(self) orelse return error.ExpectedExpression;
 
+            if (self.debug_enabled) {
+                std.debug.print("DEBUG: Creating else case with pattern: type={s}, lexeme='{s}'\n", .{ @tagName(else_token.type), else_token.lexeme });
+            }
+
             try cases.append(.{
-                .pattern = self.previous(), // Use the 'else' token we just consumed
+                .pattern = else_token, // Use the stored 'else' token
                 .body = body,
             });
 

@@ -1,0 +1,6 @@
+function test_param(x:: int, limit:: int) {
+    x?;
+    if x < limit then test_param(x + 1, limit);
+}
+
+test_param(1, 3); 

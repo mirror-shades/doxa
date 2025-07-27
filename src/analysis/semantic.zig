@@ -312,6 +312,8 @@ pub const SemanticAnalyzer = struct {
                         // Infer from initializer
                         const inferred = try self.inferTypeFromExpr(init_expr);
                         type_info.* = inferred.*;
+                        // Preserve mutability from the original declaration (var vs const)
+                        type_info.is_mutable = decl.type_info.is_mutable;
                         if (self.reporter.is_debug) {
                             std.debug.print("DEBUG: Variable '{s}' inferred type: {s}\n", .{ decl.name.lexeme, @tagName(type_info.base) });
                         }
@@ -2229,6 +2231,16 @@ pub const SemanticAnalyzer = struct {
                     return variable.value;
                 }
                 // Return default value if variable not found (shouldn't happen in well-formed code)
+                return TokenLiteral{ .nothing = {} };
+            },
+            .Match => |_| {
+                // DEBUG: Add debug output for match expression evaluation
+                if (self.reporter.is_debug) {
+                    std.debug.print("DEBUG: Match expression cannot be evaluated at compile time, leaving for runtime\n", .{});
+                }
+
+                // Match expressions should be evaluated at runtime, not compile time
+                // Return nothing to indicate this expression cannot be constant-folded
                 return TokenLiteral{ .nothing = {} };
             },
             .Cast => |cast| {

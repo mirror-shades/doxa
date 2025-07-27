@@ -570,6 +570,7 @@ fn writeHIRInstruction(writer: anytype, instruction: HIRInstruction, allocator: 
 /// Deserializes a single HIR instruction from binary format
 fn readHIRInstruction(reader: anytype, allocator: std.mem.Allocator) !HIRInstruction {
     const instruction_tag = try reader.readByte();
+    std.debug.print("DEBUG: Reading instruction tag: {}\n", .{instruction_tag});
 
     return switch (instruction_tag) {
         0 => { // Const
@@ -614,6 +615,8 @@ fn readHIRInstruction(reader: anytype, allocator: std.mem.Allocator) !HIRInstruc
             const false_len = try reader.readInt(u32, .little);
             const label_false = try allocator.alloc(u8, false_len);
             _ = try reader.readAll(label_false);
+
+            std.debug.print("DEBUG: Deserialized JumpCond - label_true='{s}' (len: {}), label_false='{s}' (len: {})\n", .{ label_true, label_true.len, label_false, label_false.len });
 
             return HIRInstruction{ .JumpCond = .{ .label_true = label_true, .label_false = label_false, .vm_offset = 0, .condition_type = .Tetra } };
         },
@@ -743,13 +746,19 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
 
         .StoreVar => |v| try writer.print("    StoreVar {} \"{s}\"          ; Store variable\n", .{ v.var_index, v.var_name }),
 
+        .StoreConst => |s| try writer.print("    StoreConst {} \"{s}\"        ; Store constant\n", .{ s.var_index, s.var_name }),
+
         .IntArith => |a| try writer.print("    IntArith {s}                ; Integer arithmetic\n", .{@tagName(a.op)}),
+
+        .FloatArith => |a| try writer.print("    FloatArith {s}              ; Float arithmetic\n", .{@tagName(a.op)}),
 
         .Compare => |c| try writer.print("    Compare {s}                 ; Comparison\n", .{@tagName(c.op)}),
 
         .Jump => |j| try writer.print("    Jump {s}                    ; Unconditional jump\n", .{j.label}),
 
-        .JumpCond => |j| try writer.print("    JumpCond {s} {s}            ; Conditional jump\n", .{ j.label_true, j.label_false }),
+        .JumpCond => |j| {
+            try writer.print("    JumpCond {s} {s}            ; Conditional jump\n", .{ j.label_true, j.label_false });
+        },
 
         .Call => |c| try writer.print("    Call {} {} \"{s}\" {s}      ; Function call\n", .{ c.function_index, c.arg_count, c.qualified_name, @tagName(c.call_kind) }),
         .TailCall => |c| try writer.print("    TailCall {} {} \"{s}\" {s}      ; Tail call optimization\n", .{ c.function_index, c.arg_count, c.qualified_name, @tagName(c.call_kind) }),
@@ -849,6 +858,20 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
             try writer.print("    LogicalOp {s}                ; Logical operation\n", .{op_name});
         },
 
-        else => try writer.print("    ; TODO: {s}\n", .{@tagName(instruction)}),
+        .Convert => |c| try writer.print("    Convert {s} -> {s}           ; Type conversion\n", .{ @tagName(c.from_type), @tagName(c.to_type) }),
+
+        .TypeOf => |t| try writer.print("    TypeOf {s}                   ; Type reflection\n", .{@tagName(t.value_type)}),
+
+        .TryBegin => |t| try writer.print("    TryBegin {s}                 ; Begin try block\n", .{t.catch_label}),
+
+        .TryCatch => |t| try writer.print("    TryCatch {s}                 ; Catch block\n", .{if (t.exception_type) |et| @tagName(et) else "any"}),
+
+        .Throw => |t| try writer.print("    Throw {s}                    ; Throw exception\n", .{@tagName(t.exception_type)}),
+
+        .Exists => |e| try writer.print("    Exists {s}                   ; Exists quantifier\n", .{@tagName(e.predicate_type)}),
+
+        .Forall => |f| try writer.print("    Forall {s}                   ; Forall quantifier\n", .{@tagName(f.predicate_type)}),
+
+        .EnumNew => |e| try writer.print("    EnumNew {s}.{s} {}           ; Create enum variant\n", .{ e.enum_name, e.variant_name, e.variant_index }),
     }
 }

@@ -1,0 +1,63 @@
+/////
+// COMPREHENSIVE MATCH EXPRESSION TESTS
+/////
+enum Color {
+    Red,
+    Green,
+    Blue,
+    Yellow,
+}
+
+const red :: Color is .Red;
+const green :: Color is .Green;
+const blue :: Color is .Blue;
+const yellow :: Color is .Yellow;
+
+// Test 1: First case match
+var result1 is match red {
+    .Red => "First case matched",
+    .Green => "Second case matched",
+    .Blue => "Third case matched",
+    else => "Else case matched",
+};
+result1?; // Should print: "First case matched"
+
+// Test 2: Middle case match
+var result2 is match green {
+    .Red => "First case matched",
+    .Green => "Second case matched",
+    .Blue => "Third case matched",
+    else => "Else case matched",
+};
+result2?; // Should print: "Second case matched"
+
+// Test 3: Last explicit case match
+var result3 is match blue {
+    .Red => "First case matched",
+    .Green => "Second case matched",
+    .Blue => "Third case matched",
+    else => "Else case matched",
+};
+result3?; // Should print: "Third case matched"
+
+// Test 4: Else case match
+var result4 is match yellow {
+    .Red => "First case matched",
+    .Green => "Second case matched",
+    .Blue => "Third case matched",
+    else => "Else case matched",
+};
+result4?; // Should print: "Else case matched"
+
+// Test 5: Match with only else case
+var result5 is match red {
+    else => "Only else case",
+};
+result5?; // Should print: "Only else case"
+
+// Test 6: Match with single explicit case
+var result6 is match blue {
+    .Blue => "Single case matched",
+    else => "Else case",
+};
+result6?; // Should print: "Single case matched" 

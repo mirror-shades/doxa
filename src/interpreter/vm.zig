@@ -693,7 +693,21 @@ pub const HIRVM = struct {
 
                 // SIMPLIFIED: Direct variable lookup using semantic analysis results
                 if (self.current_scope.lookupVariable(v.var_name)) |variable| {
-                    try self.stack.push(HIRFrame.initFromHIRValue(self.tokenLiteralToHIRValue(variable.value)));
+                    var hir_value: HIRValue = undefined;
+                    if (variable.value == .enum_variant and variable.type_info.base == .Enum) {
+                        // For enum variants, use the variable's type information to reconstruct the enum variant
+                        hir_value = HIRValue{
+                            .enum_variant = .{
+                                .type_name = variable.type_info.custom_type orelse "unknown",
+                                .variant_name = variable.value.enum_variant,
+                                .variant_index = 0, // We'll need to handle this better
+                                .path = null,
+                            },
+                        };
+                    } else {
+                        hir_value = self.tokenLiteralToHIRValue(variable.value);
+                    }
+                    try self.stack.push(HIRFrame.initFromHIRValue(hir_value));
                 } else {
                     return self.reporter.throwError("Undefined variable: {s}", .{v.var_name}, ErrorList.UndefinedVariable);
                 }
@@ -710,8 +724,17 @@ pub const HIRVM = struct {
                 const token_type = self.hirValueToTokenType(coerced_value);
                 const type_info = self.hirValueToTypeInfo(coerced_value);
 
-                // SIMPLIFIED: Direct variable storage using semantic analysis results
-                if (self.memory_manager.lookupVariable(self.current_scope, v.var_name)) |variable| {
+                if (self.debug_enabled) {
+                    std.debug.print("StoreVar: Checking for variable '{s}' in current scope with {} variables\n", .{ v.var_name, self.current_scope.variable_count });
+                }
+
+                // Check if variable exists in current scope
+                if (self.current_scope.name_indices.get(v.var_name)) |index| {
+                    if (self.debug_enabled) {
+                        std.debug.print("StoreVar: Variable '{s}' exists in current scope at index {}\n", .{ v.var_name, index });
+                    }
+                    // Variable exists in current scope - update it
+                    const variable = &self.current_scope.variables[index];
                     if (variable.is_constant) {
                         return self.reporter.reportError("Cannot modify constant variable: {s}", .{v.var_name});
                     }
@@ -720,6 +743,10 @@ pub const HIRVM = struct {
                     variable.vtype = token_type;
                     variable.type_info = type_info;
                 } else {
+                    if (self.debug_enabled) {
+                        std.debug.print("StoreVar: Variable '{s}' does not exist in current scope, creating it\n", .{v.var_name});
+                    }
+                    // Variable doesn't exist in current scope - create it
                     _ = self.memory_manager.createVariable(v.var_name, token_literal, token_type, type_info, false, .{ .file = "vm.zig", .line = 0 }) catch |err| {
                         return self.reporter.reportError("Failed to create variable {s}: {}", .{ v.var_name, err });
                     };
@@ -826,6 +853,9 @@ pub const HIRVM = struct {
 
             .Jump => |j| {
                 // Unconditional jump to label
+                if (self.debug_enabled) {
+                    std.debug.print("DoxVM: Jump instruction looking for label '{s}' (len: {})\n", .{ j.label, j.label.len });
+                }
                 if (self.label_map.get(j.label)) |target_ip| {
                     self.ip = target_ip;
                 } else {
@@ -836,6 +866,10 @@ pub const HIRVM = struct {
             .JumpCond => |j| {
                 // OPTIMIZED: Conditional jump with reduced overhead
                 const condition = try self.stack.pop();
+
+                if (self.debug_enabled) {
+                    std.debug.print("DoxVM: JumpCond - label_true='{s}' (len: {}), label_false='{s}' (len: {})\n", .{ j.label_true, j.label_true.len, j.label_false, j.label_false.len });
+                }
 
                 const should_jump = switch (condition.value) {
                     .tetra => |t| switch (t) {
@@ -852,6 +886,10 @@ pub const HIRVM = struct {
                 };
 
                 const target_label = if (should_jump) j.label_true else j.label_false;
+
+                if (self.debug_enabled) {
+                    std.debug.print("DoxVM: JumpCond instruction looking for label '{s}' (len: {})\n", .{ target_label, target_label.len });
+                }
 
                 if (self.label_map.get(target_label)) |target_ip| {
                     // Always set IP explicitly since JumpCond is marked as a "jump" instruction
@@ -1004,11 +1042,15 @@ pub const HIRVM = struct {
                 // Create new scope - the memory module handles all the complexity
                 const new_scope = try self.memory_manager.createScope(self.current_scope);
                 self.current_scope = new_scope;
+                // FIX: Also update the memory manager's current_scope
+                self.memory_manager.current_scope = new_scope;
             },
 
             .ExitScope => {
                 if (self.current_scope.parent) |parent_scope| {
                     self.current_scope = parent_scope;
+                    // FIX: Also update the memory manager's current_scope
+                    self.memory_manager.current_scope = parent_scope;
                 }
             },
 
@@ -1487,33 +1529,8 @@ pub const HIRVM = struct {
                             std.debug.print("DoxVM: Calling function: {s}, start_label: {s}\n", .{ function.name, function.start_label });
                         }
 
-                        // Push call frame for proper return handling
-                        const return_ip = self.ip + 1; // Return to instruction after this call
-
-                        const call_frame = CallFrame{
-                            .return_ip = return_ip,
-                            .function_name = function.name,
-                            .arg_count = c.arg_count, // Store arg count to clean up stack later
-                        };
-                        try self.call_stack.push(call_frame);
-
-                        // Use pre-resolved label map for O(1) lookup
-                        if (self.label_map.get(function.start_label)) |target_ip| {
-                            if (self.debug_enabled) {
-                                std.debug.print("DoxVM: Jumping to label {s} at IP {}\n", .{ function.start_label, target_ip });
-                            }
-                            self.ip = target_ip;
-                            return; // Jump to function start
-                        } else {
-                            if (self.debug_enabled) {
-                                std.debug.print("DoxVM: Available labels in label_map:\n", .{});
-                                var iterator = self.label_map.iterator();
-                                while (iterator.next()) |entry| {
-                                    std.debug.print("  {s} -> {}\n", .{ entry.key_ptr.*, entry.value_ptr.* });
-                                }
-                            }
-                            return self.reporter.reportError("Function label not found: {s}", .{function.start_label});
-                        }
+                        // Use executeCall method for proper scope management
+                        try self.executeCall(function, c.arg_count);
                     },
                     .BuiltinFunction => {
                         // Built-in function/method call
@@ -2624,7 +2641,6 @@ pub const HIRVM = struct {
 
     /// Enhanced comparison with mixed int/float support from old VM
     fn compareEqual(self: *HIRVM, a: HIRFrame, b: HIRFrame) !bool {
-        _ = self;
         return switch (a.value) {
             .int => |a_val| switch (b.value) {
                 .int => |b_val| a_val == b_val,
@@ -2655,7 +2671,16 @@ pub const HIRVM = struct {
                 else => false,
             },
             .enum_variant => |a_val| switch (b.value) {
-                .enum_variant => |b_val| std.mem.eql(u8, a_val.variant_name, b_val.variant_name) and std.mem.eql(u8, a_val.type_name, b_val.type_name),
+                .enum_variant => |b_val| {
+                    if (self.debug_enabled) {
+                        std.debug.print("DEBUG: Comparing enum variants: {s}.{s} == {s}.{s}\n", .{ a_val.type_name, a_val.variant_name, b_val.type_name, b_val.variant_name });
+                    }
+                    const result = std.mem.eql(u8, a_val.variant_name, b_val.variant_name) and std.mem.eql(u8, a_val.type_name, b_val.type_name);
+                    if (self.debug_enabled) {
+                        std.debug.print("DEBUG: Enum comparison result: {}\n", .{result});
+                    }
+                    return result;
+                },
                 else => false,
             },
             // Complex types - basic equality for now
@@ -2900,66 +2925,29 @@ pub const HIRVM = struct {
         }
     }
 
-    pub fn executeCall(self: *HIRVM, function: HIRFunction, args: []HIRValue) !void {
-        // Create new scope for function
-        const new_scope = try self.memory_manager.scope_manager.createScope(self.current_scope);
+    pub fn executeCall(self: *HIRVM, function: HIRFunction, arg_count: u32) !void {
+        // Push call frame for proper return handling
+        const return_ip = self.ip + 1; // Return to instruction after this call
 
-        // Get current frame and increment its scope reference
-        var frame = try self.stack.peek();
-        frame.incrementScopeRefs();
+        const call_frame = CallFrame{
+            .return_ip = return_ip,
+            .function_name = function.name,
+            .arg_count = arg_count,
+        };
+        try self.call_stack.push(call_frame);
 
-        // Add function arguments to new scope
-        // We use arg_0, arg_1, etc. as parameter names since we don't have the actual names
-        for (args, 0..) |arg, i| {
-            const param_name = try std.fmt.allocPrint(self.allocator, "arg_{d}", .{i});
-            defer self.allocator.free(param_name);
-
-            _ = try new_scope.createValueBinding(param_name, self.hirValueToTokenLiteral(arg), self.hirValueToTokenType(arg), self.hirValueToTypeInfo(arg), false);
-        }
-
-        self.reporter.debug(">> Entered scope {} (parent: {}) [Call stack: {}]", .{
-            new_scope.id,
-            self.current_scope,
+        self.reporter.debug(">> Calling function: {s} [Call stack: {}]", .{
+            function.name,
             self.call_stack.sp,
         });
-
-        // Update current scope
-        self.current_scope = new_scope;
 
         // Find the function's start label in the program's instruction array
         const start_label_idx = self.label_map.get(function.start_label) orelse {
             return self.reporter.reportError("Function start label not found: {s}", .{function.start_label});
         };
 
-        // Save current execution state
-        const saved_ip = self.ip;
-        const saved_running = self.running;
-
-        // Set up execution environment for function
+        // Jump to function start - let normal VM execution handle the rest
         self.ip = start_label_idx;
-        self.running = true;
-
-        // Execute instructions until we hit a Return
-        while (self.running and self.ip < self.program.instructions.len) {
-            const instruction = self.program.instructions[self.ip];
-            try self.executeInstruction(instruction);
-
-            // Only advance IP if instruction didn't jump
-            if (!self.didJump(instruction)) {
-                self.ip += 1;
-            }
-        }
-
-        // Restore original execution state
-        self.ip = saved_ip;
-        self.running = saved_running;
-
-        // Decrement scope reference before exiting
-        frame = try self.stack.peek();
-        frame.decrementScopeRefs();
-
-        // Exit function scope
-        try self.exitScope(new_scope.id);
     }
 
     fn handleArrayPush(self: *HIRVM, value: HIRValue) !void {
@@ -3033,7 +3021,7 @@ pub const HIRVM = struct {
                     // Create a mutable slice for the arguments
                     var args = try self.allocator.alloc(HIRValue, 1);
                     args[0] = element;
-                    try self.executeCall(function, args);
+                    try self.executeCall(function, 1);
                     self.allocator.free(args);
 
                     const pred_result = try self.stack.pop();
