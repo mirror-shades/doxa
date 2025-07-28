@@ -1,7 +1,38 @@
-enum Color {
-    Red,
-    Green,
-    Blue,
+struct Person {
+    name :: string,
+    age :: int,
 }
 
-var c6 is Color.Red; 
+struct Employee {
+    person :: Person,
+    salary :: int,
+}
+
+var mike is Employee {
+    person is Person {
+        name is "Mike",
+        age is 25,
+    },
+    salary is 1000,
+};
+
+// Test simple variable access
+mike?;
+
+// Test field access
+mike.person?;
+mike.salary?;
+
+// Test nested field access
+mike.person.name?;
+mike.person.age?;
+
+// Test field assignment (this might be the issue)
+mike.person.age is 26;
+mike.person.age?;
+
+// Test string indexing
+mike.person.name[0]?;
+
+// Test bytes indexing
+bytes(mike.person.name)[0]?; 

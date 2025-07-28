@@ -318,13 +318,17 @@ pub const SoxaTextParser = struct {
             const var_index = std.fmt.parseInt(u32, idx_str, 10) catch return;
             const name_quoted = tokens.next() orelse return;
             const var_name = try self.parseQuotedString(name_quoted);
-            try self.instructions.append(HIRInstruction{ .LoadVar = .{ .var_index = var_index, .var_name = var_name, .scope_kind = .Local, .module_context = null } });
+            const scope_kind_str = tokens.next() orelse return;
+            const scope_kind = if (std.mem.eql(u8, scope_kind_str, "Local")) SoxaTypes.ScopeKind.Local else if (std.mem.eql(u8, scope_kind_str, "ModuleGlobal")) SoxaTypes.ScopeKind.ModuleGlobal else if (std.mem.eql(u8, scope_kind_str, "ImportedModule")) SoxaTypes.ScopeKind.ImportedModule else if (std.mem.eql(u8, scope_kind_str, "Builtin")) SoxaTypes.ScopeKind.Builtin else SoxaTypes.ScopeKind.Local; // Default to Local for backward compatibility
+            try self.instructions.append(HIRInstruction{ .LoadVar = .{ .var_index = var_index, .var_name = var_name, .scope_kind = scope_kind, .module_context = null } });
         } else if (std.mem.eql(u8, op, "StoreVar")) {
             const idx_str = tokens.next() orelse return;
             const var_index = std.fmt.parseInt(u32, idx_str, 10) catch return;
             const name_quoted = tokens.next() orelse return;
             const var_name = try self.parseQuotedString(name_quoted);
-            try self.instructions.append(HIRInstruction{ .StoreVar = .{ .var_index = var_index, .var_name = var_name, .scope_kind = .Local, .module_context = null, .expected_type = .Auto } });
+            const scope_kind_str = tokens.next() orelse return;
+            const scope_kind = if (std.mem.eql(u8, scope_kind_str, "Local")) SoxaTypes.ScopeKind.Local else if (std.mem.eql(u8, scope_kind_str, "ModuleGlobal")) SoxaTypes.ScopeKind.ModuleGlobal else if (std.mem.eql(u8, scope_kind_str, "ImportedModule")) SoxaTypes.ScopeKind.ImportedModule else if (std.mem.eql(u8, scope_kind_str, "Builtin")) SoxaTypes.ScopeKind.Builtin else SoxaTypes.ScopeKind.Local; // Default to Local for backward compatibility
+            try self.instructions.append(HIRInstruction{ .StoreVar = .{ .var_index = var_index, .var_name = var_name, .scope_kind = scope_kind, .module_context = null, .expected_type = .Auto } });
         } else if (std.mem.eql(u8, op, "IntArith")) {
             const op_str = tokens.next() orelse return;
             const arith_op = if (std.mem.eql(u8, op_str, "Add")) ArithOp.Add else if (std.mem.eql(u8, op_str, "Sub")) ArithOp.Sub else if (std.mem.eql(u8, op_str, "Mul")) ArithOp.Mul else if (std.mem.eql(u8, op_str, "Div")) ArithOp.Div else if (std.mem.eql(u8, op_str, "Mod")) ArithOp.Mod else ArithOp.Add;

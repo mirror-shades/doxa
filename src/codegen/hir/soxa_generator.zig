@@ -11,6 +11,7 @@ const HIRMapEntry = SoxaValues.HIRMapEntry;
 const SoxaTypes = @import("soxa_types.zig");
 const HIRType = SoxaTypes.HIRType;
 const CallKind = SoxaTypes.CallKind;
+const ScopeKind = SoxaTypes.ScopeKind;
 const HIRProgram = SoxaTypes.HIRProgram;
 
 // Import shared CustomTypeInfo
@@ -413,7 +414,7 @@ pub const HIRGenerator = struct {
 
                 // DEBUG: Print variable declaration info
                 if (self.debug_enabled) {
-                    std.debug.print("HIR: VarDecl {s}, type_info.base={s}, custom_type={s}\n", .{ decl.name.lexeme, @tagName(decl.type_info.base), if (decl.type_info.custom_type) |ct| ct else "null" });
+                    std.debug.print("HIR: VarDecl {s}, type_info.base={s}, custom_type={s}, current_function={s}\n", .{ decl.name.lexeme, @tagName(decl.type_info.base), if (decl.type_info.custom_type) |ct| ct else "null", if (self.current_function) |cf| cf else "null" });
                 }
 
                 // NEW: Determine the variable's type for tracking
@@ -570,10 +571,14 @@ pub const HIRGenerator = struct {
                 if (self.current_function == null) {
                     try self.instructions.append(.Dup);
                 }
+                const scope_kind: ScopeKind = if (self.current_function == null) .ModuleGlobal else .Local;
+                if (self.debug_enabled) {
+                    std.debug.print("HIR: StoreVar {s} with scope_kind={s} (current_function={s})\n", .{ decl.name.lexeme, @tagName(scope_kind), if (self.current_function) |cf| cf else "null" });
+                }
                 try self.instructions.append(.{ .StoreVar = .{
                     .var_index = var_idx,
                     .var_name = decl.name.lexeme,
-                    .scope_kind = .Local,
+                    .scope_kind = scope_kind,
                     .module_context = null,
                     .expected_type = var_type,
                 } });
@@ -790,11 +795,16 @@ pub const HIRGenerator = struct {
                 // Compile-time validation: Ensure variable has been declared
                 if (self.variables.get(var_token.lexeme)) |existing_idx| {
                     const var_idx = existing_idx;
+                    // Determine scope kind based on whether we're in a function
+                    const scope_kind: ScopeKind = if (self.current_function == null) .ModuleGlobal else .Local;
+                    if (self.debug_enabled) {
+                        std.debug.print("HIR: LoadVar {s} with scope_kind={s} (current_function={s})\n", .{ var_token.lexeme, @tagName(scope_kind), if (self.current_function) |cf| cf else "null" });
+                    }
                     try self.instructions.append(.{
                         .LoadVar = .{
                             .var_index = var_idx,
                             .var_name = var_token.lexeme,
-                            .scope_kind = .Local, // TODO: determine actual scope
+                            .scope_kind = scope_kind,
                             .module_context = null,
                         },
                     });
@@ -1498,11 +1508,12 @@ pub const HIRGenerator = struct {
 
                 // Load current variable value
                 const var_idx = try self.getOrCreateVariable(compound.name.lexeme);
+                const scope_kind: ScopeKind = if (self.current_function == null) .ModuleGlobal else .Local;
                 try self.instructions.append(.{
                     .LoadVar = .{
                         .var_index = var_idx,
                         .var_name = compound.name.lexeme,
-                        .scope_kind = .Local,
+                        .scope_kind = scope_kind,
                         .module_context = null,
                     },
                 });
@@ -1533,7 +1544,7 @@ pub const HIRGenerator = struct {
                 try self.instructions.append(.{ .StoreVar = .{
                     .var_index = var_idx,
                     .var_name = compound.name.lexeme,
-                    .scope_kind = .Local,
+                    .scope_kind = scope_kind,
                     .module_context = null,
                     .expected_type = expected_type,
                 } });

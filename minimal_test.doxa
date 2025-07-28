@@ -1,0 +1,28 @@
+// Test function that might affect scope
+function test_func() {
+    // Empty function
+}
+
+test_func();
+
+// Now create the struct and variable
+struct Person {
+    name :: string,
+    age :: int,
+}
+
+struct Employee {
+    person :: Person,
+    salary :: int,
+}
+
+var mike is Employee {
+    person is Person {
+        name is "Mike",
+        age is 25,
+    },
+    salary is 1000,
+};
+
+// Try to access the variable
+mike?; 

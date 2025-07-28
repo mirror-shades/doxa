@@ -742,9 +742,9 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
     switch (instruction) {
         .Const => |c| try writer.print("    Const {}                    ; Push constant\n", .{c.constant_id}),
 
-        .LoadVar => |v| try writer.print("    LoadVar {} \"{s}\"           ; Load variable\n", .{ v.var_index, v.var_name }),
+        .LoadVar => |v| try writer.print("    LoadVar {} \"{s}\" {s}        ; Load variable\n", .{ v.var_index, v.var_name, @tagName(v.scope_kind) }),
 
-        .StoreVar => |v| try writer.print("    StoreVar {} \"{s}\"          ; Store variable\n", .{ v.var_index, v.var_name }),
+        .StoreVar => |v| try writer.print("    StoreVar {} \"{s}\" {s}       ; Store variable\n", .{ v.var_index, v.var_name, @tagName(v.scope_kind) }),
 
         .StoreConst => |s| try writer.print("    StoreConst {} \"{s}\"        ; Store constant\n", .{ s.var_index, s.var_name }),
 

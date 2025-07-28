@@ -214,6 +214,28 @@ pub const MemoryManager = struct {
         return &scope.variables[index];
     }
 
+    pub fn createVariableInScope(
+        self: *MemoryManager,
+        scope: *Scope,
+        name: []const u8,
+        value: TokenLiteral,
+        vtype: TokenType,
+        type_info: TypeInfo,
+        is_constant: bool,
+        location: SourceLocation,
+    ) !*Variable {
+        const index = try scope.createVariable(
+            self.arena.allocator(),
+            name,
+            value,
+            vtype,
+            type_info,
+            is_constant,
+            location,
+        );
+        return &scope.variables[index];
+    }
+
     pub fn lookupVariable(self: *MemoryManager, scope: *Scope, name: []const u8) ?*Variable {
         _ = self; // unused
         return scope.lookupVariable(name);

@@ -691,21 +691,49 @@ pub const HIRVM = struct {
                     std.debug.print("DoxVM: Debug: LoadVar {} \"{s}\" - Stack size before: {}\n", .{ v.var_index, v.var_name, self.stack.size() });
                 }
 
-                // SIMPLIFIED: Direct variable lookup using semantic analysis results
-                if (self.current_scope.lookupVariable(v.var_name)) |variable| {
+                // Handle different scope kinds
+                var variable: ?*@import("../utils/memory.zig").Variable = null;
+                switch (v.scope_kind) {
+                    .Local => {
+                        // Look in current scope
+                        if (self.debug_enabled) {
+                            std.debug.print("LoadVar: Looking for '{s}' in current scope\n", .{v.var_name});
+                        }
+                        variable = self.current_scope.lookupVariable(v.var_name);
+                    },
+                    .ModuleGlobal => {
+                        // Look in root scope for global variables
+                        if (self.debug_enabled) {
+                            std.debug.print("LoadVar: Looking for '{s}' in root scope\n", .{v.var_name});
+                        }
+                        if (self.memory_manager.getRootScope()) |root_scope| {
+                            variable = root_scope.lookupVariable(v.var_name);
+                        }
+                    },
+                    .ImportedModule => {
+                        // TODO: Handle imported module variables
+                        return self.reporter.throwError("Imported module variables not yet supported: {s}", .{v.var_name}, ErrorList.UnsupportedModule);
+                    },
+                    .Builtin => {
+                        // TODO: Handle builtin variables
+                        return self.reporter.throwError("Builtin variables not yet supported: {s}", .{v.var_name}, ErrorList.UnsupportedModule);
+                    },
+                }
+
+                if (variable) |found_var| {
                     var hir_value: HIRValue = undefined;
-                    if (variable.value == .enum_variant and variable.type_info.base == .Enum) {
+                    if (found_var.value == .enum_variant and found_var.type_info.base == .Enum) {
                         // For enum variants, use the variable's type information to reconstruct the enum variant
                         hir_value = HIRValue{
                             .enum_variant = .{
-                                .type_name = variable.type_info.custom_type orelse "unknown",
-                                .variant_name = variable.value.enum_variant,
+                                .type_name = found_var.type_info.custom_type orelse "unknown",
+                                .variant_name = found_var.value.enum_variant,
                                 .variant_index = 0, // We'll need to handle this better
                                 .path = null,
                             },
                         };
                     } else {
-                        hir_value = self.tokenLiteralToHIRValue(variable.value);
+                        hir_value = self.tokenLiteralToHIRValue(found_var.value);
                     }
                     try self.stack.push(HIRFrame.initFromHIRValue(hir_value));
                 } else {
@@ -725,31 +753,80 @@ pub const HIRVM = struct {
                 const type_info = self.hirValueToTypeInfo(coerced_value);
 
                 if (self.debug_enabled) {
-                    std.debug.print("StoreVar: Checking for variable '{s}' in current scope with {} variables\n", .{ v.var_name, self.current_scope.variable_count });
+                    std.debug.print("StoreVar: Checking for variable '{s}' with scope kind {s}\n", .{ v.var_name, @tagName(v.scope_kind) });
                 }
 
-                // Check if variable exists in current scope
-                if (self.current_scope.name_indices.get(v.var_name)) |index| {
-                    if (self.debug_enabled) {
-                        std.debug.print("StoreVar: Variable '{s}' exists in current scope at index {}\n", .{ v.var_name, index });
-                    }
-                    // Variable exists in current scope - update it
-                    const variable = &self.current_scope.variables[index];
-                    if (variable.is_constant) {
-                        return self.reporter.reportError("Cannot modify constant variable: {s}", .{v.var_name});
-                    }
+                // Handle different scope kinds
+                if (self.debug_enabled) {
+                    std.debug.print("StoreVar: Processing scope kind {s} for variable '{s}'\n", .{ @tagName(v.scope_kind), v.var_name });
+                }
+                switch (v.scope_kind) {
+                    .Local => {
+                        if (self.debug_enabled) {
+                            std.debug.print("StoreVar: Entering Local case for '{s}'\n", .{v.var_name});
+                        }
+                        // Check if variable exists in current scope
+                        if (self.current_scope.name_indices.get(v.var_name)) |index| {
+                            if (self.debug_enabled) {
+                                std.debug.print("StoreVar: Variable '{s}' exists in current scope at index {}\n", .{ v.var_name, index });
+                            }
+                            // Variable exists in current scope - update it
+                            const variable = &self.current_scope.variables[index];
+                            if (variable.is_constant) {
+                                return self.reporter.reportError("Cannot modify constant variable: {s}", .{v.var_name});
+                            }
 
-                    variable.value = token_literal;
-                    variable.vtype = token_type;
-                    variable.type_info = type_info;
-                } else {
-                    if (self.debug_enabled) {
-                        std.debug.print("StoreVar: Variable '{s}' does not exist in current scope, creating it\n", .{v.var_name});
-                    }
-                    // Variable doesn't exist in current scope - create it
-                    _ = self.memory_manager.createVariable(v.var_name, token_literal, token_type, type_info, false, .{ .file = "vm.zig", .line = 0 }) catch |err| {
-                        return self.reporter.reportError("Failed to create variable {s}: {}", .{ v.var_name, err });
-                    };
+                            variable.value = token_literal;
+                            variable.vtype = token_type;
+                            variable.type_info = type_info;
+                        } else {
+                            if (self.debug_enabled) {
+                                std.debug.print("StoreVar: Variable '{s}' does not exist in current scope, creating it\n", .{v.var_name});
+                            }
+                            // Variable doesn't exist in current scope - create it
+                            _ = self.memory_manager.createVariable(v.var_name, token_literal, token_type, type_info, false, .{ .file = "vm.zig", .line = 0 }) catch |err| {
+                                return self.reporter.reportError("Failed to create variable {s}: {}", .{ v.var_name, err });
+                            };
+                        }
+                    },
+                    .ModuleGlobal => {
+                        if (self.debug_enabled) {
+                            std.debug.print("StoreVar: Entering ModuleGlobal case for '{s}'\n", .{v.var_name});
+                        }
+                        // Store in root scope for global variables
+                        if (self.memory_manager.getRootScope()) |root_scope| {
+                            if (root_scope.name_indices.get(v.var_name)) |index| {
+                                if (self.debug_enabled) {
+                                    std.debug.print("StoreVar: Global variable '{s}' exists in root scope at index {}\n", .{ v.var_name, index });
+                                }
+                                // Variable exists in root scope - update it
+                                const variable = &root_scope.variables[index];
+                                if (variable.is_constant) {
+                                    return self.reporter.reportError("Cannot modify constant variable: {s}", .{v.var_name});
+                                }
+
+                                variable.value = token_literal;
+                                variable.vtype = token_type;
+                                variable.type_info = type_info;
+                            } else {
+                                if (self.debug_enabled) {
+                                    std.debug.print("StoreVar: Global variable '{s}' does not exist in root scope, creating it\n", .{v.var_name});
+                                }
+                                // Variable doesn't exist in root scope - create it
+                                _ = self.memory_manager.createVariableInScope(root_scope, v.var_name, token_literal, token_type, type_info, false, .{ .file = "vm.zig", .line = 0 }) catch |err| {
+                                    return self.reporter.reportError("Failed to create global variable {s}: {}", .{ v.var_name, err });
+                                };
+                            }
+                        } else {
+                            return self.reporter.reportError("No root scope available for global variable {s}", .{v.var_name});
+                        }
+                    },
+                    .ImportedModule => {
+                        return self.reporter.reportError("Imported module variables not yet supported: {s}", .{v.var_name});
+                    },
+                    .Builtin => {
+                        return self.reporter.reportError("Builtin variables not yet supported: {s}", .{v.var_name});
+                    },
                 }
             },
 

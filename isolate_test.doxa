@@ -1,0 +1,61 @@
+// Include the problematic function calls from the original test
+function fizzbuzz(x:: int, limit:: int) {
+    var current is x;
+    while current <= limit {
+        if current % 3 equals 0 and current % 5 equals 0 then "fizzbuzz"?;
+        else if current % 3 equals 0 then "fizz"?;
+        else if current % 5 equals 0 then "buzz"?;
+        else current?;
+        
+        current += 1;
+    }
+}
+
+fizzbuzz(100, 115);
+
+fn fber(x:: int, limit:: int) {
+    if x % 3 equals 0 and x % 5 equals 0 then "fizzbuzzer"?;
+    else if x % 3 equals 0 then "fizzer"?;
+    else if x % 5 equals 0 then "buzzer"?;
+    else x?;
+
+    if x < limit then fber(x + 1, limit);
+}
+
+fber(1000, 1015);
+
+fn forloop(x :: int) {
+    for (var i is 0; i < x; i++) {
+        ((i+10)*66)?;
+    }
+}
+
+forloop(5);
+
+fn return_test() returns(string) {
+    return "return";
+}
+
+return_test()?;
+
+// Now create the struct and variable
+struct Person {
+    name :: string,
+    age :: int,
+}
+
+struct Employee {
+    person :: Person,
+    salary :: int,
+}
+
+var mike is Employee {
+    person is Person {
+        name is "Mike",
+        age is 25,
+    },
+    salary is 1000,
+};
+
+// Try to access the variable
+mike?; 
