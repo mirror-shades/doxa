@@ -226,6 +226,9 @@ fn runSoxaFile(memoryManager: *MemoryManager, soxa_path: []const u8, reporter: *
     var vm = try DoxaVM.init(&hir_program, reporter, memoryManager, reporter.is_debug);
     defer vm.deinit();
 
+    if (reporter.is_debug) {
+        std.debug.print("DEBUG: About to run VM with {} instructions\n", .{vm.program.instructions.len});
+    }
     _ = try vm.run();
 }
 
@@ -392,6 +395,9 @@ pub fn main() !void {
 
     // Initialize memory manager with debug setting
     var memoryManager = MemoryManager.init(gpa.allocator(), cli_options.debug);
+    if (cli_options.debug) {
+        std.debug.print("DEBUG: Created new MemoryManager\n", .{});
+    }
     defer memoryManager.deinit();
 
     if (cli_options.output) |out_file| {
@@ -416,44 +422,6 @@ pub fn main() !void {
     const abs_path = try std.fs.cwd().realpath(path, &path_buffer);
 
     reporter.debug("Debug: Absolute path: '{s}'\n", .{abs_path});
-
-    // Read source file for AST interpretation
-    const source = try std.fs.cwd().readFileAlloc(memoryManager.getAllocator(), path, MAX_FILE_SIZE);
-    defer memoryManager.getAllocator().free(source);
-
-    //==========================================================================
-    // Lexical analysis
-    //==========================================================================
-
-    // Lexical analysis
-    var lexer = LexicalAnalyzer.init(memoryManager.getAllocator(), source, path, &reporter);
-    defer lexer.deinit();
-    try lexer.initKeywords();
-    const tokens = try lexer.lexTokens();
-
-    //==========================================================================
-    // Parsing phase
-    //==========================================================================
-
-    // Parsing phase
-    var parser = Parser.init(memoryManager.getAllocator(), tokens.items, path, reporter.is_debug, &reporter);
-    defer parser.deinit();
-    const statements = try parser.execute();
-
-    // Write AST for debugging
-    const ast_path = try generateArtifactPath(&memoryManager, path, ".ast");
-    defer memoryManager.getAllocator().free(ast_path);
-    try ASTWriter.writeASTToFile(statements, ast_path);
-
-    //==========================================================================
-    // Semantic analysis
-    //==========================================================================
-    if (reporter.is_debug) {
-        std.debug.print("DEBUG: Parser imported symbols: {}\n", .{if (parser.imported_symbols != null) parser.imported_symbols.?.count() else 0});
-    }
-    var semantic_analyzer = SemanticAnalyzer.initWithImportedSymbols(memoryManager.getAllocator(), &reporter, &memoryManager, parser.imported_symbols);
-    defer semantic_analyzer.deinit();
-    try semantic_analyzer.analyze(statements);
 
     //==========================================================================
     // Compile to SOXA

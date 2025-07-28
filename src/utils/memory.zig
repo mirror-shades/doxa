@@ -49,6 +49,43 @@ pub const Variable = struct {
 };
 
 pub const Scope = struct {
+    // ... existing fields ...
+    /// Cleans up corrupted variable entries in the scope by removing variables with non-printable names.
+    pub fn cleanCorruptedEntries(self: *Scope, allocator: std.mem.Allocator) void {
+        if (self.variable_count > 0) {
+            var needs_cleanup = false;
+            for (self.variables[0..self.variable_count]) |variable| {
+                for (variable.name) |char| {
+                    if (char < 32 or char > 126) {
+                        needs_cleanup = true;
+                        break;
+                    }
+                }
+                if (needs_cleanup) break;
+            }
+            if (needs_cleanup) {
+                self.name_indices.clearRetainingCapacity();
+                var valid_count: u32 = 0;
+                for (self.variables[0..self.variable_count], 0..) |variable, i| {
+                    var is_valid = true;
+                    for (variable.name) |char| {
+                        if (char < 32 or char > 126) {
+                            is_valid = false;
+                            break;
+                        }
+                    }
+                    if (is_valid) {
+                        if (valid_count != i) {
+                            self.variables[valid_count] = variable;
+                        }
+                        self.name_indices.put(allocator, variable.name, valid_count) catch {};
+                        valid_count += 1;
+                    }
+                }
+                self.variable_count = valid_count;
+            }
+        }
+    }
     parent: ?*Scope,
     variables: []Variable,
     name_indices: std.StringHashMapUnmanaged(u32),
@@ -82,6 +119,48 @@ pub const Scope = struct {
         is_constant: bool,
         location: SourceLocation,
     ) !u32 {
+        // Check for corrupted entries and clean them up if needed
+        if (self.variable_count > 0) {
+            var needs_cleanup = false;
+            for (self.variables[0..self.variable_count]) |variable| {
+                // Check if variable name contains non-printable characters (corruption indicator)
+                for (variable.name) |char| {
+                    if (char < 32 or char > 126) {
+                        needs_cleanup = true;
+                        break;
+                    }
+                }
+                if (needs_cleanup) break;
+            }
+
+            if (needs_cleanup) {
+                // Clear the hash map and rebuild it with only valid entries
+                self.name_indices.clearRetainingCapacity();
+                var valid_count: u32 = 0;
+
+                for (self.variables[0..self.variable_count], 0..) |variable, i| {
+                    var is_valid = true;
+                    for (variable.name) |char| {
+                        if (char < 32 or char > 126) {
+                            is_valid = false;
+                            break;
+                        }
+                    }
+
+                    if (is_valid) {
+                        // Move valid variable to the front and update hash map
+                        if (valid_count != i) {
+                            self.variables[valid_count] = variable;
+                        }
+                        try self.name_indices.put(allocator, variable.name, valid_count);
+                        valid_count += 1;
+                    }
+                }
+
+                self.variable_count = valid_count;
+            }
+        }
+
         // Check for duplicate in current scope only
         if (self.name_indices.get(name) != null) {
             return error.DuplicateVariableName;
@@ -106,7 +185,6 @@ pub const Scope = struct {
 
         try self.name_indices.put(allocator, name, index);
         self.variable_count += 1;
-
         return index;
     }
 
@@ -128,12 +206,22 @@ pub const Scope = struct {
 };
 
 pub const MemoryManager = struct {
+    /// Cleans all scopes (including root) of corrupted variable entries.
+    pub fn cleanAllScopes(self: *MemoryManager) void {
+        for (self.scopes.items) |scope| {
+            scope.cleanCorruptedEntries(self.arena.allocator());
+        }
+        if (self.is_debug) {
+            std.debug.print("[MemoryManager] Cleaned all scopes of corrupted variable entries.\n", .{});
+        }
+    }
     arena: std.heap.ArenaAllocator,
     base_allocator: std.mem.Allocator,
     scopes: std.ArrayListUnmanaged(*Scope),
     root_scope: ?*Scope,
     current_scope: ?*Scope, // Tracks active scope
     is_debug: bool,
+    string_interner: StringInterner,
 
     pub fn init(allocator: std.mem.Allocator, is_debug: bool) MemoryManager {
         return .{
@@ -143,6 +231,7 @@ pub const MemoryManager = struct {
             .root_scope = null,
             .current_scope = null,
             .is_debug = is_debug,
+            .string_interner = StringInterner.init(allocator),
         };
     }
 
@@ -151,13 +240,19 @@ pub const MemoryManager = struct {
             std.debug.print("Cleaning up memory manager with {} scopes\n", .{self.scopes.items.len});
         }
 
-        // Note: name_indices hashmaps are arena-allocated, so they don't need manual cleanup
-        // The arena cleanup will handle all Variable data, Scope structs, and hashmap storage
-
+        // Clean up scopes first
         self.scopes.deinit(self.base_allocator);
 
-        // Arena cleanup handles all Variable data and Scope structs
+        // Then clean up the string interner
+        self.string_interner.deinit();
+
+        // Finally, clean up the arena
         self.arena.deinit();
+    }
+
+    /// Intern a string to ensure consistent memory usage and comparison by pointer
+    pub fn internString(self: *MemoryManager, str: []const u8) ![]const u8 {
+        return self.string_interner.intern(str);
     }
 
     pub fn getAllocator(self: *MemoryManager) std.mem.Allocator {
@@ -175,9 +270,11 @@ pub const MemoryManager = struct {
         self.scopes.clearRetainingCapacity();
         self.root_scope = null;
 
-        // Reset arena - this frees all scopes and variables at once
+        // Reset arena and string interner
         self.arena.deinit();
+        self.string_interner.deinit();
         self.arena = std.heap.ArenaAllocator.init(self.base_allocator);
+        self.string_interner = StringInterner.init(self.base_allocator);
     }
 
     // Public API - Simple and focused
@@ -188,7 +285,6 @@ pub const MemoryManager = struct {
         if (parent == null) {
             self.root_scope = scope;
         }
-
         return scope;
     }
 
@@ -202,9 +298,16 @@ pub const MemoryManager = struct {
         location: SourceLocation,
     ) !*Variable {
         const scope = self.current_scope orelse return error.NoActiveScope;
+
+        // First, make a copy of the name in the arena
+        const name_copy = try self.arena.allocator().dupe(u8, name);
+
+        // Then intern the copied string
+        const interned_name = try self.internString(name_copy);
+
         const index = try scope.createVariable(
             self.arena.allocator(),
-            name,
+            interned_name, // Use the interned string here
             value,
             vtype,
             type_info,
@@ -224,20 +327,32 @@ pub const MemoryManager = struct {
         is_constant: bool,
         location: SourceLocation,
     ) !*Variable {
+        // First, make a copy of the name in the arena
+        const name_copy = try self.arena.allocator().dupe(u8, name);
+
+        // Then intern the copied string
+        const interned_name = try self.internString(name_copy);
+
         const index = try scope.createVariable(
             self.arena.allocator(),
-            name,
+            interned_name, // Use the interned string here
             value,
             vtype,
             type_info,
             is_constant,
             location,
         );
+
         return &scope.variables[index];
     }
 
     pub fn lookupVariable(self: *MemoryManager, scope: *Scope, name: []const u8) ?*Variable {
-        _ = self; // unused
+        // First, try to find the string in the interner
+        if (self.string_interner.strings.get(name)) |interned_name| {
+            // If found, use the interned string for the lookup
+            return scope.lookupVariable(interned_name);
+        }
+        // If not found in interner, try direct lookup (for backward compatibility)
         return scope.lookupVariable(name);
     }
 
@@ -257,12 +372,18 @@ pub const MemoryManager = struct {
     pub fn pushScope(self: *MemoryManager, parent: ?*Scope) !*Scope {
         const scope = try self.createScope(parent);
         self.current_scope = scope;
+        if (self.is_debug) {
+            std.debug.print("DEBUG: Pushed new scope as current (total scopes: {})\n", .{self.scopes.items.len});
+        }
         return scope;
     }
 
     pub fn popScope(self: *MemoryManager) void {
         if (self.current_scope) |scope| {
             self.current_scope = scope.parent;
+            if (self.is_debug) {
+                std.debug.print("DEBUG: Popped scope, current scope now has {} variables\n", .{if (self.current_scope) |cs| cs.variable_count else 0});
+            }
         }
     }
 

@@ -117,12 +117,28 @@ pub const SemanticAnalyzer = struct {
         // The MemoryManager will handle cleanup in its deinit method
     }
 
-    // NEW: Export custom type information for HIR generation
+    /// Looks up a struct TypeInfo by its interned name and copies its struct_fields into the given TypeInfo if found.
+    pub fn populateStructFieldsByName(self: *SemanticAnalyzer, type_info: *ast.TypeInfo, struct_name: []const u8) void {
+        // Search all variables in the root scope for a struct type with the given name
+        if (self.memory.getRootScope()) |root_scope| {
+            for (root_scope.variables[0..root_scope.variable_count]) |variable| {
+                if (std.mem.eql(u8, variable.name, struct_name) and variable.type_info.base == .Struct) {
+                    if (variable.type_info.struct_fields) |fields| {
+                        type_info.struct_fields = fields;
+                        if (self.reporter.is_debug) {
+                            std.debug.print("[SemanticAnalyzer] Populated struct_fields for '{s}' with {d} fields.\n", .{ struct_name, fields.len });
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
     pub fn getCustomTypes(self: *SemanticAnalyzer) std.StringHashMap(CustomTypeInfo) {
         return self.custom_types;
     }
 
-    // NEW: Flatten union types to ensure no nested unions
     fn flattenUnionType(self: *SemanticAnalyzer, union_type: *ast.UnionType) !*ast.UnionType {
         var flat_types = std.ArrayList(*ast.TypeInfo).init(self.allocator);
         defer flat_types.deinit();
@@ -170,7 +186,6 @@ pub const SemanticAnalyzer = struct {
         return flattened_union;
     }
 
-    // NEW: Create a union type from multiple types
     fn createUnionType(self: *SemanticAnalyzer, types: []*ast.TypeInfo) !*ast.TypeInfo {
         // Flatten any existing unions in the input types
         var flat_types = std.ArrayList(*ast.TypeInfo).init(self.allocator);
@@ -231,7 +246,6 @@ pub const SemanticAnalyzer = struct {
         return type_info;
     }
 
-    // NEW: Register a custom type during semantic analysis
     fn registerCustomType(self: *SemanticAnalyzer, type_name: []const u8, kind: CustomTypeInfo.CustomTypeKind) !void {
         const custom_type = CustomTypeInfo{
             .name = try self.allocator.dupe(u8, type_name),
@@ -240,7 +254,6 @@ pub const SemanticAnalyzer = struct {
         try self.custom_types.put(type_name, custom_type);
     }
 
-    // NEW: Register enum with variants
     fn registerEnumType(self: *SemanticAnalyzer, enum_name: []const u8, variants: []const []const u8) !void {
         var enum_variants = try self.allocator.alloc(CustomTypeInfo.EnumVariant, variants.len);
         for (variants, 0..) |variant_name, index| {
@@ -258,7 +271,6 @@ pub const SemanticAnalyzer = struct {
         try self.custom_types.put(enum_name, custom_type);
     }
 
-    // NEW: Register struct with fields
     fn registerStructType(self: *SemanticAnalyzer, struct_name: []const u8, fields: []const ast.StructFieldType) !void {
         var struct_fields = try self.allocator.alloc(CustomTypeInfo.StructField, fields.len);
         for (fields, 0..) |field, index| {
@@ -278,7 +290,12 @@ pub const SemanticAnalyzer = struct {
     }
 
     pub fn analyze(self: *SemanticAnalyzer, statements: []ast.Stmt) ErrorList!void {
-        const root_scope = try self.memory.createScope(null);
+        // Use existing root scope if available, otherwise create a new one
+        const root_scope = if (self.memory.getRootScope()) |existing_root|
+            existing_root
+        else
+            try self.memory.createScope(null);
+
         self.current_scope = root_scope;
 
         // NEW: Register imported symbols in the root scope
@@ -1075,34 +1092,40 @@ pub const SemanticAnalyzer = struct {
                 const array_type = try self.inferTypeFromExpr(index.array);
                 const index_type = try self.inferTypeFromExpr(index.index);
 
-                if (array_type.base != .Array) {
-                    self.reporter.reportCompileError(
-                        expr.base.span.start,
-                        "Cannot index non-array type {s}",
-                        .{@tagName(array_type.base)},
-                    );
+                if (array_type.base != .Array and array_type.base != .String) {
+                    self.reporter.reportCompileError(expr.base.span.start, "Cannot index non-array or non-string type {s}", .{@tagName(array_type.base)});
                     self.fatal_error = true;
-                    type_info.base = .Nothing;
-                    return type_info;
+                    var inner_type_info = try self.allocator.create(ast.TypeInfo);
+                    errdefer self.allocator.destroy(inner_type_info);
+                    inner_type_info.base = .Nothing;
+                    return inner_type_info;
                 }
 
                 if (index_type.base != .Int) {
-                    self.reporter.reportCompileError(
-                        expr.base.span.start,
-                        "Array index must be integer, got {s}",
-                        .{@tagName(index_type.base)},
-                    );
+                    self.reporter.reportCompileError(expr.base.span.start, "Array/string index must be integer, got {s}", .{@tagName(index_type.base)});
                     self.fatal_error = true;
-                    type_info.base = .Nothing;
-                    return type_info;
+                    var inner_type_info = try self.allocator.create(ast.TypeInfo);
+                    errdefer self.allocator.destroy(inner_type_info);
+                    inner_type_info.base = .Nothing;
+                    return inner_type_info;
                 }
 
-                if (array_type.array_type) |elem_type| {
-                    type_info.* = elem_type.*;
-                } else {
-                    type_info.base = .Nothing;
+                const inner_type_info = try self.allocator.create(ast.TypeInfo);
+                errdefer self.allocator.destroy(inner_type_info);
+
+                if (array_type.base == .Array) {
+                    if (array_type.array_type) |elem_type| {
+                        inner_type_info.* = elem_type.*;
+                    } else {
+                        inner_type_info.base = .Nothing;
+                    }
+                } else if (array_type.base == .String) {
+                    // Indexing a string returns a byte (character code)
+                    inner_type_info.base = .Byte;
                 }
+                return inner_type_info;
             },
+
             .FieldAccess => |field| {
                 if (self.reporter.is_debug) {
                     std.debug.print("DEBUG: Processing FieldAccess: {s}.{s}\n", .{ if (field.object.data == .Variable) field.object.data.Variable.lexeme else "unknown", field.field.lexeme });
@@ -1202,6 +1225,19 @@ pub const SemanticAnalyzer = struct {
                         return type_info;
                     }
                 } else if (object_type.base == .Custom) {
+                    // Check if this is a struct type by looking up the variable
+                    if (object_type.custom_type) |custom_type_name| {
+                        self.populateStructFieldsByName(object_type, custom_type_name);
+                        if (object_type.struct_fields != null and self.reporter.is_debug) {
+                            std.debug.print("[SemanticAnalyzer] Resolved .Custom type '{s}' as struct with fields.\n", .{custom_type_name});
+                        }
+                        // PATCH: If this is a struct, propagate its fields for nested field access/assignment
+                        if (self.lookupVariable(custom_type_name)) |variable| {
+                            if (variable.type_info.base == .Struct and variable.type_info.struct_fields != null) {
+                                object_type.struct_fields = variable.type_info.struct_fields;
+                            }
+                        }
+                    }
                     // Check if this is a struct type by looking up the variable
                     if (object_type.custom_type) |custom_type_name| {
                         if (self.lookupVariable(custom_type_name)) |variable| {
@@ -1667,7 +1703,9 @@ pub const SemanticAnalyzer = struct {
                     type_info.base = .Nothing;
                     return type_info;
                 }
-                type_info.* = .{ .base = .Int }; // BytesOf returns an integer
+                const byte_type = try self.allocator.create(ast.TypeInfo);
+byte_type.* = .{ .base = .Byte };
+type_info.* = .{ .base = .Array, .array_type = byte_type }; // BytesOf returns array of bytes
             },
             .Map => |map_entries| {
                 if (map_entries.len == 0) {
@@ -1842,8 +1880,24 @@ pub const SemanticAnalyzer = struct {
                 type_info.* = .{ .base = .Nothing }; // IndexAssign has no return value
             },
             .FieldAssignment => |field_assign| {
-                const object_type = try self.inferTypeFromExpr(field_assign.object);
+                var object_type = try self.inferTypeFromExpr(field_assign.object);
                 const value_type = try self.inferTypeFromExpr(field_assign.value);
+
+                // PATCH: If object_type is .Custom, propagate struct fields if it is a struct
+                if (object_type.base == .Custom) {
+                    if (object_type.custom_type) |custom_type_name| {
+                        self.populateStructFieldsByName(object_type, custom_type_name);
+                        if (self.lookupVariable(custom_type_name)) |variable| {
+                            if (variable.type_info.base == .Struct and variable.type_info.struct_fields != null) {
+                                object_type.struct_fields = variable.type_info.struct_fields;
+                            }
+                        }
+                    }
+                    // PATCH: If struct_fields is present, set base = .Struct
+                    if (object_type.struct_fields != null) {
+                        object_type.base = .Struct;
+                    }
+                }
 
                 if (object_type.base != .Struct) {
                     self.reporter.reportCompileError(
@@ -2082,8 +2136,14 @@ pub const SemanticAnalyzer = struct {
             },
         }
 
-        // Cache the result
-        try self.type_cache.put(expr.base.id, type_info);
+        // After inferring type_info, if it's a .Custom type, try to populate struct_fields
+        if (type_info.base == .Custom and type_info.custom_type != null) {
+            self.populateStructFieldsByName(type_info, type_info.custom_type.?);
+            if (type_info.struct_fields != null and self.reporter.is_debug) {
+                std.debug.print("[SemanticAnalyzer] inferTypeFromExpr: .Custom type '{s}' resolved as struct with fields.\n", .{type_info.custom_type.?});
+            }
+        }
+
         return type_info;
     }
 
@@ -2142,8 +2202,6 @@ pub const SemanticAnalyzer = struct {
         return null;
     }
 
-    // Instead of setting fatal_error = true immediately, collect errors
-    // and continue analysis where possible
     pub fn reportTypeError(self: *SemanticAnalyzer, span: ast.SourceSpan, comptime fmt: []const u8, args: anytype) void {
         self.reporter.reportCompileError(span.start, fmt, args);
         // Only set fatal_error for critical errors that prevent further analysis
@@ -2778,18 +2836,25 @@ pub const SemanticAnalyzer = struct {
 
                 // Create appropriate type info based on symbol kind
                 const type_info = try self.allocator.create(ast.TypeInfo);
+
+                // Intern the custom_type name if needed
+                const interned_custom_type = if (symbol_info.kind == .Enum or symbol_info.kind == .Struct or symbol_info.kind == .Type)
+                    try self.memory.internString(symbol_info.name)
+                else
+                    null;
+
                 type_info.* = switch (symbol_info.kind) {
                     .Function => .{ .base = .Function, .is_mutable = false },
                     .Variable => .{ .base = .Nothing, .is_mutable = false }, // Will be resolved during usage
-                    .Enum => .{ .base = .Enum, .custom_type = symbol_info.name, .is_mutable = false },
-                    .Struct => .{ .base = .Struct, .custom_type = symbol_info.name, .is_mutable = false },
-                    .Type => .{ .base = .Custom, .custom_type = symbol_info.name, .is_mutable = false },
+                    .Enum => .{ .base = .Enum, .custom_type = interned_custom_type.?, .is_mutable = false },
+                    .Struct => .{ .base = .Struct, .custom_type = interned_custom_type.?, .is_mutable = false },
+                    .Type => .{ .base = .Custom, .custom_type = interned_custom_type.?, .is_mutable = false },
                     .Import => .{ .base = .Nothing, .is_mutable = false }, // Import namespaces are not directly usable
                 };
 
-                // Register the symbol in the scope
-                _ = scope.createVariable(
-                    self.allocator,
+                // Register the symbol in the scope using MemoryManager to ensure string interning
+                _ = self.memory.createVariableInScope(
+                    scope,
                     symbol_name,
                     TokenLiteral{ .nothing = {} }, // Placeholder value
                     self.convertTypeToTokenType(type_info.base),

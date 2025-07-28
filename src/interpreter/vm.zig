@@ -528,6 +528,10 @@ pub const HIRVM = struct {
 
         // Set the execution scope as the current scope in the memory manager
         memory_manager.current_scope = execution_scope;
+        if (debug_enabled) {
+            std.debug.print("DEBUG: Set execution scope as current scope in memory manager\n", .{});
+            std.debug.print("DEBUG: VM initialization - execution_scope has {} variables, root_scope has {} variables\n", .{ execution_scope.variable_count, if (memory_manager.getRootScope()) |root| root.variable_count else 0 });
+        }
 
         const string_interner = try allocator.create(StringInterner);
         string_interner.* = StringInterner.init(allocator);
@@ -592,6 +596,16 @@ pub const HIRVM = struct {
 
         while (self.running and self.ip < self.program.instructions.len) {
             const instruction = self.program.instructions[self.ip];
+
+            if (self.debug_enabled) {
+                // Add specific logging for StoreVar instructions
+                switch (instruction) {
+                    .StoreVar => |v| {
+                        std.debug.print("DEBUG: StoreVar instruction for '{s}' with scope_kind={s}\n", .{ v.var_name, @tagName(v.scope_kind) });
+                    },
+                    else => {},
+                }
+            }
 
             try self.executeInstruction(instruction);
 
@@ -783,8 +797,8 @@ pub const HIRVM = struct {
                             if (self.debug_enabled) {
                                 std.debug.print("StoreVar: Variable '{s}' does not exist in current scope, creating it\n", .{v.var_name});
                             }
-                            // Variable doesn't exist in current scope - create it
                             _ = self.memory_manager.createVariable(v.var_name, token_literal, token_type, type_info, false, .{ .file = "vm.zig", .line = 0 }) catch |err| {
+                                std.debug.print("ERROR: Failed to create variable '{s}' in current scope: {}\n", .{ v.var_name, err });
                                 return self.reporter.reportError("Failed to create variable {s}: {}", .{ v.var_name, err });
                             };
                         }
@@ -795,6 +809,13 @@ pub const HIRVM = struct {
                         }
                         // Store in root scope for global variables
                         if (self.memory_manager.getRootScope()) |root_scope| {
+                            if (self.debug_enabled) {
+                                std.debug.print("DEBUG: Found root scope with {} variables\n", .{root_scope.variable_count});
+                                // List all variables in root scope
+                                for (root_scope.variables[0..root_scope.variable_count], 0..) |variable, i| {
+                                    std.debug.print("DEBUG: Root scope variable {}: '{s}'\n", .{ i, variable.name });
+                                }
+                            }
                             if (root_scope.name_indices.get(v.var_name)) |index| {
                                 if (self.debug_enabled) {
                                     std.debug.print("StoreVar: Global variable '{s}' exists in root scope at index {}\n", .{ v.var_name, index });
@@ -814,6 +835,7 @@ pub const HIRVM = struct {
                                 }
                                 // Variable doesn't exist in root scope - create it
                                 _ = self.memory_manager.createVariableInScope(root_scope, v.var_name, token_literal, token_type, type_info, false, .{ .file = "vm.zig", .line = 0 }) catch |err| {
+                                    std.debug.print("ERROR: Failed to create variable '{s}': {}\n", .{ v.var_name, err });
                                     return self.reporter.reportError("Failed to create global variable {s}: {}", .{ v.var_name, err });
                                 };
                             }
@@ -1121,6 +1143,9 @@ pub const HIRVM = struct {
                 self.current_scope = new_scope;
                 // FIX: Also update the memory manager's current_scope
                 self.memory_manager.current_scope = new_scope;
+                if (self.debug_enabled) {
+                    std.debug.print("DEBUG: Updated memory manager current_scope to new scope\n", .{});
+                }
             },
 
             .ExitScope => {
@@ -1128,6 +1153,9 @@ pub const HIRVM = struct {
                     self.current_scope = parent_scope;
                     // FIX: Also update the memory manager's current_scope
                     self.memory_manager.current_scope = parent_scope;
+                    if (self.debug_enabled) {
+                        std.debug.print("DEBUG: Updated memory manager current_scope to parent scope\n", .{});
+                    }
                 }
             },
 
