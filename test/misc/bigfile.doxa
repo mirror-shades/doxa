@@ -1,7 +1,7 @@
 /////
 //IMPORTS
 /////
-import safeMath from "./safeMath.doxa";
+module safeMath from "./safeMath.doxa";
 
 // complex import statement
 var import1 is safeMath.safeAdd(15, 66);
