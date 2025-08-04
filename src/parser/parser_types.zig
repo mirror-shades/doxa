@@ -186,18 +186,23 @@ pub const Parser = struct {
             statements.deinit();
         }
 
-        // --- Pass 1: Imports (Process side effects, don't add to statements list yet) ---
+        // --- Pass 1: Imports and Modules (Process side effects, don't add to statements list yet) ---
         // Keep track of the original position after imports are processed
         var start_index_after_imports = self.current;
-        while (self.tokens[start_index_after_imports].type == .IMPORT) {
-            // Temporarily move parser to process the import
+        while (self.tokens[start_index_after_imports].type == .IMPORT or self.tokens[start_index_after_imports].type == .MODULE) {
+            // Temporarily move parser to process the import/module
             const temp_current = self.current;
             self.current = start_index_after_imports;
 
-            _ = try import_parser.parseImportStmt(self); // Call for side-effects (loading/registration)
+            // Call appropriate parser based on token type
+            if (self.tokens[start_index_after_imports].type == .MODULE) {
+                _ = try import_parser.parseModuleStmt(self); // Call for side-effects (loading/registration)
+            } else {
+                _ = try import_parser.parseImportStmt(self); // Call for side-effects (loading/registration)
+            }
 
-            // Advance start_index_after_imports past the import statement
-            // parseImportStmt should have advanced self.current appropriately
+            // Advance start_index_after_imports past the import/module statement
+            // parseImportStmt/parseModuleStmt should have advanced self.current appropriately
             start_index_after_imports = self.current;
 
             // Restore original parser position if needed (though we'll reset below)
@@ -2022,8 +2027,10 @@ pub const Parser = struct {
                 }
 
                 try imports.append(ast.ImportInfo{
+                    .import_type = .Module,
                     .module_path = imported_module_path,
                     .namespace_alias = alias,
+                    .specific_symbols = null,
                     .specific_symbol = null,
                 });
             }
@@ -2043,8 +2050,10 @@ pub const Parser = struct {
                     }
 
                     try imports.append(ast.ImportInfo{
+                        .import_type = .Module,
                         .module_path = imported_module_path,
                         .namespace_alias = alias,
+                        .specific_symbols = null,
                         .specific_symbol = null,
                     });
                 }
@@ -2533,6 +2542,94 @@ pub const Parser = struct {
                     }
                 }
             }
+        }
+    }
+
+    pub fn loadAndRegisterSpecificSymbol(self: *Parser, module_path: []const u8, symbol_name: []const u8) ErrorList!void {
+        // Get module info - this will parse the module if not already cached
+        const module_info = try self.resolveModule(module_path);
+
+        // If we have the full module AST available (from module_info),
+        // we can scan it for the specific symbol and register it
+        if (module_info.ast) |module_ast| {
+            try self.registerSpecificSymbol(module_ast, module_path, symbol_name);
+        }
+    }
+
+    // Function to scan a module's AST and register a specific symbol
+    fn registerSpecificSymbol(self: *Parser, module_ast: *ast.Expr, module_path: []const u8, symbol_name: []const u8) !void {
+        // Initialize symbol table for this module if needed
+        if (self.imported_symbols == null) {
+            self.imported_symbols = std.StringHashMap(import_parser.ImportedSymbol).init(self.allocator);
+        }
+
+        switch (module_ast.data) {
+            .Block => {
+                const statements = module_ast.data.Block.statements;
+                for (statements) |stmt| {
+                    switch (stmt.data) {
+                        // Handle function declarations
+                        .FunctionDecl => |func| {
+                            const is_public = func.is_public;
+                            if (is_public and std.mem.eql(u8, func.name.lexeme, symbol_name)) {
+                                // Register the symbol directly (not with namespace prefix)
+                                try self.imported_symbols.?.put(symbol_name, .{
+                                    .kind = .Function,
+                                    .name = func.name.lexeme,
+                                    .original_module = module_path,
+                                });
+                                return; // Found the symbol, we're done
+                            }
+                        },
+                        // Handle variable declarations
+                        .VarDecl => |var_decl| {
+                            const is_public = var_decl.is_public;
+                            if (is_public and std.mem.eql(u8, var_decl.name.lexeme, symbol_name)) {
+                                // Register the symbol directly (not with namespace prefix)
+                                try self.imported_symbols.?.put(symbol_name, .{
+                                    .kind = .Variable,
+                                    .name = var_decl.name.lexeme,
+                                    .original_module = module_path,
+                                });
+                                return; // Found the symbol, we're done
+                            }
+                        },
+                        // Handle enum declarations
+                        .EnumDecl => |enum_decl| {
+                            const is_public = enum_decl.is_public;
+                            if (is_public and std.mem.eql(u8, enum_decl.name.lexeme, symbol_name)) {
+                                // Register the symbol directly (not with namespace prefix)
+                                try self.imported_symbols.?.put(symbol_name, .{
+                                    .kind = .Enum,
+                                    .name = enum_decl.name.lexeme,
+                                    .original_module = module_path,
+                                });
+                                return; // Found the symbol, we're done
+                            }
+                        },
+                        // Handle struct declarations
+                        .Expression => |maybe_expr| {
+                            if (maybe_expr) |expr| {
+                                if (expr.data == .StructDecl) {
+                                    const struct_decl = expr.data.StructDecl;
+                                    const is_public = struct_decl.is_public;
+                                    if (is_public and std.mem.eql(u8, struct_decl.name.lexeme, symbol_name)) {
+                                        // Register the symbol directly (not with namespace prefix)
+                                        try self.imported_symbols.?.put(symbol_name, .{
+                                            .kind = .Struct,
+                                            .name = struct_decl.name.lexeme,
+                                            .original_module = module_path,
+                                        });
+                                        return; // Found the symbol, we're done
+                                    }
+                                }
+                            }
+                        },
+                        else => {}, // Skip other types of statements
+                    }
+                }
+            },
+            else => {}, // Skip other AST types
         }
     }
 

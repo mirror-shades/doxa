@@ -5,6 +5,8 @@ const MemoryManager = Memory.MemoryManager;
 const Scope = Memory.Scope;
 const ScopeManager = Memory.ScopeManager;
 const Variable = Memory.Variable;
+const Parser = @import("../parser/parser_types.zig").Parser;
+const import_parser = @import("../parser/import_parser.zig");
 
 const Reporting = @import("../utils/reporting.zig");
 const Reporter = Reporting.Reporter;
@@ -42,7 +44,10 @@ pub const SemanticAnalyzer = struct {
     // NEW: Track return statements in current function for inference
     current_function_returns: std.ArrayList(*ast.TypeInfo),
 
-    pub fn init(allocator: std.mem.Allocator, reporter: *Reporter, memory: *MemoryManager) SemanticAnalyzer {
+    // NEW: Reference to parser for accessing imported symbols
+    parser: ?*const Parser = null,
+
+    pub fn init(allocator: std.mem.Allocator, reporter: *Reporter, memory: *MemoryManager, parser: ?*const Parser) SemanticAnalyzer {
         return .{
             .allocator = allocator,
             .reporter = reporter,
@@ -53,6 +58,7 @@ pub const SemanticAnalyzer = struct {
             .custom_types = std.StringHashMap(CustomTypeInfo).init(allocator),
             .function_return_types = std.AutoHashMap(NodeId, *ast.TypeInfo).init(allocator),
             .current_function_returns = std.ArrayList(*ast.TypeInfo).init(allocator),
+            .parser = parser,
         };
     }
 
@@ -1062,6 +1068,12 @@ pub const SemanticAnalyzer = struct {
                 } else if (object_type.base == .Custom) {
                     // Check if this is a struct type by looking up the variable
                     if (object_type.custom_type) |custom_type_name| {
+                        // First check if this is a module namespace
+                        if (self.isModuleNamespace(custom_type_name)) {
+                            // Handle module namespace access
+                            return self.handleModuleFieldAccess(custom_type_name, field.field.lexeme, expr.base.span);
+                        }
+
                         if (self.lookupVariable(custom_type_name)) |variable| {
                             if (self.memory.scope_manager.value_storage.get(variable.storage_id)) |storage| {
                                 if (storage.type_info.base == .Struct) {
@@ -1937,14 +1949,180 @@ pub const SemanticAnalyzer = struct {
                 if (result) |variable| {
                     std.debug.print("DEBUG: Found variable '{s}' with storage_id {}\n", .{ name, variable.storage_id });
                 } else {
-                    std.debug.print("DEBUG: Variable '{s}' not found\n", .{name});
+                    std.debug.print("DEBUG: Variable '{s}' not found in scope\n", .{name});
                 }
             }
-            return result;
+            if (result != null) return result;
         }
+
+        // Check for imported symbols if not found in scope
+        if (self.parser) |parser| {
+            if (parser.imported_symbols) |imported_symbols| {
+                if (imported_symbols.get(name)) |imported_symbol| {
+                    if (self.reporter.is_debug) {
+                        std.debug.print("DEBUG: Found imported symbol '{s}' from module '{s}'\n", .{ name, imported_symbol.original_module });
+                    }
+                    // Create a variable for the imported symbol
+                    return self.createImportedSymbolVariable(name, imported_symbol);
+                }
+            }
+
+            // Check for module namespaces
+            if (parser.module_namespaces.contains(name)) {
+                if (self.reporter.is_debug) {
+                    std.debug.print("DEBUG: Found module namespace '{s}'\n", .{name});
+                }
+                // Create a variable for the module namespace
+                return self.createModuleNamespaceVariable(name);
+            }
+        }
+
         if (self.reporter.is_debug) {
-            std.debug.print("DEBUG: No current scope available for variable lookup '{s}'\n", .{name});
+            std.debug.print("DEBUG: Variable '{s}' not found in scope or imports\n", .{name});
         }
+        return null;
+    }
+
+    // Helper function to create a Variable for a module namespace
+    fn createModuleNamespaceVariable(self: *SemanticAnalyzer, name: []const u8) ?*Variable {
+        // Create a TypeInfo for the module namespace
+        const type_info = self.allocator.create(ast.TypeInfo) catch return null;
+        errdefer self.allocator.destroy(type_info);
+
+        type_info.* = ast.TypeInfo{ .base = .Custom, .is_mutable = false, .custom_type = name };
+
+        // Convert TypeInfo to TokenType
+        const token_type = self.convertTypeToTokenType(type_info.base);
+
+        // Create a Variable object for the module namespace using the scope's createValueBinding
+        if (self.current_scope) |scope| {
+            // Create a placeholder value for the module namespace
+            const placeholder_value = TokenLiteral{ .nothing = {} };
+
+            const variable = scope.createValueBinding(name, placeholder_value, token_type, type_info.*, false) catch return null;
+            return variable;
+        }
+
+        return null;
+    }
+
+    // Helper function to check if a name is a module namespace
+    fn isModuleNamespace(self: *SemanticAnalyzer, name: []const u8) bool {
+        if (self.parser) |parser| {
+            if (parser.module_namespaces.contains(name)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Helper function to handle module field access (e.g., math.add)
+    fn handleModuleFieldAccess(self: *SemanticAnalyzer, module_name: []const u8, field_name: []const u8, span: ast.SourceSpan) !*ast.TypeInfo {
+        var type_info = try self.allocator.create(ast.TypeInfo);
+        errdefer self.allocator.destroy(type_info);
+
+        if (self.parser) |parser| {
+            // Look for the field in the module's imported symbols
+            if (parser.imported_symbols) |imported_symbols| {
+                const full_name = std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ module_name, field_name }) catch {
+                    self.reporter.reportCompileError(
+                        span.start,
+                        "Internal error: Could not format module field name",
+                        .{},
+                    );
+                    self.fatal_error = true;
+                    type_info.base = .Nothing;
+                    return type_info;
+                };
+                defer self.allocator.free(full_name);
+
+                if (imported_symbols.get(full_name)) |imported_symbol| {
+                    // Return appropriate type based on the imported symbol kind
+                    switch (imported_symbol.kind) {
+                        .Function => {
+                            // Create return type
+                            const return_type = self.allocator.create(ast.TypeInfo) catch return type_info;
+                            return_type.* = ast.TypeInfo{ .base = .Int, .is_mutable = false };
+
+                            // Create function type
+                            const function_type = self.allocator.create(ast.FunctionType) catch return type_info;
+                            function_type.* = ast.FunctionType{
+                                .params = &[_]ast.TypeInfo{},
+                                .return_type = return_type,
+                            };
+
+                            type_info.* = ast.TypeInfo{
+                                .base = .Function,
+                                .is_mutable = false,
+                                .function_type = function_type,
+                            };
+                        },
+                        .Variable => type_info.* = ast.TypeInfo{ .base = .Int, .is_mutable = false },
+                        .Struct => type_info.* = ast.TypeInfo{ .base = .Struct, .is_mutable = false },
+                        .Enum => type_info.* = ast.TypeInfo{ .base = .Enum, .is_mutable = false },
+                        .Type => type_info.* = ast.TypeInfo{ .base = .Custom, .is_mutable = false },
+                        .Import => type_info.* = ast.TypeInfo{ .base = .Custom, .is_mutable = false },
+                    }
+                    return type_info;
+                }
+            }
+        }
+
+        // Field not found in module
+        self.reporter.reportCompileError(
+            span.start,
+            "Field '{s}' not found in module '{s}'",
+            .{ field_name, module_name },
+        );
+        self.fatal_error = true;
+        type_info.base = .Nothing;
+        return type_info;
+    }
+
+    // Helper function to create a Variable for an imported symbol
+    fn createImportedSymbolVariable(self: *SemanticAnalyzer, name: []const u8, imported_symbol: import_parser.ImportedSymbol) ?*Variable {
+        // Create a TypeInfo based on the imported symbol kind
+        const type_info = self.allocator.create(ast.TypeInfo) catch return null;
+        errdefer self.allocator.destroy(type_info);
+
+        switch (imported_symbol.kind) {
+            .Function => {
+                // Create return type
+                const return_type = self.allocator.create(ast.TypeInfo) catch return null;
+                return_type.* = ast.TypeInfo{ .base = .Int, .is_mutable = false };
+
+                // Create function type
+                const function_type = self.allocator.create(ast.FunctionType) catch return null;
+                function_type.* = ast.FunctionType{
+                    .params = &[_]ast.TypeInfo{},
+                    .return_type = return_type,
+                };
+
+                type_info.* = ast.TypeInfo{
+                    .base = .Function,
+                    .is_mutable = false,
+                    .function_type = function_type,
+                };
+            },
+            .Variable => type_info.* = ast.TypeInfo{ .base = .Int, .is_mutable = false },
+            .Struct => type_info.* = ast.TypeInfo{ .base = .Struct, .is_mutable = false },
+            .Enum => type_info.* = ast.TypeInfo{ .base = .Enum, .is_mutable = false },
+            .Type => type_info.* = ast.TypeInfo{ .base = .Custom, .is_mutable = false },
+            .Import => type_info.* = ast.TypeInfo{ .base = .Custom, .is_mutable = false },
+        }
+
+        // Convert TypeInfo to TokenType
+        const token_type = self.convertTypeToTokenType(type_info.base);
+
+        // Create a Variable object for the imported symbol using the scope's createValueBinding
+        if (self.current_scope) |scope| {
+            // Create a placeholder value for the imported symbol
+            const placeholder_value = TokenLiteral{ .nothing = {} };
+
+            const variable = scope.createValueBinding(name, placeholder_value, token_type, type_info.*, false) catch return null;
+            return variable;
+        }
+
         return null;
     }
 

@@ -101,6 +101,7 @@ pub const LexicalAnalyzer = struct {
         try self.keywords.put("or", .OR);
         try self.keywords.put("nothing", .NOTHING);
         try self.keywords.put("import", .IMPORT);
+        try self.keywords.put("module", .MODULE);
         try self.keywords.put("assert", .ASSERT);
         try self.keywords.put("match", .MATCH);
         try self.keywords.put("enum", .ENUM);

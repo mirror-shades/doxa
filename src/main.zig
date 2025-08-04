@@ -448,7 +448,7 @@ pub fn main() !void {
     //==========================================================================
     // Semantic analysis
     //==========================================================================
-    var semantic_analyzer = SemanticAnalyzer.init(memoryManager.getAllocator(), &reporter, &memoryManager);
+    var semantic_analyzer = SemanticAnalyzer.init(memoryManager.getAllocator(), &reporter, &memoryManager, &parser);
     defer semantic_analyzer.deinit();
     try semantic_analyzer.analyze(statements);
 

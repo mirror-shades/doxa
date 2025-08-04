@@ -1,4 +1,4 @@
-import "./math.doxa" as math; 
+module math from "./math.doxa"; 
 
 const limit :: int is 255;
 

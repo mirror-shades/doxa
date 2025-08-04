@@ -1,0 +1,29 @@
+// Testing module import syntax: "module math from "./misc/math.doxa";"
+// This imports the entire module as a namespace, accessed via dot notation
+
+module math from "./misc/math.doxa";
+
+const limit :: int is 255;
+
+pub function testModuleImport(a :: int, b :: int) returns(int) {
+    if(a > limit or b > limit) then {
+        "Overflow detected in module import test"?;
+        return -1;
+    } 
+    
+    if(a < 0 or b < 0) then {
+        "Underflow detected in module import test"?;
+        return -1;
+    }
+
+    // Using module import: math.add(a, b)
+    // The function is accessed through the namespace
+    return math.add(a, b);
+}
+
+pub function demonstrateModuleAccess() returns(int) {
+    // Multiple calls using the module namespace
+    const result1 is math.add(5, 10);
+    const result2 is math.add(result1, 3);
+    return result2; // Should return 18
+} 

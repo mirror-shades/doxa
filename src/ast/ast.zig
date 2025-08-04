@@ -1032,9 +1032,18 @@ pub const TypeExpr = struct {
 // Module System
 //======================================================================
 
+pub const ImportType = enum {
+    Module, // module math from "./math.doxa"
+    Specific, // import add from "./math.doxa"
+};
+
 pub const ImportInfo = struct {
+    import_type: ImportType,
     module_path: []const u8,
     namespace_alias: ?[]const u8 = null,
+    specific_symbols: ?[][]const u8 = null, // Support multiple symbols: import add, subtract from "./math.doxa"
+
+    // Legacy support for current parser
     specific_symbol: ?[]const u8 = null,
 };
 
