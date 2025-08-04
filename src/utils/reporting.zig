@@ -43,6 +43,7 @@ pub const ErrorList = error{
     UnknownVariableType,
     UnknownCustomType,
     InvalidExpressionType,
+    ImportMustHaveFrom,
 
     // Variable Management
     VariableNotFound,

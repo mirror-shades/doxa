@@ -1,0 +1,29 @@
+// Testing specific import syntax: "import add from "./misc/math.doxa";"
+// This imports only the specific function directly into the current scope
+
+import add from "./misc/math.doxa";
+
+const limit :: int is 255;
+
+pub function testSpecificImport(a :: int, b :: int) returns(int) {
+    if(a > limit or b > limit) then {
+        "Overflow detected in specific import test"?;
+        return -1;
+    } 
+    
+    if(a < 0 or b < 0) then {
+        "Underflow detected in specific import test"?;
+        return -1;
+    }
+
+    // Using specific import: add(a, b) directly
+    // No namespace needed - the function is imported directly
+    return add(a, b);
+}
+
+pub function demonstrateDirectAccess() returns(int) {
+    // Multiple calls using the directly imported function
+    const result1 is add(7, 13);
+    const result2 is add(result1, 5);
+    return result2; // Should return 25
+} 

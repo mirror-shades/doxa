@@ -1,4 +1,4 @@
-import "./badSafeMath.doxa" as safeMath;
+import safeMath from "./badSafeMath.doxa";
 
 // complex import statement
 var import1 is safeMath.safeAdd(1, 2);

@@ -1,4 +1,4 @@
-import "./badMath.doxa" as math; 
+import math from "./badMath.doxa"; 
 
 const limit :: int is 255;
 
