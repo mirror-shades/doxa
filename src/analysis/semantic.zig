@@ -916,7 +916,7 @@ pub const SemanticAnalyzer = struct {
                     type_info.* = .{ .base = .Float };
                 } else if (std.mem.eql(u8, op, "<") or std.mem.eql(u8, op, ">") or
                     std.mem.eql(u8, op, "<=") or std.mem.eql(u8, op, ">=") or
-                    std.mem.eql(u8, op, "==") or std.mem.eql(u8, op, "!="))
+                    std.mem.eql(u8, op, "==") or std.mem.eql(u8, op, "equals") or std.mem.eql(u8, op, "!="))
                 {
                     // Comparison operators return boolean
                     // Allow mixed numeric types for comparison
@@ -1188,9 +1188,25 @@ pub const SemanticAnalyzer = struct {
                 const then_type = try self.inferTypeFromExpr(if_expr.then_branch.?);
                 if (if_expr.else_branch) |else_branch| {
                     const else_type = try self.inferTypeFromExpr(else_branch);
-                    try self.unifyTypes(then_type, else_type, expr.base.span);
+
+                    // Special handling for peek expressions - allow different types
+                    // since peek is used for output/printing and the actual return value
+                    // should be the same as the expression being peeked
+                    const then_is_peek = if_expr.then_branch.?.data == .Peek;
+                    const else_is_peek = else_branch.data == .Peek;
+
+                    if (then_is_peek and else_is_peek) {
+                        // Both are peek expressions - use the then type as the result type
+                        // This allows different types to be peeked in different branches
+                        type_info.* = then_type.*;
+                    } else {
+                        // At least one is not a peek expression - unify types as usual
+                        try self.unifyTypes(then_type, else_type, expr.base.span);
+                        type_info.* = then_type.*;
+                    }
+                } else {
+                    type_info.* = then_type.*;
                 }
-                type_info.* = then_type.*;
             },
             .Logical => |logical| {
                 const left_type = try self.inferTypeFromExpr(logical.left);
@@ -1226,6 +1242,21 @@ pub const SemanticAnalyzer = struct {
                 type_info.* = .{ .base = .Nothing }; // While expressions have no value
             },
             .For => |for_expr| {
+                // Create a scope for the loop variables
+                const loop_scope = try self.memory.scope_manager.createScope(self.current_scope);
+                const previous_scope = self.current_scope;
+                self.current_scope = loop_scope;
+                defer {
+                    self.current_scope = previous_scope;
+                    loop_scope.deinit();
+                }
+
+                // Process the initializer if present
+                if (for_expr.initializer) |init_stmt| {
+                    try self.validateStatements(&[_]ast.Stmt{init_stmt.*});
+                }
+
+                // Check the condition
                 if (for_expr.condition) |condition| {
                     const condition_type = try self.inferTypeFromExpr(condition);
                     if (condition_type.base != .Tetra) {
@@ -1240,6 +1271,7 @@ pub const SemanticAnalyzer = struct {
                     }
                 }
 
+                // Process the body
                 _ = try self.inferTypeFromExpr(for_expr.body);
                 type_info.* = .{ .base = .Nothing }; // For expressions have no value
             },
