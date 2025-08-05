@@ -167,7 +167,7 @@ fn compileDoxaToSoxa(memoryManager: *MemoryManager, source_path: []const u8, sox
     reporter.debug(">> Constant folding applied: {} optimizations\n", .{constant_folder.getOptimizationCount()});
 
     // NEW: Semantic analysis phase
-    var semantic_analyzer = SemanticAnalyzer.init(memoryManager.getAllocator(), reporter, memoryManager);
+    var semantic_analyzer = SemanticAnalyzer.init(memoryManager.getAllocator(), reporter, memoryManager, &parser);
     defer semantic_analyzer.deinit();
     try semantic_analyzer.analyze(statements);
 
@@ -458,21 +458,22 @@ pub fn main() !void {
     // Compile to SOXA
     //==========================================================================
 
-    // // Determine output paths
-    // const soxa_path = try generateArtifactPath(&memoryManager, path, ".soxa");
-    // defer memoryManager.getAllocator().free(soxa_path);
+    // Determine output paths
+    const soxa_path = try generateArtifactPath(&memoryManager, path, ".soxa");
+    defer memoryManager.getAllocator().free(soxa_path);
 
-    // // TESTING: Always delete cached .soxa file to test fixes
-    // std.fs.cwd().deleteFile(soxa_path) catch {};
+    // TESTING: Always delete cached .soxa file for now
+    // TODO: Remove this once we have a proper cache system
+    std.fs.cwd().deleteFile(soxa_path) catch {};
 
-    // // Check if we need to recompile .doxa → .soxa using cache validation
-    // const needs_recompile = try needsRecompilation(path, soxa_path, memoryManager.getAllocator());
+    // Check if we need to recompile .doxa → .soxa using cache validation
+    const needs_recompile = try needsRecompilation(path, soxa_path, memoryManager.getAllocator());
 
-    // if (needs_recompile) {
-    //     try compileDoxaToSoxa(&memoryManager, path, soxa_path, &reporter);
-    // } else {
-    //     reporter.debug(">> Using cached SOXA: {s}\n", .{soxa_path});
-    // }
+    if (needs_recompile) {
+        try compileDoxaToSoxa(&memoryManager, path, soxa_path, &reporter);
+    } else {
+        reporter.debug(">> Using cached SOXA: {s}\n", .{soxa_path});
+    }
 
     // //==========================================================================
     // // Execute
