@@ -1693,6 +1693,28 @@ pub const HIRVM = struct {
                             };
 
                             try self.stack.push(HIRFrame.initInt(result));
+                        } else if (std.mem.eql(u8, c.qualified_name, "power")) {
+                            // Power function - expects base and exponent on stack
+                            const exponent = try self.stack.pop();
+                            const base = try self.stack.pop();
+
+                            // Convert both operands to float for power calculation
+                            const base_float = switch (base.value) {
+                                .int => |i| @as(f64, @floatFromInt(i)),
+                                .float => |f| f,
+                                .byte => |b| @as(f64, @floatFromInt(b)),
+                                else => return self.reporter.reportError("power: base must be numeric", .{}),
+                            };
+
+                            const exponent_float = switch (exponent.value) {
+                                .int => |i| @as(f64, @floatFromInt(i)),
+                                .float => |f| f,
+                                .byte => |b| @as(f64, @floatFromInt(b)),
+                                else => return self.reporter.reportError("power: exponent must be numeric", .{}),
+                            };
+
+                            const result = std.math.pow(f64, base_float, exponent_float);
+                            try self.stack.push(HIRFrame.initFloat(result));
                         } else if (std.mem.eql(u8, c.qualified_name, "exists_quantifier_gt")) {
                             // Existential quantifier with greater-than condition
                             const comparison_value = try self.stack.pop();
