@@ -391,7 +391,7 @@ pub fn main() !void {
     };
 
     // Initialize memory manager with debug setting
-    var memoryManager = try MemoryManager.init(gpa.allocator(), cli_options.debug);
+    var memoryManager = try MemoryManager.init(gpa.allocator());
     defer memoryManager.deinit();
 
     if (cli_options.output) |out_file| {

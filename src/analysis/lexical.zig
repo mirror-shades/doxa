@@ -133,7 +133,6 @@ pub const LexicalAnalyzer = struct {
         try self.keywords.put("at", .AT);
         try self.keywords.put("typeof", .TYPEOF);
         try self.keywords.put("length", .LENGTH);
-        try self.keywords.put("bytes", .BYTES);
         try self.keywords.put("substring", .SUBSTRING);
         try self.keywords.put("concat", .CONCAT);
         try self.keywords.put("slice", .SLICE);
@@ -717,14 +716,15 @@ pub const LexicalAnalyzer = struct {
     }
 
     fn internalMethod(self: *LexicalAnalyzer) !void {
-        const method_name = self.getMethodName(); // Get full name like "typeof"
+        const method_name = self.getMethodName();
+        self.start = self.current;
 
         if (std.mem.eql(u8, method_name, "typeof")) {
             try self.addToken(.TYPEOF, .nothing);
         } else if (std.mem.eql(u8, method_name, "lengthof")) {
             try self.addToken(.LENGTH, .nothing);
         } else if (std.mem.eql(u8, method_name, "bytesof")) {
-            try self.addToken(.BYTES, .nothing);
+            try self.addToken(.BYTESOF, .nothing);
         } else if (std.mem.eql(u8, method_name, "substring")) {
             try self.addToken(.SUBSTRING, .nothing);
         } else if (std.mem.eql(u8, method_name, "concat")) {
@@ -754,7 +754,9 @@ pub const LexicalAnalyzer = struct {
             i += 1;
         }
 
-        return buffer[0..i];
+        // Copy the string to avoid returning a slice to a local buffer
+        const result = self.source[self.current - i .. self.current];
+        return result;
     }
 
     //======================================================================

@@ -202,7 +202,7 @@ pub const rules = blk: {
     r.set(.LENGTH, .{ .prefix = lengthofExpr, .precedence = .CALL });
 
     // Add bytesof support
-    r.set(.BYTES, .{ .prefix = bytesofExpr, .precedence = .CALL });
+    r.set(.BYTESOF, .{ .prefix = bytesofExpr, .precedence = .CALL });
 
     // Add cast operator support
     r.set(.AS, .{ .infix = expr_parser.castExpr, .precedence = .CALL });

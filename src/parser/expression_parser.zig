@@ -10,10 +10,8 @@ const Reporting = @import("../utils/reporting.zig");
 const Reporter = Reporting.Reporter;
 const ErrorList = Reporting.ErrorList;
 const printTemp = std.debug.print;
+
 pub fn parseExpression(self: *Parser) ErrorList!?*ast.Expr {
-    if (self.debug_enabled) {
-        std.debug.print("[DEBUG] parseExpression: starting at token {s} ('{s}')\n", .{ @tagName(self.peek().type), self.peek().lexeme });
-    }
 
     // Special handling for array type expressions
     if (self.peek().type == .ARRAY_TYPE) {
@@ -67,9 +65,6 @@ pub fn binary(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Ex
 }
 
 pub fn braceExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-    if (self.debug_enabled) {
-        std.debug.print("\nParsing brace expression...\n", .{});
-    }
 
     // Consume the left brace
     self.advance();
@@ -152,9 +147,6 @@ pub fn typeofExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.E
 }
 
 pub fn lengthofExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-    if (self.debug_enabled) {
-        std.debug.print("\nParsing lengthof expression...\n", .{});
-    }
 
     // We're already at 'lengthof', advance to the next token
     self.advance();
@@ -191,9 +183,6 @@ pub fn lengthofExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast
 }
 
 pub fn bytesofExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-    if (self.debug_enabled) {
-        std.debug.print("\nParsing bytesof expression...\n", .{});
-    }
 
     // We're already at 'bytesof', advance to the next token
     self.advance();
@@ -230,10 +219,6 @@ pub fn bytesofExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
 }
 
 pub fn parseMatchExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-    if (self.debug_enabled) {
-        std.debug.print("\nParsing match expression...\n", .{});
-    }
-
     self.advance(); // consume 'match' keyword
 
     // Parse the value to match on - parse as a simple variable expression to avoid recursion
@@ -343,10 +328,6 @@ pub fn parseMatchExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*a
 }
 
 pub fn whileExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-    if (self.debug_enabled) {
-        std.debug.print("\nParsing while expression...\n", .{});
-    }
-
     self.advance(); // consume 'while'
 
     // Optional parentheses around condition
@@ -409,10 +390,6 @@ pub fn whileExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Ex
 }
 
 pub fn forExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-    if (self.debug_enabled) {
-        std.debug.print("\nParsing for expression...\n", .{});
-    }
-
     self.advance(); // consume 'for'
 
     if (self.peek().type != .LEFT_PAREN) {
@@ -606,10 +583,6 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
     const type_token = self.peek();
     const type_name = type_token.lexeme;
 
-    if (self.debug_enabled) {
-        std.debug.print("parseTypeExpr: starting with token {s} ('{s}')\n", .{ @tagName(type_token.type), type_name });
-    }
-
     var base_type_expr: ?*ast.TypeExpr = null;
     var consumed_token = false;
 
@@ -637,9 +610,6 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
 
     if (maybe_basic_type) |basic| {
         // It's a basic type
-        if (self.debug_enabled) {
-            std.debug.print("Recognized basic type: {s}\n", .{@tagName(basic)});
-        }
         self.advance(); // Consume the basic type keyword token
         consumed_token = true;
         base_type_expr = try self.allocator.create(ast.TypeExpr);
@@ -654,9 +624,6 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
         };
     } else if (type_token.type == .ARRAY_TYPE) {
         // 2. Check for Array Type Syntax
-        if (self.debug_enabled) {
-            std.debug.print("Recognized array type syntax\n", .{});
-        }
         self.advance(); // consume 'array'
         consumed_token = true;
 
@@ -684,9 +651,6 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
         self.advance(); // consume ]
 
         // Parse element type (comes after the brackets)
-        if (self.debug_enabled) {
-            std.debug.print("Parsing element type after brackets, current token: {s}\n", .{@tagName(self.peek().type)});
-        }
         const element_type = try parseTypeExpr(self) orelse return error.ExpectedType;
 
         base_type_expr = try self.allocator.create(ast.TypeExpr);
@@ -704,9 +668,6 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
         };
     } else if (type_token.type == .STRUCT_TYPE) {
         // 3. Check for Struct Type Syntax
-        if (self.debug_enabled) {
-            std.debug.print("Recognized struct type syntax\n", .{});
-        }
         self.advance(); // consume 'struct'
         consumed_token = true;
 
@@ -763,9 +724,6 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
         var is_known_custom = false;
         if (self.declared_types.contains(type_name)) {
             is_known_custom = true;
-            if (self.debug_enabled) {
-                std.debug.print("Recognized locally declared type: {s}\n", .{type_name});
-            }
         } else if (self.imported_symbols) |symbols| {
             var it = symbols.iterator();
             while (it.next()) |entry| {
@@ -774,9 +732,6 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
                     std.mem.eql(u8, symbol.name, type_name))
                 {
                     is_known_custom = true;
-                    if (self.debug_enabled) {
-                        std.debug.print("Recognized imported type: {s}\n", .{type_name});
-                    }
                     break;
                 }
             }
@@ -797,18 +752,12 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
             };
         } else {
             // 5. Unknown Identifier -> Error
-            if (self.debug_enabled) {
-                std.debug.print("Unknown type identifier: {s}\n", .{type_name});
-            }
             var reporter = Reporter.init(false);
             reporter.reportCompileError(.{ .file = self.current_file, .line = type_token.line, .column = type_token.column }, "Unknown type: '{s}'", .{type_name});
             return error.UnknownType;
         }
     } else {
         // 6. Not a basic type, not array syntax, not struct syntax, not an identifier -> Error
-        if (self.debug_enabled) {
-            std.debug.print("Invalid token for type expression: {s}\n", .{@tagName(type_token.type)});
-        }
         var reporter = Reporter.init(false);
         reporter.reportCompileError(.{ .file = self.current_file, .line = type_token.line, .column = type_token.column }, "Expected type identifier, found {s}", .{@tagName(type_token.type)});
         return error.ExpectedType;
@@ -824,9 +773,6 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
 
     // --- Check for Array Type ---
     while (self.peek().type == .LEFT_BRACKET) {
-        if (self.debug_enabled) {
-            std.debug.print("Found array brackets after base type\n", .{});
-        }
         self.advance(); // consume [
 
         var size: ?*ast.Expr = null;
@@ -872,22 +818,12 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
             },
         };
         base_type_expr = array_type_expr;
-        if (self.debug_enabled) {
-            std.debug.print("Successfully parsed array type\n", .{});
-        }
     }
 
     // If no array brackets, return the base type expression
-    if (self.debug_enabled) {
-        std.debug.print("Successfully parsed non-array type\n", .{});
-    }
 
     // --- Check for Union Type ---
     if (self.peek().type == .PIPE) {
-        if (self.debug_enabled) {
-            std.debug.print("Found union type syntax\n", .{});
-        }
-
         var types = std.ArrayList(*ast.TypeExpr).init(self.allocator);
         errdefer {
             for (types.items) |type_expr| {
@@ -918,10 +854,6 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
             },
         };
         base_type_expr = union_type_expr;
-
-        if (self.debug_enabled) {
-            std.debug.print("Successfully parsed union type\n", .{});
-        }
     }
 
     return base_type_expr;
@@ -934,10 +866,6 @@ pub fn allocExpr(self: *Parser, expr: ast.Expr) ErrorList!*ast.Expr {
 }
 
 pub fn parseIfExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-    if (self.debug_enabled) {
-        std.debug.print("\nParsing if expression...\n", .{});
-    }
-
     self.advance(); // consume 'if'
 
     // Optional parentheses around condition
@@ -1051,10 +979,6 @@ pub fn parseIfExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
 }
 
 pub fn returnExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-    if (self.debug_enabled) {
-        std.debug.print("\\nParsing return expression...\\n", .{});
-    }
-
     self.advance(); // consume 'return'
 
     var value: ?*ast.Expr = null;
@@ -1208,11 +1132,6 @@ pub fn functionExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast
 
 pub fn literal(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     const current = self.peek();
-
-    if (self.debug_enabled) {
-        std.debug.print("Attempting to parse literal, token: {s}\n", .{@tagName(current.type)});
-    }
-
     const expr = switch (current.type) {
         .INT, .FLOAT, .LOGIC, .NOTHING, .TETRA, .BYTE => blk: {
             const new_expr = try self.allocator.create(ast.Expr);
@@ -1245,16 +1164,9 @@ pub fn literal(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr
             break :blk new_expr;
         },
         else => {
-            if (self.debug_enabled) {
-                std.debug.print("Not a literal token: {s}\n", .{@tagName(current.type)});
-            }
             return null;
         },
     };
-
-    if (self.debug_enabled) {
-        std.debug.print("Successfully parsed literal, next token: {s}\n", .{@tagName(self.peek().type)});
-    }
 
     return expr;
 }
@@ -1262,34 +1174,19 @@ pub fn literal(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr
 pub fn castExpr(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     if (left == null) return error.ExpectedLeftOperand;
 
-    if (self.debug_enabled) {
-        std.debug.print("\nParsing cast expression...\n", .{});
-        std.debug.print("Current token: {s} ('{s}')\n", .{ @tagName(self.peek().type), self.peek().lexeme });
-    }
-
     // The 'as' token has already been consumed by the precedence parser
     // We should now be at the target type token
 
     // Parse the target type
     const target_type = try parseTypeExpr(self) orelse return error.ExpectedType;
 
-    if (self.debug_enabled) {
-        std.debug.print("After parsing target type, current token: {s}\n", .{@tagName(self.peek().type)});
-    }
-
     // Check for optional else branch
     var else_branch: ?*ast.Expr = null;
     if (self.peek().type == .ELSE) {
-        if (self.debug_enabled) {
-            std.debug.print("Found else branch\n", .{});
-        }
         self.advance(); // consume 'else'
 
         // Parse the else branch as a block
         if (self.peek().type == .LEFT_BRACE) {
-            if (self.debug_enabled) {
-                std.debug.print("Parsing else branch as block\n", .{});
-            }
             const block_stmts = try statement_parser.parseBlockStmt(self);
             const block_expr = try self.allocator.create(ast.Expr);
             block_expr.* = .{
@@ -1306,16 +1203,8 @@ pub fn castExpr(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
             };
             else_branch = block_expr;
         } else {
-            // Single expression else branch
-            if (self.debug_enabled) {
-                std.debug.print("Parsing else branch as single expression\n", .{});
-            }
             else_branch = try parseExpression(self);
         }
-    }
-
-    if (self.debug_enabled) {
-        std.debug.print("Finished parsing cast expression, current token: {s}\n", .{@tagName(self.peek().type)});
     }
 
     const cast_expr = try self.allocator.create(ast.Expr);
@@ -1512,17 +1401,7 @@ pub fn arrayType(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Ex
 }
 
 pub fn parseArrayLiteral(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-    if (self.debug_enabled) {
-        std.debug.print("\nParsing array literal\n", .{});
-    }
-
-    if (self.debug_enabled) {
-        std.debug.print("Before consuming '[', current token: {s} ('{s}')\n", .{ @tagName(self.peek().type), self.peek().lexeme });
-    }
     self.advance(); // consume '['
-    if (self.debug_enabled) {
-        std.debug.print("After consuming '[', current token: {s} ('{s}')\n", .{ @tagName(self.peek().type), self.peek().lexeme });
-    }
 
     var elements = std.ArrayList(*ast.Expr).init(self.allocator);
     errdefer {
@@ -1535,31 +1414,16 @@ pub fn parseArrayLiteral(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!
 
     // Parse first element to establish the type
     if (self.peek().type != .RIGHT_BRACKET) {
-        if (self.debug_enabled) {
-            std.debug.print("About to parse first element, current token: {s} ('{s}')\n", .{ @tagName(self.peek().type), self.peek().lexeme });
-        }
         const first_element = try parseExpression(self) orelse return error.ExpectedExpression;
         try elements.append(first_element);
-
-        if (self.debug_enabled) {
-            std.debug.print("After parsing first element, current token: {s} ('{s}')\n", .{ @tagName(self.peek().type), self.peek().lexeme });
-        }
 
         // Parse remaining elements without type checking
         while (self.peek().type == .COMMA) {
             self.advance(); // consume comma
             if (self.peek().type == .RIGHT_BRACKET) break;
 
-            if (self.debug_enabled) {
-                std.debug.print("Parsing next element, current token: {s} ('{s}')\n", .{ @tagName(self.peek().type), self.peek().lexeme });
-            }
-
             const element = try parseExpression(self) orelse return error.ExpectedExpression;
             try elements.append(element);
-
-            if (self.debug_enabled) {
-                std.debug.print("After parsing element, current token: {s} ('{s}')\n", .{ @tagName(self.peek().type), self.peek().lexeme });
-            }
         }
     }
 
@@ -1567,10 +1431,6 @@ pub fn parseArrayLiteral(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!
         return error.ExpectedRightBracket;
     }
     self.advance(); // consume ']'
-
-    if (self.debug_enabled) {
-        std.debug.print("Finished parsing array literal. Current token: {s} ('{s}')\n", .{ @tagName(self.peek().type), self.peek().lexeme });
-    }
 
     const array_expr = try self.allocator.create(ast.Expr);
     array_expr.* = .{
@@ -1638,10 +1498,6 @@ pub fn inferType(expr: *ast.Expr) !ast.TypeInfo {
 }
 
 pub fn parseStructOrMatch(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-    if (self.debug_enabled) {
-        std.debug.print("\nParsing struct or match expression...\n", .{});
-    }
-
     // We should be at an identifier
     if (self.peek().type != .IDENTIFIER) {
         return null;
@@ -1677,11 +1533,6 @@ pub fn parseStructOrMatch(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList
     if (is_match_pattern) {
         // This is a match expression - parse it directly without recursion
         self.current = start_pos; // Reset to before identifier
-
-        // Parse the match expression directly
-        if (self.debug_enabled) {
-            std.debug.print("\nParsing match expression directly...\n", .{});
-        }
 
         // We should be at an identifier (the match value)
         if (self.peek().type != .IDENTIFIER) {
@@ -1801,10 +1652,6 @@ pub fn parseStructOrMatch(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList
 
 fn parseMatchPattern(self: *Parser) ErrorList!?token.Token {
     const current = self.peek();
-
-    if (self.debug_enabled) {
-        std.debug.print("parseMatchPattern: token type = {s}, lexeme = '{s}'\n", .{ @tagName(current.type), current.lexeme });
-    }
 
     switch (current.type) {
         .DOT => {
