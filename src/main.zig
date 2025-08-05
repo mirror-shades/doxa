@@ -14,6 +14,7 @@ const env = @import("./interpreter/environment.zig");
 const ASTWriter = @import("./utils/ast_writer.zig");
 const ASTReader = @import("./utils/ast_reader.zig");
 const AST = @import("./ast/ast.zig");
+const ast = AST;
 const SoxaCompiler = @import("./codegen/hir/soxa.zig");
 const HIRGenerator = @import("./codegen/hir/soxa_generator.zig").HIRGenerator;
 const SoxaTextParser = @import("./codegen/hir/soxa_parser.zig").SoxaTextParser;
@@ -139,37 +140,9 @@ fn compileToNative(memoryManager: *MemoryManager, soxa_path: []const u8, output_
 }
 
 ///==========================================================================
-/// Compile DOXA to SOXA (HIR)
+/// Compile DOXA to SOXA (HIR) - using pre-parsed AST
 ///==========================================================================
-fn compileDoxaToSoxa(memoryManager: *MemoryManager, source_path: []const u8, soxa_path: []const u8, reporter: *Reporter) !void {
-
-    // Read and parse the .doxa file
-    const source = try std.fs.cwd().readFileAlloc(memoryManager.getAllocator(), source_path, MAX_FILE_SIZE);
-    defer memoryManager.getAllocator().free(source);
-
-    // Lexical analysis
-    var lexer = LexicalAnalyzer.init(memoryManager.getAllocator(), source, source_path, reporter);
-    defer lexer.deinit();
-    try lexer.initKeywords();
-    const tokens = try lexer.lexTokens();
-
-    // Parsing phase
-    var parser = Parser.init(memoryManager.getAllocator(), tokens.items, source_path, reporter.is_debug, reporter);
-    defer parser.deinit();
-    const statements = try parser.execute();
-
-    // Constant folding optimization pass
-    var constant_folder = ConstantFolder.init(memoryManager.getAllocator());
-    for (statements, 0..) |*stmt, i| {
-        statements[i] = try constant_folder.foldStmt(stmt);
-    }
-
-    reporter.debug(">> Constant folding applied: {} optimizations\n", .{constant_folder.getOptimizationCount()});
-
-    // NEW: Semantic analysis phase
-    var semantic_analyzer = SemanticAnalyzer.init(memoryManager.getAllocator(), reporter, memoryManager, &parser);
-    defer semantic_analyzer.deinit();
-    try semantic_analyzer.analyze(statements);
+fn compileDoxaToSoxaFromAST(memoryManager: *MemoryManager, statements: []ast.Stmt, parser: *Parser, semantic_analyzer: *SemanticAnalyzer, source_path: []const u8, soxa_path: []const u8, reporter: *Reporter) !void {
 
     // NEW: Pass custom type information to HIR generator
     var hir_generator = HIRGenerator.init(memoryManager.getAllocator(), reporter, parser.module_namespaces);
@@ -181,7 +154,8 @@ fn compileDoxaToSoxa(memoryManager: *MemoryManager, source_path: []const u8, sox
     var custom_types_iter = custom_types.iterator();
     while (custom_types_iter.next()) |entry| {
         const custom_type = entry.value_ptr.*;
-        try hir_generator.custom_types.put(custom_type.name, custom_type);
+        const converted_type = try SemanticAnalyzer.convertCustomTypeInfo(custom_type, memoryManager.getAllocator());
+        try hir_generator.custom_types.put(custom_type.name, converted_type);
     }
 
     var hir_program = try hir_generator.generateProgram(statements);
@@ -470,7 +444,7 @@ pub fn main() !void {
     const needs_recompile = try needsRecompilation(path, soxa_path, memoryManager.getAllocator());
 
     if (needs_recompile) {
-        try compileDoxaToSoxa(&memoryManager, path, soxa_path, &reporter);
+        try compileDoxaToSoxaFromAST(&memoryManager, statements, &parser, &semantic_analyzer, path, soxa_path, &reporter);
     } else {
         reporter.debug(">> Using cached SOXA: {s}\n", .{soxa_path});
     }

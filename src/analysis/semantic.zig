@@ -301,6 +301,46 @@ pub const SemanticAnalyzer = struct {
         };
     }
 
+    // Helper function to convert SemanticAnalyzer.CustomTypeInfo to HIRGenerator.CustomTypeInfo
+    pub fn convertCustomTypeInfo(semantic_type: CustomTypeInfo, allocator: std.mem.Allocator) !@import("../codegen/hir/soxa_generator.zig").HIRGenerator.CustomTypeInfo {
+        var hir_type = @import("../codegen/hir/soxa_generator.zig").HIRGenerator.CustomTypeInfo{
+            .name = semantic_type.name,
+            .kind = switch (semantic_type.kind) {
+                .Struct => .Struct,
+                .Enum => .Enum,
+            },
+            .enum_variants = null,
+            .struct_fields = null,
+        };
+
+        // Convert enum variants if present
+        if (semantic_type.enum_variants) |variants| {
+            const converted_variants = try allocator.alloc(@import("../codegen/hir/soxa_generator.zig").HIRGenerator.CustomTypeInfo.EnumVariant, variants.len);
+            for (variants, 0..) |variant, i| {
+                converted_variants[i] = .{
+                    .name = variant.name,
+                    .index = variant.index,
+                };
+            }
+            hir_type.enum_variants = converted_variants;
+        }
+
+        // Convert struct fields if present
+        if (semantic_type.struct_fields) |fields| {
+            const converted_fields = try allocator.alloc(@import("../codegen/hir/soxa_generator.zig").HIRGenerator.CustomTypeInfo.StructField, fields.len);
+            for (fields, 0..) |field, i| {
+                converted_fields[i] = .{
+                    .name = field.name,
+                    .field_type = field.field_type,
+                    .index = field.index,
+                };
+            }
+            hir_type.struct_fields = converted_fields;
+        }
+
+        return hir_type;
+    }
+
     pub fn analyze(self: *SemanticAnalyzer, statements: []ast.Stmt) ErrorList!void {
         const root_scope = try self.memory.scope_manager.createScope(null);
         self.memory.scope_manager.root_scope = root_scope;
