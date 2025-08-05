@@ -107,11 +107,11 @@ mike.person.age?; // 26
 //testing length method
 length(mike.person.name)?;
 //testing bytes method
-bytes(mike.person.name)?;
+@bytesof(mike.person.name)?;
 // testing index method
 mike.person.name[0]?; // M
 // testing bytes print and bytes index
-bytes(mike.person.name)[0]?; // 77
+@bytesof(mike.person.name)[0]?; // 77
 
 mike.salary?; // 1000
 

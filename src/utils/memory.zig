@@ -1,7 +1,8 @@
 const std = @import("std");
 const TokenImport = @import("../types/token.zig");
 const TokenType = TokenImport.TokenType;
-const TypeInfo = @import("../ast/ast.zig").TypeInfo;
+const ast = @import("../ast/ast.zig");
+const TypeInfo = ast.TypeInfo;
 const TypesImport = @import("../types/types.zig");
 const TokenLiteral = TypesImport.TokenLiteral;
 
@@ -37,22 +38,16 @@ pub const StringInterner = struct {
 pub const MemoryManager = struct {
     arena: std.heap.ArenaAllocator,
     scope_manager: *ScopeManager,
-    is_debug: bool,
 
-    pub fn init(allocator: std.mem.Allocator, is_debug: bool) !MemoryManager {
-        const scope_manager = try ScopeManager.init(allocator, is_debug);
+    pub fn init(allocator: std.mem.Allocator) !MemoryManager {
+        const scope_manager = try ScopeManager.init(allocator);
         return .{
             .arena = std.heap.ArenaAllocator.init(allocator),
-            .is_debug = is_debug,
             .scope_manager = scope_manager,
         };
     }
 
     pub fn deinit(self: *MemoryManager) void {
-        if (self.is_debug) {
-            std.debug.print("Cleaning up memory manager...\n", .{});
-        }
-
         // Clean up root scope first if it exists
         if (self.scope_manager.root_scope) |root_scope| {
             root_scope.deinit();
@@ -68,16 +63,13 @@ pub const MemoryManager = struct {
     }
 
     pub fn reset(self: *MemoryManager) void {
-        if (self.is_debug) {
-            std.debug.print("Resetting memory manager...\n", .{});
-        }
         self.arena.deinit();
         self.arena = std.heap.ArenaAllocator.init(self.arena.child_allocator);
     }
 };
 
 /// ValueStorage holds a value with alias counting
-const ValueStorage = struct { value: TokenLiteral, type: TokenType, type_info: TypeInfo, alias_count: u32, constant: bool };
+const ValueStorage = struct { value: TokenLiteral, type: TokenType, type_info: *ast.TypeInfo, alias_count: u32, constant: bool };
 
 /// Variable represents a named alias to a storage location
 pub const Variable = struct {
@@ -96,15 +88,13 @@ pub const ScopeManager = struct {
     variable_counter: u32 = 0,
     root_scope: ?*Scope = null,
     allocator: std.mem.Allocator,
-    is_debug: bool,
 
-    pub fn init(allocator: std.mem.Allocator, is_debug: bool) !*ScopeManager {
+    pub fn init(allocator: std.mem.Allocator) !*ScopeManager {
         const self = try allocator.create(ScopeManager);
         self.* = .{
             .variable_map = std.AutoHashMap(u32, *Variable).init(allocator),
             .value_storage = std.AutoHashMap(u32, *ValueStorage).init(allocator),
             .allocator = allocator,
-            .is_debug = is_debug,
         };
         return self;
     }
@@ -145,28 +135,12 @@ pub const ScopeManager = struct {
         } else {
             std.debug.print("No variables\n", .{});
         }
-
-        // Display storage
-        if (self.value_storage.count() > 0) {
-            std.debug.print("Value Storage:\n", .{});
-            var storage_it = self.value_storage.iterator();
-            while (storage_it.next()) |entry| {
-                const key = entry.key_ptr.*;
-                const value = entry.value_ptr.*;
-                if (self.is_debug) {
-                    std.debug.print("DEBUG: Storage [{d}] - type: {s}, type_info.base: {s}\n", .{ key, @tagName(value.type), @tagName(value.type_info.base) });
-                }
-                std.debug.print("  [{d}]: type={}, aliases={d}, constant={}\n", .{ key, value.type, value.alias_count, value.constant });
-            }
-        } else {
-            std.debug.print("No value storage\n", .{});
-        }
     }
 
     pub fn createScope(self: *ScopeManager, parent: ?*Scope) !*Scope {
         const scope_id = self.next_storage_id;
         self.next_storage_id += 1;
-        return Scope.init(self, scope_id, parent, self.is_debug);
+        return Scope.init(self, scope_id, parent);
     }
 };
 
@@ -178,9 +152,8 @@ pub const Scope = struct {
     name_map: std.StringHashMap(*Variable),
     arena: std.heap.ArenaAllocator,
     manager: *ScopeManager,
-    is_debug: bool,
 
-    pub fn init(manager: *ScopeManager, scope_id: u32, parent: ?*Scope, is_debug: bool) !*Scope {
+    pub fn init(manager: *ScopeManager, scope_id: u32, parent: ?*Scope) !*Scope {
         const self = try manager.allocator.create(Scope);
         self.* = .{
             .id = scope_id,
@@ -189,16 +162,11 @@ pub const Scope = struct {
             .variables = std.AutoHashMap(u32, *Variable).init(self.arena.allocator()),
             .name_map = std.StringHashMap(*Variable).init(self.arena.allocator()),
             .manager = manager,
-            .is_debug = is_debug,
         };
         return self;
     }
 
     pub fn deinit(self: *Scope) void {
-        if (self.is_debug) {
-            std.debug.print("Cleaning up scope {}\n", .{self.id});
-        }
-
         // Run sanity check before any cleanup
         self.sanityCheck();
 
@@ -232,14 +200,10 @@ pub const Scope = struct {
         self.manager.allocator.destroy(self);
     }
 
-    pub fn createValueBinding(self: *Scope, name: []const u8, value: TokenLiteral, vtype: TokenType, type_info: TypeInfo, constant: bool) !*Variable {
+    pub fn createValueBinding(self: *Scope, name: []const u8, value: TokenLiteral, vtype: TokenType, type_info: *ast.TypeInfo, constant: bool) !*Variable {
         // Check for duplicate variable name in current scope
         if (self.name_map.contains(name)) {
             return error.DuplicateVariableName;
-        }
-
-        if (self.is_debug) {
-            std.debug.print("DEBUG: createValueBinding - name: '{s}', vtype: {s}, type_info.base: {s}\n", .{ name, @tagName(vtype), @tagName(type_info.base) });
         }
 
         const storage_id = self.manager.next_storage_id;
