@@ -850,6 +850,20 @@ pub const HIRGenerator = struct {
                     .ASTERISK => try self.instructions.append(.{ .IntArith = .{ .op = .Mul, .overflow_behavior = .Wrap } }),
                     .SLASH => try self.instructions.append(.{ .IntArith = .{ .op = .Div, .overflow_behavior = .Trap } }),
                     .MODULO => try self.instructions.append(.{ .IntArith = .{ .op = .Mod, .overflow_behavior = .Wrap } }), // This was super slow in AST walker!
+                    .POWER => {
+                        // POWER always returns float, so we need to convert operands to float first
+                        // For now, use a builtin function call since we don't have a direct power instruction
+                        try self.instructions.append(.{
+                            .Call = .{
+                                .function_index = 0, // Will be resolved to builtin power function
+                                .call_kind = .BuiltinFunction,
+                                .qualified_name = "power",
+                                .arg_count = 2,
+                                .target_module = null,
+                                .return_type = .Float,
+                            },
+                        });
+                    },
                     .EQUALITY => try self.instructions.append(.{ .Compare = .{ .op = .Eq, .operand_type = .Int } }),
                     .BANG_EQUAL => try self.instructions.append(.{ .Compare = .{ .op = .Ne, .operand_type = .Int } }),
                     .LESS => try self.instructions.append(.{ .Compare = .{ .op = .Lt, .operand_type = .Int } }),
