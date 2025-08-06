@@ -200,6 +200,9 @@ fn runSoxaFile(memoryManager: *MemoryManager, soxa_path: []const u8, reporter: *
     var vm = try DoxaVM.init(&hir_program, reporter, memoryManager, reporter.is_debug);
     defer vm.deinit();
 
+    // NEW: Bridge custom types from memory manager to VM
+    try memoryManager.bridgeTypesToVM(&vm);
+
     _ = try vm.run();
 }
 
@@ -449,36 +452,36 @@ pub fn main() !void {
         reporter.debug(">> Using cached SOXA: {s}\n", .{soxa_path});
     }
 
-    // //==========================================================================
-    // // Execute
-    // //==========================================================================
+    //==========================================================================
+    // Execute
+    //==========================================================================
 
-    // // Execute based on command
-    // switch (cli_options.command) {
-    //     .run => {
-    //         reporter.debug(">> Executing with HIR VM\n", .{});
-    //         // Try to run SOXA file, but recompile if it's incompatible
-    //         runSoxaFile(&memoryManager, soxa_path, &reporter) catch |err| {
-    //             if (err == error.EndOfStream or err == error.InvalidFormat) {
-    //                 reporter.reportError("!! SOXA file incompatible, regenerating...\n", .{});
-    //                 // Delete the incompatible SOXA file
-    //                 std.fs.cwd().deleteFile(soxa_path) catch {};
-    //                 // Recompile
-    //                 try compileDoxaToSoxa(&memoryManager, path, soxa_path, &reporter);
-    //                 // Try again
-    //                 try runSoxaFile(&memoryManager, soxa_path, &reporter);
-    //             } else {
-    //                 return err;
-    //             }
-    //         };
-    //     },
+    // Execute based on command
+    switch (cli_options.command) {
+        .run => {
+            reporter.debug(">> Executing with HIR VM\n", .{});
+            // Try to run SOXA file, but recompile if it's incompatible
+            runSoxaFile(&memoryManager, soxa_path, &reporter) catch |err| {
+                if (err == error.EndOfStream or err == error.InvalidFormat) {
+                    reporter.reportError("!! SOXA file incompatible, regenerating...\n", .{});
+                    // Delete the incompatible SOXA file
+                    std.fs.cwd().deleteFile(soxa_path) catch {};
+                    // Recompile
+                    try compileDoxaToSoxaFromAST(&memoryManager, statements, &parser, &semantic_analyzer, path, soxa_path, &reporter);
+                    // Try again
+                    try runSoxaFile(&memoryManager, soxa_path, &reporter);
+                } else {
+                    return err;
+                }
+            };
+        },
 
-    //     .compile => {
-    //         reporter.debug(">> Compiling to native binary\n", .{});
-    //         const output_path = cli_options.output orelse try generateArtifactPath(&memoryManager, path, "");
-    //         defer if (cli_options.output == null) memoryManager.getAllocator().free(output_path);
+        .compile => {
+            reporter.debug(">> Compiling to native binary\n", .{});
+            const output_path = cli_options.output orelse try generateArtifactPath(&memoryManager, path, "");
+            defer if (cli_options.output == null) memoryManager.getAllocator().free(output_path);
 
-    //         try compileToNative(&memoryManager, soxa_path, output_path, &reporter);
-    //     },
-    // }
+            try compileToNative(&memoryManager, soxa_path, output_path, &reporter);
+        },
+    }
 }

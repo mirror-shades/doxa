@@ -187,7 +187,7 @@ pub const MemoryManager = struct {
 
         // Create execution scope if needed
         if (self.scope_manager.root_scope == null) {
-            const execution_scope = try self.scope_manager.createScope(null);
+            const execution_scope = try self.scope_manager.createScope(null, self);
             self.scope_manager.root_scope = execution_scope;
         }
 
@@ -257,8 +257,8 @@ pub const MemoryManager = struct {
     }
 };
 
-/// ValueStorage holds a value with alias counting
-const ValueStorage = struct { value: TokenLiteral, type: TokenType, type_info: *ast.TypeInfo, alias_count: u32, constant: bool };
+/// ValueStorage holds a value - no longer needs alias counting with arena allocation
+const ValueStorage = struct { value: TokenLiteral, type: TokenType, type_info: *ast.TypeInfo, constant: bool };
 
 /// Variable represents a named alias to a storage location
 pub const Variable = struct {
@@ -333,15 +333,15 @@ pub const ScopeManager = struct {
                 const key = entry.key_ptr.*;
                 const value = entry.value_ptr.*;
                 // Safe debug output - avoid printing complex values that might have circular references
-                std.debug.print("  [{d}]: type={}, alias_count={d}, constant={}\n", .{ key, value.type, value.alias_count, value.constant });
+                std.debug.print("  [{d}]: type={}, constant={}\n", .{ key, value.type, value.constant });
             }
         }
     }
 
-    pub fn createScope(self: *ScopeManager, parent: ?*Scope) !*Scope {
+    pub fn createScope(self: *ScopeManager, parent: ?*Scope, memory_manager: *MemoryManager) !*Scope {
         const scope_id = self.next_storage_id;
         self.next_storage_id += 1;
-        return Scope.init(self, scope_id, parent);
+        return Scope.init(self, scope_id, parent, memory_manager);
     }
 };
 
@@ -353,11 +353,12 @@ pub const Scope = struct {
     name_map: std.StringHashMap(*Variable),
     arena: std.heap.ArenaAllocator,
     manager: *ScopeManager,
+    memory_manager: *MemoryManager, // Reference to parent MemoryManager for cleanup
 
-    // NEW: Custom type instances owned by this scope
+    // Custom type instances owned by this scope
     custom_type_instances: std.AutoHashMap(u32, *CustomTypeInstance),
 
-    pub fn init(manager: *ScopeManager, scope_id: u32, parent: ?*Scope) !*Scope {
+    pub fn init(manager: *ScopeManager, scope_id: u32, parent: ?*Scope, memory_manager: *MemoryManager) !*Scope {
         const self = try manager.allocator.create(Scope);
         self.* = .{
             .id = scope_id,
@@ -366,55 +367,48 @@ pub const Scope = struct {
             .variables = std.AutoHashMap(u32, *Variable).init(self.arena.allocator()),
             .name_map = std.StringHashMap(*Variable).init(self.arena.allocator()),
             .manager = manager,
+            .memory_manager = memory_manager,
             .custom_type_instances = std.AutoHashMap(u32, *CustomTypeInstance).init(self.arena.allocator()),
         };
         return self;
     }
 
     pub fn deinit(self: *Scope) void {
-        // Run sanity check before any cleanup
-        self.sanityCheck();
+        // PHASE 2: Simplified cleanup - no need for sanity checks or manual storage cleanup
+        // since everything is allocated with the arena allocator
 
-        // Clean up all variables in this scope
+        // Clean up variable references from global maps
         var it = self.variables.iterator();
         while (it.next()) |entry| {
             const variable = entry.value_ptr.*;
 
-            // Filter out invalid variable names for display
-            var display_name: []const u8 = "invalid_name";
-            if (std.unicode.utf8ValidateSlice(variable.name)) {
-                display_name = variable.name;
-            }
-
             // Remove from global variable map
             _ = self.manager.variable_map.remove(variable.id);
 
-            // Update storage alias counts
-            if (self.manager.value_storage.get(variable.storage_id)) |storage| {
-                storage.alias_count -= 1;
-                if (storage.alias_count == 0) {
-                    const s = storage;
-                    _ = self.manager.value_storage.remove(variable.storage_id);
-                    self.manager.allocator.destroy(s);
-                }
-            }
+            // Remove storage from global storage map
+            _ = self.manager.value_storage.remove(variable.storage_id);
         }
 
-        // NEW: Clean up custom type instances
+        // Clean up custom type instances from global map
         var instance_iter = self.custom_type_instances.iterator();
         while (instance_iter.next()) |entry| {
             const instance = entry.value_ptr.*;
-            self.manager.allocator.destroy(instance);
+            // Remove from memory manager's global map
+            _ = self.memory_manager.custom_type_instances.remove(instance.id);
         }
 
-        // Free all scope memory at once
+        // Free all scope memory at once - this automatically cleans up:
+        // - All Variable instances
+        // - All ValueStorage instances
+        // - All CustomTypeInstance instances
+        // - All HashMaps allocated with arena
         self.arena.deinit();
         self.manager.allocator.destroy(self);
     }
 
-    // NEW: Custom type instance creation
+    // Custom type instance creation - using arena allocator for unified cleanup
     pub fn createCustomTypeInstance(self: *Scope, type_name: []const u8, data: CustomTypeInstanceData) !*CustomTypeInstance {
-        const instance = try self.manager.allocator.create(CustomTypeInstance);
+        const instance = try self.arena.allocator().create(CustomTypeInstance);
         instance.* = .{
             .id = self.manager.next_instance_id,
             .type_name = type_name,
@@ -424,8 +418,52 @@ pub const Scope = struct {
 
         self.manager.next_instance_id += 1;
         try self.custom_type_instances.put(instance.id, instance);
+        // Also add to manager's global map for cross-scope lookups
+        try self.manager.custom_type_instances.put(instance.id, instance);
 
         return instance;
+    }
+
+    // PHASE 6: Create a variable that can be safely accessed across scopes
+    // by allocating its storage in the root scope's arena
+    pub fn createCrossScopeValueBinding(self: *Scope, name: []const u8, value: TokenLiteral, vtype: TokenType, type_info: *ast.TypeInfo, constant: bool) !*Variable {
+        // Check for duplicate variable name in current scope
+        if (self.name_map.contains(name)) {
+            return error.DuplicateVariableName;
+        }
+
+        // Find the root scope for storage allocation
+        var root_scope: *Scope = self;
+        while (root_scope.parent) |parent| {
+            root_scope = parent;
+        }
+
+        const storage_id = self.manager.next_storage_id;
+        const variableId = self.manager.variable_counter;
+        self.manager.next_storage_id += 1;
+        self.manager.variable_counter += 1;
+
+        // Allocate storage in root scope's arena for cross-scope safety
+        const storage = try root_scope.arena.allocator().create(ValueStorage);
+        storage.* = .{ .value = value, .type = vtype, .type_info = type_info, .constant = constant };
+
+        // Create variable in current scope's arena
+        const variable = try self.arena.allocator().create(Variable);
+        variable.* = .{
+            .name = name,
+            .type = vtype,
+            .storage_id = storage_id,
+            .id = variableId,
+            .is_alias = false,
+        };
+
+        // Store in maps
+        try self.manager.variable_map.put(variableId, variable);
+        try self.manager.value_storage.put(storage_id, storage);
+        try self.variables.put(variableId, variable);
+        try self.name_map.put(name, variable);
+
+        return variable;
     }
 
     pub fn createValueBinding(self: *Scope, name: []const u8, value: TokenLiteral, vtype: TokenType, type_info: *ast.TypeInfo, constant: bool) !*Variable {
@@ -439,9 +477,9 @@ pub const Scope = struct {
         self.manager.next_storage_id += 1;
         self.manager.variable_counter += 1;
 
-        // Create storage using manager's allocator
-        const storage = try self.manager.allocator.create(ValueStorage);
-        storage.* = .{ .value = value, .type = vtype, .type_info = type_info, .alias_count = 1, .constant = constant };
+        // PHASE 1: Create storage using scope's arena allocator for unified cleanup
+        const storage = try self.arena.allocator().create(ValueStorage);
+        storage.* = .{ .value = value, .type = vtype, .type_info = type_info, .constant = constant };
 
         // Create variable
         const variable = try self.arena.allocator().create(Variable);
@@ -476,10 +514,8 @@ pub const Scope = struct {
             .is_alias = true,
         };
 
-        // Increment alias count in storage
-        if (self.manager.value_storage.get(target_variable.storage_id)) |storage| {
-            storage.alias_count += 1;
-        }
+        // PHASE 3: No need to increment alias count with arena allocation
+        // Storage lifetime is managed by the scope that owns it
 
         // Store in maps
         try self.manager.variable_map.put(variableId, variable);
@@ -500,22 +536,6 @@ pub const Scope = struct {
         return null;
     }
 
-    pub fn sanityCheck(self: *Scope) void {
-        // Check storage
-        var storage_it = self.manager.value_storage.iterator();
-        while (storage_it.next()) |entry| {
-            const storage = entry.value_ptr.*;
-            std.debug.assert(storage.alias_count > 0); // Ensure no orphaned storage
-        }
-
-        // Check variables in this scope
-        var var_it = self.variables.iterator();
-        while (var_it.next()) |entry| {
-            const variable = entry.value_ptr.*;
-            // During cleanup, variables might be in the process of being removed
-            // from the manager's variable_map, so we can't rely on getVariableScope
-            // Instead, we just verify that the variable is in this scope's variables map
-            std.debug.assert(self.variables.contains(variable.id));
-        }
-    }
+    // PHASE 3: Remove sanityCheck - no longer needed with unified arena allocation
+    // All memory management is handled automatically by the arena
 };
