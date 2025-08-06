@@ -826,7 +826,6 @@ pub const HIRVM = struct {
                     }
                 }
 
-                // CRITICAL FIX: Check if variable exists in CURRENT scope only
                 // Function parameters must create NEW storage in each scope, never reuse parent storage
                 if (self.current_scope.name_map.get(v.var_name)) |variable| {
                     // Variable exists in current scope - update its storage

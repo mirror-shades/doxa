@@ -442,18 +442,8 @@ pub const HIRGenerator = struct {
             },
             .VarDecl => |decl| {
 
-                // DEBUG: Print variable declaration info
-                if (self.debug_enabled) {
-                    std.debug.print("HIR: VarDecl {s}, type_info.base={s}, custom_type={s}\n", .{ decl.name.lexeme, @tagName(decl.type_info.base), if (decl.type_info.custom_type) |ct| ct else "null" });
-                }
-
                 // NEW: Determine the variable's type for tracking
                 var var_type: HIRType = .Nothing;
-
-                // DEBUG: Print initial var_type
-                if (self.debug_enabled) {
-                    std.debug.print("HIR: Initial var_type={s}\n", .{@tagName(var_type)});
-                }
 
                 // FIXED: Prioritize explicit type annotation over inference
                 var custom_type_name: ?[]const u8 = null;
@@ -499,11 +489,6 @@ pub const HIRGenerator = struct {
                         },
                         else => .Nothing,
                     };
-
-                    // DEBUG: Print final var_type after switch
-                    if (self.debug_enabled) {
-                        std.debug.print("HIR: Final var_type after switch={s}\n", .{@tagName(var_type)});
-                    }
                 }
 
                 // Generate the initializer expression with enum type context
@@ -512,11 +497,6 @@ pub const HIRGenerator = struct {
                     const old_enum_context = self.current_enum_type;
                     if (custom_type_name != null) {
                         self.current_enum_type = custom_type_name;
-
-                        // DEBUG: Print enum context setting
-                        if (self.debug_enabled) {
-                            std.debug.print("HIR: Setting enum context to {s} for variable {s}\n", .{ custom_type_name.?, decl.name.lexeme });
-                        }
                     }
 
                     try self.generateExpression(init_expr, true);
@@ -601,13 +581,22 @@ pub const HIRGenerator = struct {
                 if (self.current_function == null) {
                     try self.instructions.append(.Dup);
                 }
-                try self.instructions.append(.{ .StoreVar = .{
-                    .var_index = var_idx,
-                    .var_name = decl.name.lexeme,
-                    .scope_kind = .Local,
-                    .module_context = null,
-                    .expected_type = var_type,
-                } });
+
+                // Use StoreConst for constant declarations, StoreVar for variables
+                if (!decl.type_info.is_mutable) {
+                    try self.instructions.append(.{ .StoreConst = .{
+                        .var_index = var_idx,
+                        .var_name = decl.name.lexeme,
+                    } });
+                } else {
+                    try self.instructions.append(.{ .StoreVar = .{
+                        .var_index = var_idx,
+                        .var_name = decl.name.lexeme,
+                        .scope_kind = .Local,
+                        .module_context = null,
+                        .expected_type = var_type,
+                    } });
+                }
 
                 // No extra value should remain on stack now; nothing to pop
             },
@@ -644,12 +633,9 @@ pub const HIRGenerator = struct {
                 const enum_type_value = HIRValue{ .string = enum_decl.name.lexeme }; // Simple representation for now
                 const const_idx = try self.addConstant(enum_type_value);
                 try self.instructions.append(.{ .Const = .{ .value = enum_type_value, .constant_id = const_idx } });
-                try self.instructions.append(.{ .StoreVar = .{
+                try self.instructions.append(.{ .StoreConst = .{
                     .var_index = var_idx,
                     .var_name = enum_decl.name.lexeme,
-                    .scope_kind = .Local,
-                    .module_context = null,
-                    .expected_type = .Enum,
                 } });
 
                 // Enum declarations don't generate runtime instructions, they're compile-time only
@@ -778,7 +764,7 @@ pub const HIRGenerator = struct {
 
     /// THE KEY FUNCTION - converts recursive AST evaluation to linear stack operations
     /// This is where we get the 10-50x speedup!
-    fn generateExpression(self: *HIRGenerator, expr: *ast.Expr, preserve_result: bool) (std.mem.Allocator.Error || reporting.ErrorList)!void {
+    fn generateExpression(self: *HIRGenerator, expr: *ast.Expr, preserve_result: bool) !void {
         switch (expr.data) {
             .Literal => |lit| {
                 const hir_value = switch (lit) {
@@ -1344,7 +1330,6 @@ pub const HIRGenerator = struct {
             },
 
             .IndexAssign => |assign| {
-
                 // Generate array expression
                 try self.generateExpression(assign.array, true);
 
@@ -1361,6 +1346,7 @@ pub const HIRGenerator = struct {
                 // Store the modified array back to the variable
                 if (assign.array.data == .Variable) {
                     const var_name = assign.array.data.Variable.lexeme;
+
                     const var_idx = try self.getOrCreateVariable(var_name);
                     const expected_type = self.getTrackedVariableType(var_name) orelse .Auto;
 
@@ -1512,10 +1498,53 @@ pub const HIRGenerator = struct {
                 // Generate array expression
                 try self.generateExpression(forall.array, true);
 
-                // For simple conditions like "e > 3", generate comparison value
-                const comparison_value = try self.extractSimpleComparison(forall.condition);
-                const const_idx = try self.addConstant(comparison_value);
-                try self.instructions.append(.{ .Const = .{ .value = comparison_value, .constant_id = const_idx } });
+                // Check if the condition is a simple binary comparison
+                if (forall.condition.data == .Binary) {
+                    const binary = forall.condition.data.Binary;
+                    if (binary.right) |right| {
+                        switch (right.data) {
+                            .Literal => |lit| {
+                                // Handle literal comparisons like "e > 3"
+                                const comparison_value = switch (lit) {
+                                    .int => |i| HIRValue{ .int = i },
+                                    .float => |f| HIRValue{ .float = f },
+                                    .string => |s| HIRValue{ .string = s },
+                                    else => HIRValue{ .int = 0 },
+                                };
+                                const const_idx = try self.addConstant(comparison_value);
+                                try self.instructions.append(.{ .Const = .{ .value = comparison_value, .constant_id = const_idx } });
+                            },
+                            .Variable => |var_token| {
+                                // Handle variable comparisons like "e > checkAgainst"
+                                // Generate code to load the variable value at runtime
+                                const var_name = var_token.lexeme;
+                                if (self.variables.get(var_name)) |var_index| {
+                                    try self.instructions.append(.{
+                                        .LoadVar = .{
+                                            .var_index = var_index,
+                                            .var_name = var_name,
+                                            .scope_kind = .Local,
+                                            .module_context = null,
+                                        },
+                                    });
+                                } else {
+                                    self.reporter.reportError("Undefined variable in quantifier condition: {s}", .{var_name});
+                                    return reporting.ErrorList.UndefinedVariable;
+                                }
+                            },
+                            else => {
+                                // Complex condition - generate the expression
+                                try self.generateExpression(right, true);
+                            },
+                        }
+                    } else {
+                        // No right operand - generate the condition as-is
+                        try self.generateExpression(forall.condition, true);
+                    }
+                } else {
+                    // Complex condition - generate the expression as-is
+                    try self.generateExpression(forall.condition, true);
+                }
 
                 // Use builtin function call with proper predicate
                 try self.instructions.append(.{
@@ -1538,10 +1567,53 @@ pub const HIRGenerator = struct {
                 // Generate array expression
                 try self.generateExpression(exists.array, true);
 
-                // For simple conditions like "e > 3", generate comparison value
-                const comparison_value = try self.extractSimpleComparison(exists.condition);
-                const const_idx = try self.addConstant(comparison_value);
-                try self.instructions.append(.{ .Const = .{ .value = comparison_value, .constant_id = const_idx } });
+                // Check if the condition is a simple binary comparison
+                if (exists.condition.data == .Binary) {
+                    const binary = exists.condition.data.Binary;
+                    if (binary.right) |right| {
+                        switch (right.data) {
+                            .Literal => |lit| {
+                                // Handle literal comparisons like "e > 3"
+                                const comparison_value = switch (lit) {
+                                    .int => |i| HIRValue{ .int = i },
+                                    .float => |f| HIRValue{ .float = f },
+                                    .string => |s| HIRValue{ .string = s },
+                                    else => HIRValue{ .int = 0 },
+                                };
+                                const const_idx = try self.addConstant(comparison_value);
+                                try self.instructions.append(.{ .Const = .{ .value = comparison_value, .constant_id = const_idx } });
+                            },
+                            .Variable => |var_token| {
+                                // Handle variable comparisons like "e > checkAgainst"
+                                // Generate code to load the variable value at runtime
+                                const var_name = var_token.lexeme;
+                                if (self.variables.get(var_name)) |var_index| {
+                                    try self.instructions.append(.{
+                                        .LoadVar = .{
+                                            .var_index = var_index,
+                                            .var_name = var_name,
+                                            .scope_kind = .Local,
+                                            .module_context = null,
+                                        },
+                                    });
+                                } else {
+                                    self.reporter.reportError("Undefined variable in quantifier condition: {s}", .{var_name});
+                                    return reporting.ErrorList.UndefinedVariable;
+                                }
+                            },
+                            else => {
+                                // Complex condition - generate the expression
+                                try self.generateExpression(right, true);
+                            },
+                        }
+                    } else {
+                        // No right operand - generate the condition as-is
+                        try self.generateExpression(exists.condition, true);
+                    }
+                } else {
+                    // Complex condition - generate the expression as-is
+                    try self.generateExpression(exists.condition, true);
+                }
 
                 // Use builtin function call with proper predicate
                 try self.instructions.append(.{
@@ -1663,10 +1735,6 @@ pub const HIRGenerator = struct {
             },
 
             .EnumMember => |member| {
-                // DEBUG: Print what's happening with enum member generation
-                if (self.debug_enabled) {
-                    std.debug.print("HIR: Generating EnumMember: {s}, current_enum_type: {s}\n", .{ member.lexeme, if (self.current_enum_type) |t| t else "null" });
-                }
 
                 // Generate enum member using current enum type context
                 if (self.current_enum_type) |enum_type_name| {
@@ -1675,11 +1743,6 @@ pub const HIRGenerator = struct {
                         custom_type.getEnumVariantIndex(member.lexeme) orelse 0
                     else
                         0;
-
-                    // DEBUG: Print variant index lookup
-                    if (self.debug_enabled) {
-                        std.debug.print("HIR: Found variant index {} for {s}.{s}\n", .{ variant_index, enum_type_name, member.lexeme });
-                    }
 
                     // Generate proper enum variant with correct index
                     const enum_value = HIRValue{
@@ -1692,17 +1755,8 @@ pub const HIRGenerator = struct {
                     };
                     const const_idx = try self.addConstant(enum_value);
 
-                    // DEBUG: Confirm enum variant generation
-                    if (self.debug_enabled) {
-                        std.debug.print("HIR: Generated enum_variant constant at index {}\n", .{const_idx});
-                    }
-
                     try self.instructions.append(.{ .Const = .{ .value = enum_value, .constant_id = const_idx } });
                 } else {
-                    // DEBUG: Print fallback case
-                    if (self.debug_enabled) {
-                        std.debug.print("HIR: No enum context - falling back to string for {s}\n", .{member.lexeme});
-                    }
 
                     // Fallback to string constant if no enum context
                     const enum_value = HIRValue{ .string = member.lexeme };
@@ -2065,11 +2119,6 @@ pub const HIRGenerator = struct {
                 }
 
                 if (!handled_as_enum_member) {
-                    // DEBUG: Add debug output to see what's happening
-                    if (self.debug_enabled) {
-                        std.debug.print("HIR: FieldAccess: object={s}, field={s}, obj_type={s}, current_enum_type={s}\n", .{ if (field.object.data == .Variable) field.object.data.Variable.lexeme else @tagName(field.object.data), field.field.lexeme, @tagName(obj_type), if (self.current_enum_type) |t| t else "null" });
-                    }
-
                     // Handle enum member access (e.g., Color.Red)
                     try self.generateExpression(field.object, true);
 
@@ -2100,12 +2149,9 @@ pub const HIRGenerator = struct {
                 const enum_type_value = HIRValue{ .string = enum_decl.name.lexeme }; // Simple representation for now
                 const const_idx = try self.addConstant(enum_type_value);
                 try self.instructions.append(.{ .Const = .{ .value = enum_type_value, .constant_id = const_idx } });
-                try self.instructions.append(.{ .StoreVar = .{
+                try self.instructions.append(.{ .StoreConst = .{
                     .var_index = var_idx,
                     .var_name = enum_decl.name.lexeme,
-                    .scope_kind = .Local,
-                    .module_context = null,
-                    .expected_type = .Enum,
                 } });
             },
 
@@ -2275,6 +2321,7 @@ pub const HIRGenerator = struct {
 
     /// Extract comparison value from simple quantifier conditions like "e > 3"
     fn extractSimpleComparison(self: *HIRGenerator, condition: *ast.Expr) !HIRValue {
+        _ = self;
         switch (condition.data) {
             .Binary => |binary| {
                 // Handle "variable > literal" patterns
@@ -2289,24 +2336,9 @@ pub const HIRGenerator = struct {
                             };
                         },
                         .Variable => |var_token| {
-                            // Handle "variable > variable" patterns by looking up the variable value
-                            const var_name = var_token.lexeme;
-                            // Look up the variable in the constants table
-                            for (self.constants.items) |constant| {
-                                switch (constant) {
-                                    .int => |int_val| {
-                                        // Check if this constant corresponds to our variable
-                                        // This is a simple approach - we could improve this by tracking variable-constant mappings
-                                        if (int_val == 333333) { // Our expected checkAgainst value
-                                            return HIRValue{ .int = int_val };
-                                        }
-                                    },
-                                    else => {},
-                                }
-                            }
-                            // If not found in constants, generate the variable expression and try to evaluate it
-                            // For now, return a default value - this should be improved to properly resolve variables
-                            _ = var_name; // Suppress unused variable warning
+                            // For variable references, we can't extract a constant value at compile time
+                            // This should be handled by generating proper variable loading code instead
+                            _ = var_token; // Suppress unused variable warning
                             return HIRValue{ .int = 0 };
                         },
                         else => {},
