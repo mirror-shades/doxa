@@ -342,7 +342,7 @@ pub const SemanticAnalyzer = struct {
     }
 
     pub fn analyze(self: *SemanticAnalyzer, statements: []ast.Stmt) ErrorList!void {
-        const root_scope = try self.memory.scope_manager.createScope(null);
+        const root_scope = try self.memory.scope_manager.createScope(null, self.memory);
         self.memory.scope_manager.root_scope = root_scope;
         self.current_scope = root_scope;
 
@@ -453,7 +453,7 @@ pub const SemanticAnalyzer = struct {
                     };
                 },
                 .Block => |block_stmts| {
-                    const block_scope = try self.memory.scope_manager.createScope(scope);
+                    const block_scope = try self.memory.scope_manager.createScope(scope, self.memory);
                     try self.collectDeclarations(block_stmts, block_scope);
                     block_scope.deinit();
                 },
@@ -736,7 +736,7 @@ pub const SemanticAnalyzer = struct {
                 },
                 .Block => |block_stmts| {
                     const prev_scope = self.current_scope;
-                    self.current_scope = try self.memory.scope_manager.createScope(self.current_scope);
+                    self.current_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
                     defer {
                         self.current_scope = prev_scope;
                         // Scope cleanup handled by memory manager
@@ -1474,7 +1474,7 @@ pub const SemanticAnalyzer = struct {
             },
             .For => |for_expr| {
                 // Create a scope for the loop variables
-                const loop_scope = try self.memory.scope_manager.createScope(self.current_scope);
+                const loop_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
                 const previous_scope = self.current_scope;
                 self.current_scope = loop_scope;
                 defer {
@@ -1520,7 +1520,7 @@ pub const SemanticAnalyzer = struct {
                 }
 
                 // Create a scope for the loop variables
-                const loop_scope = try self.memory.scope_manager.createScope(self.current_scope);
+                const loop_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
 
                 // Infer the element type from the array type
                 var element_type = ast.TypeInfo{ .base = .Nothing, .is_mutable = false };
@@ -1998,7 +1998,7 @@ pub const SemanticAnalyzer = struct {
                 const array_type = try self.inferTypeFromExpr(exists.array);
 
                 // Create a temporary scope for the bound variable
-                const quantifier_scope = try self.memory.scope_manager.createScope(self.current_scope);
+                const quantifier_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
 
                 // Add the bound variable to the quantifier scope
                 // Infer the type from the array element type
@@ -2070,7 +2070,7 @@ pub const SemanticAnalyzer = struct {
                 const array_type = try self.inferTypeFromExpr(for_all.array);
 
                 // Create a temporary scope for the bound variable
-                const quantifier_scope = try self.memory.scope_manager.createScope(self.current_scope);
+                const quantifier_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
 
                 // Add the bound variable to the quantifier scope
                 // Infer the type from the array element type
@@ -2754,7 +2754,7 @@ pub const SemanticAnalyzer = struct {
     // NEW: Function body validation
     fn validateFunctionBody(self: *SemanticAnalyzer, func: anytype, func_span: ast.SourceSpan, expected_return_type: ast.TypeInfo) !void {
         // Create function scope with parameters
-        const func_scope = try self.memory.scope_manager.createScope(self.current_scope);
+        const func_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
         defer func_scope.deinit();
 
         // Add parameters to function scope
@@ -2916,7 +2916,7 @@ pub const SemanticAnalyzer = struct {
         }
 
         // Create a scope for the loop variables
-        const loop_scope = try self.memory.scope_manager.createScope(self.current_scope);
+        const loop_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
 
         // Infer the element type from the array type
         var element_type = ast.TypeInfo{ .base = .Nothing, .is_mutable = false };
@@ -3088,7 +3088,7 @@ pub const SemanticAnalyzer = struct {
         defer return_types.deinit();
 
         // Create function scope with parameters for return type inference
-        const func_scope = try self.memory.scope_manager.createScope(self.current_scope);
+        const func_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
         defer func_scope.deinit();
 
         // Add parameters to function scope

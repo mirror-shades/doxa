@@ -2,6 +2,7 @@ const std = @import("std");
 const ast = @import("../../ast/ast.zig");
 const reporting = @import("../../utils/reporting.zig");
 const TokenLiteral = @import("../../types/types.zig").TokenLiteral;
+const TokenType = @import("../../types/token.zig").TokenType;
 const SoxaInstructions = @import("soxa_instructions.zig");
 const HIRInstruction = SoxaInstructions.HIRInstruction;
 const SoxaValues = @import("soxa_values.zig");
@@ -842,14 +843,39 @@ pub const HIRGenerator = struct {
                 // Generate right operand (pushes to stack)
                 try self.generateExpression(bin.right.?, true);
 
+                // Determine the result type for proper instruction selection
+                const result_type = self.inferBinaryOpResultType(bin.operator.type, bin.left.?, bin.right.?);
+
                 switch (bin.operator.type) {
                     .PLUS => {
-                        try self.instructions.append(.{ .IntArith = .{ .op = .Add, .overflow_behavior = .Wrap } });
+                        if (result_type == .Float) {
+                            try self.instructions.append(.{ .FloatArith = .{ .op = .Add, .exception_behavior = .Trap } });
+                        } else {
+                            try self.instructions.append(.{ .IntArith = .{ .op = .Add, .overflow_behavior = .Wrap } });
+                        }
                     },
-                    .MINUS => try self.instructions.append(.{ .IntArith = .{ .op = .Sub, .overflow_behavior = .Wrap } }),
-                    .ASTERISK => try self.instructions.append(.{ .IntArith = .{ .op = .Mul, .overflow_behavior = .Wrap } }),
-                    .SLASH => try self.instructions.append(.{ .IntArith = .{ .op = .Div, .overflow_behavior = .Trap } }),
-                    .MODULO => try self.instructions.append(.{ .IntArith = .{ .op = .Mod, .overflow_behavior = .Wrap } }), // This was super slow in AST walker!
+                    .MINUS => {
+                        if (result_type == .Float) {
+                            try self.instructions.append(.{ .FloatArith = .{ .op = .Sub, .exception_behavior = .Trap } });
+                        } else {
+                            try self.instructions.append(.{ .IntArith = .{ .op = .Sub, .overflow_behavior = .Wrap } });
+                        }
+                    },
+                    .ASTERISK => {
+                        if (result_type == .Float) {
+                            try self.instructions.append(.{ .FloatArith = .{ .op = .Mul, .exception_behavior = .Trap } });
+                        } else {
+                            try self.instructions.append(.{ .IntArith = .{ .op = .Mul, .overflow_behavior = .Wrap } });
+                        }
+                    },
+                    .SLASH => {
+                        // Division always returns float
+                        try self.instructions.append(.{ .FloatArith = .{ .op = .Div, .exception_behavior = .Trap } });
+                    },
+                    .MODULO => {
+                        // Modulo only works with integers
+                        try self.instructions.append(.{ .IntArith = .{ .op = .Mod, .overflow_behavior = .Wrap } });
+                    },
                     .POWER => {
                         // POWER always returns float, so we need to convert operands to float first
                         // For now, use a builtin function call since we don't have a direct power instruction
@@ -864,12 +890,12 @@ pub const HIRGenerator = struct {
                             },
                         });
                     },
-                    .EQUALITY => try self.instructions.append(.{ .Compare = .{ .op = .Eq, .operand_type = .Int } }),
-                    .BANG_EQUAL => try self.instructions.append(.{ .Compare = .{ .op = .Ne, .operand_type = .Int } }),
-                    .LESS => try self.instructions.append(.{ .Compare = .{ .op = .Lt, .operand_type = .Int } }),
-                    .GREATER => try self.instructions.append(.{ .Compare = .{ .op = .Gt, .operand_type = .Int } }),
-                    .LESS_EQUAL => try self.instructions.append(.{ .Compare = .{ .op = .Le, .operand_type = .Int } }),
-                    .GREATER_EQUAL => try self.instructions.append(.{ .Compare = .{ .op = .Ge, .operand_type = .Int } }),
+                    .EQUALITY => try self.instructions.append(.{ .Compare = .{ .op = .Eq, .operand_type = result_type } }),
+                    .BANG_EQUAL => try self.instructions.append(.{ .Compare = .{ .op = .Ne, .operand_type = result_type } }),
+                    .LESS => try self.instructions.append(.{ .Compare = .{ .op = .Lt, .operand_type = result_type } }),
+                    .GREATER => try self.instructions.append(.{ .Compare = .{ .op = .Gt, .operand_type = result_type } }),
+                    .LESS_EQUAL => try self.instructions.append(.{ .Compare = .{ .op = .Le, .operand_type = result_type } }),
+                    .GREATER_EQUAL => try self.instructions.append(.{ .Compare = .{ .op = .Ge, .operand_type = result_type } }),
                     else => {
                         self.reporter.reportError("Unsupported binary operator: {}", .{bin.operator.type});
                         return reporting.ErrorList.UnsupportedOperator;
@@ -2014,21 +2040,18 @@ pub const HIRGenerator = struct {
                 // Check the type of the object being accessed first
                 const obj_type = self.inferTypeFromExpression(field.object);
 
-                // CRITICAL FIX: Handle standalone enum member access (e.g., .Blue in enum context)
-                // When we're in an enum context, check if this is Color.Blue syntax
-                if (self.current_enum_type) |enum_type_name| {
-                    if (field.object.data == .Variable) {
-                        const var_token = field.object.data.Variable;
-                        if (std.mem.eql(u8, var_token.lexeme, enum_type_name)) {
+                // CRITICAL FIX: Handle enum member access (e.g., Color.Blue syntax)
+                if (field.object.data == .Variable) {
+                    const var_token = field.object.data.Variable;
+                    // Check if this variable name matches a registered enum type
+                    if (self.custom_types.get(var_token.lexeme)) |custom_type| {
+                        if (custom_type.kind == .Enum) {
                             // This is Color.Blue syntax - generate enum variant
-                            const variant_index = if (self.custom_types.get(enum_type_name)) |custom_type|
-                                custom_type.getEnumVariantIndex(field.field.lexeme) orelse 0
-                            else
-                                0;
+                            const variant_index = custom_type.getEnumVariantIndex(field.field.lexeme) orelse 0;
 
                             const enum_value = HIRValue{
                                 .enum_variant = HIREnum{
-                                    .type_name = enum_type_name,
+                                    .type_name = var_token.lexeme,
                                     .variant_name = field.field.lexeme,
                                     .variant_index = variant_index,
                                     .path = null,
@@ -2598,6 +2621,79 @@ pub const HIRGenerator = struct {
     /// NEW: Get tracked variable type
     fn getTrackedVariableType(self: *HIRGenerator, var_name: []const u8) ?HIRType {
         return self.variable_types.get(var_name);
+    }
+
+    /// NEW: Infer the result type of a binary operation
+    fn inferBinaryOpResultType(self: *HIRGenerator, operator_type: TokenType, left_expr: *ast.Expr, right_expr: *ast.Expr) HIRType {
+        const left_type = self.inferTypeFromExpression(left_expr);
+        const right_type = self.inferTypeFromExpression(right_expr);
+
+        return switch (operator_type) {
+            .PLUS => switch (left_type) {
+                .Int => switch (right_type) {
+                    .Int => .Int,
+                    .Float => .Float,
+                    .Byte => .Int,
+                    else => .Int,
+                },
+                .Float => .Float, // Any float operand makes result float
+                .Byte => switch (right_type) {
+                    .Int => .Int,
+                    .Float => .Float,
+                    .Byte => .Byte,
+                    else => .Int,
+                },
+                else => .Int,
+            },
+            .MINUS => switch (left_type) {
+                .Int => switch (right_type) {
+                    .Int => .Int,
+                    .Float => .Float,
+                    .Byte => .Int,
+                    else => .Int,
+                },
+                .Float => .Float, // Any float operand makes result float
+                .Byte => switch (right_type) {
+                    .Int => .Int,
+                    .Float => .Float,
+                    .Byte => .Byte,
+                    else => .Int,
+                },
+                else => .Int,
+            },
+            .ASTERISK => switch (left_type) {
+                .Int => switch (right_type) {
+                    .Int => .Int,
+                    .Float => .Float,
+                    .Byte => .Int,
+                    else => .Int,
+                },
+                .Float => .Float, // Any float operand makes result float
+                .Byte => switch (right_type) {
+                    .Int => .Int,
+                    .Float => .Float,
+                    .Byte => .Byte,
+                    else => .Int,
+                },
+                else => .Int,
+            },
+            .SLASH => .Float, // Division always returns float
+            .MODULO => .Int, // Modulo only works with integers
+            .EQUALITY, .BANG_EQUAL, .LESS, .GREATER, .LESS_EQUAL, .GREATER_EQUAL => {
+                // For comparisons, we need to determine the comparison type
+                // If either operand is float, use float comparison
+                if (left_type == .Float or right_type == .Float) {
+                    return .Float;
+                } else if (left_type == .Int or right_type == .Int) {
+                    return .Int;
+                } else if (left_type == .Byte or right_type == .Byte) {
+                    return .Byte;
+                } else {
+                    return .Int; // Default to int comparison
+                }
+            },
+            else => .Int, // Default to int for other operations
+        };
     }
 
     /// NEW: Register a custom type (struct or enum)

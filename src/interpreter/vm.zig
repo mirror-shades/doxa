@@ -26,6 +26,7 @@ const TokenLiteral = @import("../types/types.zig").TokenLiteral;
 const TypeInfo = @import("../ast/ast.zig").TypeInfo;
 const StructField = @import("../types/types.zig").StructField;
 const StringInterner = memory.StringInterner;
+const CustomTypeInfo = memory.CustomTypeInfo;
 const types = @import("../types/types.zig");
 
 const STACK_SIZE: u32 = 1024 * 1024;
@@ -317,17 +318,29 @@ pub const HIRVM = struct {
     // Add string interner to VM
     string_interner: *StringInterner,
 
-    pub fn tokenLiteralToHIRValueWithType(self: *HIRVM, token_literal: TokenLiteral, type_info: TypeInfo) HIRValue {
+    // NEW: Custom type registry for runtime type safety
+    custom_type_registry: std.StringHashMap(CustomTypeInfo),
+
+    pub fn tokenLiteralToHIRValueWithType(self: *HIRVM, token_literal: TokenLiteral, type_info: *TypeInfo) HIRValue {
         // Handle enum types with proper type information
         if (type_info.base == .Enum and token_literal == .enum_variant) {
             const variant_name = token_literal.enum_variant;
             const enum_type_name = type_info.custom_type orelse "unknown";
 
-            // Try to find the variant index (simplified for now)
+            // Look up the variant index from the custom type registry
             var variant_index: u32 = 0;
-            if (std.mem.eql(u8, variant_name, "Red")) variant_index = 0;
-            if (std.mem.eql(u8, variant_name, "Green")) variant_index = 1;
-            if (std.mem.eql(u8, variant_name, "Blue")) variant_index = 2;
+            if (self.custom_type_registry.get(enum_type_name)) |custom_type| {
+                if (custom_type.kind == .Enum) {
+                    if (custom_type.enum_variants) |variants| {
+                        for (variants, 0..) |variant, i| {
+                            if (std.mem.eql(u8, variant.name, variant_name)) {
+                                variant_index = @intCast(i);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
 
             return HIRValue{ .enum_variant = .{
                 .type_name = enum_type_name,
@@ -541,7 +554,7 @@ pub const HIRVM = struct {
 
         // Create a new execution scope for this HIR VM run
         // This allows proper cleanup and isolation
-        const execution_scope = try memory_manager.scope_manager.createScope(memory_manager.scope_manager.root_scope);
+        const execution_scope = try memory_manager.scope_manager.createScope(memory_manager.scope_manager.root_scope, memory_manager);
 
         const string_interner = try allocator.create(StringInterner);
         string_interner.* = StringInterner.init(allocator);
@@ -562,6 +575,7 @@ pub const HIRVM = struct {
             .hot_var_count = 0,
             .debug_enabled = debug_enabled,
             .string_interner = string_interner,
+            .custom_type_registry = std.StringHashMap(CustomTypeInfo).init(allocator), // NEW: Initialize custom type registry
         };
 
         // Pre-resolve all labels for efficient jumps
@@ -571,12 +585,33 @@ pub const HIRVM = struct {
     }
 
     pub fn deinit(self: *HIRVM) void {
-        // Clean up the execution scope
-        self.current_scope.deinit();
+        // Clean up the execution scope if it's not the root scope
+        if (self.current_scope != self.memory_manager.scope_manager.root_scope) {
+            self.current_scope.deinit();
+        }
 
-        // Note: stack, call_stack, label_map, and var_cache are allocated with
-        // the memory manager's arena allocator, so they'll be cleaned up automatically
-        // when the memory manager deinitializes its arena
+        // Clean up string interner
+        self.string_interner.deinit();
+        self.allocator.destroy(self.string_interner);
+
+        // Clean up custom type registry
+        self.custom_type_registry.deinit();
+
+        // Clean up VM data structures
+        self.stack.deinit();
+        self.call_stack.deinit();
+        self.label_map.deinit();
+        self.var_cache.deinit();
+    }
+
+    /// NEW: Register a custom type for runtime type safety
+    pub fn registerCustomType(self: *HIRVM, type_info: CustomTypeInfo) !void {
+        try self.custom_type_registry.put(type_info.name, type_info);
+    }
+
+    /// NEW: Get a custom type by name
+    pub fn getCustomType(self: *HIRVM, type_name: []const u8) ?CustomTypeInfo {
+        return self.custom_type_registry.get(type_name);
     }
 
     /// Pre-resolve all labels to instruction indices for O(1) jump lookup
@@ -779,7 +814,9 @@ pub const HIRVM = struct {
 
                 const token_literal = self.hirValueToTokenLiteral(coerced_value);
                 const token_type = self.hirValueToTokenType(coerced_value);
-                const type_info = self.hirValueToTypeInfo(coerced_value);
+                const type_info_value = self.hirValueToTypeInfo(coerced_value);
+                const type_info = try self.allocator.create(TypeInfo);
+                type_info.* = type_info_value;
 
                 // PERFORMANCE: Update cache after storing to keep it synchronized with memory module
                 if (self.fast_mode) {
@@ -1086,7 +1123,7 @@ pub const HIRVM = struct {
                 }
 
                 // Create new scope - the memory module handles all the complexity
-                const new_scope = try self.memory_manager.scope_manager.createScope(self.current_scope);
+                const new_scope = try self.memory_manager.scope_manager.createScope(self.current_scope, self.memory_manager);
                 self.current_scope = new_scope;
 
                 // PERFORMANCE: Clear cache when entering new scope to prevent stale data
@@ -1932,7 +1969,7 @@ pub const HIRVM = struct {
 
             .TryBegin => |t| {
                 // Create a new scope for the try block
-                const new_scope = try self.memory_manager.scope_manager.createScope(self.current_scope);
+                const new_scope = try self.memory_manager.scope_manager.createScope(self.current_scope, self.memory_manager);
                 self.current_scope = new_scope;
                 if (self.fast_mode) {
                     self.var_cache.clearRetainingCapacity();
@@ -1959,7 +1996,7 @@ pub const HIRVM = struct {
                 }
 
                 // Create new scope for catch block
-                const catch_scope = try self.memory_manager.scope_manager.createScope(self.current_scope);
+                const catch_scope = try self.memory_manager.scope_manager.createScope(self.current_scope, self.memory_manager);
                 self.current_scope = catch_scope;
                 if (self.fast_mode) {
                     self.var_cache.clearRetainingCapacity();
@@ -2062,39 +2099,58 @@ pub const HIRVM = struct {
             },
 
             .GetField => |get_field| {
+                // DEBUG: Print what field we're trying to access
+                if (self.debug_enabled) {
+                    std.debug.print("DoxVM: Debug: GetField instruction - field_name: '{s}'\n", .{get_field.field_name});
+                }
+
                 // Get the struct instance from the top of the stack
                 const frame = try self.stack.pop();
 
-                // Handle string operations
-                if (frame.value == .string) {
-                    if (std.mem.eql(u8, get_field.field_name, "length")) {
-                        // String length operation
-                        const result = try self.stringLength(frame);
-                        try self.stack.push(result);
-                        return;
-                    } else if (std.mem.eql(u8, get_field.field_name, "bytes")) {
-                        // String bytes operation
-                        const result = try self.stringBytes(frame);
-                        try self.stack.push(result);
-                        return;
-                    } else {
-                        // Try to parse field name as index for string indexing
-                        if (std.fmt.parseInt(i32, get_field.field_name, 10)) |index| {
-                            // Create frames for substring operation
-                            const start_frame = HIRFrame.initInt(index);
-                            const len_frame = HIRFrame.initInt(1);
-                            const result = try self.stringSubstring(frame, start_frame, len_frame);
-                            try self.stack.push(result);
-                            return;
-                        } else |_| {
-                            self.reporter.reportError("Invalid string operation: {s}", .{get_field.field_name});
-                            return ErrorList.TypeError;
-                        }
+                // DEBUG: Print what we got from the stack
+                if (self.debug_enabled) {
+                    std.debug.print("DoxVM: Debug: GetField '{s}' on value type: {s}\n", .{ get_field.field_name, @tagName(frame.value) });
+                    if (frame.value == .string) {
+                        std.debug.print("DoxVM: Debug: String value: '{s}'\n", .{frame.value.string});
+                    } else if (frame.value == .enum_variant) {
+                        std.debug.print("DoxVM: Debug: Enum variant: {s}.{s}\n", .{ frame.value.enum_variant.type_name, frame.value.enum_variant.variant_name });
                     }
                 }
 
                 // Handle struct fields
                 switch (frame.value) {
+                    .string => |s_val| {
+                        // DEBUG: Print string value when trying to access field
+                        if (self.debug_enabled) {
+                            std.debug.print("DoxVM: Debug: Trying to access field '{s}' on string value: '{s}'\n", .{ get_field.field_name, s_val });
+                        }
+
+                        // Handle special string operations
+                        if (std.mem.eql(u8, get_field.field_name, "length")) {
+                            // String length operation
+                            const result = try self.stringLength(frame);
+                            try self.stack.push(result);
+                            return;
+                        } else if (std.mem.eql(u8, get_field.field_name, "bytes")) {
+                            // String bytes operation
+                            const result = try self.stringBytes(frame);
+                            try self.stack.push(result);
+                            return;
+                        } else {
+                            // Try to parse field name as index for string indexing
+                            if (std.fmt.parseInt(i32, get_field.field_name, 10)) |index| {
+                                // Create frames for substring operation
+                                const start_frame = HIRFrame.initInt(index);
+                                const len_frame = HIRFrame.initInt(1);
+                                const result = try self.stringSubstring(frame, start_frame, len_frame);
+                                try self.stack.push(result);
+                                return;
+                            } else |_| {
+                                self.reporter.reportError("Invalid string operation: {s}", .{get_field.field_name});
+                                return ErrorList.TypeError;
+                            }
+                        }
+                    },
                     .struct_instance => |struct_inst| {
                         // Intern the field name for comparison
                         const interned_name = try self.string_interner.intern(get_field.field_name);
@@ -2741,12 +2797,14 @@ pub const HIRVM = struct {
         return switch (a.value) {
             .int => |a_val| switch (b.value) {
                 .int => |b_val| a_val == b_val,
+                .byte => |b_val| a_val == b_val,
                 // Mixed int/float comparison (from old VM)
                 .float => |b_val| @as(f64, @floatFromInt(a_val)) == b_val,
                 else => false,
             },
             .float => |a_val| switch (b.value) {
                 .float => |b_val| a_val == b_val,
+                .byte => |b_val| a_val == @as(f64, @floatFromInt(b_val)),
                 // Mixed float/int comparison (from old VM)
                 .int => |b_val| a_val == @as(f64, @floatFromInt(b_val)),
                 else => false,
@@ -2765,6 +2823,8 @@ pub const HIRVM = struct {
             },
             .byte => |a_val| switch (b.value) {
                 .byte => |b_val| a_val == b_val,
+                .int => |b_val| a_val == b_val,
+                .float => |b_val| @as(f64, @floatFromInt(a_val)) == b_val,
                 else => false,
             },
             .enum_variant => |a_val| switch (b.value) {
@@ -2782,18 +2842,22 @@ pub const HIRVM = struct {
         return switch (a.value) {
             .int => |a_val| switch (b.value) {
                 .int => |b_val| a_val < b_val,
+                .byte => |b_val| a_val < b_val,
                 // Mixed int/float comparison (from old VM)
                 .float => |b_val| @as(f64, @floatFromInt(a_val)) < b_val,
                 else => ErrorList.TypeError,
             },
             .float => |a_val| switch (b.value) {
                 .float => |b_val| a_val < b_val,
+                .byte => |b_val| a_val < @as(f64, @floatFromInt(b_val)),
                 // Mixed float/int comparison (from old VM)
                 .int => |b_val| a_val < @as(f64, @floatFromInt(b_val)),
                 else => ErrorList.TypeError,
             },
             .byte => |a_val| switch (b.value) {
                 .byte => |b_val| a_val < b_val,
+                .int => |b_val| a_val < b_val,
+                .float => |b_val| @as(f64, @floatFromInt(a_val)) < b_val,
                 else => ErrorList.TypeError,
             },
             // Complex types don't support comparison
@@ -2807,18 +2871,22 @@ pub const HIRVM = struct {
         return switch (a.value) {
             .int => |a_val| switch (b.value) {
                 .int => |b_val| a_val > b_val,
+                .byte => |b_val| a_val > b_val,
                 // Mixed int/float comparison (from old VM)
                 .float => |b_val| @as(f64, @floatFromInt(a_val)) > b_val,
                 else => ErrorList.TypeError,
             },
             .float => |a_val| switch (b.value) {
                 .float => |b_val| a_val > b_val,
+                .byte => |b_val| a_val > @as(f64, @floatFromInt(b_val)),
                 // Mixed float/int comparison (from old VM)
                 .int => |b_val| a_val > @as(f64, @floatFromInt(b_val)),
                 else => ErrorList.TypeError,
             },
             .byte => |a_val| switch (b.value) {
                 .byte => |b_val| a_val > b_val,
+                .int => |b_val| a_val > b_val,
+                .float => |b_val| @as(f64, @floatFromInt(a_val)) > b_val,
                 else => ErrorList.TypeError,
             },
             // Complex types don't support comparison
@@ -3005,7 +3073,7 @@ pub const HIRVM = struct {
 
     pub fn executeCall(self: *HIRVM, function: HIRFunction, args: []HIRValue) !void {
         // Create new scope for function
-        const new_scope = try self.memory_manager.scope_manager.createScope(self.current_scope);
+        const new_scope = try self.memory_manager.scope_manager.createScope(self.current_scope, self.memory_manager);
 
         // Get current frame and increment its scope reference
         var frame = try self.stack.peek();
