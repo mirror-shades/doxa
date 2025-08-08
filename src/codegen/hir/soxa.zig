@@ -61,6 +61,10 @@ pub fn translateToVMBytecode(program: *HIRProgram, allocator: std.mem.Allocator,
                 try bytecode.append(@intFromEnum(instructions.OpCode.OP_SET_VAR));
                 try bytecode.append(@intCast(v.var_index));
             },
+            .StoreConst => |v| {
+                try bytecode.append(@intFromEnum(instructions.OpCode.OP_SET_CONST));
+                try bytecode.append(@intCast(v.var_index));
+            },
             .IntArith => |a| {
                 const opcode = switch (a.op) {
                     .Add => instructions.OpCode.OP_IADD,
@@ -144,7 +148,7 @@ pub fn translateToVMBytecode(program: *HIRProgram, allocator: std.mem.Allocator,
 
 fn getBytecodeSize(instruction: HIRInstruction) u32 {
     return switch (instruction) {
-        .Const, .LoadVar, .StoreVar, .Jump, .JumpCond, .Call, .TailCall => 2, // opcode + operand
+        .Const, .LoadVar, .StoreVar, .StoreConst, .Jump, .JumpCond, .Call, .TailCall => 2, // opcode + operand
         .IntArith, .Compare, .Return, .Dup, .Pop, .Swap, .Peek, .Halt, .AssertFail => 1, // opcode only
         .Label => 0, // No bytecode generated
         else => 1, // Default to 1 byte
@@ -451,6 +455,12 @@ fn writeHIRInstruction(writer: anytype, instruction: HIRInstruction, allocator: 
             try writer.writeInt(u32, @as(u32, @intCast(v.var_name.len)), .little);
             try writer.writeAll(v.var_name);
         },
+        .StoreConst => |v| {
+            try writer.writeByte(23); // Instruction tag (new)
+            try writer.writeInt(u32, v.var_index, .little);
+            try writer.writeInt(u32, @as(u32, @intCast(v.var_name.len)), .little);
+            try writer.writeAll(v.var_name);
+        },
         .IntArith => |a| {
             try writer.writeByte(3); // Instruction tag
             try writer.writeByte(@intFromEnum(a.op));
@@ -589,6 +599,13 @@ fn readHIRInstruction(reader: anytype, allocator: std.mem.Allocator) !HIRInstruc
             const name = try allocator.alloc(u8, name_len);
             _ = try reader.readAll(name);
             return HIRInstruction{ .StoreVar = .{ .var_index = var_index, .var_name = name, .scope_kind = .Local, .module_context = null, .expected_type = .Auto } };
+        },
+        23 => { // StoreConst
+            const var_index = try reader.readInt(u32, .little);
+            const name_len = try reader.readInt(u32, .little);
+            const name = try allocator.alloc(u8, name_len);
+            _ = try reader.readAll(name);
+            return HIRInstruction{ .StoreConst = .{ .var_index = var_index, .var_name = name } };
         },
         3 => { // IntArith
             const op_byte = try reader.readByte();
@@ -742,6 +759,7 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
         .LoadVar => |v| try writer.print("    LoadVar {} \"{s}\"           ; Load variable\n", .{ v.var_index, v.var_name }),
 
         .StoreVar => |v| try writer.print("    StoreVar {} \"{s}\"          ; Store variable\n", .{ v.var_index, v.var_name }),
+        .StoreConst => |v| try writer.print("    StoreConst {} \"{s}\"        ; Store constant\n", .{ v.var_index, v.var_name }),
 
         .IntArith => |a| try writer.print("    IntArith {s}                ; Integer arithmetic\n", .{@tagName(a.op)}),
 

@@ -325,6 +325,12 @@ pub const SoxaTextParser = struct {
             const name_quoted = tokens.next() orelse return;
             const var_name = try self.parseQuotedString(name_quoted);
             try self.instructions.append(HIRInstruction{ .StoreVar = .{ .var_index = var_index, .var_name = var_name, .scope_kind = .Local, .module_context = null, .expected_type = .Auto } });
+        } else if (std.mem.eql(u8, op, "StoreConst")) {
+            const idx_str = tokens.next() orelse return;
+            const var_index = std.fmt.parseInt(u32, idx_str, 10) catch return;
+            const name_quoted = tokens.next() orelse return;
+            const var_name = try self.parseQuotedString(name_quoted);
+            try self.instructions.append(HIRInstruction{ .StoreConst = .{ .var_index = var_index, .var_name = var_name } });
         } else if (std.mem.eql(u8, op, "IntArith")) {
             const op_str = tokens.next() orelse return;
             const arith_op = if (std.mem.eql(u8, op_str, "Add")) ArithOp.Add else if (std.mem.eql(u8, op_str, "Sub")) ArithOp.Sub else if (std.mem.eql(u8, op_str, "Mul")) ArithOp.Mul else if (std.mem.eql(u8, op_str, "Div")) ArithOp.Div else if (std.mem.eql(u8, op_str, "Mod")) ArithOp.Mod else ArithOp.Add;
