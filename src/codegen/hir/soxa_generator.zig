@@ -1673,7 +1673,11 @@ pub const HIRGenerator = struct {
                     // Duplicate the match value for comparison
                     try self.instructions.append(.Dup);
 
-                    if (case.pattern.type == .ELSE) {
+                    // Treat both token type .ELSE and identifier "else" as the else-case
+                    const is_else_case = case.pattern.type == .ELSE or
+                        (case.pattern.type == .IDENTIFIER and std.mem.eql(u8, case.pattern.lexeme, "else"));
+
+                    if (is_else_case) {
                         // Else case - always matches, pop the duplicated value
                         try self.instructions.append(.Pop);
                         try self.instructions.append(.{ .Jump = .{ .label = case_labels.items[i], .vm_offset = 0 } });
@@ -1721,6 +1725,10 @@ pub const HIRGenerator = struct {
                     if (match_enum_type) |enum_type_name| {
                         self.current_enum_type = enum_type_name;
                     }
+
+                    // Drop the original match value before producing the case body result
+                    // to keep the stack balanced and ensure the case body value is on top.
+                    try self.instructions.append(.Pop);
 
                     try self.generateExpression(case.body, true);
 
