@@ -355,21 +355,21 @@ pub const SemanticAnalyzer = struct {
         try self.validateStatements(statements);
 
         // Debug: Print all custom types
-        std.debug.print("Custom types in semantic analyzer:\n", .{});
-        var custom_types_iter = self.custom_types.iterator();
-        while (custom_types_iter.next()) |entry| {
-            std.debug.print("  '{s}': kind={s}\n", .{ entry.key_ptr.*, @tagName(entry.value_ptr.kind) });
-            if (entry.value_ptr.kind == .Struct and entry.value_ptr.struct_fields != null) {
-                std.debug.print("    Fields:\n", .{});
-                for (entry.value_ptr.struct_fields.?) |field| {
-                    std.debug.print("      '{s}': type={s}", .{ field.name, @tagName(field.field_type) });
-                    if (field.custom_type_name) |custom_name| {
-                        std.debug.print(", custom_type='{s}'", .{custom_name});
-                    }
-                    std.debug.print("\n", .{});
-                }
-            }
-        }
+        // std.debug.print("Custom types in semantic analyzer:\n", .{});
+        // var custom_types_iter = self.custom_types.iterator();
+        // while (custom_types_iter.next()) |entry| {
+        //     std.debug.print("  '{s}': kind={s}\n", .{ entry.key_ptr.*, @tagName(entry.value_ptr.kind) });
+        //     if (entry.value_ptr.kind == .Struct and entry.value_ptr.struct_fields != null) {
+        //         std.debug.print("    Fields:\n", .{});
+        //         for (entry.value_ptr.struct_fields.?) |field| {
+        //             std.debug.print("      '{s}': type={s}", .{ field.name, @tagName(field.field_type) });
+        //             if (field.custom_type_name) |custom_name| {
+        //                 std.debug.print(", custom_type='{s}'", .{custom_name});
+        //             }
+        //             std.debug.print("\n", .{});
+        //         }
+        //     }
+        // }
     }
 
     fn collectDeclarations(self: *SemanticAnalyzer, statements: []ast.Stmt, scope: *Scope) ErrorList!void {

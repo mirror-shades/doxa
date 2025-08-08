@@ -861,11 +861,13 @@ pub const HIRVM = struct {
                 type_info.* = type_info_value;
 
                 if (self.current_scope.name_map.get(v.var_name)) |variable| {
-                    // If exists and is constant, prevent modification; otherwise mark as constant now
+                    // If variable already exists in current scope
                     if (self.memory_manager.scope_manager.value_storage.getPtr(variable.storage_id)) |storage| {
                         if (storage.*.constant) {
-                            return self.reporter.reportError("Cannot redefine constant variable: {s}", .{v.var_name});
+                            // Already defined as constant (likely by semantic analysis). Treat as idempotent and skip.
+                            return;
                         }
+                        // Upgrade existing mutable to constant with the provided value
                         storage.*.value = token_literal;
                         storage.*.type = token_type;
                         storage.*.type_info = type_info;

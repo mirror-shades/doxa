@@ -429,7 +429,7 @@ pub fn main() !void {
     defer semantic_analyzer.deinit();
     try semantic_analyzer.analyze(statements);
 
-    memoryManager.scope_manager.dumpState(0);
+    //memoryManager.scope_manager.dumpState(0);
 
     //==========================================================================
     // Compile to SOXA
