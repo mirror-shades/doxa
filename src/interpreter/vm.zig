@@ -156,9 +156,20 @@ pub fn hirValueToTokenLiteral(self: *HIRVM, hir_value: HIRValue) TokenLiteral {
         .nothing => TokenLiteral{ .nothing = {} },
         .array => |arr| blk: {
             // Convert HIRArray to TokenLiteral array
-            var token_elements = self.allocator.alloc(TokenLiteral, arr.elements.len) catch break :blk TokenLiteral{ .nothing = {} };
+            if (self.debug_enabled) {
+                std.debug.print("hirValueToTokenLiteral: Converting array with {} elements\n", .{arr.elements.len});
+            }
+            var token_elements = self.allocator.alloc(TokenLiteral, arr.elements.len) catch |err| {
+                if (self.debug_enabled) {
+                    std.debug.print("hirValueToTokenLiteral: Failed to allocate array elements: {}\n", .{err});
+                }
+                break :blk TokenLiteral{ .nothing = {} };
+            };
             for (arr.elements, 0..) |element, i| {
                 token_elements[i] = self.hirValueToTokenLiteral(element);
+            }
+            if (self.debug_enabled) {
+                std.debug.print("hirValueToTokenLiteral: Successfully converted array to TokenLiteral\n", .{});
             }
             break :blk TokenLiteral{ .array = token_elements };
         },
@@ -302,7 +313,6 @@ pub const HIRVM = struct {
 
     // Performance optimizations
     var_cache: std.StringHashMap(u32), // Cache var_name → storage_id (invalidated on scope changes)
-    fast_mode: bool = true, // Enable optimizations for computational workloads
     turbo_mode: bool = true, // Ultra-aggressive optimizations for pure computational loops
 
     // Hot variable cache - direct storage for most accessed variables
@@ -474,9 +484,20 @@ pub const HIRVM = struct {
             .nothing => TokenLiteral{ .nothing = {} },
             .array => |arr| blk: {
                 // Convert HIRArray to TokenLiteral array
-                var token_elements = self.allocator.alloc(TokenLiteral, arr.elements.len) catch break :blk TokenLiteral{ .nothing = {} };
+                if (self.debug_enabled) {
+                    std.debug.print("hirValueToTokenLiteral: Converting array with {} elements\n", .{arr.elements.len});
+                }
+                var token_elements = self.allocator.alloc(TokenLiteral, arr.elements.len) catch |err| {
+                    if (self.debug_enabled) {
+                        std.debug.print("hirValueToTokenLiteral: Failed to allocate array elements: {}\n", .{err});
+                    }
+                    break :blk TokenLiteral{ .nothing = {} };
+                };
                 for (arr.elements, 0..) |element, i| {
                     token_elements[i] = self.hirValueToTokenLiteral(element);
+                }
+                if (self.debug_enabled) {
+                    std.debug.print("hirValueToTokenLiteral: Successfully converted array to TokenLiteral\n", .{});
                 }
                 break :blk TokenLiteral{ .array = token_elements };
             },
@@ -569,7 +590,6 @@ pub const HIRVM = struct {
             .current_scope = execution_scope,
             .label_map = std.StringHashMap(u32).init(allocator), // Use the passed allocator
             .var_cache = std.StringHashMap(u32).init(allocator), // Use the passed allocator
-            .fast_mode = true,
             .turbo_mode = true,
             .hot_vars = [_]?HotVar{null} ** 4,
             .hot_var_count = 0,
@@ -758,30 +778,9 @@ pub const HIRVM = struct {
                     }
                 }
 
-                // PERFORMANCE: Fast cache that fully integrates with memory module
-                if (self.fast_mode) {
-                    // Check cache first - trust storage_id if valid
-                    if (self.var_cache.get(v.var_name)) |cached_storage_id| {
-                        if (self.memory_manager.scope_manager.value_storage.get(cached_storage_id)) |storage| {
-                            const hir_value = self.tokenLiteralToHIRValueWithType(storage.value, storage.type_info);
-
-                            try self.stack.push(HIRFrame.initFromHIRValue(hir_value));
-                            return; // Ultra-fast cached path
-                        } else {
-                            _ = self.var_cache.remove(v.var_name);
-                        }
-                    }
-                }
-
                 // FALLBACK: Standard variable lookup (populate cache for next time)
                 if (self.current_scope.lookupVariable(v.var_name)) |variable| {
                     if (self.memory_manager.scope_manager.value_storage.get(variable.storage_id)) |storage| {
-                        // PERFORMANCE: Cache the storage_id from memory module's authoritative lookup
-                        if (self.fast_mode) {
-                            // Cache the result from the memory module for next time
-                            self.var_cache.put(v.var_name, variable.storage_id) catch {};
-                        }
-
                         const hir_value = self.tokenLiteralToHIRValueWithType(storage.value, storage.type_info);
 
                         try self.stack.push(HIRFrame.initFromHIRValue(hir_value));
@@ -809,6 +808,10 @@ pub const HIRVM = struct {
                 // Store top of stack to variable
                 const value = try self.stack.pop();
 
+                if (self.debug_enabled) {
+                    std.debug.print("StoreVar: Storing value of type {s} to variable '{s}'\n", .{ @tagName(value.value), v.var_name });
+                }
+
                 // Perform type coercion if needed
                 const coerced_value = self.coerceValue(value.value, v.expected_type);
 
@@ -818,12 +821,8 @@ pub const HIRVM = struct {
                 const type_info = try self.allocator.create(TypeInfo);
                 type_info.* = type_info_value;
 
-                // PERFORMANCE: Update cache after storing to keep it synchronized with memory module
-                if (self.fast_mode) {
-                    // Update cache with the current variable's storage_id
-                    if (self.current_scope.name_map.get(v.var_name)) |variable| {
-                        self.var_cache.put(v.var_name, variable.storage_id) catch {};
-                    }
+                if (self.debug_enabled) {
+                    std.debug.print("StoreVar: Converted to TokenLiteral of type {s}\n", .{@tagName(token_literal)});
                 }
 
                 // Function parameters must create NEW storage in each scope, never reuse parent storage
@@ -843,6 +842,40 @@ pub const HIRVM = struct {
                 } else {
                     _ = self.current_scope.createValueBinding(v.var_name, token_literal, token_type, type_info, false) catch |err| {
                         return self.reporter.reportError("Failed to create variable {s}: {}", .{ v.var_name, err });
+                    };
+                }
+            },
+
+            .StoreConst => |v| {
+                // Store top of stack as a constant binding
+                const value = try self.stack.pop();
+
+                if (self.debug_enabled) {
+                    std.debug.print("StoreConst: Storing constant of type {s} to variable '{s}'\n", .{ @tagName(value.value), v.var_name });
+                }
+
+                const token_literal = self.hirValueToTokenLiteral(value.value);
+                const token_type = self.hirValueToTokenType(value.value);
+                const type_info_value = self.hirValueToTypeInfo(value.value);
+                const type_info = try self.allocator.create(TypeInfo);
+                type_info.* = type_info_value;
+
+                if (self.current_scope.name_map.get(v.var_name)) |variable| {
+                    // If exists and is constant, prevent modification; otherwise mark as constant now
+                    if (self.memory_manager.scope_manager.value_storage.getPtr(variable.storage_id)) |storage| {
+                        if (storage.*.constant) {
+                            return self.reporter.reportError("Cannot redefine constant variable: {s}", .{v.var_name});
+                        }
+                        storage.*.value = token_literal;
+                        storage.*.type = token_type;
+                        storage.*.type_info = type_info;
+                        storage.*.constant = true;
+                    } else {
+                        return self.reporter.reportError("Variable storage not found for: {s}", .{v.var_name});
+                    }
+                } else {
+                    _ = self.current_scope.createValueBinding(v.var_name, token_literal, token_type, type_info, true) catch |err| {
+                        return self.reporter.reportError("Failed to create constant {s}: {}", .{ v.var_name, err });
                     };
                 }
             },
@@ -1124,12 +1157,6 @@ pub const HIRVM = struct {
                 // Create new scope - the memory module handles all the complexity
                 const new_scope = try self.memory_manager.scope_manager.createScope(self.current_scope, self.memory_manager);
                 self.current_scope = new_scope;
-
-                // PERFORMANCE: Clear cache when entering new scope to prevent stale data
-                // This is fast because we're using arena allocator
-                if (self.fast_mode) {
-                    self.var_cache.clearRetainingCapacity();
-                }
             },
 
             .ExitScope => {
@@ -1577,14 +1604,8 @@ pub const HIRVM = struct {
                         }
 
                         const function = self.program.function_table[c.function_index];
-
-                        // TAIL CALL FIX: Use start_label to include parameter setup, but we need to handle the scope issue
                         const target_label = function.start_label;
 
-                        // TAIL CALL FIX: Clear variable cache and set flag to skip scope creation
-                        if (self.fast_mode) {
-                            self.var_cache.clearRetainingCapacity();
-                        }
                         self.skip_next_enter_scope = true; // Skip scope creation when we jump to function start
 
                         // Jump to function start (including parameter setup) without call stack modification
@@ -1942,11 +1963,6 @@ pub const HIRVM = struct {
                         const old_scope = self.current_scope;
                         self.current_scope = parent_scope;
 
-                        // PERFORMANCE: Clear cache on scope change for correctness
-                        if (self.fast_mode) {
-                            self.var_cache.clearRetainingCapacity();
-                        }
-
                         old_scope.deinit();
                     }
 
@@ -1970,9 +1986,6 @@ pub const HIRVM = struct {
                 // Create a new scope for the try block
                 const new_scope = try self.memory_manager.scope_manager.createScope(self.current_scope, self.memory_manager);
                 self.current_scope = new_scope;
-                if (self.fast_mode) {
-                    self.var_cache.clearRetainingCapacity();
-                }
 
                 // Store the catch label for later use
                 if (self.label_map.get(t.catch_label)) |target_ip| {
@@ -1988,18 +2001,12 @@ pub const HIRVM = struct {
                 if (self.current_scope.parent) |parent_scope| {
                     const old_scope = self.current_scope;
                     self.current_scope = parent_scope;
-                    if (self.fast_mode) {
-                        self.var_cache.clearRetainingCapacity();
-                    }
                     old_scope.deinit();
                 }
 
                 // Create new scope for catch block
                 const catch_scope = try self.memory_manager.scope_manager.createScope(self.current_scope, self.memory_manager);
                 self.current_scope = catch_scope;
-                if (self.fast_mode) {
-                    self.var_cache.clearRetainingCapacity();
-                }
 
                 // If there's an exception type, we could store it for type checking
                 _ = t.exception_type;

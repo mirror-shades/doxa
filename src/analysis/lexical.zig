@@ -721,10 +721,10 @@ pub const LexicalAnalyzer = struct {
 
         if (std.mem.eql(u8, method_name, "typeof")) {
             try self.addToken(.TYPEOF, .nothing);
-        } else if (std.mem.eql(u8, method_name, "lengthof")) {
+        } else if (std.mem.eql(u8, method_name, "length")) {
             try self.addToken(.LENGTH, .nothing);
-        } else if (std.mem.eql(u8, method_name, "bytesof")) {
-            try self.addToken(.BYTESOF, .nothing);
+        } else if (std.mem.eql(u8, method_name, "bytes")) {
+            try self.addToken(.BYTES, .nothing);
         } else if (std.mem.eql(u8, method_name, "substring")) {
             try self.addToken(.SUBSTRING, .nothing);
         } else if (std.mem.eql(u8, method_name, "concat")) {

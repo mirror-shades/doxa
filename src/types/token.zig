@@ -76,7 +76,7 @@ pub const TokenType = enum {
     // compiler level methods
     TYPEOF, // typeof
     LENGTH, // length
-    BYTESOF, // bytesof
+    BYTES, // bytes
     SUBSTRING, // substring
     CONCAT, // concat
     SLICE, // slice
