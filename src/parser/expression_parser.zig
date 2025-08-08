@@ -256,6 +256,7 @@ pub fn parseMatchExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*a
         if (self.peek().type == .ELSE) {
             // Handle else case
             self.advance(); // consume 'else'
+            const else_token = self.previous(); // capture 'else' token before consuming '=>'
 
             // Parse arrow
             if (self.peek().type != .ARROW) {
@@ -267,7 +268,7 @@ pub fn parseMatchExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*a
             const body = try parseExpression(self) orelse return error.ExpectedExpression;
 
             try cases.append(.{
-                .pattern = self.previous(), // Use the 'else' token we just consumed
+                .pattern = else_token, // ensure codegen sees a real ELSE token
                 .body = body,
             });
 
@@ -1558,6 +1559,7 @@ pub fn parseStructOrMatch(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList
             if (self.peek().type == .ELSE) {
                 // Handle else case
                 self.advance(); // consume 'else'
+                const else_token = self.previous();
 
                 // Parse arrow
                 if (self.peek().type != .ARROW) {
@@ -1569,7 +1571,7 @@ pub fn parseStructOrMatch(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList
                 const body = try parseExpression(self) orelse return error.ExpectedExpression;
 
                 try cases.append(.{
-                    .pattern = self.previous(), // Use the 'else' token we just consumed
+                    .pattern = else_token,
                     .body = body,
                 });
 
