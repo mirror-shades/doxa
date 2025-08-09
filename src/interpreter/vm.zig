@@ -741,6 +741,14 @@ pub const HIRVM = struct {
                     if (self.memory_manager.scope_manager.value_storage.get(variable.storage_id)) |storage| {
                         const hir_value = self.tokenLiteralToHIRValueWithType(storage.value, storage.type_info);
 
+                        // Targeted debug for suspected variables
+                        if (std.mem.eql(u8, v.var_name, "resint") or std.mem.eql(u8, v.var_name, "resfloat")) {
+                            self.reporter.debug(
+                                "DBG LoadVar {s}: token_type={s}, type_info={s}, token_literal={any}, hir_tag={s}",
+                                .{ v.var_name, @tagName(storage.type), @tagName(storage.type_info.base), storage.value, @tagName(hir_value) },
+                            );
+                        }
+
                         try self.stack.push(HIRFrame.initFromHIRValue(hir_value));
                     } else {
                         // Propagate error so VM halts execution immediately
@@ -764,6 +772,13 @@ pub const HIRVM = struct {
                 const type_info_value = self.hirValueToTypeInfo(coerced_value);
                 const type_info = try self.allocator.create(TypeInfo);
                 type_info.* = type_info_value;
+
+                if (std.mem.eql(u8, v.var_name, "resint") or std.mem.eql(u8, v.var_name, "resfloat")) {
+                    self.reporter.debug(
+                        "DBG StoreVar {s}: token_type={s}, type_info={s}, token_literal={any}",
+                        .{ v.var_name, @tagName(token_type), @tagName(type_info.base), token_literal },
+                    );
+                }
 
                 // Function parameters must create NEW storage in each scope, never reuse parent storage
                 if (self.current_scope.name_map.get(v.var_name)) |variable| {
@@ -796,14 +811,25 @@ pub const HIRVM = struct {
                 const type_info = try self.allocator.create(TypeInfo);
                 type_info.* = type_info_value;
 
+                if (std.mem.eql(u8, v.var_name, "resint") or std.mem.eql(u8, v.var_name, "resfloat") or std.mem.eql(u8, v.var_name, "newun")) {
+                    self.reporter.debug(
+                        "DBG StoreConst {s}: token_type={s}, type_info={s}, token_literal={any}",
+                        .{ v.var_name, @tagName(token_type), @tagName(type_info.base), token_literal },
+                    );
+                }
+
                 if (self.current_scope.name_map.get(v.var_name)) |variable| {
                     // If variable already exists in current scope
                     if (self.memory_manager.scope_manager.value_storage.getPtr(variable.storage_id)) |storage| {
                         if (storage.*.constant) {
-                            // Already defined as constant (likely by semantic analysis). Treat as idempotent and skip.
-                            return;
+                            // Allow initializing a constant that currently holds 'nothing'
+                            const is_nothing = storage.*.value == .nothing;
+                            if (!is_nothing) {
+                                // Already initialized constant - skip
+                                return;
+                            }
                         }
-                        // Upgrade existing mutable to constant with the provided value
+                        // Initialize or upgrade to constant with the provided value
                         storage.*.value = token_literal;
                         storage.*.type = token_type;
                         storage.*.type_info = type_info;
@@ -812,7 +838,8 @@ pub const HIRVM = struct {
                         return self.reporter.reportError("Variable storage not found for: {s}", .{v.var_name});
                     }
                 } else {
-                    _ = self.current_scope.createValueBinding(v.var_name, token_literal, token_type, type_info, true) catch |err| {
+                    // Create constant in the root scope to ensure it survives function scope churn
+                    _ = self.current_scope.createCrossScopeValueBinding(v.var_name, token_literal, token_type, type_info, true) catch |err| {
                         return self.reporter.reportError("Failed to create constant {s}: {}", .{ v.var_name, err });
                     };
                 }

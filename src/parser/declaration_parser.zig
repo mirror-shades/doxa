@@ -569,26 +569,9 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
         std.debug.print("Finished parsing variable declaration. Current token: {s} ('{s}')\n", .{ @tagName(self.peek().type), self.peek().lexeme });
     }
 
-    // Handle type inference and union initialization
+    // Handle type inference (defer union member resolution to semantic analysis)
     if (type_info.base == .Union and initializer != null) {
-        // For unions, we need to determine which type the initializer matches
-        const union_type = type_info.union_type orelse return error.TypeMismatch;
-        const inferred_type = try expression_parser.inferType(initializer.?);
-
-        // Find which type in the union matches the initializer
-        var found_match = false;
-        for (union_type.types, 0..) |union_member_type, i| {
-            if (union_member_type.base == inferred_type.base) {
-                union_type.setCurrentType(@intCast(i));
-                found_match = true;
-                break;
-            }
-        }
-
-        if (!found_match) {
-            // TODO: Add better error reporting for union type mismatch
-            return error.TypeMismatch;
-        }
+        // Do not attempt to resolve which union member at parse time; semantic analysis will handle it.
     } else if (type_info.base == .Nothing and initializer != null) {
         // infer type from initializer for non-union types
         const inferred_type = try expression_parser.inferType(initializer.?);
