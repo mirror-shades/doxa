@@ -107,7 +107,7 @@ function endLoop() {
 function checkClosingBracket(scan :: string) returns(tetra) {
     var pointer :: int is 0;
     var openBrackets :: int is 0;
-    while(pointer < scan.length) {
+    while(pointer < @length(scan)) {
         if(scan[pointer] equals "[") then openBrackets += 1;
         if(scan[pointer] equals "]") then openBrackets -= 1;
         pointer += 1;
