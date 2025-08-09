@@ -75,7 +75,6 @@ pub const LexicalAnalyzer = struct {
         try self.keywords.put("safe", .SAFE);
         try self.keywords.put("normal", .NORMAL);
         try self.keywords.put("guide", .GUIDE);
-        try self.keywords.put("input", .INPUT);
         try self.keywords.put("pub", .PUBLIC);
         try self.keywords.put("public", .PUBLIC);
         try self.keywords.put("true", .LOGIC);
@@ -731,6 +730,8 @@ pub const LexicalAnalyzer = struct {
             try self.addToken(.CLONE, .nothing);
         } else if (std.mem.eql(u8, method_name, "assert")) {
             try self.addToken(.ASSERT, .nothing);
+        } else if (std.mem.eql(u8, method_name, "input")) {
+            try self.addToken(.INPUT, .nothing);
         } else {
             return error.InvalidInternalMethod;
         }

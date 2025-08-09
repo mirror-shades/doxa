@@ -2404,12 +2404,14 @@ pub const Parser = struct {
             .column = 0,
             .file = "",
         };
-
         // Handle both input("prompt") and input "prompt" syntax
         if (self.peek().type == .LEFT_PAREN) {
             self.advance(); // consume '('
 
-            if (self.peek().type == .STRING) {
+            if (self.peek().type == .RIGHT_PAREN) {
+                // Empty parentheses => no prompt
+                self.advance(); // consume ')'
+            } else if (self.peek().type == .STRING) {
                 prompt = self.peek();
                 if (self.debug_enabled) {
                     std.debug.print("Found prompt string in parentheses: '{s}'\n", .{prompt.lexeme});

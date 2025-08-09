@@ -45,6 +45,8 @@ pub const HIRGenerator = struct {
     module_namespaces: std.StringHashMap(ast.ModuleInfo), // Track module namespaces for function call resolution
 
     current_enum_type: ?[]const u8 = null,
+    // Track array element types per variable for better index/peek typing
+    variable_array_element_types: std.StringHashMap(HIRType),
 
     pub const FunctionInfo = struct {
         name: []const u8,
@@ -169,6 +171,7 @@ pub const HIRGenerator = struct {
             .module_namespaces = module_namespaces,
             .current_enum_type = null,
             .stats = HIRStats.init(allocator),
+            .variable_array_element_types = std.StringHashMap(HIRType).init(allocator),
         };
     }
 
@@ -184,6 +187,7 @@ pub const HIRGenerator = struct {
         self.function_signatures.deinit();
         self.function_bodies.deinit();
         self.function_calls.deinit();
+        self.variable_array_element_types.deinit();
         // Note: module_namespaces is not owned by HIRGenerator, so we don't deinit it
     }
 
@@ -561,6 +565,9 @@ pub const HIRGenerator = struct {
                                 .element_type = element_type,
                                 .size = size,
                             } });
+
+                            // Track element type for this variable
+                            try self.trackArrayElementType(decl.name.lexeme, element_type);
                         },
                         else => {
                             const default_value = HIRValue.nothing;
@@ -1198,23 +1205,16 @@ pub const HIRGenerator = struct {
                     }
                 } else try self.buildPeekPath(peek.expr);
 
-                // NEW: Use tracked variable type when available, otherwise infer
-                var inferred_type: HIRType = .Auto;
-
-                // If peeking a variable, use the tracked type first
-                if (peek_path != null) {
-                    // For simple variables, try to get tracked type
-                    if (peek.expr.data == .Variable) {
-                        if (self.getTrackedVariableType(peek.expr.data.Variable.lexeme)) |tracked_type| {
-                            inferred_type = tracked_type;
-                        } else {
-                            inferred_type = self.inferTypeFromExpression(peek.expr);
-                        }
-                    } else {
-                        inferred_type = self.inferTypeFromExpression(peek.expr);
+                // NEW: Prefer expression inference; refine for array indexing
+                var inferred_type: HIRType = self.inferTypeFromExpression(peek.expr);
+                if (peek.expr.data == .Index and peek.expr.data.Index.array.data == .Variable) {
+                    if (self.getTrackedArrayElementType(peek.expr.data.Index.array.data.Variable.lexeme)) |elem_type| {
+                        inferred_type = elem_type;
                     }
-                } else {
-                    inferred_type = self.inferTypeFromExpression(peek.expr);
+                } else if (peek.expr.data == .Variable) {
+                    if (self.getTrackedVariableType(peek.expr.data.Variable.lexeme)) |tracked_type| {
+                        inferred_type = tracked_type;
+                    }
                 }
 
                 // Generate peek instruction with full path and correct type
@@ -1282,6 +1282,8 @@ pub const HIRGenerator = struct {
                     .size = @intCast(elements.len),
                 } });
 
+                // Note: We cannot track the target variable here without broader context
+
                 // Generate each element and ArraySet
                 for (elements, 0..) |element, i| {
                     // Duplicate array reference (needed for ArraySet)
@@ -1325,6 +1327,13 @@ pub const HIRGenerator = struct {
 
                         // Array access - use ArrayGet
                         try self.instructions.append(.{ .ArrayGet = .{ .bounds_check = true } });
+
+                        // Record element type for index expressions into variables
+                        if (index.array.data == .Variable) {
+                            if (self.getTrackedArrayElementType(index.array.data.Variable.lexeme)) |elem_type| {
+                                try self.trackVariableType("__index_tmp__", elem_type);
+                            }
+                        }
                     },
                     else => {
                         // Generate index expression
@@ -2727,6 +2736,21 @@ pub const HIRGenerator = struct {
     /// NEW: Get tracked variable type
     fn getTrackedVariableType(self: *HIRGenerator, var_name: []const u8) ?HIRType {
         return self.variable_types.get(var_name);
+    }
+
+    // NEW: Track array element types per variable for better index inference
+
+    fn ensureAuxMapsInit(self: *HIRGenerator) void {
+        _ = self; // map is initialized in init()
+    }
+
+    fn trackArrayElementType(self: *HIRGenerator, var_name: []const u8, elem_type: HIRType) !void {
+        self.ensureAuxMapsInit();
+        try self.variable_array_element_types.put(var_name, elem_type);
+    }
+
+    fn getTrackedArrayElementType(self: *HIRGenerator, var_name: []const u8) ?HIRType {
+        return self.variable_array_element_types.get(var_name);
     }
 
     /// NEW: Infer the result type of a binary operation

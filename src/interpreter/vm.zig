@@ -863,6 +863,13 @@ pub const HIRVM = struct {
                     .int => |i| i,
                     .byte => |u| @as(i32, u),
                     .tetra => |t| @as(i32, t),
+                    .string => |s| blk: {
+                        // Gracefully allow numeric strings in arithmetic (e.g., "42")
+                        const parsed = std.fmt.parseInt(i32, s, 10) catch {
+                            return self.reporter.reportError("Cannot convert string to integer for arithmetic", .{});
+                        };
+                        break :blk parsed;
+                    },
                     .nothing => {
                         return self.reporter.reportError("Cannot perform arithmetic on 'nothing' value", .{});
                     },
@@ -875,6 +882,12 @@ pub const HIRVM = struct {
                     .int => |i| i,
                     .byte => |u| @as(i32, u),
                     .tetra => |t| @as(i32, t),
+                    .string => |s| blk: {
+                        const parsed = std.fmt.parseInt(i32, s, 10) catch {
+                            return self.reporter.reportError("Cannot convert string to integer for arithmetic", .{});
+                        };
+                        break :blk parsed;
+                    },
                     .nothing => {
                         return self.reporter.reportError("Cannot perform arithmetic on 'nothing' value", .{});
                     },
@@ -1421,16 +1434,16 @@ pub const HIRVM = struct {
 
                         const element_value = switch (mutable_arr.element_type) {
                             .Byte => switch (value.value) {
-                                .int => |i| if (i >= 0 and i <= 255) HIRValue{ .byte = @intCast(i) } else value.value,
+                                .int => |i| if (i >= 0 and i <= 255) HIRValue{ .byte = @intCast(i) } else HIRValue{ .byte = 0 },
                                 .byte => value.value, // Already correct type
-                                else => blk: {
-                                    break :blk value.value; // Keep original for other types
-                                },
+                                .string => |_| return self.reporter.reportError("Cannot assign string to byte array element", .{}),
+                                else => return self.reporter.reportError("Cannot assign {s} to byte array element", .{@tagName(value.value)}),
                             },
                             .Int => switch (value.value) {
                                 .byte => |b| HIRValue{ .int = @as(i32, b) }, // Convert byte to int
                                 .int => value.value, // Already correct type
-                                else => value.value, // Keep original for other types
+                                .string => |_| return self.reporter.reportError("Cannot assign string to int array element", .{}),
+                                else => return self.reporter.reportError("Cannot assign {s} to int array element", .{@tagName(value.value)}),
                             },
                             else => value.value, // For other array types, keep original value
                         };
