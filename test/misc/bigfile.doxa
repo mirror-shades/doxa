@@ -133,6 +133,21 @@ fourthFold?;
 //neither is neither true or false
 (neither equals true or neither equals false)?; // false
 
+const Bob is true;
+const Shakespere is false;
+const zombie is both;
+const angel is neither;
+
+function living(alive :: tetra) {
+    if alive then "I am alive"?;
+    if not alive then "I am dead"?;
+}
+
+living(Bob); // I am alive
+living(Shakespere); // I am dead
+living(zombie); // I am alive; I am dead
+living(angel); // 
+
 
 /////
 // ARRAYS
@@ -198,15 +213,15 @@ foo(777, ~)?; // 782
 // UNION TYPES
 /////
 
+const un1 :: int | float is 3;
+const un2 :: int | float is 3.5;
+
 fn process_number_union_string(value :: int | float) returns(string) {
     return match value {
         int => "integer"?,
         float => "float"?,
     };
 }
-
-const un1 :: int | float is 3;
-const un2 :: int | float is 3.5;
 
 process_number_union_string(un1)?; // integer
 process_number_union_string(un2)?; // float
