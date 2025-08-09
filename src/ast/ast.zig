@@ -1179,8 +1179,6 @@ pub fn typeInfoFromExpr(allocator: std.mem.Allocator, type_expr: ?*TypeExpr) !*T
 
             for (types, 0..) |union_type_expr, i| {
                 union_types[i] = try typeInfoFromExpr(allocator, union_type_expr);
-                // Debug: Print the type of each union member
-                std.debug.print("DEBUG: Union member {} has type: {s}\n", .{ i, @tagName(union_types[i].base) });
             }
 
             const union_type = try allocator.create(UnionType);

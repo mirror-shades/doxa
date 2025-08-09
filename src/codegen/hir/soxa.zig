@@ -468,6 +468,8 @@ fn writeHIRInstruction(writer: anytype, instruction: HIRInstruction, allocator: 
         .Compare => |c| {
             try writer.writeByte(4); // Instruction tag
             try writer.writeByte(@intFromEnum(c.op));
+            // Serialize operand_type to preserve intended comparison semantics (Int/Float/String/Enum/...)
+            try writer.writeByte(@intFromEnum(c.operand_type));
         },
         .Jump => |j| {
             try writer.writeByte(5); // Instruction tag
@@ -615,7 +617,10 @@ fn readHIRInstruction(reader: anytype, allocator: std.mem.Allocator) !HIRInstruc
         4 => { // Compare
             const op_byte = try reader.readByte();
             const op = @as(CompareOp, @enumFromInt(op_byte));
-            return HIRInstruction{ .Compare = .{ .op = op, .operand_type = .Int } };
+            // Read operand_type that was serialized with Compare
+            const type_byte = try reader.readByte();
+            const operand_type = @as(HIRType, @enumFromInt(type_byte));
+            return HIRInstruction{ .Compare = .{ .op = op, .operand_type = operand_type } };
         },
         5 => { // Jump
             const label_len = try reader.readInt(u32, .little);
@@ -763,7 +768,7 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
 
         .IntArith => |a| try writer.print("    IntArith {s}                ; Integer arithmetic\n", .{@tagName(a.op)}),
 
-        .Compare => |c| try writer.print("    Compare {s}                 ; Comparison\n", .{@tagName(c.op)}),
+        .Compare => |c| try writer.print("    Compare {s} {s}                 ; Comparison\n", .{ @tagName(c.op), @tagName(c.operand_type) }),
 
         .Jump => |j| try writer.print("    Jump {s}                    ; Unconditional jump\n", .{j.label}),
 

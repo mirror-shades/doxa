@@ -338,7 +338,15 @@ pub const SoxaTextParser = struct {
         } else if (std.mem.eql(u8, op, "Compare")) {
             const op_str = tokens.next() orelse return;
             const comp_op = if (std.mem.eql(u8, op_str, "Eq")) CompareOp.Eq else if (std.mem.eql(u8, op_str, "Ne")) CompareOp.Ne else if (std.mem.eql(u8, op_str, "Lt")) CompareOp.Lt else if (std.mem.eql(u8, op_str, "Le")) CompareOp.Le else if (std.mem.eql(u8, op_str, "Gt")) CompareOp.Gt else if (std.mem.eql(u8, op_str, "Ge")) CompareOp.Ge else CompareOp.Eq;
-            try self.instructions.append(HIRInstruction{ .Compare = .{ .op = comp_op, .operand_type = .Int } });
+
+            // Optional operand type (default Int if omitted)
+            const maybe_type = tokens.next();
+            var operand_type: HIRType = .Int;
+            if (maybe_type) |type_str| {
+                operand_type = if (std.mem.eql(u8, type_str, "Int")) HIRType.Int else if (std.mem.eql(u8, type_str, "Byte")) HIRType.Byte else if (std.mem.eql(u8, type_str, "Float")) HIRType.Float else if (std.mem.eql(u8, type_str, "String")) HIRType.String else if (std.mem.eql(u8, type_str, "Tetra")) HIRType.Tetra else if (std.mem.eql(u8, type_str, "Nothing")) HIRType.Nothing else if (std.mem.eql(u8, type_str, "Array")) HIRType.Array else if (std.mem.eql(u8, type_str, "Struct")) HIRType.Struct else if (std.mem.eql(u8, type_str, "Map")) HIRType.Map else if (std.mem.eql(u8, type_str, "Enum")) HIRType.Enum else if (std.mem.eql(u8, type_str, "Function")) HIRType.Function else if (std.mem.eql(u8, type_str, "Auto")) HIRType.Auto else HIRType.Int;
+            }
+
+            try self.instructions.append(HIRInstruction{ .Compare = .{ .op = comp_op, .operand_type = operand_type } });
         } else if (std.mem.eql(u8, op, "Jump")) {
             const label = tokens.next() orelse return;
             const label_name = try self.allocator.dupe(u8, label);

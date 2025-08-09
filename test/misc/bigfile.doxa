@@ -194,6 +194,30 @@ fn foo(a :: int, b :: int is 5) returns(int) {
 foo(777, 2)?; // 779
 foo(777, ~)?; // 782
 
+/////
+// UNION TYPES
+/////
+
+fn process_number_union_string(value :: int | float) returns(string) {
+    return match value {
+        int => "integer"?,
+        float => "float"?,
+    };
+}
+
+const un1 :: int | float is 3;
+const un2 :: int | float is 3.5;
+
+process_number_union_string(un1)?; // integer
+process_number_union_string(un2)?; // float
+
+fn process_number_union_int(value :: int | float) returns(int) {
+    return value as int else 0;
+}
+
+process_number_union_int(un1)?; // integer
+process_number_union_int(un2)?; // float
+
 
 /////
 // MAPS

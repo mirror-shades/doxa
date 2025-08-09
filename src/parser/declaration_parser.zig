@@ -445,49 +445,16 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
     if (self.peek().type == .TYPE_SYMBOL and type_info.base == .Nothing) {
         self.advance(); // consume ::
 
-        // Check if this is a union type using pipe syntax (int | float | ErrorEnum)
-        if (self.peek().type == .PIPE or self.peekAhead(1).type == .PIPE) {
-            var types = std.ArrayList(*ast.TypeInfo).init(self.allocator);
-            defer types.deinit();
+        // Always delegate to parseTypeExpr which already supports unions (int | float | ...)
+        const type_expr = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
 
-            // Parse the first type
-            const first_type_expr = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
-            const first_type_info = try ast.typeInfoFromExpr(self.allocator, first_type_expr);
-            try types.append(first_type_info);
+        // Convert TypeExpr to TypeInfo (handles basic, arrays, structs, unions, etc.)
+        const type_info_ptr = try ast.typeInfoFromExpr(self.allocator, type_expr);
+        type_info = type_info_ptr.*;
+        self.allocator.destroy(type_info_ptr); // Free the pointer since we copied the struct
 
-            // Parse additional types separated by pipes
-            while (self.peek().type == .PIPE) {
-                self.advance(); // consume |
-                const type_expr = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
-                const next_type_info = try ast.typeInfoFromExpr(self.allocator, type_expr);
-                try types.append(next_type_info);
-            }
-
-            // Create union type
-            const union_type = try self.allocator.create(ast.UnionType);
-            union_type.* = .{
-                .types = try types.toOwnedSlice(),
-                .current_type_index = 0, // Default to first type
-            };
-
-            // The memory manager will handle this type_info through ValueStorage
-            type_info = .{
-                .base = .Union,
-                .union_type = union_type,
-                .is_mutable = !is_const,
-            };
-        } else {
-            // Regular type annotation
-            const type_expr = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
-
-            // Use the typeInfoFromExpr function to properly convert TypeExpr to TypeInfo
-            const type_info_ptr = try ast.typeInfoFromExpr(self.allocator, type_expr);
-            type_info = type_info_ptr.*;
-            self.allocator.destroy(type_info_ptr); // Free the pointer since we copied the struct
-
-            // Preserve mutability from our original type_info
-            type_info.is_mutable = !is_const;
-        }
+        // Preserve mutability from our original declaration
+        type_info.is_mutable = !is_const;
     }
 
     if (self.debug_enabled) {
