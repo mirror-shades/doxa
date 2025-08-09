@@ -419,6 +419,8 @@ pub const HIRGenerator = struct {
             .Tetra => .Tetra,
             .Byte => .Byte,
             .Array => .Array,
+            // Treat unions as having a value at runtime; approximate to Int to avoid dropping returns
+            .Union => .Int,
             else => .Nothing,
         };
     }
@@ -611,7 +613,9 @@ pub const HIRGenerator = struct {
                     } else {
                         // Regular return with value
                         try self.generateExpression(value, true);
-                        try self.instructions.append(.{ .Return = .{ .has_value = true, .return_type = self.current_function_return_type } });
+                        // Infer return type from the returned expression to avoid relying on signature inference
+                        const inferred_ret_type = self.inferTypeFromExpression(value);
+                        try self.instructions.append(.{ .Return = .{ .has_value = true, .return_type = inferred_ret_type } });
                     }
                 } else {
                     try self.instructions.append(.{ .Return = .{ .has_value = false, .return_type = .Nothing } });
@@ -1178,11 +1182,8 @@ pub const HIRGenerator = struct {
                 self.current_peek_expr = peek.expr;
                 defer self.current_peek_expr = null;
 
-                // Generate the expression to peek
+                // Generate the expression to peek (leaves value on stack)
                 try self.generateExpression(peek.expr, true);
-
-                // Duplicate it so it remains on stack after peekion
-                try self.instructions.append(.Dup);
 
                 // Build the full path for the peek expression (handles field access)
                 // Special case: Don't show variable name for enum member access like Color.Red
@@ -1222,6 +1223,12 @@ pub const HIRGenerator = struct {
                     .value_type = inferred_type,
                     .location = peek.location,
                 } });
+
+                // IMPORTANT: Peek pops the value, prints, then pushes it back.
+                // If the caller does not need the result (statement context), drop it now
+                if (!preserve_result) {
+                    try self.instructions.append(.Pop);
+                }
             },
 
             .Assignment => |assign| {

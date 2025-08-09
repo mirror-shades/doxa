@@ -777,29 +777,59 @@ pub const SemanticAnalyzer = struct {
     }
 
     fn unifyTypes(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual: *ast.TypeInfo, span: ast.SourceSpan) !void {
-        // Handle union types first - check if actual type is one of the union's member types
+        // Handle union types first - check if actual type is compatible with the expected union
         if (expected.base == .Union) {
-            if (expected.union_type) |union_type| {
-                var found_match = false;
-                for (union_type.types) |member_type| {
-                    if (member_type.base == actual.base) {
-                        found_match = true;
-                        break;
+            if (expected.union_type) |exp_union| {
+                if (actual.base == .Union) {
+                    // Union-to-union compatibility: every member of actual must be allowed by expected
+                    if (actual.union_type) |act_union| {
+                        for (act_union.types) |act_member| {
+                            var member_allowed = false;
+                            for (exp_union.types) |exp_member| {
+                                if (exp_member.base == act_member.base) {
+                                    member_allowed = true;
+                                    break;
+                                }
+                            }
+                            if (!member_allowed) {
+                                // Build expected list for error message
+                                var type_list = std.ArrayList(u8).init(self.allocator);
+                                defer type_list.deinit();
+                                for (exp_union.types, 0..) |m, i| {
+                                    if (i > 0) try type_list.appendSlice(" | ");
+                                    try type_list.appendSlice(@tagName(m.base));
+                                }
+                                self.reporter.reportCompileError(
+                                    span.start,
+                                    "Type mismatch: expected union ({s}), got {s}",
+                                    .{ type_list.items, @tagName(act_member.base) },
+                                );
+                                self.fatal_error = true;
+                                return;
+                            }
+                        }
+                        return; // All actual members are allowed by expected
                     }
-                }
-
-                if (found_match) {
-                    return; // Type is compatible with union
+                    // If actual has no union_type detail, accept conservatively
+                    return;
                 } else {
+                    // Non-union on the right: check membership in expected union
+                    var found_match = false;
+                    for (exp_union.types) |member_type| {
+                        if (member_type.base == actual.base) {
+                            found_match = true;
+                            break;
+                        }
+                    }
+                    if (found_match) return;
+
                     // Build a list of allowed types for the error message
                     var type_list = std.ArrayList(u8).init(self.allocator);
                     defer type_list.deinit();
-
-                    for (union_type.types, 0..) |member_type, i| {
+                    for (exp_union.types, 0..) |member_type, i| {
                         if (i > 0) try type_list.appendSlice(" | ");
                         try type_list.appendSlice(@tagName(member_type.base));
                     }
-
                     self.reporter.reportCompileError(
                         span.start,
                         "Type mismatch: expected union ({s}), got {s}",
@@ -1595,7 +1625,14 @@ pub const SemanticAnalyzer = struct {
 
                 // Analyze all cases and create a union type if they have different types
                 if (match_expr.cases.len > 0) {
-                    const first_case_type = try self.inferTypeFromExpr(match_expr.cases[0].body);
+                    // If the match value is a simple variable, we can narrow it inside cases
+                    var matched_var_name: ?[]const u8 = null;
+                    if (match_expr.value.data == .Variable) {
+                        matched_var_name = match_expr.value.data.Variable.lexeme;
+                    }
+
+                    // Infer first case with narrowing
+                    const first_case_type = try self.inferMatchCaseTypeWithNarrow(match_expr.cases[0], matched_var_name);
 
                     // Check if all cases have the same type
                     var all_same_type = true;
@@ -1605,7 +1642,7 @@ pub const SemanticAnalyzer = struct {
                     try union_types.append(first_case_type);
 
                     for (match_expr.cases[1..]) |case| {
-                        const case_type = try self.inferTypeFromExpr(case.body);
+                        const case_type = try self.inferMatchCaseTypeWithNarrow(case, matched_var_name);
                         if (case_type.base != first_case_type.base) {
                             all_same_type = false;
                         }
@@ -1613,9 +1650,7 @@ pub const SemanticAnalyzer = struct {
                     }
 
                     if (all_same_type) {
-                        // All cases have the same type - preserve the base type but ensure mutability is handled by the variable declaration
                         type_info.* = first_case_type.*;
-                        // Don't override is_mutable here - let the variable declaration handle it
                     } else {
                         // Create a union type from all case types
                         const union_type_array = try self.allocator.alloc(*ast.TypeInfo, union_types.items.len);
@@ -1627,7 +1662,6 @@ pub const SemanticAnalyzer = struct {
                         union_type.* = .{ .types = union_type_array };
 
                         type_info.* = .{ .base = .Union, .union_type = union_type };
-                        // Don't override is_mutable here - let the variable declaration handle it
                     }
                 } else {
                     type_info.* = .{ .base = .Nothing };
@@ -2220,6 +2254,51 @@ pub const SemanticAnalyzer = struct {
         // Cache the result
         try self.type_cache.put(expr.base.id, type_info);
         return type_info;
+    }
+
+    // Narrow the matched variable type within a single match case, then infer the body type.
+    fn inferMatchCaseTypeWithNarrow(self: *SemanticAnalyzer, case: ast.MatchCase, matched_var_name: ?[]const u8) ErrorList!*ast.TypeInfo {
+        // Create a per-case scope so narrowing does not leak out of the case
+        const case_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
+        defer case_scope.deinit();
+
+        const prev_scope = self.current_scope;
+        self.current_scope = case_scope;
+        defer self.current_scope = prev_scope;
+
+        if (matched_var_name) |name| {
+            // Build a narrowed TypeInfo from the pattern
+            const narrow_info = try self.allocator.create(ast.TypeInfo);
+            narrow_info.* = switch (case.pattern.type) {
+                .INT_TYPE => .{ .base = .Int, .is_mutable = false },
+                .FLOAT_TYPE => .{ .base = .Float, .is_mutable = false },
+                .STRING_TYPE => .{ .base = .String, .is_mutable = false },
+                .BYTE_TYPE => .{ .base = .Byte, .is_mutable = false },
+                .TETRA_TYPE => .{ .base = .Tetra, .is_mutable = false },
+                .NOTHING_TYPE, .NOTHING => .{ .base = .Nothing, .is_mutable = false },
+                .DOT => .{ .base = .Enum, .is_mutable = false }, // enum member pattern implies enum
+                else => blk: {
+                    if (case.pattern.type == .IDENTIFIER and !std.mem.eql(u8, case.pattern.lexeme, "else")) {
+                        break :blk .{ .base = .Custom, .custom_type = case.pattern.lexeme, .is_mutable = false };
+                    }
+                    // For else or unknown, skip narrowing
+                    break :blk .{ .base = .Nothing, .is_mutable = false };
+                },
+            };
+
+            const token_type: TokenType = self.convertTypeToTokenType(narrow_info.base);
+
+            // Shadow the variable in this case scope with the narrowed type
+            _ = case_scope.createValueBinding(
+                name,
+                TokenLiteral{ .nothing = {} },
+                token_type,
+                narrow_info,
+                false,
+            ) catch {};
+        }
+
+        return try self.inferTypeFromExpr(case.body);
     }
 
     fn resolveTypeInfo(self: *SemanticAnalyzer, type_info: ast.TypeInfo) !ast.TypeInfo {

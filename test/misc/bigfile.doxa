@@ -211,13 +211,34 @@ const un2 :: int | float is 3.5;
 process_number_union_string(un1)?; // integer
 process_number_union_string(un2)?; // float
 
+fn process_number_union_narrow(value :: int | float) returns(int) {
+    return match value {
+        int => value,
+        float => 0,
+    };
+}
+
+process_number_union_narrow(un1)?; // 3
+process_number_union_narrow(un2)?; // 0
+
 fn process_number_union_int(value :: int | float) returns(int) {
     return value as int else 0;
 }
 
-process_number_union_int(un1)?; // integer
-process_number_union_int(un2)?; // float
+process_number_union_int(un1)?; // 3
+process_number_union_int(un2)?; // 0
 
+fn process_number_union_return_union(value :: int | float) returns(int | float) {
+    return value;
+}
+
+const newun :: int | float is process_number_union_return_union(un1);
+
+const resint is newun as int else 0; // integer
+const resfloat is newun as float else 0; // float
+
+resint?; // 3
+resfloat?; // 0
 
 /////
 // MAPS
