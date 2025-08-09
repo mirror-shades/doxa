@@ -1781,7 +1781,11 @@ pub const SemanticAnalyzer = struct {
                     type_info.base = .Nothing;
                     return type_info;
                 }
-                type_info.* = .{ .base = .Array, .element_type = .Byte }; // BytesOf returns an array of bytes
+                // BytesOf returns an array of bytes. Arrays in the semantic type system
+                // carry their element type via `array_type` (a TypeInfo pointer).
+                const byte_type = try self.allocator.create(ast.TypeInfo);
+                byte_type.* = .{ .base = .Byte };
+                type_info.* = .{ .base = .Array, .array_type = byte_type };
             },
             .Map => |map_entries| {
                 if (map_entries.len == 0) {
@@ -2891,7 +2895,6 @@ pub const SemanticAnalyzer = struct {
         var has_return = false;
         var has_return_with_value = false;
         var has_return_without_value = false;
-        var all_paths_return = true;
 
         for (body) |stmt| {
             switch (stmt.data) {
@@ -2918,9 +2921,6 @@ pub const SemanticAnalyzer = struct {
                     const block_returns = try self.validateReturnPaths(block_stmts, expected_return_type, func_span);
                     if (block_returns) {
                         has_return = true;
-                        has_return_with_value = true; // Assume blocks with returns have values
-                    } else {
-                        all_paths_return = false;
                     }
                 },
                 .Expression => |expr| {
@@ -2931,9 +2931,6 @@ pub const SemanticAnalyzer = struct {
                             const if_returns = try self.validateIfExpressionReturns(expression, expected_return_type, func_span);
                             if (if_returns) {
                                 has_return = true;
-                                has_return_with_value = true; // If expressions that return have values
-                            } else {
-                                all_paths_return = false;
                             }
                         }
                     }
@@ -2961,7 +2958,7 @@ pub const SemanticAnalyzer = struct {
             self.fatal_error = true;
         }
 
-        return has_return or all_paths_return;
+        return has_return;
     }
 
     // NEW: Validate if expressions for return paths

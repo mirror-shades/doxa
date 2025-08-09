@@ -293,7 +293,7 @@ Map["c"]?; // 3.5
 ; // true
 
 /////
-// TYPEOF AND INFERENCE
+// @typeof AND INFERENCE
 /////
 
 var __int :: int;
@@ -313,26 +313,26 @@ __string?; // ""
 
 
 var _int is 5;
-typeof(_int)?; // int
+@typeof(_int)?; // int
 
 var _byte is 0xff;
-typeof(_byte)?; // byte
+@typeof(_byte)?; // byte
 
 var _float is 5.5;
-typeof(_float)?; // float
+@typeof(_float)?; // float
 
 var _string is "hello";
-typeof(_string)?; // string
+@typeof(_string)?; // string
 
 var _tetra is both;
-typeof(_tetra)?; // tetra
+@typeof(_tetra)?; // tetra
 
-typeof(arr)?; // array
+@typeof(arr)?; // array
 
-typeof(Employee)?; // struct
-typeof(mike)?; // Employee
+@typeof(Employee)?; // struct
+@typeof(mike)?; // Employee
 
-typeof(Color)?; // enum
-typeof(Color.Blue)?; // Color
+@typeof(Color)?; // enum
+@typeof(Color.Blue)?; // Color
 
-typeof(Map)?; // map
+@typeof(Map)?; // map
