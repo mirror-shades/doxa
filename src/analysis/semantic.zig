@@ -1456,7 +1456,11 @@ pub const SemanticAnalyzer = struct {
                     const then_is_peek = if_expr.then_branch.?.data == .Peek;
                     const else_is_peek = else_branch.data == .Peek;
 
-                    if (then_is_peek and else_is_peek) {
+                    // New: if one branch is a peek and the other is implicit nothing, allow the peek branch type
+                    if ((then_is_peek and else_type.base == .Nothing) or (else_is_peek and then_type.base == .Nothing)) {
+                        // Prefer the branch that actually peeks a value
+                        type_info.* = if (then_is_peek) then_type.* else else_type.*;
+                    } else if (then_is_peek and else_is_peek) {
                         // Both are peek expressions - use the then type as the result type
                         // This allows different types to be peeked in different branches
                         type_info.* = then_type.*;
