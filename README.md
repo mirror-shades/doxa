@@ -35,7 +35,7 @@ zig build
 ## Development Status
 
 - ✅ **AST Interpreter**: Fully functional, supports all language features, will be deprecated for VM
-- 🚧 **Soxa VM**: currently implementing stack based HIR and VM
+- ✅ **Soxa VM**: currently implementing stack based HIR and VM
 - ❌ **LLVM IR**: Minimal prototyping, many features missing, future
 
 ## Value Types

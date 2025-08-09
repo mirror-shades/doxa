@@ -155,21 +155,11 @@ pub fn hirValueToTokenLiteral(self: *HIRVM, hir_value: HIRValue) TokenLiteral {
         } },
         .nothing => TokenLiteral{ .nothing = {} },
         .array => |arr| blk: {
-            // Convert HIRArray to TokenLiteral array
-            if (self.debug_enabled) {
-                std.debug.print("hirValueToTokenLiteral: Converting array with {} elements\n", .{arr.elements.len});
-            }
-            var token_elements = self.allocator.alloc(TokenLiteral, arr.elements.len) catch |err| {
-                if (self.debug_enabled) {
-                    std.debug.print("hirValueToTokenLiteral: Failed to allocate array elements: {}\n", .{err});
-                }
+            var token_elements = self.allocator.alloc(TokenLiteral, arr.elements.len) catch {
                 break :blk TokenLiteral{ .nothing = {} };
             };
             for (arr.elements, 0..) |element, i| {
                 token_elements[i] = self.hirValueToTokenLiteral(element);
-            }
-            if (self.debug_enabled) {
-                std.debug.print("hirValueToTokenLiteral: Successfully converted array to TokenLiteral\n", .{});
             }
             break :blk TokenLiteral{ .array = token_elements };
         },
@@ -299,7 +289,6 @@ pub const HIRVM = struct {
     reporter: *Reporter,
     memory_manager: *MemoryManager, // Use existing memory manager from main
     allocator: std.mem.Allocator,
-    debug_enabled: bool,
 
     // Execution state
     ip: u32 = 0, // Instruction pointer (index into instructions array)
@@ -483,21 +472,11 @@ pub const HIRVM = struct {
             } },
             .nothing => TokenLiteral{ .nothing = {} },
             .array => |arr| blk: {
-                // Convert HIRArray to TokenLiteral array
-                if (self.debug_enabled) {
-                    std.debug.print("hirValueToTokenLiteral: Converting array with {} elements\n", .{arr.elements.len});
-                }
-                var token_elements = self.allocator.alloc(TokenLiteral, arr.elements.len) catch |err| {
-                    if (self.debug_enabled) {
-                        std.debug.print("hirValueToTokenLiteral: Failed to allocate array elements: {}\n", .{err});
-                    }
+                var token_elements = self.allocator.alloc(TokenLiteral, arr.elements.len) catch {
                     break :blk TokenLiteral{ .nothing = {} };
                 };
                 for (arr.elements, 0..) |element, i| {
                     token_elements[i] = self.hirValueToTokenLiteral(element);
-                }
-                if (self.debug_enabled) {
-                    std.debug.print("hirValueToTokenLiteral: Successfully converted array to TokenLiteral\n", .{});
                 }
                 break :blk TokenLiteral{ .array = token_elements };
             },
@@ -570,7 +549,7 @@ pub const HIRVM = struct {
         };
     }
 
-    pub fn init(program: *HIRProgram, reporter: *Reporter, memory_manager: *MemoryManager, debug_enabled: bool) !HIRVM {
+    pub fn init(program: *HIRProgram, reporter: *Reporter, memory_manager: *MemoryManager) !HIRVM {
         const allocator = memory_manager.getAllocator();
 
         // Create a new execution scope for this HIR VM run
@@ -593,7 +572,6 @@ pub const HIRVM = struct {
             .turbo_mode = true,
             .hot_vars = [_]?HotVar{null} ** 4,
             .hot_var_count = 0,
-            .debug_enabled = debug_enabled,
             .string_interner = string_interner,
             .custom_type_registry = std.StringHashMap(CustomTypeInfo).init(allocator), // NEW: Initialize custom type registry
         };
@@ -636,24 +614,13 @@ pub const HIRVM = struct {
 
     /// Pre-resolve all labels to instruction indices for O(1) jump lookup
     fn resolveLabels(self: *HIRVM) !void {
-        if (self.debug_enabled) {
-            std.debug.print("DoxVM: Resolving labels from {} instructions\n", .{self.program.instructions.len});
-        }
-
         for (self.program.instructions, 0..) |instruction, i| {
             switch (instruction) {
                 .Label => |label| {
-                    if (self.debug_enabled) {
-                        std.debug.print("DoxVM: Found label '{s}' at instruction {}\n", .{ label.name, i });
-                    }
                     try self.label_map.put(label.name, @intCast(i));
                 },
                 else => {},
             }
-        }
-
-        if (self.debug_enabled) {
-            std.debug.print("DoxVM: Resolved {} labels total\n", .{self.label_map.count()});
         }
     }
 
@@ -747,11 +714,6 @@ pub const HIRVM = struct {
 
     /// Execute a single HIR instruction
     fn executeInstruction(self: *HIRVM, instruction: HIRInstruction) ErrorList!void {
-        // Add debug logging for all instructions
-        if (self.debug_enabled) {
-            std.debug.print("DoxVM: Executing instruction at IP {}: {s}\n", .{ self.ip, @tagName(instruction) });
-        }
-
         switch (instruction) {
             .Const => |c| {
                 // Push constant from constant pool
@@ -760,10 +722,6 @@ pub const HIRVM = struct {
             },
 
             .LoadVar => |v| {
-                if (self.debug_enabled) {
-                    std.debug.print("DoxVM: Debug: LoadVar {} \"{s}\" - Stack size before: {}\n", .{ v.var_index, v.var_name, self.stack.size() });
-                }
-
                 if (self.turbo_mode) {
                     // TURBO: Check hot variable cache first (array lookup - fastest possible)
                     for (self.hot_vars[0..self.hot_var_count]) |hot_var| {
@@ -784,16 +742,6 @@ pub const HIRVM = struct {
                         const hir_value = self.tokenLiteralToHIRValueWithType(storage.value, storage.type_info);
 
                         try self.stack.push(HIRFrame.initFromHIRValue(hir_value));
-
-                        if (self.debug_enabled) {
-                            std.debug.print("DoxVM: Debug: LoadVar {} \"{s}\" - Stack size after: {}, loaded value: {s}\n", .{ v.var_index, v.var_name, self.stack.size(), @tagName(hir_value) });
-                            if (std.mem.eql(u8, v.var_name, "tape")) {
-                                std.debug.print("DoxVM: Debug: *** TAPE VARIABLE LOADED - Type: {s} ***\n", .{@tagName(hir_value)});
-                                if (hir_value != .array) {
-                                    std.debug.print("DoxVM: Debug: *** ERROR: TAPE SHOULD BE ARRAY BUT IS {s} ***\n", .{@tagName(hir_value)});
-                                }
-                            }
-                        }
                     } else {
                         // Propagate error so VM halts execution immediately
                         return self.reporter.throwError("Variable storage not found for: {s}", .{v.var_name}, ErrorList.VariableNotFound);
@@ -808,10 +756,6 @@ pub const HIRVM = struct {
                 // Store top of stack to variable
                 const value = try self.stack.pop();
 
-                if (self.debug_enabled) {
-                    std.debug.print("StoreVar: Storing value of type {s} to variable '{s}'\n", .{ @tagName(value.value), v.var_name });
-                }
-
                 // Perform type coercion if needed
                 const coerced_value = self.coerceValue(value.value, v.expected_type);
 
@@ -820,10 +764,6 @@ pub const HIRVM = struct {
                 const type_info_value = self.hirValueToTypeInfo(coerced_value);
                 const type_info = try self.allocator.create(TypeInfo);
                 type_info.* = type_info_value;
-
-                if (self.debug_enabled) {
-                    std.debug.print("StoreVar: Converted to TokenLiteral of type {s}\n", .{@tagName(token_literal)});
-                }
 
                 // Function parameters must create NEW storage in each scope, never reuse parent storage
                 if (self.current_scope.name_map.get(v.var_name)) |variable| {
@@ -849,10 +789,6 @@ pub const HIRVM = struct {
             .StoreConst => |v| {
                 // Store top of stack as a constant binding
                 const value = try self.stack.pop();
-
-                if (self.debug_enabled) {
-                    std.debug.print("StoreConst: Storing constant of type {s} to variable '{s}'\n", .{ @tagName(value.value), v.var_name });
-                }
 
                 const token_literal = self.hirValueToTokenLiteral(value.value);
                 const token_type = self.hirValueToTokenType(value.value);
@@ -913,19 +849,15 @@ pub const HIRVM = struct {
 
                 const result = switch (a.op) {
                     .Add => std.math.add(i32, a_int, b_int) catch |err| {
-                        if (self.debug_enabled) std.debug.print("Integer overflow in addition: {} + {}\n", .{ a_int, b_int });
                         return err;
                     },
                     .Sub => std.math.sub(i32, a_int, b_int) catch |err| {
-                        if (self.debug_enabled) std.debug.print("Integer overflow in subtraction: {} - {}\n", .{ a_int, b_int });
                         return err;
                     },
                     .Mul => std.math.mul(i32, a_int, b_int) catch |err| {
-                        if (self.debug_enabled) std.debug.print("Integer overflow in multiplication: {} * {}\n", .{ a_int, b_int });
                         return err;
                     },
                     .Div => if (b_int == 0) {
-                        if (self.debug_enabled) std.debug.print("Division by zero: {} / {}\n", .{ a_int, b_int });
                         return ErrorList.DivisionByZero;
                     } else @divTrunc(a_int, b_int),
                     .Mod => try self.fastIntMod(a_int, b_int), // Use optimized modulo
@@ -953,7 +885,6 @@ pub const HIRVM = struct {
                     .Sub => a_float - b_float,
                     .Mul => a_float * b_float,
                     .Div => if (b_float == 0.0) {
-                        if (self.debug_enabled) std.debug.print("Float division by zero: {} / {}\n", .{ a_float, b_float });
                         return ErrorList.DivisionByZero;
                     } else a_float / b_float,
                     .Mod => return ErrorList.UnsupportedOperator, // Float modulo not supported
@@ -966,9 +897,20 @@ pub const HIRVM = struct {
                 const b = try self.stack.pop();
                 const a_val = try self.stack.pop();
 
+                // Special handling: if operand_type signals String and RHS is a string, allow comparing
+                // a value's runtime type to the provided type name string. This enables
+                // match value { int => ..., float => ... } style type-pattern checks.
+                const eq_with_type_name = blk: {
+                    if (c.operand_type == .String and b.value == .string and a_val.value != .string) {
+                        const type_name = self.getTypeString(a_val.value);
+                        break :blk std.mem.eql(u8, type_name, b.value.string);
+                    }
+                    break :blk null;
+                };
+
                 const result = switch (c.op) {
-                    .Eq => try self.compareEqual(a_val, b),
-                    .Ne => !(try self.compareEqual(a_val, b)),
+                    .Eq => if (eq_with_type_name) |is_eq| is_eq else try self.compareEqual(a_val, b),
+                    .Ne => if (eq_with_type_name) |is_eq| !is_eq else !(try self.compareEqual(a_val, b)),
                     .Lt => try self.compareLess(a_val, b),
                     .Le => (try self.compareLess(a_val, b)) or (try self.compareEqual(a_val, b)),
                     .Gt => try self.compareGreater(a_val, b),
@@ -1190,9 +1132,6 @@ pub const HIRVM = struct {
                     const stderr = std.io.getStdErr().writer();
                     try stderr.print("Assertion failed at {s}:\n{s}\n", .{ location_str, message_str });
                 } else {
-                    // DEBUG: Print that no message was provided
-                    std.debug.print("DEBUG: No message provided\n", .{});
-
                     // No message provided
                     const stderr = std.io.getStdErr().writer();
                     try stderr.print("Assertion failed at {s}\n", .{location_str});
@@ -1203,9 +1142,6 @@ pub const HIRVM = struct {
             },
 
             .Halt => {
-                if (self.debug_enabled) {
-                    std.debug.print("HIR VM halted\n", .{});
-                }
                 self.running = false;
             },
 
@@ -1306,9 +1242,6 @@ pub const HIRVM = struct {
                                     .capacity = @intCast(s_val.len),
                                 } };
 
-                                if (self.debug_enabled) {
-                                    std.debug.print("StringOp.Bytes: Created byte array with {} elements\n", .{s_val.len});
-                                }
                                 try self.stack.push(HIRFrame.initFromHIRValue(array));
                             },
                             else => return ErrorList.TypeError,
@@ -1324,10 +1257,6 @@ pub const HIRVM = struct {
                 // CRITICAL FIX: For empty arrays (size=0), allocate minimum capacity for growth
                 const initial_capacity = if (a.size == 0) 8 else a.size; // Start with capacity 8 for empty arrays
                 const elements = try self.allocator.alloc(HIRValue, initial_capacity);
-
-                if (self.debug_enabled) {
-                    std.debug.print("ArrayNew: Creating array with element_type: {s}, size: {}, capacity: {}\n", .{ @tagName(a.element_type), a.size, initial_capacity });
-                }
 
                 // Initialize all elements to default values based on element type
                 const default_value = HIRVM.getDefaultValue(a.element_type);
@@ -1380,18 +1309,13 @@ pub const HIRVM = struct {
 
                 switch (array.value) {
                     .array => |arr| {
-                        if (self.debug_enabled) {
-                            std.debug.print("ArrayGet: Accessing array element at index {}, element_type: {s}\n", .{ index_val, @tagName(arr.element_type) });
-                        }
                         if (a.bounds_check and index_val >= arr.elements.len) {
                             self.reporter.reportError("Array index {} out of bounds (array has {} elements)", .{ index_val, arr.elements.len });
                             return ErrorList.IndexOutOfBounds;
                         }
 
                         const element = arr.elements[index_val];
-                        if (self.debug_enabled) {
-                            std.debug.print("ArrayGet: Element type: {s}\n", .{@tagName(element)});
-                        }
+
                         try self.stack.push(HIRFrame.initFromHIRValue(element));
                     },
                     .nothing => {
@@ -1420,11 +1344,6 @@ pub const HIRVM = struct {
                 const value = try self.stack.pop(); // Value to set
                 const index = try self.stack.pop(); // Index
                 const array_frame = try self.stack.pop(); // Array
-
-                if (self.debug_enabled) {
-                    std.debug.print("ArraySet: About to set - array type: {s}, index type: {s}, value type: {s}\n", .{ @tagName(array_frame.value), @tagName(index.value), @tagName(value.value) });
-                    std.debug.print("ArraySet: Stack size before pops: {}, IP: {}\n", .{ self.stack.size() + 3, self.ip });
-                }
 
                 // IMPROVED: Handle different index types more gracefully
                 const index_val = switch (index.value) {
@@ -1464,18 +1383,11 @@ pub const HIRVM = struct {
                             return ErrorList.IndexOutOfBounds;
                         }
 
-                        // TYPE PRESERVATION: Convert value to match array element type when possible
-                        if (self.debug_enabled) {
-                            std.debug.print("ArraySet: Array element_type: {s}, value type: {s}\n", .{ @tagName(mutable_arr.element_type), @tagName(value.value) });
-                        }
                         const element_value = switch (mutable_arr.element_type) {
                             .Byte => switch (value.value) {
                                 .int => |i| if (i >= 0 and i <= 255) HIRValue{ .byte = @intCast(i) } else value.value,
                                 .byte => value.value, // Already correct type
                                 else => blk: {
-                                    if (self.debug_enabled) {
-                                        std.debug.print("ArraySet: Warning - storing {s} in byte array\n", .{@tagName(value.value)});
-                                    }
                                     break :blk value.value; // Keep original for other types
                                 },
                             },
@@ -1488,9 +1400,7 @@ pub const HIRVM = struct {
                         };
 
                         mutable_arr.elements[index_val] = element_value;
-                        if (self.debug_enabled) {
-                            std.debug.print("ArraySet: Stored element type: {s}\n", .{@tagName(element_value)});
-                        }
+
                         // Push the modified array back onto the stack
                         const modified_array_value = HIRValue{ .array = mutable_arr };
                         try self.stack.push(HIRFrame.initFromHIRValue(modified_array_value));
@@ -1625,11 +1535,6 @@ pub const HIRVM = struct {
             },
 
             .Call => |c| {
-                if (self.debug_enabled) {
-                    std.debug.print("DoxVM: Call instruction - function_index: {}, call_kind: {s}, qualified_name: {s}\n", .{ c.function_index, @tagName(c.call_kind), c.qualified_name });
-                    std.debug.print("DoxVM: Call stack size before: {}\n", .{self.stack.size()});
-                }
-
                 switch (c.call_kind) {
                     .LocalFunction => {
                         // User-defined function call with proper stack management
@@ -1638,10 +1543,6 @@ pub const HIRVM = struct {
                         }
 
                         const function = self.program.function_table[c.function_index];
-
-                        if (self.debug_enabled) {
-                            std.debug.print("DoxVM: Calling function: {s}, start_label: {s}\n", .{ function.name, function.start_label });
-                        }
 
                         // Push call frame for proper return handling
                         const return_ip = self.ip + 1; // Return to instruction after this call
@@ -1655,19 +1556,9 @@ pub const HIRVM = struct {
 
                         // Use pre-resolved label map for O(1) lookup
                         if (self.label_map.get(function.start_label)) |target_ip| {
-                            if (self.debug_enabled) {
-                                std.debug.print("DoxVM: Jumping to label {s} at IP {}\n", .{ function.start_label, target_ip });
-                            }
                             self.ip = target_ip;
                             return; // Jump to function start
                         } else {
-                            if (self.debug_enabled) {
-                                std.debug.print("DoxVM: Available labels in label_map:\n", .{});
-                                var iterator = self.label_map.iterator();
-                                while (iterator.next()) |entry| {
-                                    std.debug.print("  {s} -> {}\n", .{ entry.key_ptr.*, entry.value_ptr.* });
-                                }
-                            }
                             return self.reporter.reportError("Function label not found: {s}", .{function.start_label});
                         }
                     },
@@ -1814,12 +1705,6 @@ pub const HIRVM = struct {
                             const comparison_value = try self.stack.pop();
                             const array = try self.stack.pop();
 
-                            if (self.debug_enabled) {
-                                std.debug.print("DoxVM: Debug: forall_quantifier_gt: comparison_value = ", .{});
-                                try self.printHIRValue(comparison_value.value);
-                                std.debug.print("\n", .{});
-                            }
-
                             switch (array.value) {
                                 .array => |arr| {
                                     // Check if all elements are greater than comparison_value
@@ -1835,9 +1720,6 @@ pub const HIRVM = struct {
                                             .int => |elem_int| switch (comparison_value.value) {
                                                 .int => |comp_int| blk: {
                                                     const result = elem_int > comp_int;
-                                                    if (self.debug_enabled) {
-                                                        std.debug.print("DoxVM: Debug: forall check: {} > {} = {}\n", .{ elem_int, comp_int, result });
-                                                    }
                                                     break :blk result;
                                                 },
                                                 else => false,
@@ -1851,14 +1733,9 @@ pub const HIRVM = struct {
                                         };
                                         if (!satisfies_condition) {
                                             all_satisfy = false;
-                                            if (self.debug_enabled) {
-                                                std.debug.print("DoxVM: Debug: forall: condition failed, setting all_satisfy = false\n", .{});
-                                            }
+
                                             break;
                                         }
-                                    }
-                                    if (self.debug_enabled) {
-                                        std.debug.print("DoxVM: Debug: forall final: has_elements = {}, all_satisfy = {}\n", .{ has_elements, all_satisfy });
                                     }
                                     // For empty arrays, forall returns true (vacuous truth)
                                     try self.stack.push(HIRFrame.initTetra(if ((!has_elements) or all_satisfy) 1 else 0));
@@ -1952,9 +1829,6 @@ pub const HIRVM = struct {
             },
 
             .Return => |ret| {
-                if (self.debug_enabled) {
-                    std.debug.print("DoxVM: Return instruction - has_value: {}, stack size: {}\n", .{ ret.has_value, self.stack.size() });
-                }
 
                 // Check if we're returning from main program or a function call
                 if (self.call_stack.isEmpty()) {
@@ -2107,32 +1981,12 @@ pub const HIRVM = struct {
             },
 
             .GetField => |get_field| {
-                // DEBUG: Print what field we're trying to access
-                if (self.debug_enabled) {
-                    std.debug.print("DoxVM: Debug: GetField instruction - field_name: '{s}'\n", .{get_field.field_name});
-                }
-
                 // Get the struct instance from the top of the stack
                 const frame = try self.stack.pop();
 
-                // DEBUG: Print what we got from the stack
-                if (self.debug_enabled) {
-                    std.debug.print("DoxVM: Debug: GetField '{s}' on value type: {s}\n", .{ get_field.field_name, @tagName(frame.value) });
-                    if (frame.value == .string) {
-                        std.debug.print("DoxVM: Debug: String value: '{s}'\n", .{frame.value.string});
-                    } else if (frame.value == .enum_variant) {
-                        std.debug.print("DoxVM: Debug: Enum variant: {s}.{s}\n", .{ frame.value.enum_variant.type_name, frame.value.enum_variant.variant_name });
-                    }
-                }
-
                 // Handle struct fields
                 switch (frame.value) {
-                    .string => |s_val| {
-                        // DEBUG: Print string value when trying to access field
-                        if (self.debug_enabled) {
-                            std.debug.print("DoxVM: Debug: Trying to access field '{s}' on string value: '{s}'\n", .{ get_field.field_name, s_val });
-                        }
-
+                    .string => {
                         // Handle special string operations
                         if (std.mem.eql(u8, get_field.field_name, "length")) {
                             // String length operation
@@ -2229,11 +2083,6 @@ pub const HIRVM = struct {
             },
 
             .Map => |map| {
-                // Create a new map by popping key-value pairs from the stack
-                if (self.debug_enabled) {
-                    std.debug.print("DoxVM: Debug: Creating map with {} entries, stack size: {}\n", .{ map.entries.len, self.stack.size() });
-                }
-
                 var entries = try self.allocator.alloc(HIRMapEntry, map.entries.len);
 
                 // The codegen pushes entries in reverse order: [key_last, value_last, ..., key_first, value_first]
@@ -2244,9 +2093,7 @@ pub const HIRVM = struct {
                     reverse_i -= 1;
                     const value = try self.stack.pop(); // Pop value first
                     const key = try self.stack.pop(); // Pop key second
-                    if (self.debug_enabled) {
-                        std.debug.print("DoxVM: Debug: Map entry {}: key={s}, value={s}\n", .{ reverse_i, @tagName(key.value), @tagName(value.value) });
-                    }
+
                     entries[reverse_i] = HIRMapEntry{
                         .key = key.value,
                         .value = value.value,
@@ -2259,9 +2106,6 @@ pub const HIRVM = struct {
                     .value_type = map.value_type,
                 } };
 
-                if (self.debug_enabled) {
-                    std.debug.print("DoxVM: Debug: Created map, pushing to stack\n", .{});
-                }
                 try self.stack.push(HIRFrame.initFromHIRValue(map_value));
             },
 
@@ -2270,22 +2114,12 @@ pub const HIRVM = struct {
                 const key = try self.stack.pop();
                 const map = try self.stack.pop();
 
-                if (self.debug_enabled) {
-                    std.debug.print("DoxVM: Debug: MapGet - key: {any}, map type: {s}\n", .{ key.value, @tagName(map.value) });
-                }
-
                 switch (map.value) {
                     .map => |m| {
-                        if (self.debug_enabled) {
-                            std.debug.print("DoxVM: Debug: MapGet - searching in map with {} entries\n", .{m.entries.len});
-                        }
 
                         // Find entry with matching key
                         var found = false;
-                        for (m.entries, 0..) |entry, i| {
-                            if (self.debug_enabled) {
-                                std.debug.print("DoxVM: Debug: MapGet - entry {}: key={any}, value={any}\n", .{ i, entry.key, entry.value });
-                            }
+                        for (m.entries) |entry| {
 
                             // Use custom comparison for HIRValue keys
                             const keys_match = switch (entry.key) {
@@ -2301,9 +2135,6 @@ pub const HIRVM = struct {
                             };
 
                             if (keys_match) {
-                                if (self.debug_enabled) {
-                                    std.debug.print("DoxVM: Debug: MapGet - found matching key, returning value\n", .{});
-                                }
                                 try self.stack.push(HIRFrame.initFromHIRValue(entry.value));
                                 found = true;
                                 break;
@@ -2311,9 +2142,6 @@ pub const HIRVM = struct {
                         }
 
                         if (!found) {
-                            if (self.debug_enabled) {
-                                std.debug.print("DoxVM: Debug: MapGet - key not found, returning nothing\n", .{});
-                            }
                             // Key not found - return nothing
                             try self.stack.push(HIRFrame.initFromHIRValue(HIRValue.nothing));
                         }
@@ -3006,8 +2834,6 @@ pub const HIRVM = struct {
 
     /// Debug helper to dump current VM state
     pub fn dumpState(self: *HIRVM) void {
-        if (!self.debug_enabled) return;
-
         std.debug.print("\n=== HIR VM State Dump ===\n", .{});
         std.debug.print("IP: {}, Running: {}, Stack size: {}\n", .{ self.ip, self.running, self.stack.size() });
 
@@ -3269,14 +3095,10 @@ pub const HIRVM = struct {
 
     /// Coerce a value to the expected type if possible
     fn coerceValue(self: *HIRVM, value: HIRValue, expected_type: HIRType) HIRValue {
+        _ = self;
         // If expected type is Auto, no coercion needed
         if (expected_type == .Auto) {
             return value;
-        }
-
-        // Debug output for coercion
-        if (self.debug_enabled) {
-            std.debug.print("Coercing value {any} to expected type {s}\n", .{ value, @tagName(expected_type) });
         }
 
         // Perform type coercion based on expected type
@@ -3299,10 +3121,6 @@ pub const HIRVM = struct {
             },
             else => value, // No coercion for other types
         };
-
-        if (self.debug_enabled) {
-            std.debug.print("Coercion result: {any}\n", .{result});
-        }
 
         return result;
     }

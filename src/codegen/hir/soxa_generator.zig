@@ -1975,6 +1975,65 @@ pub const HIRGenerator = struct {
                 try self.instructions.append(.{ .Const = .{ .value = type_value, .constant_id = const_idx } });
             },
 
+            .Cast => |cast_expr| {
+                // Generate the value to cast
+                try self.generateExpression(cast_expr.value, true);
+
+                // Duplicate it so we can keep original value on success path
+                try self.instructions.append(.Dup);
+
+                // Map target type to a runtime name string compatible with VM getTypeString
+                const target_name: []const u8 = blk: {
+                    switch (cast_expr.target_type.data) {
+                        .Basic => |basic| switch (basic) {
+                            .Integer => break :blk "int",
+                            .Byte => break :blk "byte",
+                            .Float => break :blk "float",
+                            .String => break :blk "string",
+                            .Tetra => break :blk "tetra",
+                            .Nothing => break :blk "nothing",
+                        },
+                        .Custom => |tok| break :blk tok.lexeme,
+                        .Array => break :blk "array",
+                        .Struct => break :blk "struct",
+                        .Enum => break :blk "enum",
+                        .Union => break :blk "union",
+                    }
+                };
+
+                // Push target type name as constant
+                const target_const = HIRValue{ .string = target_name };
+                const target_idx = try self.addConstant(target_const);
+                try self.instructions.append(.{ .Const = .{ .value = target_const, .constant_id = target_idx } });
+
+                // Compare runtime type of value against target type name
+                try self.instructions.append(.{ .Compare = .{ .op = .Eq, .operand_type = .String } });
+
+                // Branch based on comparison
+                const ok_label = try self.generateLabel("cast_ok");
+                const else_label = try self.generateLabel("cast_else");
+                const end_label = try self.generateLabel("cast_end");
+                try self.instructions.append(.{ .JumpCond = .{ .label_true = ok_label, .label_false = else_label, .vm_offset = 0, .condition_type = .Tetra } });
+
+                // Else branch: drop original value and evaluate else expression
+                try self.instructions.append(.{ .Label = .{ .name = else_label, .vm_address = 0 } });
+                try self.instructions.append(.Pop);
+                if (cast_expr.else_branch) |else_expr| {
+                    try self.generateExpression(else_expr, true);
+                } else {
+                    // Default else: push nothing
+                    const nothing_idx = try self.addConstant(HIRValue.nothing);
+                    try self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } });
+                }
+                try self.instructions.append(.{ .Jump = .{ .label = end_label, .vm_offset = 0 } });
+
+                // Success branch: keep duplicated original value
+                try self.instructions.append(.{ .Label = .{ .name = ok_label, .vm_address = 0 } });
+
+                // End merge point
+                try self.instructions.append(.{ .Label = .{ .name = end_label, .vm_address = 0 } });
+            },
+
             .LengthOf => |expr_to_check| {
                 // Generate the expression whose length we want to get
                 try self.generateExpression(expr_to_check, true);
