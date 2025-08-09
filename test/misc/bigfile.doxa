@@ -267,14 +267,6 @@ var Map is {
 Map["a"]?; // 1.5
 Map["c"]?; // 3.5
 
-// // try catch, deprecated
-// const con :: int is 1;
-// try {
-//     con is 2;
-// } catch {
-//     "can't do that"?;
-// }
-
 /////   
 // FORMAL LOGICAL NOTATION
 /////

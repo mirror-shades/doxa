@@ -102,7 +102,6 @@ pub const LexicalAnalyzer = struct {
         try self.keywords.put("nothing", .NOTHING);
         try self.keywords.put("import", .IMPORT);
         try self.keywords.put("module", .MODULE);
-        try self.keywords.put("assert", .ASSERT);
         try self.keywords.put("match", .MATCH);
         try self.keywords.put("enum", .ENUM);
         try self.keywords.put("async", .ASYNC);
@@ -131,15 +130,6 @@ pub const LexicalAnalyzer = struct {
         try self.keywords.put("not", .NOT);
         try self.keywords.put("in", .IN);
         try self.keywords.put("at", .AT);
-        try self.keywords.put("typeof", .TYPEOF);
-        try self.keywords.put("length", .LENGTH);
-        try self.keywords.put("substring", .SUBSTRING);
-        try self.keywords.put("concat", .CONCAT);
-        try self.keywords.put("slice", .SLICE);
-        try self.keywords.put("reverse", .REVERSE);
-        try self.keywords.put("istype", .ISTYPE);
-        try self.keywords.put("cast", .CAST);
-        try self.keywords.put("clone", .CLONE);
         try self.keywords.put("∃", .EXISTS);
         try self.keywords.put("∀", .FORALL);
         try self.keywords.put("∈", .IN);
@@ -733,12 +723,14 @@ pub const LexicalAnalyzer = struct {
             try self.addToken(.SLICE, .nothing);
         } else if (std.mem.eql(u8, method_name, "reverse")) {
             try self.addToken(.REVERSE, .nothing);
-        } else if (std.mem.eql(u8, method_name, "istype")) {
+        } else if (std.mem.eql(u8, method_name, "istype")) { // TODO: remove this, cannot be a method as it uses a type
             try self.addToken(.ISTYPE, .nothing);
         } else if (std.mem.eql(u8, method_name, "cast")) {
             try self.addToken(.CAST, .nothing);
         } else if (std.mem.eql(u8, method_name, "clone")) {
             try self.addToken(.CLONE, .nothing);
+        } else if (std.mem.eql(u8, method_name, "assert")) {
+            try self.addToken(.ASSERT, .nothing);
         } else {
             return error.InvalidInternalMethod;
         }

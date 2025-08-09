@@ -583,9 +583,18 @@ pub const HIRVM = struct {
     }
 
     pub fn deinit(self: *HIRVM) void {
-        // Clean up the execution scope if it's not the root scope
-        if (self.current_scope != self.memory_manager.scope_manager.root_scope) {
-            self.current_scope.deinit();
+        // Aggressively unwind and deinitialize all active scopes up to (but not including) the root scope.
+        // This ensures we don't leak per-scope arena allocations when execution halts early (e.g., AssertFail).
+        var scope: ?*Scope = self.current_scope;
+        const root_scope = self.memory_manager.scope_manager.root_scope;
+        while (scope) |s| {
+            if (root_scope != null and s == root_scope.?) break;
+            const parent = s.parent;
+            s.deinit();
+            scope = parent;
+        }
+        if (root_scope) |rs| {
+            self.current_scope = rs; // Normalize to root for consistency
         }
 
         // Clean up string interner
