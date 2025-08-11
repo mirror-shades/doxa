@@ -81,6 +81,13 @@ fn return_test() returns(string) {
 
 return_test()?; // return
 
+// implicit return statements
+fn implicit_return_test() returns(string) {
+    "implicit";
+}
+
+implicit_return_test()?; // implicit
+
 /////
 // STRUCTS AND BYTES
 /////
@@ -282,9 +289,6 @@ Map["c"]?; // 3.5
 (true ↑ false)?; // true  74
 (true ↓ false)?; // false  75
 (true → false)?; // false  76
-
-// trancendental logic notation
-// always returns a tetra value, preserves contradiction in values
 
 
 // werid formatting

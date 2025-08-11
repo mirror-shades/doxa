@@ -52,6 +52,7 @@ const expected_results = [_]result{
     .{ .type = "int", .value = "858" },
     .{ .type = "int", .value = "924" },
     .{ .type = "string", .value = "\"return\"" },
+    .{ .type = "string", .value = "\"implicit\"" },
     .{ .type = "int", .value = "26" },
     .{ .type = "int", .value = "4" },
     .{ .type = "byte[]", .value = "[0x4D, 0x69, 0x6B, 0x65]" },
