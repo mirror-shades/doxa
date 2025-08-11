@@ -1,7 +1,14 @@
-import safeMath from "./safeMath.doxa";
+pub fn imported_function() {
+    "imported function"?;
+    return;
+}
 
-// complex import statement
-var import1 is safeMath.safeAdd(1, 2);
-import1?;
-var import2 is safeMath.safeAdd(1000, 2);
-import2?;
+pub fn imported_function_input(x :: int) {
+    x?;
+    return;
+}
+
+pub fn imported_function_output() -> int {
+    return 100;
+}
+

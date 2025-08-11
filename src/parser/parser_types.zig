@@ -1439,6 +1439,10 @@ pub const Parser = struct {
         // Extract module info and cache it
         const info = try self.extractModuleInfoWithParser(module_block, normalized_path, null, &new_parser);
 
+        // Register this module under its own name as a namespace for nested access
+        // e.g. inside a module we can resolve its own nested imports via alias lookups
+        _ = self.module_namespaces.put(info.name, info) catch {};
+
         // Mark as completed and cache the result
         try self.module_resolution_status.put(normalized_path, .COMPLETED);
         try self.module_cache.put(normalized_path, info);
@@ -2519,6 +2523,9 @@ pub const Parser = struct {
         // 2. Register module in module map using its unique path as identity
         // This creates a module instance accessible by its namespace
         try self.module_namespaces.put(namespace, module_info);
+        if (self.debug_enabled) {
+            std.debug.print("Parser: namespace '{s}' registered for {s}\n", .{ namespace, module_path });
+        }
 
         // 3. Process the module's imports AFTER registering it
         // Each module maintains its own view of its imports
@@ -2549,6 +2556,9 @@ pub const Parser = struct {
                     // Record that this module has access to this import under this alias
                     // This information will be used during symbol resolution
                     try self.recordModuleImport(module_path, alias, import.module_path);
+                    if (self.debug_enabled) {
+                        std.debug.print("Parser: module '{s}' imports '{s}' as '{s}'\n", .{ module_path, import.module_path, alias });
+                    }
                 }
             }
         }

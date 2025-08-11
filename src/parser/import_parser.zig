@@ -53,6 +53,15 @@ pub fn parseModuleStmt(self: *Parser) !ast.Stmt {
 
     // Load and register the entire module as a namespace
     try self.loadAndRegisterModule(module_path, namespace, null);
+    if (self.debug_enabled) {
+        std.debug.print("Parser: module alias '{s}' -> {s}\n", .{ namespace, module_path });
+    }
+
+    // Record this module import so transitive imports are visible during
+    // module info extraction (since top-level imports are consumed in pass 1)
+    // This associates the current file with the imported path under the alias.
+    // Safe to ignore errors here; symbol resolution will still attempt other paths.
+    _ = self.recordModuleImport(self.current_file, namespace, module_path) catch {};
 
     return ast.Stmt{
         .base = .{
@@ -129,6 +138,11 @@ pub fn parseImportStmt(self: *Parser) !ast.Stmt {
     // Load and register specific symbols from the module
     for (owned_symbols) |symbol| {
         try self.loadAndRegisterSpecificSymbol(module_path, symbol);
+    }
+    if (self.debug_enabled) {
+        for (owned_symbols) |symbol| {
+            std.debug.print("Parser: import symbol '{s}' from {s}\n", .{ symbol, module_path });
+        }
     }
 
     return ast.Stmt{
@@ -346,6 +360,27 @@ fn registerPublicSymbols(self: *Parser, module_ast: *ast.Expr, module_path: []co
                             .original_module = module_path,
                             .namespace_alias = import_info.namespace_alias,
                         });
+
+                        // Also register the imported module's namespace so codegen can resolve module calls
+                        if (import_info.namespace_alias) |alias| {
+                            // Skip self-imports
+                            if (!std.mem.eql(u8, import_info.module_path, module_path)) {
+                                // Resolve the imported module and put into namespaces map
+                                const imported_info = self.resolveModule(import_info.module_path) catch |err| blk: {
+                                    if (self.debug_enabled) {
+                                        std.debug.print("Failed to resolve imported module {s}: {}\n", .{ import_info.module_path, err });
+                                    }
+                                    break :blk null;
+                                };
+                                if (imported_info) |mi| {
+                                    _ = self.module_namespaces.put(alias, mi) catch |err| {
+                                        if (self.debug_enabled) {
+                                            std.debug.print("Failed to register namespace {s}: {}\n", .{ alias, err });
+                                        }
+                                    };
+                                }
+                            }
+                        }
                     },
                     else => {}, // Skip other types of statements
                 }
