@@ -66,6 +66,7 @@ const expected_results = [_]result{
     .{ .type = "int", .value = "30" },
     .{ .type = "float", .value = "0.0" },
     .{ .type = "int", .value = "50" },
+    .{ .type = "int", .value = "17" },
     .{ .type = "string", .value = "\"return\"" },
     .{ .type = "string", .value = "\"implicit\"" },
     .{ .type = "int", .value = "26" },

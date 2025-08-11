@@ -484,9 +484,35 @@ pub const SemanticAnalyzer = struct {
                         }
                     }
 
-                    // Set up function type with inferred return type
+                    // Build parameter type list
+                    var param_types = try self.allocator.alloc(ast.TypeInfo, func.params.len);
+                    for (func.params, 0..) |param, i| {
+                        if (param.type_expr) |type_expr| {
+                            const param_type_ptr = try ast.typeInfoFromExpr(self.allocator, type_expr);
+                            defer self.allocator.destroy(param_type_ptr);
+
+                            // Flatten unions in parameters to avoid nested unions and resolve custom types
+                            var resolved_param_type = try self.resolveTypeInfo(param_type_ptr.*);
+                            if (resolved_param_type.base == .Union) {
+                                if (resolved_param_type.union_type) |u| {
+                                    const flattened = try self.flattenUnionType(u);
+                                    resolved_param_type = ast.TypeInfo{
+                                        .base = .Union,
+                                        .union_type = flattened,
+                                        .is_mutable = false,
+                                    };
+                                }
+                            }
+                            param_types[i] = resolved_param_type;
+                        } else {
+                            // Untyped parameter: treat as 'nothing' which will fail unification if relied upon
+                            param_types[i] = .{ .base = .Nothing };
+                        }
+                    }
+
+                    // Set up function type with parameters and inferred return type
                     func_type.* = .{
-                        .params = &.{}, // TODO: Add parameter types
+                        .params = param_types,
                         .return_type = try self.allocator.create(ast.TypeInfo),
                     };
                     func_type.return_type.* = inferred_return_type;
@@ -1199,6 +1225,30 @@ pub const SemanticAnalyzer = struct {
                     const callee_type = try self.inferTypeFromExpr(call.callee);
                     if (callee_type.base == .Function) {
                         if (callee_type.function_type) |func_type| {
+                            // Validate argument count
+                            const expected_arg_count: usize = func_type.params.len;
+                            const actual_arg_count: usize = call.arguments.len;
+                            if (expected_arg_count != actual_arg_count) {
+                                self.reporter.reportCompileError(
+                                    expr.base.span.start,
+                                    "Argument count mismatch: expected {}, got {}",
+                                    .{ expected_arg_count, actual_arg_count },
+                                );
+                                self.fatal_error = true;
+                                type_info.base = .Nothing;
+                                return type_info;
+                            }
+
+                            // Validate each argument type against parameter type
+                            var i: usize = 0;
+                            while (i < actual_arg_count) : (i += 1) {
+                                const arg_expr = call.arguments[i];
+                                const arg_type = try self.inferTypeFromExpr(arg_expr);
+                                // Unify parameter (expected) with argument (actual)
+                                try self.unifyTypes(&func_type.params[i], arg_type, expr.base.span);
+                            }
+
+                            // Propagate return type
                             type_info.* = func_type.return_type.*;
                         } else {
                             self.reporter.reportCompileError(
@@ -2942,19 +2992,20 @@ pub const SemanticAnalyzer = struct {
             }
         }
 
-        // Find the last expression in the body if any
+        // Determine the final expression only if the last statement is an expression.
+        // Do NOT scan past a trailing non-expression like 'return;'.
         var last_expr: ?*ast.Expr = null;
-        var i: usize = body.len;
-        while (i > 0) : (i -= 1) {
-            const stmt = body[i - 1];
-            switch (stmt.data) {
+        if (body.len > 0) {
+            const last_stmt = body[body.len - 1];
+            switch (last_stmt.data) {
                 .Expression => |maybe_expr| {
                     if (maybe_expr) |expr| {
                         last_expr = expr;
                     }
-                    break;
                 },
-                else => {},
+                else => {
+                    last_expr = null;
+                },
             }
         }
 

@@ -116,6 +116,7 @@ var asThen4 is asThenUnion as float then 40.0 else { 0.0; }
 
 asThen4?; // 0.0
 
+// using as like an 'istype' style conditional
 asThenUnion as int then {
     var result is 20 + 30;
     result?;
@@ -124,6 +125,16 @@ asThenUnion as int then {
     result?;
 }; // 50
 
+
+// as narrowing
+fn onlyUsesInt(x :: int) {
+    x?;
+    return;
+}
+
+const x :: int | float is 17;
+
+x as int then onlyUsesInt(x) else "failure"?;
 
 // return statements
 fn return_test() -> string {

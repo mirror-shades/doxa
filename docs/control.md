@@ -60,6 +60,32 @@ value as int then {
 }
 ```
 
+### if vs as
+
+In Doxa, if and as both use the then / else pattern, but they invert the emphasis:
+
+| Keyword | Requires | Optional | Implied meaning                                 |
+| ------- | -------- | -------- | ----------------------------------------------- |
+| if      | then     | else     | If success then do x, failure branch optional   |
+| as      | else     | then     | As a type or else do x, success branch optional |
+
+`if` is a keyword which implicitly requires a success condition, `as` implicity requires a fail condition, but both use then/else blocks in the same way.
+
+Examples
+
+```
+// IF: Truth-driven
+if x > 10 then "big"? else "small"?;
+
+// AS: Fallback-driven
+value as int else 0;        // If not int, use 0
+value as int then 20 else 0; // If int, use 20; else 0
+
+// Both in action
+if isReady then start() else wait();
+data as string then parse(data) else log("Bad data");
+```
+
 ### match (values and union types)
 
 Use match to branch on:
