@@ -139,7 +139,7 @@ pub const Parser = struct {
             statements.deinit();
         }
 
-        const last_expr: ?*ast.Expr = null;
+        var last_expr: ?*ast.Expr = null;
 
         while (self.peek().type != .RIGHT_BRACE and self.peek().type != .EOF) {
             // Parse any statement type
@@ -159,6 +159,24 @@ pub const Parser = struct {
             return error.ExpectedRightBrace;
         }
         self.advance();
+
+        // Determine the last expression in the block (if any)
+        if (statements.items.len > 0) {
+            var i: usize = statements.items.len;
+            while (i > 0) : (i -= 1) {
+                const stmt = statements.items[i - 1];
+                switch (stmt.data) {
+                    .Expression => |maybe_expr| {
+                        if (maybe_expr) |e| {
+                            last_expr = e;
+                        }
+                        // Whether found or null, this was the last expression stmt we care about
+                        break;
+                    },
+                    else => {},
+                }
+            }
+        }
 
         const block_expr = try self.allocator.create(ast.Expr);
         block_expr.* = .{
