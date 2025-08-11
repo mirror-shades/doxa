@@ -292,21 +292,12 @@ pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
     // Parse return type if present
     var return_type = ast.TypeInfo{ .base = .Nothing }; // Default to Nothing type
     if (self.peek().type == .RETURNS) {
-        self.advance(); // consume 'returns'
-        if (self.peek().type != .LEFT_PAREN) {
-            return error.ExpectedLeftParen;
-        }
-        self.advance(); // consume '('
-
+        self.advance(); // consume '->'
+        
         const type_expr = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
         const type_info_ptr = try ast.typeInfoFromExpr(self.allocator, type_expr);
         return_type = type_info_ptr.*;
         self.allocator.destroy(type_info_ptr); // Free the pointer since we copied the struct
-
-        if (self.peek().type != .RIGHT_PAREN) {
-            return error.ExpectedRightParen;
-        }
-        self.advance(); // consume ')'
     }
 
     // Parse function body

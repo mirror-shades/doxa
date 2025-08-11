@@ -2,7 +2,7 @@ module math from "./math.doxa";
 
 const limit :: int is 255;
 
-pub function safeAdd(a :: int, b :: int) returns(int) {
+pub function safeAdd(a :: int, b :: int) -> int {
     if(a > limit or b > limit) then {
         "Overflow"?;
         return -1;
