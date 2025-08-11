@@ -227,7 +227,7 @@ arr?;
 arr[3]?; // 444444
 arr[3] is 666666;
 arr[3]?; // 666666
-arr.push(420000); // TODO: all array methods should use the @ syntax
+@push(arr, 420000); // TODO: all array methods should use the @ syntax
 arr[5]?; // 420000
 
 const checkAgainst is 333333;

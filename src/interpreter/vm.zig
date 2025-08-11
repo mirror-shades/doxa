@@ -3016,9 +3016,8 @@ pub const HIRVM = struct {
         try self.exitScope(new_scope.id);
     }
 
-    fn handleArrayPush(self: *HIRVM, value: HIRValue) !void {
+    fn handleArrayPush(self: *HIRVM, element_value: HIRValue) !void {
         const array_frame = try self.stack.pop();
-
         switch (array_frame.value) {
             .array => |arr| {
                 // Create new array with increased capacity if needed
@@ -3034,7 +3033,7 @@ pub const HIRVM = struct {
                 @memcpy(new_array.elements[0..current_len], arr.elements);
 
                 // Add the new element
-                new_array.elements[current_len] = value;
+                new_array.elements[current_len] = element_value;
 
                 // Initialize remaining elements to nothing
                 for (new_array.elements[current_len + 1 ..]) |*element| {
@@ -3057,7 +3056,7 @@ pub const HIRVM = struct {
                 for (new_array.elements) |*element| {
                     element.* = HIRValue.nothing;
                 }
-                new_array.elements[0] = value;
+                new_array.elements[0] = element_value;
 
                 try self.stack.push(HIRFrame.initFromHIRValue(HIRValue{ .array = new_array }));
             },

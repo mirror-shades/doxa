@@ -1956,10 +1956,103 @@ pub const SemanticAnalyzer = struct {
             },
             .MethodCall => |method_call| {
                 const receiver_type = try self.inferTypeFromExpr(method_call.receiver);
+                const method_name = method_call.method.lexeme;
 
-                // For now, assume method calls return the same type as the receiver
-                // In a more sophisticated implementation, you'd look up method signatures
-                type_info.* = receiver_type.*;
+                // Validate receiver type based on method
+                switch (method_call.method.type) {
+                    // Array methods
+                    .PUSH, .POP, .INSERT, .REMOVE, .CLEAR, .INDEXOF => {
+                        if (receiver_type.base != .Array) {
+                            self.reporter.reportCompileError(
+                                method_call.receiver.base.span.start,
+                                "Cannot call array method '{s}' on non-array type {s}",
+                                .{ method_name, @tagName(receiver_type.base) },
+                            );
+                            self.fatal_error = true;
+                            type_info.* = .{ .base = .Nothing };
+                            return type_info;
+                        }
+
+                        // Transform into appropriate array operation
+                        switch (method_call.method.type) {
+                            .PUSH => {
+                                if (method_call.arguments.len != 1) {
+                                    self.reporter.reportCompileError(
+                                        .{
+                                            .file = method_call.method.file,
+                                            .line = method_call.method.line,
+                                            .column = method_call.method.column,
+                                        },
+                                        "@push requires exactly one argument",
+                                        .{},
+                                    );
+                                    self.fatal_error = true;
+                                    type_info.* = .{ .base = .Nothing };
+                                    return type_info;
+                                }
+
+                                // Check element type matches array
+                                const value_type = try self.inferTypeFromExpr(method_call.arguments[0]);
+                                if (receiver_type.array_type) |elem_type| {
+                                    try self.unifyTypes(elem_type, value_type, method_call.arguments[0].base.span);
+                                }
+
+                                // Transform to ArrayPush
+                                expr.data = .{
+                                    .ArrayPush = .{
+                                        .array = method_call.receiver,
+                                        .element = method_call.arguments[0],
+                                    },
+                                };
+                                type_info.* = .{ .base = .Nothing }; // push returns nothing
+                            },
+                            else => {
+                                // For now, other array methods not implemented
+                                self.reporter.reportCompileError(
+                                    .{
+                                        .file = method_call.method.file,
+                                        .line = method_call.method.line,
+                                        .column = method_call.method.column,
+                                    },
+                                    "Array method '{s}' not yet implemented",
+                                    .{method_name},
+                                );
+                                self.fatal_error = true;
+                                type_info.* = .{ .base = .Nothing };
+                            },
+                        }
+                    },
+
+                    // String methods
+                    .TOSTRING, .PARSEINT, .PARSEFLOAT, .PARSEBYTE => {
+                        self.reporter.reportCompileError(
+                            .{
+                                .file = method_call.method.file,
+                                .line = method_call.method.line,
+                                .column = method_call.method.column,
+                            },
+                            "String method '{s}' not yet implemented",
+                            .{method_name},
+                        );
+                        self.fatal_error = true;
+                        type_info.* = .{ .base = .Nothing };
+                    },
+
+                    // Other methods
+                    else => {
+                        self.reporter.reportCompileError(
+                            .{
+                                .file = method_call.method.file,
+                                .line = method_call.method.line,
+                                .column = method_call.method.column,
+                            },
+                            "Unknown method '{s}'",
+                            .{method_name},
+                        );
+                        self.fatal_error = true;
+                        type_info.* = .{ .base = .Nothing };
+                    },
+                }
             },
             .EnumMember => {
                 // Enum members have the enum type

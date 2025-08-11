@@ -533,49 +533,37 @@ pub const Parser = struct {
             arguments.deinit();
         }
 
-        // Handle empty argument list
+        // Handle empty arglist as a degenerate case; still allow sugar rewrite
         if (self.peek().type == .RIGHT_PAREN) {
-            self.advance(); // consume )
-            const call_expr = try self.allocator.create(ast.Expr);
-            call_expr.* = .{
-                .base = .{
-                    .id = ast.generateNodeId(),
-                    .span = ast.SourceSpan.fromToken(self.peek()),
-                },
-                .data = .{
-                    .Call = .{
-                        .callee = callee.?,
-                        .arguments = try arguments.toOwnedSlice(),
-                    },
-                },
-            };
-            return call_expr;
-        }
+            // No args; fall through to common close+build logic
+        } else {
+            // Parse arguments
+            while (true) {
+                var arg: *ast.Expr = undefined;
+                if (self.peek().type == .TILDE) {
+                    // Handle default argument placeholder
+                    self.advance(); // consume ~
+                    const placeholder = try self.allocator.create(ast.Expr);
+                    placeholder.* = .{
+                        .base = .{
+                            .id = ast.generateNodeId(),
+                            .span = ast.SourceSpan.fromToken(self.peek()),
+                        },
+                        .data = .DefaultArgPlaceholder,
+                    };
+                    arg = placeholder;
+                } else {
+                    arg = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
+                }
+                try arguments.append(arg);
 
-        // Parse arguments
-        while (true) {
-            var arg: *ast.Expr = undefined;
-            if (self.peek().type == .TILDE) {
-                // Handle default argument placeholder
-                self.advance(); // consume ~
-                const placeholder = try self.allocator.create(ast.Expr);
-                placeholder.* = .{
-                    .base = .{
-                        .id = ast.generateNodeId(),
-                        .span = ast.SourceSpan.fromToken(self.peek()),
-                    },
-                    .data = .DefaultArgPlaceholder,
-                };
-                arg = placeholder;
-            } else {
-                arg = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
+                if (self.peek().type == .RIGHT_PAREN) break;
+                if (self.peek().type != .COMMA) return error.ExpectedComma;
+                self.advance(); // consume comma
             }
-            try arguments.append(arg);
-
-            if (self.peek().type == .RIGHT_PAREN) break;
-            if (self.peek().type != .COMMA) return error.ExpectedComma;
-            self.advance(); // consume comma
         }
+
+        // (arguments already parsed above if not empty)
 
         if (self.debug_enabled) {
             std.debug.print("Looking for closing paren, current token: {s}\n", .{@tagName(self.peek().type)});
@@ -590,7 +578,17 @@ pub const Parser = struct {
         }
         self.advance(); // consume )
 
-        // Create call expression
+        // Disallow dot-syntax method sugar to avoid ambiguity with user fields/methods
+        if (callee.?.data == .FieldAccess) {
+            const fa = callee.?.data.FieldAccess;
+            if (Parser.methodNameToTokenType(fa.field.lexeme)) |_| {
+                const loc: Reporter.Location = .{ .file = self.current_file, .line = fa.field.line, .column = fa.field.column };
+                self.reporter.reportCompileError(loc, "Unknown field or method '{s}'. If this is a compiler method, use @{s}(...)", .{ fa.field.lexeme, fa.field.lexeme });
+                return error.UnknownFieldOrMethod;
+            }
+        }
+
+        // Fallback: regular function call
         const call_expr = try self.allocator.create(ast.Expr);
         call_expr.* = .{
             .base = .{
@@ -606,6 +604,26 @@ pub const Parser = struct {
         };
 
         return call_expr;
+    }
+
+    fn methodNameToTokenType(name: []const u8) ?token.TokenType {
+        if (std.mem.eql(u8, name, "length")) return .LENGTH;
+        if (std.mem.eql(u8, name, "bytes")) return .BYTES;
+        if (std.mem.eql(u8, name, "slice")) return .SLICE;
+        if (std.mem.eql(u8, name, "concat")) return .CONCAT;
+        if (std.mem.eql(u8, name, "push")) return .PUSH;
+        if (std.mem.eql(u8, name, "pop")) return .POP;
+        if (std.mem.eql(u8, name, "insert")) return .INSERT;
+        if (std.mem.eql(u8, name, "remove")) return .REMOVE;
+        if (std.mem.eql(u8, name, "clear")) return .CLEAR;
+        if (std.mem.eql(u8, name, "indexOf")) return .INDEXOF;
+        if (std.mem.eql(u8, name, "toString")) return .TOSTRING;
+        if (std.mem.eql(u8, name, "parseInt")) return .PARSEINT;
+        if (std.mem.eql(u8, name, "parseFloat")) return .PARSEFLOAT;
+        if (std.mem.eql(u8, name, "parseByte")) return .PARSEBYTE;
+        if (std.mem.eql(u8, name, "panic")) return .PANIC;
+        if (std.mem.eql(u8, name, "assert")) return .ASSERT;
+        return null;
     }
 
     pub fn parseStructInit(self: *Parser) ErrorList!?*ast.Expr {
@@ -978,109 +996,24 @@ pub const Parser = struct {
             });
         }
 
-        // Store current position and token
+        // If we're still positioned at '.', consume it; in many Pratt paths the dot
+        // is already consumed before calling this function.
+        if (self.peek().type == .DOT) {
+            self.advance(); // consume '.'
+        }
+
+        // Store current position and token (identifier after '.')
         const current_token = self.peek();
 
-        // Handle length as a property access
-        if (std.mem.eql(u8, current_token.lexeme, "length") or
-            std.mem.eql(u8, current_token.lexeme, "push") or
-            std.mem.eql(u8, current_token.lexeme, "pop") or
-            std.mem.eql(u8, current_token.lexeme, "isEmpty") or
-            std.mem.eql(u8, current_token.lexeme, "concat"))
-        {
-            self.advance(); // consume length
-
-            const field_access = try self.allocator.create(ast.Expr);
-            field_access.* = .{
-                .base = .{
-                    .id = ast.generateNodeId(),
-                    .span = ast.SourceSpan.fromToken(self.peek()),
-                },
-                .data = .{
-                    .FieldAccess = .{
-                        .object = left.?,
-                        .field = current_token,
-                    },
-                },
-            };
-            return field_access;
+        // Check if this is a method name - if so, error early
+        if (Parser.methodNameToTokenType(current_token.lexeme)) |_| {
+            const loc: Reporter.Location = .{ .file = self.current_file, .line = current_token.line, .column = current_token.column };
+            self.reporter.reportCompileError(loc, "Unknown field or method '{s}'. If this is a compiler method, use @{s}(...)", .{ current_token.lexeme, current_token.lexeme });
+            return error.UnknownFieldOrMethod;
         }
 
-        // Handle bytes as a property access
-        if (std.mem.eql(u8, current_token.lexeme, "bytes")) {
-            self.advance(); // consume bytes
-
-            // Create a field access expression
-            const field_access = try self.allocator.create(ast.Expr);
-            field_access.* = .{
-                .base = .{
-                    .id = ast.generateNodeId(),
-                    .span = ast.SourceSpan.fromToken(self.peek()),
-                },
-                .data = .{
-                    .FieldAccess = .{
-                        .object = left.?,
-                        .field = current_token,
-                    },
-                },
-            };
-
-            // Check if there's an array index following
-            if (self.peek().type == .LEFT_BRACKET) {
-                self.advance(); // consume [
-                const idx_expr = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
-
-                if (self.peek().type != .RIGHT_BRACKET) {
-                    return error.ExpectedRightBracket;
-                }
-                self.advance(); // consume ]
-
-                // Create an Index expression wrapping the field access
-                const index_expr = try self.allocator.create(ast.Expr);
-                index_expr.* = .{
-                    .base = .{
-                        .id = ast.generateNodeId(),
-                        .span = ast.SourceSpan.fromToken(self.peek()),
-                    },
-                    .data = .{
-                        .Index = .{
-                            .array = field_access,
-                            .index = idx_expr,
-                        },
-                    },
-                };
-                return index_expr;
-            }
-
-            return field_access;
-        }
-
-        // Handle regular field access
-        if (current_token.type == .IDENTIFIER or current_token.type == .FIELD_ACCESS) {
-            self.advance(); // consume identifier or enum variant
-
-            const field_access = try self.allocator.create(ast.Expr);
-            field_access.* = .{
-                .base = .{
-                    .id = ast.generateNodeId(),
-                    .span = ast.SourceSpan.fromToken(self.peek()),
-                },
-                .data = .{
-                    .FieldAccess = .{
-                        .object = left.?,
-                        .field = current_token,
-                    },
-                },
-            };
-
-            // Check if there's an index operation after the field access
-            if (self.peek().type == .LEFT_BRACKET) {
-                self.advance(); // consume [
-                return try self.index(field_access, .NONE);
-            }
-
-            return field_access;
-        } else {
+        // Expect identifier or field access token
+        if (current_token.type != .IDENTIFIER and current_token.type != .FIELD_ACCESS) {
             if (self.debug_enabled) {
                 std.debug.print("Invalid token: {s} ({s})\n", .{
                     @tagName(current_token.type),
@@ -1089,6 +1022,101 @@ pub const Parser = struct {
             }
             return error.ExpectedIdentifier;
         }
+
+        self.advance(); // consume identifier
+
+        // Create field access expression
+        const field_access = try self.allocator.create(ast.Expr);
+        field_access.* = .{
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(self.peek()),
+            },
+            .data = .{
+                .FieldAccess = .{
+                    .object = left.?,
+                    .field = current_token,
+                },
+            },
+        };
+
+        // Handle array indexing if present
+        if (self.peek().type == .LEFT_BRACKET) {
+            self.advance(); // consume [
+            return try self.index(field_access, .NONE);
+        }
+
+        return field_access;
+    }
+
+    /// Parse a generic @method(...) call into a MethodCall expression.
+    /// Expect current token to be the method token (e.g., PUSH, POP, SLICE, ...)
+    pub fn methodCallExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+        const method_tok = self.peek();
+        // consume method token
+        self.advance();
+        // expect '('
+        if (self.peek().type != .LEFT_PAREN) return error.ExpectedLeftParen;
+        self.advance();
+
+        var args = std.ArrayList(*ast.Expr).init(self.allocator);
+        errdefer {
+            for (args.items) |arg| {
+                arg.deinit(self.allocator);
+                self.allocator.destroy(arg);
+            }
+            args.deinit();
+        }
+
+        // Parse zero or more comma-separated expressions until ')'
+        if (self.peek().type != .RIGHT_PAREN) {
+            while (true) {
+                const expr = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
+                try args.append(expr);
+                if (self.peek().type == .COMMA) {
+                    self.advance();
+                    continue;
+                }
+                break;
+            }
+        }
+
+        if (self.peek().type != .RIGHT_PAREN) return error.ExpectedRightParen;
+        self.advance();
+
+        // For @methods that act on a receiver, we use first argument as receiver
+        // and keep remaining as method arguments. If no args, receiver is a dummy.
+        var receiver_expr: *ast.Expr = undefined;
+        var call_args = std.ArrayList(*ast.Expr).init(self.allocator);
+        errdefer call_args.deinit();
+
+        if (args.items.len > 0) {
+            receiver_expr = args.items[0];
+            // move remaining args to call_args
+            var i: usize = 1;
+            while (i < args.items.len) : (i += 1) {
+                try call_args.append(args.items[i]);
+            }
+        } else {
+            // Create a nothing literal as placeholder receiver to keep AST consistent
+            receiver_expr = try self.allocator.create(ast.Expr);
+            receiver_expr.* = .{
+                .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(method_tok) },
+                .data = .{ .Literal = .{ .nothing = {} } },
+            };
+        }
+
+        const method_expr = try self.allocator.create(ast.Expr);
+        method_expr.* = .{
+            .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(method_tok) },
+            .data = .{ .MethodCall = .{
+                .receiver = receiver_expr,
+                .method = method_tok,
+                .arguments = try call_args.toOwnedSlice(),
+            } },
+        };
+
+        return method_expr;
     }
 
     pub fn print(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {

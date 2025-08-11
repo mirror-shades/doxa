@@ -38,6 +38,7 @@ const arrayType = expr_parser.arrayType;
 const typeofExpr = expr_parser.typeofExpr;
 const lengthofExpr = expr_parser.lengthofExpr;
 const bytesofExpr = expr_parser.bytesofExpr;
+const methodCallExpr = Parser.methodCallExpr;
 
 const existentialQuantifier = quantifer_parser.existentialQuantifier;
 const universalQuantifier = quantifer_parser.universalQuantifier;
@@ -203,6 +204,21 @@ pub const rules = blk: {
 
     // Add bytesof support
     r.set(.BYTES, .{ .prefix = bytesofExpr, .precedence = .CALL });
+
+    // Add @methods generic handler
+    r.set(.SLICE, .{ .prefix = methodCallExpr, .precedence = .CALL });
+    r.set(.CONCAT, .{ .prefix = methodCallExpr, .precedence = .CALL });
+    r.set(.PUSH, .{ .prefix = methodCallExpr, .precedence = .CALL });
+    r.set(.POP, .{ .prefix = methodCallExpr, .precedence = .CALL });
+    r.set(.INSERT, .{ .prefix = methodCallExpr, .precedence = .CALL });
+    r.set(.REMOVE, .{ .prefix = methodCallExpr, .precedence = .CALL });
+    r.set(.CLEAR, .{ .prefix = methodCallExpr, .precedence = .CALL });
+    r.set(.INDEXOF, .{ .prefix = methodCallExpr, .precedence = .CALL });
+    r.set(.TOSTRING, .{ .prefix = methodCallExpr, .precedence = .CALL });
+    r.set(.PARSEINT, .{ .prefix = methodCallExpr, .precedence = .CALL });
+    r.set(.PARSEFLOAT, .{ .prefix = methodCallExpr, .precedence = .CALL });
+    r.set(.PARSEBYTE, .{ .prefix = methodCallExpr, .precedence = .CALL });
+    r.set(.PANIC, .{ .prefix = methodCallExpr, .precedence = .CALL });
 
     // Add cast operator support
     r.set(.AS, .{ .infix = expr_parser.castExpr, .precedence = .CALL });

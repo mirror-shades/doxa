@@ -1411,6 +1411,35 @@ pub const HIRGenerator = struct {
                 }
             },
 
+            .ArrayPush => |push| {
+                // Generate array then element so that stack is: [ ... array, element ]
+                try self.generateExpression(push.array, true);
+                try self.generateExpression(push.element, true);
+
+                // Emit ArrayPush instruction (uses stack: pops element, then array)
+                try self.instructions.append(.{ .ArrayPush = .{ .resize_behavior = .Double } });
+
+                // If the receiver is a variable, store the updated array back into it
+                if (push.array.data == .Variable) {
+                    const var_name = push.array.data.Variable.lexeme;
+                    const var_idx = try self.getOrCreateVariable(var_name);
+                    const expected_type = self.getTrackedVariableType(var_name) orelse .Auto;
+
+                    // Leave result on stack if expression result must be preserved
+                    if (preserve_result) {
+                        try self.instructions.append(.Dup);
+                    }
+
+                    try self.instructions.append(.{ .StoreVar = .{
+                        .var_index = var_idx,
+                        .var_name = var_name,
+                        .scope_kind = .Local,
+                        .module_context = null,
+                        .expected_type = expected_type,
+                    } });
+                }
+            },
+
             .Grouping => |grouping| {
                 // Grouping is just parentheses - generate the inner expression
                 if (grouping) |inner_expr| {
