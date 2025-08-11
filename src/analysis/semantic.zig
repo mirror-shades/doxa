@@ -2939,14 +2939,50 @@ pub const SemanticAnalyzer = struct {
             }
         }
 
-        // Check for missing return statements
+        // Find the last expression in the body if any
+        var last_expr: ?*ast.Expr = null;
+        var i: usize = body.len;
+        while (i > 0) : (i -= 1) {
+            const stmt = body[i - 1];
+            switch (stmt.data) {
+                .Expression => |maybe_expr| {
+                    if (maybe_expr) |expr| {
+                        last_expr = expr;
+                    }
+                    break;
+                },
+                else => {},
+            }
+        }
+
+        // Error cases:
+        // 1. Function expects a return value but none found
         if (expected_return_type.base != .Nothing and !has_return_with_value) {
-            self.reporter.reportCompileError(
-                func_span.start,
-                "Function expects return value of type {s}, but no return statement with value found",
-                .{@tagName(expected_return_type.base)},
-            );
-            self.fatal_error = true;
+            if (last_expr) |expr| {
+                const return_type = try self.inferTypeFromExpr(expr);
+                try self.validateReturnTypeCompatibility(&expected_return_type, return_type, func_span);
+                // Treat as having a return with value via implicit final expression
+                has_return_with_value = true;
+            } else {
+                self.reporter.reportCompileError(
+                    func_span.start,
+                    "Function expects return value of type {s}, but no return statement with value found",
+                    .{@tagName(expected_return_type.base)},
+                );
+                self.fatal_error = true;
+            }
+        }
+        // 2. Function has no explicit return type but has a value-producing final expression
+        else if (expected_return_type.base == .Nothing and last_expr != null) {
+            const expr_type = try self.inferTypeFromExpr(last_expr.?);
+            if (expr_type.base != .Nothing) {
+                self.reporter.reportCompileError(
+                    func_span.start,
+                    "Function has no return type specified but final expression produces value of type {s}",
+                    .{@tagName(expr_type.base)},
+                );
+                self.fatal_error = true;
+            }
         }
 
         if (expected_return_type.base == .Nothing and has_return_with_value) {
