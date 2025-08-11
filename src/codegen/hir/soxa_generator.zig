@@ -327,7 +327,37 @@ pub const HIRGenerator = struct {
             try self.instructions.append(.{ .ExitScope = .{ .scope_id = self.label_count + 1000 } });
 
             // Add implicit return if no explicit return
-            try self.instructions.append(.{ .Return = .{ .has_value = false, .return_type = .Nothing } });
+            if (!has_returned) {
+                // If return type expects a value, try to return the last expression value of the body
+                if (function_body.function_info.return_type != .Nothing) {
+                    // Find last expression statement in the function body
+                    var last_expr: ?*ast.Expr = null;
+                    var i: usize = function_body.statements.len;
+                    while (i > 0) : (i -= 1) {
+                        const s = function_body.statements[i - 1];
+                        switch (s.data) {
+                            .Expression => |maybe_e| {
+                                if (maybe_e) |e| {
+                                    last_expr = e;
+                                }
+                                break;
+                            },
+                            else => {},
+                        }
+                    }
+
+                    if (last_expr) |e| {
+                        try self.generateExpression(e, true);
+                        try self.instructions.append(.{ .Return = .{ .has_value = true, .return_type = function_body.function_info.return_type } });
+                    } else {
+                        // No final expression found; emit a no-value return (semantic pass should have validated paths)
+                        try self.instructions.append(.{ .Return = .{ .has_value = false, .return_type = .Nothing } });
+                    }
+                } else {
+                    // Void function: implicit return without value
+                    try self.instructions.append(.{ .Return = .{ .has_value = false, .return_type = .Nothing } });
+                }
+            }
 
             // Clear current function context
             self.current_function = null;

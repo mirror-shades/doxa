@@ -75,41 +75,10 @@ pub fn braceExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Ex
         return self.parseMap();
     }
 
-    // Parse block statements
-    var statements = std.ArrayList(ast.Stmt).init(self.allocator);
-    errdefer {
-        for (statements.items) |*stmt| {
-            stmt.deinit(self.allocator);
-        }
-        statements.deinit();
-    }
-
-    while (self.peek().type != .RIGHT_BRACE and self.peek().type != .EOF) {
-        const stmt = try statement_parser.parseStatement(self);
-        try statements.append(stmt);
-
-        // Break after return statement
-        if (stmt.data == .Return) break;
-    }
-
-    if (self.peek().type != .RIGHT_BRACE) {
-        return error.ExpectedRightBrace;
-    }
-    self.advance();
-
-    const block_expr = try self.allocator.create(ast.Expr);
-    block_expr.* = .{
-        .base = .{
-            .id = ast.generateNodeId(),
-            .span = ast.SourceSpan.fromToken(self.peek()),
-        },
-        .data = .{ .Block = .{
-            .statements = try statements.toOwnedSlice(),
-            .value = null,
-        } },
-    };
-
-    return block_expr;
+    // Delegate to unified block parser so it can populate the last-expression value.
+    // Rewind one token so Parser.block sees the '{' it expects to consume.
+    if (self.current > 0) self.current -= 1;
+    return Parser.block(self, null, .NONE);
 }
 
 pub fn typeofExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
