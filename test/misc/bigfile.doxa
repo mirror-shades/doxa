@@ -74,6 +74,12 @@ fn forloop(x :: int) {
 
 forloop(5); //660, 726, 732, 798, 864
 
+fn eachloop(arr :: int[]) {
+    each num in arr {
+        num?;
+    }
+}
+
 // return statements
 fn return_test() -> string {
     return "return";

@@ -1623,6 +1623,9 @@ pub const SemanticAnalyzer = struct {
                 // Restore previous scope and clean up loop scope
                 self.current_scope = prev_scope;
                 loop_scope.deinit();
+
+                // ForEach is a statement-like expression; it produces no value
+                type_info.* = .{ .base = .Nothing };
             },
             .Match => |match_expr| {
                 _ = try self.inferTypeFromExpr(match_expr.value);
