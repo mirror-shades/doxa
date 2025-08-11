@@ -11,6 +11,14 @@ P ∧ ¬ P (both)
 
 See documentation for a more detailed explaination of how this works.
 
+## Some cool stuff
+
+peek operator
+
+union types
+
+deterministic memory management
+
 ## Components
 
 ![Pipeline](./pipeline.svg)
@@ -28,8 +36,7 @@ Memory is managed but not via garbage collection. Doxa uses an automated refence
 ## Usage
 
 ```bash
-zig build
-./zig-out/bin/doxa [--debug] ./path/to/file.doxa
+zig build run -- [--debug] ./path/to/file.doxa
 ```
 
 ## Development Status
@@ -38,7 +45,7 @@ zig build
 - ✅ **Soxa VM**: currently implementing stack based HIR and VM
 - ❌ **LLVM IR**: Minimal prototyping, many features missing, future
 
-## Value Types
+## Native Types
 
 ### Atomic
 
@@ -47,7 +54,7 @@ zig build
 - byte (8-bit uint hex literal)
 - string
 - tetra (four-value logic unit)
-- nothing (void/null type)
+- nothing (void type)
 
 ### Molecular
 
@@ -61,7 +68,7 @@ zig build
 ### Meta
 
 - alias (pass-by-alias for mutation)
-- intrinsic (@length, @cast, etc.)
+- intrinsic (@length, @bytes, etc.)
 
 ## Example
 
@@ -70,17 +77,20 @@ zig build
 // mirror-shades
 
 const symbols is [ ">", "<", "+", "-", ".", ",", "[", "]" ];
+var tape :: byte[10];
+var loops :: int is 0;
+var loopSpot :: int[];
+var tp :: int is 0;
+var ip :: int is 0;
 
-// input is read as a string and converted to
-// an array of u8 using the bytes method
-function getInput() returns(u8) {
-    var userInput :: string is input;
-    var newByte :: u8 is userInput.bytes[0];
+function getInput() returns(byte) {
+    var userInput :: string is @input();
+    var newByte :: byte is @bytes(userInput)[0];
     return newByte;
 }
 
 function startLoop() {
-    if loopSpot.length equals loops
+    if @length(loopSpot) equals loops
     then {
         loopSpot.push(ip);
     } else {
@@ -117,19 +127,10 @@ function checkClosingBracket(scan :: string) returns(tetra) {
 
 
 function interpret(scan :: string) {
-    // tape is a list of u8 values to represent bytes on the tape
-    // tape is initialized with 30000 cells
-    // this can be increased to allow for more memory
-    var tape :: u8[30000];
-    var tp :: int is 0;
-    var ip :: int is 0;
-    var loops :: int is 0;
-    var loopSpot :: int[];
-    const scanLength is scan.length;
+    const scanLength is @length(scan);
 
-    // do a pass to check if the brackets are matched
     var closedBrackets :: tetra is checkClosingBracket(scan);
-    assert(closedBrackets, "Unmatched brackets");
+    @assert(closedBrackets, "Unmatched brackets");
 
     while(ip < scanLength) {
         var currentInstruction is scan[ip];
@@ -141,7 +142,8 @@ function interpret(scan :: string) {
         if(currentInstruction equals ",") then tape[tp] is getInput();
         if(currentInstruction equals "[") then startLoop();
         if(currentInstruction equals "]") then endLoop();
-
+        tape[tp]?;
+        tape?;
         ip += 1;
     }
 }
@@ -149,4 +151,5 @@ function interpret(scan :: string) {
 -> function main() {
     interpret(",+.");
 }
+
 ```

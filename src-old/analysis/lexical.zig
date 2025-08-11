@@ -103,7 +103,6 @@ pub const LexicalAnalyzer = struct {
         try self.keywords.put("enum", .ENUM);
         try self.keywords.put("async", .ASYNC);
         try self.keywords.put("await", .AWAIT);
-        try self.keywords.put("entry", .ENTRY);
         try self.keywords.put("is", .ASSIGN);
         try self.keywords.put("as", .AS);
         try self.keywords.put("from", .FROM);
@@ -128,6 +127,7 @@ pub const LexicalAnalyzer = struct {
         try self.keywords.put("not", .NOT);
         try self.keywords.put("in", .IN);
         try self.keywords.put("at", .AT);
+        try self.keywords.put("entry", .ENTRY);
         try self.keywords.put("∃", .EXISTS);
         try self.keywords.put("∀", .FORALL);
         try self.keywords.put("∈", .IN);
@@ -299,7 +299,9 @@ pub const LexicalAnalyzer = struct {
             '=' => {
                 if (self.match('=')) {
                     try self.addMinimalToken(.EQUALITY);
-                } else if (self.match(' ')) {
+                } else if (self.match('>')) {
+                    try self.addMinimalToken(.ARROW);
+                } else {
                     const location = Reporter.Location{
                         .file = self.file_path,
                         .line = self.line,
@@ -333,9 +335,7 @@ pub const LexicalAnalyzer = struct {
                 }
             },
             '-' => {
-                if (self.match('>')) {
-                    try self.addMinimalToken(.RETURNS);
-                } else if (self.match('-')) {
+                if (self.match('-')) {
                     try self.addMinimalToken(.MINUS_MINUS);
                 } else if (self.match('=')) {
                     try self.addMinimalToken(.MINUS_EQUAL);
@@ -479,7 +479,7 @@ pub const LexicalAnalyzer = struct {
     }
 
     fn isOperator(c: u8) bool {
-        return c == '+' or c == '-' or c == '*' or c == '/' or c == '%' or c == '^' or c == '&' or c == '|' or c == '!' or c == '=' or c == '<' or c == '>';
+        return c == '+' or c == '-' or c == '*' or c == '/' or c == '%' or c == '&' or c == '|' or c == '!' or c == '=' or c == '<' or c == '>';
     }
 
     fn isWhitespace(c: u8) bool {
@@ -503,6 +503,20 @@ pub const LexicalAnalyzer = struct {
     //======================================================================
 
     fn identifier(self: *LexicalAnalyzer) !void {
+        // Check for special symbols at the start
+        // TODO: this is a hack and should be removed
+        const identifier_text = self.source[self.start..self.current];
+        if (std.mem.eql(u8, identifier_text, "∃") or
+            std.mem.eql(u8, identifier_text, "∀") or
+            std.mem.eql(u8, identifier_text, "¬") or
+            std.mem.eql(u8, identifier_text, "⊟"))
+        {
+            // Handle the quantifier symbol as a separate token
+            if (self.keywords.get(identifier_text)) |keyword_type| {
+                try self.addMinimalToken(keyword_type);
+                return;
+            }
+        }
 
         // Rest of the identifier handling...
         while (!self.isAtEnd()) {
@@ -517,11 +531,9 @@ pub const LexicalAnalyzer = struct {
                 _ = std.unicode.utf8Decode(remaining[0..sequence_length]) catch break;
 
                 // Check if this is a quantifier or logical symbol at the start
-                // these are actually two characters under the hood
-                // the lexer cannot handle this, so we need have a little hack here
-                // TODO: we should probably just change the characters we have chosen
                 if (self.current == self.start) {
                     const symbol = remaining[0..sequence_length];
+                    // TODO: this is a hack and should be removed
                     if (std.mem.eql(u8, symbol, "∃") or std.mem.eql(u8, symbol, "∀") or std.mem.eql(u8, symbol, "¬") or std.mem.eql(u8, symbol, "⊟")) {
                         // Advance past the symbol
                         var i: usize = 0;

@@ -220,7 +220,7 @@ pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
 
         self.has_entry_point = true;
         self.entry_point_location = self.peek();
-        self.advance(); // consume entry
+        self.advance(); // consume ->
     }
 
     // Expect function keyword (both 'fn' and 'function' map to FUNCTION token)

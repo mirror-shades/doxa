@@ -88,7 +88,7 @@ pub const ParseRule = struct {
 pub const rules = blk: {
     var r = std.EnumArray(token.TokenType, ParseRule).initFill(ParseRule{});
 
-    // Add rule for entry point keyword
+    // Add rule for entry keyword
     r.set(.ENTRY, .{ .prefix = functionExpr });
 
     // Binary operators

@@ -219,7 +219,7 @@ pub const Parser = struct {
             var is_public = false;
             var is_entry = false;
 
-            // IMPORTANT: Check for entry first as it might appear before PUBLIC
+            // IMPORTANT: Check for ENTRY first as it might appear before PUBLIC
             if (self.peek().type == .ENTRY) {
                 is_entry = true;
                 const entry_token = self.peek(); // Store token for later use if needed

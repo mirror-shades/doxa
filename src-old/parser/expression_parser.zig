@@ -255,23 +255,17 @@ pub fn parseMatchExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*a
     while (self.peek().type != .RIGHT_BRACE) {
         if (self.peek().type == .ELSE) {
             // Handle else case
-            self.advance();
-            const else_token = self.previous();
+            self.advance(); // consume 'else'
+            const else_token = self.previous(); // capture 'else' token before consuming '=>'
 
-            // Parse body: block or simple expression requiring ';'
-            var body: *ast.Expr = undefined;
-            if (self.peek().type == .LEFT_BRACE) {
-                const block_expr = try Parser.block(self, null, .NONE) orelse return error.ExpectedLeftBrace;
-                body = block_expr;
-                // Optional semicolon after block body
-                if (self.peek().type == .SEMICOLON) self.advance();
-            } else {
-                body = try parseExpression(self) orelse return error.ExpectedExpression;
-                if (self.peek().type != .SEMICOLON) {
-                    return error.ExpectedSemicolonOrBrace;
-                }
-                self.advance();
+            // Parse arrow
+            if (self.peek().type != .ARROW) {
+                return error.ExpectedArrow;
             }
+            self.advance();
+
+            // Parse body expression
+            const body = try parseExpression(self) orelse return error.ExpectedExpression;
 
             try cases.append(.{
                 .pattern = else_token, // ensure codegen sees a real ELSE token
@@ -290,29 +284,21 @@ pub fn parseMatchExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*a
         // Parse pattern (enum variant, type, or custom type)
         const pattern = try parseMatchPattern(self) orelse return error.ExpectedPattern;
 
-        // Parse then
-        if (self.peek().type != .THEN) {
-            return error.ExpectedThen;
+        // Parse arrow
+        if (self.peek().type != .ARROW) {
+            return error.ExpectedArrow;
         }
         self.advance();
 
-        // Parse body: block or simple expression requiring ';'
-        var body: *ast.Expr = undefined;
-        if (self.peek().type == .LEFT_BRACE) {
-            const block_expr = try Parser.block(self, null, .NONE) orelse return error.ExpectedLeftBrace;
-            body = block_expr;
-            if (self.peek().type == .SEMICOLON) self.advance();
-        } else {
-            body = try parseExpression(self) orelse return error.ExpectedExpression;
-            if (self.peek().type != .SEMICOLON) {
-                return error.ExpectedSemicolonOrBrace;
-            }
-            self.advance();
-        }
+        // Parse body expression
+        const body = try parseExpression(self) orelse return error.ExpectedExpression;
 
-        try cases.append(.{ .pattern = pattern, .body = body });
+        try cases.append(.{
+            .pattern = pattern,
+            .body = body,
+        });
 
-        // Optional comma between cases
+        // Handle optional comma
         if (self.peek().type == .COMMA) {
             self.advance();
         }
@@ -1572,8 +1558,14 @@ pub fn parseStructOrMatch(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList
         while (self.peek().type != .RIGHT_BRACE) {
             if (self.peek().type == .ELSE) {
                 // Handle else case
-                self.advance();
+                self.advance(); // consume 'else'
                 const else_token = self.previous();
+
+                // Parse arrow
+                if (self.peek().type != .ARROW) {
+                    return error.ExpectedArrow;
+                }
+                self.advance();
 
                 // Parse body expression
                 const body = try parseExpression(self) orelse return error.ExpectedExpression;
@@ -1595,9 +1587,9 @@ pub fn parseStructOrMatch(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList
             // Parse pattern (enum variant, type, or custom type)
             const pattern = try parseMatchPattern(self) orelse return error.ExpectedPattern;
 
-            // Parse then
-            if (self.peek().type != .THEN) {
-                return error.ExpectedThen;
+            // Parse arrow
+            if (self.peek().type != .ARROW) {
+                return error.ExpectedArrow;
             }
             self.advance();
 

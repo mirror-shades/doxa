@@ -1,4 +1,4 @@
-// indexOf()      // Basic search functionality
+// indexOf()      // Basic search fnality
 // indexOfAll()   // returns array of indices
 // includes()     // Basic membership test
 // slice()        // Array subsetting
