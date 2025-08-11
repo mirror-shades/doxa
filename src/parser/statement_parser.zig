@@ -452,10 +452,26 @@ pub fn parseEachStmt(self: *Parser) ErrorList!ast.Stmt {
     }
     self.advance();
 
-    // Parse array expression
-    const array_expr = try expression_parser.parseExpression(self);
-    if (array_expr == null) {
-        return error.ExpectedExpression;
+    // Parse array expression. Special-case IDENTIFIER { to avoid consuming the loop body as a struct literal.
+    var array_expr: ?*ast.Expr = null;
+    if (self.peek().type == .IDENTIFIER and self.peekAhead(1).type == .LEFT_BRACE) {
+        const name = self.peek();
+        self.advance(); // consume identifier only; leave '{' for the loop body
+
+        const var_expr = try self.allocator.create(ast.Expr);
+        var_expr.* = .{
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(name),
+            },
+            .data = .{ .Variable = name },
+        };
+        array_expr = var_expr;
+    } else {
+        array_expr = try expression_parser.parseExpression(self);
+        if (array_expr == null) {
+            return error.ExpectedExpression;
+        }
     }
 
     // Parse body as a block

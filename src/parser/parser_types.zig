@@ -335,7 +335,7 @@ pub const Parser = struct {
                     try statements.append(enum_decl);
                 },
                 // Handle other statement types recognised by statement_parser
-                .IF, .WHILE, .RETURN, .LEFT_BRACE => {
+                .IF, .WHILE, .RETURN, .LEFT_BRACE, .EACH => {
                     // Modifiers likely invalid here
                     if (is_entry) {
                         return error.MisplacedEntryPoint;
