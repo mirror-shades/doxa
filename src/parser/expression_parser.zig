@@ -1161,30 +1161,30 @@ pub fn castExpr(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
     // Parse the target type
     const target_type = try parseTypeExpr(self) orelse return error.ExpectedType;
 
-    // Check for optional else branch
+    // Optional then-branch: "as Type then <expr|{...}>"
+    var then_branch: ?*ast.Expr = null;
+    if (self.peek().type == .THEN) {
+        self.advance(); // consume 'then'
+        if (self.peek().type == .LEFT_BRACE) {
+            // Block-style then
+            const block_expr = try braceExpr(self, null, .NONE) orelse return error.ExpectedLeftBrace;
+            then_branch = block_expr;
+        } else {
+            then_branch = try parseExpression(self) orelse return error.ExpectedExpression;
+        }
+    }
+
+    // Optional else-branch: "else <expr|{...}>"
     var else_branch: ?*ast.Expr = null;
     if (self.peek().type == .ELSE) {
         self.advance(); // consume 'else'
 
-        // Parse the else branch as a block
         if (self.peek().type == .LEFT_BRACE) {
-            const block_stmts = try statement_parser.parseBlockStmt(self);
-            const block_expr = try self.allocator.create(ast.Expr);
-            block_expr.* = .{
-                .base = .{
-                    .id = ast.generateNodeId(),
-                    .span = ast.SourceSpan.fromToken(self.previous()),
-                },
-                .data = .{
-                    .Block = .{
-                        .statements = block_stmts,
-                        .value = null,
-                    },
-                },
-            };
+            // Block-style else
+            const block_expr = try braceExpr(self, null, .NONE) orelse return error.ExpectedLeftBrace;
             else_branch = block_expr;
         } else {
-            else_branch = try parseExpression(self);
+            else_branch = try parseExpression(self) orelse return error.ExpectedExpression;
         }
     }
 
@@ -1198,6 +1198,7 @@ pub fn castExpr(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
             .Cast = .{
                 .value = left.?,
                 .target_type = target_type,
+                .then_branch = then_branch,
                 .else_branch = else_branch,
             },
         },
