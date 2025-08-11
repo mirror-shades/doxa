@@ -249,6 +249,53 @@ pub const HIRGenerator = struct {
                 else => {},
             }
         }
+
+        // Also collect function signatures from imported modules (by namespace alias)
+        // We qualify their names as "alias.function" so calls can resolve normally
+        var it = self.module_namespaces.iterator();
+        while (it.next()) |entry| {
+            const alias = entry.key_ptr.*;
+            const module_info = entry.value_ptr.*;
+
+            if (module_info.ast) |module_ast| {
+                if (module_ast.data == .Block) {
+                    const mod_statements = module_ast.data.Block.statements;
+                    for (mod_statements) |mod_stmt| {
+                        switch (mod_stmt.data) {
+                            .FunctionDecl => |func| {
+                                if (!func.is_public) continue;
+
+                                const qualified_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ alias, func.name.lexeme });
+                                const return_type = self.convertTypeInfo(func.return_type_info);
+                                const start_label = try self.generateLabel(try std.fmt.allocPrint(self.allocator, "func_{s}", .{qualified_name}));
+
+                                const function_info = FunctionInfo{
+                                    .name = qualified_name,
+                                    .arity = @intCast(func.params.len),
+                                    .return_type = return_type,
+                                    .start_label = start_label,
+                                    .local_var_count = 0,
+                                    .is_entry = false, // imported functions are never entry points
+                                };
+
+                                try self.function_signatures.put(qualified_name, function_info);
+
+                                // Store function body for later generation
+                                try self.function_bodies.append(FunctionBody{
+                                    .function_info = function_info,
+                                    .statements = func.body,
+                                    .start_instruction_index = 0,
+                                    .function_name = qualified_name,
+                                    .function_params = func.params,
+                                    .return_type_info = func.return_type_info,
+                                });
+                            },
+                            else => {},
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Pass 3: Generate function bodies AFTER main program
@@ -367,7 +414,34 @@ pub const HIRGenerator = struct {
 
     /// Pass 2: Generate main program (non-function statements) - FIRST so execution starts here
     fn generateMainProgram(self: *HIRGenerator, statements: []ast.Stmt) !void {
-        // Process all non-function statements first (global variables, etc.)
+        // First process global (non-function) statements from imported modules so their
+        // constants and types (e.g., 'limit' in safeMath) are defined before any calls.
+        self.reporter.debug("HIR: processing imported module globals: {d}", .{self.module_namespaces.count()});
+        var it = self.module_namespaces.iterator();
+        while (it.next()) |entry| {
+            const alias = entry.key_ptr.*;
+            const module_info = entry.value_ptr.*;
+            if (module_info.ast) |module_ast| {
+                if (module_ast.data == .Block) {
+                    const mod_statements = module_ast.data.Block.statements;
+                    self.reporter.debug("HIR: module '{s}' globals count: {d}", .{alias, mod_statements.len});
+                    for (mod_statements) |mod_stmt| {
+                        switch (mod_stmt.data) {
+                            .FunctionDecl => continue, // skip functions here
+                            .VarDecl => |decl| {
+                                // For module-level globals, ensure they are stored in the root/global scope
+                                // by emitting StoreConst/StoreVar before any function bodies.
+                                try self.generateStatement(ast.Stmt{ .base = mod_stmt.base, .data = .{ .VarDecl = decl } });
+                            },
+                            else => try self.generateStatement(mod_stmt),
+                        }
+                    }
+                }
+            }
+        }
+
+        // Then process this module's non-function statements (global variables, etc.)
+        self.reporter.debug("HIR: processing current module globals", .{});
         for (statements) |stmt| {
             switch (stmt.data) {
                 .FunctionDecl => {
@@ -1094,7 +1168,19 @@ pub const HIRGenerator = struct {
                             if (self.isModuleNamespace(object_name)) {
                                 // This is a module function call like safeMath.safeAdd
                                 function_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ object_name, field_access.field.lexeme });
-                                call_kind = .ModuleFunction;
+
+                                // Hard-wire module semantic functions to ModuleFunction so the VM can
+                                // apply special behavior (e.g., overflow checks in safeMath.safeAdd)
+                                if (std.mem.eql(u8, function_name, "safeMath.safeAdd")) {
+                                    call_kind = .ModuleFunction;
+                                } else if (self.getFunctionIndex(function_name)) |idx| {
+                                    // Regular imported module function - call by local function body
+                                    function_index = idx;
+                                    call_kind = .LocalFunction;
+                                } else |_| {
+                                    // Unknown to function table - let VM handle as module function (error or builtin)
+                                    call_kind = .ModuleFunction;
+                                }
 
                                 // Don't generate the object expression - skip the LoadVar
                                 // Just generate the arguments
@@ -3319,6 +3405,17 @@ pub const HIRGenerator = struct {
 
     /// Check if a name is a module namespace
     fn isModuleNamespace(self: *HIRGenerator, name: []const u8) bool {
-        return self.module_namespaces.contains(name);
+        if (self.module_namespaces.contains(name)) return true;
+        // Fallback: if any known module imports this alias, treat it as a module namespace
+        var it = self.module_namespaces.iterator();
+        while (it.next()) |entry| {
+            const mi = entry.value_ptr.*;
+            for (mi.imports) |imp| {
+                if (imp.namespace_alias) |alias| {
+                    if (std.mem.eql(u8, alias, name)) return true;
+                }
+            }
+        }
+        return false;
     }
 };

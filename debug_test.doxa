@@ -1,7 +1,0 @@
-enum Color {
-    Red,
-    Green,
-    Blue,
-}
-
-var c6 is Color.Red; 
