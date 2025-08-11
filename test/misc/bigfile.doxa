@@ -74,10 +74,29 @@ fn forloop(x :: int) {
 
 forloop(5); //660, 726, 732, 798, 864
 
-fn eachloop(arr :: int[]) {
-    each num in arr {
-        num?;
-    }
+/////
+// CONDITIONALS
+/////
+
+var mixedBranch1 is if true then {
+    var notUsed is 10 + 5;
+    "true";
+} else "false";
+
+mixedBranch1?; // true
+
+var mixedBranch2 is if false then {
+    var notUsed is 10 + 5;
+    "true";
+} else "false";
+
+mixedBranch2?; // false
+
+var stringArr is ["hello", "world", "foo", "bar"];
+
+each word at index in stringArr {
+    index?;
+    word?;
 }
 
 // return statements
