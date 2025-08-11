@@ -146,48 +146,50 @@ pub const SoxaTextParser = struct {
     }
 
     fn parseConstant(self: *SoxaTextParser, line: []const u8) !void {
-        // Parse: "    const_0: int 42", "    const_1: string "hello"", etc.
-        if (std.mem.indexOf(u8, line, "int ")) |int_pos| {
-            const value_str = std.mem.trim(u8, line[int_pos + 4 ..], " \t");
-            const value = try std.fmt.parseInt(i32, value_str, 10);
+        // Expect: "    const_N: TYPE [payload]"
+        const colon_pos = std.mem.indexOfScalar(u8, line, ':') orelse return error.InvalidCharacter;
+        var rest = std.mem.trimLeft(u8, line[colon_pos + 1 ..], " \t");
+
+        // Split TYPE and payload
+        const space_idx = std.mem.indexOfScalar(u8, rest, ' ');
+        const type_tok = if (space_idx) |idx| rest[0..idx] else rest;
+        const payload = if (space_idx) |idx| std.mem.trimLeft(u8, rest[idx + 1 ..], " \t") else "";
+
+        if (std.mem.eql(u8, type_tok, "int")) {
+            const value = try std.fmt.parseInt(i32, payload, 10);
             try self.constants.append(HIRValue{ .int = value });
-        } else if (std.mem.indexOf(u8, line, "float ")) |float_pos| {
-            const value_str = std.mem.trim(u8, line[float_pos + 6 ..], " \t");
-            const value = try std.fmt.parseFloat(f64, value_str);
+        } else if (std.mem.eql(u8, type_tok, "float")) {
+            const value = try std.fmt.parseFloat(f64, payload);
             try self.constants.append(HIRValue{ .float = value });
-        } else if (std.mem.indexOf(u8, line, "string ")) |string_pos| {
-            const quoted_str = std.mem.trim(u8, line[string_pos + 7 ..], " \t");
-            const value = try self.parseQuotedString(quoted_str);
+        } else if (std.mem.eql(u8, type_tok, "string")) {
+            const value = try self.parseQuotedString(payload);
             try self.constants.append(HIRValue{ .string = value });
-        } else if (std.mem.indexOf(u8, line, "tetra ")) |tetra_pos| {
-            const value_str = std.mem.trim(u8, line[tetra_pos + 6 ..], " \t");
-            const value = try std.fmt.parseInt(u8, value_str, 10);
+        } else if (std.mem.eql(u8, type_tok, "tetra")) {
+            const value = try std.fmt.parseInt(u8, payload, 10);
             try self.constants.append(HIRValue{ .tetra = value });
-        } else if (std.mem.indexOf(u8, line, "byte ")) |byte_pos| {
-            const value_str = std.mem.trim(u8, line[byte_pos + 5 ..], " \t");
-            const value = try std.fmt.parseInt(u8, value_str, 10);
+        } else if (std.mem.eql(u8, type_tok, "byte")) {
+            const value = try std.fmt.parseInt(u8, payload, 10);
             try self.constants.append(HIRValue{ .byte = value });
-        } else if (std.mem.indexOf(u8, line, "enum_variant ")) |enum_pos| {
-            // Parse: "enum_variant Color.Red"
-            const variant_str = std.mem.trim(u8, line[enum_pos + 13 ..], " \t");
-            if (std.mem.indexOf(u8, variant_str, ".")) |dot_pos| {
+        } else if (std.mem.eql(u8, type_tok, "enum_variant")) {
+            const variant_str = std.mem.trim(u8, payload, " \t");
+            if (std.mem.indexOfScalar(u8, variant_str, '.')) |dot_pos| {
                 const type_name = try self.allocator.dupe(u8, variant_str[0..dot_pos]);
                 const variant_name = try self.allocator.dupe(u8, variant_str[dot_pos + 1 ..]);
                 try self.constants.append(HIRValue{
                     .enum_variant = HIREnum{
                         .type_name = type_name,
                         .variant_name = variant_name,
-                        .variant_index = 0, // Default to 0, actual index will be resolved at runtime
+                        .variant_index = 0,
                         .path = null,
                     },
                 });
             } else {
                 try self.constants.append(HIRValue.nothing);
             }
-        } else if (std.mem.indexOf(u8, line, "nothing")) |_| {
+        } else if (std.mem.eql(u8, type_tok, "nothing")) {
             try self.constants.append(HIRValue.nothing);
         } else {
-            // Default to nothing for unhandled types
+            // Fallback for unhandled/unknown types
             try self.constants.append(HIRValue.nothing);
         }
     }
