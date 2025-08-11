@@ -258,17 +258,18 @@ pub fn parseMatchExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*a
             self.advance();
             const else_token = self.previous();
 
-            // Parse body: block or simple expression requiring ';'
+            // Parse body per hybrid rule: block (no required comma) or expression (requires comma)
             var body: *ast.Expr = undefined;
             if (self.peek().type == .LEFT_BRACE) {
                 const block_expr = try Parser.block(self, null, .NONE) orelse return error.ExpectedLeftBrace;
                 body = block_expr;
-                // Optional semicolon after block body
-                if (self.peek().type == .SEMICOLON) self.advance();
+                // Optional comma after a block arm
+                if (self.peek().type == .COMMA) self.advance();
             } else {
                 body = try parseExpression(self) orelse return error.ExpectedExpression;
-                if (self.peek().type != .SEMICOLON) {
-                    return error.ExpectedSemicolonOrBrace;
+                // Expression arms must be followed by a comma (trailing comma allowed)
+                if (self.peek().type != .COMMA) {
+                    return error.ExpectedCommaOrBrace;
                 }
                 self.advance();
             }
@@ -296,26 +297,22 @@ pub fn parseMatchExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*a
         }
         self.advance();
 
-        // Parse body: block or simple expression requiring ';'
+        // Parse body per hybrid rule: block (no required comma) or expression (requires comma)
         var body: *ast.Expr = undefined;
         if (self.peek().type == .LEFT_BRACE) {
             const block_expr = try Parser.block(self, null, .NONE) orelse return error.ExpectedLeftBrace;
             body = block_expr;
-            if (self.peek().type == .SEMICOLON) self.advance();
+            // Optional comma after a block arm
+            if (self.peek().type == .COMMA) self.advance();
         } else {
             body = try parseExpression(self) orelse return error.ExpectedExpression;
-            if (self.peek().type != .SEMICOLON) {
-                return error.ExpectedSemicolonOrBrace;
+            if (self.peek().type != .COMMA) {
+                return error.ExpectedCommaOrBrace;
             }
             self.advance();
         }
 
         try cases.append(.{ .pattern = pattern, .body = body });
-
-        // Optional comma between cases
-        if (self.peek().type == .COMMA) {
-            self.advance();
-        }
     }
     self.advance(); // consume right brace
 
@@ -1575,8 +1572,22 @@ pub fn parseStructOrMatch(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList
                 self.advance();
                 const else_token = self.previous();
 
-                // Parse body expression
-                const body = try parseExpression(self) orelse return error.ExpectedExpression;
+                // Parse body per hybrid rule: block (no required comma) or expression (requires comma)
+                var body: *ast.Expr = undefined;
+                if (self.peek().type == .LEFT_BRACE) {
+                    const block_expr = try Parser.block(self, null, .NONE) orelse return error.ExpectedLeftBrace;
+                    body = block_expr;
+                    // Optional comma after a block arm
+                    if (self.peek().type == .COMMA) {
+                        self.advance();
+                    }
+                } else {
+                    body = try parseExpression(self) orelse return error.ExpectedExpression;
+                    if (self.peek().type != .COMMA) {
+                        return error.ExpectedCommaOrBrace;
+                    }
+                    self.advance();
+                }
 
                 try cases.append(.{
                     .pattern = else_token,
@@ -1584,11 +1595,6 @@ pub fn parseStructOrMatch(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList
                 });
 
                 has_else_case = true;
-
-                // Handle optional comma
-                if (self.peek().type == .COMMA) {
-                    self.advance();
-                }
                 continue;
             }
 
@@ -1601,18 +1607,27 @@ pub fn parseStructOrMatch(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList
             }
             self.advance();
 
-            // Parse body expression
-            const body = try parseExpression(self) orelse return error.ExpectedExpression;
+            // Parse body per hybrid rule: block (no required comma) or expression (requires comma)
+            var body: *ast.Expr = undefined;
+            if (self.peek().type == .LEFT_BRACE) {
+                const block_expr = try Parser.block(self, null, .NONE) orelse return error.ExpectedLeftBrace;
+                body = block_expr;
+                // Optional comma after a block arm
+                if (self.peek().type == .COMMA) {
+                    self.advance();
+                }
+            } else {
+                body = try parseExpression(self) orelse return error.ExpectedExpression;
+                if (self.peek().type != .COMMA) {
+                    return error.ExpectedCommaOrBrace;
+                }
+                self.advance();
+            }
 
             try cases.append(.{
                 .pattern = pattern,
                 .body = body,
             });
-
-            // Handle optional comma
-            if (self.peek().type == .COMMA) {
-                self.advance();
-            }
         }
         self.advance(); // consume right brace
 
