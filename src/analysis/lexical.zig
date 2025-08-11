@@ -86,7 +86,6 @@ pub const LexicalAnalyzer = struct {
         try self.keywords.put("for", .FOR);
         try self.keywords.put("each", .EACH);
         try self.keywords.put("fn", .FUNCTION);
-        try self.keywords.put("function", .FUNCTION);
         try self.keywords.put("return", .RETURN);
         try self.keywords.put("const", .CONST);
         try self.keywords.put("var", .VAR);

@@ -293,7 +293,7 @@ pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
     var return_type = ast.TypeInfo{ .base = .Nothing }; // Default to Nothing type
     if (self.peek().type == .RETURNS) {
         self.advance(); // consume '->'
-        
+
         const type_expr = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
         const type_info_ptr = try ast.typeInfoFromExpr(self.allocator, type_expr);
         return_type = type_info_ptr.*;
