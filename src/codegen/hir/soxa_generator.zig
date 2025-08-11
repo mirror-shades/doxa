@@ -2202,6 +2202,110 @@ pub const HIRGenerator = struct {
                 try self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } });
             },
 
+            .ForEach => |foreach_expr| {
+                // Create unique label set for this foreach
+                const fe_start = try self.generateLabel("foreach_start");
+                const fe_body = try self.generateLabel("foreach_body");
+                const fe_next = try self.generateLabel("foreach_next");
+                const fe_end = try self.generateLabel("foreach_end");
+
+                // Synthesize stable temporary variable names for array, length, and index
+                const arr_tmp_name = try std.fmt.allocPrint(self.allocator, "__fe_arr_{s}", .{fe_start});
+                const len_tmp_name = try std.fmt.allocPrint(self.allocator, "__fe_len_{s}", .{fe_start});
+                const idx_tmp_fallback = try std.fmt.allocPrint(self.allocator, "__fe_idx_{s}", .{fe_start});
+
+                // Resolve or create indices for the temporaries
+                const arr_tmp_idx = try self.getOrCreateVariable(arr_tmp_name);
+                const len_tmp_idx = try self.getOrCreateVariable(len_tmp_name);
+                const idx_var_name = if (foreach_expr.index_name) |idx_tok| idx_tok.lexeme else idx_tmp_fallback;
+                const idx_tmp_idx = try self.getOrCreateVariable(idx_var_name);
+
+                // Track basic types for temporaries
+                try self.trackVariableType(arr_tmp_name, .Array);
+                try self.trackVariableType(len_tmp_name, .Int);
+                try self.trackVariableType(idx_var_name, .Int);
+
+                // Generate and store the array expression into arr_tmp
+                try self.generateExpression(foreach_expr.array, true);
+                try self.instructions.append(.Dup);
+                try self.instructions.append(.{ .StoreVar = .{
+                    .var_index = arr_tmp_idx,
+                    .var_name = arr_tmp_name,
+                    .scope_kind = .Local,
+                    .module_context = null,
+                    .expected_type = .Array,
+                } });
+
+                // Compute array length into len_tmp
+                try self.instructions.append(.{ .StringOp = .{ .op = .Length } });
+                try self.instructions.append(.{ .StoreVar = .{
+                    .var_index = len_tmp_idx,
+                    .var_name = len_tmp_name,
+                    .scope_kind = .Local,
+                    .module_context = null,
+                    .expected_type = .Int,
+                } });
+
+                // Initialize index to 0
+                const zero_idx = try self.addConstant(HIRValue{ .int = 0 });
+                try self.instructions.append(.{ .Const = .{ .value = HIRValue{ .int = 0 }, .constant_id = zero_idx } });
+                try self.instructions.append(.{ .StoreVar = .{
+                    .var_index = idx_tmp_idx,
+                    .var_name = idx_var_name,
+                    .scope_kind = .Local,
+                    .module_context = null,
+                    .expected_type = .Int,
+                } });
+
+                // Loop start: check index < len
+                try self.instructions.append(.{ .Label = .{ .name = fe_start, .vm_address = 0 } });
+                try self.instructions.append(.{ .LoadVar = .{ .var_index = idx_tmp_idx, .var_name = idx_var_name, .scope_kind = .Local, .module_context = null } });
+                try self.instructions.append(.{ .LoadVar = .{ .var_index = len_tmp_idx, .var_name = len_tmp_name, .scope_kind = .Local, .module_context = null } });
+                try self.instructions.append(.{ .Compare = .{ .op = .Lt, .operand_type = .Int } });
+                try self.instructions.append(.{ .JumpCond = .{ .label_true = fe_body, .label_false = fe_end, .vm_offset = 0, .condition_type = .Tetra } });
+
+                // Loop body: load element and bind to item variable
+                try self.instructions.append(.{ .Label = .{ .name = fe_body, .vm_address = 0 } });
+                try self.instructions.append(.{ .LoadVar = .{ .var_index = arr_tmp_idx, .var_name = arr_tmp_name, .scope_kind = .Local, .module_context = null } });
+                try self.instructions.append(.{ .LoadVar = .{ .var_index = idx_tmp_idx, .var_name = idx_var_name, .scope_kind = .Local, .module_context = null } });
+                try self.instructions.append(.{ .ArrayGet = .{ .bounds_check = true } });
+
+                // Determine/track the element type if possible
+                var elem_type: HIRType = .Auto;
+                if (foreach_expr.array.data == .Variable) {
+                    if (self.getTrackedArrayElementType(foreach_expr.array.data.Variable.lexeme)) |tracked_elem| {
+                        elem_type = tracked_elem;
+                    }
+                }
+
+                // Store to loop item variable
+                const item_name = foreach_expr.item_name.lexeme;
+                const item_idx = try self.getOrCreateVariable(item_name);
+                if (elem_type != .Auto) try self.trackVariableType(item_name, elem_type);
+                try self.instructions.append(.{ .StoreVar = .{ .var_index = item_idx, .var_name = item_name, .scope_kind = .Local, .module_context = null, .expected_type = elem_type } });
+
+                // Generate loop body statements
+                for (foreach_expr.body) |stmt| {
+                    try self.generateStatement(stmt);
+                }
+
+                // Next: i = i + 1
+                try self.instructions.append(.{ .Label = .{ .name = fe_next, .vm_address = 0 } });
+                try self.instructions.append(.{ .LoadVar = .{ .var_index = idx_tmp_idx, .var_name = idx_var_name, .scope_kind = .Local, .module_context = null } });
+                const one_idx = try self.addConstant(HIRValue{ .int = 1 });
+                try self.instructions.append(.{ .Const = .{ .value = HIRValue{ .int = 1 }, .constant_id = one_idx } });
+                try self.instructions.append(.{ .IntArith = .{ .op = .Add, .overflow_behavior = .Wrap } });
+                try self.instructions.append(.{ .StoreVar = .{ .var_index = idx_tmp_idx, .var_name = idx_var_name, .scope_kind = .Local, .module_context = null, .expected_type = .Int } });
+
+                // Jump back to condition
+                try self.instructions.append(.{ .Jump = .{ .label = fe_start, .vm_offset = 0 } });
+
+                // End label and result value
+                try self.instructions.append(.{ .Label = .{ .name = fe_end, .vm_address = 0 } });
+                const nothing2_idx = try self.addConstant(HIRValue.nothing);
+                try self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing2_idx } });
+            },
+
             .FieldAccess => |field| {
                 var handled_as_enum_member: bool = false;
                 // Check the type of the object being accessed first
