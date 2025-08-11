@@ -20,6 +20,7 @@ pub const TokenType = enum {
     DOT, // .
     DOT_DOT, // ..
     AMPERSAND, // &
+    ARROW, // =>
     SLASH, // /
     SLASH_EQUAL, // /=
     ASTERISK, // *
@@ -32,7 +33,6 @@ pub const TokenType = enum {
     MINUS, // -
     MINUS_MINUS, // --
     MINUS_EQUAL, // -=
-    RETURNS, // ->
     BANG, // !
     BANG_EQUAL, // !=
     GREATER, // >
@@ -52,6 +52,7 @@ pub const TokenType = enum {
     INPUT, // input
     ASSERT, // assert
     RETURN, // return
+    RETURNS, // assign an expected return type
     BREAK, // break
     CONTINUE, // continue
     MATCH, // match

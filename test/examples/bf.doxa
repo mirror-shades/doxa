@@ -1,4 +1,5 @@
 // a brainfuck interpreter implemented in doxa
+// mirror-shades
 
 const symbols is [ ">", "<", "+", "-", ".", ",", "[", "]" ];
 var tape :: byte[10];
@@ -7,13 +8,13 @@ var loopSpot :: int[];
 var tp :: int is 0;
 var ip :: int is 0;
 
-function getInput() returns(byte) {
+fn getInput() returns(byte) {
     var userInput :: string is @input();
     var newByte :: byte is @bytes(userInput)[0];
     return newByte;
 }
 
-function startLoop() {
+fn startLoop() {
     if @length(loopSpot) equals loops 
     then {
         loopSpot.push(ip);
@@ -23,7 +24,7 @@ function startLoop() {
     loops += 1;
 }
 
-function endLoop() {
+fn endLoop() {
     if loops >= 0 
     then {
         if tape[tp] equals 0 
@@ -38,7 +39,7 @@ function endLoop() {
     }
 }
 
-function checkClosingBracket(scan :: string) returns(tetra) {
+fn checkClosingBracket(scan :: string) returns(tetra) {
     var pointer :: int is 0;
     var openBrackets :: int is 0;
     while(pointer < @length(scan)) {
@@ -50,7 +51,7 @@ function checkClosingBracket(scan :: string) returns(tetra) {
 }
 
 
-function interpret(scan :: string) {
+fn interpret(scan :: string) {
     const scanLength is @length(scan);
 
     var closedBrackets :: tetra is checkClosingBracket(scan);
@@ -66,12 +67,12 @@ function interpret(scan :: string) {
         if(currentInstruction equals ",") then tape[tp] is getInput();
         if(currentInstruction equals "[") then startLoop();
         if(currentInstruction equals "]") then endLoop();
-        // tape[tp]?;
-        // tape?;
+        tape[tp]?;
+        tape?;
         ip += 1;
     }
 }
 
--> function main() {
+entry fn main() {
     interpret(",+.");
 }

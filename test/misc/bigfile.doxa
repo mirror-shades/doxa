@@ -22,25 +22,25 @@ const b :: Color is .Blue;
 const g :: Color is .Green;
 
 var result is match b {
-    .Red => "It's red",
-    .Blue => "It's blue",
-    else => "It's something else",
+    .Red then "It's red";
+    .Blue then "It's blue";
+    else "It's something else";
 }; 
 
 result?; // It's blue
 
 result is match g {
-    .Red => "It's red",
-    .Blue => "It's blue",
-    else => "It's something else",
+    .Red then "It's red";
+    .Blue then "It's blue";
+    else "It's something else";
 };
 
 result?; // It's something else
 
 /////
-// FUNCTIONS AND LOOPS / RECURSION
+// fnS AND LOOPS / RECURSION
 /////
-function fizzbuzz(x:: int, limit:: int) {
+fn fizzbuzz(x:: int, limit:: int) {
     var current is x;
     while current <= limit {
         if current % 3 equals 0 and current % 5 equals 0 then "fizzbuzz"?;
@@ -138,7 +138,7 @@ const Shakespere is false;
 const zombie is both;
 const angel is neither;
 
-function living(alive :: tetra) {
+fn living(alive :: tetra) {
     if alive then "I am alive"?;
     if not alive then "I am dead"?;
 }
@@ -158,7 +158,7 @@ arr?;
 arr[3]?; // 444444
 arr[3] is 666666;
 arr[3]?; // 666666
-arr.push(420000);
+arr.push(420000); // TODO: all array methods should use the @ syntax
 arr[5]?; // 420000
 
 const checkAgainst is 333333;
@@ -218,8 +218,8 @@ const un2 :: int | float is 3.5;
 
 fn process_number_union_string(value :: int | float) returns(string) {
     return match value {
-        int => "integer"?,
-        float => "float"?,
+        int then "integer";
+        float then "float";
     };
 }
 
@@ -228,8 +228,8 @@ process_number_union_string(un2)?; // float
 
 fn process_number_union_narrow(value :: int | float) returns(int) {
     return match value {
-        int => value,
-        float => 0,
+        int then value;
+        float then 0;
     };
 }
 

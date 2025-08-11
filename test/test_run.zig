@@ -88,8 +88,6 @@ const expected_results = [_]result{
     .{ .type = "int", .value = "779" },
     .{ .type = "int", .value = "782" },
     .{ .type = "string", .value = "\"integer\"" },
-    .{ .type = "string", .value = "\"integer\"" },
-    .{ .type = "string", .value = "\"float\"" },
     .{ .type = "string", .value = "\"float\"" },
     .{ .type = "int", .value = "3" },
     .{ .type = "int", .value = "0" },

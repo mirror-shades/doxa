@@ -65,7 +65,7 @@ fn tokenize (source :: string) returns(string[]) {
     return tokens;
 }
 
--> fn main () {
+entry fn main () {
     const source :: string is "(begin (define r 10) (* pi (* r r)))";
     source?;
     const tokens :: string[] is tokenize(source);
