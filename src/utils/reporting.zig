@@ -183,6 +183,8 @@ pub const ErrorList = error{
     ParserDidNotAdvance,
     ImportMustHaveAlias,
     CircularImport,
+    UnknownType,
+    UnknownFieldOrMethod,
 
     // Miscellaneous
     NotImplemented,
@@ -196,11 +198,6 @@ pub const ErrorList = error{
     InternalParserError,
     SemanticError,
     RuntimeError,
-
-    // Safe Mode
-    UnknownType,
-    SafeModeRequiresType,
-    SafeModeNoDynamicTypes,
 
     // Print Statements
     UnsupportedPrintStatement,

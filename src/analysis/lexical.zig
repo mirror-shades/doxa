@@ -695,24 +695,48 @@ pub const LexicalAnalyzer = struct {
             try self.addToken(.LENGTH, .nothing);
         } else if (std.mem.eql(u8, method_name, "bytes")) {
             try self.addToken(.BYTES, .nothing);
-        } else if (std.mem.eql(u8, method_name, "substring")) {
-            try self.addToken(.SUBSTRING, .nothing);
-        } else if (std.mem.eql(u8, method_name, "concat")) {
-            try self.addToken(.CONCAT, .nothing);
         } else if (std.mem.eql(u8, method_name, "slice")) {
             try self.addToken(.SLICE, .nothing);
-        } else if (std.mem.eql(u8, method_name, "reverse")) {
-            try self.addToken(.REVERSE, .nothing);
-        } else if (std.mem.eql(u8, method_name, "istype")) { // TODO: remove this, cannot be a method as it uses a type
-            try self.addToken(.ISTYPE, .nothing);
-        } else if (std.mem.eql(u8, method_name, "cast")) {
-            try self.addToken(.CAST, .nothing);
-        } else if (std.mem.eql(u8, method_name, "clone")) {
-            try self.addToken(.CLONE, .nothing);
+        } else if (std.mem.eql(u8, method_name, "concat")) {
+            try self.addToken(.CONCAT, .nothing);
+        } else if (std.mem.eql(u8, method_name, "push")) {
+            try self.addToken(.PUSH, .nothing);
+        } else if (std.mem.eql(u8, method_name, "pop")) {
+            try self.addToken(.POP, .nothing);
+        } else if (std.mem.eql(u8, method_name, "insert")) {
+            try self.addToken(.INSERT, .nothing);
+        } else if (std.mem.eql(u8, method_name, "remove")) {
+            try self.addToken(.REMOVE, .nothing);
+        } else if (std.mem.eql(u8, method_name, "clear")) {
+            try self.addToken(.CLEAR, .nothing);
+        } else if (std.mem.eql(u8, method_name, "indexOf")) {
+            try self.addToken(.INDEXOF, .nothing);
+        } else if (std.mem.eql(u8, method_name, "toString")) {
+            try self.addToken(.TOSTRING, .nothing);
+        } else if (std.mem.eql(u8, method_name, "parseInt")) {
+            try self.addToken(.PARSEINT, .nothing);
+        } else if (std.mem.eql(u8, method_name, "parseFloat")) {
+            try self.addToken(.PARSEFLOAT, .nothing);
+        } else if (std.mem.eql(u8, method_name, "parseByte")) {
+            try self.addToken(.PARSEBYTE, .nothing);
         } else if (std.mem.eql(u8, method_name, "assert")) {
             try self.addToken(.ASSERT, .nothing);
+        } else if (std.mem.eql(u8, method_name, "panic")) {
+            try self.addToken(.PANIC, .nothing);
         } else if (std.mem.eql(u8, method_name, "input")) {
             try self.addToken(.INPUT, .nothing);
+        } else if (std.mem.eql(u8, method_name, "substring")) {
+            // Legacy - keep recognized for now (no-op or future handling)
+            try self.addToken(.SUBSTRING, .nothing);
+        } else if (std.mem.eql(u8, method_name, "reverse")) {
+            // Legacy - keep recognized for now (no-op or future handling)
+            try self.addToken(.REVERSE, .nothing);
+        } else if (std.mem.eql(u8, method_name, "cast")) {
+            // Legacy - keep recognized for now (no-op or future handling)
+            try self.addToken(.CAST, .nothing);
+        } else if (std.mem.eql(u8, method_name, "clone")) {
+            // Legacy - keep recognized for now (no-op or future handling)
+            try self.addToken(.CLONE, .nothing);
         } else {
             return error.InvalidInternalMethod;
         }
