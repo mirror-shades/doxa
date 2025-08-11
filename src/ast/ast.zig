@@ -225,6 +225,7 @@ pub const Stmt = struct {
         Cast: struct {
             value: *Expr,
             target_type: *TypeExpr,
+            then_branch: ?*Expr = null,
             else_branch: ?*Expr,
         },
     };
@@ -310,6 +311,10 @@ pub const Stmt = struct {
                 allocator.destroy(c.value);
                 c.target_type.deinit(allocator);
                 allocator.destroy(c.target_type);
+                if (c.then_branch) |then_expr| {
+                    then_expr.deinit(allocator);
+                    allocator.destroy(then_expr);
+                }
                 if (c.else_branch) |else_expr| {
                     else_expr.deinit(allocator);
                     allocator.destroy(else_expr);
@@ -538,6 +543,7 @@ pub const Expr = struct {
         Cast: struct {
             value: *Expr,
             target_type: *TypeExpr,
+            then_branch: ?*Expr = null,
             else_branch: ?*Expr,
         },
         ReturnExpr: struct {

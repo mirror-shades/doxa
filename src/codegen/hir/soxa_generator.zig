@@ -2073,8 +2073,13 @@ pub const HIRGenerator = struct {
                 }
                 try self.instructions.append(.{ .Jump = .{ .label = end_label, .vm_offset = 0 } });
 
-                // Success branch: keep duplicated original value
+                // Success branch
                 try self.instructions.append(.{ .Label = .{ .name = ok_label, .vm_address = 0 } });
+                if (cast_expr.then_branch) |then_expr| {
+                    // On success, drop original and evaluate then-branch
+                    try self.instructions.append(.Pop);
+                    try self.generateExpression(then_expr, true);
+                }
 
                 // End merge point
                 try self.instructions.append(.{ .Label = .{ .name = end_label, .vm_address = 0 } });

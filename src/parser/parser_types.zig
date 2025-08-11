@@ -160,17 +160,20 @@ pub const Parser = struct {
         }
         self.advance();
 
-        // Determine the last expression in the block (if any)
+        // Determine the last expression in the block (if any) and remove it
+        // from the statements list so it isn't executed twice.
         if (statements.items.len > 0) {
             var i: usize = statements.items.len;
             while (i > 0) : (i -= 1) {
-                const stmt = statements.items[i - 1];
+                const idx = i - 1;
+                const stmt = statements.items[idx];
                 switch (stmt.data) {
                     .Expression => |maybe_expr| {
                         if (maybe_expr) |e| {
                             last_expr = e;
                         }
-                        // Whether found or null, this was the last expression stmt we care about
+                        // Remove the trailing expression statement; it becomes the block's value
+                        statements.items.len = idx;
                         break;
                     },
                     else => {},
