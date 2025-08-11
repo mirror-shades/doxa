@@ -22,17 +22,17 @@ const b :: Color is .Blue;
 const g :: Color is .Green;
 
 var result is match b {
-    .Red then "It's red";
-    .Blue then "It's blue";
-    else "It's something else";
+    .Red then "It's red",
+    .Blue then "It's blue",
+    else "It's something else",
 }; 
 
 result?; // It's blue
 
 result is match g {
-    .Red then "It's red";
-    .Blue then "It's blue";
-    else "It's something else";
+    .Red then "It's red",
+    .Blue then "It's blue",
+    else "It's something else",
 };
 
 result?; // It's something else
@@ -199,6 +199,8 @@ uni?; // false
 var condition is if true then "true" else "false";
 condition?; // true
 
+
+
 /////
 // DEFAULT ARGUMENTS
 /////
@@ -218,8 +220,8 @@ const un2 :: int | float is 3.5;
 
 fn process_number_union_string(value :: int | float) returns(string) {
     return match value {
-        int then "integer";
-        float then "float";
+        int then "integer",
+        float then "float",
     };
 }
 
@@ -228,8 +230,8 @@ process_number_union_string(un2)?; // float
 
 fn process_number_union_narrow(value :: int | float) returns(int) {
     return match value {
-        int then value;
-        float then 0;
+        int then value,
+        float then 0,
     };
 }
 
