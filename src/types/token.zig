@@ -32,7 +32,7 @@ pub const TokenType = enum {
     MINUS, // -
     MINUS_MINUS, // --
     MINUS_EQUAL, // -=
-    RETURNS, // ->
+    RETURNS, // returns
     BANG, // !
     BANG_EQUAL, // !=
     GREATER, // >
