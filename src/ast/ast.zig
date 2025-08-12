@@ -517,6 +517,7 @@ pub const Expr = struct {
             method: Token,
             arguments: []const *Expr,
         },
+        // Array operations
         ArrayPush: struct {
             array: *Expr,
             element: *Expr,
@@ -527,12 +528,80 @@ pub const Expr = struct {
         ArrayPop: struct {
             array: *Expr,
         },
-        ArrayIsEmpty: struct {
-            array: *Expr,
-        },
         ArrayConcat: struct {
             array: *Expr,
             array2: *Expr,
+        },
+        ArrayIndex: struct {
+            array: *Expr,
+            index: *Expr,
+        },
+        ArrayClear: struct {
+            array: *Expr,
+        },
+
+        // String operations
+        StringSplit: struct {
+            string: *Expr,
+            delimiter: *Expr,
+        },
+        StringJoin: struct {
+            array: *Expr,
+            delimiter: *Expr,
+        },
+        StringTrim: struct {
+            string: *Expr,
+        },
+        StringLower: struct {
+            string: *Expr,
+        },
+        StringUpper: struct {
+            string: *Expr,
+        },
+
+        // Math operations
+        MathAbs: struct {
+            value: *Expr,
+        },
+        MathMin: struct {
+            a: *Expr,
+            b: *Expr,
+        },
+        MathMax: struct {
+            a: *Expr,
+            b: *Expr,
+        },
+        MathRound: struct {
+            value: *Expr,
+        },
+        MathFloor: struct {
+            value: *Expr,
+        },
+        MathCeil: struct {
+            value: *Expr,
+        },
+
+        // I/O operations
+        IORead: struct {
+            path: *Expr,
+        },
+        IOWrite: struct {
+            path: *Expr,
+            content: *Expr,
+        },
+        IOExec: struct {
+            command: *Expr,
+        },
+        IOSpawn: struct {
+            command: *Expr,
+        },
+
+        // Copy/clone operations
+        Clone: struct {
+            value: *Expr,
+        },
+        Copy: struct {
+            value: *Expr,
         },
         CompoundAssign: CompoundAssignment,
         Assert: struct {
@@ -812,13 +881,99 @@ pub const Expr = struct {
                 a.array.deinit(allocator);
                 allocator.destroy(a.array);
             },
-            .ArrayIsEmpty => |*a| {
-                a.array.deinit(allocator);
-                allocator.destroy(a.array);
-            },
             .ArrayConcat => |*a| {
                 a.array.deinit(allocator);
                 allocator.destroy(a.array);
+                a.array2.deinit(allocator);
+                allocator.destroy(a.array2);
+            },
+            .ArrayIndex => |*a| {
+                a.array.deinit(allocator);
+                allocator.destroy(a.array);
+                a.index.deinit(allocator);
+                allocator.destroy(a.index);
+            },
+            .ArrayClear => |*a| {
+                a.array.deinit(allocator);
+                allocator.destroy(a.array);
+            },
+            .StringSplit => |*s| {
+                s.string.deinit(allocator);
+                allocator.destroy(s.string);
+                s.delimiter.deinit(allocator);
+                allocator.destroy(s.delimiter);
+            },
+            .StringJoin => |*s| {
+                s.array.deinit(allocator);
+                allocator.destroy(s.array);
+                s.delimiter.deinit(allocator);
+                allocator.destroy(s.delimiter);
+            },
+            .StringTrim => |*s| {
+                s.string.deinit(allocator);
+                allocator.destroy(s.string);
+            },
+            .StringLower => |*s| {
+                s.string.deinit(allocator);
+                allocator.destroy(s.string);
+            },
+            .StringUpper => |*s| {
+                s.string.deinit(allocator);
+                allocator.destroy(s.string);
+            },
+            .MathAbs => |*m| {
+                m.value.deinit(allocator);
+                allocator.destroy(m.value);
+            },
+            .MathMin => |*m| {
+                m.a.deinit(allocator);
+                allocator.destroy(m.a);
+                m.b.deinit(allocator);
+                allocator.destroy(m.b);
+            },
+            .MathMax => |*m| {
+                m.a.deinit(allocator);
+                allocator.destroy(m.a);
+                m.b.deinit(allocator);
+                allocator.destroy(m.b);
+            },
+            .MathRound => |*m| {
+                m.value.deinit(allocator);
+                allocator.destroy(m.value);
+            },
+            .MathFloor => |*m| {
+                m.value.deinit(allocator);
+                allocator.destroy(m.value);
+            },
+            .MathCeil => |*m| {
+                m.value.deinit(allocator);
+                allocator.destroy(m.value);
+            },
+            .IORead => |*io| {
+                io.path.deinit(allocator);
+                allocator.destroy(io.path);
+            },
+            .IOWrite => |*io| {
+                io.path.deinit(allocator);
+                allocator.destroy(io.path);
+                io.content.deinit(allocator);
+                allocator.destroy(io.content);
+            },
+            .IOExec => |*io| {
+                io.command.deinit(allocator);
+                allocator.destroy(io.command);
+            },
+            .IOSpawn => |*io| {
+                io.command.deinit(allocator);
+                allocator.destroy(io.command);
+            },
+            .Clone => |*c| {
+                c.value.deinit(allocator);
+                allocator.destroy(c.value);
+            },
+            .Copy => |*c| {
+                c.value.deinit(allocator);
+                allocator.destroy(c.value);
             },
             .CompoundAssign => |*ca| {
                 if (ca.value) |value| {

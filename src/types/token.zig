@@ -73,32 +73,38 @@ pub const TokenType = enum {
     ENTRY, // entry
 
     // compiler level methods (@methods)
-    TYPEOF, // typeof
+    TYPE, // typeof / type
     LENGTH, // length
     BYTES, // bytes
     SLICE, // slice
-    CONCAT, // concat
     PUSH, // push
     POP, // pop
     INSERT, // insert
     REMOVE, // remove
     CLEAR, // clear
-    INDEXOF, // indexOf
-    TOSTRING, // toString
-    PARSEINT, // parseInt
-    PARSEFLOAT, // parseFloat
-    PARSEBYTE, // parseByte
+    INDEX, // indexOf / index
+    TOSTRING, // toString / string
+    PARSEINT, // parseInt / int
+    PARSEFLOAT, // parseFloat / float
+    PARSEBYTE, // parseByte (legacy)
+    SPLIT, // split
+    JOIN, // join
+    TRIM, // trim
+    LOWER, // lower
+    UPPER, // upper
+    ABS, // abs
+    MIN, // min
+    MAX, // max
+    ROUND, // round
+    FLOOR, // floor
+    CEIL, // ceil
+    READ, // read
+    WRITE, // write
+    EXEC, // exec
+    SPAWN, // spawn
     PANIC, // panic
-    // legacy or misc recognized (kept for now)
-    SUBSTRING, // substring
-    REVERSE, // reverse
-    CAST, // cast
     CLONE, // clone
-
-    // directives
-    GUIDE, // guide
-    SAFE, // safe
-    NORMAL, // normal
+    COPY, // copy
 
     // keywords with alternate tokens
     AND, // and ∧

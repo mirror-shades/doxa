@@ -628,22 +628,55 @@ pub const Parser = struct {
     }
 
     fn methodNameToTokenType(name: []const u8) ?token.TokenType {
+        // Core and array
+        if (std.mem.eql(u8, name, "type")) return .TYPE;
         if (std.mem.eql(u8, name, "length")) return .LENGTH;
         if (std.mem.eql(u8, name, "bytes")) return .BYTES;
         if (std.mem.eql(u8, name, "slice")) return .SLICE;
-        if (std.mem.eql(u8, name, "concat")) return .CONCAT;
         if (std.mem.eql(u8, name, "push")) return .PUSH;
         if (std.mem.eql(u8, name, "pop")) return .POP;
         if (std.mem.eql(u8, name, "insert")) return .INSERT;
         if (std.mem.eql(u8, name, "remove")) return .REMOVE;
         if (std.mem.eql(u8, name, "clear")) return .CLEAR;
-        if (std.mem.eql(u8, name, "indexOf")) return .INDEXOF;
-        if (std.mem.eql(u8, name, "toString")) return .TOSTRING;
-        if (std.mem.eql(u8, name, "parseInt")) return .PARSEINT;
-        if (std.mem.eql(u8, name, "parseFloat")) return .PARSEFLOAT;
-        if (std.mem.eql(u8, name, "parseByte")) return .PARSEBYTE;
+
+        // Search/index
+        if (std.mem.eql(u8, name, "index")) return .INDEX;
+
+        // Type conversions
+        if (std.mem.eql(u8, name, "string")) return .TOSTRING;
+        if (std.mem.eql(u8, name, "int")) return .PARSEINT;
+        if (std.mem.eql(u8, name, "float")) return .PARSEFLOAT;
+        if (std.mem.eql(u8, name, "bytes")) return .PARSEBYTE;
+
+        // String
+        if (std.mem.eql(u8, name, "split")) return .SPLIT;
+        if (std.mem.eql(u8, name, "join")) return .JOIN;
+        if (std.mem.eql(u8, name, "trim")) return .TRIM;
+        if (std.mem.eql(u8, name, "lower")) return .LOWER;
+        if (std.mem.eql(u8, name, "upper")) return .UPPER;
+
+        // Math
+        if (std.mem.eql(u8, name, "abs")) return .ABS;
+        if (std.mem.eql(u8, name, "min")) return .MIN;
+        if (std.mem.eql(u8, name, "max")) return .MAX;
+        if (std.mem.eql(u8, name, "round")) return .ROUND;
+        if (std.mem.eql(u8, name, "floor")) return .FLOOR;
+        if (std.mem.eql(u8, name, "ceil")) return .CEIL;
+
+        // I/O
+        if (std.mem.eql(u8, name, "read")) return .READ;
+        if (std.mem.eql(u8, name, "write")) return .WRITE;
+        if (std.mem.eql(u8, name, "exec")) return .EXEC;
+        if (std.mem.eql(u8, name, "spawn")) return .SPAWN;
+
+        // Control flow
         if (std.mem.eql(u8, name, "panic")) return .PANIC;
         if (std.mem.eql(u8, name, "assert")) return .ASSERT;
+
+        // Copy/clone
+        if (std.mem.eql(u8, name, "clone")) return .CLONE;
+        if (std.mem.eql(u8, name, "copy")) return .COPY;
+
         return null;
     }
 
