@@ -12,6 +12,9 @@ pub const ImportedSymbol = struct {
     name: []const u8,
     original_module: []const u8,
     namespace_alias: ?[]const u8 = null,
+    // Optional function metadata for accurate arity/typing
+    param_count: ?u32 = null,
+    return_type_info: ?ast.TypeInfo = null,
 };
 
 // New function to handle module imports: "module math from "./math.doxa";"
@@ -210,6 +213,8 @@ fn registerSpecificSymbol(self: *Parser, module_ast: *ast.Expr, module_path: []c
                                 .kind = .Function,
                                 .name = func.name.lexeme,
                                 .original_module = module_path,
+                                .param_count = @intCast(func.params.len),
+                                .return_type_info = func.return_type_info,
                             });
                             return; // Found the symbol, we're done
                         }

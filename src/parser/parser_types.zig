@@ -302,6 +302,27 @@ pub const Parser = struct {
                     }
                     try statements.append(func);
                 },
+                // Allow import/module statements anywhere (not only at top)
+                .IMPORT => {
+                    // Modifiers invalid with import
+                    if (is_entry) {
+                        return error.MisplacedEntryPoint;
+                    }
+                    if (is_public) {
+                        return error.MisplacedPublicModifier;
+                    }
+                    // Perform side-effects (load/register) and do not append as a normal statement
+                    _ = try import_parser.parseImportStmt(self);
+                },
+                .MODULE => {
+                    if (is_entry) {
+                        return error.MisplacedEntryPoint;
+                    }
+                    if (is_public) {
+                        return error.MisplacedPublicModifier;
+                    }
+                    _ = try import_parser.parseModuleStmt(self);
+                },
                 .STRUCT_TYPE => {
                     const expr = try declaration_parser.parseStructDecl(self, null, .NONE);
                     // Apply is_public to struct decl in AST
@@ -1410,8 +1431,14 @@ pub const Parser = struct {
 
         var new_parser = Parser.init(self.allocator, tokens.items, module_data.resolved_path, self.debug_enabled, self.reporter);
 
-        // Copy the resolution status and import stack to the new parser
-        new_parser.module_resolution_status = try self.module_resolution_status.clone();
+        // Copy the resolution status and import stack to the new parser, but exclude the current module
+        new_parser.module_resolution_status = std.StringHashMap(ModuleResolutionStatus).init(self.allocator);
+        var it = self.module_resolution_status.iterator();
+        while (it.next()) |entry| {
+            if (!std.mem.eql(u8, entry.key_ptr.*, normalized_path)) {
+                try new_parser.module_resolution_status.put(entry.key_ptr.*, entry.value_ptr.*);
+            }
+        }
         new_parser.import_stack = try self.import_stack.clone();
 
         // Parse the module file
@@ -1438,10 +1465,6 @@ pub const Parser = struct {
 
         // Extract module info and cache it
         const info = try self.extractModuleInfoWithParser(module_block, normalized_path, null, &new_parser);
-
-        // Register this module under its own name as a namespace for nested access
-        // e.g. inside a module we can resolve its own nested imports via alias lookups
-        _ = self.module_namespaces.put(info.name, info) catch {};
 
         // Mark as completed and cache the result
         try self.module_resolution_status.put(normalized_path, .COMPLETED);
@@ -2607,11 +2630,44 @@ pub const Parser = struct {
     }
 
     pub fn loadAndRegisterSpecificSymbol(self: *Parser, module_path: []const u8, symbol_name: []const u8) ErrorList!void {
-        // Get module info - this will parse the module if not already cached
+        // Helper to derive a default namespace alias from the module path (e.g. "test/misc/import.doxa" -> "import")
+        const deriveAlias = struct {
+            fn fromPath(allocator: std.mem.Allocator, path: []const u8) []const u8 {
+                var it = std.mem.splitSequence(u8, path, "/");
+                var last: []const u8 = path;
+                while (it.next()) |part| last = part;
+                if (std.mem.endsWith(u8, last, ".doxa")) {
+                    return allocator.dupe(u8, last[0 .. last.len - 5]) catch last;
+                }
+                return allocator.dupe(u8, last) catch last;
+            }
+        };
+
+        // First check if module is already cached
+        if (self.module_cache.get(module_path)) |module_info| {
+            // Ensure the module is registered in namespaces so downstream passes can discover its AST
+            const alias = deriveAlias.fromPath(self.allocator, module_path);
+            if (!self.module_namespaces.contains(alias)) {
+                try self.module_namespaces.put(alias, module_info);
+            }
+
+            // Module already loaded, just register the symbol
+            if (module_info.ast) |module_ast| {
+                try self.registerSpecificSymbol(module_ast, module_path, symbol_name);
+            }
+            return;
+        }
+
+        // Not cached, resolve the module
         const module_info = try self.resolveModule(module_path);
 
-        // If we have the full module AST available (from module_info),
-        // we can scan it for the specific symbol and register it
+        // Ensure the module is registered in namespaces so downstream passes can discover its AST
+        const alias = deriveAlias.fromPath(self.allocator, module_path);
+        if (!self.module_namespaces.contains(alias)) {
+            try self.module_namespaces.put(alias, module_info);
+        }
+
+        // Register the specific symbol
         if (module_info.ast) |module_ast| {
             try self.registerSpecificSymbol(module_ast, module_path, symbol_name);
         }
@@ -2638,6 +2694,9 @@ pub const Parser = struct {
                                     .kind = .Function,
                                     .name = func.name.lexeme,
                                     .original_module = module_path,
+                                    .namespace_alias = null,
+                                    .param_count = @intCast(func.params.len),
+                                    .return_type_info = func.return_type_info,
                                 });
                                 return; // Found the symbol, we're done
                             }

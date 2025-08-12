@@ -145,7 +145,7 @@ fn compileToNative(memoryManager: *MemoryManager, soxa_path: []const u8, output_
 fn compileDoxaToSoxaFromAST(memoryManager: *MemoryManager, statements: []ast.Stmt, parser: *Parser, semantic_analyzer: *SemanticAnalyzer, source_path: []const u8, soxa_path: []const u8, reporter: *Reporter) !void {
 
     // NEW: Pass custom type information to HIR generator
-    var hir_generator = HIRGenerator.init(memoryManager.getAllocator(), reporter, parser.module_namespaces);
+    var hir_generator = HIRGenerator.init(memoryManager.getAllocator(), reporter, parser.module_namespaces, parser.imported_symbols);
     hir_generator.debug_enabled = reporter.is_debug; // Enable debug output if --debug flag is set
     defer hir_generator.deinit();
 

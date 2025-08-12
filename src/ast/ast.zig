@@ -1203,6 +1203,36 @@ pub fn typeInfoFromExpr(allocator: std.mem.Allocator, type_expr: ?*TypeExpr) !*T
     return type_info;
 }
 
+// Helper function to create TypeInfo from HIR type
+pub fn typeInfoFromHIRType(allocator: std.mem.Allocator, hir_type: HIRType) !*TypeInfo {
+    const type_info = try allocator.create(TypeInfo);
+    errdefer allocator.destroy(type_info);
+
+    type_info.* = switch (hir_type) {
+        .Int => TypeInfo{ .base = .Int },
+        .Byte => TypeInfo{ .base = .Byte },
+        .Float => TypeInfo{ .base = .Float },
+        .String => TypeInfo{ .base = .String },
+        .Tetra => TypeInfo{ .base = .Tetra },
+        .Nothing => TypeInfo{ .base = .Nothing },
+        .Array => blk: {
+            const element_type = try allocator.create(TypeInfo);
+            element_type.* = TypeInfo{ .base = .Nothing }; // Default element type
+            break :blk TypeInfo{
+                .base = .Array,
+                .array_type = element_type,
+            };
+        },
+        .Struct => TypeInfo{ .base = .Struct },
+        .Map => TypeInfo{ .base = .Custom },
+        .Enum => TypeInfo{ .base = .Enum },
+        .Function => TypeInfo{ .base = .Function },
+        .Auto => TypeInfo{ .base = .Nothing },
+    };
+
+    return type_info;
+}
+
 //======================================================================
 // Semantic Context Structures (for HIR generation)
 //======================================================================

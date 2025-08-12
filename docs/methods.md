@@ -1,6 +1,6 @@
-@length
+@length(x :: string | array) -> int
 
-@push
+@push(source :: array, newV alue :: any) -> nothing
 
 @pop
 

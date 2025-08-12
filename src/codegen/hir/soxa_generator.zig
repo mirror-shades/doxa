@@ -13,6 +13,7 @@ const SoxaTypes = @import("soxa_types.zig");
 const HIRType = SoxaTypes.HIRType;
 const CallKind = SoxaTypes.CallKind;
 const HIRProgram = SoxaTypes.HIRProgram;
+const import_parser = @import("../../parser/import_parser.zig");
 
 pub const HIRGenerator = struct {
     allocator: std.mem.Allocator,
@@ -43,6 +44,9 @@ pub const HIRGenerator = struct {
     function_calls: std.ArrayList(FunctionCallSite),
 
     module_namespaces: std.StringHashMap(ast.ModuleInfo), // Track module namespaces for function call resolution
+
+    // Map of specifically imported symbols (unqualified names)
+    imported_symbols: ?std.StringHashMap(import_parser.ImportedSymbol) = null,
 
     current_enum_type: ?[]const u8 = null,
     // Track array element types per variable for better index/peek typing
@@ -147,7 +151,7 @@ pub const HIRGenerator = struct {
         }
     };
 
-    pub fn init(allocator: std.mem.Allocator, reporter: *reporting.Reporter, module_namespaces: std.StringHashMap(ast.ModuleInfo)) HIRGenerator {
+    pub fn init(allocator: std.mem.Allocator, reporter: *reporting.Reporter, module_namespaces: std.StringHashMap(ast.ModuleInfo), imported_symbols: ?std.StringHashMap(import_parser.ImportedSymbol)) HIRGenerator {
         return HIRGenerator{
             .allocator = allocator,
             .instructions = std.ArrayList(HIRInstruction).init(allocator),
@@ -169,6 +173,7 @@ pub const HIRGenerator = struct {
             .current_function_return_type = .Nothing,
             .function_calls = std.ArrayList(FunctionCallSite).init(allocator),
             .module_namespaces = module_namespaces,
+            .imported_symbols = imported_symbols,
             .current_enum_type = null,
             .stats = HIRStats.init(allocator),
             .variable_array_element_types = std.StringHashMap(HIRType).init(allocator),
@@ -291,6 +296,74 @@ pub const HIRGenerator = struct {
                                 });
                             },
                             else => {},
+                        }
+                    }
+                }
+            }
+        }
+
+        // Additionally, create unqualified function signatures for specifically imported symbols
+        if (self.imported_symbols) |symbols| {
+            var sym_it = symbols.iterator();
+            while (sym_it.next()) |entry2| {
+                const sym_name = entry2.key_ptr.*;
+                const sym = entry2.value_ptr.*;
+                if (sym.kind != .Function) continue;
+
+                // Search module namespaces for a module that defines this public function
+                var it2 = self.module_namespaces.iterator();
+                while (it2.next()) |m_entry| {
+                    const module_info2 = m_entry.value_ptr.*;
+                    if (module_info2.ast) |module_ast| {
+                        if (module_ast.data == .Block) {
+                            const mod_statements2 = module_ast.data.Block.statements;
+                            var found = false;
+                            var func_return_type: HIRType = .Nothing;
+                            var func_body: []ast.Stmt = &[_]ast.Stmt{};
+                            var func_params: []ast.FunctionParam = &[_]ast.FunctionParam{};
+                            for (mod_statements2) |mod_stmt2| {
+                                switch (mod_stmt2.data) {
+                                    .FunctionDecl => |func2| {
+                                        if (!func2.is_public) continue;
+                                        if (!std.mem.eql(u8, func2.name.lexeme, sym_name)) continue;
+                                        // Found matching function
+                                        found = true;
+                                        func_return_type = self.convertTypeInfo(func2.return_type_info);
+                                        func_body = func2.body;
+                                        func_params = func2.params;
+                                    },
+                                    else => {},
+                                }
+                                if (found) break;
+                            }
+
+                            if (found) {
+                                // Add unqualified function signature using the imported symbol name
+                                const start_label2 = try self.generateLabel(try std.fmt.allocPrint(self.allocator, "func_{s}", .{sym_name}));
+                                const function_info2 = FunctionInfo{
+                                    .name = sym_name,
+                                    .arity = if (sym.param_count) |pc| pc else @intCast(func_params.len),
+                                    .return_type = func_return_type,
+                                    .start_label = start_label2,
+                                    .local_var_count = 0,
+                                    .is_entry = false,
+                                };
+
+                                // Only add if not already present
+                                if (!self.function_signatures.contains(sym_name)) {
+                                    try self.function_signatures.put(sym_name, function_info2);
+                                    try self.function_bodies.append(FunctionBody{
+                                        .function_info = function_info2,
+                                        .statements = func_body,
+                                        .start_instruction_index = 0,
+                                        .function_name = sym_name,
+                                        .function_params = func_params,
+                                        .return_type_info = (try ast.typeInfoFromHIRType(self.allocator, func_return_type)).*,
+                                    });
+                                }
+
+                                break; // Stop scanning modules once found
+                            }
                         }
                     }
                 }
@@ -424,7 +497,7 @@ pub const HIRGenerator = struct {
             if (module_info.ast) |module_ast| {
                 if (module_ast.data == .Block) {
                     const mod_statements = module_ast.data.Block.statements;
-                    self.reporter.debug("HIR: module '{s}' globals count: {d}", .{alias, mod_statements.len});
+                    self.reporter.debug("HIR: module '{s}' globals count: {d}", .{ alias, mod_statements.len });
                     for (mod_statements) |mod_stmt| {
                         switch (mod_stmt.data) {
                             .FunctionDecl => continue, // skip functions here

@@ -57,7 +57,6 @@ var dog is Dog {
 
 ```doxa
 // math.doxa
-#safe
 export fn add(a :: int, b :: int) -> int {
     return a + b;
 }
@@ -299,14 +298,3 @@ There are currently two trancendental operators, `and` and `not`. These can be r
 | **T** | F   |
 | **B** | N   |
 | **N** | B   |
-
-## Modes of Operation (not yet implemented)
-
-Doxa supports three operational modes:
-
-- **Normal Mode** (default): Dynamic typing with flexible syntax
-- **Safe Mode**: Enabled via `#safe` at file start, enforces static typing
-- **Warn Mode**: Compiles in normal mode but warns about safe convention violations
-
-!!! note
-Safe files can only import other safe files, while normal files can import both.
