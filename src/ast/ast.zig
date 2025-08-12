@@ -558,6 +558,9 @@ pub const Expr = struct {
         StringUpper: struct {
             string: *Expr,
         },
+        StringToInt: struct {
+            string: *Expr,
+        },
 
         // Math operations
         MathAbs: struct {
@@ -918,6 +921,10 @@ pub const Expr = struct {
                 allocator.destroy(s.string);
             },
             .StringUpper => |*s| {
+                s.string.deinit(allocator);
+                allocator.destroy(s.string);
+            },
+            .StringToInt => |*s| {
                 s.string.deinit(allocator);
                 allocator.destroy(s.string);
             },

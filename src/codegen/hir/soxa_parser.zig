@@ -671,6 +671,8 @@ pub const SoxaTextParser = struct {
                 StringOpType.Substring
             else if (std.mem.eql(u8, op_str, "Concat"))
                 StringOpType.Concat
+            else if (std.mem.eql(u8, op_str, "ToInt"))
+                StringOpType.ToInt
             else
                 StringOpType.Length; // Default fallback
 
