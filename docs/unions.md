@@ -154,6 +154,19 @@ const doubled = value as int else {
 }; // doubled is 84
 ```
 
+`as` can be used for control flow as well, using then blocks:
+
+```
+// using as like an 'istype' style conditional
+asThenUnion as int then {
+    var result is 20 + 30;
+    result?;
+} else {
+    var result is 30 + 40;
+    result?;
+}; // 50
+```
+
 ### Common Patterns
 
 **Safe extraction with default:**
