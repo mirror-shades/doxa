@@ -1495,6 +1495,13 @@ pub const HIRGenerator = struct {
 
                 // New: include union member list for variables declared as unions
                 var union_members: ?[][]const u8 = null;
+                // If peeking a StringToInt expression directly, attach union members inline
+                if (peek.expr.data == .StringToInt) {
+                    const members = try self.allocator.alloc([]const u8, 2);
+                    members[0] = "int";
+                    members[1] = "NumberError";
+                    union_members = members;
+                }
                 if (peek.expr.data == .Variable) {
                     const var_name = peek.expr.data.Variable.lexeme;
                     self.reporter.debug("Checking union members for variable {s}", .{var_name});
@@ -1537,6 +1544,16 @@ pub const HIRGenerator = struct {
                 // NEW: Track the variable's type from the assigned value
                 const assigned_type = self.inferTypeFromExpression(assign.value.?);
                 try self.trackVariableType(assign.name.lexeme, assigned_type);
+
+                // If assigning result of StringToInt, also track union members for peeks: ["int", "NumberError"]
+                if (assign.value.?.data == .StringToInt) {
+                    if (self.getOrCreateVariable(assign.name.lexeme)) |var_idx| {
+                        const members = try self.allocator.alloc([]const u8, 2);
+                        members[0] = "int";
+                        members[1] = "NumberError";
+                        try self.trackVariableUnionMembersByIndex(var_idx, members);
+                    } else |_| {}
+                }
 
                 // Get or create variable index
                 const var_idx = try self.getOrCreateVariable(assign.name.lexeme);
@@ -3172,6 +3189,10 @@ pub const HIRGenerator = struct {
     /// NEW: Track a variable's type when it's declared or assigned
     fn trackVariableType(self: *HIRGenerator, var_name: []const u8, var_type: HIRType) !void {
         try self.variable_types.put(var_name, var_type);
+    }
+
+    fn trackVariableUnionMembersByIndex(self: *HIRGenerator, var_index: u32, members: [][]const u8) !void {
+        try self.variable_union_members_by_index.put(var_index, members);
     }
 
     /// NEW: Track a variable's custom type name (for enums/structs)

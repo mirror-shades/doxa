@@ -1332,8 +1332,24 @@ pub const HIRVM = struct {
                                 try self.stack.push(HIRFrame.initFromHIRValue(array));
                             },
                             .ToInt => {
-                                const parsed = std.fmt.parseInt(i32, s_val, 10) catch 0;
-                                try self.stack.push(HIRFrame.initInt(parsed));
+                                const parsed_int = std.fmt.parseInt(i32, s_val, 10) catch {
+                                    // Return enum variant NumberError.ParseFailed
+                                    var variant_index: u32 = 0;
+                                    if (self.custom_type_registry.get("NumberError")) |ct| {
+                                        if (ct.enum_variants) |variants| {
+                                            for (variants, 0..) |v, i| {
+                                                if (std.mem.eql(u8, v.name, "ParseFailed")) {
+                                                    variant_index = @intCast(i);
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    const hir = HIRValue{ .enum_variant = .{ .type_name = "NumberError", .variant_name = "ParseFailed", .variant_index = variant_index } };
+                                    try self.stack.push(HIRFrame.initFromHIRValue(hir));
+                                    return; // handled failure path
+                                };
+                                try self.stack.push(HIRFrame.initInt(parsed_int));
                             },
                             else => return ErrorList.TypeError,
                         }
