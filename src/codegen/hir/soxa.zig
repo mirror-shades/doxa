@@ -532,6 +532,17 @@ fn writeHIRInstruction(writer: anytype, instruction: HIRInstruction, allocator: 
             } else {
                 try writer.writeByte(0); // No location
             }
+            // Write union members if present
+            if (i.union_members) |members| {
+                try writer.writeByte(1);
+                try writer.writeInt(u32, @as(u32, @intCast(members.len)), .little);
+                for (members) |m| {
+                    try writer.writeInt(u32, @as(u32, @intCast(m.len)), .little);
+                    try writer.writeAll(m);
+                }
+            } else {
+                try writer.writeByte(0);
+            }
         },
 
         // Array operations (Phase 1)
@@ -698,7 +709,22 @@ fn readHIRInstruction(reader: anytype, allocator: std.mem.Allocator) !HIRInstruc
                 };
             } else null;
 
-            return HIRInstruction{ .Peek = .{ .name = name, .value_type = value_type, .location = location } };
+            // Read union members if present
+            const has_union = (try reader.readByte()) != 0;
+            var union_members: ?[][]const u8 = null;
+            if (has_union) {
+                const count = try reader.readInt(u32, .little);
+                const arr = try allocator.alloc([]const u8, count);
+                for (arr) |*slot| {
+                    const slen = try reader.readInt(u32, .little);
+                    const s = try allocator.alloc(u8, slen);
+                    _ = try reader.readAll(s);
+                    slot.* = s;
+                }
+                union_members = arr;
+            }
+
+            return HIRInstruction{ .Peek = .{ .name = name, .value_type = value_type, .location = location, .union_members = union_members } };
         },
 
         // Array operations (Phase 1)
@@ -789,17 +815,28 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
         .Peek => |i| {
             if (i.name) |name| {
                 if (i.location) |location| {
-                    try writer.print("    Peek \"{s}\" {s} @{s}:{}:{}         ; Debug print\n", .{ name, @tagName(i.value_type), location.file, location.line, location.column });
+                    try writer.print("    Peek \"{s}\" {s} @{s}:{}:{}", .{ name, @tagName(i.value_type), location.file, location.line, location.column });
                 } else {
-                    try writer.print("    Peek \"{s}\" {s}         ; Debug print\n", .{ name, @tagName(i.value_type) });
+                    try writer.print("    Peek \"{s}\" {s}", .{ name, @tagName(i.value_type) });
                 }
             } else {
                 if (i.location) |location| {
-                    try writer.print("    Peek {s} @{s}:{}:{}                 ; Debug print\n", .{ @tagName(i.value_type), location.file, location.line, location.column });
+                    try writer.print("    Peek {s} @{s}:{}:{}", .{ @tagName(i.value_type), location.file, location.line, location.column });
                 } else {
-                    try writer.print("    Peek {s}                 ; Debug print\n", .{@tagName(i.value_type)});
+                    try writer.print("    Peek {s}", .{@tagName(i.value_type)});
                 }
             }
+            // Optionally include union member list in text form for debugging
+            if (i.union_members) |members| {
+                // Print as ; union [a,b,c]
+                try writer.print(" ; union [", .{});
+                for (members, 0..) |m, idx| {
+                    try writer.print("{s}", .{m});
+                    if (idx < members.len - 1) try writer.writeByte(',');
+                }
+                try writer.writeByte(']');
+            }
+            try writer.print("         ; Debug print\n", .{});
         },
 
         .AssertFail => |a| {

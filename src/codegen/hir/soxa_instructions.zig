@@ -393,6 +393,7 @@ pub const HIRInstruction = union(enum) {
         name: ?[]const u8,
         value_type: HIRType,
         location: ?Reporting.Reporter.Location,
+        union_members: ?[][]const u8 = null,
     },
 
     /// Prints a struct

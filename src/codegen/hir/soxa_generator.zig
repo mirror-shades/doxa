@@ -52,6 +52,11 @@ pub const HIRGenerator = struct {
     // Track array element types per variable for better index/peek typing
     variable_array_element_types: std.StringHashMap(HIRType),
 
+    // New: track union member type names per variable name (legacy, may cause collisions across scopes)
+    variable_union_members: std.StringHashMap([][]const u8),
+    // New: track union member type names per variable index to avoid name collisions across scopes
+    variable_union_members_by_index: std.AutoHashMap(u32, [][]const u8),
+
     pub const FunctionInfo = struct {
         name: []const u8,
         arity: u32,
@@ -177,6 +182,8 @@ pub const HIRGenerator = struct {
             .current_enum_type = null,
             .stats = HIRStats.init(allocator),
             .variable_array_element_types = std.StringHashMap(HIRType).init(allocator),
+            .variable_union_members = std.StringHashMap([][]const u8).init(allocator),
+            .variable_union_members_by_index = std.AutoHashMap(u32, [][]const u8).init(allocator),
         };
     }
 
@@ -193,6 +200,8 @@ pub const HIRGenerator = struct {
         self.function_bodies.deinit();
         self.function_calls.deinit();
         self.variable_array_element_types.deinit();
+        self.variable_union_members.deinit();
+        self.variable_union_members_by_index.deinit();
         // Note: module_namespaces is not owned by HIRGenerator, so we don't deinit it
     }
 
@@ -631,6 +640,7 @@ pub const HIRGenerator = struct {
                 // FIXED: Prioritize explicit type annotation over inference
                 var custom_type_name: ?[]const u8 = null;
                 if (decl.type_info.base != .Nothing) {
+                    self.reporter.debug("Variable {s} has type base: {s}", .{ decl.name.lexeme, @tagName(decl.type_info.base) });
                     // Use explicit type annotation first
                     var_type = switch (decl.type_info.base) {
                         .Int => .Int,
@@ -642,8 +652,22 @@ pub const HIRGenerator = struct {
                         .Union => blk: {
                             // Default unions to the first member's type for initialization
                             if (decl.type_info.union_type) |ut| {
+                                self.reporter.debug("Found union type with {} members", .{ut.types.len});
                                 if (ut.types.len > 0) {
                                     const first = ut.types[0];
+                                    // New: record union member names (lowercase) for this variable (flatten nested unions)
+                                    const list = try self.collectUnionMemberNames(ut);
+                                    for (list, 0..) |nm, i| {
+                                        self.reporter.debug("Union member {}: {s}", .{ i, nm });
+                                    }
+                                    try self.variable_union_members.put(decl.name.lexeme, list);
+                                    if (self.variables.get(decl.name.lexeme)) |var_index| {
+                                        try self.variable_union_members_by_index.put(var_index, list);
+                                        self.reporter.debug("Recorded union members for variable {s} (index {})", .{ decl.name.lexeme, var_index });
+                                    } else {
+                                        self.reporter.debug("Recorded union members for variable {s}", .{decl.name.lexeme});
+                                    }
+
                                     break :blk switch (first.base) {
                                         .Int => .Int,
                                         .Float => .Float,
@@ -771,6 +795,23 @@ pub const HIRGenerator = struct {
                             const const_idx = try self.addConstant(default_value);
                             try self.instructions.append(.{ .Const = .{ .value = default_value, .constant_id = const_idx } });
                         },
+                    }
+
+                    // Store into the declared variable now so it has a concrete value and index
+                    const var_idx2 = try self.getOrCreateVariable(decl.name.lexeme);
+                    // Duplicate so subsequent code can see the value if needed
+                    try self.instructions.append(.Dup);
+                    try self.instructions.append(.{ .StoreVar = .{
+                        .var_index = var_idx2,
+                        .var_name = decl.name.lexeme,
+                        .scope_kind = .Local,
+                        .module_context = null,
+                        .expected_type = var_type,
+                    } });
+
+                    // Also record union members by index if present by name
+                    if (self.variable_union_members.get(decl.name.lexeme)) |members0| {
+                        try self.variable_union_members_by_index.put(var_idx2, members0);
                     }
                 }
 
@@ -1331,19 +1372,37 @@ pub const HIRGenerator = struct {
                     },
                 }
 
-                // Generate arguments for non-method calls (method calls and module calls handle arguments differently)
+                // Generate arguments and count only those actually emitted (handles default placeholders)
+                var arg_emitted_count: u32 = 0;
                 if (call.callee.data != .FieldAccess) {
                     for (call.arguments, 0..) |arg, arg_index| {
-                        // Check if this is a default argument placeholder
                         if (arg.data == .DefaultArgPlaceholder) {
-                            // Try to resolve the default value from function signature
                             if (self.resolveDefaultArgument(function_name, arg_index)) |default_expr| {
                                 try self.generateExpression(default_expr, true);
+                                arg_emitted_count += 1;
                             } else {
-                                try self.generateExpression(arg, true);
+                                self.reporter.reportCompileError(expr.base.span.start, "No default value for parameter {} in function '{s}'", .{ arg_index, function_name });
+                                // Do not emit a value for missing default
                             }
                         } else {
                             try self.generateExpression(arg, true);
+                            arg_emitted_count += 1;
+                        }
+                    }
+                } else {
+                    // Field access (methods/module functions): emit object, then args with default handling
+                    // Note: object was already emitted above for FieldAccess
+                    for (call.arguments, 0..) |arg, arg_index| {
+                        if (arg.data == .DefaultArgPlaceholder) {
+                            if (self.resolveDefaultArgument(function_name, arg_index)) |default_expr| {
+                                try self.generateExpression(default_expr, true);
+                                arg_emitted_count += 1;
+                            } else {
+                                self.reporter.reportCompileError(expr.base.span.start, "No default value for parameter {} in function '{s}'", .{ arg_index, function_name });
+                            }
+                        } else {
+                            try self.generateExpression(arg, true);
+                            arg_emitted_count += 1;
                         }
                     }
                 }
@@ -1356,7 +1415,7 @@ pub const HIRGenerator = struct {
                     .Call = .{
                         .function_index = function_index,
                         .qualified_name = function_name,
-                        .arg_count = @as(u32, @intCast(call.arguments.len)),
+                        .arg_count = arg_emitted_count,
                         .call_kind = call_kind,
                         .target_module = null,
                         .return_type = return_type,
@@ -1426,11 +1485,29 @@ pub const HIRGenerator = struct {
                     }
                 }
 
+                // New: include union member list for variables declared as unions
+                var union_members: ?[][]const u8 = null;
+                if (peek.expr.data == .Variable) {
+                    const var_name = peek.expr.data.Variable.lexeme;
+                    self.reporter.debug("Checking union members for variable {s}", .{var_name});
+                    if (self.variables.get(var_name)) |var_index| {
+                        if (self.variable_union_members_by_index.get(var_index)) |members2| {
+                            union_members = members2;
+                            self.reporter.debug("Found union members for {s} by index: {any}", .{ var_name, members2 });
+                        } else {
+                            self.reporter.debug("No union members found for {s} (by index)", .{var_name});
+                        }
+                    } else {
+                        self.reporter.debug("No union members found for {s} (no variable index)", .{var_name});
+                    }
+                }
+
                 // Generate peek instruction with full path and correct type
                 try self.instructions.append(.{ .Peek = .{
                     .name = peek_path,
                     .value_type = inferred_type,
                     .location = peek.location,
+                    .union_members = union_members,
                 } });
 
                 // IMPORTANT: Peek pops the value, prints, then pushes it back.
@@ -3083,6 +3160,48 @@ pub const HIRGenerator = struct {
     /// NEW: Get tracked variable type
     fn getTrackedVariableType(self: *HIRGenerator, var_name: []const u8) ?HIRType {
         return self.variable_types.get(var_name);
+    }
+
+    fn astTypeToLowerName(_: *HIRGenerator, base: ast.Type) []const u8 {
+        return switch (base) {
+            .Int => "int",
+            .Byte => "byte",
+            .Float => "float",
+            .String => "string",
+            .Tetra => "tetra",
+            .Nothing => "nothing",
+            .Array => "array",
+            .Struct => "struct",
+            .Enum => "enum",
+            .Map => "map",
+            .Function => "function",
+            .Alias => "alias",
+            .Custom => "custom",
+            .Union => "union",
+        };
+    }
+
+    /// Collect flattened union member names (lowercase) from a possibly nested union type
+    fn collectUnionMemberNames(self: *HIRGenerator, ut: *ast.UnionType) ![][]const u8 {
+        var list = std.ArrayList([]const u8).init(self.allocator);
+        defer if (false) list.deinit(); // transferred to caller
+
+        // Depth-first traversal to flatten nested unions
+        for (ut.types) |member| {
+            if (member.base == .Union) {
+                if (member.union_type) |nested| {
+                    const nested_list = try self.collectUnionMemberNames(nested);
+                    // append nested_list items to list
+                    for (nested_list) |nm| {
+                        try list.append(nm);
+                    }
+                }
+            } else {
+                try list.append(self.astTypeToLowerName(member.base));
+            }
+        }
+
+        return try list.toOwnedSlice();
     }
 
     // NEW: Track array element types per variable for better index inference

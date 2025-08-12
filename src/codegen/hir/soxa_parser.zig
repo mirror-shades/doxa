@@ -418,6 +418,7 @@ pub const SoxaTextParser = struct {
             var name: ?[]const u8 = null;
             var value_type: HIRType = .String;
             var location: ?Reporting.Reporter.Location = null;
+            var union_members: ?[][]const u8 = null;
 
             // For struct peekion
             var struct_name: ?[]const u8 = null;
@@ -476,6 +477,28 @@ pub const SoxaTextParser = struct {
             }
 
             // If this is a struct peekion, gather field information from the stack
+            // Try to parse optional union member list embedded in the line text: " ; union [t1,t2,...]"
+            // Note: We parse from the original line to avoid impacting token stream
+            const union_marker = std.mem.indexOf(u8, trimmed, "; union [");
+            if (union_marker) |marker_pos| {
+                const list_start = marker_pos + 9; // after "; union ["
+                if (std.mem.indexOfPos(u8, trimmed, list_start, "]")) |end_pos| {
+                    const inner = std.mem.trim(u8, trimmed[list_start..end_pos], " \t");
+                    // Split by commas
+                    var items = std.mem.splitScalar(u8, inner, ',');
+                    var tmp = std.ArrayList([]const u8).init(self.allocator);
+                    defer tmp.deinit();
+                    while (items.next()) |it| {
+                        const item_trim = std.mem.trim(u8, it, " \t");
+                        if (item_trim.len > 0) {
+                            const s = try self.allocator.dupe(u8, item_trim);
+                            try tmp.append(s);
+                        }
+                    }
+                    union_members = try tmp.toOwnedSlice();
+                }
+            }
+
             if (value_type == .Struct) {
                 // FIXED: Check if struct_context is available before trying to get struct info
                 // When parsing pre-generated HIR files, struct_context may be null
@@ -510,6 +533,7 @@ pub const SoxaTextParser = struct {
                             name,
                         .value_type = value_type,
                         .location = location,
+                        .union_members = union_members,
                     } });
                 }
             } else {
@@ -520,6 +544,7 @@ pub const SoxaTextParser = struct {
                         name,
                     .value_type = value_type,
                     .location = location,
+                    .union_members = union_members,
                 } });
             }
         } else if (std.mem.eql(u8, op, "ArrayNew")) {
