@@ -1037,12 +1037,49 @@ pub const HIRVM = struct {
                 }
 
                 // Print variable name before :: if available, then always show type
+                const writer = std.io.getStdOut().writer();
+
+                // If we have union member info, print union with '>' on active member; else fallback to concrete type
                 if (peek.name) |name| {
-                    const type_string = self.getTypeString(value.value);
-                    try std.io.getStdOut().writer().print("{s} :: {s} is ", .{ name, type_string });
+                    self.reporter.debug("Peek instruction for variable {s}", .{name});
+                    if (peek.union_members) |members| {
+                        self.reporter.debug("Found union members: {any}", .{members});
+                        if (members.len > 1) {
+                            const active = self.getTypeString(value.value);
+                            try writer.print("{s} :: ", .{name});
+                            for (members, 0..) |m, i| {
+                                if (i > 0) try writer.print(" | ", .{});
+                                if (std.mem.eql(u8, m, active)) try writer.print(">", .{});
+                                try writer.print("{s}", .{m});
+                            }
+                            try writer.print(" is ", .{});
+                        } else {
+                            const type_string = self.getTypeString(value.value);
+                            try writer.print("{s} :: {s} is ", .{ name, type_string });
+                        }
+                    } else {
+                        const type_string = self.getTypeString(value.value);
+                        try writer.print("{s} :: {s} is ", .{ name, type_string });
+                    }
                 } else {
-                    const type_string = self.getTypeString(value.value);
-                    try std.io.getStdOut().writer().print(":: {s} is ", .{type_string});
+                    if (peek.union_members) |members| {
+                        if (members.len > 1) {
+                            const active = self.getTypeString(value.value);
+                            try writer.print(":: ", .{});
+                            for (members, 0..) |m, i| {
+                                if (i > 0) try writer.print(" | ", .{});
+                                if (std.mem.eql(u8, m, active)) try writer.print(">", .{});
+                                try writer.print("{s}", .{m});
+                            }
+                            try writer.print(" is ", .{});
+                        } else {
+                            const type_string = self.getTypeString(value.value);
+                            try writer.print(":: {s} is ", .{type_string});
+                        }
+                    } else {
+                        const type_string = self.getTypeString(value.value);
+                        try writer.print(":: {s} is ", .{type_string});
+                    }
                 }
 
                 // Format the value

@@ -1246,30 +1246,36 @@ pub const SemanticAnalyzer = struct {
                     const callee_type = try self.inferTypeFromExpr(call.callee);
                     if (callee_type.base == .Function) {
                         if (callee_type.function_type) |func_type| {
-                            // Validate argument count
+                            // Validate argument count allowing default placeholders (~)
                             const expected_arg_count: usize = func_type.params.len;
-                            const actual_arg_count: usize = call.arguments.len;
-                            if (expected_arg_count != actual_arg_count) {
+                            var provided_arg_count: usize = 0;
+                            for (call.arguments) |arg_expr_it| {
+                                if (arg_expr_it.data != .DefaultArgPlaceholder) provided_arg_count += 1;
+                            }
+                            if (provided_arg_count > expected_arg_count) {
                                 self.reporter.reportCompileError(
                                     expr.base.span.start,
-                                    "Argument count mismatch: expected {}, got {}",
-                                    .{ expected_arg_count, actual_arg_count },
+                                    "Argument count mismatch: expected at most {}, got {}",
+                                    .{ expected_arg_count, provided_arg_count },
                                 );
                                 self.fatal_error = true;
                                 type_info.base = .Nothing;
                                 return type_info;
                             }
 
-                            // Validate each argument type against parameter type
-                            // If parameter type is Nothing (unknown from metadata), skip strict unification
-                            var i: usize = 0;
-                            while (i < actual_arg_count) : (i += 1) {
-                                const arg_expr = call.arguments[i];
-                                const arg_type = try self.inferTypeFromExpr(arg_expr);
-                                if (func_type.params[i].base != .Nothing) {
-                                    // Unify parameter (expected) with argument (actual)
-                                    try self.unifyTypes(&func_type.params[i], arg_type, expr.base.span);
+                            // Validate each non-placeholder argument type against parameter type
+                            var param_index: usize = 0;
+                            for (call.arguments) |arg_expr_it| {
+                                if (arg_expr_it.data == .DefaultArgPlaceholder) {
+                                    if (param_index < expected_arg_count) param_index += 1;
+                                    continue;
                                 }
+                                if (param_index >= expected_arg_count) break;
+                                const arg_type = try self.inferTypeFromExpr(arg_expr_it);
+                                if (func_type.params[param_index].base != .Nothing) {
+                                    try self.unifyTypes(&func_type.params[param_index], arg_type, expr.base.span);
+                                }
+                                param_index += 1;
                             }
 
                             // Propagate return type
