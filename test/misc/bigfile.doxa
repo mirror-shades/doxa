@@ -109,7 +109,7 @@ each word at index in stringArr {
     word?;
 }
 
-const asThenUnion :: int | float is 10;
+var asThenUnion :: int | float | byte is 10;
 var asThen is asThenUnion as int else 0;
 
 asThen?; // 10
@@ -135,6 +135,12 @@ asThenUnion as int then {
     result?;
 }; // 50
 
+
+asThenUnion?; // 10
+asThenUnion is 10.0;
+asThenUnion?; // 10.0
+asThenUnion is 0x0A;
+asThenUnion?; // 0x0A
 
 // as narrowing
 fn onlyUsesInt(x :: int) {

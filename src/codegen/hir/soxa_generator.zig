@@ -845,6 +845,14 @@ pub const HIRGenerator = struct {
                     } });
                 }
 
+                // Ensure union member metadata is recorded by variable index (only for union declarations)
+                if (decl.type_info.base == .Union) {
+                    if (self.variable_union_members.get(decl.name.lexeme)) |members_for_var| {
+                        // Update/insert index-based mapping so later peeks can find it reliably
+                        _ = try self.variable_union_members_by_index.put(var_idx, members_for_var);
+                    }
+                }
+
                 // No extra value should remain on stack now; nothing to pop
             },
             .FunctionDecl => {
@@ -1490,15 +1498,19 @@ pub const HIRGenerator = struct {
                 if (peek.expr.data == .Variable) {
                     const var_name = peek.expr.data.Variable.lexeme;
                     self.reporter.debug("Checking union members for variable {s}", .{var_name});
-                    if (self.variables.get(var_name)) |var_index| {
-                        if (self.variable_union_members_by_index.get(var_index)) |members2| {
-                            union_members = members2;
-                            self.reporter.debug("Found union members for {s} by index: {any}", .{ var_name, members2 });
-                        } else {
-                            self.reporter.debug("No union members found for {s} (by index)", .{var_name});
+                    // Only attach union metadata in global scope to avoid cross-function collisions
+                    if (self.current_function == null) {
+                        // Prefer index-based lookup to avoid name collisions
+                        if (self.variables.get(var_name)) |var_index| {
+                            if (self.variable_union_members_by_index.get(var_index)) |members2| {
+                                union_members = members2;
+                                self.reporter.debug("Found union members for {s} by index: {any}", .{ var_name, members2 });
+                            }
                         }
-                    } else {
-                        self.reporter.debug("No union members found for {s} (no variable index)", .{var_name});
+                    }
+                    // Regression fix: do NOT fallback to name-based lookup; avoid cross-scope collisions
+                    if (union_members == null) {
+                        self.reporter.debug("No union members found for {s}", .{var_name});
                     }
                 }
 

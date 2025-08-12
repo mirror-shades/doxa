@@ -1054,6 +1054,7 @@ pub const HIRVM = struct {
                             }
                             try writer.print(" is ", .{});
                         } else {
+                            // If a union was detected but only one member present, still print as that type
                             const type_string = self.getTypeString(value.value);
                             try writer.print("{s} :: {s} is ", .{ name, type_string });
                         }
