@@ -69,6 +69,9 @@ const expected_results = [_]result{
     .{ .type = "int", .value = "30" },
     .{ .type = "float", .value = "0.0" },
     .{ .type = "int", .value = "50" },
+    .{ .type = ">int | float | byte", .value = "10" },
+    .{ .type = "int | >float | byte", .value = "10.0" },
+    .{ .type = "int | float | >byte", .value = "0x0A" },
     .{ .type = "int", .value = "17" },
     .{ .type = "string", .value = "\"return\"" },
     .{ .type = "string", .value = "\"implicit\"" },
@@ -235,8 +238,8 @@ fn parseOutput(output: []const u8, allocator: std.mem.Allocator) !std.ArrayList(
 
 fn grabType(output: []const u8) []const u8 {
     var foundType: []const u8 = "";
-    for (output, 0..) |c, i| {
-        if (c == ' ') {
+    for (output, 0..) |_, i| {
+        if (output[i] == ' ' and output[i + 1] == 'i' and output[i + 2] == 's') {
             foundType = output[0..i];
             break;
         }
