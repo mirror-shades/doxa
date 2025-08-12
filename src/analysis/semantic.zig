@@ -1240,12 +1240,15 @@ pub const SemanticAnalyzer = struct {
                             }
 
                             // Validate each argument type against parameter type
+                            // If parameter type is Nothing (unknown from metadata), skip strict unification
                             var i: usize = 0;
                             while (i < actual_arg_count) : (i += 1) {
                                 const arg_expr = call.arguments[i];
                                 const arg_type = try self.inferTypeFromExpr(arg_expr);
-                                // Unify parameter (expected) with argument (actual)
-                                try self.unifyTypes(&func_type.params[i], arg_type, expr.base.span);
+                                if (func_type.params[i].base != .Nothing) {
+                                    // Unify parameter (expected) with argument (actual)
+                                    try self.unifyTypes(&func_type.params[i], arg_type, expr.base.span);
+                                }
                             }
 
                             // Propagate return type
@@ -2616,31 +2619,89 @@ pub const SemanticAnalyzer = struct {
         const type_info = self.allocator.create(ast.TypeInfo) catch return null;
         errdefer self.allocator.destroy(type_info);
 
-        switch (imported_symbol.kind) {
-            .Function => {
-                // Create return type
-                const return_type = self.allocator.create(ast.TypeInfo) catch return null;
-                return_type.* = ast.TypeInfo{ .base = .Int, .is_mutable = false };
+        const ti = switch (imported_symbol.kind) {
+            .Function => blk: {
+                // Build a best-effort function type using imported metadata when available;
+                // fall back to scanning module_namespaces.
+                var built_func_type: ?*ast.FunctionType = null;
 
-                // Create function type
-                const function_type = self.allocator.create(ast.FunctionType) catch return null;
-                function_type.* = ast.FunctionType{
-                    .params = &[_]ast.TypeInfo{},
-                    .return_type = return_type,
-                };
+                // If import captured param_count/return_type_info, prefer that
+                const maybe_param_count = imported_symbol.param_count;
+                const maybe_return_info = imported_symbol.return_type_info;
+                if (maybe_param_count != null or maybe_return_info != null) {
+                    const pc: usize = if (maybe_param_count) |x| @intCast(x) else 0;
+                    if (self.allocator.alloc(ast.TypeInfo, pc) catch null) |params_buf| {
+                        // Default parameter types to Nothing when unknown
+                        for (params_buf) |*ti| ti.* = ast.TypeInfo{ .base = .Nothing };
+                        if (self.allocator.create(ast.TypeInfo) catch null) |ret_ptr| {
+                            ret_ptr.* = if (maybe_return_info) |ri| ri else ast.TypeInfo{ .base = .Nothing };
+                            if (self.allocator.create(ast.FunctionType) catch null) |ft_ptr| {
+                                ft_ptr.* = ast.FunctionType{ .params = params_buf, .return_type = ret_ptr };
+                                built_func_type = ft_ptr;
+                            }
+                        }
+                    }
+                }
 
-                type_info.* = ast.TypeInfo{
-                    .base = .Function,
-                    .is_mutable = false,
-                    .function_type = function_type,
-                };
+                if (built_func_type == null) {
+                    if (self.parser) |parser| {
+                        var it = parser.module_namespaces.iterator();
+                        while (it.next()) |entry| {
+                            const module_info = entry.value_ptr.*;
+                            if (module_info.ast) |module_ast| {
+                                if (module_ast.data == .Block) {
+                                    const stmts = module_ast.data.Block.statements;
+                                    for (stmts) |s| {
+                                        switch (s.data) {
+                                            .FunctionDecl => |f| {
+                                                if (!f.is_public) continue;
+                                                if (!std.mem.eql(u8, f.name.lexeme, name)) continue;
+                                                // Found matching function; construct FunctionType from its params/return
+                                                const ft = self.allocator.create(ast.FunctionType) catch break;
+                                                // Duplicate param TypeInfos into a flat slice as FunctionType expects []TypeInfo
+                                                var params_list = std.ArrayList(ast.TypeInfo).init(self.allocator);
+                                                errdefer params_list.deinit();
+                                                for (f.params) |p| {
+                                                    const ti_ptr = if (p.type_expr) |texpr| (self.typeExprToTypeInfo(texpr) catch null) else null;
+                                                    const ti = if (ti_ptr) |tmp| tmp.* else ast.TypeInfo{ .base = .Nothing };
+                                                    params_list.append(ti) catch break;
+                                                }
+                                                const params_slice = params_list.toOwnedSlice() catch break;
+                                                const ret_ptr = self.allocator.create(ast.TypeInfo) catch break;
+                                                ret_ptr.* = f.return_type_info;
+                                                ft.* = ast.FunctionType{ .params = params_slice, .return_type = ret_ptr };
+                                                built_func_type = ft;
+                                                break;
+                                            },
+                                            else => {},
+                                        }
+                                    }
+                                }
+                            }
+                            if (built_func_type != null) break;
+                        }
+                    }
+                }
+
+                // Fallback if not found: zero params and int return (legacy behavior)
+                if (built_func_type == null) {
+                    const return_type = self.allocator.create(ast.TypeInfo) catch return null;
+                    return_type.* = ast.TypeInfo{ .base = .Int, .is_mutable = false };
+                    const function_type = self.allocator.create(ast.FunctionType) catch return null;
+                    function_type.* = ast.FunctionType{ .params = &[_]ast.TypeInfo{}, .return_type = return_type };
+                    built_func_type = function_type;
+                }
+
+                break :blk ast.TypeInfo{ .base = .Function, .is_mutable = false, .function_type = built_func_type };
             },
-            .Variable => type_info.* = ast.TypeInfo{ .base = .Int, .is_mutable = false },
-            .Struct => type_info.* = ast.TypeInfo{ .base = .Struct, .is_mutable = false },
-            .Enum => type_info.* = ast.TypeInfo{ .base = .Enum, .is_mutable = false },
-            .Type => type_info.* = ast.TypeInfo{ .base = .Custom, .is_mutable = false },
-            .Import => type_info.* = ast.TypeInfo{ .base = .Custom, .is_mutable = false },
-        }
+            .Variable => ast.TypeInfo{ .base = .Int, .is_mutable = false },
+            .Struct => ast.TypeInfo{ .base = .Struct, .is_mutable = false },
+            .Enum => ast.TypeInfo{ .base = .Enum, .is_mutable = false },
+            .Type => ast.TypeInfo{ .base = .Custom, .is_mutable = false },
+            .Import => ast.TypeInfo{ .base = .Custom, .is_mutable = false },
+        };
+
+        type_info.* = ti;
 
         // Convert TypeInfo to TokenType
         const token_type = self.convertTypeToTokenType(type_info.base);

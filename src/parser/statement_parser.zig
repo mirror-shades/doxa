@@ -8,6 +8,7 @@ const Reporter = Reporting.Reporter;
 const token = @import("../types/token.zig");
 const declaration_parser = @import("./declaration_parser.zig");
 const expression_parser = @import("./expression_parser.zig");
+const import_parser = @import("./import_parser.zig");
 const HIRType = @import("../codegen/hir/soxa_types.zig").HIRType;
 
 pub fn parse(self: *Parser, reporter: *Reporter) ErrorList![]ast.Stmt {
@@ -280,6 +281,15 @@ pub fn parseStatement(self: *Parser) ErrorList!ast.Stmt {
         .CONTINUE => parseContinueStmt(self),
         .BREAK => parseBreakStmt(self),
         .EACH => parseEachStmt(self), // Add this line
+        .IMPORT => blk: {
+            // Allow imports inside blocks; perform side-effects and emit empty expression stmt
+            _ = try import_parser.parseImportStmt(self);
+            break :blk ast.Stmt{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(self.peek()) }, .data = .{ .Expression = null } };
+        },
+        .MODULE => blk: {
+            _ = try import_parser.parseModuleStmt(self);
+            break :blk ast.Stmt{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(self.peek()) }, .data = .{ .Expression = null } };
+        },
         .LEFT_BRACE => blk: {
             const block_expr = if (try Parser.block(self, null, .NONE)) |expr|
                 ast.Stmt{ .base = .{
