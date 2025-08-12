@@ -237,6 +237,14 @@ pub const SemanticAnalyzer = struct {
         try self.custom_types.put(struct_name, custom_type);
     }
 
+    // Inject compiler-provided enums (called once per program)
+    fn ensureBuiltinEnums(self: *SemanticAnalyzer) !void {
+        if (!self.custom_types.contains("NumberError")) {
+            const variants = [_][]const u8{ "ParseFailed", "Overflow", "Underflow" };
+            try self.registerEnumType("NumberError", &variants);
+        }
+    }
+
     // NEW: Custom type info structure (matching HIR generator)
     pub const CustomTypeInfo = struct {
         name: []const u8,
@@ -346,6 +354,9 @@ pub const SemanticAnalyzer = struct {
         const root_scope = try self.memory.scope_manager.createScope(null, self.memory);
         self.memory.scope_manager.root_scope = root_scope;
         self.current_scope = root_scope;
+
+        // Inject compiler-provided enums (shared error categories)
+        try self.ensureBuiltinEnums();
 
         try self.collectDeclarations(statements, root_scope);
 
@@ -2397,36 +2408,30 @@ pub const SemanticAnalyzer = struct {
                                     return type_info;
                                 }
 
-                                // Constant-fold @int("...") when possible
+                                // For now, do not fold literals; lower all @int to runtime StringToInt to preserve union type
                                 if (method_call.method.type == .PARSEINT and method_call.receiver.data == .Literal) {
-                                    switch (method_call.receiver.data.Literal) {
-                                        .string => |s| {
-                                            const parsed = std.fmt.parseInt(i32, s, 10) catch {
-                                                self.reporter.reportCompileError(
-                                                    method_call.receiver.base.span.start,
-                                                    "Invalid integer literal for @int: '{s}'",
-                                                    .{s},
-                                                );
-                                                self.fatal_error = true;
-                                                type_info.* = .{ .base = .Nothing };
-                                                return type_info;
-                                            };
-
-                                            // Replace current expr with integer literal and free old receiver
-                                            method_call.receiver.deinit(self.allocator);
-                                            self.allocator.destroy(method_call.receiver);
-                                            expr.data = .{ .Literal = .{ .int = parsed } };
-                                            type_info.* = .{ .base = .Int };
-                                            return type_info;
-                                        },
-                                        else => {},
-                                    }
+                                    expr.data = .{ .StringToInt = .{ .string = method_call.receiver } };
+                                    const int_t = try self.allocator.create(ast.TypeInfo);
+                                    int_t.* = .{ .base = .Int };
+                                    const err_t = try self.allocator.create(ast.TypeInfo);
+                                    err_t.* = .{ .base = .Custom, .custom_type = "NumberError" };
+                                    var union_members = [_]*ast.TypeInfo{ int_t, err_t };
+                                    const u = try self.createUnionType(union_members[0..]);
+                                    type_info.* = u.*;
+                                    return type_info;
                                 }
 
                                 // Lower to runtime string->int conversion when receiver is not literal
                                 if (method_call.method.type == .PARSEINT) {
+                                    // Return type: int | NumberError
+                                    const int_t = try self.allocator.create(ast.TypeInfo);
+                                    int_t.* = .{ .base = .Int };
+                                    const err_t = try self.allocator.create(ast.TypeInfo);
+                                    err_t.* = .{ .base = .Custom, .custom_type = "NumberError" };
+                                    var union_members = [_]*ast.TypeInfo{ int_t, err_t };
+                                    const u = try self.createUnionType(union_members[0..]);
                                     expr.data = .{ .StringToInt = .{ .string = method_call.receiver } };
-                                    type_info.* = .{ .base = .Int };
+                                    type_info.* = u.*;
                                     return type_info;
                                 }
                                 // For float: keep current behavior (not implemented)
