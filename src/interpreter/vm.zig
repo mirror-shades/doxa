@@ -1331,6 +1331,10 @@ pub const HIRVM = struct {
 
                                 try self.stack.push(HIRFrame.initFromHIRValue(array));
                             },
+                            .ToInt => {
+                                const parsed = std.fmt.parseInt(i32, s_val, 10) catch 0;
+                                try self.stack.push(HIRFrame.initInt(parsed));
+                            },
                             else => return ErrorList.TypeError,
                         }
                     },

@@ -1871,6 +1871,20 @@ pub const SemanticAnalyzer = struct {
                 byte_type.* = .{ .base = .Byte };
                 type_info.* = .{ .base = .Array, .array_type = byte_type };
             },
+            .StringToInt => |string_expr| {
+                const s_type = try self.inferTypeFromExpr(string_expr.string);
+                if (s_type.base != .String) {
+                    self.reporter.reportCompileError(
+                        expr.base.span.start,
+                        "StringToInt requires string type, got {s}",
+                        .{@tagName(s_type.base)},
+                    );
+                    self.fatal_error = true;
+                    type_info.base = .Nothing;
+                    return type_info;
+                }
+                type_info.* = .{ .base = .Int };
+            },
             .Map => |map_entries| {
                 if (map_entries.len == 0) {
                     type_info.* = .{ .base = .Map };
@@ -2409,11 +2423,17 @@ pub const SemanticAnalyzer = struct {
                                     }
                                 }
 
-                                // Runtime parsing not implemented yet
+                                // Lower to runtime string->int conversion when receiver is not literal
+                                if (method_call.method.type == .PARSEINT) {
+                                    expr.data = .{ .StringToInt = .{ .string = method_call.receiver } };
+                                    type_info.* = .{ .base = .Int };
+                                    return type_info;
+                                }
+                                // For float: keep current behavior (not implemented)
                                 self.reporter.reportCompileError(
                                     .{ .file = method_call.method.file, .line = method_call.method.line, .column = method_call.method.column },
-                                    "@{s} on non-literal not implemented",
-                                    .{method_name},
+                                    "@float on non-literal not implemented",
+                                    .{},
                                 );
                                 self.fatal_error = true;
                                 type_info.* = .{ .base = .Nothing };

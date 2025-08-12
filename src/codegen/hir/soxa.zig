@@ -891,6 +891,7 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
                 .Bytes => "Bytes",
                 .Substring => "Substring",
                 .Concat => "Concat",
+                .ToInt => "ToInt",
             };
             try writer.print("    StringOp {s}                 ; String operation\n", .{op_name});
         },

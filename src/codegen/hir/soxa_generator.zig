@@ -2406,6 +2406,16 @@ pub const HIRGenerator = struct {
                 });
             },
 
+            .StringToInt => |sti| {
+                // Generate the string expression to convert
+                try self.generateExpression(sti.string, true);
+
+                // Generate StringOp.ToInt instruction
+                try self.instructions.append(.{
+                    .StringOp = .{ .op = .ToInt },
+                });
+            },
+
             .Map => |entries| {
 
                 // Generate each key-value pair in reverse order (for stack-based construction)
