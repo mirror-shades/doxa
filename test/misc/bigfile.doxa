@@ -377,7 +377,7 @@ Map["c"]?; // 3.5
 ; // true
 
 /////
-// @typeof AND INFERENCE
+// @type AND INFERENCE
 /////
 
 var _int :: int;
@@ -395,22 +395,22 @@ _tetra?; // false
 var _string :: string;
 _string?; // ""
 
-@typeof(_int)?; // int
+@type(_int)?; // int
 
-@typeof(_byte)?; // byte
+@type(_byte)?; // byte
 
-@typeof(_float)?; // float
+@type(_float)?; // float
 
-@typeof(_string)?; // string
+@type(_string)?; // string
 
-@typeof(_tetra)?; // tetra
+@type(_tetra)?; // tetra
 
-@typeof(arr)?; // array
+@type(arr)?; // array
 
-@typeof(Employee)?; // struct
-@typeof(mike)?; // Employee
+@type(Employee)?; // struct
+@type(mike)?; // Employee
 
-@typeof(Color)?; // enum
-@typeof(Color.Blue)?; // Color
+@type(Color)?; // enum
+@type(Color.Blue)?; // Color
 
-@typeof(Map)?; // map
+@type(Map)?; // map

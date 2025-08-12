@@ -1,5 +1,6 @@
 const std = @import("std");
 const ast = @import("../ast/ast.zig");
+const TypeInfo = ast.TypeInfo;
 const Memory = @import("../utils/memory.zig");
 const MemoryManager = Memory.MemoryManager;
 const Scope = Memory.Scope;
@@ -1943,20 +1944,6 @@ pub const SemanticAnalyzer = struct {
                     type_info.* = .{ .base = .Nothing };
                 }
             },
-            .ArrayIsEmpty => |array_is_empty| {
-                const array_type = try self.inferTypeFromExpr(array_is_empty.array);
-                if (array_type.base != .Array) {
-                    self.reporter.reportCompileError(
-                        expr.base.span.start,
-                        "ArrayIsEmpty requires array type, got {s}",
-                        .{@tagName(array_type.base)},
-                    );
-                    self.fatal_error = true;
-                    type_info.base = .Nothing;
-                    return type_info;
-                }
-                type_info.* = .{ .base = .Tetra }; // ArrayIsEmpty returns a boolean
-            },
             .ArrayConcat => |array_concat| {
                 const array1_type = try self.inferTypeFromExpr(array_concat.array);
                 const array2_type = try self.inferTypeFromExpr(array_concat.array2);
@@ -1984,6 +1971,285 @@ pub const SemanticAnalyzer = struct {
                     type_info.* = array2_type.*;
                 }
             },
+            .ArrayIndex => |array_index| {
+                const array_type = try self.inferTypeFromExpr(array_index.array);
+                const index_type = try self.inferTypeFromExpr(array_index.index);
+
+                if (array_type.base != .Array) {
+                    self.reporter.reportCompileError(
+                        expr.base.span.start,
+                        "Cannot index non-array type {s}",
+                        .{@tagName(array_type.base)},
+                    );
+                    self.fatal_error = true;
+                    type_info.base = .Nothing;
+                    return type_info;
+                }
+
+                if (index_type.base != .Int) {
+                    self.reporter.reportCompileError(
+                        expr.base.span.start,
+                        "Array index must be integer, got {s}",
+                        .{@tagName(index_type.base)},
+                    );
+                    self.fatal_error = true;
+                    type_info.base = .Nothing;
+                    return type_info;
+                }
+
+                if (array_type.array_type) |elem_type| {
+                    type_info.* = elem_type.*;
+                } else {
+                    type_info.* = .{ .base = .Nothing };
+                }
+            },
+            .ArrayClear => |array_clear| {
+                const array_type = try self.inferTypeFromExpr(array_clear.array);
+                if (array_type.base != .Array) {
+                    self.reporter.reportCompileError(
+                        expr.base.span.start,
+                        "Cannot clear non-array type {s}",
+                        .{@tagName(array_type.base)},
+                    );
+                    self.fatal_error = true;
+                    type_info.base = .Nothing;
+                    return type_info;
+                }
+                type_info.* = .{ .base = .Nothing }; // clear returns nothing
+            },
+            .StringSplit => |s| {
+                const str_type = try self.inferTypeFromExpr(s.string);
+                if (str_type.base != .String) {
+                    self.reporter.reportCompileError(
+                        expr.base.span.start,
+                        "Split requires string type, got {s}",
+                        .{@tagName(str_type.base)},
+                    );
+                    self.fatal_error = true;
+                    type_info.base = .Nothing;
+                    return type_info;
+                }
+                const delim_type = try self.inferTypeFromExpr(s.delimiter);
+                if (delim_type.base != .String) {
+                    self.reporter.reportCompileError(
+                        expr.base.span.start,
+                        "Split delimiter must be string, got {s}",
+                        .{@tagName(delim_type.base)},
+                    );
+                    self.fatal_error = true;
+                    type_info.base = .Nothing;
+                    return type_info;
+                }
+                // Create array type with string element type
+                const elem_type = try self.allocator.create(TypeInfo);
+                elem_type.* = .{ .base = .String };
+                type_info.* = .{ .base = .Array, .array_type = elem_type };
+            },
+            .StringJoin => |s| {
+                const array_type = try self.inferTypeFromExpr(s.array);
+                if (array_type.base != .Array) {
+                    self.reporter.reportCompileError(
+                        expr.base.span.start,
+                        "Join requires array type, got {s}",
+                        .{@tagName(array_type.base)},
+                    );
+                    self.fatal_error = true;
+                    type_info.base = .Nothing;
+                    return type_info;
+                }
+                const delim_type = try self.inferTypeFromExpr(s.delimiter);
+                if (delim_type.base != .String) {
+                    self.reporter.reportCompileError(
+                        expr.base.span.start,
+                        "Join delimiter must be string, got {s}",
+                        .{@tagName(delim_type.base)},
+                    );
+                    self.fatal_error = true;
+                    type_info.base = .Nothing;
+                    return type_info;
+                }
+                type_info.* = .{ .base = .String };
+            },
+            .StringTrim => |s| {
+                const str_type = try self.inferTypeFromExpr(s.string);
+                if (str_type.base != .String) {
+                    self.reporter.reportCompileError(
+                        expr.base.span.start,
+                        "Trim requires string type, got {s}",
+                        .{@tagName(str_type.base)},
+                    );
+                    self.fatal_error = true;
+                    type_info.base = .Nothing;
+                    return type_info;
+                }
+                type_info.* = .{ .base = .String };
+            },
+            .StringLower => |s| {
+                const str_type = try self.inferTypeFromExpr(s.string);
+                if (str_type.base != .String) {
+                    self.reporter.reportCompileError(
+                        expr.base.span.start,
+                        "Lower requires string type, got {s}",
+                        .{@tagName(str_type.base)},
+                    );
+                    self.fatal_error = true;
+                    type_info.base = .Nothing;
+                    return type_info;
+                }
+                type_info.* = .{ .base = .String };
+            },
+            .StringUpper => |s| {
+                const str_type = try self.inferTypeFromExpr(s.string);
+                if (str_type.base != .String) {
+                    self.reporter.reportCompileError(
+                        expr.base.span.start,
+                        "Upper requires string type, got {s}",
+                        .{@tagName(str_type.base)},
+                    );
+                    self.fatal_error = true;
+                    type_info.base = .Nothing;
+                    return type_info;
+                }
+                type_info.* = .{ .base = .String };
+            },
+            .MathAbs, .MathRound, .MathFloor, .MathCeil => {
+                const value_type = switch (expr.data) {
+                    .MathAbs => |m| try self.inferTypeFromExpr(m.value),
+                    .MathRound => |m| try self.inferTypeFromExpr(m.value),
+                    .MathFloor => |m| try self.inferTypeFromExpr(m.value),
+                    .MathCeil => |m| try self.inferTypeFromExpr(m.value),
+                    else => unreachable,
+                };
+
+                if (value_type.base != .Int and value_type.base != .Float) {
+                    self.reporter.reportCompileError(
+                        expr.base.span.start,
+                        "Math operation requires numeric type, got {s}",
+                        .{@tagName(value_type.base)},
+                    );
+                    self.fatal_error = true;
+                    type_info.base = .Nothing;
+                    return type_info;
+                }
+
+                // Round/floor/ceil always return int, abs preserves type
+                type_info.* = switch (expr.data) {
+                    .MathAbs => value_type.*,
+                    .MathRound, .MathFloor, .MathCeil => .{ .base = .Int },
+                    else => unreachable,
+                };
+            },
+            .MathMin, .MathMax => {
+                const a_type = switch (expr.data) {
+                    .MathMin => |m| try self.inferTypeFromExpr(m.a),
+                    .MathMax => |m| try self.inferTypeFromExpr(m.a),
+                    else => unreachable,
+                };
+                const b_type = switch (expr.data) {
+                    .MathMin => |m| try self.inferTypeFromExpr(m.b),
+                    .MathMax => |m| try self.inferTypeFromExpr(m.b),
+                    else => unreachable,
+                };
+
+                if ((a_type.base != .Int and a_type.base != .Float) or
+                    (b_type.base != .Int and b_type.base != .Float))
+                {
+                    self.reporter.reportCompileError(
+                        expr.base.span.start,
+                        "Math operation requires numeric types, got {s} and {s}",
+                        .{ @tagName(a_type.base), @tagName(b_type.base) },
+                    );
+                    self.fatal_error = true;
+                    type_info.base = .Nothing;
+                    return type_info;
+                }
+
+                // Result type is float if either input is float
+                type_info.* = if (a_type.base == .Float or b_type.base == .Float)
+                    .{ .base = .Float }
+                else
+                    .{ .base = .Int };
+            },
+            .IORead => |io| {
+                const path_type = try self.inferTypeFromExpr(io.path);
+                if (path_type.base != .String) {
+                    self.reporter.reportCompileError(
+                        expr.base.span.start,
+                        "File path must be string, got {s}",
+                        .{@tagName(path_type.base)},
+                    );
+                    self.fatal_error = true;
+                    type_info.base = .Nothing;
+                    return type_info;
+                }
+                type_info.* = .{ .base = .String };
+            },
+            .IOWrite => |io| {
+                const path_type = try self.inferTypeFromExpr(io.path);
+                const content_type = try self.inferTypeFromExpr(io.content);
+                if (path_type.base != .String) {
+                    self.reporter.reportCompileError(
+                        expr.base.span.start,
+                        "File path must be string, got {s}",
+                        .{@tagName(path_type.base)},
+                    );
+                    self.fatal_error = true;
+                    type_info.base = .Nothing;
+                    return type_info;
+                }
+                if (content_type.base != .String) {
+                    self.reporter.reportCompileError(
+                        expr.base.span.start,
+                        "File content must be string, got {s}",
+                        .{@tagName(content_type.base)},
+                    );
+                    self.fatal_error = true;
+                    type_info.base = .Nothing;
+                    return type_info;
+                }
+                type_info.* = .{ .base = .Tetra }; // Returns success/failure
+            },
+            .IOExec, .IOSpawn => {
+                const command_type = switch (expr.data) {
+                    .IOExec => |io| try self.inferTypeFromExpr(io.command),
+                    .IOSpawn => |io| try self.inferTypeFromExpr(io.command),
+                    else => unreachable,
+                };
+                if (command_type.base != .String) {
+                    self.reporter.reportCompileError(
+                        expr.base.span.start,
+                        "Command must be string, got {s}",
+                        .{@tagName(command_type.base)},
+                    );
+                    self.fatal_error = true;
+                    type_info.base = .Nothing;
+                    return type_info;
+                }
+                // exec returns output string, spawn returns success/failure
+                type_info.* = switch (expr.data) {
+                    .IOExec => .{ .base = .String },
+                    .IOSpawn => .{ .base = .Tetra },
+                    else => unreachable,
+                };
+            },
+            .Clone, .Copy => {
+                const value_type = switch (expr.data) {
+                    .Clone => |c| try self.inferTypeFromExpr(c.value),
+                    .Copy => |c| try self.inferTypeFromExpr(c.value),
+                    else => unreachable,
+                };
+                if (value_type.base != .Array and value_type.base != .String and value_type.base != .Map) {
+                    self.reporter.reportCompileError(
+                        expr.base.span.start,
+                        "Can only clone/copy arrays, strings, and maps, got {s}",
+                        .{@tagName(value_type.base)},
+                    );
+                    self.fatal_error = true;
+                    type_info.base = .Nothing;
+                    return type_info;
+                }
+                type_info.* = value_type.*; // Returns same type as input
+            },
             .MethodCall => |method_call| {
                 const receiver_type = try self.inferTypeFromExpr(method_call.receiver);
                 const method_name = method_call.method.lexeme;
@@ -1991,7 +2257,7 @@ pub const SemanticAnalyzer = struct {
                 // Validate receiver type based on method
                 switch (method_call.method.type) {
                     // Array methods
-                    .PUSH, .POP, .INSERT, .REMOVE, .CLEAR, .INDEXOF => {
+                    .PUSH, .POP, .INSERT, .REMOVE, .CLEAR, .INDEX => {
                         if (receiver_type.base != .Array) {
                             self.reporter.reportCompileError(
                                 method_call.receiver.base.span.start,
@@ -2053,23 +2319,306 @@ pub const SemanticAnalyzer = struct {
                         }
                     },
 
+                    // Type methods
+                    .TYPE => {
+                        // Any type can be queried for its type
+                        // Lower to dedicated AST node for codegen
+                        expr.data = .{ .TypeOf = method_call.receiver };
+                        type_info.* = .{ .base = .String };
+                    },
+
+                    // Built-in simple methods
+                    .LENGTH => {
+                        // length works on arrays and strings
+                        if (receiver_type.base != .Array and receiver_type.base != .String) {
+                            self.reporter.reportCompileError(
+                                method_call.receiver.base.span.start,
+                                "Cannot call length on non-array/string type {s}",
+                                .{@tagName(receiver_type.base)},
+                            );
+                            self.fatal_error = true;
+                            type_info.* = .{ .base = .Nothing };
+                            return type_info;
+                        }
+                        // Lower to dedicated AST node for codegen
+                        expr.data = .{ .LengthOf = method_call.receiver };
+                        type_info.* = .{ .base = .Int };
+                    },
+                    .BYTES => {
+                        // bytes works on strings only
+                        if (receiver_type.base != .String) {
+                            self.reporter.reportCompileError(
+                                method_call.receiver.base.span.start,
+                                "Cannot call bytes on non-string type {s}",
+                                .{@tagName(receiver_type.base)},
+                            );
+                            self.fatal_error = true;
+                            type_info.* = .{ .base = .Nothing };
+                            return type_info;
+                        }
+                        // Lower to dedicated AST node for codegen and set return type: array of Byte
+                        expr.data = .{ .BytesOf = method_call.receiver };
+                        const elem_type = try self.allocator.create(TypeInfo);
+                        elem_type.* = .{ .base = .Byte };
+                        type_info.* = .{ .base = .Array, .array_type = elem_type };
+                    },
+
                     // String methods
-                    .TOSTRING, .PARSEINT, .PARSEFLOAT, .PARSEBYTE => {
-                        self.reporter.reportCompileError(
-                            .{
-                                .file = method_call.method.file,
-                                .line = method_call.method.line,
-                                .column = method_call.method.column,
+                    .TOSTRING, .PARSEINT, .PARSEFLOAT, .PARSEBYTE, .SPLIT, .JOIN, .TRIM, .LOWER, .UPPER => {
+                        switch (method_call.method.type) {
+                            .TOSTRING => {
+                                // Any type can be converted to string
+                                type_info.* = .{ .base = .String };
                             },
-                            "String method '{s}' not yet implemented",
-                            .{method_name},
-                        );
-                        self.fatal_error = true;
-                        type_info.* = .{ .base = .Nothing };
+                            .PARSEINT, .PARSEFLOAT => {
+                                // Check receiver is string
+                                if (receiver_type.base != .String) {
+                                    self.reporter.reportCompileError(
+                                        method_call.receiver.base.span.start,
+                                        "Cannot parse non-string type {s} as number",
+                                        .{@tagName(receiver_type.base)},
+                                    );
+                                    self.fatal_error = true;
+                                    type_info.* = .{ .base = .Nothing };
+                                    return type_info;
+                                }
+
+                                // Constant-fold @int("...") when possible
+                                if (method_call.method.type == .PARSEINT and method_call.receiver.data == .Literal) {
+                                    switch (method_call.receiver.data.Literal) {
+                                        .string => |s| {
+                                            const parsed = std.fmt.parseInt(i32, s, 10) catch {
+                                                self.reporter.reportCompileError(
+                                                    method_call.receiver.base.span.start,
+                                                    "Invalid integer literal for @int: '{s}'",
+                                                    .{s},
+                                                );
+                                                self.fatal_error = true;
+                                                type_info.* = .{ .base = .Nothing };
+                                                return type_info;
+                                            };
+
+                                            // Replace current expr with integer literal and free old receiver
+                                            method_call.receiver.deinit(self.allocator);
+                                            self.allocator.destroy(method_call.receiver);
+                                            expr.data = .{ .Literal = .{ .int = parsed } };
+                                            type_info.* = .{ .base = .Int };
+                                            return type_info;
+                                        },
+                                        else => {},
+                                    }
+                                }
+
+                                // Runtime parsing not implemented yet
+                                self.reporter.reportCompileError(
+                                    .{ .file = method_call.method.file, .line = method_call.method.line, .column = method_call.method.column },
+                                    "@{s} on non-literal not implemented",
+                                    .{method_name},
+                                );
+                                self.fatal_error = true;
+                                type_info.* = .{ .base = .Nothing };
+                                return type_info;
+                            },
+                            .SPLIT => {
+                                // Check receiver is string for split
+                                if (receiver_type.base != .String) {
+                                    self.reporter.reportCompileError(
+                                        method_call.receiver.base.span.start,
+                                        "Cannot call split on non-string type {s}",
+                                        .{@tagName(receiver_type.base)},
+                                    );
+                                    self.fatal_error = true;
+                                    type_info.* = .{ .base = .Nothing };
+                                    return type_info;
+                                }
+                                // Create array type with string element type
+                                const elem_type = try self.allocator.create(TypeInfo);
+                                elem_type.* = .{ .base = .String };
+                                type_info.* = .{ .base = .Array, .array_type = elem_type };
+                            },
+                            .JOIN => {
+                                // Check receiver is array for join
+                                if (receiver_type.base != .Array) {
+                                    self.reporter.reportCompileError(
+                                        method_call.receiver.base.span.start,
+                                        "Cannot call join on non-array type {s}",
+                                        .{@tagName(receiver_type.base)},
+                                    );
+                                    self.fatal_error = true;
+                                    type_info.* = .{ .base = .Nothing };
+                                    return type_info;
+                                }
+                                type_info.* = .{ .base = .String };
+                            },
+                            .TRIM, .LOWER, .UPPER => {
+                                // Check receiver is string
+                                if (receiver_type.base != .String) {
+                                    self.reporter.reportCompileError(
+                                        method_call.receiver.base.span.start,
+                                        "Cannot call string method '{s}' on non-string type {s}",
+                                        .{ method_name, @tagName(receiver_type.base) },
+                                    );
+                                    self.fatal_error = true;
+                                    type_info.* = .{ .base = .Nothing };
+                                    return type_info;
+                                }
+                                type_info.* = .{ .base = .String };
+                            },
+                            else => unreachable,
+                        }
+                    },
+
+                    // Math methods
+                    .ABS, .MIN, .MAX, .ROUND, .FLOOR, .CEIL => {
+                        // Check receiver is numeric
+                        if (receiver_type.base != .Int and receiver_type.base != .Float) {
+                            self.reporter.reportCompileError(
+                                method_call.receiver.base.span.start,
+                                "Cannot call math method '{s}' on non-numeric type {s}",
+                                .{ method_name, @tagName(receiver_type.base) },
+                            );
+                            self.fatal_error = true;
+                            type_info.* = .{ .base = .Nothing };
+                            return type_info;
+                        }
+
+                        switch (method_call.method.type) {
+                            .ROUND, .FLOOR, .CEIL => {
+                                // These return int
+                                type_info.* = .{ .base = .Int };
+                            },
+                            else => {
+                                // Others preserve input type
+                                type_info.* = receiver_type.*;
+                            },
+                        }
+                    },
+
+                    // I/O methods
+                    .READ, .WRITE, .EXEC, .SPAWN => {
+                        switch (method_call.method.type) {
+                            .READ => {
+                                // Check path argument is string
+                                if (method_call.arguments.len != 1) {
+                                    self.reporter.reportCompileError(
+                                        .{
+                                            .file = method_call.method.file,
+                                            .line = method_call.method.line,
+                                            .column = method_call.method.column,
+                                        },
+                                        "@read requires exactly one string argument (path)",
+                                        .{},
+                                    );
+                                    self.fatal_error = true;
+                                    type_info.* = .{ .base = .Nothing };
+                                    return type_info;
+                                }
+                                const path_type = try self.inferTypeFromExpr(method_call.arguments[0]);
+                                if (path_type.base != .String) {
+                                    self.reporter.reportCompileError(
+                                        method_call.arguments[0].base.span.start,
+                                        "@read path must be string, got {s}",
+                                        .{@tagName(path_type.base)},
+                                    );
+                                    self.fatal_error = true;
+                                    type_info.* = .{ .base = .Nothing };
+                                    return type_info;
+                                }
+                                type_info.* = .{ .base = .String };
+                            },
+                            .WRITE => {
+                                // Check path and content arguments are strings
+                                if (method_call.arguments.len != 2) {
+                                    self.reporter.reportCompileError(
+                                        .{
+                                            .file = method_call.method.file,
+                                            .line = method_call.method.line,
+                                            .column = method_call.method.column,
+                                        },
+                                        "@write requires two arguments (path, content)",
+                                        .{},
+                                    );
+                                    self.fatal_error = true;
+                                    type_info.* = .{ .base = .Nothing };
+                                    return type_info;
+                                }
+                                const path_type = try self.inferTypeFromExpr(method_call.arguments[0]);
+                                const content_type = try self.inferTypeFromExpr(method_call.arguments[1]);
+                                if (path_type.base != .String or content_type.base != .String) {
+                                    self.reporter.reportCompileError(
+                                        method_call.arguments[0].base.span.start,
+                                        "@write arguments must be strings, got {s} and {s}",
+                                        .{ @tagName(path_type.base), @tagName(content_type.base) },
+                                    );
+                                    self.fatal_error = true;
+                                    type_info.* = .{ .base = .Nothing };
+                                    return type_info;
+                                }
+                                type_info.* = .{ .base = .Tetra }; // Returns success/failure
+                            },
+                            .EXEC, .SPAWN => {
+                                // Check command argument is string
+                                if (method_call.arguments.len != 1) {
+                                    self.reporter.reportCompileError(
+                                        .{
+                                            .file = method_call.method.file,
+                                            .line = method_call.method.line,
+                                            .column = method_call.method.column,
+                                        },
+                                        "@{s} requires exactly one string argument (command)",
+                                        .{method_name},
+                                    );
+                                    self.fatal_error = true;
+                                    type_info.* = .{ .base = .Nothing };
+                                    return type_info;
+                                }
+                                const cmd_type = try self.inferTypeFromExpr(method_call.arguments[0]);
+                                if (cmd_type.base != .String) {
+                                    self.reporter.reportCompileError(
+                                        method_call.arguments[0].base.span.start,
+                                        "@{s} command must be string, got {s}",
+                                        .{ method_name, @tagName(cmd_type.base) },
+                                    );
+                                    self.fatal_error = true;
+                                    type_info.* = .{ .base = .Nothing };
+                                    return type_info;
+                                }
+                                type_info.* = .{ .base = if (method_call.method.type == .EXEC) .String else .Tetra };
+                            },
+                            else => unreachable,
+                        }
+                    },
+
+                    // Copy/clone methods
+                    .CLONE, .COPY => {
+                        // Check receiver is array, string or map
+                        if (receiver_type.base != .Array and receiver_type.base != .String and receiver_type.base != .Map) {
+                            self.reporter.reportCompileError(
+                                method_call.receiver.base.span.start,
+                                "Cannot {s} type {s} - only arrays, strings and maps can be {s}d",
+                                .{ method_name, @tagName(receiver_type.base), method_name },
+                            );
+                            self.fatal_error = true;
+                            type_info.* = .{ .base = .Nothing };
+                            return type_info;
+                        }
+                        type_info.* = receiver_type.*; // Returns same type as input
                     },
 
                     // Other methods
                     else => {
+                        // Debug: print method token details to diagnose empty lexeme
+                        std.debug.print(
+                            "Unknown method debug: type={s} lexeme='{s}' len={d} at {s}:{d}:{d}\n",
+                            .{
+                                @tagName(method_call.method.type),
+                                method_call.method.lexeme,
+                                method_call.method.lexeme.len,
+                                method_call.method.file,
+                                method_call.method.line,
+                                method_call.method.column,
+                            },
+                        );
                         self.reporter.reportCompileError(
                             .{
                                 .file = method_call.method.file,

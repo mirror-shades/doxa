@@ -196,29 +196,53 @@ pub const rules = blk: {
     // Add match expression support
     r.set(.MATCH, .{ .prefix = parseMatchExpr });
 
-    // Add typeof support
-    r.set(.TYPEOF, .{ .prefix = typeofExpr, .precedence = .CALL }); // Added precedence
-
-    // Add lengthof support
-    r.set(.LENGTH, .{ .prefix = lengthofExpr, .precedence = .CALL });
-
-    // Add bytesof support
-    r.set(.BYTES, .{ .prefix = bytesofExpr, .precedence = .CALL });
-
     // Add @methods generic handler
+    r.set(.TYPE, .{ .prefix = methodCallExpr, .precedence = .CALL });
+    r.set(.LENGTH, .{ .prefix = methodCallExpr, .precedence = .CALL });
+    r.set(.BYTES, .{ .prefix = methodCallExpr, .precedence = .CALL });
     r.set(.SLICE, .{ .prefix = methodCallExpr, .precedence = .CALL });
-    r.set(.CONCAT, .{ .prefix = methodCallExpr, .precedence = .CALL });
+
+    // Array ops
     r.set(.PUSH, .{ .prefix = methodCallExpr, .precedence = .CALL });
     r.set(.POP, .{ .prefix = methodCallExpr, .precedence = .CALL });
     r.set(.INSERT, .{ .prefix = methodCallExpr, .precedence = .CALL });
     r.set(.REMOVE, .{ .prefix = methodCallExpr, .precedence = .CALL });
     r.set(.CLEAR, .{ .prefix = methodCallExpr, .precedence = .CALL });
-    r.set(.INDEXOF, .{ .prefix = methodCallExpr, .precedence = .CALL });
+    r.set(.INDEX, .{ .prefix = methodCallExpr, .precedence = .CALL });
+
+    // Type conversions
     r.set(.TOSTRING, .{ .prefix = methodCallExpr, .precedence = .CALL });
     r.set(.PARSEINT, .{ .prefix = methodCallExpr, .precedence = .CALL });
     r.set(.PARSEFLOAT, .{ .prefix = methodCallExpr, .precedence = .CALL });
     r.set(.PARSEBYTE, .{ .prefix = methodCallExpr, .precedence = .CALL });
+
+    // String
+    r.set(.SPLIT, .{ .prefix = methodCallExpr, .precedence = .CALL });
+    r.set(.JOIN, .{ .prefix = methodCallExpr, .precedence = .CALL });
+    r.set(.TRIM, .{ .prefix = methodCallExpr, .precedence = .CALL });
+    r.set(.LOWER, .{ .prefix = methodCallExpr, .precedence = .CALL });
+    r.set(.UPPER, .{ .prefix = methodCallExpr, .precedence = .CALL });
+
+    // Math
+    r.set(.ABS, .{ .prefix = methodCallExpr, .precedence = .CALL });
+    r.set(.MIN, .{ .prefix = methodCallExpr, .precedence = .CALL });
+    r.set(.MAX, .{ .prefix = methodCallExpr, .precedence = .CALL });
+    r.set(.ROUND, .{ .prefix = methodCallExpr, .precedence = .CALL });
+    r.set(.FLOOR, .{ .prefix = methodCallExpr, .precedence = .CALL });
+    r.set(.CEIL, .{ .prefix = methodCallExpr, .precedence = .CALL });
+
+    // I/O
+    r.set(.READ, .{ .prefix = methodCallExpr, .precedence = .CALL });
+    r.set(.WRITE, .{ .prefix = methodCallExpr, .precedence = .CALL });
+    r.set(.EXEC, .{ .prefix = methodCallExpr, .precedence = .CALL });
+    r.set(.SPAWN, .{ .prefix = methodCallExpr, .precedence = .CALL });
+
+    // Control flow
     r.set(.PANIC, .{ .prefix = methodCallExpr, .precedence = .CALL });
+
+    // Copy/clone
+    r.set(.CLONE, .{ .prefix = methodCallExpr, .precedence = .CALL });
+    r.set(.COPY, .{ .prefix = methodCallExpr, .precedence = .CALL });
 
     // Add cast operator support
     r.set(.AS, .{ .infix = expr_parser.castExpr, .precedence = .CALL });
