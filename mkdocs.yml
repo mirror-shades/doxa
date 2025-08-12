@@ -44,4 +44,9 @@ nav:
   - Home: index.md
   - Syntax: syntax.md
   - Tetras: tetras.md
+  # - Alias: alias.md
+  - Unions: unions.md
+  - Control: control.md
+  - Loops: loops.md
+  - Methods: methods.md
   - Soxa: soxa.md

@@ -415,6 +415,7 @@ pub const SemanticAnalyzer = struct {
                             .String => TokenLiteral{ .string = "" },
                             .Tetra => TokenLiteral{ .tetra = .false },
                             .Byte => TokenLiteral{ .byte = 0 },
+                            .Union => if (type_info.union_type) |ut| self.getUnionDefaultValue(ut) else TokenLiteral{ .nothing = {} },
                             else => TokenLiteral{ .nothing = {} },
                         };
 
@@ -720,6 +721,7 @@ pub const SemanticAnalyzer = struct {
                                     .String => TokenLiteral{ .string = "" },
                                     .Tetra => TokenLiteral{ .tetra = .false },
                                     .Byte => TokenLiteral{ .byte = 0 },
+                                    .Union => if (type_info.union_type) |ut| self.getUnionDefaultValue(ut) else TokenLiteral{ .nothing = {} },
                                     else => TokenLiteral{ .nothing = {} },
                                 };
 
@@ -800,6 +802,25 @@ pub const SemanticAnalyzer = struct {
                 else => {},
             }
         }
+    }
+
+    // Default value for unions: use the first member's default
+    fn getUnionDefaultValue(self: *SemanticAnalyzer, union_type: *ast.UnionType) TokenLiteral {
+        _ = self;
+        if (union_type.types.len == 0) {
+            return TokenLiteral{ .nothing = {} };
+        }
+
+        const first_type = union_type.types[0];
+        return switch (first_type.base) {
+            .Int => TokenLiteral{ .int = 0 },
+            .Float => TokenLiteral{ .float = 0.0 },
+            .String => TokenLiteral{ .string = "" },
+            .Tetra => TokenLiteral{ .tetra = .false },
+            .Byte => TokenLiteral{ .byte = 0 },
+            .Nothing => TokenLiteral{ .nothing = {} },
+            else => TokenLiteral{ .nothing = {} },
+        };
     }
 
     fn unifyTypes(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual: *ast.TypeInfo, span: ast.SourceSpan) !void {

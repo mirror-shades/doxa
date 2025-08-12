@@ -639,6 +639,26 @@ pub const HIRGenerator = struct {
                         .Tetra => .Tetra,
                         .Byte => .Byte,
                         .Array => .Array, // Add missing Array case
+                        .Union => blk: {
+                            // Default unions to the first member's type for initialization
+                            if (decl.type_info.union_type) |ut| {
+                                if (ut.types.len > 0) {
+                                    const first = ut.types[0];
+                                    break :blk switch (first.base) {
+                                        .Int => .Int,
+                                        .Float => .Float,
+                                        .String => .String,
+                                        .Tetra => .Tetra,
+                                        .Byte => .Byte,
+                                        .Array => .Array,
+                                        .Struct => .Struct,
+                                        .Enum => .Enum,
+                                        else => .Nothing,
+                                    };
+                                }
+                            }
+                            break :blk .Nothing;
+                        },
                         .Enum => blk: {
                             // Extract the actual enum type name from the custom_type field
                             custom_type_name = decl.type_info.custom_type;
