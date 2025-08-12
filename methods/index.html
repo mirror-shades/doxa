@@ -1,0 +1,1550 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+      
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.14">
+    
+    
+      
+        <title>Built-in Methods - Doxa Docs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.342714a4.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="teal" data-md-color-accent="lime">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#built-in-methods" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Doxa Docs" class="md-header__button md-logo" aria-label="Doxa Docs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Doxa Docs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Built-in Methods
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="teal" data-md-color-accent="lime"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17 6H7c-3.31 0-6 2.69-6 6s2.69 6 6 6h10c3.31 0 6-2.69 6-6s-2.69-6-6-6m0 10H7c-2.21 0-4-1.79-4-4s1.79-4 4-4h10c2.21 0 4 1.79 4 4s-1.79 4-4 4m0-7c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="teal" data-md-color-accent="lime"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17 6H7c-3.31 0-6 2.69-6 6s2.69 6 6 6h10c3.31 0 6-2.69 6-6s-2.69-6-6-6m0 10H7c-2.21 0-4-1.79-4-4s1.79-4 4-4h10c2.21 0 4 1.79 4 4s-1.79 4-4 4M7 9c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href=".." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../syntax/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Syntax
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../tetras/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Tetras
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../soxa/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Soxa
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+  
+
+<nav class="md-nav md-nav--primary md-nav--lifted md-nav--integrated" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Doxa Docs" class="md-nav__button md-logo" aria-label="Doxa Docs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Doxa Docs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Home
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../syntax/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Syntax
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tetras/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Tetras
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../soxa/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Soxa
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="built-in-methods">Built-in Methods</h1>
+<p>Doxa provides built-in methods prefixed with <code>@</code> for core operations. These methods are fundamental to the language and don't require imports.</p>
+<h2 id="categories">Categories</h2>
+<ul>
+<li>Array Methods</li>
+<li>String Methods</li>
+<li>Math Methods</li>
+<li>Type Methods</li>
+<li>I/O Methods</li>
+<li>Control Flow Methods</li>
+</ul>
+<h2 id="method-documentation-format">Method Documentation Format</h2>
+<p>Each method is documented with:</p>
+<ul>
+<li>Input: Parameters and their types</li>
+<li>Output: Return value and type</li>
+<li>Modifies: Any side effects</li>
+<li>Errors: Possible error conditions</li>
+<li>Example: Usage example</li>
+</ul>
+<h2 id="array-methods">Array Methods</h2>
+<h3 id="length"><em>length</em></h3>
+<p>Input:</p>
+<ul>
+<li>x :: string | array // Type checked at compile time</li>
+</ul>
+<p>Output:</p>
+<ul>
+<li>Integer length of the input</li>
+</ul>
+<p>Modifies:</p>
+<ul>
+<li>No modifications</li>
+</ul>
+<p>Example:</p>
+<ul>
+<li>var x = "hello"; @length(x) -&gt; 5</li>
+</ul>
+<hr />
+<h3 id="push"><em>push</em></h3>
+<p>Input:</p>
+<ul>
+<li>source :: array // Type checked at compile time</li>
+<li>value :: any // Type checked at compile time</li>
+</ul>
+<p>Output:</p>
+<ul>
+<li>nothing</li>
+</ul>
+<p>Modifies:</p>
+<ul>
+<li>Adds value to end of source array</li>
+</ul>
+<p>Runtime Errors:</p>
+<ul>
+<li>CapacityExceeded: if array would exceed maximum size</li>
+<li>OutOfMemory: if system cannot allocate memory</li>
+</ul>
+<p>Example:</p>
+<div class="highlight"><pre><span></span><code>var arr = [1, 2];
+@push(arr, 3) else {
+    @panic(&quot;Failed to add element&quot;);
+};
+// arr is now [1, 2, 3]
+</code></pre></div>
+<hr />
+<h3 id="pop"><em>pop</em></h3>
+<p>Input:</p>
+<ul>
+<li>source: array to modify</li>
+</ul>
+<p>Output:</p>
+<ul>
+<li>Last element from array</li>
+</ul>
+<p>Modifies:</p>
+<ul>
+<li>Removes last element from source array</li>
+<li>Original array is modified in place</li>
+<li>Array length decreases by 1</li>
+</ul>
+<p>Errors:</p>
+<ul>
+<li>EmptyArray: if array has no elements</li>
+</ul>
+<p>Notes:</p>
+<ul>
+<li>Modifies the original array</li>
+<li>Cannot be undone (use @copy first if needed)</li>
+<li>Returns the removed element</li>
+</ul>
+<p>Example:</p>
+<div class="highlight"><pre><span></span><code>var arr = [1, 2, 3];
+var last = @pop(arr);     // last is 3
+@length(arr) == 2;        // array now has 2 elements
+arr == [1, 2];           // original array is modified
+
+// Save array before popping
+var backup = @copy(arr);
+var item = @pop(arr);    // only modifies arr, not backup
+</code></pre></div>
+<hr />
+<h3 id="insert"><em>insert</em></h3>
+<p>Input:</p>
+<ul>
+<li>source: array to modify</li>
+<li>index: position to insert at</li>
+<li>value: element to insert</li>
+</ul>
+<p>Output:</p>
+<ul>
+<li>nothing</li>
+</ul>
+<p>Modifies:</p>
+<ul>
+<li>Inserts value at index, shifts existing elements right</li>
+</ul>
+<p>Errors:</p>
+<ul>
+<li>IndexOutOfBounds: if index &lt; 0 or index &gt; array length</li>
+<li>OutOfMemory: if array cannot be expanded</li>
+</ul>
+<p>Example:</p>
+<ul>
+<li>var arr = [1, 2]; @insert(arr, 1, 5); // arr is now [1, 5, 2]</li>
+</ul>
+<hr />
+<h3 id="remove"><em>remove</em></h3>
+<p>Input:</p>
+<ul>
+<li>source: array to modify</li>
+<li>index: position to remove from</li>
+</ul>
+<p>Output:</p>
+<ul>
+<li>Removed element</li>
+</ul>
+<p>Modifies:</p>
+<ul>
+<li>Removes element at index, shifts remaining elements left</li>
+</ul>
+<p>Errors:</p>
+<ul>
+<li>IndexOutOfBounds: if index &lt; 0 or index &gt;= array length</li>
+</ul>
+<p>Example:</p>
+<ul>
+<li>var arr = [1, 2, 3]; var removed = @remove(arr, 1); // removed is 2, arr is [1, 3]</li>
+</ul>
+<hr />
+<h3 id="clear"><em>clear</em></h3>
+<p>Input:</p>
+<ul>
+<li>source: array to clear</li>
+</ul>
+<p>Output:</p>
+<ul>
+<li>nothing</li>
+</ul>
+<p>Modifies:</p>
+<ul>
+<li>Removes all elements from array</li>
+</ul>
+<p>Runtime Errors:</p>
+<ul>
+<li>None</li>
+</ul>
+<p>Example:</p>
+<ul>
+<li>var arr = [1, 2, 3]; @clear(arr); // arr is now []</li>
+</ul>
+<hr />
+<h3 id="index"><em>index</em></h3>
+<p>Input:</p>
+<ul>
+<li>source: array or string to search</li>
+<li>value: element to find</li>
+</ul>
+<p>Output:</p>
+<ul>
+<li>Index of first occurrence, or -1 if not found</li>
+</ul>
+<p>Modifies:</p>
+<ul>
+<li>No modifications</li>
+</ul>
+<p>Runtime Errors:</p>
+<ul>
+<li>None or string</li>
+</ul>
+<p>Example:</p>
+<ul>
+<li>var arr = [1, 2, 3]; var idx = @index(arr, 2); // idx is 1</li>
+</ul>
+<hr />
+<h3 id="clone"><em>clone</em></h3>
+<p>Input:</p>
+<ul>
+<li>value :: array | string | map</li>
+</ul>
+<p>Output:</p>
+<ul>
+<li>Deep copy of the input value (recursively copies all nested structures)</li>
+</ul>
+<p>Modifies:</p>
+<ul>
+<li>No modifications</li>
+</ul>
+<p>Runtime Errors:</p>
+<ul>
+<li>None</li>
+</ul>
+<p>Notes:</p>
+<ul>
+<li>Creates completely independent copy</li>
+<li>Recursively copies all nested arrays and maps</li>
+<li>Nested values have no connection to original</li>
+<li>Safe for circular references</li>
+</ul>
+<p>Example:</p>
+<div class="highlight"><pre><span></span><code>var nested = [1, [2, 3], {&quot;x&quot;: [4, 5]}];
+var deep = @clone(nested);
+deep[1][0] = 9;        // modifies copy only
+nested[1][0] == 2;     // original unchanged
+</code></pre></div>
+<hr />
+<h3 id="copy"><em>copy</em></h3>
+<p>Input:</p>
+<ul>
+<li>value :: array | string | map</li>
+</ul>
+<p>Output:</p>
+<ul>
+<li>Shallow copy of the input value (copies only top-level structure)</li>
+</ul>
+<p>Modifies:</p>
+<ul>
+<li>No modifications</li>
+</ul>
+<p>Runtime Errors:</p>
+<ul>
+<li>None</li>
+</ul>
+<p>Notes:</p>
+<ul>
+<li>Creates new top-level container only</li>
+<li>Nested structures are shared with original</li>
+<li>Modifying nested values affects both copies</li>
+<li>Faster than deep copy for simple structures</li>
+</ul>
+<p>Example:</p>
+<div class="highlight"><pre><span></span><code>var nested = [1, [2, 3]];
+var shallow = @copy(nested);
+shallow[0] = 9;        // modifies copy only
+shallow[1][0] = 9;     // modifies both copies!
+nested[1][0] == 9;     // shared nested array
+</code></pre></div>
+<h2 id="string-methods">String Methods</h2>
+<h3 id="split"><em>split</em></h3>
+<p>Input:</p>
+<ul>
+<li>source :: string</li>
+<li>delimiter :: string</li>
+</ul>
+<p>Output:</p>
+<ul>
+<li>Array of strings split by delimiter</li>
+</ul>
+<p>Modifies:</p>
+<ul>
+<li>No modifications</li>
+</ul>
+<p>Runtime Errors:</p>
+<ul>
+<li>None</li>
+</ul>
+<p>Example:</p>
+<ul>
+<li>var str = "a,b,c"; var parts = @split(str, ","); // parts is ["a", "b", "c"]</li>
+</ul>
+<hr />
+<h3 id="join"><em>join</em></h3>
+<p>Input:</p>
+<ul>
+<li>source :: array</li>
+<li>delimiter :: string</li>
+</ul>
+<p>Output:</p>
+<ul>
+<li>String with array elements joined by delimiter</li>
+</ul>
+<p>Modifies:</p>
+<ul>
+<li>No modifications</li>
+</ul>
+<p>Runtime Errors:</p>
+<ul>
+<li>None or delimiter is not a string</li>
+</ul>
+<p>Example:</p>
+<ul>
+<li>var arr = ["a", "b", "c"]; var str = @join(arr, ","); // str is "a,b,c"</li>
+</ul>
+<hr />
+<h3 id="slice"><em>slice</em></h3>
+<p>Input:</p>
+<ul>
+<li>source: array or string to slice</li>
+<li>start: starting index (inclusive)</li>
+<li>end: ending index (exclusive)</li>
+</ul>
+<p>Output:</p>
+<ul>
+<li>New array or string containing elements from start to end</li>
+</ul>
+<p>Modifies:</p>
+<ul>
+<li>No modifications</li>
+</ul>
+<p>Runtime Errors:</p>
+<ul>
+<li>None or string</li>
+<li>IndexOutOfBounds: if start &lt; 0 or end &gt; length</li>
+<li>InvalidArgument: if start &gt; end</li>
+</ul>
+<p>Example:</p>
+<ul>
+<li>var arr = [1, 2, 3, 4]; var sliced = @slice(arr, 1, 3); // sliced is [2, 3]</li>
+</ul>
+<hr />
+<h3 id="bytes"><em>bytes</em></h3>
+<p>Input:</p>
+<ul>
+<li>value: string to convert</li>
+</ul>
+<p>Output:</p>
+<ul>
+<li>Array of byte values</li>
+</ul>
+<p>Modifies:</p>
+<ul>
+<li>No modifications</li>
+</ul>
+<p>Runtime Errors:</p>
+<ul>
+<li>None</li>
+</ul>
+<p>Example:</p>
+<ul>
+<li>var str = "ABC"; var bytes = @bytes(str); // bytes is [65, 66, 67]</li>
+</ul>
+<hr />
+<h3 id="trim"><em>trim</em></h3>
+<p>Input:</p>
+<ul>
+<li>value :: string</li>
+</ul>
+<p>Output:</p>
+<ul>
+<li>String with leading and trailing whitespace removed</li>
+</ul>
+<p>Modifies:</p>
+<ul>
+<li>No modifications</li>
+</ul>
+<p>Runtime Errors:</p>
+<ul>
+<li>None</li>
+</ul>
+<p>Example:</p>
+<ul>
+<li>var str = " hello "; var trimmed = @trim(str); // trimmed is "hello"</li>
+</ul>
+<hr />
+<h3 id="lower"><em>lower</em></h3>
+<p>Input:</p>
+<ul>
+<li>value :: string</li>
+</ul>
+<p>Output:</p>
+<ul>
+<li>String converted to lowercase</li>
+</ul>
+<p>Modifies:</p>
+<ul>
+<li>No modifications</li>
+</ul>
+<p>Runtime Errors:</p>
+<ul>
+<li>None</li>
+</ul>
+<p>Example:</p>
+<ul>
+<li>var str = "Hello"; var lower = @lower(str); // lower is "hello"</li>
+</ul>
+<hr />
+<h3 id="upper"><em>upper</em></h3>
+<p>Input:</p>
+<ul>
+<li>value :: string</li>
+</ul>
+<p>Output:</p>
+<ul>
+<li>String converted to uppercase</li>
+</ul>
+<p>Modifies:</p>
+<ul>
+<li>No modifications</li>
+</ul>
+<p>Runtime Errors:</p>
+<ul>
+<li>None</li>
+</ul>
+<p>Example:</p>
+<ul>
+<li>var str = "Hello"; var upper = @upper(str); // upper is "HELLO"</li>
+</ul>
+<h2 id="math-methods">Math Methods</h2>
+<h3 id="abs"><em>abs</em></h3>
+<p>Input:</p>
+<ul>
+<li>value :: int | float</li>
+</ul>
+<p>Output:</p>
+<ul>
+<li>Absolute value of the input</li>
+</ul>
+<p>Modifies:</p>
+<ul>
+<li>No modifications</li>
+</ul>
+<p>Runtime Errors:</p>
+<ul>
+<li>None</li>
+</ul>
+<p>Example:</p>
+<ul>
+<li>var x = -5; var abs = @abs(x); // abs is 5</li>
+</ul>
+<hr />
+<h3 id="min"><em>min</em></h3>
+<p>Input:</p>
+<ul>
+<li>a :: int | float</li>
+<li>b :: int | float</li>
+</ul>
+<p>Output:</p>
+<ul>
+<li>Smaller of the two values</li>
+</ul>
+<p>Modifies:</p>
+<ul>
+<li>No modifications</li>
+</ul>
+<p>Runtime Errors:</p>
+<ul>
+<li>None</li>
+</ul>
+<p>Example:</p>
+<ul>
+<li>var min = @min(5, 3); // min is 3</li>
+</ul>
+<hr />
+<h3 id="max"><em>max</em></h3>
+<p>Input:</p>
+<ul>
+<li>a :: int | float</li>
+<li>b :: int | float</li>
+</ul>
+<p>Output:</p>
+<ul>
+<li>Larger of the two values</li>
+</ul>
+<p>Modifies:</p>
+<ul>
+<li>No modifications</li>
+</ul>
+<p>Runtime Errors:</p>
+<ul>
+<li>None</li>
+</ul>
+<p>Example:</p>
+<ul>
+<li>var max = @max(5, 3); // max is 5</li>
+</ul>
+<hr />
+<h3 id="round"><em>round</em></h3>
+<p>Input:</p>
+<ul>
+<li>value :: float</li>
+</ul>
+<p>Output:</p>
+<ul>
+<li>Rounded integer value</li>
+</ul>
+<p>Modifies:</p>
+<ul>
+<li>No modifications</li>
+</ul>
+<p>Runtime Errors:</p>
+<ul>
+<li>None</li>
+</ul>
+<p>Example:</p>
+<ul>
+<li>var x = 3.7; var rounded = @round(x); // rounded is 4</li>
+</ul>
+<hr />
+<h3 id="floor"><em>floor</em></h3>
+<p>Input:</p>
+<ul>
+<li>value :: float</li>
+</ul>
+<p>Output:</p>
+<ul>
+<li>Largest integer less than or equal to value</li>
+</ul>
+<p>Modifies:</p>
+<ul>
+<li>No modifications</li>
+</ul>
+<p>Runtime Errors:</p>
+<ul>
+<li>None</li>
+</ul>
+<p>Example:</p>
+<ul>
+<li>var x = 3.7; var floor = @floor(x); // floor is 3</li>
+</ul>
+<hr />
+<h3 id="ceil"><em>ceil</em></h3>
+<p>Input:</p>
+<ul>
+<li>value :: float</li>
+</ul>
+<p>Output:</p>
+<ul>
+<li>Smallest integer greater than or equal to value</li>
+</ul>
+<p>Modifies:</p>
+<ul>
+<li>No modifications</li>
+</ul>
+<p>Runtime Errors:</p>
+<ul>
+<li>None</li>
+</ul>
+<p>Example:</p>
+<ul>
+<li>var x = 3.2; var ceil = @ceil(x); // ceil is 4</li>
+</ul>
+<h2 id="type-methods">Type Methods</h2>
+<h3 id="string"><em>string</em></h3>
+<p>Input:</p>
+<ul>
+<li>value: any value to convert</li>
+</ul>
+<p>Output:</p>
+<ul>
+<li>String representation of value</li>
+</ul>
+<p>Modifies:</p>
+<ul>
+<li>No modifications</li>
+</ul>
+<p>Errors:</p>
+<ul>
+<li>None (all values can be converted to string)</li>
+</ul>
+<p>Example:</p>
+<ul>
+<li>var num = 123; var str = @string(num); // str is "123"</li>
+</ul>
+<hr />
+<h3 id="int"><em>int</em></h3>
+<p>Input:</p>
+<ul>
+<li>value :: string // Type checked at compile time</li>
+</ul>
+<p>Output:</p>
+<ul>
+<li>Integer value | NumberParseError</li>
+</ul>
+<p>Modifies:</p>
+<ul>
+<li>No modifications</li>
+</ul>
+<p>Runtime Errors:</p>
+<ul>
+<li>ParseFailed: if string is not a valid number format</li>
+<li>Overflow: if number is too large for int type</li>
+<li>Underflow: if number is too small for int type</li>
+</ul>
+<p>Example:</p>
+<div class="highlight"><pre><span></span><code>// Basic parsing
+var str = &quot;123&quot;;
+var num = @int(str) else {
+    @panic(&quot;Not a valid number&quot;);
+};
+
+// Handle specific errors
+var result = @int(&quot;-999999999999&quot;) match {
+    int then it,                    // Successfully parsed
+    ParseFailed then 0,            // Not a number
+    Overflow then MaxInt,          // Too large
+    Underflow then MinInt,         // Too small
+    else =&gt; 0
+};
+</code></pre></div>
+<hr />
+<h3 id="float"><em>float</em></h3>
+<p>Input:</p>
+<ul>
+<li>value: string to convert</li>
+</ul>
+<p>Output:</p>
+<ul>
+<li>Float value, or 0.0 if conversion fails</li>
+</ul>
+<p>Modifies:</p>
+<ul>
+<li>No modifications</li>
+</ul>
+<p>Runtime Errors:</p>
+<ul>
+<li>None</li>
+</ul>
+<p>Example:</p>
+<ul>
+<li>var str = "123.45"; var num = @float(str); // num is 123.45</li>
+</ul>
+<hr />
+<h3 id="type"><em>type</em></h3>
+<p>Input:</p>
+<ul>
+<li>value: any value to check</li>
+</ul>
+<p>Output:</p>
+<ul>
+<li>String name of value's type</li>
+</ul>
+<p>Modifies:</p>
+<ul>
+<li>No modifications</li>
+</ul>
+<p>Errors:</p>
+<ul>
+<li>None</li>
+</ul>
+<p>Example:</p>
+<ul>
+<li>var arr = [1, 2]; var type = @type(arr); // type is "array"</li>
+</ul>
+<h2 id="io-methods">I/O Methods</h2>
+<h3 id="input"><em>input</em></h3>
+<p>Input:</p>
+<ul>
+<li>none</li>
+</ul>
+<p>Output:</p>
+<ul>
+<li>string containing the line read from standard input</li>
+<li>empty string ("") on EOF or if no data is available</li>
+</ul>
+<p>Modifies:</p>
+<ul>
+<li>Blocks until a line is available or EOF is reached</li>
+</ul>
+<p>Errors:</p>
+<ul>
+<li>IOError: if input stream fails (e.g., terminal disconnected)</li>
+</ul>
+<p>Notes:</p>
+<ul>
+<li>Blocks execution until a complete line is available</li>
+<li>Line includes all characters up to but not including the newline</li>
+<li>Returns empty string on EOF rather than raising an error</li>
+<li>Use in loop to read all lines: <code>while (line = @input()) != "" { ... }</code></li>
+</ul>
+<p>Example:</p>
+<div class="highlight"><pre><span></span><code>// Basic input
+var name = @input(); // blocks until line available
+
+// Reading all lines
+var lines = [];
+var line = &quot;&quot;;
+while (line = @input()) != &quot;&quot; {
+    @push(lines, line);
+}
+</code></pre></div>
+<hr />
+<h3 id="read"><em>read</em></h3>
+<p>Input:</p>
+<ul>
+<li>path :: string - Path to file to read</li>
+</ul>
+<p>Output:</p>
+<ul>
+<li>string containing file contents</li>
+</ul>
+<p>Modifies:</p>
+<ul>
+<li>No modifications</li>
+</ul>
+<p>Errors:</p>
+<ul>
+<li>IOError: if file cannot be read</li>
+<li>PathError: if path is invalid</li>
+</ul>
+<p>Example:</p>
+<ul>
+<li>var content is @read("config.txt");</li>
+</ul>
+<hr />
+<h3 id="write"><em>write</em></h3>
+<p>Input:</p>
+<ul>
+<li>path :: string - Path to file to write</li>
+<li>content :: string - Content to write</li>
+</ul>
+<p>Output:</p>
+<ul>
+<li>tetra indicating success (true) or failure (false)</li>
+</ul>
+<p>Modifies:</p>
+<ul>
+<li>Creates or overwrites file at path</li>
+</ul>
+<p>Errors:</p>
+<ul>
+<li>IOError: if file cannot be written</li>
+<li>PathError: if path is invalid</li>
+</ul>
+<p>Example:</p>
+<ul>
+<li>var success is @write("log.txt", "Hello");</li>
+</ul>
+<hr />
+<h3 id="binary-io-and-encoding">Binary I/O and Encoding</h3>
+<p>Doxa handles binary data through composition of string and byte array operations:</p>
+<p>Reading binary files:</p>
+<div class="highlight"><pre><span></span><code>// Read file as raw bytes
+var raw = @read(&quot;image.png&quot;);    // reads file as-is, no encoding
+var bytes = @bytes(raw);         // convert to byte array
+var firstByte = bytes[0];        // access individual bytes
+
+// Text file with specific encoding
+var text = @read(&quot;text.txt&quot;);    // reads as UTF-8 by default
+var utf8Bytes = @bytes(text);    // get UTF-8 byte representation
+</code></pre></div>
+<p>Writing binary files:</p>
+<div class="highlight"><pre><span></span><code>// Write raw binary data
+var bytes = [0x89, 0x50, 0x4E, 0x47];  // PNG header bytes
+var raw = @string(bytes);               // convert to raw string (preserves bytes)
+var success = @write(&quot;file.png&quot;, raw);  // writes bytes as-is
+
+// Write text with encoding
+var text = &quot;Hello, 世界&quot;;               // UTF-8 text
+var success = @write(&quot;hello.txt&quot;, text); // writes as UTF-8
+</code></pre></div>
+<p>Notes on Binary Data:</p>
+<ul>
+<li><code>@read</code> reads file contents as-is, preserving all bytes</li>
+<li><code>@write</code> writes raw bytes without modification</li>
+<li><code>@bytes</code> converts string to its underlying bytes</li>
+<li><code>@string</code> with byte array preserves raw bytes (no encoding/decoding)</li>
+<li>Text files use UTF-8 encoding by default</li>
+<li>No data loss occurs when converting between bytes and raw strings</li>
+</ul>
+<hr />
+<h3 id="exec"><em>exec</em></h3>
+<p>Input:</p>
+<ul>
+<li>command :: string - Command to execute</li>
+</ul>
+<p>Output:</p>
+<ul>
+<li>string containing command output (stdout and stderr combined)</li>
+</ul>
+<p>Modifies:</p>
+<ul>
+<li>May modify system state depending on command</li>
+<li>Blocks until command completes</li>
+</ul>
+<p>Errors:</p>
+<ul>
+<li>ExecError: if command fails to execute</li>
+<li>SecurityError: if command is not allowed</li>
+</ul>
+<p>Notes:</p>
+<ul>
+<li>Captures both stdout and stderr in output</li>
+<li>Blocks until command completes</li>
+<li>Returns all output as UTF-8 text</li>
+<li>Command runs with same permissions as Doxa program</li>
+<li>Use @spawn for non-blocking execution</li>
+</ul>
+<p>Example:</p>
+<div class="highlight"><pre><span></span><code>// Basic usage
+var status = @exec(&quot;git status&quot;);
+
+// Handle command failure
+var result = @exec(&quot;git push&quot;) else {
+    @panic(&quot;Git push failed&quot;);
+};
+
+// Capture and process output
+var files = @exec(&quot;ls&quot;);
+var count = @length(@split(files, &quot;\n&quot;));
+</code></pre></div>
+<hr />
+<h3 id="spawn"><em>spawn</em></h3>
+<p>Input:</p>
+<ul>
+<li>command :: string - Command to execute asynchronously</li>
+</ul>
+<p>Output:</p>
+<ul>
+<li>tetra indicating if command started successfully (true)</li>
+<li>does NOT indicate process completion or success</li>
+</ul>
+<p>Modifies:</p>
+<ul>
+<li>May modify system state depending on command</li>
+<li>Process continues running after function returns</li>
+<li>No way to get process output or result</li>
+<li>Process may outlive the Doxa program</li>
+</ul>
+<p>Errors:</p>
+<ul>
+<li>ExecError: if command fails to start</li>
+<li>SecurityError: if command is not allowed</li>
+</ul>
+<p>Notes:</p>
+<ul>
+<li>Only indicates if process started, not if it succeeded</li>
+<li>Use @exec if you need the command's output</li>
+<li>Spawned process runs independently</li>
+<li>No built-in way to check process status</li>
+<li>Useful for long-running background tasks</li>
+</ul>
+<p>Example:</p>
+<div class="highlight"><pre><span></span><code>// Start a long process
+var started = @spawn(&quot;long_process&quot;);
+@assert(started, &quot;Process failed to start&quot;);
+
+// Process runs in background while main program continues
+@print(&quot;Main program continues...&quot;);
+</code></pre></div>
+<h2 id="control-flow-methods">Control Flow Methods</h2>
+<h3 id="assert"><em>assert</em></h3>
+<p>Input:</p>
+<ul>
+<li>condition: boolean expression to check</li>
+<li>message: error message if condition is false</li>
+</ul>
+<p>Output:</p>
+<ul>
+<li>nothing if condition is true</li>
+<li>panics with message if condition is false</li>
+</ul>
+<p>Modifies:</p>
+<ul>
+<li>No modifications</li>
+</ul>
+<p>Runtime Errors:</p>
+<ul>
+<li>Panic: if condition is false</li>
+</ul>
+<p>Example:</p>
+<ul>
+<li>var x = 5; @assert(x &gt; 0, "x must be positive");</li>
+</ul>
+<hr />
+<h3 id="panic"><em>panic</em></h3>
+<p>Input:</p>
+<ul>
+<li>message: error message</li>
+</ul>
+<p>Output:</p>
+<ul>
+<li>Halts program with error message</li>
+</ul>
+<p>Modifies:</p>
+<ul>
+<li>Stops program execution</li>
+</ul>
+<p>Runtime Errors:</p>
+<ul>
+<li>None</li>
+</ul>
+<p>Example:</p>
+<ul>
+<li>@panic("Fatal error occurred");</li>
+</ul>
+<h2 id="method-naming-conventions">Method Naming Conventions</h2>
+<ol>
+<li>
+<p>Case:</p>
+</li>
+<li>
+<p>All methods use lowercase</p>
+</li>
+<li>
+<p>No camelCase or PascalCase</p>
+</li>
+<li>
+<p>Type Conversions:</p>
+</li>
+<li>
+<p>Direct names: @string, @int, @float</p>
+</li>
+<li>
+<p>No 'to' prefix</p>
+</li>
+<li>
+<p>Collections:</p>
+</li>
+<li>
+<p>Array operations use verb forms: @push, @pop, @remove</p>
+</li>
+<li>
+<p>Queries use established terms: @length, @index</p>
+</li>
+<li>
+<p>Control Flow:</p>
+</li>
+<li>
+<p>Simple, lowercase forms: @assert, @panic</p>
+</li>
+<li>
+<p>I/O Operations:</p>
+</li>
+<li>Simple verbs: @read, @write, @exec<ul>
+<li>All methods are single words</li>
+<li>Binary I/O uses composition: @bytes and @string with @read/@write</li>
+</ul>
+</li>
+</ol>
+<h2 id="error-handling">Error Handling</h2>
+<p>Doxa uses a systematic approach to error handling through typed error unions:</p>
+<h3 id="core-error-types">Core Error Types</h3>
+<div class="highlight"><pre><span></span><code>// I/O related errors
+enum IOError {
+    FileNotFound,      // File does not exist
+    PermissionDenied,  // Insufficient permissions
+    DeviceError,       // Hardware/device failure
+    Interrupted,       // Operation interrupted
+    UnexpectedEOF,     // Premature end of file
+}
+
+// Path and filesystem errors
+enum PathError {
+    InvalidPath,      // Malformed path
+    NotFound,         // Path does not exist
+    AlreadyExists,    // Path already exists
+    IsDirectory,      // Expected file, got directory
+    NotDirectory,     // Expected directory, got file
+}
+
+// Runtime value error
+enum ValueError {
+    // Bounds and range errors
+    IndexOutOfRange,  // Array/string index outside valid range
+    EmptyCollection,  // Operation requires non-empty collection
+    InvalidRange,     // Invalid range specification (e.g., start &gt; end)
+
+    // Numeric errors
+    Overflow,         // Number exceeds type capacity
+    Underflow,        // Number below minimum value
+    DivideByZero,    // Division by zero
+
+    // Parse/format errors
+    ParseFailed,      // String-to-number parse failed (e.g., &quot;abc&quot; as int)
+    InvalidFormat,    // Invalid data format (e.g., malformed JSON)
+    InvalidEncoding,  // Invalid string encoding (e.g., invalid UTF-8)
+
+    // Collection errors
+    CapacityExceeded, // Collection would exceed max capacity
+    DuplicateKey,     // Duplicate key in map/set
+    KeyNotFound       // Key not found in map/set
+}
+
+// Resource errors
+enum ResourceError {
+    OutOfMemory,      // Memory allocation failed
+    TooLarge,         // Resource exceeds limits
+    Exhausted,        // Resource pool depleted
+}
+</code></pre></div>
+<h3 id="method-error-types">Method Error Types</h3>
+<p>Methods combine relevant errors into union types:</p>
+<div class="highlight"><pre><span></span><code>// Define specific error combinations for methods
+// Method-specific error types (runtime errors only)
+alias ArrayOpError =
+    | ValueError.EmptyCollection  // Array is empty
+    | ValueError.IndexOutOfRange  // Index out of bounds
+    | ValueError.CapacityExceeded // Can&#39;t grow array further
+    | ResourceError.OutOfMemory;  // System out of memory
+
+alias NumberParseError =
+    | ValueError.ParseFailed  // Invalid number format
+    | ValueError.Overflow     // Number too large
+    | ValueError.Underflow;   // Number too small
+
+alias ReadError =
+    | IOError.FileNotFound
+    | IOError.PermissionDenied
+    | PathError.InvalidPath;
+
+alias WriteError =
+    | IOError.PermissionDenied
+    | PathError.InvalidPath
+    | ResourceError.OutOfMemory;
+
+// Method signatures include error unions
+function @read(path :: string) returns(string | ReadError);
+function @write(path :: string, content :: string) returns(tetra | WriteError);
+</code></pre></div>
+<h3 id="error-handling-examples">Error Handling Examples</h3>
+<div class="highlight"><pre><span></span><code>// Using else for error handling
+var content = @read(&quot;config.txt&quot;) as string else {
+    @panic(&quot;Failed to read config&quot;);
+};
+
+// Pattern matching on specific errors
+var result = @write(&quot;log.txt&quot;, &quot;Hello&quot;) match {
+    true then &quot;Success&quot;,
+    PermissionDenied then &quot;Permission denied&quot;,
+    InvalidPath then &quot;Invalid path&quot;,
+    else =&gt; &quot;Other error&quot;
+};
+
+// Composing error handling
+function readConfig() returns(string | ParseError) {
+    var raw = @read(&quot;config.txt&quot;);
+    var rawString is raw as string else &quot;&quot;;
+    return @parse(rawString);
+}
+</code></pre></div>
+<h3 id="benefits">Benefits</h3>
+<ol>
+<li><strong>Type Safety</strong>: Errors are typed and checked at compile time</li>
+<li><strong>Composability</strong>: Error types can be combined and transformed</li>
+<li><strong>Clarity</strong>: Methods document their exact error cases</li>
+<li><strong>Consistency</strong>: Common errors are reused across methods</li>
+<li><strong>Flexibility</strong>: New error types can be added without breaking changes</li>
+</ol>
+<h3 id="error-categories">Error Categories</h3>
+<ul>
+<li><strong>IOError</strong>: Input/output operations</li>
+<li>
+<p><strong>PathError</strong>: File system paths</p>
+</li>
+<li>
+<p><strong>ResourceError</strong>: System resource management</p>
+</li>
+<li><strong>SecurityError</strong>: Permission and security</li>
+<li><strong>ParseError</strong>: Data parsing and validation</li>
+<li><strong>ExecError</strong>: Process execution</li>
+<li><strong>NetworkError</strong>: Network operations</li>
+</ul>
+<p>Each built-in method documents its specific error types in its signature and documentation.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        <div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/mirror-shades/doxa" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.7.2 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8M97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      <script id="__config" type="application/json">{"base": "..", "features": ["navigation.tabs", "navigation.sections", "toc.integrate", "search.highlight", "search.suggest", "content.tabs.link", "content.code.annotation", "content.code.copy"], "search": "../assets/javascripts/workers/search.d50fe291.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.13a4f30d.min.js"></script>
+      
+    
+  </body>
+</html>
