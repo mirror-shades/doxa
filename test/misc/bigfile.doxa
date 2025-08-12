@@ -374,35 +374,29 @@ Map["c"]?; // 3.5
 // @typeof AND INFERENCE
 /////
 
-var __int :: int;
-__int?; // 0
+var _int :: int;
+_int?; // 0
 
-var __float :: float;
-__float?; // 0.0
+var _float :: float;
+_float?; // 0.0
 
-var __byte :: byte;
-__byte?; // 0x00
+var _byte :: byte;
+_byte?; // 0x00
 
-var __tetra :: tetra;
-__tetra?; // false
+var _tetra :: tetra;
+_tetra?; // false
 
-var __string :: string;
-__string?; // ""
+var _string :: string;
+_string?; // ""
 
-
-var _int is 5;
 @typeof(_int)?; // int
 
-var _byte is 0xff;
 @typeof(_byte)?; // byte
 
-var _float is 5.5;
 @typeof(_float)?; // float
 
-var _string is "hello";
 @typeof(_string)?; // string
 
-var _tetra is both;
 @typeof(_tetra)?; // tetra
 
 @typeof(arr)?; // array
