@@ -1502,6 +1502,16 @@ pub const HIRGenerator = struct {
                     members[1] = "NumberError";
                     union_members = members;
                 }
+                // If peeking a direct @substring expression, attach union members inline
+                if (peek.expr.data == .MethodCall) {
+                    const m = peek.expr.data.MethodCall;
+                    if (std.mem.eql(u8, m.method.lexeme, "substring")) {
+                        const members = try self.allocator.alloc([]const u8, 2);
+                        members[0] = "string";
+                        members[1] = "IndexError";
+                        union_members = members;
+                    }
+                }
                 if (peek.expr.data == .Variable) {
                     const var_name = peek.expr.data.Variable.lexeme;
                     self.reporter.debug("Checking union members for variable {s}", .{var_name});
@@ -1553,6 +1563,18 @@ pub const HIRGenerator = struct {
                         members[1] = "NumberError";
                         try self.trackVariableUnionMembersByIndex(var_idx, members);
                     } else |_| {}
+                }
+                // If assigning result of @substring, track union members: ["string", "IndexError"]
+                if (assign.value.?.data == .MethodCall) {
+                    const m = assign.value.?.data.MethodCall;
+                    if (std.mem.eql(u8, m.method.lexeme, "substring")) {
+                        if (self.getOrCreateVariable(assign.name.lexeme)) |var_idx| {
+                            const members = try self.allocator.alloc([]const u8, 2);
+                            members[0] = "string";
+                            members[1] = "IndexError";
+                            try self.trackVariableUnionMembersByIndex(var_idx, members);
+                        } else |_| {}
+                    }
                 }
 
                 // Get or create variable index
@@ -3114,7 +3136,19 @@ pub const HIRGenerator = struct {
                         return .Nothing;
                     };
                     self.instructions.append(.{ .StringOp = .{ .op = .Substring } }) catch return .Nothing;
-                    return .String;
+                    // Inform peeks about union members for direct expressions
+                    if (self.current_peek_expr) |peek_expr| {
+                        if (peek_expr == expr) {
+                            const members = self.allocator.alloc([]const u8, 2) catch null;
+                            if (members) |marr| {
+                                marr[0] = "string";
+                                marr[1] = "IndexError";
+                                // We don't have a direct hook to attach here; Peek building handles expression-specific unions like StringToInt
+                                // Left intentionally minimal; variable tracking handles union metadata on assignment
+                            }
+                        }
+                    }
+                    return .String; // runtime value will be string or error enum; type system tracks union
                 }
                 // Fallback: just evaluate receiver and args and return Auto type
                 self.generateExpression(m.receiver, true) catch {

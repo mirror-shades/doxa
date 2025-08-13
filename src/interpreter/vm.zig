@@ -1294,14 +1294,55 @@ pub const HIRVM = struct {
                                     return ErrorList.TypeError;
                                 }
 
-                                const start_idx = @as(usize, @intCast(start.value.int));
-                                const len = @as(usize, @intCast(length.value.int));
-
-                                // Bounds check
-                                if (start_idx >= s_val.len) {
-                                    return ErrorList.IndexOutOfBounds;
+                                // Normalize and validate parameters (including negatives)
+                                const start_i: i32 = start.value.int;
+                                const len_i: i32 = length.value.int;
+                                if (start_i < 0 or len_i < 0) {
+                                    var variant_index: u32 = 0;
+                                    if (self.custom_type_registry.get("IndexError")) |ct| {
+                                        if (ct.enum_variants) |variants| {
+                                            for (variants, 0..) |v, i| {
+                                                if (std.mem.eql(u8, v.name, "OutOfBounds")) {
+                                                    variant_index = @intCast(i);
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    const err_val = HIRValue{ .enum_variant = .{
+                                        .type_name = "IndexError",
+                                        .variant_name = "OutOfBounds",
+                                        .variant_index = variant_index,
+                                    } };
+                                    try self.stack.push(HIRFrame.initFromHIRValue(err_val));
+                                    return;
                                 }
-                                const end_idx = @min(start_idx + len, s_val.len);
+
+                                const start_idx = @as(usize, @intCast(start_i));
+                                const len = @as(usize, @intCast(len_i));
+
+                                // Bounds check -> return union error variant IndexError.OutOfBounds
+                                if (start_idx >= s_val.len or start_idx + len > s_val.len) {
+                                    var variant_index: u32 = 0;
+                                    if (self.custom_type_registry.get("IndexError")) |ct| {
+                                        if (ct.enum_variants) |variants| {
+                                            for (variants, 0..) |v, i| {
+                                                if (std.mem.eql(u8, v.name, "OutOfBounds")) {
+                                                    variant_index = @intCast(i);
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    const err_val = HIRValue{ .enum_variant = .{
+                                        .type_name = "IndexError",
+                                        .variant_name = "OutOfBounds",
+                                        .variant_index = variant_index,
+                                    } };
+                                    try self.stack.push(HIRFrame.initFromHIRValue(err_val));
+                                    return;
+                                }
+                                const end_idx = start_idx + len;
 
                                 // Create substring
                                 const substring = s_val[start_idx..end_idx];

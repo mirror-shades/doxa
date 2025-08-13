@@ -243,6 +243,10 @@ pub const SemanticAnalyzer = struct {
             const variants = [_][]const u8{ "ParseFailed", "Overflow", "Underflow" };
             try self.registerEnumType("NumberError", &variants);
         }
+        if (!self.custom_types.contains("IndexError")) {
+            const variants = [_][]const u8{"OutOfBounds"};
+            try self.registerEnumType("IndexError", &variants);
+        }
     }
 
     // NEW: Custom type info structure (matching HIR generator)
@@ -2428,8 +2432,14 @@ pub const SemanticAnalyzer = struct {
                                 }
                                 // Lower to StringOp.Substring HIR via a small desugaring: push len, start, string
                                 // We keep it simple by generating a call-like sequence: we’ll emit in HIR generator using StringOp.Substring
-                                // Represent as method call remains; HIR generator already pops in order for Substring
-                                type_info.* = .{ .base = .String };
+                                // Always return union: string | IndexError
+                                const str_t = try self.allocator.create(TypeInfo);
+                                str_t.* = .{ .base = .String };
+                                const err_t = try self.allocator.create(TypeInfo);
+                                err_t.* = .{ .base = .Custom, .custom_type = "IndexError" };
+                                var members = [_]*TypeInfo{ str_t, err_t };
+                                const u = try self.createUnionType(members[0..]);
+                                type_info.* = u.*;
                             },
                             .TOSTRING => {
                                 // Any type can be converted to string
