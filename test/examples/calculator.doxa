@@ -1,7 +1,7 @@
 
 
 entry fn main() {
-    const input is @input("Enter an equation: ");
+    const input is @input();
     input?;
 
     const equation is split(input);
@@ -11,17 +11,6 @@ entry fn main() {
 }
 
 fn split(input :: string) -> string[] {
-    var result is string[];
-    var current is "";
-    each c at i in input {
-        if c equals " " then {
-            @push(result, current);
-            current is "";
-        } else {
-            current is current + c;
-        }
-        current?;
-    }
-    @push(result, current);
+    var result :: string[];
     return result;
 }

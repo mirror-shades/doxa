@@ -1406,10 +1406,14 @@ pub const HIRVM = struct {
                 const initial_capacity = if (a.size == 0) 8 else a.size; // Start with capacity 8 for empty arrays
                 const elements = try self.allocator.alloc(HIRValue, initial_capacity);
 
-                // Initialize all elements to default values based on element type
+                // Initialize elements: first 'size' with type default, remainder with 'nothing'
                 const default_value = HIRVM.getDefaultValue(a.element_type);
-                for (elements) |*element| {
-                    element.* = default_value;
+                var i: usize = 0;
+                while (i < @as(usize, @intCast(a.size)) and i < elements.len) : (i += 1) {
+                    elements[i] = default_value;
+                }
+                while (i < elements.len) : (i += 1) {
+                    elements[i] = HIRValue.nothing;
                 }
 
                 // For empty arrays, we use the full capacity but track length separately
@@ -2932,7 +2936,8 @@ pub const HIRVM = struct {
                 .Array => "array[]", // Nested arrays
                 .Struct => "struct[]",
                 .Auto => "auto[]",
-                else => unreachable,
+                .Nothing => "array[]",
+                else => "array[]",
             },
             .struct_instance => |s| s.type_name,
             .map => "map",
