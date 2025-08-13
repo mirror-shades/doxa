@@ -633,6 +633,7 @@ pub const Parser = struct {
         if (std.mem.eql(u8, name, "length")) return .LENGTH;
         if (std.mem.eql(u8, name, "bytes")) return .BYTES;
         if (std.mem.eql(u8, name, "slice")) return .SLICE;
+        if (std.mem.eql(u8, name, "substring")) return .SUBSTRING;
         if (std.mem.eql(u8, name, "push")) return .PUSH;
         if (std.mem.eql(u8, name, "pop")) return .POP;
         if (std.mem.eql(u8, name, "insert")) return .INSERT;

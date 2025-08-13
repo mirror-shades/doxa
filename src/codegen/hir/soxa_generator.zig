@@ -3049,9 +3049,11 @@ pub const HIRGenerator = struct {
                 // Handle different types of function calls
                 switch (call.callee.data) {
                     .MethodCall => |method| {
-                        if (std.mem.eql(u8, method.method.lexeme, "safeAdd")) {
-                            return .Int; // safeAdd returns int
-                        }
+                        if (std.mem.eql(u8, method.method.lexeme, "substring")) return .String;
+                        if (std.mem.eql(u8, method.method.lexeme, "length")) return .Int;
+                        if (std.mem.eql(u8, method.method.lexeme, "bytes")) return .Array;
+                        if (std.mem.eql(u8, method.method.lexeme, "int")) return .Int; // union at semantic level
+                        if (std.mem.eql(u8, method.method.lexeme, "safeAdd")) return .Int;
                     },
                     .FieldAccess => |field| {
                         // Handle imported functions like safeMath.safeAdd
@@ -3089,6 +3091,42 @@ pub const HIRGenerator = struct {
                     }
                     return then_type;
                 }
+                return .Auto;
+            },
+            .MethodCall => |m| {
+                // Emit HIR for compiler methods
+                const name = m.method.lexeme;
+                if (std.mem.eql(u8, name, "substring")) {
+                    // Evaluate in VM-expected order: start, length, then receiver on top
+                    self.generateExpression(m.arguments[0], true) catch {
+                        const nothing_idx = self.addConstant(HIRValue.nothing) catch 0;
+                        self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } }) catch {};
+                        return .Nothing;
+                    };
+                    self.generateExpression(m.arguments[1], true) catch {
+                        const nothing_idx = self.addConstant(HIRValue.nothing) catch 0;
+                        self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } }) catch {};
+                        return .Nothing;
+                    };
+                    self.generateExpression(m.receiver, true) catch {
+                        const nothing_idx = self.addConstant(HIRValue.nothing) catch 0;
+                        self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } }) catch {};
+                        return .Nothing;
+                    };
+                    self.instructions.append(.{ .StringOp = .{ .op = .Substring } }) catch return .Nothing;
+                    return .String;
+                }
+                // Fallback: just evaluate receiver and args and return Auto type
+                self.generateExpression(m.receiver, true) catch {
+                    const nothing_idx = self.addConstant(HIRValue.nothing) catch 0;
+                    self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } }) catch {};
+                    return .Nothing;
+                };
+                for (m.arguments) |a| self.generateExpression(a, true) catch {
+                    const nothing_idx = self.addConstant(HIRValue.nothing) catch 0;
+                    self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } }) catch {};
+                    return .Nothing;
+                };
                 return .Auto;
             },
             .Match => .String, // Match expressions typically return strings in this codebase

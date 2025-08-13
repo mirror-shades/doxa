@@ -77,6 +77,7 @@ pub const TokenType = enum {
     LENGTH, // length
     BYTES, // bytes
     SLICE, // slice
+    SUBSTRING, // substring
     PUSH, // push
     POP, // pop
     INSERT, // insert

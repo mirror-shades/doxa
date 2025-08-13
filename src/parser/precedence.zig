@@ -201,6 +201,7 @@ pub const rules = blk: {
     r.set(.LENGTH, .{ .prefix = methodCallExpr, .precedence = .CALL });
     r.set(.BYTES, .{ .prefix = methodCallExpr, .precedence = .CALL });
     r.set(.SLICE, .{ .prefix = methodCallExpr, .precedence = .CALL });
+    r.set(.SUBSTRING, .{ .prefix = methodCallExpr, .precedence = .CALL });
 
     // Array ops
     r.set(.PUSH, .{ .prefix = methodCallExpr, .precedence = .CALL });
