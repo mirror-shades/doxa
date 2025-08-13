@@ -699,6 +699,8 @@ pub const LexicalAnalyzer = struct {
             try self.addToken(.BYTES, .nothing);
         } else if (std.mem.eql(u8, method_name, "slice")) {
             try self.addToken(.SLICE, .nothing);
+        } else if (std.mem.eql(u8, method_name, "substring")) {
+            try self.addToken(.SUBSTRING, .nothing);
         } else if (std.mem.eql(u8, method_name, "push")) {
             try self.addToken(.PUSH, .nothing);
         } else if (std.mem.eql(u8, method_name, "pop")) {

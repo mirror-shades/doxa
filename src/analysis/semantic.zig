@@ -2389,8 +2389,48 @@ pub const SemanticAnalyzer = struct {
                     },
 
                     // String methods
-                    .TOSTRING, .PARSEINT, .PARSEFLOAT, .PARSEBYTE, .SPLIT, .JOIN, .TRIM, .LOWER, .UPPER => {
+                    .TOSTRING, .PARSEINT, .PARSEFLOAT, .PARSEBYTE, .SPLIT, .JOIN, .TRIM, .LOWER, .UPPER, .SUBSTRING => {
                         switch (method_call.method.type) {
+                            .SUBSTRING => {
+                                // Expect receiver string and two int args (start, length)
+                                if (receiver_type.base != .String) {
+                                    self.reporter.reportCompileError(
+                                        method_call.receiver.base.span.start,
+                                        "Cannot call substring on non-string type {s}",
+                                        .{@tagName(receiver_type.base)},
+                                    );
+                                    self.fatal_error = true;
+                                    type_info.* = .{ .base = .Nothing };
+                                    return type_info;
+                                }
+                                if (method_call.arguments.len != 2) {
+                                    self.reporter.reportCompileError(
+                                        .{ .file = method_call.method.file, .line = method_call.method.line, .column = method_call.method.column },
+                                        "@substring requires 2 arguments (start, length)",
+                                        .{},
+                                    );
+                                    self.fatal_error = true;
+                                    type_info.* = .{ .base = .Nothing };
+                                    return type_info;
+                                }
+                                // Type-check args are ints
+                                const a0 = try self.inferTypeFromExpr(method_call.arguments[0]);
+                                const a1 = try self.inferTypeFromExpr(method_call.arguments[1]);
+                                if (a0.base != .Int or a1.base != .Int) {
+                                    self.reporter.reportCompileError(
+                                        method_call.arguments[0].base.span.start,
+                                        "@substring arguments must be integers",
+                                        .{},
+                                    );
+                                    self.fatal_error = true;
+                                    type_info.* = .{ .base = .Nothing };
+                                    return type_info;
+                                }
+                                // Lower to StringOp.Substring HIR via a small desugaring: push len, start, string
+                                // We keep it simple by generating a call-like sequence: we’ll emit in HIR generator using StringOp.Substring
+                                // Represent as method call remains; HIR generator already pops in order for Substring
+                                type_info.* = .{ .base = .String };
+                            },
                             .TOSTRING => {
                                 // Any type can be converted to string
                                 type_info.* = .{ .base = .String };

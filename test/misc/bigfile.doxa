@@ -357,9 +357,9 @@ Map["c"]?; // 3.5
 /////   
 // FORMAL LOGICAL NOTATION
 /////
-(∃x ∈ arr : x > checkAgainst)?; // true  67
-(∀x ∈ arr : x > checkAgainst)?; // false  68
-(¬∀x ∈ arr : x > checkAgainst)?; // true  69
+(∃x ∈ arr : x > checkAgainst)?; // true 
+(∀x ∈ arr : x > checkAgainst)?; // false 
+(¬∀x ∈ arr : x > checkAgainst)?; // true 
 (false ↔ false)?; // true  70
 (true ⊕ true)?; // false  71
 (true ∧ false)?; // false  72
@@ -375,6 +375,14 @@ Map["c"]?; // 3.5
     true) 
     ?
 ; // true
+
+/////
+// STRING METHODS
+/////
+
+var s is "hello world";
+@substring(s, 0, 5)?;   // "hello"
+@substring(s, 6, 5)?;   // "world"
 
 /////
 // @type AND INFERENCE
