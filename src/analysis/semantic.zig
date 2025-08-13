@@ -389,6 +389,92 @@ pub const SemanticAnalyzer = struct {
     }
 
     fn collectDeclarations(self: *SemanticAnalyzer, statements: []ast.Stmt, scope: *Scope) ErrorList!void {
+        // First pass: pre-register all function declarations so calls can see them
+        for (statements) |stmt| {
+            switch (stmt.data) {
+                .FunctionDecl => |func| {
+                    // Create function type
+                    const func_type = try self.allocator.create(ast.FunctionType);
+
+                    // Infer or use explicit return type
+                    var inferred_return_type = func.return_type_info;
+                    if (func.return_type_info.base == .Nothing) {
+                        const inferred = try self.inferFunctionReturnType(func);
+                        inferred_return_type = inferred.*;
+                    } else if (func.return_type_info.base == .Union) {
+                        if (func.return_type_info.union_type) |union_type| {
+                            const flattened = try self.flattenUnionType(union_type);
+                            inferred_return_type = ast.TypeInfo{
+                                .base = .Union,
+                                .union_type = flattened,
+                                .is_mutable = false,
+                            };
+                        }
+                    }
+
+                    // Build parameter types
+                    var param_types = try self.allocator.alloc(ast.TypeInfo, func.params.len);
+                    for (func.params, 0..) |param, i| {
+                        if (param.type_expr) |type_expr| {
+                            const param_type_ptr = try ast.typeInfoFromExpr(self.allocator, type_expr);
+                            defer self.allocator.destroy(param_type_ptr);
+
+                            var resolved_param_type = try self.resolveTypeInfo(param_type_ptr.*);
+                            if (resolved_param_type.base == .Union) {
+                                if (resolved_param_type.union_type) |u| {
+                                    const flattened = try self.flattenUnionType(u);
+                                    resolved_param_type = ast.TypeInfo{
+                                        .base = .Union,
+                                        .union_type = flattened,
+                                        .is_mutable = false,
+                                    };
+                                }
+                            }
+                            param_types[i] = resolved_param_type;
+                        } else {
+                            param_types[i] = .{ .base = .Nothing };
+                        }
+                    }
+
+                    // Set up function type
+                    func_type.* = .{
+                        .params = param_types,
+                        .return_type = try self.allocator.create(ast.TypeInfo),
+                    };
+                    func_type.return_type.* = inferred_return_type;
+
+                    // Add function to current scope if not already present
+                    if (scope.lookupVariable(func.name.lexeme) == null) {
+                        const func_type_info = try self.allocator.create(ast.TypeInfo);
+                        func_type_info.* = .{ .base = .Function, .function_type = func_type };
+
+                        var env = @import("../interpreter/environment.zig").init(
+                            self.allocator,
+                            null,
+                            false,
+                            self.memory,
+                        );
+                        _ = scope.createValueBinding(
+                            func.name.lexeme,
+                            TokenLiteral{ .function = .{ .params = func.params, .body = func.body, .closure = &env, .defining_module = null } },
+                            .FUNCTION,
+                            func_type_info,
+                            true,
+                        ) catch |err| {
+                            if (err == error.DuplicateVariableName) {
+                                // Ignore duplicates in pre-pass; they will be reported later
+                            } else {
+                                return err;
+                            }
+                        };
+
+                        try self.function_return_types.put(stmt.base.id, func_type.return_type);
+                    }
+                },
+                else => {},
+            }
+        }
+
         for (statements) |stmt| {
             switch (stmt.data) {
                 .VarDecl => |decl| {
@@ -474,106 +560,8 @@ pub const SemanticAnalyzer = struct {
                     try self.collectDeclarations(block_stmts, block_scope);
                     block_scope.deinit();
                 },
-                .FunctionDecl => |func| {
-                    // NEW: Start collecting return types for this function
-                    self.current_function_returns.clearRetainingCapacity();
-
-                    // Create function type
-                    const func_type = try self.allocator.create(ast.FunctionType);
-
-                    // NEW: Infer return type if not explicitly provided
-                    var inferred_return_type = func.return_type_info;
-                    if (func.return_type_info.base == .Nothing) {
-                        // No explicit return type - infer from function body
-                        const inferred = try self.inferFunctionReturnType(func);
-                        inferred_return_type = inferred.*;
-                    } else {
-                        // Explicit return type - flatten if it's a union
-                        if (func.return_type_info.base == .Union) {
-                            if (func.return_type_info.union_type) |union_type| {
-                                const flattened = try self.flattenUnionType(union_type);
-                                inferred_return_type = ast.TypeInfo{
-                                    .base = .Union,
-                                    .union_type = flattened,
-                                    .is_mutable = false,
-                                };
-                            }
-                        }
-                    }
-
-                    // Build parameter type list
-                    var param_types = try self.allocator.alloc(ast.TypeInfo, func.params.len);
-                    for (func.params, 0..) |param, i| {
-                        if (param.type_expr) |type_expr| {
-                            const param_type_ptr = try ast.typeInfoFromExpr(self.allocator, type_expr);
-                            defer self.allocator.destroy(param_type_ptr);
-
-                            // Flatten unions in parameters to avoid nested unions and resolve custom types
-                            var resolved_param_type = try self.resolveTypeInfo(param_type_ptr.*);
-                            if (resolved_param_type.base == .Union) {
-                                if (resolved_param_type.union_type) |u| {
-                                    const flattened = try self.flattenUnionType(u);
-                                    resolved_param_type = ast.TypeInfo{
-                                        .base = .Union,
-                                        .union_type = flattened,
-                                        .is_mutable = false,
-                                    };
-                                }
-                            }
-                            param_types[i] = resolved_param_type;
-                        } else {
-                            // Untyped parameter: treat as 'nothing' which will fail unification if relied upon
-                            param_types[i] = .{ .base = .Nothing };
-                        }
-                    }
-
-                    // Set up function type with parameters and inferred return type
-                    func_type.* = .{
-                        .params = param_types,
-                        .return_type = try self.allocator.create(ast.TypeInfo),
-                    };
-                    func_type.return_type.* = inferred_return_type;
-
-                    // Add function to current scope
-                    const func_type_info = try self.allocator.create(ast.TypeInfo);
-                    func_type_info.* = .{ .base = .Function, .function_type = func_type };
-
-                    var env = @import("../interpreter/environment.zig").init(
-                        self.allocator,
-                        null, // no enclosing environment for function declarations
-                        false, // debug disabled
-                        self.memory,
-                    );
-                    _ = scope.createValueBinding(
-                        func.name.lexeme,
-                        TokenLiteral{ .function = .{
-                            .params = func.params,
-                            .body = func.body,
-                            .closure = &env,
-                            .defining_module = null,
-                        } },
-                        .FUNCTION,
-                        func_type_info,
-                        true,
-                    ) catch |err| {
-                        if (err == error.DuplicateVariableName) {
-                            self.reporter.reportCompileError(
-                                stmt.base.span.start,
-                                "Duplicate function name '{s}' in current scope",
-                                .{func.name.lexeme},
-                            );
-                            self.fatal_error = true;
-                            continue;
-                        } else {
-                            return err;
-                        }
-                    };
-
-                    // Store the inferred return type for this function
-                    try self.function_return_types.put(stmt.base.id, func_type.return_type);
-
-                    // NEW: Validate function body with inferred return type
-                    try self.validateFunctionBody(func, stmt.base.span, inferred_return_type);
+                .FunctionDecl => |_| {
+                    // Already registered in pre-pass. Validation will occur later.
                 },
                 .EnumDecl => |enum_decl| {
                     // Register the enum type in the current scope
