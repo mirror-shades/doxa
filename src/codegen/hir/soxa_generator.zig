@@ -1095,6 +1095,10 @@ pub const HIRGenerator = struct {
                         const lt = self.inferTypeFromExpression(bin.left.?);
                         const rt = self.inferTypeFromExpression(bin.right.?);
                         if (lt == .String or rt == .String) {
+                            // We pushed left, then right. VM pops top as receiver (s_val),
+                            // and then pops the next as the second string. To compute left + right,
+                            // we need top to be left. So swap the top two values before Concat.
+                            try self.instructions.append(.Swap);
                             try self.instructions.append(.{ .StringOp = .{ .op = .Concat } });
                         } else if (result_type == .Float) {
                             try self.instructions.append(.{ .FloatArith = .{ .op = .Add, .exception_behavior = .Trap } });
