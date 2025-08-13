@@ -1069,7 +1069,35 @@ pub const SemanticAnalyzer = struct {
                     } else {
                         type_info.* = .{ .base = .Byte };
                     }
-                } else if (std.mem.eql(u8, op, "+") or std.mem.eql(u8, op, "-") or std.mem.eql(u8, op, "*")) {
+                } else if (std.mem.eql(u8, op, "+")) {
+                    // String concatenation if either side is string
+                    if (left_type.base == .String or right_type.base == .String) {
+                        type_info.* = .{ .base = .String };
+                    } else {
+                        // Arithmetic with type promotion
+                        if ((left_type.base != .Int and left_type.base != .Float and left_type.base != .Byte) or
+                            (right_type.base != .Int and right_type.base != .Float and right_type.base != .Byte))
+                        {
+                            self.reporter.reportCompileError(
+                                expr.base.span.start,
+                                "Arithmetic requires numeric operands",
+                                .{},
+                            );
+                            self.fatal_error = true;
+                            type_info.base = .Nothing;
+                            return type_info;
+                        }
+
+                        // Type promotion rules: Float > Int > Byte
+                        if (left_type.base == .Float or right_type.base == .Float) {
+                            type_info.* = .{ .base = .Float };
+                        } else if (left_type.base == .Int or right_type.base == .Int) {
+                            type_info.* = .{ .base = .Int };
+                        } else {
+                            type_info.* = .{ .base = .Byte };
+                        }
+                    }
+                } else if (std.mem.eql(u8, op, "-") or std.mem.eql(u8, op, "*")) {
                     // Arithmetic with type promotion
                     if ((left_type.base != .Int and left_type.base != .Float and left_type.base != .Byte) or
                         (right_type.base != .Int and right_type.base != .Float and right_type.base != .Byte))
@@ -1637,12 +1665,12 @@ pub const SemanticAnalyzer = struct {
                 type_info.* = .{ .base = .Nothing }; // For expressions have no value
             },
             .ForEach => |foreach_expr| {
-                const array_type = try self.inferTypeFromExpr(foreach_expr.array);
-                if (array_type.base != .Array) {
+                const container_type = try self.inferTypeFromExpr(foreach_expr.array);
+                if (container_type.base != .Array and container_type.base != .String) {
                     self.reporter.reportCompileError(
                         expr.base.span.start,
-                        "ForEach requires array type, got {s}",
-                        .{@tagName(array_type.base)},
+                        "ForEach requires array or string type, got {s}",
+                        .{@tagName(container_type.base)},
                     );
                     self.fatal_error = true;
                     type_info.base = .Nothing;
@@ -1652,10 +1680,14 @@ pub const SemanticAnalyzer = struct {
                 // Create a scope for the loop variables
                 const loop_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
 
-                // Infer the element type from the array type
+                // Infer the element type from the container type
                 var element_type = ast.TypeInfo{ .base = .Nothing, .is_mutable = false };
-                if (array_type.array_type) |element_type_info| {
-                    element_type = element_type_info.*;
+                if (container_type.base == .Array) {
+                    if (container_type.array_type) |element_type_info| {
+                        element_type = element_type_info.*;
+                    }
+                } else if (container_type.base == .String) {
+                    element_type = .{ .base = .String };
                 }
 
                 // Add the item variable to the loop scope
@@ -3878,13 +3910,13 @@ pub const SemanticAnalyzer = struct {
 
     // NEW: Validate ForEach expressions with proper scope management
     fn validateForEachExpression(self: *SemanticAnalyzer, foreach_expr: ast.ForEachExpr, span: ast.SourceSpan) ErrorList!void {
-        // Validate the array expression
-        const array_type = try self.inferTypeFromExpr(foreach_expr.array);
-        if (array_type.base != .Array) {
+        // Validate the container expression
+        const container_type = try self.inferTypeFromExpr(foreach_expr.array);
+        if (container_type.base != .Array and container_type.base != .String) {
             self.reporter.reportCompileError(
                 span.start,
-                "ForEach requires array type, got {s}",
-                .{@tagName(array_type.base)},
+                "ForEach requires array or string type, got {s}",
+                .{@tagName(container_type.base)},
             );
             self.fatal_error = true;
             return;
@@ -3895,8 +3927,12 @@ pub const SemanticAnalyzer = struct {
 
         // Infer the element type from the array type
         var element_type = ast.TypeInfo{ .base = .Nothing, .is_mutable = false };
-        if (array_type.array_type) |element_type_info| {
-            element_type = element_type_info.*;
+        if (container_type.base == .Array) {
+            if (container_type.array_type) |element_type_info| {
+                element_type = element_type_info.*;
+            }
+        } else if (container_type.base == .String) {
+            element_type = .{ .base = .String };
         }
 
         // Add the item variable to the loop scope

@@ -1091,7 +1091,12 @@ pub const HIRGenerator = struct {
 
                 switch (bin.operator.type) {
                     .PLUS => {
-                        if (result_type == .Float) {
+                        // If either operand is a string, emit string concatenation
+                        const lt = self.inferTypeFromExpression(bin.left.?);
+                        const rt = self.inferTypeFromExpression(bin.right.?);
+                        if (lt == .String or rt == .String) {
+                            try self.instructions.append(.{ .StringOp = .{ .op = .Concat } });
+                        } else if (result_type == .Float) {
                             try self.instructions.append(.{ .FloatArith = .{ .op = .Add, .exception_behavior = .Trap } });
                         } else {
                             try self.instructions.append(.{ .IntArith = .{ .op = .Add, .overflow_behavior = .Wrap } });
@@ -2572,7 +2577,10 @@ pub const HIRGenerator = struct {
                 const idx_tmp_idx = try self.getOrCreateVariable(idx_var_name);
 
                 // Track basic types for temporaries
-                try self.trackVariableType(arr_tmp_name, .Array);
+                // Determine container type (array or string)
+                const container_type = self.inferTypeFromExpression(foreach_expr.array);
+                const is_string_container = container_type == .String;
+                try self.trackVariableType(arr_tmp_name, container_type);
                 try self.trackVariableType(len_tmp_name, .Int);
                 try self.trackVariableType(idx_var_name, .Int);
 
@@ -2587,7 +2595,7 @@ pub const HIRGenerator = struct {
                     .expected_type = .Array,
                 } });
 
-                // Compute array length into len_tmp
+                // Compute container length into len_tmp
                 try self.instructions.append(.{ .StringOp = .{ .op = .Length } });
                 try self.instructions.append(.{ .StoreVar = .{
                     .var_index = len_tmp_idx,
@@ -2617,17 +2625,28 @@ pub const HIRGenerator = struct {
 
                 // Loop body: load element and bind to item variable
                 try self.instructions.append(.{ .Label = .{ .name = fe_body, .vm_address = 0 } });
-                try self.instructions.append(.{ .LoadVar = .{ .var_index = arr_tmp_idx, .var_name = arr_tmp_name, .scope_kind = .Local, .module_context = null } });
-                try self.instructions.append(.{ .LoadVar = .{ .var_index = idx_tmp_idx, .var_name = idx_var_name, .scope_kind = .Local, .module_context = null } });
-                try self.instructions.append(.{ .ArrayGet = .{ .bounds_check = true } });
+                if (is_string_container) {
+                    // For strings, order must be: start, length, string (so string is on top when StringOp executes)
+                    try self.instructions.append(.{ .LoadVar = .{ .var_index = idx_tmp_idx, .var_name = idx_var_name, .scope_kind = .Local, .module_context = null } });
+                    // For strings, use Substring with length 1 to fetch a single-char string
+                    const one_idx = try self.addConstant(HIRValue{ .int = 1 });
+                    try self.instructions.append(.{ .Const = .{ .value = HIRValue{ .int = 1 }, .constant_id = one_idx } });
+                    try self.instructions.append(.{ .LoadVar = .{ .var_index = arr_tmp_idx, .var_name = arr_tmp_name, .scope_kind = .Local, .module_context = null } });
+                    try self.instructions.append(.{ .StringOp = .{ .op = .Substring } });
+                } else {
+                    try self.instructions.append(.{ .LoadVar = .{ .var_index = arr_tmp_idx, .var_name = arr_tmp_name, .scope_kind = .Local, .module_context = null } });
+                    try self.instructions.append(.{ .LoadVar = .{ .var_index = idx_tmp_idx, .var_name = idx_var_name, .scope_kind = .Local, .module_context = null } });
+                    try self.instructions.append(.{ .ArrayGet = .{ .bounds_check = true } });
+                }
 
                 // Determine/track the element type if possible
                 var elem_type: HIRType = .Auto;
-                if (foreach_expr.array.data == .Variable) {
+                if (!is_string_container and foreach_expr.array.data == .Variable) {
                     if (self.getTrackedArrayElementType(foreach_expr.array.data.Variable.lexeme)) |tracked_elem| {
                         elem_type = tracked_elem;
                     }
                 }
+                if (is_string_container) elem_type = .String;
 
                 // Store to loop item variable
                 const item_name = foreach_expr.item_name.lexeme;
