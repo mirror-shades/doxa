@@ -349,6 +349,32 @@ pub const HIRVM = struct {
             } };
         }
 
+        // Preserve array element types using provided TypeInfo (fix for empty arrays)
+        if (token_literal == .array and type_info.base == .Array) {
+            const hir_val = self.tokenLiteralToHIRValue(token_literal);
+            switch (hir_val) {
+                .array => |arr| {
+                    var mutable_arr = arr;
+                    if (type_info.array_type) |elem_info| {
+                        const mapped_elem_type: HIRType = switch (elem_info.base) {
+                            .Int => .Int,
+                            .Byte => .Byte,
+                            .Float => .Float,
+                            .String => .String,
+                            .Tetra => .Tetra,
+                            .Array => .Array,
+                            .Struct => .Struct,
+                            .Enum => .Enum,
+                            else => mutable_arr.element_type,
+                        };
+                        mutable_arr.element_type = mapped_elem_type;
+                    }
+                    return HIRValue{ .array = mutable_arr };
+                },
+                else => {},
+            }
+        }
+
         // Otherwise, use the regular conversion
         return self.tokenLiteralToHIRValue(token_literal);
     }
@@ -533,7 +559,6 @@ pub const HIRVM = struct {
     }
 
     pub fn hirValueToTypeInfo(self: *HIRVM, hir_value: HIRValue) TypeInfo {
-        _ = self;
         return switch (hir_value) {
             .int => TypeInfo{ .base = .Int, .is_mutable = true },
             .byte => TypeInfo{ .base = .Byte, .is_mutable = true },
@@ -542,7 +567,25 @@ pub const HIRVM = struct {
             .tetra => TypeInfo{ .base = .Tetra, .is_mutable = true },
             .nothing => TypeInfo{ .base = .Nothing, .is_mutable = true },
             // Complex types - map to appropriate TypeInfo
-            .array => TypeInfo{ .base = .Array, .is_mutable = true },
+            .array => |arr| blk: {
+                // Allocate element TypeInfo to preserve array element type
+                const elem_info = self.allocator.create(TypeInfo) catch {
+                    break :blk TypeInfo{ .base = .Array, .is_mutable = true };
+                };
+                elem_info.* = switch (arr.element_type) {
+                    .Int => TypeInfo{ .base = .Int },
+                    .Byte => TypeInfo{ .base = .Byte },
+                    .Float => TypeInfo{ .base = .Float },
+                    .String => TypeInfo{ .base = .String },
+                    .Tetra => TypeInfo{ .base = .Tetra },
+                    .Array => TypeInfo{ .base = .Array },
+                    .Struct => TypeInfo{ .base = .Struct },
+                    .Map => TypeInfo{ .base = .Map },
+                    .Enum => TypeInfo{ .base = .Enum },
+                    else => TypeInfo{ .base = .Nothing },
+                };
+                break :blk TypeInfo{ .base = .Array, .array_type = elem_info, .is_mutable = true };
+            },
             .struct_instance => TypeInfo{ .base = .Struct, .is_mutable = true }, // Struct types need resolution
             .map => TypeInfo{ .base = .Map, .is_mutable = true },
             .enum_variant => |e| TypeInfo{ .base = .Enum, .is_mutable = true, .custom_type = e.type_name }, // Preserve enum type name
@@ -3124,35 +3167,75 @@ pub const HIRVM = struct {
         const array_frame = try self.stack.pop();
         switch (array_frame.value) {
             .array => |arr| {
-                // Create new array with increased capacity if needed
-                const current_len = arr.elements.len;
-                const new_capacity = if (current_len >= arr.capacity) arr.capacity * 2 else arr.capacity;
-                var new_array = HIRArray{
-                    .elements = try self.allocator.alloc(HIRValue, new_capacity),
-                    .element_type = arr.element_type,
-                    .capacity = new_capacity,
-                };
+                // Work with a mutable copy
+                var mutable_arr = arr;
 
-                // Copy existing elements
-                @memcpy(new_array.elements[0..current_len], arr.elements);
-
-                // Add the new element
-                new_array.elements[current_len] = element_value;
-
-                // Initialize remaining elements to nothing
-                for (new_array.elements[current_len + 1 ..]) |*element| {
-                    element.* = HIRValue.nothing;
+                // If array has no concrete element type yet, infer from first pushed element
+                if (mutable_arr.element_type == .Auto or mutable_arr.element_type == .Nothing) {
+                    mutable_arr.element_type = switch (element_value) {
+                        .int => .Int,
+                        .byte => .Byte,
+                        .float => .Float,
+                        .string => .String,
+                        .tetra => .Tetra,
+                        .array => .Array,
+                        .struct_instance => .Struct,
+                        else => mutable_arr.element_type,
+                    };
                 }
 
-                // Free old array and push new one
-                self.allocator.free(arr.elements);
-                try self.stack.push(HIRFrame.initFromHIRValue(HIRValue{ .array = new_array }));
+                // Compute logical length (count until first 'nothing')
+                var length: usize = 0;
+                while (length < mutable_arr.elements.len) : (length += 1) {
+                    if (std.meta.eql(mutable_arr.elements[length], HIRValue.nothing)) break;
+                }
+
+                // Resize if at capacity
+                if (length >= mutable_arr.capacity) {
+                    const old_capacity = mutable_arr.capacity;
+                    const new_capacity = if (old_capacity == 0) 1 else old_capacity * 2;
+                    const new_elements = try self.allocator.alloc(HIRValue, new_capacity);
+
+                    // Copy existing populated elements
+                    if (length > 0) {
+                        @memcpy(new_elements[0..length], mutable_arr.elements[0..length]);
+                    }
+
+                    // Place new element
+                    new_elements[length] = element_value;
+
+                    // Initialize remaining to nothing
+                    var i: usize = length + 1;
+                    while (i < new_capacity) : (i += 1) {
+                        new_elements[i] = HIRValue.nothing;
+                    }
+
+                    // Replace storage
+                    self.allocator.free(mutable_arr.elements);
+                    mutable_arr.elements = new_elements;
+                    mutable_arr.capacity = new_capacity;
+                } else {
+                    // Enough capacity, write in-place
+                    mutable_arr.elements[length] = element_value;
+                }
+
+                // Push updated array back
+                try self.stack.push(HIRFrame.initFromHIRValue(HIRValue{ .array = mutable_arr }));
             },
             .nothing => {
                 // Create new array with initial capacity of 8
                 var new_array = HIRArray{
                     .elements = try self.allocator.alloc(HIRValue, 8),
-                    .element_type = .Auto,
+                    .element_type = switch (element_value) {
+                        .int => .Int,
+                        .byte => .Byte,
+                        .float => .Float,
+                        .string => .String,
+                        .tetra => .Tetra,
+                        .array => .Array,
+                        .struct_instance => .Struct,
+                        else => .Auto,
+                    },
                     .capacity = 8,
                 };
 
