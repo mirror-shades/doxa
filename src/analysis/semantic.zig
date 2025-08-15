@@ -30,6 +30,7 @@ const HIRType = @import("../codegen/hir/soxa_types.zig").HIRType;
 const NodeId = u32; // Or whatever your AST uses
 
 pub const SemanticAnalyzer = struct {
+    in_loop_scope: bool = false,
     allocator: std.mem.Allocator,
     reporter: *Reporter,
     memory: *MemoryManager,
@@ -602,6 +603,11 @@ pub const SemanticAnalyzer = struct {
 
                 .Expression => |maybe_expr| {
                     if (maybe_expr) |expr| {
+                        // Ensure expression statements are semantically analyzed so that
+                        // compiler methods like @push are lowered (e.g., MethodCall -> ArrayPush)
+                        // even when their values are not used.
+                        _ = try self.inferTypeFromExpr(expr);
+
                         // Handle struct declarations that are expressions
                         if (expr.data == .StructDecl) {
                             const struct_decl = expr.data.StructDecl;
@@ -1664,6 +1670,8 @@ pub const SemanticAnalyzer = struct {
                     type_info.base = .Nothing;
                     return type_info;
                 }
+                // ForEach is a statement, it doesn't produce a value
+                type_info.* = .{ .base = .Nothing };
 
                 // Create a scope for the loop variables
                 const loop_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
@@ -2300,13 +2308,25 @@ pub const SemanticAnalyzer = struct {
                 type_info.* = value_type.*; // Returns same type as input
             },
             .MethodCall => |method_call| {
-                const receiver_type = try self.inferTypeFromExpr(method_call.receiver);
+                var receiver_type = try self.inferTypeFromExpr(method_call.receiver);
                 const method_name = method_call.method.lexeme;
 
                 // Validate receiver type based on method
                 switch (method_call.method.type) {
                     // Array methods
                     .PUSH, .POP, .INSERT, .REMOVE, .CLEAR, .INDEX => {
+                        // If inference yielded Nothing but the receiver is a known variable,
+                        // fall back to its declared type. This helps for statement-level method calls
+                        // where the receiver was initialized to a default (e.g., empty array) and
+                        // type info exists in storage.
+                        if (receiver_type.base == .Nothing and method_call.receiver.data == .Variable) {
+                            const var_name = method_call.receiver.data.Variable.lexeme;
+                            if (self.lookupVariable(var_name)) |variable| {
+                                if (self.memory.scope_manager.value_storage.get(variable.storage_id)) |storage| {
+                                    receiver_type = storage.type_info;
+                                }
+                            }
+                        }
                         if (receiver_type.base != .Array) {
                             self.reporter.reportCompileError(
                                 method_call.receiver.base.span.start,
@@ -3046,7 +3066,22 @@ pub const SemanticAnalyzer = struct {
                 type_info.* = .{ .base = .Function };
             },
             .Block => |block| {
-                if (block.value) |value| {
+                // Ensure statements inside a block expression are validated so that
+                // statement-level transformations (e.g., @push lowering) occur within blocks
+                const prev_scope = self.current_scope;
+                const block_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
+                self.current_scope = block_scope;
+                defer {
+                    self.current_scope = prev_scope;
+                    block_scope.deinit();
+                }
+
+                try self.validateStatements(block.statements);
+
+                // For blocks in statement context (like in ForEach), don't try to infer a value
+                if (self.in_loop_scope) {
+                    type_info.* = .{ .base = .Nothing };
+                } else if (block.value) |value| {
                     type_info.* = (try self.inferTypeFromExpr(value)).*;
                 } else {
                     type_info.* = .{ .base = .Nothing };
@@ -3897,7 +3932,15 @@ pub const SemanticAnalyzer = struct {
     }
 
     // NEW: Validate ForEach expressions with proper scope management
+    fn isLoopScope(self: *SemanticAnalyzer) bool {
+        return self.in_loop_scope;
+    }
+
     fn validateForEachExpression(self: *SemanticAnalyzer, foreach_expr: ast.ForEachExpr, span: ast.SourceSpan) ErrorList!void {
+        const prev_in_loop = self.in_loop_scope;
+        self.in_loop_scope = true;
+        defer self.in_loop_scope = prev_in_loop;
+
         // Validate the container expression
         const container_type = try self.inferTypeFromExpr(foreach_expr.array);
         if (container_type.base != .Array and container_type.base != .String) {
@@ -3910,7 +3953,7 @@ pub const SemanticAnalyzer = struct {
             return;
         }
 
-        // Create a scope for the loop variables
+        // Create a scope for the loop variables but don't try to unify statement expression types
         const loop_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
 
         // Infer the element type from the array type

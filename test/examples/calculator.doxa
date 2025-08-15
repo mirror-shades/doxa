@@ -12,5 +12,40 @@ entry fn main() {
 
 fn split(input :: string) -> string[] {
     var result :: string[];
+    var current is "";
+
+    each c at i in input {
+        if c equals "+" then {
+            if @length(current) > 0 then {
+                @push(result, current);
+                current is "";
+            }
+            @push(result, "+");
+        }
+        else if c equals "-" then {
+            if @length(current) > 0 then {
+                @push(result, current);
+                current is "";
+            }
+            @push(result, "-");
+        }
+        else if c equals "*" then {
+            if @length(current) > 0 then {
+                @push(result, current);
+                current is "";
+            }
+            @push(result, "*");
+        }
+        else if c equals "/" then {
+            if @length(current) > 0 then {
+                @push(result, current);
+                current is "";
+            }
+            @push(result, "/");
+        } else {
+            if not(c equals " ") then current is current + c;
+        }
+    }
+    @push(result, current);
     return result;
 }
