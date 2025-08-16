@@ -595,7 +595,17 @@ pub const HIRVM = struct {
     pub fn init(program: *HIRProgram, reporter: *Reporter, memory_manager: *MemoryManager) !HIRVM {
         const allocator = memory_manager.getAllocator();
 
-        // Create a new execution scope for this HIR VM run
+        // Ensure a fresh root scope for each run to avoid leftover globals from prior executions
+        if (memory_manager.scope_manager.root_scope) |existing_root| {
+            existing_root.deinit();
+            memory_manager.scope_manager.root_scope = null;
+        }
+
+        // Create a brand new root scope
+        const fresh_root = try memory_manager.scope_manager.createScope(null, memory_manager);
+        memory_manager.scope_manager.root_scope = fresh_root;
+
+        // Create a new execution scope for this HIR VM run (child of fresh root)
         // This allows proper cleanup and isolation
         const execution_scope = try memory_manager.scope_manager.createScope(memory_manager.scope_manager.root_scope, memory_manager);
 
@@ -787,8 +797,8 @@ pub const HIRVM = struct {
                         // Targeted debug for suspected variables
                         if (std.mem.eql(u8, v.var_name, "resint") or std.mem.eql(u8, v.var_name, "resfloat")) {
                             self.reporter.debug(
-                                "DBG LoadVar {s}: token_type={s}, type_info={s}, token_literal={any}, hir_tag={s}",
-                                .{ v.var_name, @tagName(storage.type), @tagName(storage.type_info.base), storage.value, @tagName(hir_value) },
+                                "DBG LoadVar {s}: storage_id={}, token_type={s}, type_info={s}, token_literal={any}, hir_tag={s}",
+                                .{ v.var_name, variable.storage_id, @tagName(storage.type), @tagName(storage.type_info.base), storage.value, @tagName(hir_value) },
                             );
                         }
 
@@ -817,10 +827,17 @@ pub const HIRVM = struct {
                 type_info.* = type_info_value;
 
                 if (std.mem.eql(u8, v.var_name, "resint") or std.mem.eql(u8, v.var_name, "resfloat")) {
-                    self.reporter.debug(
-                        "DBG StoreVar {s}: token_type={s}, type_info={s}, token_literal={any}",
-                        .{ v.var_name, @tagName(token_type), @tagName(type_info.base), token_literal },
-                    );
+                    if (self.current_scope.lookupVariable(v.var_name)) |variable| {
+                        self.reporter.debug(
+                            "DBG StoreVar {s}: storage_id={}, token_type={s}, type_info={s}, token_literal={any}",
+                            .{ v.var_name, variable.storage_id, @tagName(token_type), @tagName(type_info.base), token_literal },
+                        );
+                    } else {
+                        self.reporter.debug(
+                            "DBG StoreVar {s}: storage_id=?, token_type={s}, type_info={s}, token_literal={any}",
+                            .{ v.var_name, @tagName(token_type), @tagName(type_info.base), token_literal },
+                        );
+                    }
                 }
 
                 // Function parameters must create NEW storage in each scope, never reuse parent storage
@@ -834,6 +851,12 @@ pub const HIRVM = struct {
                         storage.*.value = token_literal;
                         storage.*.type = token_type;
                         storage.*.type_info = type_info;
+
+                        // Unconditional debug for any StoreVar write
+                        self.reporter.debug(
+                            "DBG WRITE StoreVar {s}: storage_id={}, value={any}",
+                            .{ v.var_name, variable.storage_id, token_literal },
+                        );
                     } else {
                         return self.reporter.reportError("Variable storage not found for: {s}", .{v.var_name});
                     }
@@ -841,6 +864,12 @@ pub const HIRVM = struct {
                     _ = self.current_scope.createValueBinding(v.var_name, token_literal, token_type, type_info, false) catch |err| {
                         return self.reporter.reportError("Failed to create variable {s}: {}", .{ v.var_name, err });
                     };
+                    if (self.current_scope.lookupVariable(v.var_name)) |variable2| {
+                        self.reporter.debug(
+                            "DBG WRITE StoreVar (create) {s}: storage_id={}, value={any}",
+                            .{ v.var_name, variable2.storage_id, token_literal },
+                        );
+                    }
                 }
             },
 
@@ -855,10 +884,17 @@ pub const HIRVM = struct {
                 type_info.* = type_info_value;
 
                 if (std.mem.eql(u8, v.var_name, "resint") or std.mem.eql(u8, v.var_name, "resfloat") or std.mem.eql(u8, v.var_name, "newun")) {
-                    self.reporter.debug(
-                        "DBG StoreConst {s}: token_type={s}, type_info={s}, token_literal={any}",
-                        .{ v.var_name, @tagName(token_type), @tagName(type_info.base), token_literal },
-                    );
+                    if (self.current_scope.lookupVariable(v.var_name)) |variable| {
+                        self.reporter.debug(
+                            "DBG StoreConst {s}: storage_id={}, token_type={s}, type_info={s}, token_literal={any}",
+                            .{ v.var_name, variable.storage_id, @tagName(token_type), @tagName(type_info.base), token_literal },
+                        );
+                    } else {
+                        self.reporter.debug(
+                            "DBG StoreConst {s}: storage_id=?, token_type={s}, type_info={s}, token_literal={any}",
+                            .{ v.var_name, @tagName(token_type), @tagName(type_info.base), token_literal },
+                        );
+                    }
                 }
 
                 if (self.current_scope.name_map.get(v.var_name)) |variable| {
@@ -877,6 +913,12 @@ pub const HIRVM = struct {
                         storage.*.type = token_type;
                         storage.*.type_info = type_info;
                         storage.*.constant = true;
+
+                        // Unconditional debug for any StoreConst write (existing)
+                        self.reporter.debug(
+                            "DBG WRITE StoreConst {s}: storage_id={}, value={any}",
+                            .{ v.var_name, variable.storage_id, token_literal },
+                        );
                     } else {
                         return self.reporter.reportError("Variable storage not found for: {s}", .{v.var_name});
                     }
@@ -885,6 +927,12 @@ pub const HIRVM = struct {
                     _ = self.current_scope.createCrossScopeValueBinding(v.var_name, token_literal, token_type, type_info, true) catch |err| {
                         return self.reporter.reportError("Failed to create constant {s}: {}", .{ v.var_name, err });
                     };
+                    if (self.current_scope.lookupVariable(v.var_name)) |variable2| {
+                        self.reporter.debug(
+                            "DBG WRITE StoreConst (create) {s}: storage_id={}, value={any}",
+                            .{ v.var_name, variable2.storage_id, token_literal },
+                        );
+                    }
                 }
             },
 
@@ -2023,7 +2071,7 @@ pub const HIRVM = struct {
                 }
             },
 
-            .Return => |ret| {
+            .Return => |_| {
 
                 // Check if we're returning from main program or a function call
                 if (self.call_stack.isEmpty()) {
@@ -2040,10 +2088,7 @@ pub const HIRVM = struct {
                     // Returning from function call - pop call frame and return to caller
                     const call_frame = try self.call_stack.pop();
 
-                    if (!ret.has_value) {
-                        // No return value - push nothing for void functions
-                        try self.stack.push(HIRFrame.initFromHIRValue(HIRValue.nothing));
-                    }
+                    // For void returns, do not modify the stack; for value returns, the value is already on stack
                     // Note: Return value is already on stack for functions with return values
 
                     // Return to caller
@@ -2988,12 +3033,21 @@ pub const HIRVM = struct {
         };
     }
 
+    fn printFloat(writer: anytype, f: f64) !void {
+        const roundedDown = std.math.floor(f);
+        if (f - roundedDown == 0) {
+            try writer.print("{d}.0", .{f});
+        } else {
+            try writer.print("{d}", .{f});
+        }
+    }
+
     /// Format HIR value to a writer (for proper UTF-8 buffered output like old interpreter)
     pub fn formatHIRValue(self: *HIRVM, writer: anytype, value: HIRValue) !void {
         switch (value) {
             .int => |i| try writer.print("{}", .{i}),
             .byte => |u| try writer.print("0x{X:0>2}", .{u}),
-            .float => |f| try writer.print("{d:.1}", .{f}),
+            .float => |f| try printFloat(writer, f),
             .string => |s| try writer.print("\"{s}\"", .{s}),
             .tetra => |t| try writer.print("{s}", .{switch (t) {
                 0 => "false",

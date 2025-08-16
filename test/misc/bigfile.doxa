@@ -137,7 +137,7 @@ asThenUnion as int then {
 
 
 asThenUnion?; // 10
-asThenUnion is 10.0;
+asThenUnion is 12.345;
 asThenUnion?; // 10.0
 asThenUnion is 0x0A;
 asThenUnion?; // 0x0A

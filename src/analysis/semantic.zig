@@ -3103,6 +3103,17 @@ pub const SemanticAnalyzer = struct {
                 self.allocator.destroy(type_info_ptr);
             },
             .Cast => |cast| {
+                // Enforce: 'as' requires an else; then is optional
+                if (cast.else_branch == null) {
+                    self.reporter.reportCompileError(
+                        expr.base.span.start,
+                        "'as' requires an 'else' block",
+                        .{},
+                    );
+                    self.fatal_error = true;
+                    type_info.base = .Nothing;
+                    return type_info;
+                }
                 // For cast expressions (value as Type), the result type is the target type
                 // Parse the target type from the cast expression
                 const target_type_info = try self.typeExprToTypeInfo(cast.target_type);
@@ -3119,6 +3130,67 @@ pub const SemanticAnalyzer = struct {
                     self.fatal_error = true;
                     type_info.base = .Nothing;
                     return type_info;
+                }
+
+                // Handle the then branch in a new scope with narrowed type
+                var then_type: ?*ast.TypeInfo = null;
+                if (cast.then_branch) |then_expr| {
+                    // Create a scope for the then branch where we know the type
+                    const then_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
+                    defer then_scope.deinit();
+
+                    const prev_scope = self.current_scope;
+                    self.current_scope = then_scope;
+                    defer self.current_scope = prev_scope;
+
+                    // If the cast value is a variable, shadow it with the narrowed type
+                    if (cast.value.data == .Variable) {
+                        const var_name = cast.value.data.Variable.lexeme;
+                        const token_type = self.convertTypeToTokenType(target_type_info.base);
+                        _ = then_scope.createValueBinding(
+                            var_name,
+                            TokenLiteral{ .nothing = {} },
+                            token_type,
+                            target_type_info,
+                            false,
+                        ) catch {};
+                    }
+
+                    // Analyze the then branch with the narrowed type
+                    then_type = try self.inferTypeFromExpr(then_expr);
+                }
+
+                // Handle the else branch (no type narrowing)
+                var else_type: ?*ast.TypeInfo = null;
+                if (cast.else_branch) |else_expr| {
+                    else_type = try self.inferTypeFromExpr(else_expr);
+                }
+
+                // For an as expression with then/else, first set the type to the target type
+                // This ensures proper type inference in the branches
+                type_info.* = target_type_info.*;
+
+                // For an as expression with then/else, the type depends on the branch types
+                if (then_type) |tt| {
+                    if (else_type) |et| {
+                        // If both branches exist, create a union of their types
+                        if (tt.base == et.base) {
+                            type_info.* = tt.*;
+                        } else {
+                            var types = [_]*ast.TypeInfo{ tt, et };
+                            const union_type = try self.createUnionType(&types);
+                            type_info.* = union_type.*;
+                        }
+                    } else {
+                        // Only then branch exists
+                        type_info.* = tt.*;
+                    }
+                } else if (else_type) |et| {
+                    // Only else branch exists
+                    type_info.* = et.*;
+                } else {
+                    // No branch types (shouldn't happen)
+                    type_info.* = .{ .base = .Nothing };
                 }
             },
         }
@@ -3527,9 +3599,61 @@ pub const SemanticAnalyzer = struct {
                 return TokenLiteral{ .nothing = {} };
             },
             .Cast => |cast| {
-                // TODO: Implement evaluation for cast expressions
-                // For now, just evaluate the value
-                return try self.evaluateExpression(cast.value);
+                // Evaluate the value first
+                const value_literal = try self.evaluateExpression(cast.value);
+
+                // Determine target type
+                const target_type_info = try self.typeExprToTypeInfo(cast.target_type);
+                defer self.allocator.destroy(target_type_info);
+
+                // Helper: check if the evaluated value matches the target type
+                const matches_target: bool = switch (target_type_info.base) {
+                    .Int => switch (value_literal) {
+                        .int => true,
+                        else => false,
+                    },
+                    .Float => switch (value_literal) {
+                        .float => true,
+                        else => false,
+                    },
+                    .Byte => switch (value_literal) {
+                        .byte => true,
+                        else => false,
+                    },
+                    .String => switch (value_literal) {
+                        .string => true,
+                        else => false,
+                    },
+                    .Tetra => switch (value_literal) {
+                        .tetra => true,
+                        else => false,
+                    },
+                    .Nothing => switch (value_literal) {
+                        .nothing => true,
+                        else => false,
+                    },
+                    else => false,
+                };
+
+                // If we have branches, pick one at evaluation time
+                if (cast.then_branch != null or cast.else_branch != null) {
+                    if (matches_target) {
+                        if (cast.then_branch) |then_expr| {
+                            return try self.evaluateExpression(then_expr);
+                        }
+                        // No then branch; fall through
+                    } else {
+                        if (cast.else_branch) |else_expr| {
+                            return try self.evaluateExpression(else_expr);
+                        }
+                        // No else branch; fall through
+                    }
+                    // If the relevant branch is missing, return nothing
+                    return TokenLiteral{ .nothing = {} };
+                }
+
+                // No branches: return original value (narrowing only affects type, not value)
+                return value_literal;
             },
             else => {
                 // For complex expressions that can't be evaluated at compile time,

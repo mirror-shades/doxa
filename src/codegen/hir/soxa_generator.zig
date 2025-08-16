@@ -834,6 +834,10 @@ pub const HIRGenerator = struct {
                         .var_index = var_idx,
                         .var_name = decl.name.lexeme,
                     } });
+                    // In global scope, we duplicated the initializer; pop it to keep stack balanced
+                    if (self.current_function == null) {
+                        try self.instructions.append(.Pop);
+                    }
                 } else {
                     try self.instructions.append(.{ .StoreVar = .{
                         .var_index = var_idx,
@@ -842,6 +846,10 @@ pub const HIRGenerator = struct {
                         .module_context = null,
                         .expected_type = var_type,
                     } });
+                    // In global scope, we duplicated the initializer; pop it to keep stack balanced
+                    if (self.current_function == null) {
+                        try self.instructions.append(.Pop);
+                    }
                 }
 
                 // Ensure union member metadata is recorded by variable index (only for union declarations)
@@ -2410,11 +2418,11 @@ pub const HIRGenerator = struct {
                 try self.instructions.append(.{ .Label = .{ .name = else_label, .vm_address = 0 } });
                 try self.instructions.append(.Pop);
                 if (cast_expr.else_branch) |else_expr| {
-                    try self.generateExpression(else_expr, true);
+                    // Preserve result only if requested by parent
+                    try self.generateExpression(else_expr, preserve_result);
                 } else {
-                    // Default else: push nothing
-                    const nothing_idx = try self.addConstant(HIRValue.nothing);
-                    try self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } });
+                    // No else branch: cast must fail -> halt program
+                    try self.instructions.append(.Halt);
                 }
                 try self.instructions.append(.{ .Jump = .{ .label = end_label, .vm_offset = 0 } });
 
@@ -2423,7 +2431,10 @@ pub const HIRGenerator = struct {
                 if (cast_expr.then_branch) |then_expr| {
                     // On success, drop original and evaluate then-branch
                     try self.instructions.append(.Pop);
-                    try self.generateExpression(then_expr, true);
+                    try self.generateExpression(then_expr, preserve_result);
+                } else if (!preserve_result) {
+                    // No then branch and no result requested: drop duplicated original
+                    try self.instructions.append(.Pop);
                 }
 
                 // End merge point

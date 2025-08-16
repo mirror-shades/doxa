@@ -70,7 +70,7 @@ const expected_results = [_]result{
     .{ .type = "float", .value = "0.0" },
     .{ .type = "int", .value = "50" },
     .{ .type = ">int | float | byte", .value = "10" },
-    .{ .type = "int | >float | byte", .value = "10.0" },
+    .{ .type = "int | >float | byte", .value = "12.345" },
     .{ .type = "int | float | >byte", .value = "0x0A" },
     .{ .type = "int", .value = "17" },
     .{ .type = "string", .value = "\"return\"" },
