@@ -1,11 +1,27 @@
+enum Error {
+    INVALID_TOKEN,
+}
 
+enum TokenType {
+    NUMBER,
+    OPERATOR,
+    PARENTHESIS,
+}
+
+struct Token {
+    type :: TokenType,
+    value :: string,
+}
 
 entry fn main() {
     const input is @input();
     input?;
 
-    const equation is split(input);
-    equation?;
+    const splitInput is split(input);
+    splitInput?;
+
+    const tokens is tokenize(splitInput);
+    tokens?;
 
     return;
 }
@@ -36,4 +52,33 @@ fn split(input :: string) -> string[] {
     }
     @push(result, current);
     return result;
+}
+
+fn tokenize(input :: string[]) -> Token[] | Error {
+    var tokens :: Token[];
+
+    each token at i in input {
+        if token equals "+" or token equals "-" or token equals "*" or token equals "/" then {
+            @push(tokens, Token {
+                type is TokenType.OPERATOR,
+                value is token,
+            });
+        } 
+        else if token equals "(" or token equals ")" then {
+            @push(tokens, Token {
+                type is TokenType.PARENTHESIS,
+                value is token,
+            });
+        } else {
+            @int(token) as int then {
+                @push(tokens, Token {
+                    type is TokenType.NUMBER,
+                    value is token,
+                });
+            } else {
+                return Error.INVALID_TOKEN;
+            }
+        }
+    }
+    return tokens;
 }

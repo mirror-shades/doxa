@@ -1389,6 +1389,17 @@ pub fn typeInfoFromHIRType(allocator: std.mem.Allocator, hir_type: HIRType) !*Ty
         .Map => TypeInfo{ .base = .Custom },
         .Enum => TypeInfo{ .base = .Enum },
         .Function => TypeInfo{ .base = .Function },
+        .Union => blk: {
+            // Minimal representation: unknown members (will be resolved from AST where available)
+            // Represent as a union with no members to avoid collapsing to a concrete type.
+            const union_types = try allocator.alloc(*TypeInfo, 0);
+            const union_expr = try allocator.create(TypeExpr);
+            union_expr.* = .{ .base = .{ .id = 0, .span = SourceSpan.fromToken(.{ .line = 0, .column = 0, .file = "", .lexeme = "", .type = undefined, .literal = .{ .nothing = {} } }) }, .data = .{ .Union = union_types } };
+            // Note: We only need TypeInfo; build a bare Union TypeInfo with no members
+            const u = try allocator.create(UnionType);
+            u.* = .{ .types = union_types, .current_type_index = null };
+            break :blk TypeInfo{ .base = .Union, .union_type = u };
+        },
         .Auto => TypeInfo{ .base = .Nothing },
     };
 

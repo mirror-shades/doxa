@@ -290,6 +290,7 @@ pub const SemanticAnalyzer = struct {
             .Map => .Map,
             .Enum => .Enum,
             .Function => .Function,
+            .Union => .Union,
             .Auto => .Nothing, // Auto types default to Nothing in semantic analysis
         };
     }
