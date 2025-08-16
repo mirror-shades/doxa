@@ -609,8 +609,7 @@ pub const HIRGenerator = struct {
             .Tetra => .Tetra,
             .Byte => .Byte,
             .Array => .Array,
-            // Treat unions as having a value at runtime; approximate to Int to avoid dropping returns
-            .Union => .Int,
+            .Union => .Union,
             else => .Nothing,
         };
     }
@@ -2305,6 +2304,7 @@ pub const HIRGenerator = struct {
                     .Byte => "byte",
                     .Nothing => "nothing",
                     .Array => "array",
+                    .Union => "union",
                     .Struct => blk: {
                         if (expr_to_check.data == .Variable) {
                             const var_name = expr_to_check.data.Variable.lexeme;

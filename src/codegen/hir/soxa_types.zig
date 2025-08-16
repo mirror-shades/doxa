@@ -18,6 +18,7 @@ pub const HIRType = enum {
     Map,
     Enum,
     Function,
+    Union,
     Auto, // will throw error in VM, Soxa is explicit
 };
 

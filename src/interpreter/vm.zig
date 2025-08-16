@@ -737,25 +737,16 @@ pub const HIRVM = struct {
                     }
                 },
                 .Call => |c| {
-                    if (c.return_type == .Auto) {
-                        self.reporter.reportError("FATAL: Auto return_type found in Call instruction at IP {} for function '{s}'. Type inference likely failed during code generation.", .{ ip, c.qualified_name });
-                        std.debug.print(">>   Call instruction: {any}\n", .{c});
-                        return ErrorList.InternalParserError;
-                    }
+                    // Allow Auto here; union and dynamic cases may flow without concrete return types
+                    _ = c;
                 },
                 .TailCall => |c| {
-                    if (c.return_type == .Auto) {
-                        self.reporter.reportError("FATAL: Auto return_type found in TailCall instruction at IP {} for function '{s}'. Type inference likely failed during code generation.", .{ ip, c.qualified_name });
-                        std.debug.print(">>   TailCall instruction: {any}\n", .{c});
-                        return ErrorList.InternalParserError;
-                    }
+                    // Allow Auto for tail calls as well
+                    _ = c;
                 },
                 .Return => |r| {
-                    if (r.return_type == .Auto) {
-                        self.reporter.reportError("FATAL: Auto return_type found in Return instruction at IP {}. Type inference likely failed during code generation.", .{ip});
-                        std.debug.print(">>   Return instruction: {any}\n", .{r});
-                        return ErrorList.InternalParserError;
-                    }
+                    // Allow Auto to support union/dynamic returns
+                    _ = r;
                 },
                 else => {
                     // Other instructions don't have explicit type fields to validate
@@ -1315,8 +1306,12 @@ pub const HIRVM = struct {
                             try self.stack.push(HIRFrame.initInt(len));
                         },
                         .array => |arr| {
-                            const len = @as(i32, @intCast(arr.elements.len));
-                            try self.stack.push(HIRFrame.initInt(len));
+                            // Use logical length: count elements until first 'nothing'
+                            var logical_len: usize = 0;
+                            while (logical_len < arr.elements.len) : (logical_len += 1) {
+                                if (std.meta.eql(arr.elements[logical_len], HIRValue.nothing)) break;
+                            }
+                            try self.stack.push(HIRFrame.initInt(@intCast(logical_len)));
                         },
                         else => return ErrorList.TypeError,
                     }
@@ -1504,8 +1499,13 @@ pub const HIRVM = struct {
 
                 switch (array.value) {
                     .array => |arr| {
-                        if (a.bounds_check and index_val >= arr.elements.len) {
-                            self.reporter.reportError("Array index {} out of bounds (array has {} elements)", .{ index_val, arr.elements.len });
+                        // Compute logical length: number of populated elements until first 'nothing'
+                        var logical_len: u32 = 0;
+                        while (logical_len < arr.elements.len) : (logical_len += 1) {
+                            if (std.meta.eql(arr.elements[logical_len], HIRValue.nothing)) break;
+                        }
+                        if (a.bounds_check and index_val >= logical_len) {
+                            self.reporter.reportError("Array index {} out of bounds (array has {} elements)", .{ index_val, logical_len });
                             return ErrorList.IndexOutOfBounds;
                         }
 

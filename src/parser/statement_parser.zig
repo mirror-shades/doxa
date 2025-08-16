@@ -178,7 +178,12 @@ pub fn parseExpressionStmt(self: *Parser) ErrorList!ast.Stmt {
         .Match => false,
         .Index => true,
         .Assignment => true,
-        .Cast => true, // Cast expressions need semicolons
+        .Cast => |c| blk: {
+            // If either branch is a block, allow omitting the semicolon
+            const then_is_block = c.then_branch != null and c.then_branch.?.data == .Block;
+            const else_is_block = c.else_branch != null and c.else_branch.?.data == .Block;
+            break :blk !(then_is_block or else_is_block);
+        },
         .Assert => true,
         else => true,
     } else true;
