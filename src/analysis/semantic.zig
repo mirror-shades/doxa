@@ -3078,11 +3078,19 @@ pub const SemanticAnalyzer = struct {
 
                 try self.validateStatements(block.statements);
 
-                // For blocks in statement context (like in ForEach), don't try to infer a value
+                // Always analyze the block's final value expression (if any) so that
+                // expression-level transformations (like lowering compiler methods) occur
+                // even inside loop scopes. When in a loop, we still report the type as Nothing.
+                var value_type_ptr: ?*ast.TypeInfo = null;
+                if (block.value) |value_expr| {
+                    value_type_ptr = try self.inferTypeFromExpr(value_expr);
+                }
+
                 if (self.in_loop_scope) {
+                    // In statement context (like ForEach bodies), a block has no value
                     type_info.* = .{ .base = .Nothing };
-                } else if (block.value) |value| {
-                    type_info.* = (try self.inferTypeFromExpr(value)).*;
+                } else if (value_type_ptr) |vt| {
+                    type_info.* = vt.*;
                 } else {
                     type_info.* = .{ .base = .Nothing };
                 }
