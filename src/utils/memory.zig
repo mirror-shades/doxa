@@ -274,6 +274,8 @@ pub const ScopeManager = struct {
     variable_map: std.AutoHashMap(u32, *Variable),
     value_storage: std.AutoHashMap(u32, *ValueStorage),
     next_storage_id: u32 = 0,
+    // Use a separate counter for scope IDs to avoid colliding with storage IDs
+    next_scope_id: u32 = 0,
     variable_counter: u32 = 0,
     root_scope: ?*Scope = null,
     allocator: std.mem.Allocator,
@@ -339,8 +341,8 @@ pub const ScopeManager = struct {
     }
 
     pub fn createScope(self: *ScopeManager, parent: ?*Scope, memory_manager: *MemoryManager) !*Scope {
-        const scope_id = self.next_storage_id;
-        self.next_storage_id += 1;
+        const scope_id = self.next_scope_id;
+        self.next_scope_id += 1;
         return Scope.init(self, scope_id, parent, memory_manager);
     }
 };

@@ -1,0 +1,25 @@
+fn forloop(x :: int) {
+    for (var i is 0; i < x; i++) {
+        ((i+10)*66)?;
+    }
+}
+
+forloop(5); //660, 726, 732, 798, 864
+
+/////
+// UNION TYPES
+/////
+
+const un1 :: int | float is 3;
+
+fn process(x :: int | float) -> int | float {
+    return x;
+}
+
+const newun :: int | float is process(un1);
+
+const resint is newun as int else 0; // integer
+const resfloat is newun as float else 0; // float
+
+resint?; // 3
+resfloat?; // 0
