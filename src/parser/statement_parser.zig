@@ -190,14 +190,18 @@ pub fn parseExpressionStmt(self: *Parser) ErrorList!ast.Stmt {
 
     // Only check for newline if we need one
     if (needs_newline) {
-        if (self.peek().type != .NEWLINE) {
+        const next_type = self.peek().type;
+        if (next_type == .NEWLINE) {
+            self.advance(); // Consume the newline
+        } else if (next_type == .EOF or next_type == .RIGHT_BRACE) {
+            // EOF or '}' terminates the statement
+        } else {
             if (expr) |e| {
                 e.deinit(self.allocator);
                 self.allocator.destroy(e);
             }
             return error.ExpectedNewline;
         }
-        self.advance(); // Consume the newline
     }
 
     return ast.Stmt{

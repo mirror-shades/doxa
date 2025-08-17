@@ -729,6 +729,9 @@ pub const Parser = struct {
                 }
 
                 while (self.peek().type != .RIGHT_BRACE) {
+                    // Allow blank lines between fields
+                    while (self.peek().type == .NEWLINE) self.advance();
+
                     // Parse field name
                     if (self.peek().type != .IDENTIFIER) {
                         return error.ExpectedIdentifier;
@@ -736,14 +739,31 @@ pub const Parser = struct {
                     const field_name = self.peek();
                     self.advance();
 
-                    // Expect =
+                    // Expect equals
                     if (self.peek().type != .ASSIGN) {
                         return error.ExpectedEquals;
                     }
                     self.advance();
 
-                    // Parse field value
-                    const value = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
+                    // Parse field value - try struct init first, then fall back to regular expression
+                    var value: *ast.Expr = undefined;
+                    if (self.peek().type == .IDENTIFIER) {
+                        if (self.debug_enabled) {
+                            std.debug.print("Attempting nested struct init for identifier: {s}\n", .{
+                                self.peek().lexeme,
+                            });
+                        }
+                        if (try parseStructInit(self)) |struct_init| {
+                            value = struct_init;
+                        } else {
+                            if (self.debug_enabled) {
+                                std.debug.print("Not a struct init, falling back to expression\n", .{});
+                            }
+                            value = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
+                        }
+                    } else {
+                        value = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
+                    }
 
                     // Create field
                     const field = try self.allocator.create(ast.StructInstanceField);
@@ -753,16 +773,12 @@ pub const Parser = struct {
                     };
                     try fields.append(field);
 
-                    // Handle comma
+                    // Handle separators: comma and/or newline(s)
                     if (self.peek().type == .COMMA) {
                         self.advance();
-                        // Allow trailing comma
-                        if (self.peek().type == .RIGHT_BRACE) {
-                            break;
-                        }
-                    } else if (self.peek().type != .RIGHT_BRACE) {
-                        return error.ExpectedCommaOrBrace;
                     }
+                    while (self.peek().type == .NEWLINE) self.advance();
+                    // Allow trailing comma/newlines before closing brace
                 }
 
                 self.advance(); // consume }
@@ -805,6 +821,8 @@ pub const Parser = struct {
         }
 
         while (self.peek().type != .RIGHT_BRACE) {
+            // Allow blank lines between fields
+            while (self.peek().type == .NEWLINE) self.advance();
 
             // Parse field name
             if (self.peek().type != .IDENTIFIER) {
@@ -847,21 +865,12 @@ pub const Parser = struct {
             };
             try fields.append(field);
 
-            // Handle comma
+            // Handle separators: comma and/or newline(s)
             if (self.peek().type == .COMMA) {
                 self.advance();
-                // Allow trailing comma by checking for closing brace
-                if (self.peek().type == .RIGHT_BRACE) {
-                    break;
-                }
-            } else if (self.peek().type != .RIGHT_BRACE) {
-                if (self.debug_enabled) {
-                    std.debug.print("Expected comma or brace, got: {s}\n", .{
-                        @tagName(self.peek().type),
-                    });
-                }
-                return error.ExpectedCommaOrBrace;
             }
+            while (self.peek().type == .NEWLINE) self.advance();
+            // Allow trailing comma/newlines before closing brace
         }
 
         self.advance(); // consume }
@@ -1297,6 +1306,8 @@ pub const Parser = struct {
 
         // Parse entries until we hit a right brace
         while (self.peek().type != .RIGHT_BRACE and self.peek().type != .EOF) {
+            // Allow blank lines between entries
+            while (self.peek().type == .NEWLINE) self.advance();
             // Parse key
             const key = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
 
@@ -1317,14 +1328,12 @@ pub const Parser = struct {
                 .value = value,
             });
 
-            // Handle comma
+            // Handle separators: comma and/or newline(s)
             if (self.peek().type == .COMMA) {
                 self.advance();
-                // Allow trailing comma
-                if (self.peek().type == .RIGHT_BRACE) break;
-            } else if (self.peek().type != .RIGHT_BRACE) {
-                return error.ExpectedCommaOrBrace;
             }
+            while (self.peek().type == .NEWLINE) self.advance();
+            // Allow trailing comma/newlines
         }
 
         if (self.peek().type != .RIGHT_BRACE) {

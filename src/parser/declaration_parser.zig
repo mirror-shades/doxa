@@ -44,6 +44,11 @@ pub fn parseEnumDecl(self: *Parser) ErrorList!ast.Stmt {
     errdefer variants.deinit();
 
     while (self.peek().type != .RIGHT_BRACE) {
+        // Allow blank lines between variants
+        if (self.peek().type == .NEWLINE) {
+            self.advance();
+            continue;
+        }
         if (self.peek().type != .IDENTIFIER) {
             return error.ExpectedIdentifier;
         }
@@ -55,7 +60,11 @@ pub fn parseEnumDecl(self: *Parser) ErrorList!ast.Stmt {
 
         self.advance();
 
+        // Optional separator: comma and/or newline(s)
         if (self.peek().type == .COMMA) {
+            self.advance();
+        }
+        while (self.peek().type == .NEWLINE) {
             self.advance();
         }
     }
@@ -129,6 +138,8 @@ pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*
     }
 
     while (self.peek().type != .RIGHT_BRACE) {
+        // Allow blank lines between fields
+        while (self.peek().type == .NEWLINE) self.advance();
         // Parse field name
         if (self.peek().type != .IDENTIFIER) {
             return error.ExpectedIdentifier;
@@ -153,16 +164,12 @@ pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*
         };
         try fields.append(field);
 
-        // Handle field separator (comma)
+        // Handle field separators: comma and/or newline(s)
         if (self.peek().type == .COMMA) {
             self.advance();
-            // Allow trailing comma by checking for closing brace
-            if (self.peek().type == .RIGHT_BRACE) {
-                break;
-            }
-        } else if (self.peek().type != .RIGHT_BRACE) {
-            return error.ExpectedCommaOrBrace;
         }
+        while (self.peek().type == .NEWLINE) self.advance();
+        // If next is right brace, finish; otherwise, next loop expects identifier
     }
 
     self.advance(); // consume right brace
