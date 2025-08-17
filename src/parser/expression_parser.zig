@@ -71,13 +71,21 @@ pub fn braceExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Ex
 
     // Look ahead to see if this might be a map
     // A map must have a key followed by a :
-    if (self.peek().type != .RIGHT_BRACE and self.peekAhead(1).type == .WHERE) {
+    // Skip any leading newlines after '{' before deciding
+    var skipped: usize = 0;
+    while (self.peek().type == .NEWLINE) : (skipped += 1) self.advance();
+    const is_map = (self.peek().type != .RIGHT_BRACE and self.peekAhead(1).type == .WHERE) or
+        (self.peekAhead(1).type != .EOF and self.peekAhead(2).type == .WHERE);
+    if (is_map) {
         return self.parseMap();
     }
 
     // Delegate to unified block parser so it can populate the last-expression value.
-    // Rewind one token so Parser.block sees the '{' it expects to consume.
-    if (self.current > 0) self.current -= 1;
+    // Rewind tokens we may have skipped plus the '{' so Parser.block sees it to consume.
+    var to_rewind: usize = skipped + 1;
+    while (to_rewind > 0 and self.current > 0) : (to_rewind -= 1) {
+        self.current -= 1;
+    }
     return Parser.block(self, null, .NONE);
 }
 
@@ -222,6 +230,15 @@ pub fn parseMatchExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*a
     var has_else_case = false;
 
     while (self.peek().type != .RIGHT_BRACE) {
+        // Allow blank lines between match arms
+        while (self.peek().type == .NEWLINE) self.advance();
+        // Tolerate stray commas between arms (e.g., trailing commas and blank lines)
+        while (self.peek().type == .COMMA) self.advance();
+        // If skipping moved us to the closing brace, stop parsing arms
+        if (self.peek().type == .RIGHT_BRACE) break;
+        if (self.debug_enabled) {
+            std.debug.print("[DEBUG] Parsing match arm, current token: {s} ('{s}')\n", .{ @tagName(self.peek().type), self.peek().lexeme });
+        }
         if (self.peek().type == .ELSE) {
             // Handle else case
             self.advance();
@@ -1210,8 +1227,14 @@ pub fn grouping(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
         return self.call(left, .NONE);
     }
 
+    // Allow optional newlines after '('
+    while (self.peek().type == .NEWLINE) self.advance();
+
     // Otherwise it's just a grouped expression
     const expr = try parseExpression(self) orelse return error.ExpectedExpression;
+
+    // Allow optional newlines before ')'
+    while (self.peek().type == .NEWLINE) self.advance();
 
     if (self.peek().type != .RIGHT_PAREN) {
         std.debug.print("Expected right parenthesis, got {s}\n", .{@tagName(self.peek().type)});
@@ -1533,6 +1556,14 @@ pub fn parseStructOrMatch(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList
         var has_else_case = false;
 
         while (self.peek().type != .RIGHT_BRACE) {
+            // Allow blank lines between match arms
+            while (self.peek().type == .NEWLINE) self.advance();
+            // Tolerate stray commas between arms
+            while (self.peek().type == .COMMA) self.advance();
+            if (self.peek().type == .RIGHT_BRACE) break;
+            if (self.debug_enabled) {
+                std.debug.print("[DEBUG] Parsing match arm, current token: {s} ('{s}')\n", .{ @tagName(self.peek().type), self.peek().lexeme });
+            }
             if (self.peek().type == .ELSE) {
                 // Handle else case
                 self.advance();
@@ -1642,9 +1673,17 @@ pub fn parseStructOrMatch(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList
 }
 
 fn parseMatchPattern(self: *Parser) ErrorList!?token.Token {
+    // Skip any leading newlines before a pattern
+    while (self.peek().type == .NEWLINE or self.peek().type == .COMMA) self.advance();
     const current = self.peek();
 
     switch (current.type) {
+        .FIELD_ACCESS => {
+            // Allow tokens that represent a field/enum member (e.g., .Red) directly
+            const fa = self.peek();
+            self.advance();
+            return fa;
+        },
         .DOT => {
             // Enum variant pattern: .Red
             self.advance(); // consume '.'
@@ -1661,6 +1700,12 @@ fn parseMatchPattern(self: *Parser) ErrorList!?token.Token {
             self.advance();
             return int_token;
         },
+        .STRING, .FLOAT, .BYTE, .TETRA, .LOGIC => {
+            // Support literal patterns for common literal token types
+            const lit_token = self.peek();
+            self.advance();
+            return lit_token;
+        },
         .INT_TYPE, .FLOAT_TYPE, .STRING_TYPE, .BYTE_TYPE, .TETRA_TYPE, .NOTHING_TYPE, .NOTHING => {
             // Type patterns for union matching: int, float, string, etc.
             // Also handle .NOTHING for the literal 'nothing' when used as a type pattern
@@ -1669,19 +1714,32 @@ fn parseMatchPattern(self: *Parser) ErrorList!?token.Token {
             return type_token;
         },
         .IDENTIFIER => {
-            // Check if it's "else" or a custom type name
+            // Treat any identifier (except 'else') as a valid pattern token.
             if (std.mem.eql(u8, current.lexeme, "else")) {
                 self.advance();
                 return current;
             }
-            // Check if it's a known custom type (struct, enum, etc.)
-            if (self.declared_types.contains(current.lexeme)) {
-                const type_token = self.peek();
-                self.advance();
-                return type_token;
+            // Handle qualified enum variant: Type.Identifier
+            if (self.peekAhead(1).type == .DOT and self.peekAhead(2).type == .IDENTIFIER) {
+                self.advance(); // consume type identifier
+                self.advance(); // dot
+                const variant_ident = self.peek();
+                self.advance(); // variant
+                // Return the variant identifier as the pattern token (codegen/semantics can use both)
+                return variant_ident;
             }
-            return null; // Not a valid pattern
+            const ident_tok = self.peek();
+            self.advance();
+            return ident_tok;
         },
-        else => return null, // Not a valid pattern
+        else => {
+            // Permissive fallback: accept any non-separator token as a pattern token
+            if (current.type == .THEN or current.type == .RIGHT_BRACE or current.type == .COMMA or current.type == .NEWLINE) {
+                return null;
+            }
+            const tok = self.peek();
+            self.advance();
+            return tok;
+        },
     }
 }

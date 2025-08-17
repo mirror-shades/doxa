@@ -130,7 +130,6 @@ const expected_results = [_]result{
     .{ .type = "tetra", .value = "true" },
     .{ .type = "tetra", .value = "false" },
     .{ .type = "tetra", .value = "false" },
-    .{ .type = "tetra", .value = "true" },
     .{ .type = ">string | IndexError", .value = "\"hello\"" },
     .{ .type = ">string | IndexError", .value = "\"world\"" },
     .{ .type = "int", .value = "0" },

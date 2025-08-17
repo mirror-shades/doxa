@@ -147,6 +147,7 @@ pub const LexicalAnalyzer = struct {
         while (!self.isAtEnd()) {
             try self.getNextToken();
         }
+
         try self.tokens.append(Token.init(.EOF, "", .nothing, self.line, self.column));
         return self.tokens;
     }
@@ -154,7 +155,7 @@ pub const LexicalAnalyzer = struct {
     // lexes the next token
     fn getNextToken(self: *LexicalAnalyzer) (Reporting.ErrorList || std.mem.Allocator.Error)!void {
         // Skip whitespace
-        while (!self.isAtEnd() and (self.peekAt(0) == ' ' or self.peekAt(0) == '\r' or self.peekAt(0) == '\t' or self.peekAt(0) == '\n')) {
+        while (!self.isAtEnd() and (self.peekAt(0) == ' ' or self.peekAt(0) == '\r' or self.peekAt(0) == '\t')) {
             self.advance();
         }
 
@@ -194,6 +195,11 @@ pub const LexicalAnalyzer = struct {
                     }
                     if (!self.isAtEnd() and self.peekAt(0) == '\n') {
                         self.advance();
+                        // Emit newline token for end-of-line comment without relying on start/line_start
+                        if (self.tokens.items.len == 0 or self.tokens.items[self.tokens.items.len - 1].type != .NEWLINE) {
+                            const tok_line: i32 = if (self.line > 0) self.line - 1 else 0;
+                            try self.tokens.append(Token.initWithFile(.NEWLINE, "", .nothing, tok_line, 1, self.file_path));
+                        }
                     }
                 } else if (self.match('*')) {
                     var nesting: i32 = 1;
@@ -266,7 +272,12 @@ pub const LexicalAnalyzer = struct {
                     try self.addMinimalToken(.DOT);
                 }
             },
-            ';' => try self.addMinimalToken(.NEWLINE),
+            ';' => {
+                // if previous token is a newline, don't add a new one
+                if (self.tokens.items.len == 0 or self.tokens.items[self.tokens.items.len - 1].type != .NEWLINE) {
+                    try self.tokens.append(Token.initWithFile(.NEWLINE, "", .nothing, self.line, 1, self.file_path));
+                }
+            },
             '%' => try self.addMinimalToken(.MODULO),
             '#' => try self.addMinimalToken(.HASH),
 
@@ -358,9 +369,12 @@ pub const LexicalAnalyzer = struct {
             //whitespace
             ' ', '\r', '\t' => {}, // Skip whitespace without creating tokens
             '\n' => {
-                self.line_start = self.current + 1; // Set start of next line
-                self.column = 1;
-                // Don't create a token for newlines
+                // advance() already handled line/column/line_start for this newline.
+                // Emit a single NEWLINE token without relying on start/line_start arithmetic.
+                if (self.tokens.items.len == 0 or self.tokens.items[self.tokens.items.len - 1].type != .NEWLINE) {
+                    const tok_line: i32 = if (self.line > 0) self.line - 1 else 0;
+                    try self.tokens.append(Token.initWithFile(.NEWLINE, "", .nothing, tok_line, 1, self.file_path));
+                }
             },
             //identifier or keyword
             else => {

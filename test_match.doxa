@@ -1,0 +1,16 @@
+enum Color {
+    Red,
+    Green,
+    Blue,
+}
+
+const b :: Color is .Blue
+const g :: Color is .Green
+
+var matchResult is match b {
+    .Red then "It's red",
+    .Blue then "It's blue",
+    else "It's something else",
+}; 
+
+matchResult?; // It's blue

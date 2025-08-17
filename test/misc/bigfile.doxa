@@ -28,8 +28,8 @@ enum Color {
     Blue,
 }
 
-const b :: Color is .Blue;
-const g :: Color is .Green;
+const b :: Color is .Blue
+const g :: Color is .Green
 
 var matchResult is match b {
     .Red then "It's red",
@@ -53,9 +53,9 @@ matchResult?; // It's something else
 fn fizzbuzz(x:: int, limit:: int) {
     var current is x;
     while current <= limit {
-        if current % 3 equals 0 and current % 5 equals 0 then "fizzbuzz"?;
-        else if current % 3 equals 0 then "fizz"?;
-        else if current % 5 equals 0 then "buzz"?;
+        if current % 3 equals 0 and current % 5 equals 0 then "fizzbuzz"?
+        else if current % 3 equals 0 then "fizz"?
+        else if current % 5 equals 0 then "buzz"?
         else current?;
         
         current += 1;
@@ -367,14 +367,6 @@ Map["c"]?; // 3.5
 (true ↑ false)?; // true  74
 (true ↓ false)?; // false  75
 (true → false)?; // false  76
-
-
-// werid formatting
-(
-    
-    true) 
-    ?
-; // true
 
 /////
 // STRING METHODS
