@@ -251,7 +251,12 @@ pub const LexicalAnalyzer = struct {
                     self.advance(); // consume second dot
                     if (self.peekAt(0) == '.') {
                         self.advance(); // consume third dot
-                        try self.addMinimalToken(.CONTINUE_LINE);
+                        // if previous token is a newline
+                        if (self.tokens.items.len > 0 and self.tokens.items[self.tokens.items.len - 1].type == .NEWLINE) {
+                            try self.removeLastToken();
+                        } else {
+                            return error.EllipsisWithoutNewline;
+                        }
                     } else {
                         try self.addMinimalToken(.DOT_DOT);
                     }
@@ -788,6 +793,12 @@ pub const LexicalAnalyzer = struct {
             try self.addToken(.COPY, .nothing);
         } else {
             return error.InvalidInternalMethod;
+        }
+    }
+
+    fn removeLastToken(self: *LexicalAnalyzer) !void {
+        if (self.tokens.items.len > 0) {
+            _ = self.tokens.pop();
         }
     }
 
