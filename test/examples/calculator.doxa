@@ -11,85 +11,83 @@ enum TokenType {
 
 struct Token {
     token_type :: TokenType,
-    value :: string,
+    value :: string | int,
 }
 
 entry fn main() {
-    const input is @input();
-    input?;
+    const input is @input()
+    input?
 
-    const splitInput is split(input);
-    splitInput?;
+    const splitInput is split(input)
+    splitInput?
 
-    const tokens is tokenize(splitInput);
-    tokens?;
+    const tokens is tokenize(splitInput)
+    tokens?
 
-    return;
+    return
 }
 
 fn split(input :: string) -> string[] {
-    var result :: string[];
-    var current is "";
+    var result :: string[]
+    var current is ""
 
-    const lin is @length(input);
-    lin?;
+    const lin is @length(input)
 
     each c in input {
         if @length(current) > 0 and (c equals " " or c equals "+" or c equals "-" or c equals "*" or c equals "/") then {
-            @push(result, current);
-            current is "";
+            @push(result, current)
+            current is ""
         }
 
         if c equals " " then {
             // Skip spaces
         }
         else if c equals "+" or c equals "-" or c equals "*" or c equals "/" then {
-            @push(result, c);
+            @push(result, c)
         } else {
-            current is current + c;
+            current is current + c
         }
 
     }
-    @push(result, current);
-    return result;
+    @push(result, current)
+    return result
 }
 
 fn tokenize(input :: string[]) -> Token[] | Error {
-    var tokens :: Token[];
+    var tokens :: Token[]
 
     each token in input {
-        token?;
         if token equals "+" or token equals "-" or token equals "*" or token equals "/" then {
             @push(tokens, Token {
                 token_type is .OPERATOR,
                 value is token,
-            });
+            })
         } 
         else if token equals "(" or token equals ")" then {
             @push(tokens, Token {
                 token_type is .PARENTHESIS,
                 value is token,
-            });
+            })
         } else {
             // @int returns a union type, so we need to narrow it down to an int
             // at this point we are not sure is the token is a valid int
-            var possibleNumber is @int(token);
-            possibleNumber?;
+            var possibleNumber is @int(token)
+            possibleNumber?
             // the `as` keyword checks to see if the union is an int
             possibleNumber as int then {
-                possibleNumber?;
+                possibleNumber?
                 // if the token is a valid int, it is narrowed in the then block
-                @push(tokens, Token {
+                @push(tokens, Token { 
                     token_type is .NUMBER,
                     value is possibleNumber,
-                });
+                })
             } else {
                 // if @int cannot be narrowed an error was returned
                 // we can print the unnarrowed value, then return an error value
-                possibleNumber?;
-                return Error.INVALID_TOKEN;
+                possibleNumber?
+                return Error.INVALID_TOKEN
             }
         }
     }
-    return tokens;
+    return tokens
 }

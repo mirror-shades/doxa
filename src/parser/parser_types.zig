@@ -1122,6 +1122,9 @@ pub const Parser = struct {
         if (self.peek().type != .LEFT_PAREN) return error.ExpectedLeftParen;
         self.advance();
 
+        // Allow newlines after '('
+        while (self.peek().type == .NEWLINE) self.advance();
+
         var args = std.ArrayList(*ast.Expr).init(self.allocator);
         errdefer {
             for (args.items) |arg| {
@@ -1134,16 +1137,28 @@ pub const Parser = struct {
         // Parse zero or more comma-separated expressions until ')'
         if (self.peek().type != .RIGHT_PAREN) {
             while (true) {
+                // Allow leading newlines before each argument
+                while (self.peek().type == .NEWLINE) self.advance();
                 const expr = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
                 try args.append(expr);
+                // Allow newlines before comma
+                while (self.peek().type == .NEWLINE) self.advance();
                 if (self.peek().type == .COMMA) {
                     self.advance();
+                    // Allow newlines after comma
+                    while (self.peek().type == .NEWLINE) self.advance();
+                    // Allow trailing comma: if next is ')', stop parsing args
+                    if (self.peek().type == .RIGHT_PAREN) {
+                        break;
+                    }
                     continue;
                 }
                 break;
             }
         }
 
+        // Allow trailing newlines before ')'
+        while (self.peek().type == .NEWLINE) self.advance();
         if (self.peek().type != .RIGHT_PAREN) return error.ExpectedRightParen;
         self.advance();
 
@@ -1505,7 +1520,7 @@ pub const Parser = struct {
         };
 
         // Extract module info and cache it
-        const info = try self.extractModuleInfoWithParser(module_block, normalized_path, null, &new_parser);
+        const info = try self.extractModuleInfoWithParser(module_block, module_data.resolved_path, null, &new_parser);
 
         // Mark as completed and cache the result
         try self.module_resolution_status.put(normalized_path, .COMPLETED);
@@ -1629,6 +1644,40 @@ pub const Parser = struct {
 
         // Try several file locations in order
         var err: anyerror = error.FileNotFound;
+
+        // Prefer resolving relative to the current file first
+        // 0a. Same directory as current file with potential existing extension
+        if (has_extension) {
+            var same_dir_exact_path_pre = std.ArrayList(u8).init(self.allocator);
+            defer same_dir_exact_path_pre.deinit();
+            try same_dir_exact_path_pre.appendSlice(current_dir);
+            try same_dir_exact_path_pre.appendSlice("/");
+            try same_dir_exact_path_pre.appendSlice(clean_name);
+            if (readFileContentsWithPath(self.allocator, same_dir_exact_path_pre.items, debug_enabled)) |data| {
+                return data;
+            } else |e| {
+                err = e;
+                if (self.debug_enabled) {
+                    std.debug.print("Failed to open {s}: {}\n", .{ same_dir_exact_path_pre.items, e });
+                }
+            }
+        }
+
+        // 0b. Same directory as current file with .doxa extension
+        var same_dir_path_pre = std.ArrayList(u8).init(self.allocator);
+        defer same_dir_path_pre.deinit();
+        try same_dir_path_pre.appendSlice(current_dir);
+        try same_dir_path_pre.appendSlice("/");
+        try same_dir_path_pre.appendSlice(clean_name);
+        if (!has_extension) try same_dir_path_pre.appendSlice(".doxa");
+        if (readFileContentsWithPath(self.allocator, same_dir_path_pre.items, debug_enabled)) |data| {
+            return data;
+        } else |e| {
+            err = e;
+            if (self.debug_enabled) {
+                std.debug.print("Failed to open {s}: {}\n", .{ same_dir_path_pre.items, e });
+            }
+        }
 
         // 1. First try directly with the given name (possibly including extension)
         if (has_extension) {
@@ -2612,6 +2661,10 @@ pub const Parser = struct {
                             const cached_module = self.module_cache.get(import.module_path).?;
                             try self.module_namespaces.put(alias, cached_module);
                         } else {
+                            // Ensure resolution is relative to the importing module's directory
+                            const previous_current_file = self.current_file;
+                            self.current_file = module_info.file_path;
+                            defer self.current_file = previous_current_file;
                             // Only try to load if not in cache either
                             try self.loadAndRegisterModule(import.module_path, alias, import.specific_symbol);
                         }

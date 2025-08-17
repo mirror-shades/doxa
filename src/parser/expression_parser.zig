@@ -1516,7 +1516,10 @@ pub fn parseStructOrMatch(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList
 
     self.advance(); // consume '{'
 
-    // Check the first token after the brace
+    // Skip any NEWLINEs immediately after '{' so decisions aren't tripped by formatting
+    while (self.peek().type == .NEWLINE) self.advance();
+
+    // Check the first token after the brace (after skipping newlines)
     const first_token_after_brace = self.peek();
 
     // Check if this looks like a match expression pattern
