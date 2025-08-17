@@ -83,7 +83,7 @@ pub const SoxaTextParser = struct {
                 // Function metadata - update the last function's entry point
                 try self.updateFunctionEntry(trimmed_right);
                 continue;
-            } else if (std.mem.indexOf(u8, trimmed_right, ":")) |colon_pos| {
+            } else if (std.mem.indexOf(u8, trimmed_right, ":")) |_| {
                 // Check if this is an instruction with location info (like "Peek ... @file:line:column")
                 const trimmed_line = std.mem.trim(u8, trimmed_right, " \t");
                 const is_instruction_with_location = std.mem.startsWith(u8, trimmed_line, "Peek ") or
@@ -100,18 +100,13 @@ pub const SoxaTextParser = struct {
                         try self.parseInstruction(trimmed_right);
                     }
                 } else {
-                    // Label (can be either indented or not) - CHECK BEFORE INSTRUCTIONS!
-                    const is_label = blk: {
-                        // Check if this is a label by seeing if colon comes before semicolon (or is at end)
-                        if (std.mem.indexOf(u8, trimmed_right, ";")) |semicolon_pos| {
-                            break :blk colon_pos < semicolon_pos;
-                        } else {
-                            break :blk std.mem.endsWith(u8, trimmed_right, ":");
-                        }
-                    };
+                    // Label (line ends with ':' before any inline ';' comment) - CHECK BEFORE INSTRUCTIONS!
+                    const semicolon_pos_opt = std.mem.indexOf(u8, trimmed_line, ";");
+                    const pre_comment = if (semicolon_pos_opt) |p| std.mem.trimRight(u8, trimmed_line[0..p], " \t") else trimmed_line;
+                    const is_label = std.mem.endsWith(u8, pre_comment, ":");
 
                     if (is_label) {
-                        const label_line = std.mem.trim(u8, trimmed_right, " \t");
+                        const label_line = pre_comment;
                         const label_colon_pos = std.mem.indexOf(u8, label_line, ":").?;
                         const label_name = try self.allocator.dupe(u8, label_line[0..label_colon_pos]);
                         try self.instructions.append(HIRInstruction{ .Label = .{ .name = label_name, .vm_address = 0 } });
