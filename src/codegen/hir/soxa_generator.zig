@@ -2673,6 +2673,7 @@ pub const HIRGenerator = struct {
                 for (foreach_expr.body) |stmt| {
                     try self.generateStatement(stmt);
                 }
+                // No per-iteration scope; body executes in enclosing scope
 
                 // Next: i = i + 1
                 try self.instructions.append(.{ .Label = .{ .name = fe_next, .vm_address = 0 } });
