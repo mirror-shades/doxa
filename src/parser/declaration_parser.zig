@@ -393,7 +393,7 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
         }
 
         if (self.peek().type != .NEWLINE) {
-            return error.ExpectedSemicolon;
+            return error.ExpectedNewline;
         }
         self.advance();
 
@@ -535,14 +535,14 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
         return error.ConstMustHaveInitializer;
     }
 
-    // Make semicolons optional - consume if present, but don't require them
+    // Make newlines optional - consume if present, but don't require them
     if (self.peek().type == .NEWLINE) {
-        self.advance(); // Consume the semicolon if present
+        self.advance(); // Consume the newline if present
     } else {
         if (self.debug_enabled) {
-            std.debug.print("No semicolon found, continuing. Next token: {s}\n", .{@tagName(self.peek().type)});
+            std.debug.print("No newline found, continuing. Next token: {s}\n", .{@tagName(self.peek().type)});
         }
-        // Continue without semicolon
+        // Continue without newline
     }
 
     // CRITICAL: Reject variable declarations with no type annotation and no initializer

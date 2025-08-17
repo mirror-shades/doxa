@@ -149,7 +149,6 @@ pub const Parser = struct {
             // Break after return statement
             if (stmt.data == .Return) break;
 
-            // Don't break on semicolon before right brace
             if (self.peek().type == .RIGHT_BRACE) {
                 break;
             }
@@ -1359,7 +1358,6 @@ pub const Parser = struct {
             const stmt = try statement_parser.parseExpressionStmt(self);
             try statements.append(stmt);
 
-            // Don't break on semicolon before right brace
             if (self.peek().type == .RIGHT_BRACE) {
                 break;
             }

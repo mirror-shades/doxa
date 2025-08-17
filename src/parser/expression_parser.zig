@@ -402,9 +402,9 @@ pub fn forExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr
         condition = try parseExpression(self);
     }
     if (self.peek().type != .NEWLINE) {
-        return error.ExpectedSemicolon;
+        return error.ExpectedNewline;
     }
-    self.advance(); // consume ';'
+    self.advance(); // consume newline
 
     // Parse increment
     var increment: ?*ast.Expr = null;
@@ -896,16 +896,12 @@ pub fn parseIfExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
         return error.ExpectedThen;
     }
 
-    // Don't handle semicolons at expression level - they belong to statements
-
-    // Don't consume semicolons - they belong to statement level
-
     // Handle else branch
     var else_expr: ?*ast.Expr = null;
 
-    // Check for else after semicolon (if-else-if chain syntax)
+    // Check for else after newline (if-else-if chain syntax)
     if (self.peek().type == .NEWLINE and self.peekAhead(1).type == .ELSE) {
-        self.advance(); // consume semicolon
+        self.advance(); // consume newline
     }
 
     if (self.peek().type == .ELSE) {

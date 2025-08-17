@@ -167,10 +167,7 @@ fn parseReturn(self: *Parser) ErrorList!ast.Stmt {
 
     if (self.peek().type != .NEWLINE) {
         value = try expression_parser.parseExpression(self);
-    }
-
-    if (self.peek().type != .NEWLINE) {
-        return error.ExpectedSemicolon;
+        return error.ExpectedNewline;
     }
     self.advance();
 
