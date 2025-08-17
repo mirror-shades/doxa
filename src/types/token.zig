@@ -9,7 +9,6 @@ pub const TokenType = enum {
     LEFT_BRACKET, // [
     RIGHT_BRACKET, // ]
     COMMA, // ,
-    SEMICOLON, // ;
     MODULO, // %
     HASH, // #
     TILDE, // ~
@@ -71,6 +70,8 @@ pub const TokenType = enum {
     ASYNC, // async
     AWAIT, // await
     ENTRY, // entry
+    EQUALITY, // ==
+    ASSIGN, // is
 
     // compiler level methods (@methods)
     TYPE, // typeof / type
@@ -111,8 +112,6 @@ pub const TokenType = enum {
     AND, // and ∧
     OR, // or ∨
     WHERE, // where
-    EQUALITY, // ==
-    ASSIGN, // is
 
     // logical operators
     IF, // if
@@ -124,7 +123,9 @@ pub const TokenType = enum {
 
     // literals
     IDENTIFIER, // identifier
-    SPREAD, // ...
+    SPREAD, // to
+    NEWLINE, // \n or ;
+    CONTINUE_LINE, // ...
 
     // atomic types
     INT, // integer

@@ -165,11 +165,11 @@ fn parseReturn(self: *Parser) ErrorList!ast.Stmt {
     var value: ?*ast.Expr = null;
     const type_info = ast.TypeInfo{ .base = .Nothing };
 
-    if (self.peek().type != .SEMICOLON) {
+    if (self.peek().type != .NEWLINE) {
         value = try expression_parser.parseExpression(self);
     }
 
-    if (self.peek().type != .SEMICOLON) {
+    if (self.peek().type != .NEWLINE) {
         return error.ExpectedSemicolon;
     }
     self.advance();

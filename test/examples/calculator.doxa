@@ -1,3 +1,4 @@
+// Errors will be handled with enums
 enum Error {
     INVALID_TOKEN,
 }
@@ -33,7 +34,7 @@ fn split(input :: string) -> string[] {
     const lin is @length(input);
     lin?;
 
-    each c at i in input {
+    each c in input {
         if @length(current) > 0 and (c equals " " or c equals "+" or c equals "-" or c equals "*" or c equals "/") then {
             @push(result, current);
             current is "";
@@ -56,7 +57,7 @@ fn split(input :: string) -> string[] {
 fn tokenize(input :: string[]) -> Token[] | Error {
     var tokens :: Token[];
 
-    each token at i in input {
+    each token in input {
         token?;
         if token equals "+" or token equals "-" or token equals "*" or token equals "/" then {
             @push(tokens, Token {
@@ -70,15 +71,22 @@ fn tokenize(input :: string[]) -> Token[] | Error {
                 value is token,
             });
         } else {
+            // @int returns a union type, so we need to narrow it down to an int
+            // at this point we are not sure is the token is a valid int
             var possibleNumber is @int(token);
             possibleNumber?;
+            // the `as` keyword checks to see if the union is an int
             possibleNumber as int then {
                 possibleNumber?;
+                // if the token is a valid int, it is narrowed in the then block
                 @push(tokens, Token {
                     token_type is .NUMBER,
                     value is possibleNumber,
                 });
             } else {
+                // if @int cannot be narrowed an error was returned
+                // we can print the unnarrowed value, then return an error value
+                possibleNumber?;
                 return Error.INVALID_TOKEN;
             }
         }

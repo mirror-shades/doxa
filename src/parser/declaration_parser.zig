@@ -392,7 +392,7 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
             }
         }
 
-        if (self.peek().type != .SEMICOLON) {
+        if (self.peek().type != .NEWLINE) {
             return error.ExpectedSemicolon;
         }
         self.advance();
@@ -536,7 +536,7 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
     }
 
     // Make semicolons optional - consume if present, but don't require them
-    if (self.peek().type == .SEMICOLON) {
+    if (self.peek().type == .NEWLINE) {
         self.advance(); // Consume the semicolon if present
     } else {
         if (self.debug_enabled) {

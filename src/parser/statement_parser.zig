@@ -190,7 +190,7 @@ pub fn parseExpressionStmt(self: *Parser) ErrorList!ast.Stmt {
 
     // Only check for semicolon if we need one
     if (needs_semicolon) {
-        if (self.peek().type != .SEMICOLON) {
+        if (self.peek().type != .NEWLINE) {
             if (expr) |e| {
                 e.deinit(self.allocator);
                 self.allocator.destroy(e);
@@ -249,11 +249,11 @@ pub fn parseReturnStmt(self: *Parser) ErrorList!ast.Stmt {
     var value: ?*ast.Expr = null;
     const type_info = ast.TypeInfo{ .base = .Nothing }; // Default to Nothing type
 
-    if (self.peek().type != .SEMICOLON) {
+    if (self.peek().type != .NEWLINE) {
         value = try expression_parser.parseExpression(self);
     }
 
-    if (self.peek().type != .SEMICOLON) {
+    if (self.peek().type != .NEWLINE) {
         const location = Reporter.Location{
             .file = self.current_file,
             .line = self.peek().line,
@@ -392,7 +392,7 @@ pub fn parseStructDeclStmt(self: *Parser) ErrorList!ast.Stmt {
 pub fn parseContinueStmt(self: *Parser) ErrorList!ast.Stmt {
     self.advance(); // consume 'continue' keyword
 
-    if (self.peek().type != .SEMICOLON) {
+    if (self.peek().type != .NEWLINE) {
         const location = Reporter.Location{
             .file = self.current_file,
             .line = self.peek().line,
@@ -417,7 +417,7 @@ pub fn parseContinueStmt(self: *Parser) ErrorList!ast.Stmt {
 pub fn parseBreakStmt(self: *Parser) ErrorList!ast.Stmt {
     self.advance(); // consume 'break' keyword
 
-    if (self.peek().type != .SEMICOLON) {
+    if (self.peek().type != .NEWLINE) {
         const location = Reporter.Location{
             .file = self.current_file,
             .line = self.peek().line,

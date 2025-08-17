@@ -101,6 +101,7 @@ pub const LexicalAnalyzer = struct {
         try self.keywords.put("entry", .ENTRY);
         try self.keywords.put("is", .ASSIGN);
         try self.keywords.put("as", .AS);
+        try self.keywords.put("to", .SPREAD);
         try self.keywords.put("from", .FROM);
         try self.keywords.put("equals", .EQUALITY);
         try self.keywords.put("int", .INT_TYPE);
@@ -152,8 +153,13 @@ pub const LexicalAnalyzer = struct {
 
     // lexes the next token
     fn getNextToken(self: *LexicalAnalyzer) (Reporting.ErrorList || std.mem.Allocator.Error)!void {
+        // skip newlines
+        while (!self.isAtEnd() and self.peekAt(0) == '\n') {
+            try self.addMinimalToken(.NEWLINE);
+        }
+
         // Skip whitespace
-        while (!self.isAtEnd() and (self.peekAt(0) == ' ' or self.peekAt(0) == '\r' or self.peekAt(0) == '\t' or self.peekAt(0) == '\n')) {
+        while (!self.isAtEnd() and (self.peekAt(0) == ' ' or self.peekAt(0) == '\r' or self.peekAt(0) == '\t')) {
             self.advance();
         }
 
@@ -244,7 +250,7 @@ pub const LexicalAnalyzer = struct {
                     self.advance(); // consume second dot
                     if (self.peekAt(0) == '.') {
                         self.advance(); // consume third dot
-                        try self.addMinimalToken(.SPREAD);
+                        try self.addMinimalToken(.CONTINUE_LINE);
                     } else {
                         try self.addMinimalToken(.DOT_DOT);
                     }
@@ -265,7 +271,7 @@ pub const LexicalAnalyzer = struct {
                     try self.addMinimalToken(.DOT);
                 }
             },
-            ';' => try self.addMinimalToken(.SEMICOLON),
+            ';' => try self.addMinimalToken(.NEWLINE),
             '%' => try self.addMinimalToken(.MODULO),
             '#' => try self.addMinimalToken(.HASH),
 
