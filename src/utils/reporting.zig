@@ -143,7 +143,7 @@ pub const ErrorList = error{
     CodepointTooLarge,
 
     // Syntax & Parsing
-    ExpectedSemicolon,
+    ExpectedNewline,
     ExpectedClosingParen,
     ExpectedExpression,
     ExpectedIdentifier,
@@ -162,7 +162,7 @@ pub const ErrorList = error{
     ExpectedElse,
     ExpectedColon,
     ExpectedCommaOrBracket,
-    ExpectedSemicolonOrBrace,
+    ExpectedNewlineOrBrace,
     ExpectedEnumVariant,
     ExpectedCommaOrBrace,
     ExpectedCommaOrParen,

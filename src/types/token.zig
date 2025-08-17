@@ -70,8 +70,7 @@ pub const TokenType = enum {
     ASYNC, // async
     AWAIT, // await
     ENTRY, // entry
-    EQUALITY, // ==
-    ASSIGN, // is
+    RANGE, // to
 
     // compiler level methods (@methods)
     TYPE, // typeof / type
@@ -112,6 +111,8 @@ pub const TokenType = enum {
     AND, // and ∧
     OR, // or ∨
     WHERE, // where
+    EQUALITY, // ==
+    ASSIGN, // is
 
     // logical operators
     IF, // if
@@ -123,9 +124,8 @@ pub const TokenType = enum {
 
     // literals
     IDENTIFIER, // identifier
-    SPREAD, // to
-    NEWLINE, // \n or ;
-    CONTINUE_LINE, // ...
+    NEWLINE, // newline
+    CONTINUE_LINE, // continue line
 
     // atomic types
     INT, // integer

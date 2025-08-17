@@ -167,10 +167,10 @@ pub fn parseExpressionStmt(self: *Parser) ErrorList!ast.Stmt {
 
     const expr = try expression_parser.parseExpression(self);
 
-    // Check if we need a semicolon
-    const needs_semicolon = if (expr) |e| switch (e.data) {
+    // Check if we need a newline
+    const needs_newline = if (expr) |e| switch (e.data) {
         .Block => false,
-        .If => false, // If expressions don't need semicolons
+        .If => false, // If expressions don't need newlines
         .While => false,
         .For => false,
         .ForEach => false, // Make sure this is false
@@ -179,7 +179,7 @@ pub fn parseExpressionStmt(self: *Parser) ErrorList!ast.Stmt {
         .Index => true,
         .Assignment => true,
         .Cast => |c| blk: {
-            // If either branch is a block, allow omitting the semicolon
+            // If either branch is a block, allow omitting the newline
             const then_is_block = c.then_branch != null and c.then_branch.?.data == .Block;
             const else_is_block = c.else_branch != null and c.else_branch.?.data == .Block;
             break :blk !(then_is_block or else_is_block);
@@ -188,16 +188,16 @@ pub fn parseExpressionStmt(self: *Parser) ErrorList!ast.Stmt {
         else => true,
     } else true;
 
-    // Only check for semicolon if we need one
-    if (needs_semicolon) {
+    // Only check for newline if we need one
+    if (needs_newline) {
         if (self.peek().type != .NEWLINE) {
             if (expr) |e| {
                 e.deinit(self.allocator);
                 self.allocator.destroy(e);
             }
-            return error.ExpectedSemicolon;
+            return error.ExpectedNewline;
         }
-        self.advance(); // Consume the semicolon
+        self.advance(); // Consume the newline
     }
 
     return ast.Stmt{
@@ -259,8 +259,8 @@ pub fn parseReturnStmt(self: *Parser) ErrorList!ast.Stmt {
             .line = self.peek().line,
             .column = self.peek().column,
         };
-        self.reporter.reportCompileError(location, "Expected semicolon", .{});
-        return error.ExpectedSemicolon;
+        self.reporter.reportCompileError(location, "Expected newline", .{});
+        return error.ExpectedNewline;
     }
     self.advance();
 
@@ -398,8 +398,8 @@ pub fn parseContinueStmt(self: *Parser) ErrorList!ast.Stmt {
             .line = self.peek().line,
             .column = self.peek().column,
         };
-        self.reporter.reportCompileError(location, "Expected semicolon", .{});
-        return error.ExpectedSemicolon;
+        self.reporter.reportCompileError(location, "Expected newline", .{});
+        return error.ExpectedNewline;
     }
     self.advance(); // consume ';'
 
@@ -423,8 +423,8 @@ pub fn parseBreakStmt(self: *Parser) ErrorList!ast.Stmt {
             .line = self.peek().line,
             .column = self.peek().column,
         };
-        self.reporter.reportCompileError(location, "Expected semicolon", .{});
-        return error.ExpectedSemicolon;
+        self.reporter.reportCompileError(location, "Expected newline", .{});
+        return error.ExpectedNewline;
     }
     self.advance(); // consume ';'
 

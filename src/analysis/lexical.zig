@@ -101,7 +101,6 @@ pub const LexicalAnalyzer = struct {
         try self.keywords.put("entry", .ENTRY);
         try self.keywords.put("is", .ASSIGN);
         try self.keywords.put("as", .AS);
-        try self.keywords.put("to", .SPREAD);
         try self.keywords.put("from", .FROM);
         try self.keywords.put("equals", .EQUALITY);
         try self.keywords.put("int", .INT_TYPE);
@@ -124,6 +123,7 @@ pub const LexicalAnalyzer = struct {
         try self.keywords.put("not", .NOT);
         try self.keywords.put("in", .IN);
         try self.keywords.put("at", .AT);
+        try self.keywords.put("to", .RANGE);
         try self.keywords.put("∃", .EXISTS);
         try self.keywords.put("∀", .FORALL);
         try self.keywords.put("∈", .IN);
@@ -153,13 +153,8 @@ pub const LexicalAnalyzer = struct {
 
     // lexes the next token
     fn getNextToken(self: *LexicalAnalyzer) (Reporting.ErrorList || std.mem.Allocator.Error)!void {
-        // skip newlines
-        while (!self.isAtEnd() and self.peekAt(0) == '\n') {
-            try self.addMinimalToken(.NEWLINE);
-        }
-
         // Skip whitespace
-        while (!self.isAtEnd() and (self.peekAt(0) == ' ' or self.peekAt(0) == '\r' or self.peekAt(0) == '\t')) {
+        while (!self.isAtEnd() and (self.peekAt(0) == ' ' or self.peekAt(0) == '\r' or self.peekAt(0) == '\t' or self.peekAt(0) == '\n')) {
             self.advance();
         }
 
