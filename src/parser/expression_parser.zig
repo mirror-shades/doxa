@@ -380,7 +380,7 @@ pub fn forExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr
 
     // Parse initializer
     var initializer: ?*ast.Stmt = null;
-    if (self.peek().type != .SEMICOLON) {
+    if (self.peek().type != .NEWLINE) {
         if (self.peek().type == .VAR) {
             const var_decl = try declaration_parser.parseVarDecl(self);
             const stmt = try self.allocator.create(ast.Stmt);
@@ -398,10 +398,10 @@ pub fn forExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr
 
     // Parse condition
     var condition: ?*ast.Expr = null;
-    if (self.peek().type != .SEMICOLON) {
+    if (self.peek().type != .NEWLINE) {
         condition = try parseExpression(self);
     }
-    if (self.peek().type != .SEMICOLON) {
+    if (self.peek().type != .NEWLINE) {
         return error.ExpectedSemicolon;
     }
     self.advance(); // consume ';'
@@ -904,7 +904,7 @@ pub fn parseIfExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
     var else_expr: ?*ast.Expr = null;
 
     // Check for else after semicolon (if-else-if chain syntax)
-    if (self.peek().type == .SEMICOLON and self.peekAhead(1).type == .ELSE) {
+    if (self.peek().type == .NEWLINE and self.peekAhead(1).type == .ELSE) {
         self.advance(); // consume semicolon
     }
 
@@ -965,7 +965,7 @@ pub fn returnExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.E
     var value: ?*ast.Expr = null;
 
     // Check if there's a value to return
-    if (self.peek().type != .SEMICOLON and
+    if (self.peek().type != .NEWLINE and
         self.peek().type != .ELSE and
         self.peek().type != .RIGHT_BRACE and
         self.peek().type != .EOF)

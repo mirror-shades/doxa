@@ -518,7 +518,7 @@ pub const Parser = struct {
                     // Check next token
                     if (pos + 1 < self.tokens.len) {
                         const next_token = self.tokens[pos + 1];
-                        if (next_token.type != .SEMICOLON) {
+                        if (next_token.type != .NEWLINE) {
                             found_return_value = true;
                             break;
                         }
