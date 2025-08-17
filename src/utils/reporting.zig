@@ -185,6 +185,7 @@ pub const ErrorList = error{
     CircularImport,
     UnknownType,
     UnknownFieldOrMethod,
+    EllipsisWithoutNewline,
 
     // Miscellaneous
     NotImplemented,
