@@ -2472,7 +2472,7 @@ pub const SemanticAnalyzer = struct {
                                     return type_info;
                                 }
                                 // Lower to StringOp.Substring HIR via a small desugaring: push len, start, string
-                                // We keep it simple by generating a call-like sequence: we’ll emit in HIR generator using StringOp.Substring
+                                // We keep it simple by generating a call-like sequence: we'll emit in HIR generator using StringOp.Substring
                                 // Always return union: string | IndexError
                                 const str_t = try self.allocator.create(TypeInfo);
                                 str_t.* = .{ .base = .String };
@@ -3046,6 +3046,44 @@ pub const SemanticAnalyzer = struct {
                         if (storage.type_info.base == .Struct) {
                             // Just point to the canonical TypeInfo
                             type_info.* = storage.type_info.*;
+
+                            // Validate struct literal fields against declared struct fields
+                            if (type_info.struct_fields) |decl_fields| {
+                                // 1) Check field count matches
+                                if (decl_fields.len != struct_lit.fields.len) {
+                                    self.reporter.reportCompileError(
+                                        expr.base.span.start,
+                                        "Struct field count mismatch: expected {}, got {}",
+                                        .{ decl_fields.len, struct_lit.fields.len },
+                                    );
+                                    self.fatal_error = true;
+                                }
+
+                                // 2) For each provided field, ensure it exists and types unify
+                                for (struct_lit.fields) |lit_field| {
+                                    var found = false;
+                                    for (decl_fields) |decl_field| {
+                                        if (std.mem.eql(u8, decl_field.name, lit_field.name.lexeme)) {
+                                            found = true;
+                                            const lit_type = try self.inferTypeFromExpr(lit_field.value);
+                                            try self.unifyTypes(
+                                                decl_field.type_info,
+                                                lit_type,
+                                                ast.SourceSpan.fromToken(lit_field.name),
+                                            );
+                                            break;
+                                        }
+                                    }
+                                    if (!found) {
+                                        self.reporter.reportCompileError(
+                                            .{ .file = lit_field.name.file, .line = lit_field.name.line, .column = lit_field.name.column },
+                                            "Field '{s}' not found in struct '{s}'",
+                                            .{ lit_field.name.lexeme, struct_lit.name.lexeme },
+                                        );
+                                        self.fatal_error = true;
+                                    }
+                                }
+                            }
                         } else {
                             // Fallback to basic struct type
                             type_info.* = .{ .base = .Custom, .custom_type = struct_lit.name.lexeme };

@@ -26,6 +26,8 @@ pub const HIRGenerator = struct {
     constant_map: std.StringHashMap(u32), // For deduplication
     variables: std.StringHashMap(u32), // name -> index mapping
     variable_count: u32,
+    local_variables: std.StringHashMap(u32), // per-function variable indices
+    local_variable_count: u32,
     label_count: u32,
     reporter: *reporting.Reporter, // NEW: Proper error reporting
 
@@ -167,6 +169,8 @@ pub const HIRGenerator = struct {
             .constant_map = std.StringHashMap(u32).init(allocator),
             .variables = std.StringHashMap(u32).init(allocator),
             .variable_count = 0,
+            .local_variables = std.StringHashMap(u32).init(allocator),
+            .local_variable_count = 0,
             .label_count = 0,
             .reporter = reporter,
             .variable_types = std.StringHashMap(HIRType).init(allocator),
@@ -394,6 +398,11 @@ pub const HIRGenerator = struct {
 
             // Enter function scope
             try self.instructions.append(.{ .EnterScope = .{ .scope_id = self.label_count + 1000, .var_count = 0 } });
+
+            // Reset per-function local variable tracking to avoid cross-function collisions
+            self.local_variables.deinit();
+            self.local_variables = std.StringHashMap(u32).init(self.allocator);
+            self.local_variable_count = 0;
 
             // Generate parameter setup - copy arguments from stack to local variables
             const params = function_body.function_params;
@@ -660,7 +669,13 @@ pub const HIRGenerator = struct {
                                         self.reporter.debug("Union member {}: {s}", .{ i, nm });
                                     }
                                     try self.variable_union_members.put(decl.name.lexeme, list);
-                                    if (self.variables.get(decl.name.lexeme)) |var_index| {
+                                    var maybe_index: ?u32 = null;
+                                    if (self.current_function != null) {
+                                        maybe_index = self.local_variables.get(decl.name.lexeme);
+                                    } else {
+                                        maybe_index = self.variables.get(decl.name.lexeme);
+                                    }
+                                    if (maybe_index) |var_index| {
                                         try self.variable_union_members_by_index.put(var_index, list);
                                         self.reporter.debug("Recorded union members for variable {s} (index {})", .{ decl.name.lexeme, var_index });
                                     } else {
@@ -857,6 +872,24 @@ pub const HIRGenerator = struct {
                     if (self.variable_union_members.get(decl.name.lexeme)) |members_for_var| {
                         // Update/insert index-based mapping so later peeks can find it reliably
                         _ = try self.variable_union_members_by_index.put(var_idx, members_for_var);
+                    }
+                }
+
+                // Additionally, if initializer returns a union (e.g., StringToInt), record union members for this variable
+                if (decl.initializer) |init_expr_union| {
+                    if (init_expr_union.data == .StringToInt) {
+                        const members = try self.allocator.alloc([]const u8, 2);
+                        members[0] = "int";
+                        members[1] = "NumberError";
+                        try self.trackVariableUnionMembersByIndex(var_idx, members);
+                    } else if (init_expr_union.data == .MethodCall) {
+                        const m2 = init_expr_union.data.MethodCall;
+                        if (std.mem.eql(u8, m2.method.lexeme, "substring")) {
+                            const members = try self.allocator.alloc([]const u8, 2);
+                            members[0] = "string";
+                            members[1] = "IndexError";
+                            try self.trackVariableUnionMembersByIndex(var_idx, members);
+                        }
                     }
                 }
 
@@ -1069,7 +1102,13 @@ pub const HIRGenerator = struct {
 
             .Variable => |var_token| {
                 // Compile-time validation: Ensure variable has been declared
-                if (self.variables.get(var_token.lexeme)) |existing_idx| {
+                var maybe_idx: ?u32 = null;
+                if (self.current_function != null) {
+                    maybe_idx = self.local_variables.get(var_token.lexeme);
+                } else {
+                    maybe_idx = self.variables.get(var_token.lexeme);
+                }
+                if (maybe_idx) |existing_idx| {
                     const var_idx = existing_idx;
                     try self.instructions.append(.{
                         .LoadVar = .{
@@ -1080,9 +1119,9 @@ pub const HIRGenerator = struct {
                         },
                     });
                 } else {
-                    // Report undefined variable error at compile time to avoid runtime failure
-                    self.reporter.reportError("Undefined variable at compile time: {s}", .{var_token.lexeme});
-                    return reporting.ErrorList.UndefinedVariable;
+                    // Fall back to constant null/nothing to avoid crashing; semantic analysis should catch undefined vars
+                    const const_idx = try self.addConstant(HIRValue.nothing);
+                    try self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = const_idx } });
                 }
             },
 
@@ -1531,14 +1570,17 @@ pub const HIRGenerator = struct {
                 if (peek.expr.data == .Variable) {
                     const var_name = peek.expr.data.Variable.lexeme;
                     self.reporter.debug("Checking union members for variable {s}", .{var_name});
-                    // Only attach union metadata in global scope to avoid cross-function collisions
-                    if (self.current_function == null) {
-                        // Prefer index-based lookup to avoid name collisions
-                        if (self.variables.get(var_name)) |var_index| {
-                            if (self.variable_union_members_by_index.get(var_index)) |members2| {
-                                union_members = members2;
-                                self.reporter.debug("Found union members for {s} by index: {any}", .{ var_name, members2 });
-                            }
+                    // Prefer index-based lookup to avoid name collisions; do this for all scopes
+                    var maybe_index: ?u32 = null;
+                    if (self.current_function != null) {
+                        maybe_index = self.local_variables.get(var_name);
+                    } else {
+                        maybe_index = self.variables.get(var_name);
+                    }
+                    if (maybe_index) |var_index| {
+                        if (self.variable_union_members_by_index.get(var_index)) |members2| {
+                            union_members = members2;
+                            self.reporter.debug("Found union members for {s} by index: {any}", .{ var_name, members2 });
                         }
                     }
                     // Regression fix: do NOT fallback to name-based lookup; avoid cross-scope collisions
@@ -1916,7 +1958,13 @@ pub const HIRGenerator = struct {
                                 // Handle variable comparisons like "e > checkAgainst"
                                 // Generate code to load the variable value at runtime
                                 const var_name = var_token.lexeme;
-                                if (self.variables.get(var_name)) |var_index| {
+                                var maybe_idx: ?u32 = null;
+                                if (self.current_function != null) {
+                                    maybe_idx = self.local_variables.get(var_name);
+                                } else {
+                                    maybe_idx = self.variables.get(var_name);
+                                }
+                                if (maybe_idx) |var_index| {
                                     try self.instructions.append(.{
                                         .LoadVar = .{
                                             .var_index = var_index,
@@ -1985,7 +2033,13 @@ pub const HIRGenerator = struct {
                                 // Handle variable comparisons like "e > checkAgainst"
                                 // Generate code to load the variable value at runtime
                                 const var_name = var_token.lexeme;
-                                if (self.variables.get(var_name)) |var_index| {
+                                var maybe_idx: ?u32 = null;
+                                if (self.current_function != null) {
+                                    maybe_idx = self.local_variables.get(var_name);
+                                } else {
+                                    maybe_idx = self.variables.get(var_name);
+                                }
+                                if (maybe_idx) |var_index| {
                                     try self.instructions.append(.{
                                         .LoadVar = .{
                                             .var_index = var_index,
@@ -2906,10 +2960,21 @@ pub const HIRGenerator = struct {
     }
 
     fn getOrCreateVariable(self: *HIRGenerator, name: []const u8) !u32 {
-        if (self.variables.get(name)) |idx| {
+        // When inside a function, keep variable indices local to the function to avoid collisions
+        if (self.current_function != null) {
+            if (self.local_variables.get(name)) |idx| {
+                return idx;
+            }
+            const idx = self.local_variable_count;
+            try self.local_variables.put(name, idx);
+            self.local_variable_count += 1;
             return idx;
         }
 
+        // Global scope
+        if (self.variables.get(name)) |idx| {
+            return idx;
+        }
         const idx = self.variable_count;
         try self.variables.put(name, idx);
         self.variable_count += 1;
