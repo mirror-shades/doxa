@@ -426,13 +426,39 @@ pub const HIRVM = struct {
                 // Convert StructField array to HIRStructField array
                 var hir_fields = self.allocator.alloc(HIRStructField, s.fields.len) catch break :blk HIRValue.nothing;
                 for (s.fields, 0..) |field, i| {
-                    // Recursively convert field value
-                    const field_value = self.tokenLiteralToHIRValue(field.value);
+                    // Recursively convert field value, but preserve enum type names when possible
+                    var field_value_hir = self.tokenLiteralToHIRValue(field.value);
+
+                    // If this field is an enum variant literal, try to recover the enum type from registry
+                    if (field.value == .enum_variant) {
+                        if (self.getCustomType(s.type_name)) |struct_info| {
+                            if (struct_info.kind == .Struct) {
+                                if (struct_info.struct_fields) |sf| {
+                                    // Find matching field by name and check if it declares a custom enum type
+                                    for (sf) |decl_field| {
+                                        if (std.mem.eql(u8, decl_field.name, field.name)) {
+                                            if (decl_field.custom_type_name) |enum_type_name| {
+                                                // Rebuild enum HIR with correct type name
+                                                field_value_hir = HIRValue{ .enum_variant = .{
+                                                    .type_name = enum_type_name,
+                                                    .variant_name = field.value.enum_variant,
+                                                    .variant_index = struct_info.getEnumVariantIndex(field.value.enum_variant) orelse 0,
+                                                    .path = null,
+                                                } };
+                                            }
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     hir_fields[i] = HIRStructField{
                         .name = field.name,
-                        .value = field_value,
+                        .value = field_value_hir,
                         // Infer field type from the value
-                        .field_type = switch (field_value) {
+                        .field_type = switch (field_value_hir) {
                             .int => .Int,
                             .byte => .Byte,
                             .float => .Float,
@@ -440,6 +466,8 @@ pub const HIRVM = struct {
                             .tetra => .Tetra,
                             .nothing => .Nothing,
                             .struct_instance => .Struct,
+                            .enum_variant => .Enum,
+                            .array => .Array,
                             else => .Auto,
                         },
                         .path = s.path,

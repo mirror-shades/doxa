@@ -15,14 +15,16 @@ struct Token {
 }
 
 entry fn main() {
+    // all compiler level methods are distinguished by @
     const input is @input()
-    input?
 
     const splitInput is split(input)
+
     splitInput?
 
     const tokens is tokenize(splitInput)
-    tokens?
+
+    execute(tokens)
 
     return
 }
@@ -33,6 +35,8 @@ fn split(input :: string) -> string[] {
 
     const lin is @length(input)
 
+    // each loops iterate through each element
+    // they can work on strings as well as arrays
     each c in input {
         if @length(current) > 0 and (c equals " " or c equals "+" or c equals "-" or c equals "*" or c equals "/") then {
             @push(result, current)
@@ -53,7 +57,7 @@ fn split(input :: string) -> string[] {
     return result
 }
 
-fn tokenize(input :: string[]) -> Token[] | Error {
+fn tokenize(input :: string[]) -> Token[] {
     var tokens :: Token[]
 
     each token in input {
@@ -72,10 +76,8 @@ fn tokenize(input :: string[]) -> Token[] | Error {
             // @int returns a union type, so we need to narrow it down to an int
             // at this point we are not sure is the token is a valid int
             var possibleNumber is @int(token)
-            possibleNumber?
             // the `as` keyword checks to see if the union is an int
             possibleNumber as int then {
-                possibleNumber?
                 // if the token is a valid int, it is narrowed in the then block
                 @push(tokens, Token { 
                     token_type is .NUMBER,
@@ -83,11 +85,57 @@ fn tokenize(input :: string[]) -> Token[] | Error {
                 })
             } else {
                 // if @int cannot be narrowed an error was returned
-                // we can print the unnarrowed value, then return an error value
-                possibleNumber?
-                return Error.INVALID_TOKEN
+                // we can print the unnarrowed value, then skip this token
+                token?
+                "invalid token, skipping"?
             }
         }
     }
     return tokens
+}
+
+fn execute(tokens :: Token[]) {
+	var total :: int is 0
+	const first is tokens[0].value
+	first as int then {
+		total is first
+	} else {
+		tokens[0].token_type?
+		tokens[0].value?
+		"first value must be a number"?
+		return
+	}
+	each token at i in tokens {
+		if i != 0 then {
+            token.token_type?
+			if token.token_type equals TokenType.OPERATOR then {
+                "operator found"?
+
+                const op is token.value as string else {
+                    token.value?
+                    "value must be an operator"?
+                    return
+                }
+
+				const rightHand is tokens[i + 1].value as int else {
+					token.value?
+					"value must be a number"?
+					return
+                }
+
+                op?
+                if op equals "+" then total += rightHand
+                else if op equals "-" then total -= rightHand
+                else if op equals "*" then total *= rightHand
+                else if op equals "/" then total /= rightHand
+                else {
+                    op?
+                    "invlaid operator"?
+                    return
+                }
+			}
+		}
+	}
+	total?
+	return
 }
