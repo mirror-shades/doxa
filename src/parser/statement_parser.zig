@@ -167,19 +167,17 @@ pub fn parseExpressionStmt(self: *Parser) ErrorList!ast.Stmt {
 
     const expr = try expression_parser.parseExpression(self);
 
-    // Check if we need a newline
     const needs_newline = if (expr) |e| switch (e.data) {
         .Block => false,
-        .If => false, // If expressions don't need newlines
+        .If => false,
         .While => false,
         .For => false,
-        .ForEach => false, // Make sure this is false
-        .Peek => true,
+        .ForEach => false,
+        .Peek => false,
         .Match => false,
         .Index => true,
         .Assignment => true,
         .Cast => |c| blk: {
-            // If either branch is a block, allow omitting the newline
             const then_is_block = c.then_branch != null and c.then_branch.?.data == .Block;
             const else_is_block = c.else_branch != null and c.else_branch.?.data == .Block;
             break :blk !(then_is_block or else_is_block);
@@ -188,14 +186,11 @@ pub fn parseExpressionStmt(self: *Parser) ErrorList!ast.Stmt {
         else => true,
     } else true;
 
-    // Only check for newline if we need one
     if (needs_newline) {
         const next_type = self.peek().type;
         if (next_type == .NEWLINE) {
-            self.advance(); // Consume the newline
-        } else if (next_type == .EOF or next_type == .RIGHT_BRACE) {
-            // EOF or '}' terminates the statement
-        } else {
+            self.advance();
+        } else if (next_type == .EOF or next_type == .RIGHT_BRACE) {} else {
             if (expr) |e| {
                 e.deinit(self.allocator);
                 self.allocator.destroy(e);
@@ -253,20 +248,30 @@ pub fn parseReturnStmt(self: *Parser) ErrorList!ast.Stmt {
     var value: ?*ast.Expr = null;
     const type_info = ast.TypeInfo{ .base = .Nothing }; // Default to Nothing type
 
-    if (self.peek().type != .NEWLINE) {
+    // Only parse a value if the next token can start an expression
+    if (self.peek().type != .NEWLINE and
+        self.peek().type != .ELSE and
+        self.peek().type != .RIGHT_BRACE and
+        self.peek().type != .EOF)
+    {
         value = try expression_parser.parseExpression(self);
     }
 
-    if (self.peek().type != .NEWLINE) {
+    // Accept newline, '}', or EOF as statement terminators
+    const next_type = self.peek().type;
+    if (next_type == .NEWLINE) {
+        self.advance();
+    } else if (next_type == .RIGHT_BRACE or next_type == .EOF) {
+        // do not consume here; caller (block parser) will handle
+    } else {
         const location = Reporter.Location{
             .file = self.current_file,
             .line = self.peek().line,
             .column = self.peek().column,
         };
-        self.reporter.reportCompileError(location, "Expected newline", .{});
+        self.reporter.reportCompileError(location, "Expected newline or closing brace after return", .{});
         return error.ExpectedNewline;
     }
-    self.advance();
 
     return ast.Stmt{
         .base = .{

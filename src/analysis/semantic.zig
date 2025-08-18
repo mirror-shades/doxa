@@ -3330,7 +3330,7 @@ pub const SemanticAnalyzer = struct {
                 // For an as expression with then/else, the type depends on the branch types
                 if (then_type) |tt| {
                     if (else_type) |et| {
-                        // If both branches exist, create a union of their types
+                        // Both then and else exist: result can be either branch
                         if (tt.base == et.base) {
                             type_info.* = tt.*;
                         } else {
@@ -3339,15 +3339,23 @@ pub const SemanticAnalyzer = struct {
                             type_info.* = union_type.*;
                         }
                     } else {
-                        // Only then branch exists
+                        // Only then branch exists: result type is the then-type
                         type_info.* = tt.*;
                     }
                 } else if (else_type) |et| {
-                    // Only else branch exists
-                    type_info.* = et.*;
+                    // Else-only: if else yields Nothing (control-flow exit), result is target type
+                    if (et.base == .Nothing) {
+                        type_info.* = target_type_info.*;
+                    } else if (target_type_info.base == et.base) {
+                        type_info.* = target_type_info.*;
+                    } else {
+                        var types = [_]*ast.TypeInfo{ target_type_info, et };
+                        const union_type = try self.createUnionType(&types);
+                        type_info.* = union_type.*;
+                    }
                 } else {
-                    // No branch types (shouldn't happen)
-                    type_info.* = .{ .base = .Nothing };
+                    // No branches: type remains the target type
+                    type_info.* = target_type_info.*;
                 }
             },
         }

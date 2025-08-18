@@ -1,8 +1,3 @@
-// Errors will be handled with enums
-enum Error {
-    INVALID_TOKEN,
-}
-
 enum TokenType {
     NUMBER,
     OPERATOR,
@@ -15,14 +10,12 @@ struct Token {
 }
 
 entry fn main() {
+    // all compiler level methods are distinguished by @
     const input is @input()
 
     const splitInput is split(input)
 
-    const tokens is tokenize(splitInput) as Tokens[] else {
-        "Failed to resolve tokens"?
-        return
-    }
+    const tokens is tokenize(splitInput)
 
     execute(tokens)
 
@@ -35,6 +28,8 @@ fn split(input :: string) -> string[] {
 
     const lin is @length(input)
 
+    // each loops iterate through each element
+    // they can work on strings as well as arrays
     each c in input {
         if @length(current) > 0 and (c equals " " or c equals "+" or c equals "-" or c equals "*" or c equals "/") then {
             @push(result, current)
@@ -55,7 +50,7 @@ fn split(input :: string) -> string[] {
     return result
 }
 
-fn tokenize(input :: string[]) -> Token[] | Error {
+fn tokenize(input :: string[]) -> Token[] {
     var tokens :: Token[]
 
     each token in input {
@@ -83,9 +78,9 @@ fn tokenize(input :: string[]) -> Token[] | Error {
                 })
             } else {
                 // if @int cannot be narrowed an error was returned
-                // we can print the unnarrowed value, then return an error value
+                // we can print the unnarrowed value, then skip this token
                 token?
-                return Error.INVALID_TOKEN
+                "invalid token, skipping"?
             }
         }
     }
@@ -93,45 +88,44 @@ fn tokenize(input :: string[]) -> Token[] | Error {
 }
 
 fn execute(tokens :: Token[]) {
-    // we use the peek operator to give some ouput on error
-    if tokens[0].token_type != TokenType.NUMBER then {
-        tokens[0].token_type?
-        tokens[0].value?
-        "first value must be a number"?
-        return
-    }
-    // we use will narrow casually with else 0 as we know this is an int
-    var total :: int is tokens[0].value as int else 0
-
-    each token at i in tokens {
-        if i != 0 then {
-            if token.token_type equals TokenType.OPERATOR then {
-                // we can use `as` to narrow the relevant values
-                // errors are handled in our else case
-                const rightHand is tokens[i + 1].value as int else {
-                    token.value?
-                    "value must be a number"?
-                    return
-                }
+	var total :: int is 0
+	const first is tokens[0].value
+	first as int then {
+		total is first
+	} else {
+		tokens[0].token_type?
+		tokens[0].value?
+		"first value must be a number"?
+		return
+	}
+	each token at i in tokens {
+		if i != 0 then {
+			if token.token_type equals TokenType.OPERATOR then {
+                // we can use `as` to both narrow and handle errors
                 const op is token.value as string else {
                     token.value?
                     "value must be an operator"?
                     return
                 }
-                match op {
-                    "+" then total += rightHand,
-                    "-" then total -= rightHand,
-                    "*" then total *= rightHand,
-                    "/" then total /= rightHand,
-                    else {
-                        op?
-                        "invlaid operator"?
-                        return
-                    }
+
+				const rightHand is tokens[i + 1].value as int else {
+					token.value?
+					"value must be a number"?
+					return
                 }
-            }
-        }
-    }
-    total?
-    return
+
+                if op equals "+" then total += rightHand
+                else if op equals "-" then total -= rightHand
+                else if op equals "*" then total *= rightHand
+                else if op equals "/" then total /= rightHand
+                else {
+                    op?
+                    "invlaid operator"?
+                    return
+                }
+			}
+		}
+	}
+	total?
+	return
 }

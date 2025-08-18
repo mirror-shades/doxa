@@ -1,12 +1,8 @@
-// Errors will be handled with enums
-enum Error {
-    INVALID_TOKEN,
-}
-
 enum TokenType {
     NUMBER,
     OPERATOR,
-    PARENTHESIS,
+    LPAREN,
+    RPAREN,
 }
 
 struct Token {
@@ -22,9 +18,15 @@ entry fn main() {
 
     splitInput?
 
-    const tokens is tokenize(splitInput)
+    const possibleTokens is tokenize(splitInput)
 
-    execute(tokens)
+    // union needs to be narrowed to catch our error returns
+    possibleTokens as Token[] then {
+        execute(possibleTokens)
+    } else {
+        "tokens failed to parse"?
+        return
+    }
 
     return
 }
@@ -35,20 +37,24 @@ fn split(input :: string) -> string[] {
 
     const lin is @length(input)
 
-    // each loops iterate through each element
+    // `each` loops iterate through each element
     // they can work on strings as well as arrays
-    each c in input {
+    // `at` is optional syntax for a loop index
+    each c at i in input {
+        // breaks number if operator is found
         if @length(current) > 0 and (c equals " " or c equals "+" or c equals "-" or c equals "*" or c equals "/") then {
             @push(result, current)
             current is ""
         }
 
-        if c equals " " then {
-            // Skip spaces
-        }
-        else if c equals "+" or c equals "-" or c equals "*" or c equals "/" then {
+        // make sure - isn't a negative sign
+        if c equals "-" and input[i+1] equals " " then {
             @push(result, c)
-        } else {
+        } 
+
+        else if c equals "+" or c equals "*" or c equals "/" then {
+            @push(result, c)
+        } else if c != " " {
             current is current + c
         }
 
@@ -57,7 +63,7 @@ fn split(input :: string) -> string[] {
     return result
 }
 
-fn tokenize(input :: string[]) -> Token[] {
+fn tokenize(input :: string[]) -> Token[] | nothing {
     var tokens :: Token[]
 
     each token in input {
@@ -67,9 +73,15 @@ fn tokenize(input :: string[]) -> Token[] {
                 value is token,
             })
         } 
-        else if token equals "(" or token equals ")" then {
+        else if token equals "(" then {
             @push(tokens, Token {
-                token_type is .PARENTHESIS,
+                token_type is .LPAREN,
+                value is token,
+            })
+        } 
+        else if token equals ")" then {
+            @push(tokens, Token {
+                token_type is .RPAREN,
                 value is token,
             })
         } else {
@@ -85,9 +97,11 @@ fn tokenize(input :: string[]) -> Token[] {
                 })
             } else {
                 // if @int cannot be narrowed an error was returned
-                // we can print the unnarrowed value, then skip this token
-                token?
-                "invalid token, skipping"?
+                // we can print debug info and exit the function
+                token?;
+                "invalid token, skipping"?;
+                // return nothing
+                return
             }
         }
     }
@@ -100,39 +114,34 @@ fn execute(tokens :: Token[]) {
 	first as int then {
 		total is first
 	} else {
-		tokens[0].token_type?
-		tokens[0].value?
-		"first value must be a number"?
+		tokens[0].token_type?;
+		tokens[0].value?;
+		"first value must be a number"?;
 		return
 	}
 	each token at i in tokens {
 		if i != 0 then {
-            token.token_type?
+			token.token_type?;
 			if token.token_type equals TokenType.OPERATOR then {
-                "operator found"?
-
-                const op is token.value as string else {
-                    token.value?
-                    "value must be an operator"?
-                    return
-                }
-
-				const rightHand is tokens[i + 1].value as int else {
-					token.value?
-					"value must be a number"?
+				// narrow operator value to string and process in success branch
+				const op is token.value as string else {
+					token.value?;
+					"value must be an operator"?;
 					return
-                }
+				}
 
-                op?
-                if op equals "+" then total += rightHand
-                else if op equals "-" then total -= rightHand
-                else if op equals "*" then total *= rightHand
-                else if op equals "/" then total /= rightHand
-                else {
-                    op?
-                    "invlaid operator"?
-                    return
-                }
+				const next is tokens[i + 1]
+				const rightHand is next.value as int else {
+					next.value?;
+					"value must be a number"?;
+					return
+				}
+
+				if op equals "+" then { total += rightHand }
+				else if op equals "-" then { total -= rightHand }
+				else if op equals "*" then { total *= rightHand }
+				else if op equals "/" then { total /= rightHand }
+				else { op?; "invalid operator"?; return }
 			}
 		}
 	}
