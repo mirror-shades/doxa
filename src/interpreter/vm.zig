@@ -1056,11 +1056,10 @@ pub const HIRVM = struct {
                 const b = try self.stack.pop();
                 const a_val = try self.stack.pop();
 
-                // Special handling: if operand_type signals String and RHS is a string, allow comparing
-                // a value's runtime type to the provided type name string. This enables
-                // match value { int => ..., float => ... } style type-pattern checks.
+                // Special handling: if operand_type signals String and RHS is a string, compare
+                // the runtime type of the left value to the provided type name string.
                 const eq_with_type_name = blk: {
-                    if (c.operand_type == .String and b.value == .string and a_val.value != .string) {
+                    if (c.operand_type == .String and b.value == .string) {
                         const type_name = self.getTypeString(a_val.value);
                         break :blk std.mem.eql(u8, type_name, b.value.string);
                     }

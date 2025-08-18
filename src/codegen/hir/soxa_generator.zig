@@ -2472,7 +2472,24 @@ pub const HIRGenerator = struct {
                             .Nothing => break :blk "nothing",
                         },
                         .Custom => |tok| break :blk tok.lexeme,
-                        .Array => break :blk "array",
+                        .Array => |arr_type| {
+                            // Map array element types to the strings produced by VM.getTypeString
+                            switch (arr_type.element_type.data) {
+                                .Basic => |elem_basic| switch (elem_basic) {
+                                    .Integer => break :blk "int[]",
+                                    .Byte => break :blk "byte[]",
+                                    .Float => break :blk "float[]",
+                                    .String => break :blk "string[]",
+                                    .Tetra => break :blk "tetra[]",
+                                    .Nothing => break :blk "array[]", // VM uses array[] for unknown/nothing
+                                },
+                                // Arrays of custom/struct types appear as struct[] at runtime
+                                .Custom => break :blk "struct[]",
+                                .Struct => break :blk "struct[]",
+                                // Other element kinds (enum, union, map, function, auto) default to array[]
+                                else => break :blk "array[]",
+                            }
+                        },
                         .Struct => break :blk "struct",
                         .Enum => break :blk "enum",
                         .Union => break :blk "union",
