@@ -131,6 +131,7 @@ pub const HIRGenerator = struct {
             name: []const u8,
             field_type: HIRType,
             index: u32,
+            custom_type_name: ?[]const u8 = null,
         };
 
         /// Get the index of an enum variant by name
@@ -2237,8 +2238,33 @@ pub const HIRGenerator = struct {
                     reverse_i -= 1;
                     const field = struct_lit.fields[reverse_i];
 
-                    // Generate field value
+                    // If we know the struct type and this field's declared custom type name refers
+                    // to an enum, set the enum context so `.FOO` lowers to an enum value, not string
+                    const previous_enum_context = self.current_enum_type;
+                    if (self.custom_types.get(struct_lit.name.lexeme)) |ctype| {
+                        if (ctype.kind == .Struct) {
+                            if (ctype.struct_fields) |cfields| {
+                                // Find matching field by name
+                                for (cfields) |cf| {
+                                    if (std.mem.eql(u8, cf.name, field.name.lexeme)) {
+                                        if (cf.custom_type_name) |ct_name| {
+                                            if (self.custom_types.get(ct_name)) |maybe_enum| {
+                                                if (maybe_enum.kind == .Enum) {
+                                                    self.current_enum_type = ct_name;
+                                                }
+                                            }
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Generate field value with possible enum context
                     try self.generateExpression(field.value, true);
+                    // Restore enum context
+                    self.current_enum_type = previous_enum_context;
 
                     // Infer and store field type
                     field_types[reverse_i] = self.inferTypeFromExpression(field.value);
@@ -2258,8 +2284,7 @@ pub const HIRGenerator = struct {
                     },
                 });
 
-                // Note: Removed Dup instruction as it was corrupting the stack for nested structs
-                // The struct instance will be used directly without duplication
+                // Result is on the stack
             },
 
             .FieldAssignment => |field_assign| {
@@ -3537,6 +3562,9 @@ pub const HIRGenerator = struct {
 
     /// NEW: Register a struct type with its fields
     fn registerStructType(self: *HIRGenerator, struct_name: []const u8, fields: []const []const u8) !void {
+        // If semantic analysis already populated this struct with rich field info,
+        // do not override it with a lossy registration.
+        if (self.custom_types.contains(struct_name)) return;
         // Create struct fields array with proper indices and types
         var struct_fields = try self.allocator.alloc(CustomTypeInfo.StructField, fields.len);
         for (fields, 0..) |field_name, index| {
@@ -3544,6 +3572,7 @@ pub const HIRGenerator = struct {
                 .name = try self.allocator.dupe(u8, field_name),
                 .field_type = .Auto, // Will be inferred at runtime
                 .index = @intCast(index),
+                .custom_type_name = null,
             };
         }
 

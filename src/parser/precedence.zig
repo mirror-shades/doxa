@@ -104,8 +104,8 @@ pub const rules = blk: {
     r.set(.PLUS_EQUAL, .{ .infix = compound_assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
     r.set(.MINUS_EQUAL, .{ .infix = compound_assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
     r.set(.POWER_EQUAL, .{ .infix = compound_assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
-    // r.set(.ASTERISK_EQUAL, .{ .infix = compound_assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
-    // r.set(.SLASH_EQUAL, .{ .infix = compound_assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
+    r.set(.ASTERISK_EQUAL, .{ .infix = compound_assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
+    r.set(.SLASH_EQUAL, .{ .infix = compound_assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
     // r.set(.MODULO_EQUAL, .{ .infix = compound_assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
 
     // Comparison operators
@@ -173,7 +173,7 @@ pub const rules = blk: {
     // Add struct declaration rule in the rules block
     r.set(.STRUCT_TYPE, .{ .prefix = parseStructDecl });
 
-    // Add struct instantiation support
+    // Add struct instantiation or match lookahead support
     r.set(.IDENTIFIER, .{ .prefix = parseStructOrMatch });
     r.set(.DOT, .{ .infix = fieldAccess, .precedence = .CALL });
 

@@ -292,10 +292,15 @@ pub fn parseMatchExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*a
             if (self.peek().type == .COMMA) self.advance();
         } else {
             body = try parseExpression(self) orelse return error.ExpectedExpression;
-            if (self.peek().type != .COMMA) {
+            // After an expression arm, tolerate newlines and require either a comma or a closing brace.
+            while (self.peek().type == .NEWLINE) self.advance();
+            if (self.peek().type == .COMMA) {
+                self.advance();
+            } else if (self.peek().type == .RIGHT_BRACE) {
+                // No trailing comma before closing brace is allowed
+            } else {
                 return error.ExpectedCommaOrBrace;
             }
-            self.advance();
         }
 
         try cases.append(.{ .pattern = pattern, .body = body });

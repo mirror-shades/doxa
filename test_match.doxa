@@ -1,16 +1,137 @@
-enum Color {
-    Red,
-    Green,
-    Blue,
+// Errors will be handled with enums
+enum Error {
+    INVALID_TOKEN,
 }
 
-const b :: Color is .Blue
-const g :: Color is .Green
+enum TokenType {
+    NUMBER,
+    OPERATOR,
+    PARENTHESIS,
+}
 
-var matchResult is match b {
-    .Red then "It's red",
-    .Blue then "It's blue",
-    else "It's something else",
-}; 
+struct Token {
+    token_type :: TokenType,
+    value :: string | int,
+}
 
-matchResult?; // It's blue
+entry fn main() {
+    const input is @input()
+
+    const splitInput is split(input)
+
+    const tokens is tokenize(splitInput) as Tokens[] else {
+        "Failed to resolve tokens"?
+        return
+    }
+
+    execute(tokens)
+
+    return
+}
+
+fn split(input :: string) -> string[] {
+    var result :: string[]
+    var current is ""
+
+    const lin is @length(input)
+
+    each c in input {
+        if @length(current) > 0 and (c equals " " or c equals "+" or c equals "-" or c equals "*" or c equals "/") then {
+            @push(result, current)
+            current is ""
+        }
+
+        if c equals " " then {
+            // Skip spaces
+        }
+        else if c equals "+" or c equals "-" or c equals "*" or c equals "/" then {
+            @push(result, c)
+        } else {
+            current is current + c
+        }
+
+    }
+    @push(result, current)
+    return result
+}
+
+fn tokenize(input :: string[]) -> Token[] | Error {
+    var tokens :: Token[]
+
+    each token in input {
+        if token equals "+" or token equals "-" or token equals "*" or token equals "/" then {
+            @push(tokens, Token {
+                token_type is .OPERATOR,
+                value is token,
+            })
+        } 
+        else if token equals "(" or token equals ")" then {
+            @push(tokens, Token {
+                token_type is .PARENTHESIS,
+                value is token,
+            })
+        } else {
+            // @int returns a union type, so we need to narrow it down to an int
+            // at this point we are not sure is the token is a valid int
+            var possibleNumber is @int(token)
+            // the `as` keyword checks to see if the union is an int
+            possibleNumber as int then {
+                // if the token is a valid int, it is narrowed in the then block
+                @push(tokens, Token { 
+                    token_type is .NUMBER,
+                    value is possibleNumber,
+                })
+            } else {
+                // if @int cannot be narrowed an error was returned
+                // we can print the unnarrowed value, then return an error value
+                token?
+                return Error.INVALID_TOKEN
+            }
+        }
+    }
+    return tokens
+}
+
+fn execute(tokens :: Token[]) {
+    // we use the peek operator to give some ouput on error
+    if tokens[0].token_type != TokenType.NUMBER then {
+        tokens[0].token_type?
+        tokens[0].value?
+        "first value must be a number"?
+        return
+    }
+    // we use will narrow casually with else 0 as we know this is an int
+    var total :: int is tokens[0].value as int else 0
+
+    each token at i in tokens {
+        if i != 0 then {
+            if token.token_type equals TokenType.OPERATOR then {
+                // we can use `as` to narrow the relevant values
+                // errors are handled in our else case
+                const rightHand is tokens[i + 1].value as int else {
+                    token.value?
+                    "value must be a number"?
+                    return
+                }
+                const op is token.value as string else {
+                    token.value?
+                    "value must be an operator"?
+                    return
+                }
+                match op {
+                    "+" then total += rightHand,
+                    "-" then total -= rightHand,
+                    "*" then total *= rightHand,
+                    "/" then total /= rightHand,
+                    else {
+                        op?
+                        "invlaid operator"?
+                        return
+                    }
+                }
+            }
+        }
+    }
+    total?
+    return
+}

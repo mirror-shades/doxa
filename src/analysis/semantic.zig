@@ -210,6 +210,22 @@ pub const SemanticAnalyzer = struct {
             .enum_variants = enum_variants,
         };
         try self.custom_types.put(enum_name, custom_type);
+
+        // Also register into runtime memory manager for VM access
+        var mem_enum_variants = try self.allocator.alloc(Memory.CustomTypeInfo.EnumVariant, variants.len);
+        for (variants, 0..) |variant_name, i| {
+            mem_enum_variants[i] = Memory.CustomTypeInfo.EnumVariant{
+                .name = try self.allocator.dupe(u8, variant_name),
+                .index = @intCast(i),
+            };
+        }
+        const mem_enum = Memory.CustomTypeInfo{
+            .name = try self.allocator.dupe(u8, enum_name),
+            .kind = .Enum,
+            .enum_variants = mem_enum_variants,
+            .struct_fields = null,
+        };
+        try self.memory.registerCustomType(mem_enum);
     }
 
     // NEW: Register struct with fields
@@ -217,14 +233,16 @@ pub const SemanticAnalyzer = struct {
         var struct_fields = try self.allocator.alloc(CustomTypeInfo.StructField, fields.len);
         for (fields, 0..) |field, index| {
             // Convert ast.Type to HIRType
-            const hir_field_type = self.astTypeToHirType(field.type_info.base);
             var custom_type_name: ?[]const u8 = null;
             if (field.type_info.base == .Custom and field.type_info.custom_type != null) {
                 custom_type_name = try self.allocator.dupe(u8, field.type_info.custom_type.?);
             }
+            // Preserve full field type info (no lossy HIR conversion here)
+            const full_type_info = try self.allocator.create(ast.TypeInfo);
+            full_type_info.* = field.type_info.*;
             struct_fields[index] = CustomTypeInfo.StructField{
                 .name = try self.allocator.dupe(u8, field.name),
-                .field_type = hir_field_type,
+                .field_type_info = full_type_info,
                 .custom_type_name = custom_type_name,
                 .index = @intCast(index),
             };
@@ -236,6 +254,43 @@ pub const SemanticAnalyzer = struct {
             .struct_fields = struct_fields,
         };
         try self.custom_types.put(struct_name, custom_type);
+
+        // Also register into runtime memory manager for VM access
+        var mem_fields = try self.allocator.alloc(Memory.CustomTypeInfo.StructField, fields.len);
+        for (fields, 0..) |field, i| {
+            const mapped_hir_type: HIRType = switch (field.type_info.base) {
+                .Int => .Int,
+                .Byte => .Byte,
+                .Float => .Float,
+                .String => .String,
+                .Tetra => .Tetra,
+                .Nothing => .Nothing,
+                .Array => .Array,
+                .Struct, .Custom => .Struct,
+                .Map => .Map,
+                .Enum => .Enum,
+                .Function => .Function,
+                .Union => .Union,
+                .Alias => .Auto,
+            };
+            var ctn: ?[]const u8 = null;
+            if (field.type_info.base == .Custom and field.type_info.custom_type != null) {
+                ctn = try self.allocator.dupe(u8, field.type_info.custom_type.?);
+            }
+            mem_fields[i] = Memory.CustomTypeInfo.StructField{
+                .name = try self.allocator.dupe(u8, field.name),
+                .field_type = mapped_hir_type,
+                .custom_type_name = ctn,
+                .index = @intCast(i),
+            };
+        }
+        const mem_struct = Memory.CustomTypeInfo{
+            .name = try self.allocator.dupe(u8, struct_name),
+            .kind = .Struct,
+            .enum_variants = null,
+            .struct_fields = mem_fields,
+        };
+        try self.memory.registerCustomType(mem_struct);
     }
 
     // Inject compiler-provided enums (called once per program)
@@ -269,7 +324,7 @@ pub const SemanticAnalyzer = struct {
 
         pub const StructField = struct {
             name: []const u8,
-            field_type: HIRType,
+            field_type_info: *ast.TypeInfo,
             custom_type_name: ?[]const u8 = null, // For custom types like Person
             index: u32,
         };
@@ -344,10 +399,27 @@ pub const SemanticAnalyzer = struct {
         if (semantic_type.struct_fields) |fields| {
             const converted_fields = try allocator.alloc(@import("../codegen/hir/soxa_generator.zig").HIRGenerator.CustomTypeInfo.StructField, fields.len);
             for (fields, 0..) |field, i| {
+                // Map to coarse HIRType here without relying on self
+                const mapped_hir_type: HIRType = switch (field.field_type_info.base) {
+                    .Int => .Int,
+                    .Byte => .Byte,
+                    .Float => .Float,
+                    .String => .String,
+                    .Tetra => .Tetra,
+                    .Nothing => .Nothing,
+                    .Array => .Array,
+                    .Struct, .Custom => .Struct,
+                    .Map => .Map,
+                    .Enum => .Enum,
+                    .Function => .Function,
+                    .Union => .Union,
+                    .Alias => .Auto,
+                };
                 converted_fields[i] = .{
                     .name = field.name,
-                    .field_type = field.field_type,
+                    .field_type = mapped_hir_type,
                     .index = field.index,
+                    .custom_type_name = field.custom_type_name,
                 };
             }
             hir_type.struct_fields = converted_fields;
@@ -1418,11 +1490,9 @@ pub const SemanticAnalyzer = struct {
                                             // Convert CustomTypeInfo.StructField to ast.StructFieldType
                                             const struct_fields = try self.allocator.alloc(ast.StructFieldType, custom_type.struct_fields.?.len);
                                             for (custom_type.struct_fields.?, 0..) |custom_field, i| {
-                                                const field_type_info = try self.allocator.create(ast.TypeInfo);
-                                                field_type_info.* = .{ .base = self.hirTypeToAstType(custom_field.field_type) };
                                                 struct_fields[i] = .{
                                                     .name = custom_field.name,
-                                                    .type_info = field_type_info,
+                                                    .type_info = custom_field.field_type_info,
                                                 };
                                             }
                                             type_info.* = .{ .base = .Struct, .custom_type = type_info.custom_type, .struct_fields = struct_fields, .is_mutable = false };
@@ -1466,11 +1536,11 @@ pub const SemanticAnalyzer = struct {
                                 if (custom_type.struct_fields) |fields| {
                                     for (fields) |struct_field| {
                                         if (std.mem.eql(u8, struct_field.name, field.field.lexeme)) {
-                                            if (struct_field.field_type == .Struct and struct_field.custom_type_name != null) {
+                                            if (struct_field.field_type_info.base == .Struct and struct_field.custom_type_name != null) {
                                                 // This is a custom struct field
                                                 type_info.* = .{ .base = .Custom, .custom_type = struct_field.custom_type_name };
                                             } else {
-                                                type_info.* = .{ .base = self.hirTypeToAstType(struct_field.field_type) };
+                                                type_info.* = struct_field.field_type_info.*;
                                             }
                                             break;
                                         }
@@ -3192,8 +3262,57 @@ pub const SemanticAnalyzer = struct {
                             target_type_info,
                             false,
                         ) catch {};
+                    } else if (cast.value.data == .FieldAccess) {
+                        const field_access = cast.value.data.FieldAccess;
+                        // Only support narrowing when object is a simple variable (e.g., token.value)
+                        if (field_access.object.data == .Variable) {
+                            const obj_name = field_access.object.data.Variable.lexeme;
+                            const fld_name = field_access.field.lexeme;
+                            // Lookup original variable type
+                            if (self.lookupVariable(obj_name)) |variable| {
+                                if (self.memory.scope_manager.value_storage.get(variable.storage_id)) |storage| {
+                                    const original_type = storage.type_info.*;
+                                    // Build a struct type view of the object
+                                    var struct_fields: ?[]ast.StructFieldType = null;
+                                    if (original_type.base == .Struct and original_type.struct_fields != null) {
+                                        struct_fields = original_type.struct_fields.?;
+                                    } else if (original_type.base == .Custom and original_type.custom_type != null) {
+                                        // Expand custom struct fields from registry
+                                        if (self.custom_types.get(original_type.custom_type.?)) |custom_type| {
+                                            if (custom_type.kind == .Struct and custom_type.struct_fields != null) {
+                                                const ct_fields = custom_type.struct_fields.?;
+                                                const new_sf = try self.allocator.alloc(ast.StructFieldType, ct_fields.len);
+                                                for (ct_fields, 0..) |ct_field, i| {
+                                                    new_sf[i] = .{ .name = ct_field.name, .type_info = ct_field.field_type_info };
+                                                }
+                                                struct_fields = new_sf;
+                                            }
+                                        }
+                                    }
+                                    if (struct_fields) |fields_arr| {
+                                        // Duplicate and narrow the specific field
+                                        const dup_fields = try self.allocator.alloc(ast.StructFieldType, fields_arr.len);
+                                        for (fields_arr, 0..) |sf, i| {
+                                            if (std.mem.eql(u8, sf.name, fld_name)) {
+                                                dup_fields[i] = .{ .name = sf.name, .type_info = target_type_info };
+                                            } else {
+                                                dup_fields[i] = sf;
+                                            }
+                                        }
+                                        const narrowed_struct = try self.allocator.create(ast.TypeInfo);
+                                        narrowed_struct.* = .{ .base = .Struct, .struct_fields = dup_fields };
+                                        _ = then_scope.createValueBinding(
+                                            obj_name,
+                                            TokenLiteral{ .nothing = {} },
+                                            .STRUCT,
+                                            narrowed_struct,
+                                            false,
+                                        ) catch {};
+                                    }
+                                }
+                            }
+                        }
                     }
-
                     // Analyze the then branch with the narrowed type
                     then_type = try self.inferTypeFromExpr(then_expr);
                 }
