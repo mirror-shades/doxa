@@ -98,7 +98,7 @@ Values are encoded with type tags:
 | 0   | Integer      | 4-byte signed little-endian                           |
 | 1   | Float        | 8-byte IEEE-754 double (bitcast as u64)               |
 | 2   | String       | 4-byte length + UTF-8 data                            |
-| 3   | Boolean      | 1-byte (0=false, 1=true)                              |
+| 3   | Tetra        | 2-byte (0=false, 1=true, 3=both, 4=neither)           |
 | 4   | U8           | 1-byte unsigned                                       |
 | 5   | Nothing      | No data                                               |
 | 6   | Array        | 4-byte length + 4-byte capacity + 1-byte element type |
@@ -171,7 +171,7 @@ Arrays serialize both length and capacity:
 
 - Length: current number of elements (calculated by counting non-nothing elements)
 - Capacity: allocated storage size for resize operations
-- Element type: HIR type tag (Auto, Int, Float, String, Boolean, etc.)
+- Element type: HIR type tag (Auto, Int, Float, String, Tetra, etc.)
 - Elements: serialized element values (padded with HIRValue.nothing)
 
 Empty arrays receive minimum capacity allocation (8 elements) to enable growth.
@@ -228,7 +228,7 @@ Each function entry contains:
 - Return type (1 byte HIRType enum value)
 - Start label (4-byte length + UTF-8 string)
 - Local variable count (4 bytes)
-- Is entry point flag (1 byte boolean)
+- Is entry point flag (2 byte tetra)
 
 ## Constant Pool Format
 

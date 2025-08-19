@@ -138,7 +138,6 @@ pub const HIRInstruction = union(enum) {
     //==================================================================
 
     /// Logical operations (AND, OR, NOT)
-    /// VM: Strict boolean type checking from old VM
     /// LLVM: LLVMBuildAnd, LLVMBuildOr, LLVMBuildNot
     LogicalOp: struct {
         op: LogicalOpType,

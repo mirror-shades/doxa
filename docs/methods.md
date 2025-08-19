@@ -951,7 +951,7 @@ var started = @spawn("long_process");
 
 Input:
 
-- condition: boolean expression to check
+- condition: tetra expression to check
 - message: error message if condition is false
 
 Output:
