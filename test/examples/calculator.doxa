@@ -7,7 +7,19 @@ enum TokenType {
 
 struct Token {
     token_type :: TokenType,
-    value :: string | int,
+    value :: string,
+}
+
+fn precedence(op :: string) -> int {
+    return match op {
+        "(" then 0,
+        ")" then 0,
+        "+" then 1,
+        "-" then 1,
+        "*" then 2,
+        "/" then 2,
+        else -1,
+    }
 }
 
 entry fn main() {
@@ -17,6 +29,8 @@ entry fn main() {
     const splitInput is split(input)
 
     splitInput?
+
+    @assert(verifyParens(splitInput))
 
     const possibleTokens is tokenize(splitInput)
 
@@ -42,25 +56,53 @@ fn split(input :: string) -> string[] {
     // `at` is optional syntax for a loop index
     each c at i in input {
         // breaks number if operator is found
-        if @length(current) > 0 and (c equals " " or c equals "+" or c equals "-" or c equals "*" or c equals "/") then {
-            @push(result, current)
-            current is ""
+        if c equals " " then {
+            if current != "" then {
+                @push(result, current)
+                current is ""
+            }
+        }
+
+        else if c equals "+" or c equals "*" or c equals "/" or c equals "(" or c equals ")" then {
+            if current != "" then {
+                @push(result, current)
+                current is ""
+            }
+            @push(result, c)
         }
 
         // make sure - isn't a negative sign
-        if c equals "-" and input[i+1] equals " " then {
+        else if c equals "-" and input[i+1] equals " " then {
+            if current != "" then {
+                @push(result, current)
+                current is ""
+            }
             @push(result, c)
         } 
 
-        else if c equals "+" or c equals "*" or c equals "/" then {
-            @push(result, c)
-        } else if c != " " {
+        else if c != " " {
             current is current + c
         }
 
     }
     @push(result, current)
     return result
+}
+
+fn verifyParens(input :: string[]) -> tetra {
+    var depth is 0
+    var passed :: tetra is true
+    each s in input {
+        if s equals "(" then depth += 1
+        if s equals ")" then depth -= 1
+        if depth < 0 then {
+            passed is false
+        }
+    }
+    if depth > 0 then {
+        passed is false
+    }
+    return passed
 }
 
 fn tokenize(input :: string[]) -> Token[] | nothing {
@@ -85,32 +127,18 @@ fn tokenize(input :: string[]) -> Token[] | nothing {
                 value is token,
             })
         } else {
-            // @int returns a union type, so we need to narrow it down to an int
-            // at this point we are not sure is the token is a valid int
-            var possibleNumber is @int(token)
-            // the `as` keyword checks to see if the union is an int
-            possibleNumber as int then {
-                // if the token is a valid int, it is narrowed in the then block
-                @push(tokens, Token { 
-                    token_type is .NUMBER,
-                    value is possibleNumber,
-                })
-            } else {
-                // if @int cannot be narrowed an error was returned
-                // we can print debug info and exit the function
-                token?;
-                "invalid token, skipping"?;
-                // return nothing
-                return
-            }
-        }
+            @push(tokens, Token { 
+                token_type is .NUMBER,
+                value is token,
+            })
+    }
     }
     return tokens
 }
 
 fn execute(tokens :: Token[]) {
 	var total :: int is 0
-	const first is tokens[0].value
+	const first is @int(tokens[0].value)
 	first as int then {
 		total is first
 	} else {
@@ -124,14 +152,10 @@ fn execute(tokens :: Token[]) {
 			token.token_type?;
 			if token.token_type equals TokenType.OPERATOR then {
 				// narrow operator value to string and process in success branch
-				const op is token.value as string else {
-					token.value?;
-					"value must be an operator"?;
-					return
-				}
+				const op is token.value
 
 				const next is tokens[i + 1]
-				const rightHand is next.value as int else {
+				const rightHand is @int(next.value) as int else {
 					next.value?;
 					"value must be a number"?;
 					return

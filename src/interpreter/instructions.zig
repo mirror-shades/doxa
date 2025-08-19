@@ -108,7 +108,6 @@ pub const ValueData = union(ValueType) {
     NOTHING: void,
 };
 
-/// VM Value representation
 pub const Value = struct {
     type: ValueType,
     nothing: bool,
@@ -116,11 +115,9 @@ pub const Value = struct {
         int: i32,
         float: f64,
         string: []const u8,
-        boolean: bool,
-        // Add other data types as needed
+        tetra: bool,
     },
 
-    /// Create an integer value
     pub fn initInt(value: i32) Value {
         return Value{
             .type = .INT,
@@ -129,7 +126,6 @@ pub const Value = struct {
         };
     }
 
-    /// Create a float value
     pub fn initFloat(value: f64) Value {
         return Value{
             .type = .FLOAT,
@@ -138,7 +134,6 @@ pub const Value = struct {
         };
     }
 
-    /// Create a string value
     pub fn initString(value: []const u8) Value {
         return Value{
             .type = .STRING,
@@ -147,16 +142,14 @@ pub const Value = struct {
         };
     }
 
-    /// Create a boolean value
     pub fn initBool(value: bool) Value {
         return Value{
             .type = .BOOL,
             .nothing = false,
-            .data = .{ .boolean = value },
+            .data = .{ .tetra = value },
         };
     }
 
-    /// Create a nothing value
     pub fn initNothing() Value {
         return Value{
             .type = .NOTHING,
@@ -165,42 +158,24 @@ pub const Value = struct {
         };
     }
 
-    /// Extract integer value
     pub fn asInt(self: Value) !i32 {
         if (self.type != .INT) return error.TypeError;
         return self.data.int;
     }
 
-    /// Extract float value
     pub fn asFloat(self: Value) !f64 {
         if (self.type != .FLOAT) return error.TypeError;
         return self.data.float;
     }
 
-    /// Extract string value
     pub fn asString(self: Value) ![]const u8 {
         if (self.type != .STRING) return error.TypeError;
         return self.data.string;
     }
 
-    /// Extract boolean value
     pub fn asBool(self: Value) !bool {
         if (self.type != .BOOL) return error.TypeError;
-        return self.data.boolean;
-    }
-
-    /// Check if value is truthy
-    pub fn isTruthy(self: Value) bool {
-        if (self.nothing) return false;
-
-        return switch (self.type) {
-            .BOOL => self.data.boolean,
-            .INT => self.data.int != 0,
-            .FLOAT => self.data.float != 0.0,
-            .STRING => self.data.string.len > 0,
-            .NOTHING => false,
-            else => true, // Arrays, structs, functions are truthy if not nothing
-        };
+        return self.data.tetra;
     }
 
     /// Check if two values are equal
@@ -212,7 +187,7 @@ pub const Value = struct {
         return switch (self.type) {
             .INT => self.data.int == other.data.int,
             .FLOAT => self.data.float == other.data.float,
-            .BOOL => self.data.boolean == other.data.boolean,
+            .TETRA => self.data.tetra == other.data.tetra,
             .STRING => std.mem.eql(u8, self.data.string, other.data.string),
             .NOTHING => true,
             else => false, // TODO: Add equality for complex types
