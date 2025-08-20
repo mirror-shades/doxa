@@ -438,22 +438,19 @@ fn peekValue(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Exp
         name_token = left.?.data.Variable.lexeme;
     }
 
+    // Use the '?' token (previous) for accurate location info. After infix dispatch,
+    // parsePrecedence has already advanced past '?', so peek() would point at the next token
+    // (possibly EOF/newline) which may have empty file information.
+    const qm_token = self.previous();
+
     // Create the peekion expression
     const peek_expr = try self.allocator.create(ast.Expr);
     peek_expr.* = .{
         .base = .{
             .id = ast.generateNodeId(),
             .span = .{
-                .start = .{
-                    .file = self.peek().file,
-                    .line = self.peek().line,
-                    .column = self.peek().column,
-                },
-                .end = .{
-                    .file = self.peek().file,
-                    .line = self.peek().line,
-                    .column = self.peek().column + self.peek().lexeme.len,
-                },
+                .start = .{ .file = qm_token.file, .line = qm_token.line, .column = qm_token.column },
+                .end = .{ .file = qm_token.file, .line = qm_token.line, .column = qm_token.column + qm_token.lexeme.len },
             },
         },
         .data = .{
@@ -461,9 +458,9 @@ fn peekValue(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Exp
             .Peek = .{
                 .expr = left.?,
                 .location = .{
-                    .line = self.peek().line,
-                    .column = self.peek().column,
-                    .file = self.peek().file,
+                    .line = qm_token.line,
+                    .column = qm_token.column,
+                    .file = qm_token.file,
                 },
                 .variable_name = name_token,
             },

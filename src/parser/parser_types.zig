@@ -102,21 +102,44 @@ pub const Parser = struct {
     pub fn deinit(_: *Parser) void {}
 
     pub fn peek(self: *Parser) token.Token {
-        return self.tokens[self.current];
+        var i = self.current;
+        // Skip over any semicolon tokens (non-semantic separators)
+        while (i < self.tokens.len - 1 and self.tokens[i].type == .SEMICOLON) {
+            i += 1;
+        }
+        return self.tokens[i];
     }
 
     pub fn peekAhead(self: *Parser, offset: usize) token.Token {
-        const pos = self.current + offset;
-        if (pos >= self.tokens.len) {
+        // Walk forward over tokens, skipping semicolons and counting only non-semicolons
+        var i: usize = self.current;
+        var remaining = offset;
+        // Ensure we start from a non-semicolon for offset 0 as well
+        while (i < self.tokens.len - 1 and self.tokens[i].type == .SEMICOLON) {
+            i += 1;
+        }
+        while (remaining > 0 and i < self.tokens.len - 1) {
+            i += 1;
+            if (self.tokens[i].type == .SEMICOLON) continue;
+            remaining -= 1;
+        }
+        if (i >= self.tokens.len) {
             return self.tokens[self.tokens.len - 1];
         }
-        return self.tokens[pos];
+        // If we landed on a semicolon, skip to next non-semicolon or EOF
+        while (i < self.tokens.len - 1 and self.tokens[i].type == .SEMICOLON) {
+            i += 1;
+        }
+        return self.tokens[i];
     }
 
     pub fn advance(self: *Parser) void {
-        // Only advance if we're not at the end
+        // Move to the next non-semicolon token
         if (self.current < self.tokens.len - 1) {
             self.current += 1;
+            while (self.current < self.tokens.len - 1 and self.tokens[self.current].type == .SEMICOLON) {
+                self.current += 1;
+            }
         }
     }
 

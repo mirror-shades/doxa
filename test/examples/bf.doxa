@@ -15,7 +15,7 @@ fn getInput() returns(byte) {
 }
 
 fn startLoop() {
-    if @length(loopSpot) equals loops 
+    if @length(loopSpot) == loops 
     then {
         loopSpot.push(ip);
     } else {
@@ -27,7 +27,7 @@ fn startLoop() {
 fn endLoop() {
     if loops >= 0 
     then {
-        if tape[tp] equals 0 
+        if tape[tp] == 0 
         then {
             loops -= 1;
         } else {
@@ -43,11 +43,11 @@ fn checkClosingBracket(scan :: string) returns(tetra) {
     var pointer :: int is 0;
     var openBrackets :: int is 0;
     while(pointer < @length(scan)) {
-        if(scan[pointer] equals "[") then openBrackets += 1;
-        if(scan[pointer] equals "]") then openBrackets -= 1;
+        if(scan[pointer] == "[") then openBrackets += 1;
+        if(scan[pointer] == "]") then openBrackets -= 1;
         pointer += 1;
     }
-    return(openBrackets equals 0);
+    return(openBrackets == 0);
 }
 
 
@@ -59,14 +59,14 @@ fn interpret(scan :: string) {
 
     while(ip < scanLength) {
         var currentInstruction is scan[ip];
-        if(currentInstruction equals ">") then tp += 1;
-        if(currentInstruction equals "<") then tp -= 1;
-        if(currentInstruction equals "+") then tape[tp] += 1;
-        if(currentInstruction equals "-") then tape[tp] -= 1;
-        if(currentInstruction equals ".") then tape[tp]?;
-        if(currentInstruction equals ",") then tape[tp] is getInput();
-        if(currentInstruction equals "[") then startLoop();
-        if(currentInstruction equals "]") then endLoop();
+        if(currentInstruction == ">") then tp += 1;
+        if(currentInstruction == "<") then tp -= 1;
+        if(currentInstruction == "+") then tape[tp] += 1;
+        if(currentInstruction == "-") then tape[tp] -= 1;
+        if(currentInstruction == ".") then tape[tp]?;
+        if(currentInstruction == ",") then tape[tp] is getInput();
+        if(currentInstruction == "[") then startLoop();
+        if(currentInstruction == "]") then endLoop();
         tape[tp]?;
         tape?;
         ip += 1;

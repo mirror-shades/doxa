@@ -187,10 +187,16 @@ pub fn parseExpressionStmt(self: *Parser) ErrorList!ast.Stmt {
     } else true;
 
     if (needs_newline) {
+        // Accept optional semicolon before newline/terminator
+        if (self.peek().type == .SEMICOLON) {
+            self.advance();
+        }
         const next_type = self.peek().type;
         if (next_type == .NEWLINE) {
             self.advance();
-        } else if (next_type == .EOF or next_type == .RIGHT_BRACE) {} else {
+        } else if (next_type == .EOF or next_type == .RIGHT_BRACE) {
+            // OK: statement terminated by end-of-file or closing brace
+        } else {
             if (expr) |e| {
                 e.deinit(self.allocator);
                 self.allocator.destroy(e);
@@ -257,7 +263,10 @@ pub fn parseReturnStmt(self: *Parser) ErrorList!ast.Stmt {
         value = try expression_parser.parseExpression(self);
     }
 
-    // Accept newline, '}', or EOF as statement terminators
+    // Accept optional semicolon, then newline, '}', or EOF as statement terminators
+    if (self.peek().type == .SEMICOLON) {
+        self.advance();
+    }
     const next_type = self.peek().type;
     if (next_type == .NEWLINE) {
         self.advance();
@@ -401,7 +410,11 @@ pub fn parseStructDeclStmt(self: *Parser) ErrorList!ast.Stmt {
 pub fn parseContinueStmt(self: *Parser) ErrorList!ast.Stmt {
     self.advance(); // consume 'continue' keyword
 
-    if (self.peek().type != .NEWLINE) {
+    // Allow optional semicolon before required newline or accept '}'/EOF terminators
+    if (self.peek().type == .SEMICOLON) {
+        self.advance();
+    }
+    if (self.peek().type != .NEWLINE and self.peek().type != .RIGHT_BRACE and self.peek().type != .EOF) {
         const location = Reporter.Location{
             .file = self.current_file,
             .line = self.peek().line,
@@ -410,7 +423,9 @@ pub fn parseContinueStmt(self: *Parser) ErrorList!ast.Stmt {
         self.reporter.reportCompileError(location, "Expected newline", .{});
         return error.ExpectedNewline;
     }
-    self.advance(); // consume ';'
+    if (self.peek().type == .NEWLINE) {
+        self.advance();
+    }
 
     return ast.Stmt{
         .base = .{
@@ -426,7 +441,11 @@ pub fn parseContinueStmt(self: *Parser) ErrorList!ast.Stmt {
 pub fn parseBreakStmt(self: *Parser) ErrorList!ast.Stmt {
     self.advance(); // consume 'break' keyword
 
-    if (self.peek().type != .NEWLINE) {
+    // Allow optional semicolon before required newline or accept '}'/EOF terminators
+    if (self.peek().type == .SEMICOLON) {
+        self.advance();
+    }
+    if (self.peek().type != .NEWLINE and self.peek().type != .RIGHT_BRACE and self.peek().type != .EOF) {
         const location = Reporter.Location{
             .file = self.current_file,
             .line = self.peek().line,
@@ -435,7 +454,9 @@ pub fn parseBreakStmt(self: *Parser) ErrorList!ast.Stmt {
         self.reporter.reportCompileError(location, "Expected newline", .{});
         return error.ExpectedNewline;
     }
-    self.advance(); // consume ';'
+    if (self.peek().type == .NEWLINE) {
+        self.advance();
+    }
 
     return ast.Stmt{
         .base = .{
