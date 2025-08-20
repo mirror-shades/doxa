@@ -66,10 +66,10 @@ Runtime Errors:
 Example:
 
 ```doxa
-var arr = [1, 2];
+var arr = [1, 2]
 @push(arr, 3) else {
-    @panic("Failed to add element");
-};
+    @panic("Failed to add element")
+}
 // arr is now [1, 2, 3]
 ```
 
@@ -104,14 +104,14 @@ Notes:
 Example:
 
 ```doxa
-var arr = [1, 2, 3];
-var last = @pop(arr);     // last is 3
-@length(arr) == 2;        // array now has 2 elements
-arr == [1, 2];           // original array is modified
+var arr = [1, 2, 3]
+var last = @pop(arr)     // last is 3
+@length(arr) == 2        // array now has 2 elements
+arr == [1, 2]            // original array is modified
 
 // Save array before popping
-var backup = @copy(arr);
-var item = @pop(arr);    // only modifies arr, not backup
+var backup = @copy(arr)
+var item = @pop(arr)    // only modifies arr, not backup
 ```
 
 ---
@@ -245,10 +245,10 @@ Notes:
 Example:
 
 ```doxa
-var nested = [1, [2, 3], {"x": [4, 5]}];
-var deep = @clone(nested);
-deep[1][0] = 9;        // modifies copy only
-nested[1][0] == 2;     // original unchanged
+var nested = [1, [2, 3], {"x": [4, 5]}]
+var deep = @clone(nested)
+deep[1][0] = 9        // modifies copy only
+nested[1][0] == 2     // original unchanged
 ```
 
 ---
@@ -281,11 +281,11 @@ Notes:
 Example:
 
 ```doxa
-var nested = [1, [2, 3]];
-var shallow = @copy(nested);
-shallow[0] = 9;        // modifies copy only
-shallow[1][0] = 9;     // modifies both copies!
-nested[1][0] == 9;     // shared nested array
+var nested = [1, [2, 3]]
+var shallow = @copy(nested)
+shallow[0] = 9        // modifies copy only
+shallow[1][0] = 9     // modifies both copies!
+nested[1][0] == 9     // shared nested array
 ```
 
 ## String Methods
@@ -658,10 +658,10 @@ Example:
 
 ```doxa
 // Basic parsing
-var str = "123";
+var str = "123"
 var num = @int(str) else {
-    @panic("Not a valid number");
-};
+    @panic("Not a valid number")
+}
 
 // Handle specific errors
 var result = @int("-999999999999") match {
@@ -670,7 +670,7 @@ var result = @int("-999999999999") match {
     Overflow then MaxInt,          // Too large
     Underflow then MinInt,         // Too small
     else => 0
-};
+}
 ```
 
 ---
@@ -753,13 +753,13 @@ Example:
 
 ```doxa
 // Basic input
-var name = @input(); // blocks until line available
+var name = @input() // blocks until line available
 
 // Reading all lines
-var lines = [];
-var line = "";
+var lines = []
+var line = ""
 while (line = @input()) != "" {
-    @push(lines, line);
+    @push(lines, line)
 }
 ```
 
@@ -824,26 +824,26 @@ Reading binary files:
 
 ```doxa
 // Read file as raw bytes
-var raw = @read("image.png");    // reads file as-is, no encoding
-var bytes = @bytes(raw);         // convert to byte array
-var firstByte = bytes[0];        // access individual bytes
+var raw = @read("image.png")    // reads file as-is, no encoding
+var bytes = @bytes(raw)         // convert to byte array
+var firstByte = bytes[0]        // access individual bytes
 
 // Text file with specific encoding
-var text = @read("text.txt");    // reads as UTF-8 by default
-var utf8Bytes = @bytes(text);    // get UTF-8 byte representation
+var text = @read("text.txt")    // reads as UTF-8 by default
+var utf8Bytes = @bytes(text)    // get UTF-8 byte representation
 ```
 
 Writing binary files:
 
 ```doxa
 // Write raw binary data
-var bytes = [0x89, 0x50, 0x4E, 0x47];  // PNG header bytes
-var raw = @string(bytes);               // convert to raw string (preserves bytes)
-var success = @write("file.png", raw);  // writes bytes as-is
+var bytes = [0x89, 0x50, 0x4E, 0x47]   // PNG header bytes
+var raw = @string(bytes)               // convert to raw string (preserves bytes)
+var success = @write("file.png", raw)  // writes bytes as-is
 
 // Write text with encoding
-var text = "Hello, 世界";               // UTF-8 text
-var success = @write("hello.txt", text); // writes as UTF-8
+var text = "Hello, 世界"                 // UTF-8 text
+var success = @write("hello.txt", text) // writes as UTF-8
 ```
 
 Notes on Binary Data:
@@ -889,16 +889,16 @@ Example:
 
 ```doxa
 // Basic usage
-var status = @exec("git status");
+var status = @exec("git status")
 
 // Handle command failure
 var result = @exec("git push") else {
-    @panic("Git push failed");
-};
+    @panic("Git push failed")
+}
 
 // Capture and process output
-var files = @exec("ls");
-var count = @length(@split(files, "\n"));
+var files = @exec("ls")
+var count = @length(@split(files, "\n"))
 ```
 
 ---
@@ -938,11 +938,11 @@ Example:
 
 ```doxa
 // Start a long process
-var started = @spawn("long_process");
-@assert(started, "Process failed to start");
+var started = @spawn("long_process")
+@assert(started, "Process failed to start")
 
 // Process runs in background while main program continues
-@print("Main program continues...");
+@print("Main program continues...")
 ```
 
 ## Control Flow Methods
@@ -1088,26 +1088,26 @@ alias ArrayOpError =
     | ValueError.EmptyCollection  // Array is empty
     | ValueError.IndexOutOfRange  // Index out of bounds
     | ValueError.CapacityExceeded // Can't grow array further
-    | ResourceError.OutOfMemory;  // System out of memory
+    | ResourceError.OutOfMemory  // System out of memory
 
 alias NumberParseError =
     | ValueError.ParseFailed  // Invalid number format
     | ValueError.Overflow     // Number too large
-    | ValueError.Underflow;   // Number too small
+    | ValueError.Underflow   // Number too small
 
 alias ReadError =
     | IOError.FileNotFound
     | IOError.PermissionDenied
-    | PathError.InvalidPath;
+    | PathError.InvalidPath
 
 alias WriteError =
     | IOError.PermissionDenied
     | PathError.InvalidPath
-    | ResourceError.OutOfMemory;
+    | ResourceError.OutOfMemory
 
 // Method signatures include error unions
-function @read(path :: string) returns(string | ReadError);
-function @write(path :: string, content :: string) returns(tetra | WriteError);
+function @read(path :: string) returns(string | ReadError)
+function @write(path :: string, content :: string) returns(tetra | WriteError)
 ```
 
 ### Error Handling Examples
@@ -1115,8 +1115,8 @@ function @write(path :: string, content :: string) returns(tetra | WriteError);
 ```doxa
 // Using else for error handling
 var content = @read("config.txt") as string else {
-    @panic("Failed to read config");
-};
+    @panic("Failed to read config")
+}
 
 // Pattern matching on specific errors
 var result = @write("log.txt", "Hello") match {
@@ -1124,13 +1124,13 @@ var result = @write("log.txt", "Hello") match {
     PermissionDenied then "Permission denied",
     InvalidPath then "Invalid path",
     else => "Other error"
-};
+}
 
 // Composing error handling
 function readConfig() returns(string | ParseError) {
-    var raw = @read("config.txt");
-    var rawString is raw as string else "";
-    return @parse(rawString);
+    var raw = @read("config.txt")
+    var rawString is raw as string else ""
+    return @parse(rawString)
 }
 ```
 

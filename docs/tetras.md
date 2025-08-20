@@ -18,32 +18,32 @@ Let's start with a condition, in this case, the condition of being alive. In tra
 Here are four values to represent the four possible states or corners of a tetra:
 
 ```
-const Bob is true;
-const Shakespere is false;
-const zombie is both;
-const angel is neither;
+const Bob is true
+const Shakespere is false
+const zombie is both
+const angel is neither
 ```
 
 Now let's create some conditional logic to understand how a tetra works. Here is a function to discover whether something is alive or not:
 
 ```
 function living(alive :: tetra) {
-    if alive then "I am alive"?;
-    if not alive then "I am dead"?;
+    if alive then "I am alive"?
+    if not alive then "I am dead"?
 }
 ```
 
 Notice that if this function was in another language and was using a boolean, there would only be two possible branches when executed. If you would like to follow along, here is how I ran the values through the function:
 
 ```
-"Bob"?;
-living(Bob);
-"Shakespere"?;
-living(Shakespere);
-"zombie"?;
-living(zombie);
-"angel"?;
-living(angel);
+"Bob"?
+living(Bob)
+"Shakespere"?
+living(Shakespere)
+"zombie"?
+living(zombie)
+"angel"?
+living(angel)
 ```
 
 And here is the ouput I received:
@@ -80,18 +80,18 @@ Keep in mind, a tetra is a value. It doesn't actually alter the logic flow of yo
 Special attention should (not) be paid to the else clause. The else clause is exactly what it sounds like - "if a condition is ment, then do x, OR ELSE, do y". As we now know, both will always trigger a condition, and neither will never trigger a condition. The effect with else blocks is then as you would assume, both with never trigger an else clause, and neither will always trigger an else clause.
 
 ```
-const zombie is both;
-const angel is neither;
+const zombie is both
+const angel is neither
 
 function living(alive :: tetra) {
-    if alive then "I am alive"? else "I am not alive"?;
-    if not alive then "I am dead"? else "I am not dead"?;
+    if alive then "I am alive"? else "I am not alive"?
+    if not alive then "I am dead"? else "I am not dead"?
 }
 
-"zombie"?;
-living(zombie);
-"angel"?;
-living(angel);
+"zombie"?
+living(zombie)
+"angel"?
+living(angel)
 ```
 
 ```

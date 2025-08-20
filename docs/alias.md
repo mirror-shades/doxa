@@ -6,18 +6,18 @@ Alias parameters allow a function to modify a caller’s variable directly, with
 Syntax
 
 fn modify(^param :: int) {
-param += 1; // Directly mutates caller's variable
+param += 1 // Directly mutates caller's variable
 }
 
-var x = 0;
-modify(^x); // Caller opts-in to mutation
+var x = 0
+modify(^x) // Caller opts-in to mutation
 // x == 1
 
 Core Rules
 
     Parameter-only — ^T may only appear in function parameters, never in locals, returns, or stored types.
 
-    Lvalue-only — Only full variables can be aliased; no temporaries, expressions, struct fields, or array elements.
+    Lvalue-only — Only full variables can be aliased no temporaries, expressions, struct fields, or array elements.
 
     Explicit call-site — Caller must pass ^var to grant mutation rights.
 
@@ -31,7 +31,7 @@ Core Rules
 
     No async/threads — Aliases are banned in async functions and cannot be passed to concurrent tasks.
 
-    Exclusive borrow — Aliases grant exclusive mutable access for the duration of the call; no overlapping borrows allowed.
+    Exclusive borrow — Aliases grant exclusive mutable access for the duration of the call no overlapping borrows allowed.
 
     FFI control — Passing aliases to foreign code requires explicit unsafe or noescape annotation.
 
@@ -40,21 +40,21 @@ Core Rules
 Example: Safe Swap
 
 fn swap(^a :: int, ^b :: int) {
-let tmp is a;
-a is b;
-b is tmp;
+let tmp is a
+a is b
+b is tmp
 }
 
-var x is 1, y is 2;
-swap(^x, ^y);
+var x is 1, y is 2
+swap(^x, ^y)
 // x == 2, y == 1
 
 Example: Compile-time Error Cases
 
-swap(^x, ^x); // ❌ same variable passed twice
-modify(^(x + 1)); // ❌ temporaries not allowed
-f(^obj.field); // ❌ partial object aliasing not allowed
-g(^x, x); // ❌ aliased and by-value in same call
+swap(^x, ^x) // ❌ same variable passed twice
+modify(^(x + 1)) // ❌ temporaries not allowed
+f(^obj.field) // ❌ partial object aliasing not allowed
+g(^x, x) // ❌ aliased and by-value in same call
 
 Design Intent
 This model offers mutation semantics without full pointers, preserving deterministic lifetime and memory safety under stack-based allocation. By forcing explicit syntax and disallowing escaping or partial aliasing, it avoids common pitfalls of traditional references while retaining enough flexibility for in-place updates.

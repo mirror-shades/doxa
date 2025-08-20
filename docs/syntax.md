@@ -41,7 +41,7 @@ struct Dog {
     breed: string,
 
     fn bark(self) {
-        print(animal.name + " says woof!");
+        print(animal.name + " says woof!")
     }
 }
 
@@ -50,21 +50,8 @@ var dog is Dog {
         name: "Spot"
         },
     breed: "Labrador"
-};
-```
-
-<!-- ### Modules
-
-```doxa
-// math.doxa
-export fn add(a :: int, b :: int) -> int {
-    return a + b;
 }
-
-// main.doxa
-import { add } from "./math.doxa";
-var sum is add(1, 2);
-``` -->
+```
 
 ## Data Types
 
@@ -86,12 +73,12 @@ The `tetra` type represents a four cornered value with the possible states: `tru
 Arrays are homogeneous collections with type inference:
 
 ```doxa
-var nums :: int[] is [1, 2, 3];    // Explicit typing
-var strs is ["a", "b"];            // Inferred as string[]
+var nums :: int[] is [1, 2, 3]    // Explicit typing
+var strs is ["a", "b"]            // Inferred as string[]
 
 // Invalid operations
-var mixed is [1, "two", true];     // Error: mixed types
-nums.push("four");                // Error: type mismatch
+var mixed is [1, "two", true]     // Error: mixed types
+nums.push("four")                // Error: type mismatch
 ````
 
 ### Tuples
@@ -99,11 +86,11 @@ nums.push("four");                // Error: type mismatch
 Fixed-size collections supporting heterogenus types:
 
 ```doxa
-var point is (: 10, "hello", true :);         // Simple tuple
-var nested is (: (: 1, "hello" :), (: 3, true :) :);    // Nested tuple
+var point is (: 10, "hello", true :)         // Simple tuple
+var nested is (: (: 1, "hello" :), (: 3, true :) :)    // Nested tuple
 
-point[0];                         // Access first element
-nested[1][0];                     // Access nested element
+point[0]                         // Access first element
+nested[1][0]                     // Access nested element
 ```
 
 ### Maps
@@ -114,8 +101,8 @@ String-keyed dictionaries:
 var scores is {
     "alice": 100,
     "bob": 85
-};
-scores["alice"];                  // Access value
+}
+scores["alice"]                  // Access value
 ```
 
 ## Control Flow
@@ -129,7 +116,7 @@ var result is match status {
     .Success => "all good",
     .Error => "failed",
     else => "waiting"
-};
+}
 ```
 
 !!! warning
@@ -139,9 +126,9 @@ Match expressions must be exhaustive or include an `else` clause.
 
 ```doxa
 try {
-    riskyOperation();
+    riskyOperation()
 } catch {
-    handleError();
+    handleError()
 }
 ```
 
@@ -150,16 +137,16 @@ try {
 ### Peek operator (`?`)
 
 ```doxa
-var x is computeValue();
-x?;                              // Prints value with location, name, and type
+var x is computeValue()
+x?                              // Prints value with location, name, and type
 ```
 
 ### Type Information
 
 ```doxa
-typeof(42);                      // "int"
-typeof("hello");                 // "string"
-typeof([1,2,3]);                 // "array"
+typeof(42)                      // "int"
+typeof("hello")                 // "string"
+typeof([1,2,3])                 // "array"
 ```
 
 ### Collection Quantifiers
@@ -180,13 +167,13 @@ var result is if condition then {
     value1
 } else {
     value2
-};
+}
 ```
 
 !!! note
 Expressions without a value return `nothing`:
 `doxa
-    var x is if (false) { y is 1 };  // x becomes nothing
+    var x is if (false) { y is 1 }  // x becomes nothing
     `
 
 ### Function Return Types
@@ -195,12 +182,12 @@ Functions can specify return types using either `->` or `returns` syntax:
 
 ```doxa
 fn add(a: int, b: int) -> int {
-    return a + b;
+    return a + b
 }
 
 // Alternative syntax
 fn add(a: int, b: int) returns(int) {
-    return a + b;
+    return a + b
 }
 ```
 
@@ -209,7 +196,7 @@ return types are optional and inferred by default:
 ```doxa
 // Normal Mode - Valid
 fn add(a, b) {
-    return a + b;
+    return a + b
 }
 ```
 
@@ -225,34 +212,34 @@ Doxa has extensive for traditional first order logics that work as expected with
 const arr :: int[] = [1, 2, 3, 4, 5]
 
 // existential quantifier ∃, element of ∈
-∃x ∈ arr : x > 3; // true
+∃x ∈ arr : x > 3 // true
 
 // universal quantifier ∀, where :
-∀x ∈ arr : x > 3; // false
+∀x ∈ arr : x > 3 // false
 
 // NOT ¬
-¬false; // true
+¬false // true
 
 // biconditional ↔
-false ↔ false; // true
+false ↔ false // true
 
 // XOR ⊕
-true ⊕ true; // false
+true ⊕ true // false
 
 // AND ∧
-true ∧ false; // false
+true ∧ false // false
 
 // OR ∨
-true ∨ false; // true
+true ∨ false // true
 
 // NAND ↑
-true ↑ false; // true
+true ↑ false // true
 
 // NOR ↓
-true ↓ false; // false
+true ↓ false // false
 
 // implication →
-true → false; // false
+true → false // false
 ```
 
 This unicode support is paired with plaintext keywords which act in an identical fashion:
@@ -277,8 +264,8 @@ This means formal logical representation can be written in either way:
 ```
 const arr :: int[] = [1, 2, 3, 4, 5]
 
-¬(∀x ∈ arr : x > 3); // true
-not (forall x in arr where x > 3); // true
+¬(∀x ∈ arr : x > 3) // true
+not (forall x in arr where x > 3) // true
 ```
 
 ### Trancendental logic

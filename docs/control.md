@@ -2,7 +2,6 @@
 
 Doxa unifies conditional branching with a consistent then / else pattern across if, as, and match.
 
-
 ### if / then / else
 
 - **then required**, **else optional**.
@@ -37,12 +36,12 @@ Examples:
 
 ```doxa
 // Success and failure as expressions
-const n_or_zero is value as int else 0 
+const n_or_zero is value as int else 0
 
 // Block failure case
 value as int else {
-    "value is not an int"? 
-} 
+    "value is not an int"?
+}
 
 // Explicit success block
 value as int then {
@@ -67,15 +66,15 @@ Examples
 
 ```
 // IF: Truth-driven
-if x > 10 then "big"? else "small"? 
+if x > 10 then "big"? else "small"?
 
 // AS: Fallback-driven
 value as int else 0         // If not int, use 0
 value as int then 20 else 0  // If int, use 20  else 0
 
 // Both in action
-if isReady then start() else wait() 
-data as string then parse(data) else log("Bad data") 
+if isReady then start() else wait()
+data as string then parse(data) else log("Bad data")
 ```
 
 ### match (values and union types)
@@ -98,7 +97,7 @@ fn kind(value :: int | float) returns(string) {
     return match value {
         int then "integer"?
         float then "float"?
-    } 
+    }
 }
 ```
 
@@ -108,24 +107,24 @@ Match on enums and values:
 enum Color { Red, Green, Blue }
 
 var msg1 is match color {
-    .Red then "It's red" 
-    .Blue then "It's blue" 
-    else "It's something else" 
-} 
+    .Red then "It's red"
+    .Blue then "It's blue"
+    else "It's something else"
+}
 
-const x is 5 
+const x is 5
 var msg2 is match x {
-    0 then "It's zero" 
-    5 then "It's five" 
-    else "It's something else" 
-} 
+    0 then "It's zero"
+    5 then "It's five"
+    else "It's something else"
+}
 
-const s is "big" 
+const s is "big"
 var msg3 is match s {
-    "big" then "It's big" 
-    "small" then "It's small" 
-    else "It's something else" 
-} 
+    "big" then "It's big"
+    "small" then "It's small"
+    else "It's something else"
+}
 ```
 
 Block arms in match:
@@ -133,19 +132,19 @@ Block arms in match:
 ```doxa
 var msg is match color {
     // semicolons can be used to represent line breaks
-    .Red then { "stop"?; "red";}
-    .Green then "green" 
-    else { "caution"?; "yellowish";}
-} 
+    .Red then { "stop"? "red"}
+    .Green then "green"
+    else { "caution"? "yellowish"}
+}
 ```
 
 Notes:
 
-- **Exhaustiveness**: For enums, prefer covering all variants or add an `else` arm. For unions, cover the needed type arms  `else` is optional.
+- **Exhaustiveness**: For enums, prefer covering all variants or add an `else` arm. For unions, cover the needed type arms `else` is optional.
 - **Result type**: All arms must produce a compatible result type. For block arms, the last expression is the arm’s value.
 
 ### Quick reference
 
-- **if**: then required  else optional  expression body ends with ` `, block body does not.
-- **as**: else required  then optional  same body rules.
-- **match**: pattern then BODY  else BODY  arm separation via expression ` ` or closing block `}`.
+- **if**: then required else optional expression body ends with ` `, block body does not.
+- **as**: else required then optional same body rules.
+- **match**: pattern then BODY else BODY arm separation via expression ` ` or closing block `}`.

@@ -278,10 +278,8 @@ pub const LexicalAnalyzer = struct {
                 }
             },
             ';' => {
-                // if previous token is a newline, don't add a new one
-                if (self.tokens.items.len == 0 or self.tokens.items[self.tokens.items.len - 1].type != .NEWLINE) {
-                    try self.tokens.append(Token.initWithFile(.NEWLINE, "", .nothing, self.line, 1, self.file_path));
-                }
+                try self.addMinimalToken(.SEMICOLON);
+                try self.tokens.append(Token.initWithFile(.NEWLINE, "", .nothing, self.line, 1, self.file_path));
             },
             '%' => try self.addMinimalToken(.MODULO),
             '#' => try self.addMinimalToken(.HASH),
@@ -374,9 +372,20 @@ pub const LexicalAnalyzer = struct {
             //whitespace
             ' ', '\r', '\t' => {}, // Skip whitespace without creating tokens
             '\n' => {
-                // advance() already handled line/column/line_start for this newline.
-                // Emit a single NEWLINE token without relying on start/line_start arithmetic.
-                if (self.tokens.items.len == 0 or self.tokens.items[self.tokens.items.len - 1].type != .NEWLINE) {
+                const length = self.tokens.items.len;
+                var should_add_newline = false;
+                if (length == 0) {
+                    should_add_newline = true;
+                }
+                // if the last token is not a newline, add one
+                else if (self.tokens.items[length - 1].type != .NEWLINE) {
+                    should_add_newline = true;
+                    // if a semicolon is used, add a double newline for consumption by `...` if used
+                } else if (length > 1) {
+                    should_add_newline = self.tokens.items[length - 2].type == .SEMICOLON;
+                }
+
+                if (should_add_newline) {
                     const tok_line: i32 = if (self.line > 0) self.line - 1 else 0;
                     try self.tokens.append(Token.initWithFile(.NEWLINE, "", .nothing, tok_line, 1, self.file_path));
                 }
