@@ -56,14 +56,14 @@ fn split(input :: string) -> string[] {
     // `at` is optional syntax for a loop index
     each c at i in input {
         // breaks number if operator is found
-        if c equals " " then {
+        if c == " " then {
             if current != "" then {
                 @push(result, current)
                 current is ""
             }
         }
 
-        else if c equals "+" or c equals "*" or c equals "/" or c equals "(" or c equals ")" then {
+        else if c == "+" or c == "*" or c == "/" or c == "(" or c == ")" then {
             if current != "" then {
                 @push(result, current)
                 current is ""
@@ -72,7 +72,7 @@ fn split(input :: string) -> string[] {
         }
 
         // make sure - isn't a negative sign
-        else if c equals "-" and input[i+1] equals " " then {
+        else if c == "-" and input[i+1] == " " then {
             if current != "" then {
                 @push(result, current)
                 current is ""
@@ -93,8 +93,8 @@ fn verifyParens(input :: string[]) -> tetra {
     var depth is 0
     var passed :: tetra is true
     each s in input {
-        if s equals "(" then depth += 1
-        if s equals ")" then depth -= 1
+        if s == "(" then depth += 1
+        if s == ")" then depth -= 1
         if depth < 0 then {
             passed is false
         }
@@ -109,19 +109,19 @@ fn tokenize(input :: string[]) -> Token[] | nothing {
     var tokens :: Token[]
 
     each token in input {
-        if token equals "+" or token equals "-" or token equals "*" or token equals "/" then {
+        if token == "+" or token == "-" or token == "*" or token == "/" then {
             @push(tokens, Token {
                 token_type is .OPERATOR,
                 value is token,
             })
         } 
-        else if token equals "(" then {
+        else if token == "(" then {
             @push(tokens, Token {
                 token_type is .LPAREN,
                 value is token,
             })
         } 
-        else if token equals ")" then {
+        else if token == ")" then {
             @push(tokens, Token {
                 token_type is .RPAREN,
                 value is token,
@@ -150,7 +150,7 @@ fn execute(tokens :: Token[]) {
 	each token at i in tokens {
 		if i != 0 then {
 			token.token_type?;
-			if token.token_type equals TokenType.OPERATOR then {
+			if token.token_type == TokenType.OPERATOR then {
 				// narrow operator value to string and process in success branch
 				const op is token.value
 
@@ -161,10 +161,10 @@ fn execute(tokens :: Token[]) {
 					return
 				}
 
-				if op equals "+" then { total += rightHand }
-				else if op equals "-" then { total -= rightHand }
-				else if op equals "*" then { total *= rightHand }
-				else if op equals "/" then { total /= rightHand }
+				if op == "+" then { total += rightHand }
+				else if op == "-" then { total -= rightHand }
+				else if op == "*" then { total *= rightHand }
+				else if op == "/" then { total /= rightHand }
 				else { op?; "invalid operator"?; return }
 			}
 		}

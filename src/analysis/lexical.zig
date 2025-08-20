@@ -102,7 +102,6 @@ pub const LexicalAnalyzer = struct {
         try self.keywords.put("is", .ASSIGN);
         try self.keywords.put("as", .AS);
         try self.keywords.put("from", .FROM);
-        try self.keywords.put("equals", .EQUALITY);
         try self.keywords.put("int", .INT_TYPE);
         try self.keywords.put("byte", .BYTE_TYPE);
         try self.keywords.put("float", .FLOAT_TYPE);
