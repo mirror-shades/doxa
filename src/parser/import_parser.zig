@@ -48,7 +48,10 @@ pub fn parseModuleStmt(self: *Parser) !ast.Stmt {
     }
     self.advance();
 
-    // newline check
+    // Accept optional semicolon before required newline
+    if (self.peek().type == .SEMICOLON) {
+        self.advance();
+    }
     if (self.peek().type != .NEWLINE) {
         return error.ExpectedNewline;
     }
@@ -129,7 +132,10 @@ pub fn parseImportStmt(self: *Parser) !ast.Stmt {
     }
     self.advance();
 
-    // newline check
+    // Accept optional semicolon before required newline
+    if (self.peek().type == .SEMICOLON) {
+        self.advance();
+    }
     if (self.peek().type != .NEWLINE) {
         return error.ExpectedNewline;
     }

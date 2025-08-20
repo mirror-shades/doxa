@@ -53,9 +53,9 @@ matchResult? // It's something else
 fn fizzbuzz(x:: int, limit:: int) {
     var current is x
     while current <= limit {
-        if current % 3 equals 0 and current % 5 equals 0 then "fizzbuzz"?
-        else if current % 3 equals 0 then "fizz"?
-        else if current % 5 equals 0 then "buzz"?
+        if current % 3 == 0 and current % 5 == 0 then "fizzbuzz"?
+        else if current % 3 == 0 then "fizz"?
+        else if current % 5 == 0 then "buzz"?
         else current?
         
         current += 1
@@ -66,9 +66,9 @@ fizzbuzz(100, 115) //fizzbuzz 1-15
 
 
 fn fber(x:: int, limit:: int) {
-    if x % 3 equals 0 and x % 5 equals 0 then "fizzbuzzer"?
-    else if x % 3 equals 0 then "fizzer"?
-    else if x % 5 equals 0 then "buzzer"?
+    if x % 3 == 0 and x % 5 == 0 then "fizzbuzzer"?
+    else if x % 3 == 0 then "fizzer"?
+    else if x % 5 == 0 then "buzzer"?
     else x?
 
     if x < limit then fber(x + 1, limit)
@@ -214,9 +214,9 @@ thirdFold?
 fourthFold?
 
 //both is both true and false
-(both equals true and both equals false)? // true
+(both == true and both == false)? // true
 //neither is neither true or false
-(neither equals true or neither equals false)? // false
+(neither == true or neither == false)? // false
 
 const Bob is true
 const Shakespere is false
