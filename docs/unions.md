@@ -9,8 +9,8 @@ Unions are a special type which can represent one type or another. For instance,
 Unions are declared using pipes:
 
 ```doxa
-var x :: int | float;
-var y :: string | int | float;
+var x :: int | float
+var y :: string | int | float
 ```
 
 The pipe's only usage in Doxa is to specify a typed union.
@@ -19,22 +19,22 @@ The pipe's only usage in Doxa is to specify a typed union.
 
 ```doxa
 // A union that can be either an integer or a float
-var number :: int | float;
-number is 42;     // Valid - integer
-number is 3.14;   // Valid - float
+var number :: int | float
+number is 42     // Valid - integer
+number is 3.14   // Valid - float
 
 // A union that can be a string, integer, or float
-var value :: string | int | float;
-value is "hello"; // Valid - string
-value is 100;     // Valid - integer
-value is 2.718;   // Valid - float
+var value :: string | int | float
+value is "hello" // Valid - string
+value is 100     // Valid - integer
+value is 2.718   // Valid - float
 
 // Unions default to the first type when not initialized
-var defaulted :: int | float;
-defaulted?;       // Prints 0 (default int value)
+var defaulted :: int | float
+defaulted?       // Prints 0 (default int value)
 
-var float_first :: float | int;
-float_first?;     // Prints 0.0 (default float value)
+var float_first :: float | int
+float_first?     // Prints 0.0 (default float value)
 ```
 
 ## Default Behavior
@@ -56,18 +56,18 @@ A common use case for unions is representing optional values using `nothing`:
 
 ```doxa
 // Optional integer
-var maybe_name :: string | nothing;
-maybe_name is "Alice";     // Has a value
-maybe_name is nothing; // No value
+var maybe_name :: string | nothing
+maybe_name is "Alice"     // Has a value
+maybe_name is nothing // No value
 
 // Function that might not return a value
 function findValue(arr :: MyObject[], target :: string) returns(int | nothing) {
     each x in arr {
         if (x.name equals target) then {
-            return x;
+            return x
         }
     }
-    return nothing; // Not found
+    return nothing // Not found
 }
 ```
 
@@ -95,21 +95,21 @@ function handleError(err :: ErrorList) {
     match err {
         .Overflow => doSomething(),
         .Underflow => doSomethingElse(),
-    };
+    }
 }
 
 // Function returns a union - we won't know if the value is a number or one of our errors until we check
 function addLimit(a :: int, b :: int) returns( int | ErrorList ) {
-    const result is a + b;
-    if result > 255 then return ErrorList.Overflow;
-    if result < 0 then return ErrorList.Underflow;
-    return result;
+    const result is a + b
+    if result > 255 then return ErrorList.Overflow
+    if result < 0 then return ErrorList.Underflow
+    return result
 }
 
 // All of these return unions
-const unknownBigResult is addLimit(1000, 1000);   // ErrorList.Overflow
-const unknownSmallResult is addLimit(100, -1000); // ErrorList.Underflow
-const unknownRightResult is addLimit(100, -10);   // 90
+const unknownBigResult is addLimit(1000, 1000)   // ErrorList.Overflow
+const unknownSmallResult is addLimit(100, -1000) // ErrorList.Underflow
+const unknownRightResult is addLimit(100, -10)   // 90
 
 // Handle errors - several approaches:
 
@@ -121,16 +121,16 @@ match unknownRightResult {
 
 // Approach 2: Explicit fallback with error handling
 const myInt = unknownRightResult as int else {
-    @panic("This should never happen in production!");
-};
-onlyUsesInts(myInt);
+    @panic("This should never happen in production!")
+}
+onlyUsesInts(myInt)
 
 // Note type checking in control flow doesn't implicitly cast unlike match case which is exhaustive
 // this can be done by casting bt it is not as ergonomic as match case
 if unknownRightResult @istype int then {
-    onlyUsesInts(unknownRightResult) as int else{};
+    onlyUsesInts(unknownRightResult) as int else{}
 } else if unknownRightResult @istype ErrorList then {
-    handleError(unknownRightResult) as ErrorList else{};
+    handleError(unknownRightResult) as ErrorList else{}
 }
 ```
 
@@ -139,19 +139,19 @@ if unknownRightResult @istype int then {
 The `as` keyword attempts to cast a union to a specific type. If the cast fails, the `else` block is executed:
 
 ```doxa
-var value :: int | string;
-value is "hello";
+var value :: int | string
+value is "hello"
 
 // This will execute the else block since value is currently a string
 const number = value as int else {
-    return error.ExpectedInteger;
-};
+    return error.ExpectedInteger
+}
 
 // This will succeed since value is now an int
-value is 42;
+value is 42
 const doubled = value as int else {
-    return error.ExpectedInteger;
-}; // doubled is 84
+    return error.ExpectedInteger
+} // doubled is 84
 ```
 
 `as` can be used for control flow as well, using then blocks:
@@ -159,12 +159,12 @@ const doubled = value as int else {
 ```
 // using as like an 'istype' style conditional
 asThenUnion as int then {
-    var result is 20 + 30;
-    result?;
+    var result is 20 + 30
+    result?
 } else {
-    var result is 30 + 40;
-    result?;
-}; // 50
+    var result is 30 + 40
+    result?
+} // 50
 ```
 
 ### Common Patterns
@@ -173,16 +173,16 @@ asThenUnion as int then {
 
 ```doxa
 const result = someUnion as int else {
-    return 0; // Default value if not an int
-};
+    return 0 // Default value if not an int
+}
 ```
 
 **Error handling:**
 
 ```doxa
 const number = value as int else {
-    @panic("This should never happen in production!");
-};
+    @panic("This should never happen in production!")
+}
 ```
 
 **Conditional processing:**
@@ -190,8 +190,8 @@ const number = value as int else {
 ```doxa
 const processed = value as string else {
     // Handle non-string case
-    return "default";
-};
+    return "default"
+}
 ```
 
 The `as` keyword is essential for safely working with unions when you need to extract a specific type.

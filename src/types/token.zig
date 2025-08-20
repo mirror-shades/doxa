@@ -14,6 +14,7 @@ pub const TokenType = enum {
     TILDE, // ~
     PEEK, // ?
     PIPE, // |
+    SEMICOLON, // ;
 
     //one or two character tokens
     DOT, // .
