@@ -10,7 +10,7 @@ struct Token {
     value :: string,
 }
 
-fn precedence(op :: string) -> int {
+function precedence(op :: string) returns int {
     return match op {
         "(" then 0,
         ")" then 0,
@@ -22,7 +22,7 @@ fn precedence(op :: string) -> int {
     }
 }
 
-entry fn main() {
+entry function main() {
     // all compiler level methods are distinguished by @
     const input is @input()
 
@@ -45,7 +45,7 @@ entry fn main() {
     return
 }
 
-fn split(input :: string) -> string[] {
+function split(input :: string) returns string[] {
     var result :: string[]
     var current is ""
 
@@ -89,7 +89,7 @@ fn split(input :: string) -> string[] {
     return result
 }
 
-fn verifyParens(input :: string[]) -> tetra {
+function verifyParens(input :: string[]) returns tetra {
     var depth is 0
     var passed :: tetra is true
     each s in input {
@@ -105,7 +105,7 @@ fn verifyParens(input :: string[]) -> tetra {
     return passed
 }
 
-fn tokenize(input :: string[]) -> Token[] | nothing {
+function tokenize(input :: string[]) returns Token[] | nothing {
     var tokens :: Token[]
 
     each token in input {
@@ -136,7 +136,7 @@ fn tokenize(input :: string[]) -> Token[] | nothing {
     return tokens
 }
 
-fn execute(tokens :: Token[]) {
+function execute(tokens :: Token[]) {
 	var total :: int is 0
 	const first is @int(tokens[0].value)
 	first as int then {

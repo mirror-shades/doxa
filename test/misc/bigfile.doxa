@@ -48,9 +48,9 @@ matchResult is match g {
 matchResult? // It's something else
 
 /////
-// fnS AND LOOPS / RECURSION
+// functionS AND LOOPS / RECURSION
 /////
-fn fizzbuzz(x:: int, limit:: int) {
+function fizzbuzz(x:: int, limit:: int) {
     var current is x
     while current <= limit {
         if current % 3 == 0 and current % 5 == 0 then "fizzbuzz"?
@@ -65,7 +65,7 @@ fn fizzbuzz(x:: int, limit:: int) {
 fizzbuzz(100, 115) //fizzbuzz 1-15
 
 
-fn fber(x:: int, limit:: int) {
+function fber(x:: int, limit:: int) {
     if x % 3 == 0 and x % 5 == 0 then "fizzbuzzer"?
     else if x % 3 == 0 then "fizzer"?
     else if x % 5 == 0 then "buzzer"?
@@ -76,7 +76,7 @@ fn fber(x:: int, limit:: int) {
 
 fber(1000, 1015) //fizzerbuzzer 1-15
 
-fn forloop(x :: int) {
+function forloop(x :: int) {
     for (var i is 0; i < x; i++) {
         ((i+10)*66)?
     }
@@ -143,7 +143,7 @@ asThenUnion is 0x0A
 asThenUnion? // 0x0A
 
 // as narrowing
-fn onlyUsesInt(x :: int) {
+function onlyUsesInt(x :: int) {
     x?
     return
 }
@@ -153,14 +153,14 @@ const x :: int | float is 17
 x as int then onlyUsesInt(x) else "failure"?
 
 // return statements
-fn return_test() -> string {
+function return_test() returns string {
     return "return"
 }
 
 return_test()? // return
 
 // implicit return statements
-fn implicit_return_test() -> string {
+function implicit_return_test() returns string {
     "implicit"
 }
 
@@ -223,7 +223,7 @@ const Shakespere is false
 const zombie is both
 const angel is neither
 
-fn living(alive :: tetra) {
+function living(alive :: tetra) {
     if alive then "I am alive"?
     if not alive then "I am dead"?
 }
@@ -298,7 +298,7 @@ condition? // true
 /////
 // DEFAULT ARGUMENTS
 /////
-fn foo(a :: int, b :: int is 5) -> int {
+function foo(a :: int, b :: int is 5) returns int {
     return a+b
 }
 
@@ -312,7 +312,7 @@ foo(777, ~)? // 782
 const un1 :: int | float is 3
 const un2 :: int | float is 3.5
 
-fn process_number_union_string(value :: int | float) -> string {
+function process_number_union_string(value :: int | float) returns string {
     return match value {
         int then "integer",
         float then "float",
@@ -322,7 +322,7 @@ fn process_number_union_string(value :: int | float) -> string {
 process_number_union_string(un1)? // integer
 process_number_union_string(un2)? // float
 
-fn process_number_union_narrow(value :: int | float) -> int {
+function process_number_union_narrow(value :: int | float) returns int {
     return match value {
         int then value,
         float then 0,
@@ -332,14 +332,14 @@ fn process_number_union_narrow(value :: int | float) -> int {
 process_number_union_narrow(un1)? // 3
 process_number_union_narrow(un2)? // 0
 
-fn process_number_union_int(value :: int | float) -> int {
+function process_number_union_int(value :: int | float) returns int {
     return value as int else 0
 }
 
 process_number_union_int(un1)? // 3
 process_number_union_int(un2)? // 0
 
-fn process_number_union_return_union(value :: int | float) -> int | float {
+function process_number_union_return_union(value :: int | float) returns int | float {
     return value
 }
 

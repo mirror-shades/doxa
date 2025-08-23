@@ -82,7 +82,8 @@ pub const LexicalAnalyzer = struct {
         try self.keywords.put("while", .WHILE);
         try self.keywords.put("for", .FOR);
         try self.keywords.put("each", .EACH);
-        try self.keywords.put("fn", .FUNCTION);
+        try self.keywords.put("function", .FUNCTION);
+        try self.keywords.put("returns", .RETURNS);
         try self.keywords.put("return", .RETURN);
         try self.keywords.put("const", .CONST);
         try self.keywords.put("var", .VAR);
@@ -342,9 +343,7 @@ pub const LexicalAnalyzer = struct {
                 }
             },
             '-' => {
-                if (self.match('>')) {
-                    try self.addMinimalToken(.RETURNS);
-                } else if (self.match('-')) {
+                if (self.match('-')) {
                     try self.addMinimalToken(.MINUS_MINUS);
                 } else if (self.match('=')) {
                     try self.addMinimalToken(.MINUS_EQUAL);
