@@ -8,7 +8,11 @@ const result = struct {
     value: []const u8,
 };
 
-const expected_results = [_]result{
+const expected_brainfuck_results = [_]result{
+    .{ .type = "byte", .value = "0x67" },
+};
+
+const expected_bigfile_results = [_]result{
     .{ .type = "int", .value = "81" },
     .{ .type = "string", .value = "\"Overflow\"" },
     .{ .type = "int", .value = "-1" },
@@ -155,22 +159,11 @@ const expected_results = [_]result{
     .{ .type = "string", .value = "\"map\"" },
 };
 
-fn runDoxaCommand(allocator: std.mem.Allocator, path: []const u8) ![]const u8 {
+fn runDoxaCommandEx(allocator: std.mem.Allocator, path: []const u8, input: ?[]const u8) ![]const u8 {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const child_allocator = arena.allocator();
 
-    // Verify test file exists and print contents
-    const file = fs.cwd().openFile(path, .{}) catch |err| {
-        std.debug.print("Failed to open test file {s}: {}\n", .{ path, err });
-        return error.FileNotFound;
-    };
-    defer file.close();
-
-    const file_contents = try file.readToEndAlloc(child_allocator, std.math.maxInt(usize));
-    defer child_allocator.free(file_contents);
-
-    // Get the path to the doxa executable
     const exe_path = try fs.path.join(allocator, &[_][]const u8{ "zig-out", "bin", "doxa" });
     defer allocator.free(exe_path);
 
@@ -178,8 +171,17 @@ fn runDoxaCommand(allocator: std.mem.Allocator, path: []const u8) ![]const u8 {
     child.cwd = ".";
     child.stdout_behavior = .Pipe;
     child.stderr_behavior = .Pipe;
+    if (input != null) child.stdin_behavior = .Pipe;
 
     try child.spawn();
+
+    if (input) |input_data| {
+        try child.stdin.?.writer().writeAll(input_data);
+        child.stdin.?.close();
+        // Avoid double-close on Windows: Child.wait() will cleanup streams
+        child.stdin = null;
+    }
+
     const stdout = try child.stdout.?.reader().readAllAlloc(child_allocator, std.math.maxInt(usize));
     const stderr = try child.stderr.?.reader().readAllAlloc(child_allocator, std.math.maxInt(usize));
     const term = try child.wait();
@@ -193,14 +195,24 @@ fn runDoxaCommand(allocator: std.mem.Allocator, path: []const u8) ![]const u8 {
     return try allocator.dupe(u8, stdout);
 }
 
-test "big file" {
-    std.debug.print("\n=== Running big file test ===\n", .{});
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
+fn runDoxaCommand(allocator: std.mem.Allocator, path: []const u8) ![]const u8 {
+    return runDoxaCommandEx(allocator, path, null);
+}
 
-    std.debug.print("Running doxa command with bigfile.doxa...\n", .{});
-    const output = try runDoxaCommand(allocator, "./test/misc/bigfile.doxa");
+//this function will pipe a char to a doxa command and return the output
+fn runDoxaCommandWithInput(allocator: std.mem.Allocator, path: []const u8, input: []const u8) ![]const u8 {
+    return runDoxaCommandEx(allocator, path, input);
+}
+
+fn runTest(allocator: std.mem.Allocator, test_name: []const u8, path: []const u8, expected_results: []const result, input: ?[]const u8) !void {
+    std.debug.print("\n=== Running {s} test ===\n", .{test_name});
+    defer std.debug.print("\n=== {s} test complete ===\n", .{test_name});
+
+    std.debug.print("Running doxa command with {s}...\n", .{path});
+    const output = if (input) |in|
+        try runDoxaCommandWithInput(allocator, path, in)
+    else
+        try runDoxaCommand(allocator, path);
     defer allocator.free(output);
 
     std.debug.print("Parsing output...\n", .{});
@@ -217,7 +229,23 @@ test "big file" {
         break;
     }
     std.debug.print("verified {d} test cases\n", .{i});
-    std.debug.print("\n=== Big file test complete ===\n", .{});
+}
+
+test "big file" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    try runTest(allocator, "big file", "./test/misc/bigfile.doxa", expected_bigfile_results[0..], null);
+}
+
+test "brainfuck" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    // Input 'f' (102) + newline -> ',+.' increments to 103 (0x67)
+    try runTest(allocator, "brainfuck", "./test/examples/brainfuck.doxa", expected_brainfuck_results[0..], "f\n");
 }
 
 fn parseOutput(output: []const u8, allocator: std.mem.Allocator) !std.ArrayList(result) {
