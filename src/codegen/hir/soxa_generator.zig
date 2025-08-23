@@ -59,6 +59,9 @@ pub const HIRGenerator = struct {
     // New: track union member type names per variable index to avoid name collisions across scopes
     variable_union_members_by_index: std.AutoHashMap(u32, [][]const u8),
 
+    // Loop context stack to support break/continue codegen
+    loop_context_stack: std.ArrayList(LoopContext),
+
     pub const FunctionInfo = struct {
         name: []const u8,
         arity: u32,
@@ -83,6 +86,11 @@ pub const HIRGenerator = struct {
         function_name: []const u8,
         is_tail_position: bool,
         instruction_index: u32,
+    };
+
+    pub const LoopContext = struct {
+        break_label: []const u8,
+        continue_label: []const u8,
     };
 
     pub const HIRStats = struct {
@@ -189,6 +197,7 @@ pub const HIRGenerator = struct {
             .variable_array_element_types = std.StringHashMap(HIRType).init(allocator),
             .variable_union_members = std.StringHashMap([][]const u8).init(allocator),
             .variable_union_members_by_index = std.AutoHashMap(u32, [][]const u8).init(allocator),
+            .loop_context_stack = std.ArrayList(LoopContext).init(allocator),
         };
     }
 
@@ -207,7 +216,23 @@ pub const HIRGenerator = struct {
         self.variable_array_element_types.deinit();
         self.variable_union_members.deinit();
         self.variable_union_members_by_index.deinit();
+        self.loop_context_stack.deinit();
         // Note: module_namespaces is not owned by HIRGenerator, so we don't deinit it
+    }
+
+    inline fn pushLoopContext(self: *HIRGenerator, break_label: []const u8, continue_label: []const u8) !void {
+        try self.loop_context_stack.append(.{ .break_label = break_label, .continue_label = continue_label });
+    }
+
+    inline fn popLoopContext(self: *HIRGenerator) void {
+        if (self.loop_context_stack.items.len > 0) {
+            _ = self.loop_context_stack.pop();
+        }
+    }
+
+    inline fn currentLoopContext(self: *HIRGenerator) ?LoopContext {
+        if (self.loop_context_stack.items.len == 0) return null;
+        return self.loop_context_stack.items[self.loop_context_stack.items.len - 1];
     }
 
     /// Main entry point - converts AST statements to HIR program using multi-pass approach
@@ -639,6 +664,22 @@ pub const HIRGenerator = struct {
             .Expression => |expr| {
                 if (expr) |e| {
                     try self.generateExpression(e, false);
+                }
+            },
+            .Continue => {
+                if (self.currentLoopContext()) |lc| {
+                    self.reporter.debug("HIR: emitting continue -> {s}", .{lc.continue_label});
+                    try self.instructions.append(.{ .Jump = .{ .label = lc.continue_label, .vm_offset = 0 } });
+                } else {
+                    self.reporter.reportError("'continue' used outside of a loop", .{});
+                }
+            },
+            .Break => {
+                if (self.currentLoopContext()) |lc| {
+                    self.reporter.debug("HIR: emitting break -> {s}", .{lc.break_label});
+                    try self.instructions.append(.{ .Jump = .{ .label = lc.break_label, .vm_offset = 0 } });
+                } else {
+                    self.reporter.reportError("'break' used outside of a loop", .{});
                 }
             },
             .VarDecl => |decl| {
@@ -1284,52 +1325,115 @@ pub const HIRGenerator = struct {
 
             .If => |if_expr| {
 
-                // Generate condition
-                try self.generateExpression(if_expr.condition.?, true);
+                // Special-case: if inside a loop and the then/else branch is a pure break/continue block,
+                // emit a direct conditional jump to the loop label (so control flow skips subsequent body code).
+                var handled_as_loop_control = false;
+                const lc_opt = self.currentLoopContext();
 
-                // Create labels for branches
-                const else_label = try self.generateLabel("else");
-                const end_label = try self.generateLabel("end_if");
+                // Helper lambdas for detection
+                const isControlOnlyBlock = struct {
+                    fn run(_: *HIRGenerator, node: *ast.Expr, want_break: bool, want_continue: bool) bool {
+                        switch (node.data) {
+                            .Block => |blk| {
+                                if (blk.statements.len == 0) return false;
+                                // Require all statements to be the desired control kind(s)
+                                for (blk.statements) |s| {
+                                    const d = s.data;
+                                    if (want_break and d == .Break) continue;
+                                    if (want_continue and d == .Continue) continue;
+                                    // Allow empty expression statements as no-ops
+                                    if (d == .Expression and s.data.Expression == null) continue;
+                                    return false;
+                                }
+                                return true;
+                            },
+                            else => return false,
+                        }
+                    }
+                };
 
-                // Jump to else if condition is false
-                const then_label = try self.generateLabel("then");
-                try self.instructions.append(.{
-                    .JumpCond = .{
-                        .label_true = then_label, // If TRUE: jump to then branch
-                        .label_false = else_label, // If FALSE: jump to else branch
-                        .vm_offset = 0, // Will be patched during VM bytecode generation
-                        .condition_type = .Tetra,
-                    },
-                });
+                if (lc_opt) |lc| {
+                    const then_is_continue = isControlOnlyBlock.run(self, if_expr.then_branch.?, false, true);
+                    const then_is_break = isControlOnlyBlock.run(self, if_expr.then_branch.?, true, false);
+                    const else_is_continue = if (if_expr.else_branch) |eb| isControlOnlyBlock.run(self, eb, false, true) else false;
+                    const else_is_break = if (if_expr.else_branch) |eb| isControlOnlyBlock.run(self, eb, true, false) else false;
 
-                // Then label
-                try self.instructions.append(.{ .Label = .{ .name = then_label, .vm_address = 0 } });
-
-                // Generate then branch
-                try self.generateExpression(if_expr.then_branch.?, true);
-
-                // Jump to end
-                try self.instructions.append(.{ .Jump = .{ .label = end_label, .vm_offset = 0 } });
-
-                // Else label
-                try self.instructions.append(.{ .Label = .{ .name = else_label, .vm_address = 0 } });
-
-                // Generate else branch (or push nothing if no else)
-                if (if_expr.else_branch) |else_branch| {
-                    try self.generateExpression(else_branch, true);
-                } else {
-                    const nothing_idx = try self.addConstant(HIRValue.nothing);
-                    try self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } });
+                    if (then_is_continue and !else_is_break and !else_is_continue and !then_is_break) {
+                        // If TRUE -> continue label, else fall-through
+                        try self.generateExpression(if_expr.condition.?, true);
+                        const end_if = try self.generateLabel("end_if");
+                        try self.instructions.append(.{ .JumpCond = .{ .label_true = lc.continue_label, .label_false = end_if, .vm_offset = 0, .condition_type = .Tetra } });
+                        try self.instructions.append(.{ .Label = .{ .name = end_if, .vm_address = 0 } });
+                        handled_as_loop_control = true;
+                    } else if (then_is_break and !else_is_break and !else_is_continue and !then_is_continue) {
+                        // If TRUE -> break label, else fall-through
+                        try self.generateExpression(if_expr.condition.?, true);
+                        const end_if = try self.generateLabel("end_if");
+                        try self.instructions.append(.{ .JumpCond = .{ .label_true = lc.break_label, .label_false = end_if, .vm_offset = 0, .condition_type = .Tetra } });
+                        try self.instructions.append(.{ .Label = .{ .name = end_if, .vm_address = 0 } });
+                        handled_as_loop_control = true;
+                    } else if (!then_is_break and !then_is_continue and (else_is_break or else_is_continue)) {
+                        // Only else branch is control: invert condition
+                        try self.generateExpression(if_expr.condition.?, true);
+                        const end_if = try self.generateLabel("end_if");
+                        const target = if (else_is_break) lc.break_label else lc.continue_label;
+                        // If FALSE -> target, TRUE -> fall through
+                        try self.instructions.append(.{ .JumpCond = .{ .label_true = end_if, .label_false = target, .vm_offset = 0, .condition_type = .Tetra } });
+                        try self.instructions.append(.{ .Label = .{ .name = end_if, .vm_address = 0 } });
+                        handled_as_loop_control = true;
+                    }
                 }
 
-                // End label
-                try self.instructions.append(.{ .Label = .{ .name = end_label, .vm_address = 0 } });
+                if (!handled_as_loop_control) {
+                    // Standard if codegen
+                    try self.generateExpression(if_expr.condition.?, true);
+
+                    const else_label = try self.generateLabel("else");
+                    const end_label = try self.generateLabel("end_if");
+                    const then_label = try self.generateLabel("then");
+                    try self.instructions.append(.{
+                        .JumpCond = .{
+                            .label_true = then_label,
+                            .label_false = else_label,
+                            .vm_offset = 0,
+                            .condition_type = .Tetra,
+                        },
+                    });
+
+                    // THEN branch
+                    try self.instructions.append(.{ .Label = .{ .name = then_label, .vm_address = 0 } });
+                    if (preserve_result) {
+                        try self.generateExpression(if_expr.then_branch.?, true);
+                    } else {
+                        // Statement context: do not produce a value
+                        try self.generateExpression(if_expr.then_branch.?, false);
+                    }
+                    try self.instructions.append(.{ .Jump = .{ .label = end_label, .vm_offset = 0 } });
+
+                    // ELSE branch
+                    try self.instructions.append(.{ .Label = .{ .name = else_label, .vm_address = 0 } });
+                    if (if_expr.else_branch) |else_branch| {
+                        if (preserve_result) {
+                            try self.generateExpression(else_branch, true);
+                        } else {
+                            try self.generateExpression(else_branch, false);
+                        }
+                    } else if (preserve_result) {
+                        // Only push a value when needed
+                        const nothing_idx = try self.addConstant(HIRValue.nothing);
+                        try self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } });
+                    }
+                    try self.instructions.append(.{ .Label = .{ .name = end_label, .vm_address = 0 } });
+                }
             },
 
             .While => |while_expr| {
                 const loop_start_label = try self.generateLabel("while_start");
                 const loop_body_label = try self.generateLabel("while_body");
                 const loop_end_label = try self.generateLabel("while_end");
+
+                // Register loop context: continue -> start, break -> end
+                try self.pushLoopContext(loop_end_label, loop_start_label);
 
                 // Loop start
                 try self.instructions.append(.{ .Label = .{ .name = loop_start_label, .vm_address = 0 } });
@@ -1358,6 +1462,9 @@ pub const HIRGenerator = struct {
 
                 // Loop end
                 try self.instructions.append(.{ .Label = .{ .name = loop_end_label, .vm_address = 0 } });
+
+                // Unregister loop context
+                self.popLoopContext();
 
                 // Push nothing as while result
                 const nothing_idx = try self.addConstant(HIRValue.nothing);
@@ -1863,10 +1970,15 @@ pub const HIRGenerator = struct {
 
                 // Generate final value if present
                 if (block.value) |value_expr| {
-                    // Block with a final value expression
+                    // Evaluate the final value expression
+                    // Always evaluate, but only preserve on stack when requested
                     try self.generateExpression(value_expr, true);
-                } else {
-                    // Block without value - push nothing
+                    if (!preserve_result) {
+                        // Discard the produced value in statement context
+                        try self.instructions.append(.Pop);
+                    }
+                } else if (preserve_result) {
+                    // Block without value: only push 'nothing' when a value is expected
                     const nothing_idx = try self.addConstant(HIRValue.nothing);
                     try self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } });
                 }
@@ -2662,6 +2774,9 @@ pub const HIRGenerator = struct {
                 const loop_increment_label = try self.generateLabel("for_increment");
                 const loop_end_label = try self.generateLabel("for_end");
 
+                // Register loop context: continue -> increment, break -> end
+                try self.pushLoopContext(loop_end_label, loop_increment_label);
+
                 // Generate initializer (var i is 0)
                 if (for_expr.initializer) |initializer| {
                     try self.generateStatement(initializer.*);
@@ -2710,6 +2825,9 @@ pub const HIRGenerator = struct {
                 // Push nothing as for loop result
                 const nothing_idx = try self.addConstant(HIRValue.nothing);
                 try self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } });
+
+                // Unregister loop context
+                self.popLoopContext();
             },
 
             .ForEach => |foreach_expr| {
@@ -2718,6 +2836,9 @@ pub const HIRGenerator = struct {
                 const fe_body = try self.generateLabel("foreach_body");
                 const fe_next = try self.generateLabel("foreach_next");
                 const fe_end = try self.generateLabel("foreach_end");
+
+                // Register loop context: continue -> next, break -> end
+                try self.pushLoopContext(fe_end, fe_next);
 
                 // Synthesize stable temporary variable names for array, length, and index
                 const arr_tmp_name = try std.fmt.allocPrint(self.allocator, "__fe_arr_{s}", .{fe_start});
@@ -2829,6 +2950,9 @@ pub const HIRGenerator = struct {
                 try self.instructions.append(.{ .Label = .{ .name = fe_end, .vm_address = 0 } });
                 const nothing2_idx = try self.addConstant(HIRValue.nothing);
                 try self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing2_idx } });
+
+                // Unregister loop context
+                self.popLoopContext();
             },
 
             .FieldAccess => |field| {

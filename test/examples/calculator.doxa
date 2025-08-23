@@ -25,21 +25,18 @@ function precedence(op :: string) returns int {
 entry function main() {
     // all compiler level methods are distinguished by @
     const input is @input()
-
     const splitInput is split(input)
-
-    splitInput?
-
-    @assert(verifyParens(splitInput))
-
+    @assert(verifyParens(splitInput), "parens don't match")
     const possibleTokens is tokenize(splitInput)
 
-    // union needs to be narrowed to catch our error returns
     possibleTokens as Token[] then {
-        execute(possibleTokens)
+        const rpn is shunt(possibleTokens) as Token[] then {
+            execute(rpn)
+        } else {
+            "shunting failed"?
+        }
     } else {
         "tokens failed to parse"?
-        return
     }
 
     return
@@ -136,39 +133,112 @@ function tokenize(input :: string[]) returns Token[] | nothing {
     return tokens
 }
 
+function shunt(tokens :: Token[]) returns Token[] | nothing {
+    var output :: Token[]
+    var operators :: Token[]
+
+    each token in tokens {
+        if token.token_type == TokenType.NUMBER then {
+            @push(output, token)
+        }
+
+        else if token.token_type == TokenType.OPERATOR then {
+            // pop higher or equal precedence ops onto output
+            while @length(operators) > 0 {
+                const top is operators[@length(operators) - 1]
+                if top.token_type == TokenType.OPERATOR and precedence(top.value) >= precedence(token.value) then {
+                    @push(output, top)
+                    @pop(operators)
+                } else {
+                    break
+                }
+            }
+            @push(operators, token)
+        }
+
+        else if token.token_type == TokenType.LPAREN then {
+            @push(operators, token)
+        }
+
+        else if token.token_type == TokenType.RPAREN then {
+            // pop until left paren found
+            var matched is false
+            while @length(operators) > 0 {
+                const top is operators[@length(operators) - 1]
+                if top.token_type == TokenType.LPAREN then {
+                    @pop(operators)
+                    matched is true
+                    break
+                } else {
+                    @push(output, top)
+                    @pop(operators)
+                }
+            }
+            if !matched then {
+                "mismatched parentheses"? 
+                return nothing
+            }
+        }
+    }
+
+    // drain remaining operators
+    while @length(operators) > 0 {
+        const top is operators[@length(operators) - 1]
+        if top.token_type == TokenType.LPAREN or top.token_type == TokenType.RPAREN then {
+            "mismatched parentheses"? 
+            return nothing
+        }
+        @push(output, top)
+        @pop(operators)
+    }
+
+    return output
+}
+
 function execute(tokens :: Token[]) {
-	var total :: int is 0
-	const first is @int(tokens[0].value)
-	first as int then {
-		total is first
-	} else {
-		tokens[0].token_type?;
-		tokens[0].value?;
-		"first value must be a number"?;
-		return
-	}
-	each token at i in tokens {
-		if i != 0 then {
-			token.token_type?;
-			if token.token_type == TokenType.OPERATOR then {
-				// narrow operator value to string and process in success branch
-				const op is token.value
+    var stack :: int[]
 
-				const next is tokens[i + 1]
-				const rightHand is @int(next.value) as int else {
-					next.value?;
-					"value must be a number"?;
-					return
-				}
+    each token in tokens {
+        if token.token_type == TokenType.NUMBER then {
+            const n is @int(token.value) as int else {
+                token.value?
+                "invalid number"?
+                return
+            }
+            @push(stack, n)
+        } 
 
-				if op == "+" then { total += rightHand }
-				else if op == "-" then { total -= rightHand }
-				else if op == "*" then { total *= rightHand }
-				else if op == "/" then { total /= rightHand }
-				else { op?; "invalid operator"?; return }
-			}
-		}
-	}
-	total?
-	return
+        else if token.token_type == TokenType.OPERATOR then {
+            // need two operands
+            if @length(stack) < 2 then {
+                "not enough operands"? 
+                return
+            }
+
+            const right is @pop(stack)
+            const left is @pop(stack)
+
+            var result is 0
+
+            if token.value == "+" then result is left + right
+            else if token.value == "-" then result is left - right
+            else if token.value == "*" then result is left * right
+            else if token.value == "/" then result is left / right
+            else {
+                token.value?
+                "invalid operator"?
+                return
+            }
+
+            @push(stack, result)
+        }
+    }
+
+    if @length(stack) != 1 then {
+        "invalid expression"? 
+        return
+    }
+
+    stack[0]?
+    return
 }

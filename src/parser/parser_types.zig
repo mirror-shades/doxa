@@ -182,24 +182,20 @@ pub const Parser = struct {
         }
         self.advance();
 
-        // Determine the last expression in the block (if any) and remove it
-        // from the statements list so it isn't executed twice.
+        // Determine the last expression in the block (if any) ONLY if it is the
+        // final statement. Do not skip control-flow statements that follow.
         if (statements.items.len > 0) {
-            var i: usize = statements.items.len;
-            while (i > 0) : (i -= 1) {
-                const idx = i - 1;
-                const stmt = statements.items[idx];
-                switch (stmt.data) {
-                    .Expression => |maybe_expr| {
-                        if (maybe_expr) |e| {
-                            last_expr = e;
-                        }
-                        // Remove the trailing expression statement; it becomes the block's value
-                        statements.items.len = idx;
-                        break;
-                    },
-                    else => {},
-                }
+            const last_idx = statements.items.len - 1;
+            const last_stmt = statements.items[last_idx];
+            switch (last_stmt.data) {
+                .Expression => |maybe_expr| {
+                    if (maybe_expr) |e| {
+                        last_expr = e;
+                    }
+                    // Remove only the final expression statement
+                    statements.items.len = last_idx;
+                },
+                else => {},
             }
         }
 
