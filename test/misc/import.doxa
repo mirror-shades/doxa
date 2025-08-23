@@ -1,14 +1,14 @@
-pub fn imported_function() {
+pub function imported_function() {
     "imported function"?;
     return;
 }
 
-pub fn imported_function_input(x :: int) {
+pub function imported_function_input(x :: int) {
     x?;
     return;
 }
 
-pub fn imported_function_output() -> int {
+pub function imported_function_output() returns int {
     return 100;
 }
 

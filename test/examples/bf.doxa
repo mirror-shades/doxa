@@ -8,13 +8,13 @@ var loopSpot :: int[]
 var tp :: int is 0
 var ip :: int is 0
 
-fn getInput() -> byte {
+function getInput() returns byte {
     var userInput :: string is @input()
     var newByte :: byte is @bytes(userInput)[0]
     return newByte
 }
 
-fn startLoop() {
+function startLoop() {
     if @length(loopSpot) == loops then {
         @push(loopSpot, ip)
     } else {
@@ -23,7 +23,7 @@ fn startLoop() {
     loops += 1
 }
 
-fn endLoop() {
+function endLoop() {
     if loops >= 0 then {
         if tape[tp] == 0 then {
             loops -= 1
@@ -36,7 +36,7 @@ fn endLoop() {
     }
 }
 
-fn checkClosingBracket(scan :: string) -> tetra {
+function checkClosingBracket(scan :: string) returns tetra {
     var pointer :: int is 0
     var openBrackets :: int is 0
     while(pointer < @length(scan)) {
@@ -48,7 +48,7 @@ fn checkClosingBracket(scan :: string) -> tetra {
 }
 
 
-fn interpret(scan :: string) {
+function interpret(scan :: string) {
     const scanLength is @length(scan)
 
     var closedBrackets :: tetra is checkClosingBracket(scan)
@@ -68,6 +68,6 @@ fn interpret(scan :: string) {
     }
 }
 
-entry fn main() {
+entry function main() {
     interpret(",+.")
 }
