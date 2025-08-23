@@ -1,78 +1,73 @@
 // a brainfuck interpreter implemented in doxa
 // mirror-shades
 
-const symbols is [ ">", "<", "+", "-", ".", ",", "[", "]" ];
-var tape :: byte[10];
-var loops :: int is 0;
-var loopSpot :: int[];
-var tp :: int is 0;
-var ip :: int is 0;
+const symbols is [ ">", "<", "+", "-", ".", ",", "[", "]" ]
+var tape :: byte[10]
+var loops :: int is 0
+var loopSpot :: int[]
+var tp :: int is 0
+var ip :: int is 0
 
-fn getInput() returns(byte) {
-    var userInput :: string is @input();
-    var newByte :: byte is @bytes(userInput)[0];
-    return newByte;
+fn getInput() -> byte {
+    var userInput :: string is @input()
+    var newByte :: byte is @bytes(userInput)[0]
+    return newByte
 }
 
 fn startLoop() {
-    if @length(loopSpot) == loops 
-    then {
-        loopSpot.push(ip);
+    if @length(loopSpot) == loops then {
+        @push(loopSpot, ip)
     } else {
-        loopSpot[loops] is ip;
+        loopSpot[loops] is ip
     }
-    loops += 1;
+    loops += 1
 }
 
 fn endLoop() {
-    if loops >= 0 
-    then {
-        if tape[tp] == 0 
-        then {
-            loops -= 1;
+    if loops >= 0 then {
+        if tape[tp] == 0 then {
+            loops -= 1
         } else {
-            const loopPointer is loops - 1;
-            ip is loopSpot[loopPointer];
+            const loopPointer is loops - 1
+            ip is loopSpot[loopPointer]
             // cancels the ip += 1 from the main loop
-            ip -= 1;
+            ip -= 1
         }
     }
 }
 
-fn checkClosingBracket(scan :: string) returns(tetra) {
-    var pointer :: int is 0;
-    var openBrackets :: int is 0;
+fn checkClosingBracket(scan :: string) -> tetra {
+    var pointer :: int is 0
+    var openBrackets :: int is 0
     while(pointer < @length(scan)) {
-        if(scan[pointer] == "[") then openBrackets += 1;
-        if(scan[pointer] == "]") then openBrackets -= 1;
-        pointer += 1;
+        if(scan[pointer] == "[") then openBrackets += 1
+        if(scan[pointer] == "]") then openBrackets -= 1
+        pointer += 1
     }
-    return(openBrackets == 0);
+    return(openBrackets == 0)
 }
 
 
 fn interpret(scan :: string) {
-    const scanLength is @length(scan);
+    const scanLength is @length(scan)
 
-    var closedBrackets :: tetra is checkClosingBracket(scan);
-    @assert(closedBrackets, "Unmatched brackets");
+    var closedBrackets :: tetra is checkClosingBracket(scan)
+    @assert(closedBrackets, "Unmatched brackets")
 
     while(ip < scanLength) {
-        var currentInstruction is scan[ip];
-        if(currentInstruction == ">") then tp += 1;
-        if(currentInstruction == "<") then tp -= 1;
-        if(currentInstruction == "+") then tape[tp] += 1;
-        if(currentInstruction == "-") then tape[tp] -= 1;
-        if(currentInstruction == ".") then tape[tp]?;
-        if(currentInstruction == ",") then tape[tp] is getInput();
-        if(currentInstruction == "[") then startLoop();
-        if(currentInstruction == "]") then endLoop();
-        tape[tp]?;
-        tape?;
-        ip += 1;
+        var currentInstruction is scan[ip]
+        if(currentInstruction == ">") then tp += 1
+        if(currentInstruction == "<") then tp -= 1
+        if(currentInstruction == "+") then tape[tp] += 1
+        if(currentInstruction == "-") then tape[tp] -= 1
+        if(currentInstruction == ".") then tape[tp]?
+        if(currentInstruction == ",") then tape[tp] is getInput()
+        if(currentInstruction == "[") then startLoop()
+        if(currentInstruction == "]") then endLoop()
+        ip += 1
     }
 }
 
 entry fn main() {
-    interpret(",+.");
+    interpret(",+.")
 }
