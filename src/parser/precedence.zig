@@ -125,6 +125,7 @@ pub const rules = blk: {
     r.set(.IFF, .{ .infix = logical, .precedence = .IFF });
     r.set(.NOT, .{ .prefix = unary, .precedence = .UNARY });
     r.set(.NOT_PARADOXICAL, .{ .prefix = unary, .precedence = .UNARY });
+    r.set(.BANG, .{ .prefix = unary, .precedence = .UNARY });
     r.set(.IMPLIES, .{ .infix = logical, .precedence = .IMPLIES });
 
     // Literals
