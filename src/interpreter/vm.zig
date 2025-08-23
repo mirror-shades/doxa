@@ -237,6 +237,7 @@ const CallFrame = struct {
     return_ip: u32, // IP to return to after function call
     function_name: []const u8, // For debugging
     arg_count: u32 = 0, // Number of arguments to clean up from stack
+    saved_sp: i32, // Operand stack pointer before the call
 };
 
 /// Call stack for proper function return handling
@@ -1066,6 +1067,12 @@ pub const HIRVM = struct {
                     break :blk null;
                 };
 
+                // Debug: log operand tags for comparisons
+                self.reporter.debug(
+                    "DBG Compare {s}: a={s}, b={s}, operand_type={s}",
+                    .{ @tagName(c.op), @tagName(a_val.value), @tagName(b.value), @tagName(c.operand_type) },
+                );
+
                 const result = switch (c.op) {
                     .Eq => if (eq_with_type_name) |is_eq| is_eq else try self.compareEqual(a_val, b),
                     .Ne => if (eq_with_type_name) |is_eq| !is_eq else !(try self.compareEqual(a_val, b)),
@@ -1586,6 +1593,10 @@ pub const HIRVM = struct {
 
                         const element = arr.elements[index_val];
 
+                        // Debug: Show what element type we're retrieving
+                        const elem_tag = @tagName(element);
+                        self.reporter.debug("ArrayGet: array element_type={s}, retrieved element type={s}", .{ @tagName(arr.element_type), elem_tag });
+
                         try self.stack.push(HIRFrame.initFromHIRValue(element));
                     },
                     .nothing => {
@@ -1653,20 +1664,41 @@ pub const HIRVM = struct {
                             return ErrorList.IndexOutOfBounds;
                         }
 
+                        // Debug: Show what we're trying to assign
+                        const val_tag = @tagName(value.value);
+                        self.reporter.debug("ArraySet: array element_type={s}, trying to assign value type={s}", .{ @tagName(mutable_arr.element_type), val_tag });
+
                         const element_value = switch (mutable_arr.element_type) {
                             .Byte => switch (value.value) {
-                                .int => |i| if (i >= 0 and i <= 255) HIRValue{ .byte = @intCast(i) } else HIRValue{ .byte = 0 },
-                                .byte => value.value, // Already correct type
+                                .int => |i| blk: {
+                                    const byte_val = if (i >= 0 and i <= 255) HIRValue{ .byte = @intCast(i) } else HIRValue{ .byte = 0 };
+                                    self.reporter.debug("ArraySet: converted int {d} to byte {d}", .{ i, byte_val.byte });
+                                    break :blk byte_val;
+                                },
+                                .byte => blk: {
+                                    self.reporter.debug("ArraySet: keeping byte value {d}", .{value.value.byte});
+                                    break :blk value.value; // Already correct type
+                                },
                                 .string => |_| return self.reporter.reportError("Cannot assign string to byte array element", .{}),
                                 else => return self.reporter.reportError("Cannot assign {s} to byte array element", .{@tagName(value.value)}),
                             },
                             .Int => switch (value.value) {
-                                .byte => |b| HIRValue{ .int = @as(i32, b) }, // Convert byte to int
-                                .int => value.value, // Already correct type
+                                .byte => |b| blk: {
+                                    const int_val = HIRValue{ .int = @as(i32, b) };
+                                    self.reporter.debug("ArraySet: converted byte {d} to int {d}", .{ b, int_val.int });
+                                    break :blk int_val; // Convert byte to int
+                                },
+                                .int => blk: {
+                                    self.reporter.debug("ArraySet: keeping int value {d}", .{value.value.int});
+                                    break :blk value.value; // Already correct type
+                                },
                                 .string => |_| return self.reporter.reportError("Cannot assign string to int array element", .{}),
                                 else => return self.reporter.reportError("Cannot assign {s} to int array element", .{@tagName(value.value)}),
                             },
-                            else => value.value, // For other array types, keep original value
+                            else => blk: {
+                                self.reporter.debug("ArraySet: keeping value as-is for type {s}", .{@tagName(mutable_arr.element_type)});
+                                break :blk value.value; // For other array types, keep original value
+                            },
                         };
 
                         mutable_arr.elements[index_val] = element_value;
@@ -1821,6 +1853,8 @@ pub const HIRVM = struct {
                             .return_ip = return_ip,
                             .function_name = function.name,
                             .arg_count = c.arg_count, // Store arg count to clean up stack later
+                            // Save SP before arguments so Return can restore caller stack correctly
+                            .saved_sp = self.stack.size() - @as(i32, @intCast(c.arg_count)),
                         };
                         try self.call_stack.push(call_frame);
 
@@ -2115,8 +2149,17 @@ pub const HIRVM = struct {
                     // Returning from function call - pop call frame and return to caller
                     const call_frame = try self.call_stack.pop();
 
-                    // For void returns, do not modify the stack; for value returns, the value is already on stack
-                    // Note: Return value is already on stack for functions with return values
+                    // Restore operand stack to the saved position, preserving the top return value
+                    const current_sp = self.stack.size();
+                    if (current_sp > call_frame.saved_sp) {
+                        // There is at least one value to return on the stack; keep the topmost
+                        const ret_val = self.stack.pop() catch HIRFrame.initNothing();
+                        self.stack.sp = call_frame.saved_sp;
+                        try self.stack.push(ret_val);
+                    } else {
+                        // No value returned; just restore SP
+                        self.stack.sp = call_frame.saved_sp;
+                    }
 
                     // Return to caller
                     self.ip = call_frame.return_ip;
@@ -3165,20 +3208,19 @@ pub const HIRVM = struct {
         var current_scope: ?*Scope = self.current_scope;
         while (current_scope) |scope| {
             if (scope.id == scope_id) {
-                const parent_id = if (scope.parent) |parent| parent.id else 0;
                 const frame = try self.stack.peek();
                 if (frame.scope_refs == 0) {
                     scope.deinit();
-                    self.reporter.debug(">> Exited scope {} (returned to: {}) [Call stack: {}]", .{ scope_id, parent_id, self.call_stack.sp });
+                    // self.reporter.debug(">> Exited scope {d} (returned to: {d}) [Call stack: {d}]", .{ scope_id, parent_id, self.call_stack.sp });
                 } else {
-                    self.reporter.debug(">> Skipped exiting scope {} ({} refs remain)", .{ scope_id, frame.scope_refs });
+                    self.reporter.debug(">> Skipped exiting scope {d} ({d} refs remain)", .{ scope_id, frame.scope_refs });
                 }
                 return;
             }
             current_scope = scope.parent;
         }
         if (scope_id != 0) { // Don't warn about root scope
-            self.reporter.debug(">> Warning: Attempted to exit root scope {} - ignoring", .{scope_id});
+            self.reporter.debug(">> Warning: Attempted to exit root scope {d} - ignoring", .{scope_id});
         }
     }
 
@@ -3199,7 +3241,7 @@ pub const HIRVM = struct {
             _ = try new_scope.createValueBinding(param_name, self.hirValueToTokenLiteral(arg), self.hirValueToTokenType(arg), self.hirValueToTypeInfo(arg), false);
         }
 
-        self.reporter.debug(">> Entered scope {} (parent: {}) [Call stack: {}]", .{
+        self.reporter.debug(">> Entered scope {d} (parent: {d}) [Call stack: {d}]", .{
             new_scope.id,
             self.current_scope,
             self.call_stack.sp,

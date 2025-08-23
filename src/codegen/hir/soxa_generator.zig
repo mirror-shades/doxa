@@ -741,6 +741,8 @@ pub const HIRGenerator = struct {
                         self.current_enum_type = custom_type_name;
                     }
 
+                    // Var declaration initializer must leave a value on the stack for StoreVar
+                    // Preserve the result so the subsequent store can consume it
                     try self.generateExpression(init_expr, true);
 
                     // Restore previous enum context
@@ -813,20 +815,27 @@ pub const HIRGenerator = struct {
                     }
 
                     // Store into the declared variable now so it has a concrete value and index
-                    const var_idx2 = try self.getOrCreateVariable(decl.name.lexeme);
-                    // Duplicate so subsequent code can see the value if needed
-                    try self.instructions.append(.Dup);
-                    try self.instructions.append(.{ .StoreVar = .{
-                        .var_index = var_idx2,
-                        .var_name = decl.name.lexeme,
-                        .scope_kind = .Local,
-                        .module_context = null,
-                        .expected_type = var_type,
-                    } });
+                    // Only perform this pre-store in global scope where we intentionally
+                    // keep a duplicate around for subsequent global initialization steps.
+                    if (self.current_function == null) {
+                        const var_idx2 = try self.getOrCreateVariable(decl.name.lexeme);
+                        // Duplicate so subsequent code can see the value if needed (globals only)
+                        try self.instructions.append(.Dup);
+                        try self.instructions.append(.{ .StoreVar = .{
+                            .var_index = var_idx2,
+                            .var_name = decl.name.lexeme,
+                            .scope_kind = .Local,
+                            .module_context = null,
+                            .expected_type = var_type,
+                        } });
+                    }
 
-                    // Also record union members by index if present by name
-                    if (self.variable_union_members.get(decl.name.lexeme)) |members0| {
-                        try self.variable_union_members_by_index.put(var_idx2, members0);
+                    // Also record union members by index if present by name (only if pre-stored)
+                    if (self.current_function == null) {
+                        if (self.variable_union_members.get(decl.name.lexeme)) |members0| {
+                            const var_idx2 = try self.getOrCreateVariable(decl.name.lexeme);
+                            try self.variable_union_members_by_index.put(var_idx2, members0);
+                        }
                     }
                 }
 
@@ -1120,9 +1129,16 @@ pub const HIRGenerator = struct {
                         },
                     });
                 } else {
-                    // Fall back to constant null/nothing to avoid crashing; semantic analysis should catch undefined vars
-                    const const_idx = try self.addConstant(HIRValue.nothing);
-                    try self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = const_idx } });
+                    // Ensure the variable exists in the current scope and load it at runtime
+                    const var_idx2 = try self.getOrCreateVariable(var_token.lexeme);
+                    try self.instructions.append(.{
+                        .LoadVar = .{
+                            .var_index = var_idx2,
+                            .var_name = var_token.lexeme,
+                            .scope_kind = .Local,
+                            .module_context = null,
+                        },
+                    });
                 }
             },
 
@@ -1613,6 +1629,27 @@ pub const HIRGenerator = struct {
                 // NEW: Track the variable's type from the assigned value
                 const assigned_type = self.inferTypeFromExpression(assign.value.?);
                 try self.trackVariableType(assign.name.lexeme, assigned_type);
+
+                // NEW: Track array element type for array literals
+                if (assigned_type == .Array and assign.value.?.data == .Array) {
+                    const elements = assign.value.?.data.Array;
+                    if (elements.len > 0) {
+                        const element_type: HIRType = switch (elements[0].data) {
+                            .Literal => |lit| switch (lit) {
+                                .int => .Int,
+                                .float => .Float,
+                                .string => .String,
+                                .tetra => .Tetra,
+                                .byte => .Byte,
+                                else => .Auto,
+                            },
+                            else => .Auto,
+                        };
+                        if (element_type != .Auto) {
+                            try self.trackArrayElementType(assign.name.lexeme, element_type);
+                        }
+                    }
+                }
 
                 // If assigning result of StringToInt, also track union members for peeks: ["int", "NumberError"]
                 if (assign.value.?.data == .StringToInt) {
@@ -2528,9 +2565,15 @@ pub const HIRGenerator = struct {
                     // On success, drop original and evaluate then-branch
                     try self.instructions.append(.Pop);
                     try self.generateExpression(then_expr, preserve_result);
-                } else if (!preserve_result) {
-                    // No then branch and no result requested: drop duplicated original
-                    try self.instructions.append(.Pop);
+                } else {
+                    // No then branch: keep original value if result is needed, drop if not
+                    if (!preserve_result) {
+                        try self.instructions.append(.Pop);
+                    } else {
+                        // DEBUG: preserve_result is true, keeping original value on stack
+                        std.debug.print("DEBUG: Cast success branch with preserve_result=true, keeping value on stack\n", .{});
+                        // If preserve_result is true, the original duplicated value remains on stack
+                    }
                 }
 
                 // End merge point
@@ -3203,7 +3246,15 @@ pub const HIRGenerator = struct {
                 // Array/string indexing returns the element type
                 const container_type = self.inferTypeFromExpression(index.array);
                 return switch (container_type) {
-                    .Array => .String, // Most arrays in bigfile.doxa are int arrays, but for simplicity return String
+                    .Array => {
+                        // Check if we have tracked element type information for this array
+                        if (index.array.data == .Variable) {
+                            if (self.getTrackedArrayElementType(index.array.data.Variable.lexeme)) |elem_type| {
+                                return elem_type;
+                            }
+                        }
+                        return .String; // Fallback: Most arrays in bigfile.doxa are int arrays, but for simplicity return String
+                    },
                     .String => .String, // String indexing returns single character (still string in our system)
                     .Map => .Int, // Map values are integers in our test case
                     else => .String, // Default to String for most index operations
