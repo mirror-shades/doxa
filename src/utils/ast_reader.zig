@@ -131,8 +131,12 @@ pub const ASTReader = struct {
             .expr = expr,
             .location = .{
                 .file = "main",
-                .line = self.current_line,
-                .column = 1,
+                .range = .{
+                    .start_line = self.current_line,
+                    .start_col = 1,
+                    .end_line = self.current_line,
+                    .end_col = 1,
+                },
             },
             .variable_name = null,
         } };

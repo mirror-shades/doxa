@@ -12,12 +12,18 @@ pub fn writeASTToFile(statements: []const ast.Stmt, file_path: []const u8) !void
 // Helper function to write source location information
 fn writeSourceLocation(base: ast.Base, writer: anytype) std.fs.File.WriteError!void {
     try writer.print("node_id:{d}\n", .{base.id});
-    try writer.print("start_line:{d}\n", .{base.span.start.line});
-    try writer.print("start_col:{d}\n", .{base.span.start.column});
-    try writer.print("end_line:{d}\n", .{base.span.end.line});
-    try writer.print("end_col:{d}\n", .{base.span.end.column});
-    try writer.print("start_file:{s}\n", .{base.span.start.file});
-    try writer.print("end_file:{s}\n", .{base.span.end.file});
+
+    if (base.span) |span| {
+        // New location format
+        try writer.print("start_line:{d}\n", .{span.location.range.start_line});
+        try writer.print("start_col:{d}\n", .{span.location.range.start_col});
+        try writer.print("end_line:{d}\n", .{span.location.range.end_line});
+        try writer.print("end_col:{d}\n", .{span.location.range.end_col});
+        try writer.print("file:{s}\n", .{span.location.file});
+    } else {
+        // Synthetic node without location
+        try writer.print("synthetic_node:true\n", .{});
+    }
 }
 
 // Helper function to write detailed type information

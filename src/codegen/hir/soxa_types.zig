@@ -19,7 +19,7 @@ pub const HIRType = enum {
     Enum,
     Function,
     Union,
-    Auto, // will throw error in VM, Soxa is explicit
+    Unknown, // will throw error in VM, Soxa is explicit
 };
 
 // Additional type information for complex types

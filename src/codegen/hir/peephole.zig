@@ -8,6 +8,7 @@ const Reporter = @import("../../utils/reporting.zig").Reporter;
 /// Organized by optimization categories for maintainability
 pub const PeepholeOptimizer = struct {
     allocator: std.mem.Allocator,
+    reporter: *Reporter,
 
     // Optimization counters by category
     redundant_eliminations: u32 = 0,
@@ -16,14 +17,15 @@ pub const PeepholeOptimizer = struct {
     variable_optimizations: u32 = 0,
     control_flow_optimizations: u32 = 0,
 
-    pub fn init(allocator: std.mem.Allocator) PeepholeOptimizer {
+    pub fn init(allocator: std.mem.Allocator, reporter: *Reporter) PeepholeOptimizer {
         return PeepholeOptimizer{
             .allocator = allocator,
+            .reporter = reporter,
         };
     }
 
     /// Apply comprehensive peephole optimizations
-    pub fn optimize(self: *PeepholeOptimizer, instructions: []HIRInstruction, reporter: *Reporter) ![]HIRInstruction {
+    pub fn optimize(self: *PeepholeOptimizer, instructions: []HIRInstruction) ![]HIRInstruction {
         var optimized = std.ArrayList(HIRInstruction).init(self.allocator);
         defer optimized.deinit();
 
@@ -31,15 +33,6 @@ pub const PeepholeOptimizer = struct {
         while (i < instructions.len) {
             const consumed = try self.tryOptimizeAt(instructions, i, &optimized);
             i += consumed;
-        }
-
-        if (self.getTotalOptimizations() > 0) {
-            reporter.debug("Peephole optimization breakdown:\n", .{});
-            if (self.redundant_eliminations > 0) reporter.debug("   - Redundant eliminations: {}\n", .{self.redundant_eliminations});
-            if (self.arithmetic_optimizations > 0) reporter.debug("   - Arithmetic optimizations: {}\n", .{self.arithmetic_optimizations});
-            if (self.stack_optimizations > 0) reporter.debug("   - Stack optimizations: {}\n", .{self.stack_optimizations});
-            if (self.variable_optimizations > 0) reporter.debug("   - Variable optimizations: {}\n", .{self.variable_optimizations});
-            if (self.control_flow_optimizations > 0) reporter.debug("   - Control flow optimizations: {}\n", .{self.control_flow_optimizations});
         }
 
         return optimized.toOwnedSlice();

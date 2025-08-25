@@ -7,7 +7,9 @@ const MemoryImport = @import("../utils/memory.zig");
 const MemoryManager = MemoryImport.MemoryManager;
 const Scope = MemoryImport.Scope;
 const Reporting = @import("../utils/reporting.zig");
-const ErrorList = Reporting.ErrorList;
+const Errors = @import("../utils/errors.zig");
+const ErrorList = Errors.ErrorList;
+const ErrorCode = Errors.ErrorCode;
 
 // Forward declaration for circular reference
 pub const ModuleEnvironment = struct {

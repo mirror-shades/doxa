@@ -4,6 +4,8 @@ const SemanticAnalyzer = @import("./analysis/semantic.zig").SemanticAnalyzer;
 const Parser = @import("./parser/parser_types.zig").Parser;
 const Reporting = @import("./utils/reporting.zig");
 const Reporter = Reporting.Reporter;
+const Location = Reporting.Location;
+const ReporterOptions = Reporting.ReporterOptions;
 const MemoryImport = @import("./utils/memory.zig");
 const MemoryManager = MemoryImport.MemoryManager;
 const Token = @import("./types/token.zig").Token;
@@ -21,6 +23,8 @@ const SoxaTextParser = @import("./codegen/hir/soxa_parser.zig").SoxaTextParser;
 const DoxaVM = @import("./interpreter/vm.zig").HIRVM;
 const ConstantFolder = @import("./parser/constant_folder.zig").ConstantFolder;
 const PeepholeOptimizer = @import("./codegen/hir/peephole.zig").PeepholeOptimizer;
+const Errors = @import("./utils/errors.zig");
+const ErrorCode = Errors.ErrorCode;
 
 ///==========================================================================
 /// Constants
@@ -49,8 +53,8 @@ const Command = enum {
 
 const CLI = struct {
     command: Command,
-    debug: bool,
-    keep_intermediate: bool, // Keep .soxa files for debugging
+    reporter_options: ReporterOptions,
+    keep_artifacts: bool,
     output: ?[]const u8,
     script_path: ?[]const u8,
 };
@@ -135,8 +139,8 @@ fn compileToNative(memoryManager: *MemoryManager, soxa_path: []const u8, output_
     _ = memoryManager;
 
     // TODO: Implement LLVM pipeline
-    reporter.reportError("!! LLVM compilation not implemented yet\n", .{});
-    reporter.debug(">> Would compile {s} -> {s}\n", .{ soxa_path, output_path });
+    reporter.reportInternalError("!! LLVM compilation not implemented yet\n", .{}, @src());
+    reporter.debug(">> Would compile {s} -> {s}\n", .{ soxa_path, output_path }, @src());
 }
 
 ///==========================================================================
@@ -146,7 +150,6 @@ fn compileDoxaToSoxaFromAST(memoryManager: *MemoryManager, statements: []ast.Stm
 
     // NEW: Pass custom type information to HIR generator
     var hir_generator = HIRGenerator.init(memoryManager.getAllocator(), reporter, parser.module_namespaces, parser.imported_symbols);
-    hir_generator.debug_enabled = reporter.is_debug; // Enable debug output if --debug flag is set
     defer hir_generator.deinit();
 
     // NEW: Import custom types from semantic analysis
@@ -162,28 +165,37 @@ fn compileDoxaToSoxaFromAST(memoryManager: *MemoryManager, statements: []ast.Stm
     defer hir_program.deinit();
 
     // Apply peephole optimizations to HIR
-    var peephole_optimizer = PeepholeOptimizer.init(memoryManager.getAllocator());
-    const optimized_instructions = try peephole_optimizer.optimize(hir_program.instructions, reporter);
+    var peephole_optimizer = PeepholeOptimizer.init(memoryManager.getAllocator(), reporter);
+    const optimized_instructions = try peephole_optimizer.optimize(hir_program.instructions);
     defer memoryManager.getAllocator().free(optimized_instructions);
 
     // Replace the instructions in the HIR program
     memoryManager.getAllocator().free(hir_program.instructions);
     hir_program.instructions = optimized_instructions;
 
-    reporter.debug(">> Peephole optimizations applied: {} HIR instruction optimizations\n", .{peephole_optimizer.getTotalOptimizations()});
+    reporter.debug(">> Peephole optimizations applied: {} HIR instruction optimizations\n", .{peephole_optimizer.getTotalOptimizations()}, @src());
 
     // Delete existing .soxa file if it exists
     std.fs.cwd().deleteFile(soxa_path) catch |err| {
         // It's fine if the file doesn't exist
         if (err != error.FileNotFound) {
-            reporter.reportWarning("!! Warning: Could not delete existing SOXA file {s}: {}\n", .{ soxa_path, err });
+            const location = Location{
+                .file = soxa_path,
+                .range = .{
+                    .start_line = 0,
+                    .start_col = 0,
+                    .end_line = 0,
+                    .end_col = 0,
+                },
+            };
+            reporter.reportWarning(location, ErrorCode.COULD_NOT_DELETE_ARTIFACT, "Could not delete existing SOXA file {s}: {}\n", .{ soxa_path, err });
         }
     };
 
     // Write the HIR program to .soxa file with cache validation
     try SoxaCompiler.writeSoxaFile(&hir_program, soxa_path, source_path, memoryManager.getAllocator());
 
-    reporter.debug(">> Compiled {s} -> {s} ({} HIR instructions)\n", .{ source_path, soxa_path, hir_program.instructions.len });
+    reporter.debug(">> Compiled {s} -> {s} ({} HIR instructions)\n", .{ source_path, soxa_path, hir_program.instructions.len }, @src());
 }
 
 ///==========================================================================
@@ -194,7 +206,7 @@ fn runSoxaFile(memoryManager: *MemoryManager, soxa_path: []const u8, reporter: *
     var hir_program = try SoxaCompiler.readSoxaFile(soxa_path, memoryManager.getAllocator());
     defer hir_program.deinit();
 
-    reporter.debug(">> Loaded SOXA: {} instructions, {} constants\n", .{ hir_program.instructions.len, hir_program.constant_pool.len });
+    reporter.debug(">> Loaded SOXA: {} instructions, {} constants\n", .{ hir_program.instructions.len, hir_program.constant_pool.len }, @src());
 
     // Create and run HIR VM directly
     var vm = try DoxaVM.init(&hir_program, reporter, memoryManager);
@@ -206,19 +218,24 @@ fn runSoxaFile(memoryManager: *MemoryManager, soxa_path: []const u8, reporter: *
     _ = try vm.run();
 }
 
-fn parseArgs(allocator: std.mem.Allocator, reporter: *Reporter) !CLI {
+fn parseArgs(allocator: std.mem.Allocator) !CLI {
     const args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);
 
     if (args.len < 2) {
-        printUsage(reporter);
+        printUsage();
         std.process.exit(EXIT_CODE_USAGE);
     }
 
     var options = CLI{
         .command = .run, // Default to run execution
-        .debug = false,
-        .keep_intermediate = false,
+        .reporter_options = .{
+            .max_diagnostics = 1000,
+            .warn_as_error = false,
+            .debug_mode = false,
+            .print_immediately = true,
+        },
+        .keep_artifacts = false,
         .output = null,
         .script_path = null,
     };
@@ -231,21 +248,22 @@ fn parseArgs(allocator: std.mem.Allocator, reporter: *Reporter) !CLI {
 
         // Handle global flags first
         if (stringEquals(arg, "--debug")) {
-            options.debug = true;
+            options.reporter_options.debug_mode = true;
             continue;
         } else if (stringEquals(arg, "--keep-intermediate")) {
-            options.keep_intermediate = true;
+            options.keep_artifacts = true;
             continue;
         } else if (stringEquals(arg, "--output") or stringEquals(arg, "-o")) {
             if (i + 1 >= args.len) {
-                reporter.reportError("Error: --output/-o requires a filename\n", .{});
+                std.debug.print("Error: --output/-o requires a filename\n", .{});
+                printUsage();
                 std.process.exit(EXIT_CODE_USAGE);
             }
             options.output = args[i + 1];
             i += 1;
             continue;
         } else if (stringEquals(arg, "--help") or stringEquals(arg, "-h")) {
-            printUsage(reporter);
+            printUsage();
             std.process.exit(0);
         }
 
@@ -265,8 +283,8 @@ fn parseArgs(allocator: std.mem.Allocator, reporter: *Reporter) !CLI {
             i += 1;
             break;
         } else {
-            reporter.reportError("Error: Unknown command or invalid file: '{s}'\n", .{arg});
-            printUsage(reporter);
+            std.debug.print("Error: Unknown command or invalid file: '{s}'\n", .{arg});
+            printUsage();
             std.process.exit(EXIT_CODE_USAGE);
         }
     }
@@ -276,12 +294,13 @@ fn parseArgs(allocator: std.mem.Allocator, reporter: *Reporter) !CLI {
         const arg = args[i];
 
         if (stringEquals(arg, "--debug")) {
-            options.debug = true;
+            options.reporter_options.debug_mode = true;
         } else if (stringEquals(arg, "--keep-intermediate")) {
-            options.keep_intermediate = true;
+            options.keep_artifacts = true;
         } else if (stringEquals(arg, "--output") or stringEquals(arg, "-o")) {
             if (i + 1 >= args.len) {
-                reporter.reportError("Error: --output/-o requires a filename\n", .{});
+                std.debug.print("Error: --output/-o requires a filename\n", .{});
+                printUsage();
                 std.process.exit(EXIT_CODE_USAGE);
             }
             options.output = args[i + 1];
@@ -290,41 +309,38 @@ fn parseArgs(allocator: std.mem.Allocator, reporter: *Reporter) !CLI {
             // Found the script file
             options.script_path = try allocator.dupe(u8, arg);
         } else {
-            reporter.reportError("Error: Unexpected argument: '{s}'\n", .{arg});
-            printUsage(reporter);
+            std.debug.print("Error: Unexpected argument: '{s}'\n", .{arg});
+            printUsage();
             std.process.exit(EXIT_CODE_USAGE);
         }
     }
 
     // Validate that we have a script path
     if (options.script_path == null) {
-        reporter.reportError("Error: No script file specified\n", .{});
-        printUsage(reporter);
+        std.debug.print("Error: No script file specified\n", .{});
+        printUsage();
         std.process.exit(EXIT_CODE_USAGE);
     }
 
     return options;
 }
 
-fn printUsage(reporter: *Reporter) void {
-    reporter.printf("Doxa Programming Language\n", .{});
-    reporter.printl("");
-    reporter.printf("Usage:\n", .{});
-    reporter.printf("  doxa run [options] <file.doxa>          # Execute with HIR VM (explicit)\n", .{});
-    reporter.printf("  doxa compile [options] <file.doxa>      # Compile to native binary\n", .{});
-    reporter.printf("  doxa old [options] <file.doxa>          # Debug with old AST interpreter (deprecated)\n", .{});
-    reporter.printl("");
-    reporter.printf("Options:\n", .{});
-    reporter.printf("  --debug                                 Enable debug output\n", .{});
-    reporter.printf("  --keep-intermediate                     Keep .soxa files for debugging\n", .{});
-    reporter.printf("  --output <file>, -o <file>             Specify output file (compile mode)\n", .{});
-    reporter.printf("  --help, -h                             Show this help message\n", .{});
-    reporter.printl("");
-    reporter.printf("Examples:\n", .{});
-    reporter.printf("  doxa script.doxa                       # Execute with HIR VM\n", .{});
-    reporter.printf("  doxa run script.doxa                   # Same as above (explicit)\n", .{});
-    reporter.printf("  doxa compile --output app script.doxa  # Compile to native binary 'app'\n", .{});
-    reporter.printf("  doxa old script.doxa                   # Test with AST interpreter\n", .{});
+fn printUsage() void {
+    std.debug.print("Doxa Programming Language\n", .{});
+    std.debug.print("\nUsage:\n", .{});
+    std.debug.print("  doxa run [options] <file.doxa>          # Execute with HIR VM (explicit)\n", .{});
+    std.debug.print("  doxa compile [options] <file.doxa>      # Compile to native binary\n", .{});
+    std.debug.print("  doxa old [options] <file.doxa>          # Debug with old AST interpreter (deprecated)\n", .{});
+    std.debug.print("\nOptions:\n", .{});
+    std.debug.print("  --debug                                 Enable debug output\n", .{});
+    std.debug.print("  --keep-intermediate                     Keep .soxa files for debugging\n", .{});
+    std.debug.print("  --output <file>, -o <file>             Specify output file (compile mode)\n", .{});
+    std.debug.print("  --help, -h                             Show this help message\n", .{});
+    std.debug.print("\nExamples:\n", .{});
+    std.debug.print("  doxa script.doxa                       # Execute with HIR VM\n", .{});
+    std.debug.print("  doxa run script.doxa                   # Same as above (explicit)\n", .{});
+    std.debug.print("  doxa compile --output app script.doxa  # Compile to native binary 'app'\n", .{});
+    std.debug.print("  doxa old script.doxa                   # Test with AST interpreter\n", .{});
 }
 
 // Helper functions to avoid comptime issues with string comparisons
@@ -350,18 +366,17 @@ pub fn main() !void {
     //==========================================================================
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 
-    var reporter = Reporter.initWithAllocator(gpa.allocator());
-    defer reporter.deinit();
-
     defer {
         const leaked = gpa.deinit();
-        if (leaked == .leak) reporter.reportError("Warning: Memory leak detected!\n", .{});
+        if (leaked == .leak) std.debug.print("Warning: Memory leak detected!\n", .{});
     }
 
     // Parse args first
-    const cli_options = try parseArgs(gpa.allocator(), &reporter);
-    // Set debug mode based on CLI options
-    reporter.is_debug = cli_options.debug;
+    const cli_options = try parseArgs(gpa.allocator());
+
+    var reporter = Reporter.init(gpa.allocator(), cli_options.reporter_options);
+    defer reporter.deinit();
+
     // Ensure script_path is freed
     defer if (cli_options.script_path) |path| {
         gpa.allocator().free(path);
@@ -381,10 +396,19 @@ pub fn main() !void {
 
     // Process the script
     const path = cli_options.script_path.?; // Safe to unwrap since we validated it
-    reporter.debug("Debug: Processing script: '{s}'\n", .{path});
+    reporter.debug("Debug: Processing script: '{s}'\n", .{path}, @src());
 
     if (!stringEndsWith(path, DOXA_EXTENSION)) {
-        reporter.reportError("Error: '{s}' is not a doxa file\n", .{path});
+        const loc = Location{
+            .file = path,
+            .range = .{
+                .start_line = 0,
+                .start_col = 0,
+                .end_line = 0,
+                .end_col = 0,
+            },
+        };
+        reporter.reportCompileError(loc, null, "Error: '{s}' is not a doxa file\n", .{path});
         std.process.exit(EXIT_CODE_USAGE);
     }
 
@@ -392,7 +416,7 @@ pub fn main() !void {
     var path_buffer: [std.fs.max_path_bytes]u8 = undefined; // Changed from MAX_PATH_BYTES to max_path_bytes
     const abs_path = try std.fs.cwd().realpath(path, &path_buffer);
 
-    reporter.debug("Debug: Absolute path: '{s}'\n", .{abs_path});
+    reporter.debug("Debug: Absolute path: '{s}'\n", .{abs_path}, @src());
 
     // Read source file for AST interpretation
     const source = try std.fs.cwd().readFileAlloc(memoryManager.getAllocator(), path, MAX_FILE_SIZE);
@@ -413,7 +437,7 @@ pub fn main() !void {
     //==========================================================================
 
     // Parsing phase
-    var parser = Parser.init(memoryManager.getAllocator(), tokens.items, path, reporter.is_debug, &reporter);
+    var parser = Parser.init(memoryManager.getAllocator(), tokens.items, path, &reporter);
     defer parser.deinit();
     const statements = try parser.execute();
 
@@ -449,7 +473,7 @@ pub fn main() !void {
     if (needs_recompile) {
         try compileDoxaToSoxaFromAST(&memoryManager, statements, &parser, &semantic_analyzer, path, soxa_path, &reporter);
     } else {
-        reporter.debug(">> Using cached SOXA: {s}\n", .{soxa_path});
+        reporter.debug(">> Using cached SOXA: {s}\n", .{soxa_path}, @src());
     }
 
     //==========================================================================
@@ -459,11 +483,24 @@ pub fn main() !void {
     // Execute based on command
     switch (cli_options.command) {
         .run => {
-            reporter.debug(">> Executing with HIR VM\n", .{});
+            reporter.debug(">> Executing with HIR VM\n", .{}, @src());
             // Try to run SOXA file, but recompile if it's incompatible
             runSoxaFile(&memoryManager, soxa_path, &reporter) catch |err| {
                 if (err == error.EndOfStream or err == error.InvalidFormat) {
-                    reporter.reportError("!! SOXA file incompatible, regenerating...\n", .{});
+                    reporter.reportCompileError(
+                        Location{
+                            .file = path,
+                            .range = .{
+                                .start_line = 0,
+                                .start_col = 0,
+                                .end_line = 0,
+                                .end_col = 0,
+                            },
+                        },
+                        ErrorCode.SOXA_FILE_INCOMPATIBLE,
+                        "!! SOXA file incompatible, regenerating...\n",
+                        .{},
+                    );
                     // Delete the incompatible SOXA file
                     std.fs.cwd().deleteFile(soxa_path) catch {};
                     // Recompile
@@ -477,7 +514,7 @@ pub fn main() !void {
         },
 
         .compile => {
-            reporter.debug(">> Compiling to native binary\n", .{});
+            reporter.debug(">> Compiling to native binary\n", .{}, @src());
             const output_path = cli_options.output orelse try generateArtifactPath(&memoryManager, path, "");
             defer if (cli_options.output == null) memoryManager.getAllocator().free(output_path);
 

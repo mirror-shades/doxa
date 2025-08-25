@@ -1,6 +1,8 @@
 const std = @import("std");
 const ast = @import("../../ast/ast.zig");
-const reporting = @import("../../utils/reporting.zig");
+const Reporting = @import("../../utils/reporting.zig");
+const Location = Reporting.Location;
+const Reporter = Reporting.Reporter;
 const TokenLiteral = @import("../../types/types.zig").TokenLiteral;
 const TokenType = @import("../../types/token.zig").TokenType;
 const SoxaInstructions = @import("soxa_instructions.zig");
@@ -15,11 +17,14 @@ const CallKind = SoxaTypes.CallKind;
 const HIRProgram = SoxaTypes.HIRProgram;
 const import_parser = @import("../../parser/import_parser.zig");
 
+const Errors = @import("../../utils/errors.zig");
+const ErrorList = Errors.ErrorList;
+const ErrorCode = Errors.ErrorCode;
+
 pub const HIRGenerator = struct {
     allocator: std.mem.Allocator,
     instructions: std.ArrayList(HIRInstruction),
     constants: std.ArrayList(HIRValue),
-    debug_enabled: bool = false,
     current_peek_expr: ?*ast.Expr = null,
     current_field_name: ?[]const u8 = null,
     string_pool: std.ArrayList([]const u8),
@@ -29,7 +34,7 @@ pub const HIRGenerator = struct {
     local_variables: std.StringHashMap(u32), // per-function variable indices
     local_variable_count: u32,
     label_count: u32,
-    reporter: *reporting.Reporter, // NEW: Proper error reporting
+    reporter: *Reporter,
 
     variable_types: std.StringHashMap(HIRType), // Track inferred types of variables
     variable_custom_types: std.StringHashMap([]const u8), // Track custom type names for variables
@@ -167,12 +172,11 @@ pub const HIRGenerator = struct {
         }
     };
 
-    pub fn init(allocator: std.mem.Allocator, reporter: *reporting.Reporter, module_namespaces: std.StringHashMap(ast.ModuleInfo), imported_symbols: ?std.StringHashMap(import_parser.ImportedSymbol)) HIRGenerator {
+    pub fn init(allocator: std.mem.Allocator, reporter: *Reporter, module_namespaces: std.StringHashMap(ast.ModuleInfo), imported_symbols: ?std.StringHashMap(import_parser.ImportedSymbol)) HIRGenerator {
         return HIRGenerator{
             .allocator = allocator,
             .instructions = std.ArrayList(HIRInstruction).init(allocator),
             .constants = std.ArrayList(HIRValue).init(allocator),
-            .debug_enabled = false,
             .current_peek_expr = null,
             .string_pool = std.ArrayList([]const u8).init(allocator),
             .constant_map = std.StringHashMap(u32).init(allocator),
@@ -440,7 +444,7 @@ pub const HIRGenerator = struct {
                 const param = params[param_index];
 
                 // Extract parameter type information with proper inference
-                var param_type: HIRType = .Auto;
+                var param_type: HIRType = .Unknown;
                 if (param.type_expr) |type_expr| {
                     const type_info_ptr = try ast.typeInfoFromExpr(self.allocator, type_expr);
                     defer self.allocator.destroy(type_info_ptr);
@@ -533,7 +537,7 @@ pub const HIRGenerator = struct {
     fn generateMainProgram(self: *HIRGenerator, statements: []ast.Stmt) !void {
         // First process global (non-function) statements from imported modules so their
         // constants and types (e.g., 'limit' in safeMath) are defined before any calls.
-        self.reporter.debug("HIR: processing imported module globals: {d}", .{self.module_namespaces.count()});
+        self.reporter.debug("HIR: processing imported module globals: {d}", .{self.module_namespaces.count()}, @src());
         var it = self.module_namespaces.iterator();
         while (it.next()) |entry| {
             const alias = entry.key_ptr.*;
@@ -541,7 +545,7 @@ pub const HIRGenerator = struct {
             if (module_info.ast) |module_ast| {
                 if (module_ast.data == .Block) {
                     const mod_statements = module_ast.data.Block.statements;
-                    self.reporter.debug("HIR: module '{s}' globals count: {d}", .{ alias, mod_statements.len });
+                    self.reporter.debug("HIR: module '{s}' globals count: {d}", .{ alias, mod_statements.len }, @src());
                     for (mod_statements) |mod_stmt| {
                         switch (mod_stmt.data) {
                             .FunctionDecl => continue, // skip functions here
@@ -558,7 +562,7 @@ pub const HIRGenerator = struct {
         }
 
         // Then process this module's non-function statements (global variables, etc.)
-        self.reporter.debug("HIR: processing current module globals", .{});
+        self.reporter.debug("HIR: processing current module globals", .{}, @src());
         for (statements) |stmt| {
             switch (stmt.data) {
                 .FunctionDecl => {
@@ -659,7 +663,7 @@ pub const HIRGenerator = struct {
         return null;
     }
 
-    fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator.Error || reporting.ErrorList)!void {
+    fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator.Error || ErrorList)!void {
         switch (stmt.data) {
             .Expression => |expr| {
                 if (expr) |e| {
@@ -668,18 +672,46 @@ pub const HIRGenerator = struct {
             },
             .Continue => {
                 if (self.currentLoopContext()) |lc| {
-                    self.reporter.debug("HIR: emitting continue -> {s}", .{lc.continue_label});
+                    self.reporter.debug("HIR: emitting continue -> {s}", .{lc.continue_label}, @src());
                     try self.instructions.append(.{ .Jump = .{ .label = lc.continue_label, .vm_offset = 0 } });
                 } else {
-                    self.reporter.reportError("'continue' used outside of a loop", .{});
+                    const location = Location{
+                        .file = stmt.base.location().file,
+                        .range = .{
+                            .start_line = stmt.base.location().range.start_line,
+                            .start_col = stmt.base.location().range.start_col,
+                            .end_line = stmt.base.location().range.end_line,
+                            .end_col = stmt.base.location().range.end_col,
+                        },
+                    };
+                    self.reporter.reportCompileError(
+                        location,
+                        ErrorCode.CONTINUE_USED_OUTSIDE_OF_LOOP,
+                        "'continue' used outside of a loop",
+                        .{},
+                    );
                 }
             },
             .Break => {
                 if (self.currentLoopContext()) |lc| {
-                    self.reporter.debug("HIR: emitting break -> {s}", .{lc.break_label});
+                    self.reporter.debug("HIR: emitting break -> {s}", .{lc.break_label}, @src());
                     try self.instructions.append(.{ .Jump = .{ .label = lc.break_label, .vm_offset = 0 } });
                 } else {
-                    self.reporter.reportError("'break' used outside of a loop", .{});
+                    const location = Location{
+                        .file = stmt.base.location().file,
+                        .range = .{
+                            .start_line = stmt.base.location().range.start_line,
+                            .start_col = stmt.base.location().range.start_col,
+                            .end_line = stmt.base.location().range.end_line,
+                            .end_col = stmt.base.location().range.end_col,
+                        },
+                    };
+                    self.reporter.reportCompileError(
+                        location,
+                        ErrorCode.BREAK_USED_OUTSIDE_OF_LOOP,
+                        "'break' used outside of a loop",
+                        .{},
+                    );
                 }
             },
             .VarDecl => |decl| {
@@ -690,7 +722,7 @@ pub const HIRGenerator = struct {
                 // FIXED: Prioritize explicit type annotation over inference
                 var custom_type_name: ?[]const u8 = null;
                 if (decl.type_info.base != .Nothing) {
-                    self.reporter.debug("Variable {s} has type base: {s}", .{ decl.name.lexeme, @tagName(decl.type_info.base) });
+                    self.reporter.debug("Variable {s} has type base: {s}", .{ decl.name.lexeme, @tagName(decl.type_info.base) }, @src());
                     // Use explicit type annotation first
                     var_type = switch (decl.type_info.base) {
                         .Int => .Int,
@@ -702,13 +734,13 @@ pub const HIRGenerator = struct {
                         .Union => blk: {
                             // Default unions to the first member's type for initialization
                             if (decl.type_info.union_type) |ut| {
-                                self.reporter.debug("Found union type with {} members", .{ut.types.len});
+                                self.reporter.debug("Found union type with {} members", .{ut.types.len}, @src());
                                 if (ut.types.len > 0) {
                                     const first = ut.types[0];
                                     // New: record union member names (lowercase) for this variable (flatten nested unions)
                                     const list = try self.collectUnionMemberNames(ut);
                                     for (list, 0..) |nm, i| {
-                                        self.reporter.debug("Union member {}: {s}", .{ i, nm });
+                                        self.reporter.debug("Union member {}: {s}", .{ i, nm }, @src());
                                     }
                                     try self.variable_union_members.put(decl.name.lexeme, list);
                                     var maybe_index: ?u32 = null;
@@ -719,9 +751,9 @@ pub const HIRGenerator = struct {
                                     }
                                     if (maybe_index) |var_index| {
                                         try self.variable_union_members_by_index.put(var_index, list);
-                                        self.reporter.debug("Recorded union members for variable {s} (index {})", .{ decl.name.lexeme, var_index });
+                                        self.reporter.debug("Recorded union members for variable {s} (index {})", .{ decl.name.lexeme, var_index }, @src());
                                     } else {
-                                        self.reporter.debug("Recorded union members for variable {s}", .{decl.name.lexeme});
+                                        self.reporter.debug("Recorded union members for variable {s}", .{decl.name.lexeme}, @src());
                                     }
 
                                     break :blk switch (first.base) {
@@ -1033,7 +1065,12 @@ pub const HIRGenerator = struct {
                 try self.instructions.append(.{ .Label = .{ .name = success_label, .vm_address = 0 } });
             },
             else => {
-                self.reporter.reportError("Unhandled statement type: {}", .{stmt.data});
+                self.reporter.reportCompileError(
+                    stmt.base.location(),
+                    ErrorCode.UNHANDLED_STATEMENT_TYPE,
+                    "Unhandled statement type: {}",
+                    .{stmt.data},
+                );
             },
         }
     }
@@ -1253,8 +1290,13 @@ pub const HIRGenerator = struct {
                     .LESS_EQUAL => try self.instructions.append(.{ .Compare = .{ .op = .Le, .operand_type = result_type } }),
                     .GREATER_EQUAL => try self.instructions.append(.{ .Compare = .{ .op = .Ge, .operand_type = result_type } }),
                     else => {
-                        self.reporter.reportError("Unsupported binary operator: {}", .{bin.operator.type});
-                        return reporting.ErrorList.UnsupportedOperator;
+                        self.reporter.reportCompileError(
+                            expr.base.location(),
+                            ErrorCode.UNSUPPORTED_OPERATOR,
+                            "Unsupported binary operator: {}",
+                            .{bin.operator.type},
+                        );
+                        return ErrorList.UnsupportedOperator;
                     },
                 }
             },
@@ -1318,8 +1360,13 @@ pub const HIRGenerator = struct {
                     try self.generateExpression(log.right, true);
                     try self.instructions.append(.{ .LogicalOp = .{ .op = .Implies } });
                 } else {
-                    self.reporter.reportError("Unsupported logical operator: {}", .{log.operator.type});
-                    return reporting.ErrorList.UnsupportedOperator;
+                    self.reporter.reportCompileError(
+                        expr.base.location(),
+                        ErrorCode.UNSUPPORTED_OPERATOR,
+                        "Unsupported logical operator: {}",
+                        .{log.operator.type},
+                    );
+                    return ErrorList.UnsupportedOperator;
                 }
             },
 
@@ -1554,8 +1601,13 @@ pub const HIRGenerator = struct {
                     },
                     else => {
                         // Complex callee - for now, treat as unknown
-                        self.reporter.reportError("Unsupported function call type", .{});
-                        return;
+                        self.reporter.reportCompileError(
+                            expr.base.location(),
+                            ErrorCode.UNSUPPORTED_FUNCTION_CALL_TYPE,
+                            "Unsupported function call type",
+                            .{},
+                        );
+                        return ErrorList.UnsupportedFunctionCallType;
                     },
                 }
 
@@ -1568,7 +1620,11 @@ pub const HIRGenerator = struct {
                                 try self.generateExpression(default_expr, true);
                                 arg_emitted_count += 1;
                             } else {
-                                self.reporter.reportCompileError(expr.base.span.start, "No default value for parameter {} in function '{s}'", .{ arg_index, function_name });
+                                const location = if (expr.base.span) |span| span.location else Location{
+                                    .file = "",
+                                    .range = .{ .start_line = 0, .start_col = 0, .end_line = 0, .end_col = 0 },
+                                };
+                                self.reporter.reportCompileError(location, ErrorCode.NO_DEFAULT_VALUE_FOR_PARAMETER, "No default value for parameter {} in function '{s}'", .{ arg_index, function_name });
                                 // Do not emit a value for missing default
                             }
                         } else {
@@ -1585,7 +1641,11 @@ pub const HIRGenerator = struct {
                                 try self.generateExpression(default_expr, true);
                                 arg_emitted_count += 1;
                             } else {
-                                self.reporter.reportCompileError(expr.base.span.start, "No default value for parameter {} in function '{s}'", .{ arg_index, function_name });
+                                const location = if (expr.base.span) |span| span.location else Location{
+                                    .file = "",
+                                    .range = .{ .start_line = 0, .start_col = 0, .end_line = 0, .end_col = 0 },
+                                };
+                                self.reporter.reportCompileError(location, ErrorCode.NO_DEFAULT_VALUE_FOR_PARAMETER, "No default value for parameter {} in function '{s}'", .{ arg_index, function_name });
                             }
                         } else {
                             try self.generateExpression(arg, true);
@@ -1626,7 +1686,7 @@ pub const HIRGenerator = struct {
 
                         // Store the result back to the original variable
                         const var_idx = try self.getOrCreateVariable(target_var);
-                        const expected_type = self.getTrackedVariableType(target_var) orelse .Auto;
+                        const expected_type = self.getTrackedVariableType(target_var) orelse .Unknown;
                         try self.instructions.append(.{ .StoreVar = .{
                             .var_index = var_idx,
                             .var_name = target_var,
@@ -1693,7 +1753,7 @@ pub const HIRGenerator = struct {
                 }
                 if (peek.expr.data == .Variable) {
                     const var_name = peek.expr.data.Variable.lexeme;
-                    self.reporter.debug("Checking union members for variable {s}", .{var_name});
+                    self.reporter.debug("Checking union members for variable {s}", .{var_name}, @src());
                     // Prefer index-based lookup to avoid name collisions; do this for all scopes
                     var maybe_index: ?u32 = null;
                     if (self.current_function != null) {
@@ -1704,12 +1764,12 @@ pub const HIRGenerator = struct {
                     if (maybe_index) |var_index| {
                         if (self.variable_union_members_by_index.get(var_index)) |members2| {
                             union_members = members2;
-                            self.reporter.debug("Found union members for {s} by index: {any}", .{ var_name, members2 });
+                            self.reporter.debug("Found union members for {s} by index: {any}", .{ var_name, members2 }, @src());
                         }
                     }
                     // Regression fix: do NOT fallback to name-based lookup; avoid cross-scope collisions
                     if (union_members == null) {
-                        self.reporter.debug("No union members found for {s}", .{var_name});
+                        self.reporter.debug("No union members found for {s}", .{var_name}, @src());
                     }
                 }
 
@@ -1748,11 +1808,11 @@ pub const HIRGenerator = struct {
                                 .string => .String,
                                 .tetra => .Tetra,
                                 .byte => .Byte,
-                                else => .Auto,
+                                else => .Unknown,
                             },
-                            else => .Auto,
+                            else => .Unknown,
                         };
-                        if (element_type != .Auto) {
+                        if (element_type != .Unknown) {
                             try self.trackArrayElementType(assign.name.lexeme, element_type);
                         }
                     }
@@ -1810,11 +1870,11 @@ pub const HIRGenerator = struct {
                             .string => .String,
                             .tetra => .Tetra,
                             .byte => .Byte,
-                            else => .Auto,
+                            else => .Unknown,
                         },
-                        else => break :blk .Auto,
+                        else => break :blk .Unknown,
                     }
-                } else .Auto;
+                } else .Unknown;
 
                 // Generate ArrayNew instruction
                 try self.instructions.append(.{ .ArrayNew = .{
@@ -1904,7 +1964,7 @@ pub const HIRGenerator = struct {
                     const var_name = assign.array.data.Variable.lexeme;
 
                     const var_idx = try self.getOrCreateVariable(var_name);
-                    const expected_type = self.getTrackedVariableType(var_name) orelse .Auto;
+                    const expected_type = self.getTrackedVariableType(var_name) orelse .Unknown;
 
                     // Duplicate the result to leave it on stack as the expression result
                     if (preserve_result) {
@@ -1933,7 +1993,7 @@ pub const HIRGenerator = struct {
                 if (push.array.data == .Variable) {
                     const var_name = push.array.data.Variable.lexeme;
                     const var_idx = try self.getOrCreateVariable(var_name);
-                    const expected_type = self.getTrackedVariableType(var_name) orelse .Auto;
+                    const expected_type = self.getTrackedVariableType(var_name) orelse .Unknown;
 
                     // Leave result on stack if expression result must be preserved
                     if (preserve_result) {
@@ -2008,8 +2068,22 @@ pub const HIRGenerator = struct {
                     .SLASH_EQUAL => try self.instructions.append(.{ .IntArith = .{ .op = .Div, .overflow_behavior = .Trap } }),
                     .POWER_EQUAL => try self.instructions.append(.{ .IntArith = .{ .op = .Mul, .overflow_behavior = .Wrap } }), // TODO: Implement power operation
                     else => {
-                        self.reporter.reportError("Unsupported compound assignment operator: {}", .{compound.operator.type});
-                        return reporting.ErrorList.UnsupportedOperator;
+                        const location = Location{
+                            .file = compound.operator.file,
+                            .range = .{
+                                .start_line = compound.operator.line,
+                                .start_col = compound.operator.column,
+                                .end_line = compound.operator.line,
+                                .end_col = compound.operator.column + compound.operator.lexeme.len,
+                            },
+                        };
+                        self.reporter.reportCompileError(
+                            location,
+                            ErrorCode.UNSUPPORTED_OPERATOR,
+                            "Unsupported compound assignment operator: {}",
+                            .{compound.operator.type},
+                        );
+                        return ErrorList.UnsupportedOperator;
                     },
                 }
 
@@ -2019,7 +2093,7 @@ pub const HIRGenerator = struct {
                 }
 
                 // Store the result back to the variable
-                const expected_type = self.getTrackedVariableType(compound.name.lexeme) orelse .Auto;
+                const expected_type = self.getTrackedVariableType(compound.name.lexeme) orelse .Unknown;
                 try self.instructions.append(.{ .StoreVar = .{
                     .var_index = var_idx,
                     .var_name = compound.name.lexeme,
@@ -2074,8 +2148,22 @@ pub const HIRGenerator = struct {
                         // The operand is already on the stack
                     },
                     else => {
-                        self.reporter.reportError("Unsupported unary operator: {}", .{unary.operator.type});
-                        return reporting.ErrorList.UnsupportedOperator;
+                        const location = Location{
+                            .file = unary.operator.file,
+                            .range = .{
+                                .start_line = unary.operator.line,
+                                .start_col = unary.operator.column,
+                                .end_line = unary.operator.line,
+                                .end_col = unary.operator.column + unary.operator.lexeme.len,
+                            },
+                        };
+                        self.reporter.reportCompileError(
+                            location,
+                            ErrorCode.UNSUPPORTED_OPERATOR,
+                            "Unsupported unary operator: {}",
+                            .{unary.operator.type},
+                        );
+                        return ErrorList.UnsupportedOperator;
                     },
                 }
             },
@@ -2124,8 +2212,22 @@ pub const HIRGenerator = struct {
                                         },
                                     });
                                 } else {
-                                    self.reporter.reportError("Undefined variable in quantifier condition: {s}", .{var_name});
-                                    return reporting.ErrorList.UndefinedVariable;
+                                    const location = Location{
+                                        .file = var_token.file,
+                                        .range = .{
+                                            .start_line = var_token.line,
+                                            .start_col = var_token.column,
+                                            .end_line = var_token.line,
+                                            .end_col = var_token.column + var_token.lexeme.len,
+                                        },
+                                    };
+                                    self.reporter.reportCompileError(
+                                        location,
+                                        ErrorCode.UNDEFINED_VARIABLE,
+                                        "Undefined variable in quantifier condition: {s}",
+                                        .{var_name},
+                                    );
+                                    return ErrorList.UndefinedVariable;
                                 }
                             },
                             else => {
@@ -2199,8 +2301,22 @@ pub const HIRGenerator = struct {
                                         },
                                     });
                                 } else {
-                                    self.reporter.reportError("Undefined variable in quantifier condition: {s}", .{var_name});
-                                    return reporting.ErrorList.UndefinedVariable;
+                                    const location = Location{
+                                        .file = var_token.file,
+                                        .range = .{
+                                            .start_line = var_token.line,
+                                            .start_col = var_token.column,
+                                            .end_line = var_token.line,
+                                            .end_col = var_token.column + var_token.lexeme.len,
+                                        },
+                                    };
+                                    self.reporter.reportCompileError(
+                                        location,
+                                        ErrorCode.UNDEFINED_VARIABLE,
+                                        "Undefined variable in quantifier condition: {s}",
+                                        .{var_name},
+                                    );
+                                    return ErrorList.UndefinedVariable;
                                 }
                             },
                             else => {
@@ -2499,7 +2615,7 @@ pub const HIRGenerator = struct {
                     if (outer_field.object.data == .Variable) {
                         const var_name = outer_field.object.data.Variable.lexeme;
                         const var_index = try self.getOrCreateVariable(var_name);
-                        const expected_type = self.getTrackedVariableType(var_name) orelse .Auto;
+                        const expected_type = self.getTrackedVariableType(var_name) orelse .Unknown;
                         try self.instructions.append(.{
                             .StoreVar = .{
                                 .var_index = var_index,
@@ -2589,12 +2705,7 @@ pub const HIRGenerator = struct {
                         break :blk "enum"; // Generic enum type
                     },
                     .Function => "function",
-                    .Auto => blk: {
-                        // ERROR: Unresolved auto type at runtime!
-                        const error_msg = try std.fmt.allocPrint(self.allocator, "TypeOf failed to resolve type for expression: {s}", .{@tagName(expr_to_check.data)});
-                        self.reporter.reportError("{s}", .{error_msg});
-                        break :blk "auto"; // Still return auto for now, but this should be caught
-                    },
+                    .Unknown => "unknown",
                 };
 
                 const type_value = HIRValue{ .string = type_name };
@@ -2753,7 +2864,7 @@ pub const HIRGenerator = struct {
                     .Map = .{
                         .entries = dummy_entries,
                         .key_type = .String, // Assume string keys for now
-                        .value_type = .Auto, // Will be inferred from values
+                        .value_type = .Unknown, // Will be inferred from values
                     },
                 };
 
@@ -2915,7 +3026,7 @@ pub const HIRGenerator = struct {
                 }
 
                 // Determine/track the element type if possible
-                var elem_type: HIRType = .Auto;
+                var elem_type: HIRType = .Unknown;
                 if (!is_string_container and foreach_expr.array.data == .Variable) {
                     if (self.getTrackedArrayElementType(foreach_expr.array.data.Variable.lexeme)) |tracked_elem| {
                         elem_type = tracked_elem;
@@ -2926,7 +3037,7 @@ pub const HIRGenerator = struct {
                 // Store to loop item variable
                 const item_name = foreach_expr.item_name.lexeme;
                 const item_idx = try self.getOrCreateVariable(item_name);
-                if (elem_type != .Auto) try self.trackVariableType(item_name, elem_type);
+                if (elem_type != .Unknown) try self.trackVariableType(item_name, elem_type);
                 try self.instructions.append(.{ .StoreVar = .{ .var_index = item_idx, .var_name = item_name, .scope_kind = .Local, .module_context = null, .expected_type = elem_type } });
 
                 // Generate loop body statements
@@ -3326,7 +3437,7 @@ pub const HIRGenerator = struct {
             .tetra => .Tetra,
             .byte => .Byte,
             .nothing => .Nothing,
-            else => .Auto,
+            else => .Unknown,
         };
     }
 
@@ -3344,19 +3455,19 @@ pub const HIRGenerator = struct {
                 }
 
                 // Otherwise look up the variable's tracked type
-                const var_type = self.variable_types.get(var_token.lexeme) orelse .Auto;
+                const var_type = self.variable_types.get(var_token.lexeme) orelse .Unknown;
                 return var_type;
             },
             .Binary => |binary| {
                 // Simple type inference for binary operations
-                const left_type = if (binary.left) |left| self.inferTypeFromExpression(left) else .Auto;
-                const right_type = if (binary.right) |right| self.inferTypeFromExpression(right) else .Auto;
+                const left_type = if (binary.left) |left| self.inferTypeFromExpression(left) else .Unknown;
+                const right_type = if (binary.right) |right| self.inferTypeFromExpression(right) else .Unknown;
                 return switch (binary.operator.type) {
                     .EQUALITY, .BANG_EQUAL, .LESS, .LESS_EQUAL, .GREATER, .GREATER_EQUAL => .Tetra,
                     .AND, .OR, .XOR => .Tetra, // Logical operations return tetra values
                     .PLUS, .MINUS, .ASTERISK, .SLASH, .MODULO => {
                         // Arithmetic operations - return the promoted type
-                        if (left_type == right_type and left_type != .Auto) return left_type;
+                        if (left_type == right_type and left_type != .Unknown) return left_type;
                         if ((left_type == .Int and right_type == .Float) or (left_type == .Float and right_type == .Int)) {
                             return .Float;
                         }
@@ -3418,7 +3529,7 @@ pub const HIRGenerator = struct {
                     },
                     else => {},
                 }
-                return .Auto; // Default for unrecognized function calls
+                return .Unknown; // Default for unrecognized function calls
             },
             .If => |if_expr| {
                 // If both branches have the same type, return that
@@ -3430,7 +3541,7 @@ pub const HIRGenerator = struct {
                     }
                     return then_type;
                 }
-                return .Auto;
+                return .Unknown;
             },
             .MethodCall => |m| {
                 // Emit HIR for compiler methods
@@ -3478,7 +3589,7 @@ pub const HIRGenerator = struct {
                     self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } }) catch {};
                     return .Nothing;
                 };
-                return .Auto;
+                return .Unknown;
             },
             .Match => .String, // Match expressions typically return strings in this codebase
             .StructLiteral => .Struct,
@@ -3499,7 +3610,7 @@ pub const HIRGenerator = struct {
                     if (std.fmt.parseInt(i32, field.field.lexeme, 10)) |_| {
                         return .String;
                     } else |_| {
-                        return .Auto; // Invalid string operation
+                        return .Unknown; // Invalid string operation
                     }
                 }
 
@@ -3551,7 +3662,7 @@ pub const HIRGenerator = struct {
                     }
                 }
 
-                return .Auto; // Default for unknown object types
+                return .Unknown; // Default for unknown object types
             },
             .Exists, .ForAll => .Tetra, // Quantifiers return tetra values
             .Logical => .Tetra, // Logical operations (↔, ⊕, ∧, ∨, ↑, ↓, →) return tetra values
@@ -3607,7 +3718,6 @@ pub const HIRGenerator = struct {
             .Enum => "enum",
             .Map => "map",
             .Function => "function",
-            .Alias => "alias",
             .Custom => "custom",
             .Union => "union",
         };
@@ -3762,7 +3872,7 @@ pub const HIRGenerator = struct {
         for (fields, 0..) |field_name, index| {
             struct_fields[index] = CustomTypeInfo.StructField{
                 .name = try self.allocator.dupe(u8, field_name),
-                .field_type = .Auto, // Will be inferred at runtime
+                .field_type = .Unknown, // Will be inferred at runtime
                 .index = @intCast(index),
                 .custom_type_name = null,
             };
@@ -3979,7 +4089,7 @@ pub const HIRGenerator = struct {
                 .Enum => .Enum,
             };
         }
-        return .Auto; // Unresolved
+        return .Unknown; // Unresolved
     }
 
     /// Build a full variable path for peek expressions (e.g., "mike.person.age")

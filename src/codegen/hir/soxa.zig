@@ -5,6 +5,9 @@ const TokenLiteral = @import("../../types/types.zig").TokenLiteral;
 const instructions = @import("../../interpreter/instructions.zig");
 const reporting = @import("../../utils/reporting.zig");
 const Reporting = reporting;
+const Errors = @import("../../utils/errors.zig");
+const ErrorList = Errors.ErrorList;
+const ErrorCode = Errors.ErrorCode;
 const SoxaTypes = @import("soxa_types.zig");
 const HIRType = SoxaTypes.HIRType;
 const HIRProgram = SoxaTypes.HIRProgram;
@@ -90,7 +93,7 @@ pub fn translateToVMBytecode(program: *HIRProgram, allocator: std.mem.Allocator,
                 try bytecode.append(@intFromEnum(instructions.OpCode.OP_JUMP));
                 const target_addr = label_addresses.get(j.label) orelse {
                     reporter.reportError("Undefined label: {s}", .{j.label});
-                    return reporting.ErrorList.UndefinedVariable;
+                    return ErrorList.UndefinedVariable;
                 };
                 const current_addr = @as(u32, @intCast(bytecode.items.len - 1));
                 const offset = target_addr - current_addr;
@@ -100,7 +103,7 @@ pub fn translateToVMBytecode(program: *HIRProgram, allocator: std.mem.Allocator,
                 try bytecode.append(@intFromEnum(instructions.OpCode.OP_JUMP_IF_FALSE));
                 const target_addr = label_addresses.get(j.label_false) orelse {
                     reporter.reportError("Undefined label: {s}", .{j.label_false});
-                    return reporting.ErrorList.UndefinedVariable;
+                    return ErrorList.UndefinedVariable;
                 };
                 const current_addr = @as(u32, @intCast(bytecode.items.len - 1));
                 const offset = target_addr - current_addr;
@@ -137,7 +140,7 @@ pub fn translateToVMBytecode(program: *HIRProgram, allocator: std.mem.Allocator,
             },
             else => {
                 reporter.reportError("Unhandled HIR instruction for VM translation: {}", .{instruction});
-                return reporting.ErrorList.UnsupportedStatement;
+                return ErrorList.UnsupportedStatement;
             },
         }
     }
@@ -240,8 +243,8 @@ pub fn validateSoxaCache(soxa_path: []const u8, source_path: []const u8, allocat
 
 pub fn writeSoxaFile(program: *HIRProgram, file_path: []const u8, source_path: []const u8, allocator: std.mem.Allocator) !void {
     const file = std.fs.cwd().createFile(file_path, .{}) catch |err| switch (err) {
-        error.AccessDenied => return reporting.ErrorList.AccessDenied,
-        error.FileNotFound => return reporting.ErrorList.FileNotFound,
+        error.AccessDenied => return ErrorList.AccessDenied,
+        error.FileNotFound => return ErrorList.FileNotFound,
         else => return err,
     };
     defer file.close();
@@ -292,8 +295,8 @@ pub fn writeSoxaFile(program: *HIRProgram, file_path: []const u8, source_path: [
 
 pub fn readSoxaFile(file_path: []const u8, allocator: std.mem.Allocator) !HIRProgram {
     const file = std.fs.cwd().openFile(file_path, .{}) catch |err| switch (err) {
-        error.FileNotFound => return reporting.ErrorList.FileNotFound,
-        error.AccessDenied => return reporting.ErrorList.AccessDenied,
+        error.FileNotFound => return ErrorList.FileNotFound,
+        error.AccessDenied => return ErrorList.AccessDenied,
         else => return err,
     };
     defer file.close();
@@ -429,7 +432,7 @@ fn readHIRValue(reader: anytype, allocator: std.mem.Allocator) !HIRValue {
             };
         },
         else => {
-            return reporting.ErrorList.InvalidArgument;
+            return ErrorList.InvalidArgument;
         },
     };
 }
@@ -585,7 +588,7 @@ fn writeHIRInstruction(writer: anytype, instruction: HIRInstruction, allocator: 
         },
 
         else => {
-            return reporting.ErrorList.UnsupportedStatement;
+            return ErrorList.UnsupportedStatement;
         },
     }
 }
@@ -763,7 +766,7 @@ fn readHIRInstruction(reader: anytype, allocator: std.mem.Allocator) !HIRInstruc
         },
 
         else => {
-            return reporting.ErrorList.UnsupportedStatement;
+            return ErrorList.UnsupportedStatement;
         },
     };
 }
@@ -815,13 +818,13 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
         .Peek => |i| {
             if (i.name) |name| {
                 if (i.location) |location| {
-                    try writer.print("    Peek \"{s}\" {s} @{s}:{}:{}", .{ name, @tagName(i.value_type), location.file, location.line, location.column });
+                    try writer.print("    Peek \"{s}\" {s} @{s}:{}:{}", .{ name, @tagName(i.value_type), location.file, location.range.start_line, location.range.start_col });
                 } else {
                     try writer.print("    Peek \"{s}\" {s}", .{ name, @tagName(i.value_type) });
                 }
             } else {
                 if (i.location) |location| {
-                    try writer.print("    Peek {s} @{s}:{}:{}", .{ @tagName(i.value_type), location.file, location.line, location.column });
+                    try writer.print("    Peek {s} @{s}:{}:{}", .{ @tagName(i.value_type), location.file, location.range.start_line, location.range.start_col });
                 } else {
                     try writer.print("    Peek {s}", .{@tagName(i.value_type)});
                 }
@@ -840,7 +843,7 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
         },
 
         .AssertFail => |a| {
-            try writer.print("    AssertFail @{s}:{}:{}{s}        ; Assertion failure\n", .{ a.location.file, a.location.line, a.location.column, if (a.has_message) " with message" else "" });
+            try writer.print("    AssertFail @{s}:{}:{}{s}        ; Assertion failure\n", .{ a.location.file, a.location.range.start_line, a.location.range.start_col, if (a.has_message) " with message" else "" });
         },
 
         .Halt => try writer.print("    Halt                        ; Program termination\n", .{}),
@@ -880,7 +883,7 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
             }
             try writer.writeAll("]");
             if (i.location) |loc| {
-                try writer.print(" @{s}:{d}:{d}", .{ loc.file, loc.line, loc.column });
+                try writer.print(" @{s}:{d}:{d}", .{ loc.file, loc.range.start_line, loc.range.start_col });
             }
             try writer.writeAll("         ; Peek struct\n");
         },

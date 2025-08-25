@@ -8,7 +8,9 @@ const statement_parser = @import("./statement_parser.zig");
 const declaration_parser = @import("./declaration_parser.zig");
 const Reporting = @import("../utils/reporting.zig");
 const Reporter = Reporting.Reporter;
-const ErrorList = Reporting.ErrorList;
+const Errors = @import("../utils/errors.zig");
+const ErrorList = Errors.ErrorList;
+const ErrorCode = Errors.ErrorCode;
 const printTemp = std.debug.print;
 
 pub fn parseExpression(self: *Parser) ErrorList!?*ast.Expr {
@@ -754,15 +756,9 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
                 },
             };
         } else {
-            // 5. Unknown Identifier -> Error
-            var reporter = Reporter.init(false);
-            reporter.reportCompileError(.{ .file = self.current_file, .line = type_token.line, .column = type_token.column }, "Unknown type: '{s}'", .{type_name});
             return error.UnknownType;
         }
     } else {
-        // 6. Not a basic type, not array syntax, not struct syntax, not an identifier -> Error
-        var reporter = Reporter.init(false);
-        reporter.reportCompileError(.{ .file = self.current_file, .line = type_token.line, .column = type_token.column }, "Expected type identifier, found {s}", .{@tagName(type_token.type)});
         return error.ExpectedType;
     }
 
@@ -909,12 +905,16 @@ pub fn parseIfExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
     } else {
         condition.deinit(self.allocator);
         self.allocator.destroy(condition);
-        const location: Reporter.Location = .{
+        const location: Reporting.Location = .{
             .file = self.current_file,
-            .line = self.peek().line,
-            .column = self.peek().column,
+            .range = .{
+                .start_line = self.peek().line,
+                .start_col = self.peek().column,
+                .end_line = self.peek().line,
+                .end_col = self.peek().column,
+            },
         };
-        self.reporter.reportCompileError(location, "If must be followed by then (expression) or brace (statement block)", .{});
+        self.reporter.reportCompileError(location, ErrorCode.EXPECTED_THEN, "Expected then", .{});
         return error.ExpectedThen;
     }
 

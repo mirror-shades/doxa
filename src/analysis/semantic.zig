@@ -11,7 +11,11 @@ const import_parser = @import("../parser/import_parser.zig");
 
 const Reporting = @import("../utils/reporting.zig");
 const Reporter = Reporting.Reporter;
-const ErrorList = Reporting.ErrorList;
+const Location = Reporting.Location;
+
+const Errors = @import("../utils/errors.zig");
+const ErrorList = Errors.ErrorList;
+const ErrorCode = Errors.ErrorCode;
 
 const Types = @import("../types/types.zig");
 const TokenLiteral = Types.TokenLiteral;
@@ -28,6 +32,19 @@ const HIRType = @import("../codegen/hir/soxa_types.zig").HIRType;
 //======================================================================
 
 const NodeId = u32; // Or whatever your AST uses
+
+/// Helper function to get location from AST Base, handling optional spans
+fn getLocationFromBase(base: ast.Base) Reporting.Location {
+    if (base.span) |span| {
+        return span.location;
+    } else {
+        // Synthetic node - return default location
+        return .{
+            .file = "",
+            .range = .{ .start_line = 0, .start_col = 0, .end_line = 0, .end_col = 0 },
+        };
+    }
+}
 
 pub const SemanticAnalyzer = struct {
     in_loop_scope: bool = false,
@@ -271,7 +288,6 @@ pub const SemanticAnalyzer = struct {
                 .Enum => .Enum,
                 .Function => .Function,
                 .Union => .Union,
-                .Alias => .Auto,
             };
             var ctn: ?[]const u8 = null;
             if (field.type_info.base == .Custom and field.type_info.custom_type != null) {
@@ -346,7 +362,7 @@ pub const SemanticAnalyzer = struct {
             .Enum => .Enum,
             .Function => .Function,
             .Union => .Union,
-            .Auto => .Nothing, // Auto types default to Nothing in semantic analysis
+            .Unknown => .Nothing, // TODO: This feels hacky
         };
     }
 
@@ -366,8 +382,7 @@ pub const SemanticAnalyzer = struct {
             .Enum => .Enum,
             .Function => .Function,
             .Custom => .Struct, // Custom types are typically structs
-            .Alias => .Auto, // Aliases need to be resolved
-            .Union => .Auto, // Unions need special handling
+            .Union => .Union, // Unions need special handling
         };
     }
 
@@ -413,7 +428,6 @@ pub const SemanticAnalyzer = struct {
                     .Enum => .Enum,
                     .Function => .Function,
                     .Union => .Union,
-                    .Alias => .Auto,
                 };
                 converted_fields[i] = .{
                     .name = field.name,
@@ -568,8 +582,10 @@ pub const SemanticAnalyzer = struct {
                         type_info.is_mutable = decl.type_info.is_mutable;
                     } else {
                         // No type annotation and no initializer - this is invalid
+                        const location = getLocationFromBase(stmt.base);
                         self.reporter.reportCompileError(
-                            stmt.base.span.start,
+                            location,
+                            ErrorCode.VARIABLE_DECLARATION_MISSING_ANNOTATION,
                             "Variable declaration requires either type annotation (::) or initializer",
                             .{},
                         );
@@ -601,7 +617,8 @@ pub const SemanticAnalyzer = struct {
                     // ENFORCE: nothing types must be const
                     if (type_info.base == .Nothing and type_info.is_mutable) {
                         self.reporter.reportCompileError(
-                            stmt.base.span.start,
+                            getLocationFromBase(stmt.base),
+                            ErrorCode.NOTHING_TYPE_MUST_BE_CONST,
                             "Nothing type variables must be declared as 'const'",
                             .{},
                         );
@@ -618,7 +635,8 @@ pub const SemanticAnalyzer = struct {
                     ) catch |err| {
                         if (err == error.DuplicateVariableName) {
                             self.reporter.reportCompileError(
-                                stmt.base.span.start,
+                                getLocationFromBase(stmt.base),
+                                ErrorCode.DUPLICATE_VARIABLE,
                                 "Duplicate variable name '{s}' in current scope",
                                 .{decl.name.lexeme},
                             );
@@ -654,7 +672,8 @@ pub const SemanticAnalyzer = struct {
                     ) catch |err| {
                         if (err == error.DuplicateVariableName) {
                             self.reporter.reportCompileError(
-                                stmt.base.span.start,
+                                getLocationFromBase(stmt.base),
+                                ErrorCode.DUPLICATE_VARIABLE,
                                 "Duplicate enum name '{s}' in current scope",
                                 .{enum_decl.name.lexeme},
                             );
@@ -711,7 +730,8 @@ pub const SemanticAnalyzer = struct {
                             ) catch |err| {
                                 if (err == error.DuplicateVariableName) {
                                     self.reporter.reportCompileError(
-                                        stmt.base.span.start,
+                                        getLocationFromBase(stmt.base),
+                                        ErrorCode.DUPLICATE_VARIABLE,
                                         "Duplicate struct name '{s}' in current scope",
                                         .{struct_decl.name.lexeme},
                                     );
@@ -729,7 +749,7 @@ pub const SemanticAnalyzer = struct {
                 },
                 .Import => |import_info| {
                     // NEW: Validate import
-                    try self.validateImport(import_info, stmt.base.span);
+                    try self.validateImport(import_info, .{ .location = getLocationFromBase(stmt.base) });
                 },
                 // TODO: Handle other declarations...
                 else => {},
@@ -751,7 +771,6 @@ pub const SemanticAnalyzer = struct {
             .Nothing => .NOTHING,
             .Map => .MAP,
             .Custom => .CUSTOM,
-            .Alias => .ALIAS,
             .Enum => .ENUM,
             .Union => .UNION,
         };
@@ -782,7 +801,8 @@ pub const SemanticAnalyzer = struct {
                             } else {
                                 // No type annotation and no initializer - this is invalid
                                 self.reporter.reportCompileError(
-                                    stmt.base.span.start,
+                                    getLocationFromBase(stmt.base),
+                                    ErrorCode.VARIABLE_DECLARATION_MISSING_ANNOTATION,
                                     "Variable declaration requires either type annotation (::) or initializer",
                                     .{},
                                 );
@@ -820,7 +840,8 @@ pub const SemanticAnalyzer = struct {
                             ) catch |err| {
                                 if (err == error.DuplicateVariableName) {
                                     self.reporter.reportCompileError(
-                                        stmt.base.span.start,
+                                        getLocationFromBase(stmt.base),
+                                        ErrorCode.DUPLICATE_VARIABLE,
                                         "Duplicate variable name '{s}' in current scope",
                                         .{decl.name.lexeme},
                                     );
@@ -841,7 +862,7 @@ pub const SemanticAnalyzer = struct {
                             // Resolve the declared type first, then create a mutable copy for unifyTypes
                             const resolved_type = try self.resolveTypeInfo(decl.type_info);
                             var decl_type_copy = resolved_type;
-                            try self.unifyTypes(&decl_type_copy, init_type, stmt.base.span);
+                            try self.unifyTypes(&decl_type_copy, init_type, .{ .location = getLocationFromBase(stmt.base) });
                         }
                     }
                 },
@@ -858,7 +879,7 @@ pub const SemanticAnalyzer = struct {
                     if (expr) |expression| {
                         // Check if this is a ForEach expression that needs special handling
                         if (expression.data == .ForEach) {
-                            try self.validateForEachExpression(expression.data.ForEach, stmt.base.span);
+                            try self.validateForEachExpression(expression.data.ForEach, .{ .location = getLocationFromBase(stmt.base) });
                         } else {
                             // Validate the expression, which will trigger type checking for assignments
                             _ = try self.inferTypeFromExpr(expression);
@@ -875,10 +896,10 @@ pub const SemanticAnalyzer = struct {
                     // Function declarations are already validated in collectDeclarations
                     // Just validate the body here with the stored return type
                     if (self.function_return_types.get(stmt.base.id)) |return_type| {
-                        try self.validateFunctionBody(func, stmt.base.span, return_type.*);
+                        try self.validateFunctionBody(func, .{ .location = getLocationFromBase(stmt.base) }, return_type.*);
                     } else {
                         // Fallback to original return type if not found
-                        try self.validateFunctionBody(func, stmt.base.span, func.return_type_info);
+                        try self.validateFunctionBody(func, .{ .location = getLocationFromBase(stmt.base) }, func.return_type_info);
                     }
                 },
                 // TODO: Handle other statements...
@@ -930,7 +951,8 @@ pub const SemanticAnalyzer = struct {
                                     try type_list.appendSlice(@tagName(m.base));
                                 }
                                 self.reporter.reportCompileError(
-                                    span.start,
+                                    span.location,
+                                    ErrorCode.TYPE_MISMATCH,
                                     "Type mismatch: expected union ({s}), got {s}",
                                     .{ type_list.items, @tagName(act_member.base) },
                                 );
@@ -961,7 +983,8 @@ pub const SemanticAnalyzer = struct {
                         try type_list.appendSlice(@tagName(member_type.base));
                     }
                     self.reporter.reportCompileError(
-                        span.start,
+                        span.location,
+                        ErrorCode.TYPE_MISMATCH,
                         "Type mismatch: expected union ({s}), got {s}",
                         .{ type_list.items, @tagName(actual.base) },
                     );
@@ -1005,7 +1028,8 @@ pub const SemanticAnalyzer = struct {
             }
 
             self.reporter.reportCompileError(
-                span.start,
+                span.location,
+                ErrorCode.TYPE_MISMATCH,
                 "Type mismatch: expected {s}, got {s}",
                 .{ @tagName(expected.base), @tagName(actual.base) },
             );
@@ -1026,7 +1050,8 @@ pub const SemanticAnalyzer = struct {
                     if (actual.struct_fields) |act_fields| {
                         if (exp_fields.len != act_fields.len) {
                             self.reporter.reportCompileError(
-                                span.start,
+                                span.location,
+                                ErrorCode.STRUCT_FIELD_COUNT_MISMATCH,
                                 "Struct field count mismatch: expected {}, got {}",
                                 .{ exp_fields.len, act_fields.len },
                             );
@@ -1036,7 +1061,8 @@ pub const SemanticAnalyzer = struct {
                         for (exp_fields, act_fields) |exp_field, act_field| {
                             if (!std.mem.eql(u8, exp_field.name, act_field.name)) {
                                 self.reporter.reportCompileError(
-                                    span.start,
+                                    span.location,
+                                    ErrorCode.STRUCT_FIELD_NAME_MISMATCH,
                                     "Struct field name mismatch: expected '{s}', got '{s}'",
                                     .{ exp_field.name, act_field.name },
                                 );
@@ -1097,7 +1123,8 @@ pub const SemanticAnalyzer = struct {
                     // Division always returns float
                     if (left_type.base != .Int and left_type.base != .Float and left_type.base != .Byte) {
                         self.reporter.reportCompileError(
-                            expr.base.span.start,
+                            getLocationFromBase(expr.base),
+                            ErrorCode.DIVISION_REQUIRES_NUMERIC_OPERANDS,
                             "Division requires numeric operands, got {s}",
                             .{@tagName(left_type.base)},
                         );
@@ -1107,7 +1134,8 @@ pub const SemanticAnalyzer = struct {
                     }
                     if (right_type.base != .Int and right_type.base != .Float and right_type.base != .Byte) {
                         self.reporter.reportCompileError(
-                            expr.base.span.start,
+                            getLocationFromBase(expr.base),
+                            ErrorCode.DIVISION_REQUIRES_NUMERIC_OPERANDS,
                             "Division requires numeric operands, got {s}",
                             .{@tagName(right_type.base)},
                         );
@@ -1122,7 +1150,8 @@ pub const SemanticAnalyzer = struct {
                         (right_type.base != .Int and right_type.base != .Byte))
                     {
                         self.reporter.reportCompileError(
-                            expr.base.span.start,
+                            getLocationFromBase(expr.base),
+                            ErrorCode.MODULO_REQUIRES_INTEGER_OR_BYTE_OPERANDS,
                             "Modulo requires integer or byte operands",
                             .{},
                         );
@@ -1146,7 +1175,8 @@ pub const SemanticAnalyzer = struct {
                             (right_type.base != .Int and right_type.base != .Float and right_type.base != .Byte))
                         {
                             self.reporter.reportCompileError(
-                                expr.base.span.start,
+                                getLocationFromBase(expr.base),
+                                ErrorCode.ARITHMETIC_REQUIRES_NUMERIC_OPERANDS,
                                 "Arithmetic requires numeric operands",
                                 .{},
                             );
@@ -1170,7 +1200,8 @@ pub const SemanticAnalyzer = struct {
                         (right_type.base != .Int and right_type.base != .Float and right_type.base != .Byte))
                     {
                         self.reporter.reportCompileError(
-                            expr.base.span.start,
+                            getLocationFromBase(expr.base),
+                            ErrorCode.ARITHMETIC_REQUIRES_NUMERIC_OPERANDS,
                             "Arithmetic requires numeric operands",
                             .{},
                         );
@@ -1193,7 +1224,8 @@ pub const SemanticAnalyzer = struct {
                         (right_type.base != .Int and right_type.base != .Float and right_type.base != .Byte))
                     {
                         self.reporter.reportCompileError(
-                            expr.base.span.start,
+                            getLocationFromBase(expr.base),
+                            ErrorCode.EXPONENTIATION_REQUIRES_NUMERIC_OPERANDS,
                             "Exponentiation requires numeric operands",
                             .{},
                         );
@@ -1223,7 +1255,8 @@ pub const SemanticAnalyzer = struct {
                     } else {
                         // Incompatible types for comparison
                         self.reporter.reportCompileError(
-                            expr.base.span.start,
+                            getLocationFromBase(expr.base),
+                            ErrorCode.INCOMPATIBLE_TYPES_FOR_COMPARISON,
                             "Cannot compare {s} with {s}",
                             .{ @tagName(left_type.base), @tagName(right_type.base) },
                         );
@@ -1232,19 +1265,19 @@ pub const SemanticAnalyzer = struct {
                         return type_info;
                     }
                 } else {
-                    // Default case: unify types and use left type
-                    try self.unifyTypes(left_type, right_type, expr.base.span);
+                    // Default case: location is cast to the AST type
+                    try self.unifyTypes(left_type, right_type, .{ .location = getLocationFromBase(expr.base) });
                     type_info.* = left_type.*;
                 }
             },
             .Variable => |var_token| {
-                // Look up in current and parent scopes
                 if (self.lookupVariable(var_token.lexeme)) |variable| {
                     if (self.memory.scope_manager.value_storage.get(variable.storage_id)) |storage| {
                         type_info.* = storage.type_info.*;
                     } else {
                         self.reporter.reportCompileError(
-                            expr.base.span.start,
+                            getLocationFromBase(expr.base),
+                            ErrorCode.INTERNAL_ERROR,
                             "Internal error: Variable storage not found",
                             .{},
                         );
@@ -1253,7 +1286,8 @@ pub const SemanticAnalyzer = struct {
                     }
                 } else {
                     self.reporter.reportCompileError(
-                        expr.base.span.start,
+                        getLocationFromBase(expr.base),
+                        ErrorCode.VARIABLE_NOT_FOUND,
                         "Undefined variable",
                         .{},
                     );
@@ -1300,7 +1334,8 @@ pub const SemanticAnalyzer = struct {
                                 type_info.* = .{ .base = .Int };
                             } else {
                                 self.reporter.reportCompileError(
-                                    expr.base.span.start,
+                                    getLocationFromBase(expr.base),
+                                    ErrorCode.UNKNOWN_METHOD,
                                     "Unknown array method '{s}'",
                                     .{method_name},
                                 );
@@ -1316,7 +1351,8 @@ pub const SemanticAnalyzer = struct {
                                 type_info.* = .{ .base = .Array };
                             } else {
                                 self.reporter.reportCompileError(
-                                    expr.base.span.start,
+                                    getLocationFromBase(expr.base),
+                                    ErrorCode.UNKNOWN_METHOD,
                                     "Unknown string method '{s}'",
                                     .{method_name},
                                 );
@@ -1332,7 +1368,8 @@ pub const SemanticAnalyzer = struct {
                                 type_info.* = .{ .base = .Nothing };
                             } else {
                                 self.reporter.reportCompileError(
-                                    expr.base.span.start,
+                                    getLocationFromBase(expr.base),
+                                    ErrorCode.UNKNOWN_METHOD,
                                     "Unknown map method '{s}'",
                                     .{method_name},
                                 );
@@ -1342,7 +1379,8 @@ pub const SemanticAnalyzer = struct {
                         },
                         else => {
                             self.reporter.reportCompileError(
-                                expr.base.span.start,
+                                getLocationFromBase(expr.base),
+                                ErrorCode.CANNOT_CALL_METHOD_ON_TYPE,
                                 "Cannot call method '{s}' on type {s}",
                                 .{ method_name, @tagName(object_type.base) },
                             );
@@ -1363,7 +1401,8 @@ pub const SemanticAnalyzer = struct {
                             }
                             if (provided_arg_count > expected_arg_count) {
                                 self.reporter.reportCompileError(
-                                    expr.base.span.start,
+                                    getLocationFromBase(expr.base),
+                                    ErrorCode.ARGUMENT_COUNT_MISMATCH,
                                     "Argument count mismatch: expected at most {}, got {}",
                                     .{ expected_arg_count, provided_arg_count },
                                 );
@@ -1382,7 +1421,7 @@ pub const SemanticAnalyzer = struct {
                                 if (param_index >= expected_arg_count) break;
                                 const arg_type = try self.inferTypeFromExpr(arg_expr_it);
                                 if (func_type.params[param_index].base != .Nothing) {
-                                    try self.unifyTypes(&func_type.params[param_index], arg_type, expr.base.span);
+                                    try self.unifyTypes(&func_type.params[param_index], arg_type, .{ .location = getLocationFromBase(expr.base) });
                                 }
                                 param_index += 1;
                             }
@@ -1391,7 +1430,8 @@ pub const SemanticAnalyzer = struct {
                             type_info.* = func_type.return_type.*;
                         } else {
                             self.reporter.reportCompileError(
-                                expr.base.span.start,
+                                getLocationFromBase(expr.base),
+                                ErrorCode.INVALID_FUNCTION_TYPE,
                                 "Function type has no return type information",
                                 .{},
                             );
@@ -1400,7 +1440,8 @@ pub const SemanticAnalyzer = struct {
                         }
                     } else {
                         self.reporter.reportCompileError(
-                            expr.base.span.start,
+                            getLocationFromBase(expr.base),
+                            ErrorCode.INVALID_FUNCTION_CALL,
                             "Cannot call non-function type {s}",
                             .{@tagName(callee_type.base)},
                         );
@@ -1417,7 +1458,8 @@ pub const SemanticAnalyzer = struct {
                     // Array indexing
                     if (index_type.base != .Int) {
                         self.reporter.reportCompileError(
-                            expr.base.span.start,
+                            getLocationFromBase(expr.base),
+                            ErrorCode.INVALID_ARRAY_INDEX_TYPE,
                             "Array index must be integer, got {s}",
                             .{@tagName(index_type.base)},
                         );
@@ -1435,7 +1477,8 @@ pub const SemanticAnalyzer = struct {
                     // Map indexing
                     if (index_type.base != .String) {
                         self.reporter.reportCompileError(
-                            expr.base.span.start,
+                            getLocationFromBase(expr.base),
+                            ErrorCode.INVALID_MAP_KEY_TYPE,
                             "Map key must be string, got {s}",
                             .{@tagName(index_type.base)},
                         );
@@ -1450,7 +1493,8 @@ pub const SemanticAnalyzer = struct {
                     // String indexing
                     if (index_type.base != .Int) {
                         self.reporter.reportCompileError(
-                            expr.base.span.start,
+                            getLocationFromBase(expr.base),
+                            ErrorCode.INVALID_STRING_INDEX_TYPE,
                             "String index must be integer, got {s}",
                             .{@tagName(index_type.base)},
                         );
@@ -1462,7 +1506,8 @@ pub const SemanticAnalyzer = struct {
                     type_info.* = .{ .base = .String }; // String indexing returns a character (string)
                 } else {
                     self.reporter.reportCompileError(
-                        expr.base.span.start,
+                        getLocationFromBase(expr.base),
+                        ErrorCode.CANNOT_INDEX_TYPE,
                         "Cannot index non-array/map/string type {s}",
                         .{@tagName(array_type.base)},
                     );
@@ -1501,7 +1546,8 @@ pub const SemanticAnalyzer = struct {
                             }
                         } else {
                             self.reporter.reportCompileError(
-                                expr.base.span.start,
+                                getLocationFromBase(expr.base),
+                                ErrorCode.FIELD_NOT_FOUND,
                                 "Field '{s}' not found in struct",
                                 .{field.field.lexeme},
                             );
@@ -1511,7 +1557,8 @@ pub const SemanticAnalyzer = struct {
                         }
                     } else {
                         self.reporter.reportCompileError(
-                            expr.base.span.start,
+                            getLocationFromBase(expr.base),
+                            ErrorCode.STRUCT_HAS_NO_FIELDS,
                             "Struct has no fields defined",
                             .{},
                         );
@@ -1525,7 +1572,7 @@ pub const SemanticAnalyzer = struct {
                         // First check if this is a module namespace
                         if (self.isModuleNamespace(custom_type_name)) {
                             // Handle module namespace access
-                            return self.handleModuleFieldAccess(custom_type_name, field.field.lexeme, expr.base.span);
+                            return self.handleModuleFieldAccess(custom_type_name, field.field.lexeme, .{ .location = getLocationFromBase(expr.base) });
                         }
 
                         if (self.custom_types.get(custom_type_name)) |custom_type| {
@@ -1544,7 +1591,8 @@ pub const SemanticAnalyzer = struct {
                                         }
                                     } else {
                                         self.reporter.reportCompileError(
-                                            expr.base.span.start,
+                                            getLocationFromBase(expr.base),
+                                            ErrorCode.FIELD_NOT_FOUND,
                                             "Field '{s}' not found in struct '{s}'",
                                             .{ field.field.lexeme, custom_type_name },
                                         );
@@ -1554,7 +1602,8 @@ pub const SemanticAnalyzer = struct {
                                     }
                                 } else {
                                     self.reporter.reportCompileError(
-                                        expr.base.span.start,
+                                        getLocationFromBase(expr.base),
+                                        ErrorCode.STRUCT_HAS_NO_FIELDS,
                                         "Struct '{s}' has no fields defined",
                                         .{custom_type_name},
                                     );
@@ -1568,7 +1617,8 @@ pub const SemanticAnalyzer = struct {
                             }
                         } else {
                             self.reporter.reportCompileError(
-                                expr.base.span.start,
+                                getLocationFromBase(expr.base),
+                                ErrorCode.TYPE_MISMATCH,
                                 "Undefined type '{s}'",
                                 .{custom_type_name},
                             );
@@ -1586,7 +1636,8 @@ pub const SemanticAnalyzer = struct {
                     type_info.* = .{ .base = .Enum };
                 } else {
                     self.reporter.reportCompileError(
-                        expr.base.span.start,
+                        getLocationFromBase(expr.base),
+                        ErrorCode.CANNOT_ACCESS_FIELD_ON_TYPE,
                         "Cannot access field on non-struct type {s}",
                         .{@tagName(object_type.base)},
                     );
@@ -1602,7 +1653,7 @@ pub const SemanticAnalyzer = struct {
                     const first_type = try self.inferTypeFromExpr(elements[0]);
                     for (elements[1..]) |element| {
                         const element_type = try self.inferTypeFromExpr(element);
-                        try self.unifyTypes(first_type, element_type, expr.base.span);
+                        try self.unifyTypes(first_type, element_type, .{ .location = getLocationFromBase(expr.base) });
                     }
                     const array_type = try self.allocator.create(ast.TypeInfo);
                     array_type.* = first_type.*;
@@ -1624,7 +1675,8 @@ pub const SemanticAnalyzer = struct {
                 const condition_type = try self.inferTypeFromExpr(if_expr.condition.?);
                 if (condition_type.base != .Tetra) {
                     self.reporter.reportCompileError(
-                        expr.base.span.start,
+                        getLocationFromBase(expr.base),
+                        ErrorCode.INVALID_CONDITION_TYPE,
                         "Condition must be tetra, got {s}",
                         .{@tagName(condition_type.base)},
                     );
@@ -1653,7 +1705,7 @@ pub const SemanticAnalyzer = struct {
                         type_info.* = then_type.*;
                     } else {
                         // At least one is not a peek expression - unify types as usual
-                        try self.unifyTypes(then_type, else_type, expr.base.span);
+                        try self.unifyTypes(then_type, else_type, .{ .location = getLocationFromBase(expr.base) });
                         type_info.* = then_type.*;
                     }
                 } else {
@@ -1666,7 +1718,8 @@ pub const SemanticAnalyzer = struct {
 
                 if (left_type.base != .Tetra or right_type.base != .Tetra) {
                     self.reporter.reportCompileError(
-                        expr.base.span.start,
+                        getLocationFromBase(expr.base),
+                        ErrorCode.INVALID_OPERAND_TYPE,
                         "Logical operators require tetra operands",
                         .{},
                     );
@@ -1681,7 +1734,8 @@ pub const SemanticAnalyzer = struct {
                 const condition_type = try self.inferTypeFromExpr(while_expr.condition);
                 if (condition_type.base != .Tetra) {
                     self.reporter.reportCompileError(
-                        expr.base.span.start,
+                        getLocationFromBase(expr.base),
+                        ErrorCode.INVALID_CONDITION_TYPE,
                         "While condition must be tetra, got {s}",
                         .{@tagName(condition_type.base)},
                     );
@@ -1713,7 +1767,8 @@ pub const SemanticAnalyzer = struct {
                     const condition_type = try self.inferTypeFromExpr(condition);
                     if (condition_type.base != .Tetra) {
                         self.reporter.reportCompileError(
-                            expr.base.span.start,
+                            getLocationFromBase(expr.base),
+                            ErrorCode.INVALID_CONDITION_TYPE,
                             "For condition must be tetra, got {s}",
                             .{@tagName(condition_type.base)},
                         );
@@ -1731,7 +1786,8 @@ pub const SemanticAnalyzer = struct {
                 const container_type = try self.inferTypeFromExpr(foreach_expr.array);
                 if (container_type.base != .Array and container_type.base != .String) {
                     self.reporter.reportCompileError(
-                        expr.base.span.start,
+                        getLocationFromBase(expr.base),
+                        ErrorCode.INVALID_ARRAY_TYPE,
                         "ForEach requires array or string type, got {s}",
                         .{@tagName(container_type.base)},
                     );
@@ -1765,7 +1821,8 @@ pub const SemanticAnalyzer = struct {
                 ) catch |err| {
                     if (err == error.DuplicateVariableName) {
                         self.reporter.reportCompileError(
-                            expr.base.span.start,
+                            getLocationFromBase(expr.base),
+                            ErrorCode.DUPLICATE_VARIABLE,
                             "Duplicate loop variable name '{s}'",
                             .{foreach_expr.item_name.lexeme},
                         );
@@ -1790,7 +1847,8 @@ pub const SemanticAnalyzer = struct {
                     ) catch |err| {
                         if (err == error.DuplicateVariableName) {
                             self.reporter.reportCompileError(
-                                expr.base.span.start,
+                                getLocationFromBase(expr.base),
+                                ErrorCode.DUPLICATE_VARIABLE,
                                 "Duplicate loop variable name '{s}'",
                                 .{index_name.lexeme},
                             );
@@ -1883,7 +1941,8 @@ pub const SemanticAnalyzer = struct {
                         if (self.memory.scope_manager.value_storage.get(variable.storage_id)) |storage| {
                             if (storage.constant) {
                                 self.reporter.reportCompileError(
-                                    expr.base.span.start,
+                                    getLocationFromBase(expr.base),
+                                    ErrorCode.INVALID_ASSIGNMENT_TARGET,
                                     "Cannot assign to immutable variable '{s}'",
                                     .{assign.name.lexeme},
                                 );
@@ -1892,11 +1951,12 @@ pub const SemanticAnalyzer = struct {
                                 return type_info;
                             }
                             // Check type compatibility
-                            try self.unifyTypes(storage.type_info, value_type, expr.base.span);
+                            try self.unifyTypes(storage.type_info, value_type, .{ .location = getLocationFromBase(expr.base) });
                         }
                     } else {
                         self.reporter.reportCompileError(
-                            expr.base.span.start,
+                            getLocationFromBase(expr.base),
+                            ErrorCode.VARIABLE_NOT_FOUND,
                             "Undefined variable '{s}'",
                             .{assign.name.lexeme},
                         );
@@ -1916,7 +1976,8 @@ pub const SemanticAnalyzer = struct {
                         if (self.memory.scope_manager.value_storage.get(variable.storage_id)) |storage| {
                             if (storage.constant) {
                                 self.reporter.reportCompileError(
-                                    expr.base.span.start,
+                                    getLocationFromBase(expr.base),
+                                    ErrorCode.INVALID_ASSIGNMENT_TARGET,
                                     "Cannot assign to immutable variable '{s}'",
                                     .{compound_assign.name.lexeme},
                                 );
@@ -1925,11 +1986,12 @@ pub const SemanticAnalyzer = struct {
                                 return type_info;
                             }
                             // Check type compatibility
-                            try self.unifyTypes(storage.type_info, value_type, expr.base.span);
+                            try self.unifyTypes(storage.type_info, value_type, .{ .location = getLocationFromBase(expr.base) });
                         }
                     } else {
                         self.reporter.reportCompileError(
-                            expr.base.span.start,
+                            getLocationFromBase(expr.base),
+                            ErrorCode.VARIABLE_NOT_FOUND,
                             "Undefined variable '{s}'",
                             .{compound_assign.name.lexeme},
                         );
@@ -1955,7 +2017,8 @@ pub const SemanticAnalyzer = struct {
                 const array_type = try self.inferTypeFromExpr(length_of_expr);
                 if (array_type.base != .Array and array_type.base != .String) {
                     self.reporter.reportCompileError(
-                        expr.base.span.start,
+                        getLocationFromBase(expr.base),
+                        ErrorCode.INVALID_OPERAND_TYPE,
                         "LengthOf requires array or string type, got {s}",
                         .{@tagName(array_type.base)},
                     );
@@ -1969,7 +2032,8 @@ pub const SemanticAnalyzer = struct {
                 const value_type = try self.inferTypeFromExpr(bytes_of_expr);
                 if (value_type.base != .String) {
                     self.reporter.reportCompileError(
-                        expr.base.span.start,
+                        getLocationFromBase(expr.base),
+                        ErrorCode.INVALID_STRING_TYPE,
                         "BytesOf requires string type, got {s}",
                         .{@tagName(value_type.base)},
                     );
@@ -1987,7 +2051,8 @@ pub const SemanticAnalyzer = struct {
                 const s_type = try self.inferTypeFromExpr(string_expr.string);
                 if (s_type.base != .String) {
                     self.reporter.reportCompileError(
-                        expr.base.span.start,
+                        getLocationFromBase(expr.base),
+                        ErrorCode.INVALID_STRING_TYPE,
                         "StringToInt requires string type, got {s}",
                         .{@tagName(s_type.base)},
                     );
@@ -2009,8 +2074,8 @@ pub const SemanticAnalyzer = struct {
                     for (map_entries[1..]) |entry| {
                         const key_type = try self.inferTypeFromExpr(entry.key);
                         const value_type = try self.inferTypeFromExpr(entry.value);
-                        try self.unifyTypes(first_key_type, key_type, expr.base.span);
-                        try self.unifyTypes(first_value_type, value_type, expr.base.span);
+                        try self.unifyTypes(first_key_type, key_type, .{ .location = getLocationFromBase(expr.base) });
+                        try self.unifyTypes(first_value_type, value_type, .{ .location = getLocationFromBase(expr.base) });
                     }
 
                     type_info.* = .{ .base = .Map };
@@ -2022,7 +2087,8 @@ pub const SemanticAnalyzer = struct {
 
                 if (array_type.base != .Array) {
                     self.reporter.reportCompileError(
-                        expr.base.span.start,
+                        getLocationFromBase(expr.base),
+                        ErrorCode.INVALID_ARRAY_TYPE,
                         "ArrayPush requires array type, got {s}",
                         .{@tagName(array_type.base)},
                     );
@@ -2032,7 +2098,7 @@ pub const SemanticAnalyzer = struct {
                 }
 
                 if (array_type.array_type) |expected_elem_type| {
-                    try self.unifyTypes(expected_elem_type, element_type, expr.base.span);
+                    try self.unifyTypes(expected_elem_type, element_type, .{ .location = getLocationFromBase(expr.base) });
                 }
 
                 type_info.* = .{ .base = .Nothing }; // ArrayPush has no return value
@@ -2041,7 +2107,8 @@ pub const SemanticAnalyzer = struct {
                 const array_type = try self.inferTypeFromExpr(array_length.array);
                 if (array_type.base != .Array) {
                     self.reporter.reportCompileError(
-                        expr.base.span.start,
+                        getLocationFromBase(expr.base),
+                        ErrorCode.INVALID_ARRAY_TYPE,
                         "ArrayLength requires array type, got {s}",
                         .{@tagName(array_type.base)},
                     );
@@ -2055,7 +2122,8 @@ pub const SemanticAnalyzer = struct {
                 const array_type = try self.inferTypeFromExpr(array_pop.array);
                 if (array_type.base != .Array) {
                     self.reporter.reportCompileError(
-                        expr.base.span.start,
+                        getLocationFromBase(expr.base),
+                        ErrorCode.INVALID_ARRAY_TYPE,
                         "ArrayPop requires array type, got {s}",
                         .{@tagName(array_type.base)},
                     );
@@ -2076,7 +2144,8 @@ pub const SemanticAnalyzer = struct {
 
                 if (array1_type.base != .Array or array2_type.base != .Array) {
                     self.reporter.reportCompileError(
-                        expr.base.span.start,
+                        getLocationFromBase(expr.base),
+                        ErrorCode.INVALID_ARRAY_TYPE,
                         "ArrayConcat requires array types",
                         .{},
                     );
@@ -2088,7 +2157,7 @@ pub const SemanticAnalyzer = struct {
                 // Ensure both arrays have compatible element types
                 if (array1_type.array_type) |elem1| {
                     if (array2_type.array_type) |elem2| {
-                        try self.unifyTypes(elem1, elem2, expr.base.span);
+                        try self.unifyTypes(elem1, elem2, .{ .location = getLocationFromBase(expr.base) });
                         type_info.* = array1_type.*; // Return type of first array
                     } else {
                         type_info.* = array1_type.*;
@@ -2103,7 +2172,8 @@ pub const SemanticAnalyzer = struct {
 
                 if (array_type.base != .Array) {
                     self.reporter.reportCompileError(
-                        expr.base.span.start,
+                        getLocationFromBase(expr.base),
+                        ErrorCode.INVALID_ARRAY_TYPE,
                         "Cannot index non-array type {s}",
                         .{@tagName(array_type.base)},
                     );
@@ -2114,7 +2184,8 @@ pub const SemanticAnalyzer = struct {
 
                 if (index_type.base != .Int) {
                     self.reporter.reportCompileError(
-                        expr.base.span.start,
+                        getLocationFromBase(expr.base),
+                        ErrorCode.INVALID_ARRAY_INDEX_TYPE,
                         "Array index must be integer, got {s}",
                         .{@tagName(index_type.base)},
                     );
@@ -2133,7 +2204,8 @@ pub const SemanticAnalyzer = struct {
                 const array_type = try self.inferTypeFromExpr(array_clear.array);
                 if (array_type.base != .Array) {
                     self.reporter.reportCompileError(
-                        expr.base.span.start,
+                        getLocationFromBase(expr.base),
+                        ErrorCode.INVALID_ARRAY_TYPE,
                         "Cannot clear non-array type {s}",
                         .{@tagName(array_type.base)},
                     );
@@ -2147,7 +2219,8 @@ pub const SemanticAnalyzer = struct {
                 const str_type = try self.inferTypeFromExpr(s.string);
                 if (str_type.base != .String) {
                     self.reporter.reportCompileError(
-                        expr.base.span.start,
+                        getLocationFromBase(expr.base),
+                        ErrorCode.INVALID_STRING_TYPE,
                         "Split requires string type, got {s}",
                         .{@tagName(str_type.base)},
                     );
@@ -2158,7 +2231,8 @@ pub const SemanticAnalyzer = struct {
                 const delim_type = try self.inferTypeFromExpr(s.delimiter);
                 if (delim_type.base != .String) {
                     self.reporter.reportCompileError(
-                        expr.base.span.start,
+                        getLocationFromBase(expr.base),
+                        ErrorCode.INVALID_STRING_TYPE,
                         "Split delimiter must be string, got {s}",
                         .{@tagName(delim_type.base)},
                     );
@@ -2175,7 +2249,8 @@ pub const SemanticAnalyzer = struct {
                 const array_type = try self.inferTypeFromExpr(s.array);
                 if (array_type.base != .Array) {
                     self.reporter.reportCompileError(
-                        expr.base.span.start,
+                        getLocationFromBase(expr.base),
+                        ErrorCode.INVALID_ARRAY_TYPE,
                         "Join requires array type, got {s}",
                         .{@tagName(array_type.base)},
                     );
@@ -2186,7 +2261,8 @@ pub const SemanticAnalyzer = struct {
                 const delim_type = try self.inferTypeFromExpr(s.delimiter);
                 if (delim_type.base != .String) {
                     self.reporter.reportCompileError(
-                        expr.base.span.start,
+                        getLocationFromBase(expr.base),
+                        ErrorCode.INVALID_STRING_TYPE,
                         "Join delimiter must be string, got {s}",
                         .{@tagName(delim_type.base)},
                     );
@@ -2200,7 +2276,8 @@ pub const SemanticAnalyzer = struct {
                 const str_type = try self.inferTypeFromExpr(s.string);
                 if (str_type.base != .String) {
                     self.reporter.reportCompileError(
-                        expr.base.span.start,
+                        getLocationFromBase(expr.base),
+                        ErrorCode.INVALID_STRING_TYPE,
                         "Trim requires string type, got {s}",
                         .{@tagName(str_type.base)},
                     );
@@ -2214,7 +2291,8 @@ pub const SemanticAnalyzer = struct {
                 const str_type = try self.inferTypeFromExpr(s.string);
                 if (str_type.base != .String) {
                     self.reporter.reportCompileError(
-                        expr.base.span.start,
+                        getLocationFromBase(expr.base),
+                        ErrorCode.INVALID_STRING_TYPE,
                         "Lower requires string type, got {s}",
                         .{@tagName(str_type.base)},
                     );
@@ -2228,7 +2306,8 @@ pub const SemanticAnalyzer = struct {
                 const str_type = try self.inferTypeFromExpr(s.string);
                 if (str_type.base != .String) {
                     self.reporter.reportCompileError(
-                        expr.base.span.start,
+                        getLocationFromBase(expr.base),
+                        ErrorCode.INVALID_STRING_TYPE,
                         "Upper requires string type, got {s}",
                         .{@tagName(str_type.base)},
                     );
@@ -2249,7 +2328,8 @@ pub const SemanticAnalyzer = struct {
 
                 if (value_type.base != .Int and value_type.base != .Float) {
                     self.reporter.reportCompileError(
-                        expr.base.span.start,
+                        getLocationFromBase(expr.base),
+                        ErrorCode.INVALID_OPERAND_TYPE,
                         "Math operation requires numeric type, got {s}",
                         .{@tagName(value_type.base)},
                     );
@@ -2281,7 +2361,8 @@ pub const SemanticAnalyzer = struct {
                     (b_type.base != .Int and b_type.base != .Float))
                 {
                     self.reporter.reportCompileError(
-                        expr.base.span.start,
+                        getLocationFromBase(expr.base),
+                        ErrorCode.INVALID_OPERAND_TYPE,
                         "Math operation requires numeric types, got {s} and {s}",
                         .{ @tagName(a_type.base), @tagName(b_type.base) },
                     );
@@ -2300,7 +2381,8 @@ pub const SemanticAnalyzer = struct {
                 const path_type = try self.inferTypeFromExpr(io.path);
                 if (path_type.base != .String) {
                     self.reporter.reportCompileError(
-                        expr.base.span.start,
+                        getLocationFromBase(expr.base),
+                        ErrorCode.INVALID_FILE_PATH_TYPE,
                         "File path must be string, got {s}",
                         .{@tagName(path_type.base)},
                     );
@@ -2315,7 +2397,8 @@ pub const SemanticAnalyzer = struct {
                 const content_type = try self.inferTypeFromExpr(io.content);
                 if (path_type.base != .String) {
                     self.reporter.reportCompileError(
-                        expr.base.span.start,
+                        getLocationFromBase(expr.base),
+                        ErrorCode.INVALID_FILE_PATH_TYPE,
                         "File path must be string, got {s}",
                         .{@tagName(path_type.base)},
                     );
@@ -2325,7 +2408,8 @@ pub const SemanticAnalyzer = struct {
                 }
                 if (content_type.base != .String) {
                     self.reporter.reportCompileError(
-                        expr.base.span.start,
+                        getLocationFromBase(expr.base),
+                        ErrorCode.INVALID_FILE_CONTENT_TYPE,
                         "File content must be string, got {s}",
                         .{@tagName(content_type.base)},
                     );
@@ -2343,7 +2427,8 @@ pub const SemanticAnalyzer = struct {
                 };
                 if (command_type.base != .String) {
                     self.reporter.reportCompileError(
-                        expr.base.span.start,
+                        getLocationFromBase(expr.base),
+                        ErrorCode.INVALID_COMMAND_TYPE,
                         "Command must be string, got {s}",
                         .{@tagName(command_type.base)},
                     );
@@ -2366,7 +2451,8 @@ pub const SemanticAnalyzer = struct {
                 };
                 if (value_type.base != .Array and value_type.base != .String and value_type.base != .Map) {
                     self.reporter.reportCompileError(
-                        expr.base.span.start,
+                        getLocationFromBase(expr.base),
+                        ErrorCode.INVALID_OPERAND_TYPE,
                         "Can only clone/copy arrays, strings, and maps, got {s}",
                         .{@tagName(value_type.base)},
                     );
@@ -2398,7 +2484,8 @@ pub const SemanticAnalyzer = struct {
                         }
                         if (receiver_type.base != .Array) {
                             self.reporter.reportCompileError(
-                                method_call.receiver.base.span.start,
+                                getLocationFromBase(method_call.receiver.base),
+                                ErrorCode.INVALID_ARRAY_TYPE,
                                 "Cannot call array method '{s}' on non-array type {s}",
                                 .{ method_name, @tagName(receiver_type.base) },
                             );
@@ -2412,11 +2499,8 @@ pub const SemanticAnalyzer = struct {
                             .PUSH => {
                                 if (method_call.arguments.len != 1) {
                                     self.reporter.reportCompileError(
-                                        .{
-                                            .file = method_call.method.file,
-                                            .line = method_call.method.line,
-                                            .column = method_call.method.column,
-                                        },
+                                        getLocationFromBase(method_call.arguments[0].base),
+                                        ErrorCode.INVALID_ARRAY_TYPE,
                                         "@push requires exactly one argument",
                                         .{},
                                     );
@@ -2428,7 +2512,7 @@ pub const SemanticAnalyzer = struct {
                                 // Check element type matches array
                                 const value_type = try self.inferTypeFromExpr(method_call.arguments[0]);
                                 if (receiver_type.array_type) |elem_type| {
-                                    try self.unifyTypes(elem_type, value_type, method_call.arguments[0].base.span);
+                                    try self.unifyTypes(elem_type, value_type, .{ .location = getLocationFromBase(method_call.arguments[0].base) });
                                 }
 
                                 // Transform to ArrayPush
@@ -2443,11 +2527,8 @@ pub const SemanticAnalyzer = struct {
                             else => {
                                 // For now, other array methods not implemented
                                 self.reporter.reportCompileError(
-                                    .{
-                                        .file = method_call.method.file,
-                                        .line = method_call.method.line,
-                                        .column = method_call.method.column,
-                                    },
+                                    getLocationFromBase(method_call.receiver.base),
+                                    ErrorCode.NOT_IMPLEMENTED,
                                     "Array method '{s}' not yet implemented",
                                     .{method_name},
                                 );
@@ -2470,7 +2551,8 @@ pub const SemanticAnalyzer = struct {
                         // length works on arrays and strings
                         if (receiver_type.base != .Array and receiver_type.base != .String) {
                             self.reporter.reportCompileError(
-                                method_call.receiver.base.span.start,
+                                getLocationFromBase(method_call.receiver.base),
+                                ErrorCode.INVALID_ARRAY_TYPE,
                                 "Cannot call length on non-array/string type {s}",
                                 .{@tagName(receiver_type.base)},
                             );
@@ -2486,7 +2568,8 @@ pub const SemanticAnalyzer = struct {
                         // bytes works on strings only
                         if (receiver_type.base != .String) {
                             self.reporter.reportCompileError(
-                                method_call.receiver.base.span.start,
+                                getLocationFromBase(method_call.receiver.base),
+                                ErrorCode.INVALID_STRING_TYPE,
                                 "Cannot call bytes on non-string type {s}",
                                 .{@tagName(receiver_type.base)},
                             );
@@ -2508,7 +2591,8 @@ pub const SemanticAnalyzer = struct {
                                 // Expect receiver string and two int args (start, length)
                                 if (receiver_type.base != .String) {
                                     self.reporter.reportCompileError(
-                                        method_call.receiver.base.span.start,
+                                        getLocationFromBase(method_call.receiver.base),
+                                        ErrorCode.INVALID_STRING_TYPE,
                                         "Cannot call substring on non-string type {s}",
                                         .{@tagName(receiver_type.base)},
                                     );
@@ -2518,7 +2602,8 @@ pub const SemanticAnalyzer = struct {
                                 }
                                 if (method_call.arguments.len != 2) {
                                     self.reporter.reportCompileError(
-                                        .{ .file = method_call.method.file, .line = method_call.method.line, .column = method_call.method.column },
+                                        getLocationFromBase(method_call.receiver.base),
+                                        ErrorCode.NOT_IMPLEMENTED,
                                         "@substring requires 2 arguments (start, length)",
                                         .{},
                                     );
@@ -2531,7 +2616,8 @@ pub const SemanticAnalyzer = struct {
                                 const a1 = try self.inferTypeFromExpr(method_call.arguments[1]);
                                 if (a0.base != .Int or a1.base != .Int) {
                                     self.reporter.reportCompileError(
-                                        method_call.arguments[0].base.span.start,
+                                        getLocationFromBase(method_call.arguments[0].base),
+                                        ErrorCode.INVALID_STRING_INDEX_TYPE,
                                         "@substring arguments must be integers",
                                         .{},
                                     );
@@ -2558,7 +2644,8 @@ pub const SemanticAnalyzer = struct {
                                 // Check receiver is string
                                 if (receiver_type.base != .String) {
                                     self.reporter.reportCompileError(
-                                        method_call.receiver.base.span.start,
+                                        getLocationFromBase(method_call.receiver.base),
+                                        ErrorCode.INVALID_STRING_TYPE,
                                         "Cannot parse non-string type {s} as number",
                                         .{@tagName(receiver_type.base)},
                                     );
@@ -2595,7 +2682,8 @@ pub const SemanticAnalyzer = struct {
                                 }
                                 // For float: keep current behavior (not implemented)
                                 self.reporter.reportCompileError(
-                                    .{ .file = method_call.method.file, .line = method_call.method.line, .column = method_call.method.column },
+                                    getLocationFromBase(method_call.receiver.base),
+                                    ErrorCode.NOT_IMPLEMENTED,
                                     "@float on non-literal not implemented",
                                     .{},
                                 );
@@ -2607,7 +2695,8 @@ pub const SemanticAnalyzer = struct {
                                 // Check receiver is string for split
                                 if (receiver_type.base != .String) {
                                     self.reporter.reportCompileError(
-                                        method_call.receiver.base.span.start,
+                                        getLocationFromBase(method_call.receiver.base),
+                                        ErrorCode.INVALID_STRING_TYPE,
                                         "Cannot call split on non-string type {s}",
                                         .{@tagName(receiver_type.base)},
                                     );
@@ -2624,7 +2713,8 @@ pub const SemanticAnalyzer = struct {
                                 // Check receiver is array for join
                                 if (receiver_type.base != .Array) {
                                     self.reporter.reportCompileError(
-                                        method_call.receiver.base.span.start,
+                                        getLocationFromBase(method_call.receiver.base),
+                                        ErrorCode.INVALID_ARRAY_TYPE,
                                         "Cannot call join on non-array type {s}",
                                         .{@tagName(receiver_type.base)},
                                     );
@@ -2638,7 +2728,8 @@ pub const SemanticAnalyzer = struct {
                                 // Check receiver is string
                                 if (receiver_type.base != .String) {
                                     self.reporter.reportCompileError(
-                                        method_call.receiver.base.span.start,
+                                        getLocationFromBase(method_call.receiver.base),
+                                        ErrorCode.INVALID_STRING_TYPE,
                                         "Cannot call string method '{s}' on non-string type {s}",
                                         .{ method_name, @tagName(receiver_type.base) },
                                     );
@@ -2657,7 +2748,8 @@ pub const SemanticAnalyzer = struct {
                         // Check receiver is numeric
                         if (receiver_type.base != .Int and receiver_type.base != .Float) {
                             self.reporter.reportCompileError(
-                                method_call.receiver.base.span.start,
+                                getLocationFromBase(method_call.receiver.base),
+                                ErrorCode.INVALID_OPERAND_TYPE,
                                 "Cannot call math method '{s}' on non-numeric type {s}",
                                 .{ method_name, @tagName(receiver_type.base) },
                             );
@@ -2685,11 +2777,8 @@ pub const SemanticAnalyzer = struct {
                                 // Check path argument is string
                                 if (method_call.arguments.len != 1) {
                                     self.reporter.reportCompileError(
-                                        .{
-                                            .file = method_call.method.file,
-                                            .line = method_call.method.line,
-                                            .column = method_call.method.column,
-                                        },
+                                        getLocationFromBase(method_call.receiver.base),
+                                        ErrorCode.INVALID_ARGUMENT_TYPE,
                                         "@read requires exactly one string argument (path)",
                                         .{},
                                     );
@@ -2700,7 +2789,8 @@ pub const SemanticAnalyzer = struct {
                                 const path_type = try self.inferTypeFromExpr(method_call.arguments[0]);
                                 if (path_type.base != .String) {
                                     self.reporter.reportCompileError(
-                                        method_call.arguments[0].base.span.start,
+                                        getLocationFromBase(method_call.arguments[0].base),
+                                        ErrorCode.INVALID_FILE_PATH_TYPE,
                                         "@read path must be string, got {s}",
                                         .{@tagName(path_type.base)},
                                     );
@@ -2714,11 +2804,8 @@ pub const SemanticAnalyzer = struct {
                                 // Check path and content arguments are strings
                                 if (method_call.arguments.len != 2) {
                                     self.reporter.reportCompileError(
-                                        .{
-                                            .file = method_call.method.file,
-                                            .line = method_call.method.line,
-                                            .column = method_call.method.column,
-                                        },
+                                        getLocationFromBase(method_call.receiver.base),
+                                        ErrorCode.INVALID_ARGUMENT_TYPE,
                                         "@write requires two arguments (path, content)",
                                         .{},
                                     );
@@ -2730,7 +2817,8 @@ pub const SemanticAnalyzer = struct {
                                 const content_type = try self.inferTypeFromExpr(method_call.arguments[1]);
                                 if (path_type.base != .String or content_type.base != .String) {
                                     self.reporter.reportCompileError(
-                                        method_call.arguments[0].base.span.start,
+                                        getLocationFromBase(method_call.arguments[0].base),
+                                        ErrorCode.INVALID_FILE_PATH_TYPE,
                                         "@write arguments must be strings, got {s} and {s}",
                                         .{ @tagName(path_type.base), @tagName(content_type.base) },
                                     );
@@ -2744,11 +2832,8 @@ pub const SemanticAnalyzer = struct {
                                 // Check command argument is string
                                 if (method_call.arguments.len != 1) {
                                     self.reporter.reportCompileError(
-                                        .{
-                                            .file = method_call.method.file,
-                                            .line = method_call.method.line,
-                                            .column = method_call.method.column,
-                                        },
+                                        getLocationFromBase(method_call.receiver.base),
+                                        ErrorCode.INVALID_ARGUMENT_TYPE,
                                         "@{s} requires exactly one string argument (command)",
                                         .{method_name},
                                     );
@@ -2759,7 +2844,8 @@ pub const SemanticAnalyzer = struct {
                                 const cmd_type = try self.inferTypeFromExpr(method_call.arguments[0]);
                                 if (cmd_type.base != .String) {
                                     self.reporter.reportCompileError(
-                                        method_call.arguments[0].base.span.start,
+                                        getLocationFromBase(method_call.arguments[0].base),
+                                        ErrorCode.INVALID_FILE_PATH_TYPE,
                                         "@{s} command must be string, got {s}",
                                         .{ method_name, @tagName(cmd_type.base) },
                                     );
@@ -2778,7 +2864,8 @@ pub const SemanticAnalyzer = struct {
                         // Check receiver is array, string or map
                         if (receiver_type.base != .Array and receiver_type.base != .String and receiver_type.base != .Map) {
                             self.reporter.reportCompileError(
-                                method_call.receiver.base.span.start,
+                                getLocationFromBase(method_call.receiver.base),
+                                ErrorCode.INVALID_ARRAY_TYPE,
                                 "Cannot {s} type {s} - only arrays, strings and maps can be {s}d",
                                 .{ method_name, @tagName(receiver_type.base), method_name },
                             );
@@ -2804,11 +2891,8 @@ pub const SemanticAnalyzer = struct {
                             },
                         );
                         self.reporter.reportCompileError(
-                            .{
-                                .file = method_call.method.file,
-                                .line = method_call.method.line,
-                                .column = method_call.method.column,
-                            },
+                            getLocationFromBase(method_call.receiver.base),
+                            ErrorCode.NOT_IMPLEMENTED,
                             "Unknown method '{s}'",
                             .{method_name},
                         );
@@ -2842,7 +2926,8 @@ pub const SemanticAnalyzer = struct {
 
                 if (array_type.base != .Array) {
                     self.reporter.reportCompileError(
-                        expr.base.span.start,
+                        getLocationFromBase(expr.base),
+                        ErrorCode.CANNOT_INDEX_TYPE,
                         "Cannot assign to index of non-array type {s}",
                         .{@tagName(array_type.base)},
                     );
@@ -2853,7 +2938,8 @@ pub const SemanticAnalyzer = struct {
 
                 if (index_type.base != .Int) {
                     self.reporter.reportCompileError(
-                        expr.base.span.start,
+                        getLocationFromBase(expr.base),
+                        ErrorCode.INVALID_ARRAY_INDEX_TYPE,
                         "Array index must be integer, got {s}",
                         .{@tagName(index_type.base)},
                     );
@@ -2863,7 +2949,7 @@ pub const SemanticAnalyzer = struct {
                 }
 
                 if (array_type.array_type) |elem_type| {
-                    try self.unifyTypes(elem_type, value_type, expr.base.span);
+                    try self.unifyTypes(elem_type, value_type, .{ .location = getLocationFromBase(expr.base) });
                 }
 
                 type_info.* = .{ .base = .Nothing }; // IndexAssign has no return value
@@ -2874,7 +2960,8 @@ pub const SemanticAnalyzer = struct {
 
                 if (object_type.base != .Struct and object_type.base != .Custom) {
                     self.reporter.reportCompileError(
-                        expr.base.span.start,
+                        getLocationFromBase(expr.base),
+                        ErrorCode.CANNOT_ACCESS_FIELD_ON_TYPE,
                         "Cannot assign to field of non-struct type {s}",
                         .{@tagName(object_type.base)},
                     );
@@ -2887,12 +2974,13 @@ pub const SemanticAnalyzer = struct {
                     const fields = object_type.struct_fields.?;
                     for (fields) |struct_field| {
                         if (std.mem.eql(u8, struct_field.name, field_assign.field.lexeme)) {
-                            try self.unifyTypes(struct_field.type_info, value_type, expr.base.span);
+                            try self.unifyTypes(struct_field.type_info, value_type, .{ .location = getLocationFromBase(expr.base) });
                             break;
                         }
                     } else {
                         self.reporter.reportCompileError(
-                            expr.base.span.start,
+                            getLocationFromBase(expr.base),
+                            ErrorCode.FIELD_NOT_FOUND,
                             "Field '{s}' not found in struct",
                             .{field_assign.field.lexeme},
                         );
@@ -2913,7 +3001,8 @@ pub const SemanticAnalyzer = struct {
                                 }
                             } else {
                                 self.reporter.reportCompileError(
-                                    expr.base.span.start,
+                                    getLocationFromBase(expr.base),
+                                    ErrorCode.FIELD_NOT_FOUND,
                                     "Field '{s}' not found in struct '{s}'",
                                     .{ field_assign.field.lexeme, custom_type_name },
                                 );
@@ -2923,7 +3012,8 @@ pub const SemanticAnalyzer = struct {
                             }
                         } else {
                             self.reporter.reportCompileError(
-                                expr.base.span.start,
+                                getLocationFromBase(expr.base),
+                                ErrorCode.CANNOT_ACCESS_FIELD_ON_TYPE,
                                 "Cannot assign to field of non-struct type {s}",
                                 .{@tagName(object_type.base)},
                             );
@@ -2933,7 +3023,8 @@ pub const SemanticAnalyzer = struct {
                         }
                     } else {
                         self.reporter.reportCompileError(
-                            expr.base.span.start,
+                            getLocationFromBase(expr.base),
+                            ErrorCode.FIELD_NOT_FOUND,
                             "Undefined type '{s}'",
                             .{custom_type_name},
                         );
@@ -2967,7 +3058,8 @@ pub const SemanticAnalyzer = struct {
                 ) catch |err| {
                     if (err == error.DuplicateVariableName) {
                         self.reporter.reportCompileError(
-                            expr.base.span.start,
+                            getLocationFromBase(expr.base),
+                            ErrorCode.DUPLICATE_BOUND_VARIABLE_NAME,
                             "Duplicate bound variable name '{s}' in exists quantifier",
                             .{exists.variable.lexeme},
                         );
@@ -2995,7 +3087,8 @@ pub const SemanticAnalyzer = struct {
 
                 if (array_type.base != .Array) {
                     self.reporter.reportCompileError(
-                        expr.base.span.start,
+                        getLocationFromBase(expr.base),
+                        ErrorCode.INVALID_ARRAY_TYPE,
                         "Exists requires array type, got {s}",
                         .{@tagName(array_type.base)},
                     );
@@ -3006,7 +3099,8 @@ pub const SemanticAnalyzer = struct {
 
                 if (condition_type.base != .Tetra) {
                     self.reporter.reportCompileError(
-                        expr.base.span.start,
+                        getLocationFromBase(expr.base),
+                        ErrorCode.INVALID_CONDITION_TYPE,
                         "Exists condition must be tetra, got {s}",
                         .{@tagName(condition_type.base)},
                     );
@@ -3039,7 +3133,8 @@ pub const SemanticAnalyzer = struct {
                 ) catch |err| {
                     if (err == error.DuplicateVariableName) {
                         self.reporter.reportCompileError(
-                            expr.base.span.start,
+                            getLocationFromBase(expr.base),
+                            ErrorCode.DUPLICATE_BOUND_VARIABLE_NAME,
                             "Duplicate bound variable name '{s}' in forall quantifier",
                             .{for_all.variable.lexeme},
                         );
@@ -3067,7 +3162,8 @@ pub const SemanticAnalyzer = struct {
 
                 if (array_type.base != .Array) {
                     self.reporter.reportCompileError(
-                        expr.base.span.start,
+                        getLocationFromBase(expr.base),
+                        ErrorCode.INVALID_ARRAY_TYPE,
                         "ForAll requires array type, got {s}",
                         .{@tagName(array_type.base)},
                     );
@@ -3078,7 +3174,8 @@ pub const SemanticAnalyzer = struct {
 
                 if (condition_type.base != .Tetra) {
                     self.reporter.reportCompileError(
-                        expr.base.span.start,
+                        getLocationFromBase(expr.base),
+                        ErrorCode.INVALID_CONDITION_TYPE,
                         "ForAll condition must be tetra, got {s}",
                         .{@tagName(condition_type.base)},
                     );
@@ -3093,7 +3190,8 @@ pub const SemanticAnalyzer = struct {
                 const condition_type = try self.inferTypeFromExpr(assert.condition);
                 if (condition_type.base != .Tetra) {
                     self.reporter.reportCompileError(
-                        expr.base.span.start,
+                        getLocationFromBase(expr.base),
+                        ErrorCode.INVALID_CONDITION_TYPE,
                         "Assert condition must be tetra, got {s}",
                         .{@tagName(condition_type.base)},
                     );
@@ -3120,7 +3218,8 @@ pub const SemanticAnalyzer = struct {
                                 // 1) Check field count matches
                                 if (decl_fields.len != struct_lit.fields.len) {
                                     self.reporter.reportCompileError(
-                                        expr.base.span.start,
+                                        getLocationFromBase(expr.base),
+                                        ErrorCode.STRUCT_FIELD_COUNT_MISMATCH,
                                         "Struct field count mismatch: expected {}, got {}",
                                         .{ decl_fields.len, struct_lit.fields.len },
                                     );
@@ -3144,7 +3243,8 @@ pub const SemanticAnalyzer = struct {
                                     }
                                     if (!found) {
                                         self.reporter.reportCompileError(
-                                            .{ .file = lit_field.name.file, .line = lit_field.name.line, .column = lit_field.name.column },
+                                            getLocationFromBase(lit_field.value.base),
+                                            ErrorCode.STRUCT_FIELD_NAME_MISMATCH,
                                             "Field '{s}' not found in struct '{s}'",
                                             .{ lit_field.name.lexeme, struct_lit.name.lexeme },
                                         );
@@ -3212,7 +3312,8 @@ pub const SemanticAnalyzer = struct {
                 // Enforce: 'as' requires an else; then is optional
                 if (cast.else_branch == null) {
                     self.reporter.reportCompileError(
-                        expr.base.span.start,
+                        getLocationFromBase(expr.base),
+                        ErrorCode.EXPECTED_CLOSING_BRACE,
                         "'as' requires an 'else' block",
                         .{},
                     );
@@ -3229,7 +3330,8 @@ pub const SemanticAnalyzer = struct {
                 const value_type = try self.inferTypeFromExpr(cast.value);
                 if (value_type.base != .Union) {
                     self.reporter.reportCompileError(
-                        expr.base.span.start,
+                        getLocationFromBase(expr.base),
+                        ErrorCode.INVALID_OPERAND_TYPE,
                         "Type casting 'as' can only be used with union types, got {s}",
                         .{@tagName(value_type.base)},
                     );
@@ -3510,7 +3612,8 @@ pub const SemanticAnalyzer = struct {
             if (parser.imported_symbols) |imported_symbols| {
                 const full_name = std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ module_name, field_name }) catch {
                     self.reporter.reportCompileError(
-                        span.start,
+                        span.location,
+                        ErrorCode.INTERNAL_ERROR,
                         "Internal error: Could not format module field name",
                         .{},
                     );
@@ -3554,7 +3657,8 @@ pub const SemanticAnalyzer = struct {
 
         // Field not found in module
         self.reporter.reportCompileError(
-            span.start,
+            span.location,
+            ErrorCode.FIELD_NOT_FOUND,
             "Field '{s}' not found in module '{s}'",
             .{ field_name, module_name },
         );
@@ -3671,7 +3775,7 @@ pub const SemanticAnalyzer = struct {
     // Instead of setting fatal_error = true immediately, collect errors
     // and continue analysis where possible
     pub fn reportTypeError(self: *SemanticAnalyzer, span: ast.SourceSpan, comptime fmt: []const u8, args: anytype) void {
-        self.reporter.reportCompileError(span.start, fmt, args);
+        self.reporter.reportCompileError(span.location, fmt, args);
         // Only set fatal_error for critical errors that prevent further analysis
     }
 
@@ -4073,7 +4177,8 @@ pub const SemanticAnalyzer = struct {
             ) catch |err| {
                 if (err == error.DuplicateVariableName) {
                     self.reporter.reportCompileError(
-                        func_span.start,
+                        func_span.location,
+                        ErrorCode.DUPLICATE_VARIABLE,
                         "Duplicate parameter name '{s}' in function '{s}'",
                         .{ param.name.lexeme, func.name.lexeme },
                     );
@@ -4112,12 +4217,13 @@ pub const SemanticAnalyzer = struct {
                     if (return_stmt.value) |value| {
                         has_return_with_value = true;
                         const return_type = try self.inferTypeFromExpr(value);
-                        try self.validateReturnTypeCompatibility(&expected_return_type, return_type, stmt.base.span);
+                        try self.validateReturnTypeCompatibility(&expected_return_type, return_type, .{ .location = getLocationFromBase(stmt.base) });
                     } else {
                         has_return_without_value = true;
                         if (expected_return_type.base != .Nothing) {
                             self.reporter.reportCompileError(
-                                stmt.base.span.start,
+                                getLocationFromBase(stmt.base),
+                                ErrorCode.MISSING_RETURN_VALUE,
                                 "Function expects return value of type {s}, but return statement has no value",
                                 .{@tagName(expected_return_type.base)},
                             );
@@ -4146,7 +4252,8 @@ pub const SemanticAnalyzer = struct {
                                     has_return_without_value = true;
                                     if (expected_return_type.base != .Nothing) {
                                         self.reporter.reportCompileError(
-                                            stmt.base.span.start,
+                                            getLocationFromBase(stmt.base),
+                                            ErrorCode.MISSING_RETURN_VALUE,
                                             "Function expects return value of type {s}, but return statement has no value",
                                             .{@tagName(expected_return_type.base)},
                                         );
@@ -4154,7 +4261,7 @@ pub const SemanticAnalyzer = struct {
                                     }
                                 } else {
                                     has_return_with_value = true;
-                                    try self.validateReturnTypeCompatibility(&expected_return_type, ret_type, stmt.base.span);
+                                    try self.validateReturnTypeCompatibility(&expected_return_type, ret_type, .{ .location = getLocationFromBase(stmt.base) });
                                 }
                             }
                         } else if (expression.data == .If) {
@@ -4206,7 +4313,8 @@ pub const SemanticAnalyzer = struct {
             const expr_type = try self.inferTypeFromExpr(last_expr.?);
             if (expr_type.base != .Nothing) {
                 self.reporter.reportCompileError(
-                    func_span.start,
+                    func_span.location,
+                    ErrorCode.MISSING_RETURN_TYPE,
                     "Function has no return type specified but final expression produces value of type {s}",
                     .{@tagName(expr_type.base)},
                 );
@@ -4216,7 +4324,8 @@ pub const SemanticAnalyzer = struct {
 
         if (expected_return_type.base == .Nothing and has_return_with_value) {
             self.reporter.reportCompileError(
-                func_span.start,
+                func_span.location,
+                ErrorCode.MISSING_RETURN_VALUE,
                 "Function expects no return value, but return statement has value",
                 .{},
             );
@@ -4260,7 +4369,8 @@ pub const SemanticAnalyzer = struct {
         const container_type = try self.inferTypeFromExpr(foreach_expr.array);
         if (container_type.base != .Array and container_type.base != .String) {
             self.reporter.reportCompileError(
-                span.start,
+                span.location,
+                ErrorCode.INVALID_ARRAY_TYPE,
                 "ForEach requires array or string type, got {s}",
                 .{@tagName(container_type.base)},
             );
@@ -4291,7 +4401,8 @@ pub const SemanticAnalyzer = struct {
         ) catch |err| {
             if (err == error.DuplicateVariableName) {
                 self.reporter.reportCompileError(
-                    span.start,
+                    span.location,
+                    ErrorCode.DUPLICATE_BOUND_VARIABLE_NAME,
                     "Duplicate loop variable name '{s}'",
                     .{foreach_expr.item_name.lexeme},
                 );
@@ -4316,7 +4427,8 @@ pub const SemanticAnalyzer = struct {
             ) catch |err| {
                 if (err == error.DuplicateVariableName) {
                     self.reporter.reportCompileError(
-                        span.start,
+                        span.location,
+                        ErrorCode.DUPLICATE_BOUND_VARIABLE_NAME,
                         "Duplicate loop variable name '{s}'",
                         .{index_name.lexeme},
                     );
@@ -4350,7 +4462,7 @@ pub const SemanticAnalyzer = struct {
             .ReturnExpr => |return_expr| {
                 if (return_expr.value) |value| {
                     const return_type = try self.inferTypeFromExpr(value);
-                    try self.validateReturnTypeCompatibility(&expected_return_type, return_type, expr.base.span);
+                    try self.validateReturnTypeCompatibility(&expected_return_type, return_type, .{ .location = getLocationFromBase(expr.base) });
                     return true;
                 } else {
                     return expected_return_type.base == .Nothing;
@@ -4384,7 +4496,8 @@ pub const SemanticAnalyzer = struct {
         const module_exists = self.checkModuleExists(import_info.module_path);
         if (!module_exists) {
             self.reporter.reportCompileError(
-                import_span.start,
+                import_span.location,
+                ErrorCode.MODULE_NOT_FOUND,
                 "Module file not found: '{s}'",
                 .{import_info.module_path},
             );
@@ -4395,7 +4508,8 @@ pub const SemanticAnalyzer = struct {
         // Check for circular imports
         if (self.isCircularImport(import_info.module_path)) {
             self.reporter.reportCompileError(
-                import_span.start,
+                import_span.location,
+                ErrorCode.CIRCULAR_IMPORT,
                 "Circular import detected: '{s}'",
                 .{import_info.module_path},
             );
@@ -4408,7 +4522,8 @@ pub const SemanticAnalyzer = struct {
             const symbol_exists = self.checkSymbolExists(import_info.module_path, symbol_name);
             if (!symbol_exists) {
                 self.reporter.reportCompileError(
-                    import_span.start,
+                    import_span.location,
+                    ErrorCode.SYMBOL_NOT_FOUND_IN_IMPORT_MODULE,
                     "Symbol '{s}' not found in module '{s}'",
                     .{ symbol_name, import_info.module_path },
                 );
@@ -4623,7 +4738,8 @@ pub const SemanticAnalyzer = struct {
                             }
                             if (!found_match) {
                                 self.reporter.reportCompileError(
-                                    span.start,
+                                    span.location,
+                                    ErrorCode.INVALID_RETURN_TYPE_FOR_UNION,
                                     "Return type {s} is not compatible with function's union return type",
                                     .{@tagName(actual_member.base)},
                                 );
@@ -4666,7 +4782,8 @@ pub const SemanticAnalyzer = struct {
                         }
 
                         self.reporter.reportCompileError(
-                            span.start,
+                            span.location,
+                            ErrorCode.INVALID_RETURN_TYPE_FOR_UNION,
                             "Return type {s} is not compatible with function's union return type ({s})",
                             .{ @tagName(actual.base), type_list.items },
                         );

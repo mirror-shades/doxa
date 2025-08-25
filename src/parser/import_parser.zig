@@ -3,7 +3,8 @@ const Parser = @import("./parser_types.zig").Parser;
 const ast = @import("../ast/ast.zig");
 const token = @import("../types/token.zig");
 const Reporting = @import("../utils/reporting.zig");
-const ErrorList = Reporting.ErrorList;
+const Errors = @import("../utils/errors.zig");
+const ErrorList = Errors.ErrorList;
 const printDebug = std.debug.print;
 
 // Struct to track imported symbols

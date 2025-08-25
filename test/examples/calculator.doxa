@@ -23,15 +23,26 @@ function precedence(op :: string) returns int {
 }
 
 entry function main() {
-    // all compiler level methods are distinguished by @
-    const input is @input()
+    // Test the full calculator with an expression
+    "Starting calculator"?
+    const input is "5 + 6"
+    "Input: " + input?
     const splitInput is split(input)
+    "After split"?
     @assert(verifyParens(splitInput), "parens don't match")
+    "After paren check"?
     const possibleTokens is tokenize(splitInput)
+    "After tokenize"?
 
     possibleTokens as Token[] then {
-        const rpn is shunt(possibleTokens) as Token[] then {
+        "current tokens: " + possibleTokens)?
+        "Got tokens, calling shunt"?
+        const rpn is shunt(possibleTokens)
+        "After shunt"?
+        rpn as Token[] then {
+            "Got RPN, calling execute"?
             execute(rpn)
+            "After execute"?
         } else {
             "shunting failed"?
         }
@@ -111,24 +122,24 @@ function tokenize(input :: string[]) returns Token[] | nothing {
                 token_type is .OPERATOR,
                 value is token,
             })
-        } 
+        }
         else if token == "(" then {
             @push(tokens, Token {
                 token_type is .LPAREN,
                 value is token,
             })
-        } 
+        }
         else if token == ")" then {
             @push(tokens, Token {
                 token_type is .RPAREN,
                 value is token,
             })
         } else {
-            @push(tokens, Token { 
+            @push(tokens, Token {
                 token_type is .NUMBER,
                 value is token,
             })
-    }
+        }
     }
     return tokens
 }
@@ -138,21 +149,33 @@ function shunt(tokens :: Token[]) returns Token[] | nothing {
     var operators :: Token[]
 
     each token in tokens {
+        "Processing token in shunt"?
+        token.token_type?
         if token.token_type == TokenType.NUMBER then {
+            "Pushing number to output"?
             @push(output, token)
         }
 
         else if token.token_type == TokenType.OPERATOR then {
+            "Processing operator"?
             // pop higher or equal precedence ops onto output
             while @length(operators) > 0 {
+                "In operator while loop, operators length: " + @length(operators)?
                 const top is operators[@length(operators) - 1]
+                "Top operator: " + top.value?
+                "Current token: " + token.value?
                 if top.token_type == TokenType.OPERATOR and precedence(top.value) >= precedence(token.value) then {
+                    "Popping operator to output"?
                     @push(output, top)
                     @pop(operators)
+                    "After pop, operators length: " + @length(operators)?
                 } else {
+                    "Breaking from operator loop"?
                     break
+                    
                 }
             }
+            "Pushing current operator to operators stack"?
             @push(operators, token)
         }
 
@@ -175,61 +198,85 @@ function shunt(tokens :: Token[]) returns Token[] | nothing {
                 }
             }
             if !matched then {
-                "mismatched parentheses"? 
+                "mismatched parentheses"?
                 return nothing
             }
         }
     }
 
-    // drain remaining operators
+    // All tokens have been processed, now drain remaining operators
     while @length(operators) > 0 {
         const top is operators[@length(operators) - 1]
         if top.token_type == TokenType.LPAREN or top.token_type == TokenType.RPAREN then {
-            "mismatched parentheses"? 
+            "mismatched parentheses"?
             return nothing
         }
         @push(output, top)
         @pop(operators)
     }
 
+    // All operators drained, return the result
     return output
 }
 
-function execute(tokens :: Token[]) {
+function execute(tokens :: Token[]) returns int {
     var stack :: int[]
 
     each token in tokens {
+        "Processing token in execute:"?
+        token.token_type?
+        token.value?
         if token.token_type == TokenType.NUMBER then {
-            const n is @int(token.value) as int else {
-                token.value?
-                "invalid number"?
+            "Converting number token:"?
+            token.value?
+            var temp_result is @int(token.value)
+            temp_result?
+            const n is temp_result as int else {
+                "invalid number conversion"?
                 return
             }
+            "Number conversion successful:"?
+            n?
+            "Pushing to stack:"?
             @push(stack, n)
         } 
 
+
         else if token.token_type == TokenType.OPERATOR then {
+            "Processing operator:"?
+            token.value?
+            "Stack length:"?
+            @length(stack)?
+
             // need two operands
             if @length(stack) < 2 then {
-                "not enough operands"? 
+                "not enough operands"?
                 return
             }
 
+            "Popping operands:"?
             const right is @pop(stack)
             const left is @pop(stack)
 
-            var result is 0
+            "Operands:"?
+            left?
+            right?
 
+            var result :: int is 0
+
+            "Calculating result:"?
             if token.value == "+" then result is left + right
             else if token.value == "-" then result is left - right
             else if token.value == "*" then result is left * right
-            else if token.value == "/" then result is left / right
+            else if token.value == "/" then result is @floor(left / right)
             else {
                 token.value?
                 "invalid operator"?
                 return
             }
 
+            "Result:"?
+            result?
             @push(stack, result)
         }
     }
@@ -240,5 +287,5 @@ function execute(tokens :: Token[]) {
     }
 
     stack[0]?
-    return
+    return stack[0]
 }

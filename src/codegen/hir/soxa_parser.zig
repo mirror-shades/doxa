@@ -1,5 +1,6 @@
 const std = @import("std");
 const Reporting = @import("../../utils/reporting.zig");
+const Location = Reporting.Location;
 
 const SoxaValues = @import("soxa_values.zig");
 const HIRValue = SoxaValues.HIRValue;
@@ -211,7 +212,7 @@ pub const SoxaTextParser = struct {
                 .name = name,
                 .qualified_name = name,
                 .arity = arity,
-                .return_type = .Auto,
+                .return_type = .Unknown,
                 .start_label = try self.allocator.dupe(u8, "unknown"), // Will be updated
                 .local_var_count = 0,
                 .is_entry = false,
@@ -321,7 +322,7 @@ pub const SoxaTextParser = struct {
             const var_index = std.fmt.parseInt(u32, idx_str, 10) catch return;
             const name_quoted = tokens.next() orelse return;
             const var_name = try self.parseQuotedString(name_quoted);
-            try self.instructions.append(HIRInstruction{ .StoreVar = .{ .var_index = var_index, .var_name = var_name, .scope_kind = .Local, .module_context = null, .expected_type = .Auto } });
+            try self.instructions.append(HIRInstruction{ .StoreVar = .{ .var_index = var_index, .var_name = var_name, .scope_kind = .Local, .module_context = null, .expected_type = .Unknown } });
         } else if (std.mem.eql(u8, op, "StoreConst")) {
             const idx_str = tokens.next() orelse return;
             const var_index = std.fmt.parseInt(u32, idx_str, 10) catch return;
@@ -340,7 +341,7 @@ pub const SoxaTextParser = struct {
             const maybe_type = tokens.next();
             var operand_type: HIRType = .Int;
             if (maybe_type) |type_str| {
-                operand_type = if (std.mem.eql(u8, type_str, "Int")) HIRType.Int else if (std.mem.eql(u8, type_str, "Byte")) HIRType.Byte else if (std.mem.eql(u8, type_str, "Float")) HIRType.Float else if (std.mem.eql(u8, type_str, "String")) HIRType.String else if (std.mem.eql(u8, type_str, "Tetra")) HIRType.Tetra else if (std.mem.eql(u8, type_str, "Nothing")) HIRType.Nothing else if (std.mem.eql(u8, type_str, "Array")) HIRType.Array else if (std.mem.eql(u8, type_str, "Struct")) HIRType.Struct else if (std.mem.eql(u8, type_str, "Map")) HIRType.Map else if (std.mem.eql(u8, type_str, "Enum")) HIRType.Enum else if (std.mem.eql(u8, type_str, "Function")) HIRType.Function else if (std.mem.eql(u8, type_str, "Auto")) HIRType.Auto else HIRType.Int;
+                operand_type = if (std.mem.eql(u8, type_str, "Int")) HIRType.Int else if (std.mem.eql(u8, type_str, "Byte")) HIRType.Byte else if (std.mem.eql(u8, type_str, "Float")) HIRType.Float else if (std.mem.eql(u8, type_str, "String")) HIRType.String else if (std.mem.eql(u8, type_str, "Tetra")) HIRType.Tetra else if (std.mem.eql(u8, type_str, "Nothing")) HIRType.Nothing else if (std.mem.eql(u8, type_str, "Array")) HIRType.Array else if (std.mem.eql(u8, type_str, "Struct")) HIRType.Struct else if (std.mem.eql(u8, type_str, "Map")) HIRType.Map else if (std.mem.eql(u8, type_str, "Enum")) HIRType.Enum else if (std.mem.eql(u8, type_str, "Function")) HIRType.Function else if (std.mem.eql(u8, type_str, "Auto")) HIRType.Unknown else HIRType.Int;
             }
 
             try self.instructions.append(HIRInstruction{ .Compare = .{ .op = comp_op, .operand_type = operand_type } });
@@ -412,7 +413,7 @@ pub const SoxaTextParser = struct {
             const name_or_type = tokens.next() orelse return;
             var name: ?[]const u8 = null;
             var value_type: HIRType = .String;
-            var location: ?Reporting.Reporter.Location = null;
+            var location: ?Location = null;
             var union_members: ?[][]const u8 = null;
 
             // For struct peekion
@@ -545,7 +546,7 @@ pub const SoxaTextParser = struct {
         } else if (std.mem.eql(u8, op, "ArrayNew")) {
             const type_str = tokens.next() orelse return;
             const size_str = tokens.next() orelse return;
-            const element_type = if (std.mem.eql(u8, type_str, "Int")) HIRType.Int else if (std.mem.eql(u8, type_str, "Float")) HIRType.Float else if (std.mem.eql(u8, type_str, "String")) HIRType.String else if (std.mem.eql(u8, type_str, "Byte")) HIRType.Byte else if (std.mem.eql(u8, type_str, "Tetra")) HIRType.Tetra else HIRType.Auto;
+            const element_type = if (std.mem.eql(u8, type_str, "Int")) HIRType.Int else if (std.mem.eql(u8, type_str, "Float")) HIRType.Float else if (std.mem.eql(u8, type_str, "String")) HIRType.String else if (std.mem.eql(u8, type_str, "Byte")) HIRType.Byte else if (std.mem.eql(u8, type_str, "Tetra")) HIRType.Tetra else HIRType.Unknown;
             const size = std.fmt.parseInt(u32, size_str, 10) catch return;
             try self.instructions.append(HIRInstruction{ .ArrayNew = .{ .element_type = element_type, .size = size } });
         } else if (std.mem.eql(u8, op, "ArrayGet")) {
@@ -584,7 +585,7 @@ pub const SoxaTextParser = struct {
             try self.instructions.append(HIRInstruction{ .Map = .{
                 .entries = dummy_entries,
                 .key_type = key_type,
-                .value_type = .Auto,
+                .value_type = .Unknown,
             } });
         } else if (std.mem.eql(u8, op, "MapGet")) {
             const key_type_str = tokens.next() orelse return;
@@ -614,7 +615,7 @@ pub const SoxaTextParser = struct {
             // based on the actual values on the stack
             const field_types = try self.allocator.alloc(HIRType, field_count);
             for (field_types) |*field_type| {
-                field_type.* = HIRType.Auto; // Default to Auto, will be resolved at runtime
+                field_type.* = HIRType.Unknown; // Default to Auto, will be resolved at runtime
             }
 
             try self.instructions.append(HIRInstruction{
@@ -703,7 +704,7 @@ pub const SoxaTextParser = struct {
             // or: AssertFail @file:line:column
             const rest_of_line = tokens.rest();
             var has_message = false;
-            var location: ?Reporting.Reporter.Location = null;
+            var location: ?Location = null;
 
             // Look for location string starting with @
             if (std.mem.indexOf(u8, rest_of_line, "@")) |at_pos| {
@@ -722,10 +723,14 @@ pub const SoxaTextParser = struct {
             }
 
             try self.instructions.append(HIRInstruction{ .AssertFail = .{
-                .location = location orelse Reporting.Reporter.Location{
+                .location = location orelse Location{
                     .file = "unknown",
-                    .line = 0,
-                    .column = 0,
+                    .range = .{
+                        .start_line = 0,
+                        .start_col = 0,
+                        .end_line = 0,
+                        .end_col = 0,
+                    },
                 },
                 .has_message = has_message,
             } });
@@ -764,7 +769,7 @@ pub const SoxaTextParser = struct {
         return error.NoStructContext;
     }
 
-    fn parseLocationString(self: *SoxaTextParser, location_str: []const u8) !Reporting.Reporter.Location {
+    fn parseLocationString(self: *SoxaTextParser, location_str: []const u8) !Location {
         // Parse format: @file:line:column
         // Handle Windows paths by splitting from the right side
         if (!std.mem.startsWith(u8, location_str, "@")) {
@@ -782,13 +787,17 @@ pub const SoxaTextParser = struct {
         const column_part = location_part[last_colon + 1 ..];
 
         const file = try self.allocator.dupe(u8, file_part);
-        const line = try std.fmt.parseInt(i32, line_part, 10);
+        const line = try std.fmt.parseInt(usize, line_part, 10);
         const column = try std.fmt.parseInt(usize, column_part, 10);
 
-        return Reporting.Reporter.Location{
+        return Location{
             .file = file,
-            .line = line,
-            .column = column,
+            .range = .{
+                .start_line = line,
+                .start_col = column,
+                .end_line = line,
+                .end_col = column,
+            },
         };
     }
 };

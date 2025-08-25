@@ -36,7 +36,21 @@ Memory is managed but not via garbage collection. Doxa uses an automated refence
 ## Usage
 
 ```bash
+doxa run ./path/to/file.doxa
+```
+
+compile from source and run
+
+```bash
 zig build run -- [--debug] ./path/to/file.doxa
+```
+
+## Tests
+
+compile from source and run tests
+
+```bash
+zig build test
 ```
 
 ## Development Status

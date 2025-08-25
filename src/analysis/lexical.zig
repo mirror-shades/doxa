@@ -1,6 +1,11 @@
 const std = @import("std");
 const Reporting = @import("../utils/reporting.zig");
+const Location = Reporting.Location;
 const Reporter = Reporting.Reporter;
+
+const Errors = @import("../utils/errors.zig");
+const ErrorList = Errors.ErrorList;
+const ErrorCode = Errors.ErrorCode;
 
 const TokenImport = @import("../types/token.zig");
 const Token = TokenImport.Token;
@@ -16,16 +21,16 @@ pub const LexicalAnalyzer = struct {
     keywords: std.StringHashMap(TokenType),
     tokens: std.ArrayList(Token),
     source: []const u8,
-    start: usize, // array index is usize by default
-    current: usize, // array index is usize by default
-    line: i32,
-    column: usize, // array index is usize by default
+    start: usize,
+    current: usize,
+    line: usize,
+    column: usize,
     allocator: std.mem.Allocator,
     allocated_strings: std.ArrayList([]const u8),
     allocated_arrays: std.ArrayList([]const TokenLiteral),
     line_start: usize, // Add this to track start of current line
     file_path: []const u8,
-    token_line: i32, // Add this to track line at token start
+    token_line: usize, // Add this to track line at token start
     reporter: *Reporter,
 
     //======================================================================
@@ -153,7 +158,7 @@ pub const LexicalAnalyzer = struct {
     }
 
     // lexes the next token
-    fn getNextToken(self: *LexicalAnalyzer) (Reporting.ErrorList || std.mem.Allocator.Error)!void {
+    fn getNextToken(self: *LexicalAnalyzer) (ErrorList || std.mem.Allocator.Error)!void {
         // Skip whitespace
         while (!self.isAtEnd() and (self.peekAt(0) == ' ' or self.peekAt(0) == '\r' or self.peekAt(0) == '\t')) {
             self.advance();
@@ -197,12 +202,12 @@ pub const LexicalAnalyzer = struct {
                         self.advance();
                         // Emit newline token for end-of-line comment without relying on start/line_start
                         if (self.tokens.items.len == 0 or self.tokens.items[self.tokens.items.len - 1].type != .NEWLINE) {
-                            const tok_line: i32 = if (self.line > 0) self.line - 1 else 0;
+                            const tok_line: usize = if (self.line > 0) self.line - 1 else 0;
                             try self.tokens.append(Token.initWithFile(.NEWLINE, "", .nothing, tok_line, 1, self.file_path));
                         }
                     }
                 } else if (self.match('*')) {
-                    var nesting: i32 = 1;
+                    var nesting: usize = 1;
 
                     while (nesting > 0 and !self.isAtEnd()) {
                         if (self.peekAt(0) == '/' and self.peekAt(1) == '*') {
@@ -310,12 +315,16 @@ pub const LexicalAnalyzer = struct {
                 if (self.match('=')) {
                     try self.addMinimalToken(.EQUALITY);
                 } else if (self.match(' ')) {
-                    const location = Reporter.Location{
+                    const location = Location{
                         .file = self.file_path,
-                        .line = self.line,
-                        .column = self.column,
+                        .range = .{
+                            .start_line = self.line,
+                            .start_col = self.column,
+                            .end_line = self.line,
+                            .end_col = self.column,
+                        },
                     };
-                    self.reporter.reportCompileError(location, "equals sign '=' is not used for variable declarations, use 'is' instead", .{});
+                    self.reporter.reportCompileError(location, ErrorCode.USE_IS_FOR_ASSIGNMENT, "equals sign '=' is not used for variable declarations, use 'is' instead", .{});
                     return error.UseIsForAssignment;
                 }
             },
@@ -384,7 +393,7 @@ pub const LexicalAnalyzer = struct {
                 }
 
                 if (should_add_newline) {
-                    const tok_line: i32 = if (self.line > 0) self.line - 1 else 0;
+                    const tok_line: usize = if (self.line > 0) self.line - 1 else 0;
                     try self.tokens.append(Token.initWithFile(.NEWLINE, "", .nothing, tok_line, 1, self.file_path));
                 }
             },

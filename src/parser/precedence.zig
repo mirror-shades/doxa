@@ -6,7 +6,8 @@ const decl_parser = @import("./declaration_parser.zig");
 const quantifer_parser = @import("./quantifer_parser.zig");
 const ast = @import("../ast/ast.zig");
 const Reporting = @import("../utils/reporting.zig");
-const ErrorList = Reporting.ErrorList;
+const Errors = @import("../utils/errors.zig");
+const ErrorList = Errors.ErrorList;
 
 // Import all the parsing functions used in rules
 const unary = expr_parser.unary;
@@ -406,18 +407,7 @@ fn logical(self: *Parser, left: ?*ast.Expr, precedence: Precedence) ErrorList!?*
     logical_expr.* = .{
         .base = .{
             .id = ast.generateNodeId(),
-            .span = .{
-                .start = .{
-                    .file = self.peek().file,
-                    .line = self.peek().line,
-                    .column = self.peek().column,
-                },
-                .end = .{
-                    .file = self.peek().file,
-                    .line = self.peek().line,
-                    .column = self.peek().column + self.peek().lexeme.len,
-                },
-            },
+            .span = ast.SourceSpan.fromToken(operator),
         },
         .data = .{
             .Logical = .{
@@ -450,8 +440,15 @@ fn peekValue(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Exp
         .base = .{
             .id = ast.generateNodeId(),
             .span = .{
-                .start = .{ .file = qm_token.file, .line = qm_token.line, .column = qm_token.column },
-                .end = .{ .file = qm_token.file, .line = qm_token.line, .column = qm_token.column + qm_token.lexeme.len },
+                .location = .{
+                    .file = qm_token.file,
+                    .range = .{
+                        .start_line = @intCast(qm_token.line),
+                        .start_col = qm_token.column,
+                        .end_line = @intCast(qm_token.line),
+                        .end_col = qm_token.column + qm_token.lexeme.len,
+                    },
+                },
             },
         },
         .data = .{
@@ -459,9 +456,13 @@ fn peekValue(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Exp
             .Peek = .{
                 .expr = left.?,
                 .location = .{
-                    .line = qm_token.line,
-                    .column = qm_token.column,
                     .file = qm_token.file,
+                    .range = .{
+                        .start_line = @intCast(qm_token.line),
+                        .start_col = qm_token.column,
+                        .end_line = @intCast(qm_token.line),
+                        .end_col = qm_token.column + qm_token.lexeme.len,
+                    },
                 },
                 .variable_name = name_token,
             },

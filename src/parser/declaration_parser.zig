@@ -3,13 +3,16 @@ const Parser = @import("./parser_types.zig").Parser;
 const ast = @import("../ast/ast.zig");
 const token = @import("../types/token.zig");
 const Reporting = @import("../utils/reporting.zig");
-const ErrorList = Reporting.ErrorList;
 const Reporter = Reporting.Reporter;
+const Location = Reporting.Location;
+const Errors = @import("../utils/errors.zig");
+const ErrorList = Errors.ErrorList;
 const expression_parser = @import("./expression_parser.zig");
 const Precedence = @import("./precedence.zig").Precedence;
 const statement_parser = @import("./statement_parser.zig");
 const precedence = @import("./precedence.zig");
 const declaration_parser = @import("./declaration_parser.zig");
+const ErrorCode = @import("../utils/errors.zig").ErrorCode;
 
 pub fn parseEnumDecl(self: *Parser) ErrorList!ast.Stmt {
     // Check for public keyword
@@ -72,15 +75,14 @@ pub fn parseEnumDecl(self: *Parser) ErrorList!ast.Stmt {
 
     // Create source span from name token to closing brace
     const span = ast.SourceSpan{
-        .start = .{
+        .location = .{
             .file = name.file,
-            .line = name.line,
-            .column = name.column,
-        },
-        .end = .{
-            .file = self.previous().file,
-            .line = self.previous().line,
-            .column = self.previous().column + self.previous().lexeme.len,
+            .range = .{
+                .start_line = @intCast(name.line),
+                .start_col = name.column,
+                .end_line = @intCast(self.previous().line),
+                .end_col = self.previous().column + self.previous().lexeme.len,
+            },
         },
     };
 
@@ -176,15 +178,14 @@ pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*
 
     // Create source span from name token to closing brace
     const span = ast.SourceSpan{
-        .start = .{
+        .location = .{
             .file = name.file,
-            .line = name.line,
-            .column = name.column,
-        },
-        .end = .{
-            .file = self.previous().file,
-            .line = self.previous().line,
-            .column = self.previous().column + self.previous().lexeme.len,
+            .range = .{
+                .start_line = @intCast(name.line),
+                .start_col = name.column,
+                .end_line = @intCast(self.previous().line),
+                .end_col = self.previous().column + self.previous().lexeme.len,
+            },
         },
     };
 
@@ -389,12 +390,16 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
 
             initializer = try expression_parser.parseExpression(self);
             if (initializer == null) {
-                const location = Reporter.Location{
+                const location = Reporting.Location{
                     .file = self.current_file,
-                    .line = self.peek().line,
-                    .column = self.peek().column,
+                    .range = .{
+                        .start_line = self.peek().line,
+                        .start_col = self.peek().column,
+                        .end_line = self.peek().line,
+                        .end_col = self.peek().column,
+                    },
                 };
-                self.reporter.reportCompileError(location, "Expected expression", .{});
+                self.reporter.reportCompileError(location, null, "Expected expression", .{});
                 return error.ExpectedExpression;
             }
         }
@@ -430,12 +435,16 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
     };
 
     if (self.peek().type == .WHERE) {
-        const location = Reporter.Location{
+        const location = Location{
             .file = self.current_file,
-            .line = self.peek().line,
-            .column = self.peek().column,
+            .range = .{
+                .start_line = self.peek().line,
+                .start_col = self.peek().column,
+                .end_line = self.peek().line,
+                .end_col = self.peek().column,
+            },
         };
-        self.reporter.reportCompileError(location, "Type declaration uses ::", .{});
+        self.reporter.reportCompileError(location, ErrorCode.EXPECTED_TYPE_ANNOTATION, "Expected type annotation", .{});
         return error.ExpectedTypeAnnotation;
     }
 
@@ -455,47 +464,21 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
         type_info.is_mutable = !is_const;
     }
 
-    if (self.debug_enabled) {
-        std.debug.print("After parsing type annotation. Current token: {s} ('{s}') at position {}\n", .{ @tagName(self.peek().type), self.peek().lexeme, self.current });
-    }
-
     var initializer: ?*ast.Expr = null;
-
-    if (self.debug_enabled) {
-        std.debug.print("Before checking for initializer. Current token: {s} ('{s}')\n", .{ @tagName(self.peek().type), self.peek().lexeme });
-    }
 
     // Check if the next token is INPUT, which is a special case
     if (self.peek().type == .INPUT) {
-        if (self.debug_enabled) {
-            std.debug.print("\nParsing input expression at position {}, token: {s}\n", .{
-                self.current,
-                @tagName(self.peek().type),
-            });
-        }
 
         // Handle input expression directly without requiring an assignment operator
         initializer = try Parser.input(self, null, .NONE);
         if (initializer == null) return error.ExpectedExpression;
     } else if (self.peek().type == .ASSIGN) {
         self.advance();
-        if (self.debug_enabled) {
-            std.debug.print("\nParsing var initializer at position {}, token: {s}\n", .{
-                self.current,
-                @tagName(self.peek().type),
-            });
-        }
 
         // Parse regular initializer expression
         // Try parsing array literal first
         if (self.peek().type == .LEFT_BRACKET) {
-            if (self.debug_enabled) {
-                std.debug.print("About to parse array literal. Current token: {s} ('{s}')\n", .{ @tagName(self.peek().type), self.peek().lexeme });
-            }
             initializer = try expression_parser.parseArrayLiteral(self, null, .NONE);
-            if (self.debug_enabled) {
-                std.debug.print("After parsing array literal. Current token: {s} ('{s}')\n", .{ @tagName(self.peek().type), self.peek().lexeme });
-            }
         } else if (self.peek().type == .INPUT) {
             // Handle input expression
             initializer = try Parser.input(self, null, .NONE);
@@ -504,26 +487,10 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
             if (try Parser.parseStructInit(self)) |struct_init| {
                 initializer = struct_init;
             } else {
-                // If not a struct init, try regular expression
-                if (self.debug_enabled) {
-                    std.debug.print("\n[DEBUG] About to parse initializer expression at position {}, token: {s} ('{s}')\n", .{ self.current, @tagName(self.peek().type), self.peek().lexeme });
-                    if (self.current + 1 < self.tokens.len) {
-                        std.debug.print("[DEBUG] Next token: {s} ('{s}')\n", .{ @tagName(self.tokens[self.current + 1].type), self.tokens[self.current + 1].lexeme });
-                    }
-                }
                 initializer = try expression_parser.parseExpression(self);
-                if (self.debug_enabled) {
-                    std.debug.print("[DEBUG] Finished parsing initializer expression. Next token: {s} ('{s}')\n", .{ @tagName(self.peek().type), self.peek().lexeme });
-                }
             }
         } else {
-            if (self.debug_enabled) {
-                std.debug.print("\n[DEBUG] About to parse initializer expression at position {}, token: {s}\n", .{ self.current, @tagName(self.peek().type) });
-            }
             initializer = try expression_parser.parseExpression(self);
-            if (self.debug_enabled) {
-                std.debug.print("[DEBUG] Finished parsing initializer expression. Next token: {s}\n", .{@tagName(self.peek().type)});
-            }
         }
 
         if (initializer == null) {
@@ -533,38 +500,37 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
 
     // Validate that const declarations must have initializers
     if (is_const and initializer == null) {
-        const location = Reporter.Location{
+        const location = Location{
             .file = self.current_file,
-            .line = name.line,
-            .column = name.column,
+            .range = .{
+                .start_line = name.line,
+                .start_col = name.column,
+                .end_line = name.line,
+                .end_col = name.column,
+            },
         };
-        self.reporter.reportCompileError(location, "Const declarations must have initializers", .{});
+        self.reporter.reportCompileError(location, ErrorCode.EXPECTED_TYPE_ANNOTATION, "Expected type annotation", .{});
         return error.ConstMustHaveInitializer;
     }
 
     // Make newlines optional - consume if present, but don't require them
     if (self.peek().type == .NEWLINE) {
         self.advance(); // Consume the newline if present
-    } else {
-        if (self.debug_enabled) {
-            std.debug.print("No newline found, continuing. Next token: {s}\n", .{@tagName(self.peek().type)});
-        }
-        // Continue without newline
     }
 
     // CRITICAL: Reject variable declarations with no type annotation and no initializer
     if (type_info.base == .Nothing and initializer == null) {
-        const location = Reporter.Location{
+        const location = Location{
             .file = self.current_file,
-            .line = name.line,
-            .column = name.column,
+            .range = .{
+                .start_line = name.line,
+                .start_col = name.column,
+                .end_line = name.line,
+                .end_col = name.column,
+            },
         };
-        self.reporter.reportCompileError(location, "Variable declaration requires either type annotation (::) or initializer", .{});
+        self.reporter.reportCompileError(location, ErrorCode.EXPECTED_TYPE_ANNOTATION, "Expected type annotation", .{});
         return error.ExpectedTypeAnnotationOrInitializer;
-    }
-
-    if (self.debug_enabled) {
-        std.debug.print("Finished parsing variable declaration. Current token: {s} ('{s}')\n", .{ @tagName(self.peek().type), self.peek().lexeme });
     }
 
     // Handle type inference (defer union member resolution to semantic analysis)

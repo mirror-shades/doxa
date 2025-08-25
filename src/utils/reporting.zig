@@ -1,453 +1,294 @@
 const std = @import("std");
 
-pub const ErrorList = error{
-    // Memory & Stack Management
-    StackOverflow,
-    StackUnderflow,
-    FrameStackOverflow,
-    OutOfMemory,
-    NoRootScope,
-    StorageNotFound,
-
-    // Type System & Value Handling
-    TypeError,
-    DivisionByZero,
-    IntegerOverflow,
-    FloatOverflow,
-    InvalidType,
-    InvalidOperand,
-    InvalidOperator,
-    InvalidConstant,
-    InvalidExpression,
-    UnknownDirective,
-    InvalidDirective,
-    ExpectedEquals,
-    ExpectedEnumValue,
-    InvalidReturnValue,
-    TooManyArguments,
-    NoDefaultValue,
-    TooFewArguments,
-    InvalidMapKey,
-    KeyNotFound,
-    ExpectedCatch,
-    HeterogeneousArray,
-    MissingTypeAnnotation,
-    BangNegationNotSupported,
-    UndeclaredFunction,
-    UnknownMethod,
-    MethodNotFound,
-    EmptyArray,
-    UndeclaredType,
-    NullAssignmentValue,
-    ExpectedStructType,
-    UnknownVariableType,
-    UnknownCustomType,
-    InvalidExpressionType,
-    ImportMustHaveFrom,
-
-    // Variable Management
-    VariableNotFound,
-    VariableOutOfScope,
-    VariableIndexOutOfBounds,
-    AccessingCleanedVariable,
-    CannotAssignToConstant,
-    UndefinedVariable,
-    VariableAlreadyDefined,
-    InvalidAssignment,
-    InvalidAssignmentTarget,
-    ImmutableVariable,
-    UseIsForAssignment,
-    ExpectedVarOrConst,
-    ConstMustHaveInitializer,
-    byteOverflow,
-    byteUnderflow,
-    CannotModifyConstant,
-    TypeMismatch,
-
-    // Function & Frame Management
-    InvalidFunction,
-    NoActiveFrame,
-    InsufficientArguments,
-    CannotPopGlobalFrame,
-    NotCallable,
-    InvalidFunctionCall,
-    InvalidFunctionDeclaration,
-    InvalidReturnStatement,
-    ReturnValue,
-    ReturnNothing,
-    InvalidArgumentCount,
-    ExpectedLeftOperand,
-    ExpectedRightOperand,
-    ExpectedOperand,
-    ExpectedCallable,
-    ConstAssignment,
-    MissingEntryPointFunction,
-    FunctionNotFound,
-
-    // Collections & Indexing
-    IndexOutOfBounds,
-    UnterminatedArray,
-    UnterminatedString,
-    UnterminatedParenthesis,
-    ExpectedComma,
-    ExpectedDot,
-    ExpectedArrow,
-    UnsupportedArrayType,
-    ArrayTypeMismatch,
-    NotAStruct,
-    EmptyStruct,
-    EmptyMatch,
-    FieldNotFound,
-    InvalidFieldAccess,
-    InvalidFieldAccessTarget,
-    InvalidFieldType,
-    MissingFieldTypes,
-    InvalidEnumVariant,
-    NoMatchCase,
-    UndefinedType,
-    UndefinedProperty,
-    MethodNotImplemented,
-
-    // Error Handling
-    NoTryBlock,
-    ExpectedInKeyword,
-    ExpectedTypeAnnotation,
-    ExpectedTypeAnnotationOrInitializer,
-    NoCatchWithoutTry,
-    NoTryBlockToEnd,
-    UncaughtError,
-    AssertionFailed,
-
-    // Lexical Analysis
-    UnterminatedMultilineComment,
-    ExpectedCommaOrClosingBracket,
-    ExpectedCommaOrClosingParenthesis,
-    InvalidNumber,
-    InvalidEscapeSequence,
-    UnexpectedCharacter,
-    InvalidCharacter,
-    LeadingZeros,
-    MultipleExponents,
-    InvalidExponent,
-    ByteValueTooLarge,
-    InvalidInternalMethod,
-
-    // Unicode & UTF-8 Handling
-    Utf8InvalidStartByte,
-    Utf8ExpectedContinuation,
-    Utf8OverlongEncoding,
-    Utf8InvalidCodepoint,
-    Utf8CodepointTooLarge,
-    Utf8CannotEncodeSurrogateHalf,
-    InvalidUnicodeEscape,
-    CodepointTooLarge,
-
-    // Syntax & Parsing
-    ExpectedNewline,
-    ExpectedClosingParen,
-    ExpectedExpression,
-    ExpectedIdentifier,
-    ExpectedAssignmentOperator,
-    ExpectedLiteral,
-    ExpectedString,
-    UnexpectedToken,
-    ExpectedRightParen,
-    ExpectedLeftParen,
-    ExpectedRightBracket,
-    ExpectedLeftBracket,
-    ExpectedLeftBrace,
-    ExpectedRightBrace,
-    ExpectedRightUnion,
-    ExpectedThen,
-    ExpectedElse,
-    ExpectedColon,
-    ExpectedCommaOrBracket,
-    ExpectedNewlineOrBrace,
-    ExpectedEnumVariant,
-    ExpectedCommaOrBrace,
-    ExpectedCommaOrParen,
-    ExpectedFunctionParam,
-    ExpectedFunctionReturnType,
-    ExpectedFunctionBody,
-    ExpectedFunctionParams,
-    ExpectedType,
-    ExpectedFunctionKeyword,
-    ExpectedFunctionName,
-    ExpectedArrayExpression,
-    ExpectedArrayType,
-    ExpectedWhereKeyword,
-    UnsupportedCompoundOperator,
-    MissingParameterType,
-    MissingReturnType,
-    ExpectedStringLiteral,
-    ParserDidNotAdvance,
-    ImportMustHaveAlias,
-    CircularImport,
-    UnknownType,
-    UnknownFieldOrMethod,
-    EllipsisWithoutNewline,
-
-    // Miscellaneous
-    NotImplemented,
-    Overflow,
-    PermissionDenied,
-    ProcessNotFound,
-    MessageTooBig,
-    Canceled,
-    EndOfStream,
-    StreamTooLong,
-    InternalParserError,
-    SemanticError,
-    RuntimeError,
-
-    // Print Statements
-    UnsupportedPrintStatement,
-    InvalidPrintStatement,
-    FileTooBig,
-    InputOutput,
-    BrokenPipe,
-    DiskQuota,
-    AccessDenied,
-    Unexpected,
-    SystemResources,
-    NoSpaceLeft,
-    DeviceBusy,
-    WouldBlock,
-    OperationAborted,
-    ConnectionResetByPeer,
-    InvalidArgument,
-    NotOpenForWriting,
-    LockViolation,
-
-    // Entry Points
-    MultipleEntryPoints,
-    MisplacedEntryPoint,
-    TwoMainFunctions,
-    MissingEntryPoint,
-    ExpectedFunction,
-    InvalidEntryPoint,
-
-    // Module System
-    ModuleNotFound,
-    ModuleAlreadyLoaded,
-    ModuleParseError,
-    ExpectedModuleName,
-    ExpectedImportName,
-    UnsafeImportInSafeModule,
-    MisplacedPublicModifier,
-    ModuleNotImplemented,
-    ModuleAlreadyExists,
-    ModuleLoadError,
-
-    // modules
-    SharingViolation,
-    PathAlreadyExists,
-    FileNotFound,
-    PipeBusy,
-    NameTooLong,
-    InvalidUtf8,
-    InvalidWtf8,
-    BadPathName,
-    NetworkNotFound,
-    AntivirusInterference,
-    SymLinkLoop,
-    ProcessFdQuotaExceeded,
-    SystemFdQuotaExceeded,
-    NoDevice,
-    IsDir,
-    NotDir,
-    FileLocksNotSupported,
-    FileBusy,
-    Unseekable,
-    ConnectionTimedOut,
-    NotOpenForReading,
-    SocketNotConnected,
-    IncompleteRead,
-
-    // LLVM
-    UnsupportedOperator,
-    UnsupportedLiteral,
-    UnsupportedCallType,
-    UnsupportedType,
-    UnsupportedTypeExpr,
-    UnsupportedFunction,
-    UnsupportedDeclaration,
-    UnsupportedExpression,
-    UnsupportedStatement,
-    UnsupportedModule,
-    UnsupportedInitializer,
-    MissingCondition,
-    MissingThenBranch,
-    ModuleVerificationFailed,
-    EmitFailed,
-    FunctionNotDeclared,
-    FunctionVerificationFailed,
-    ReturnOutsideFunction,
-
-    // memory
-    DuplicateVariableName,
-    NothingTypeMustBeConst,
-    ExpectedPattern,
+pub const Severity = enum {
+    Error,
+    Warning,
+    Info,
+    Hint,
+    Internal,
 };
 
-/// Reporting provides structured error handling and reporting capabilities
-/// for the DoxVM compiler and runtime.
+pub const DiagnosticPhase = enum {
+    CompileTime,
+    Runtime,
+    Internal,
+    Debug,
+};
+
+pub const ReporterOptions = struct {
+    max_diagnostics: i32 = 1000,
+    warn_as_error: bool = false,
+    debug_mode: bool = false,
+    print_immediately: bool = true, // CLI printing control
+};
+
+pub const Range = struct {
+    start_line: usize,
+    start_col: usize,
+    end_line: usize,
+    end_col: usize,
+};
+
+pub const Location = struct {
+    file: []const u8,
+    file_uri: ?[]const u8 = null, // TODO: LSP URIs
+    range: Range,
+};
+
+pub const Diagnostic = struct {
+    phase: DiagnosticPhase,
+    severity: Severity,
+    message: []const u8, // heap-allocated
+    loc: ?Location,
+    code: ?[]const u8 = null,
+    related_info: ?[]const u8 = null, // TODO: related diagnostics
+    source: ?[]const u8 = "DoxVM",
+};
+
 pub const Reporter = struct {
-    /// Total count of errors encountered
-    error_count: i32 = 0,
+    diagnostics: std.ArrayList(Diagnostic),
+    options: ReporterOptions,
+    writer: std.io.AnyWriter,
+    allocator: std.mem.Allocator,
+    debug_mode: bool,
 
-    is_debug: bool = false,
-
-    /// Total count of warnings encountered
-    warning_count: i32 = 0,
-
-    /// Whether any errors occurred
-    had_error: bool = false,
-
-    /// Whether any warnings occurred
-    had_warning: bool = false,
-
-    /// Output writer for error messages
-    writer: std.fs.File.Writer,
-
-    /// Allocator for error lists and other dynamic memory
-    allocator: ?std.mem.Allocator = null,
-
-    /// Initialize a new Reporter that writes to stderr
-    /// Optionally provide an allocator for dynamic memory operations
-    pub fn initWithAllocator(allocator: ?std.mem.Allocator) Reporter {
+    pub fn init(allocator: std.mem.Allocator, options: ReporterOptions) Reporter {
+        const writer = std.io.getStdErr().writer().any();
         return .{
-            .writer = std.io.getStdErr().writer(),
+            .diagnostics = std.ArrayList(Diagnostic).init(allocator),
+            .options = options,
+            .writer = writer,
             .allocator = allocator,
-            .error_count = 0,
-            .warning_count = 0,
-            .had_error = false,
-            .had_warning = false,
+            .debug_mode = options.debug_mode,
         };
     }
 
-    /// Initialize a new Reporter with default settings
-    pub fn init(is_debug: bool) Reporter {
-        var reporter = Reporter.initWithAllocator(null);
-        reporter.is_debug = is_debug;
-        return reporter;
-    }
-
     pub fn deinit(self: *Reporter) void {
-        _ = self;
-        //self.writer.flush() catch {};
-    }
-
-    // TODO: location in AST too, why?
-    /// Location information for error reporting
-    pub const Location = struct {
-        line: i32,
-        column: usize,
-        file: []const u8,
-
-        pub fn format(
-            self: Location,
-            comptime fmt: []const u8,
-            options: std.fmt.FormatOptions,
-            writer: anytype,
-        ) !void {
-            _ = fmt;
-            _ = options;
-            try writer.print("{s}:{d}:{d}", .{
-                self.file,
-                self.line,
-                self.column,
-            });
+        for (self.diagnostics.items) |diag| {
+            self.allocator.free(diag.message);
         }
-    };
-
-    pub const RuntimeError = struct {
-        message: []const u8,
-        location: struct {
-            file: []const u8,
-            line: usize,
-            column: usize,
-        },
-    };
-
-    /// Report a fatal error and panic
-    pub fn reportFatalError(self: *Reporter, comptime fmt: []const u8, args: anytype) noreturn {
-        self.had_error = true;
-        self.error_count += 1;
-        self.writer.print("DoxVM: Fatal error: " ++ fmt ++ "\n", args) catch {};
-        std.process.exit(1);
+        self.diagnostics.deinit();
     }
 
-    /// Report a compile-time error with location information
-    pub fn reportCompileError(
+    ////////
+    /// CORE REPORT FUNCTION
+    ////////
+
+    pub fn report(
         self: *Reporter,
-        location: Location,
+        phase: DiagnosticPhase,
+        severity: Severity,
+        loc: ?Location,
+        code: ?[]const u8,
         comptime fmt: []const u8,
         args: anytype,
     ) void {
-        self.had_error = true;
-        self.error_count += 1;
-        self.writer.print("DoxVM: {}: Compile error: " ++ fmt ++ "\n", .{location} ++ args) catch {};
-    }
+        if (self.diagnostics.items.len >= self.options.max_diagnostics) return;
 
-    /// Report a runtime error
-    pub fn reportRuntimeError(self: *Reporter, comptime fmt: []const u8, args: anytype) void {
-        self.had_error = true;
-        self.error_count += 1;
-        self.writer.print("DoxVM: Runtime error: " ++ fmt ++ "\n", args) catch {};
-    }
-
-    /// Report a warning
-    pub fn reportWarning(self: *Reporter, comptime fmt: []const u8, args: anytype) void {
-        self.had_warning = true;
-        self.warning_count += 1;
-        self.writer.print("DoxVM: Warning: " ++ fmt ++ "\n", args) catch {};
-    }
-
-    /// Report a generic error - used by compiler and other components
-    pub fn throwError(self: *Reporter, comptime fmt: []const u8, args: anytype, err: ?ErrorList) ErrorList {
-        self.had_error = true;
-        self.error_count += 1;
-        self.writer.print("DoxVM: Error: " ++ fmt ++ "\n", args) catch {};
-        return err orelse ErrorList.RuntimeError;
-    }
-
-    /// Report a generic error - used by compiler and other components
-    pub fn reportError(self: *Reporter, comptime fmt: []const u8, args: anytype) void {
-        self.throwError(fmt, args, null) catch {};
-    }
-
-    pub fn printf(self: *Reporter, comptime fmt: []const u8, args: anytype) void {
-        self.writer.print(fmt, args) catch {};
-    }
-
-    pub fn printl(self: *Reporter, comptime fmt: []const u8) void {
-        self.writer.print(fmt ++ "\n", .{}) catch {};
-    }
-
-    /// Get total error count
-    pub fn getErrorCount(self: Reporter) i32 {
-        return self.error_count;
-    }
-
-    /// Get total warning count
-    pub fn getWarningCount(self: Reporter) i32 {
-        return self.warning_count;
-    }
-
-    /// Returns true if any errors occurred
-    pub fn hadError(self: Reporter) bool {
-        return self.had_error;
-    }
-
-    /// Returns true if any warnings occurred
-    pub fn hadWarning(self: Reporter) bool {
-        return self.had_warning;
-    }
-
-    pub fn debug(self: *Reporter, comptime fmt: []const u8, args: anytype) void {
-        if (self.is_debug) {
-            self.writer.print("DoxVM: Debug: " ++ fmt ++ "\n", args) catch {};
+        var final_severity = severity;
+        if (severity == .Warning and self.options.warn_as_error) {
+            final_severity = .Error;
         }
+
+        var buf = std.ArrayList(u8).init(self.allocator);
+        defer buf.deinit();
+
+        // Handle formatting errors properly
+        std.fmt.format(buf.writer(), fmt, args) catch |err| {
+            // Log the formatting error and provide a fallback message
+            const fallback_msg = switch (err) {
+                else => "message formatting failed",
+            };
+            const msg_copy = self.allocator.dupe(u8, fallback_msg) catch {
+                // If even the fallback allocation fails, we have to skip the diagnostic
+                return;
+            };
+
+            const diag = Diagnostic{
+                .phase = phase,
+                .severity = final_severity,
+                .message = msg_copy,
+                .loc = loc,
+                .code = code,
+                .related_info = null,
+                .source = "DoxVM",
+            };
+
+            self.diagnostics.append(diag) catch {
+                self.allocator.free(msg_copy);
+                return;
+            };
+
+            if (self.options.print_immediately) {
+                self.writer.print("DoxVM[{s}]: {s}\n", .{ @tagName(final_severity), msg_copy }) catch {};
+            }
+            return;
+        };
+
+        const msg_copy = buf.toOwnedSlice() catch {
+            // Provide a fallback message for out-of-memory situations
+            const fallback_msg = "out of memory: diagnostic message lost";
+            const fallback_copy = self.allocator.dupe(u8, fallback_msg) catch return;
+
+            const diag = Diagnostic{
+                .phase = phase,
+                .severity = final_severity,
+                .message = fallback_copy,
+                .loc = loc,
+                .code = code,
+                .related_info = null,
+                .source = "DoxVM",
+            };
+
+            self.diagnostics.append(diag) catch {
+                self.allocator.free(fallback_copy);
+                return;
+            };
+
+            if (self.options.print_immediately) {
+                self.writer.print("DoxVM[{s}]: {s}\n", .{ @tagName(final_severity), fallback_copy }) catch {};
+            }
+            return;
+        };
+
+        const diag = Diagnostic{
+            .phase = phase,
+            .severity = final_severity,
+            .message = msg_copy,
+            .loc = loc,
+            .code = code,
+            .related_info = null,
+            .source = "DoxVM",
+        };
+
+        self.diagnostics.append(diag) catch {
+            self.allocator.free(msg_copy);
+            return;
+        };
+
+        if (self.options.print_immediately) {
+            self.writer.print("DoxVM[{s}]: {s}\n", .{ @tagName(final_severity), msg_copy }) catch {};
+        }
+    }
+
+    ////////
+    /// PRINTING FUNCTIONS
+    ////////
+
+    pub fn reportCompileError(self: *Reporter, loc: ?Location, code: ?[]const u8, comptime fmt: []const u8, args: anytype) void {
+        self.report(.CompileTime, .Error, loc, code, fmt, args);
+    }
+
+    pub fn reportRuntimeError(self: *Reporter, loc: ?Location, code: ?[]const u8, comptime fmt: []const u8, args: anytype) void {
+        self.report(.Runtime, .Error, loc, code, fmt, args);
+    }
+
+    pub fn reportWarning(self: *Reporter, loc: ?Location, code: ?[]const u8, comptime fmt: []const u8, args: anytype) void {
+        self.report(.CompileTime, .Warning, loc, code, fmt, args);
+    }
+
+    pub fn reportInfo(self: *Reporter, loc: ?Location, code: ?[]const u8, comptime fmt: []const u8, args: anytype) void {
+        self.report(.CompileTime, .Info, loc, code, fmt, args);
+    }
+
+    pub fn reportInternalError(
+        self: *Reporter,
+        comptime fmt: []const u8,
+        args: anytype,
+        comptime src: std.builtin.SourceLocation,
+    ) void {
+        self.reportInternal(fmt, args, src);
+    }
+
+    pub fn debug(
+        self: *Reporter,
+        comptime fmt: []const u8,
+        args: anytype,
+        comptime src: std.builtin.SourceLocation,
+    ) void {
+        if (!self.debug_mode) return;
+        self.reportInternal(fmt, args, src);
+    }
+
+    pub fn reportInternal(self: *Reporter, comptime fmt: []const u8, args: anytype, comptime src: std.builtin.SourceLocation) void {
+        // Use the main reporting system for consistency
+        const loc = Location{
+            .file = src.file,
+            .range = .{
+                .start_line = src.line,
+                .start_col = 0,
+                .end_line = src.line,
+                .end_col = 0,
+            },
+        };
+
+        self.report(.Debug, .Hint, loc, null, fmt, args);
+    }
+
+    ////////
+    /// HELPERS
+    ////////
+
+    pub fn hasErrors(self: *Reporter) bool {
+        for (self.diagnostics.items) |diag| {
+            if (diag.severity == .Error or diag.severity == .Internal) return true;
+        }
+        return false;
+    }
+
+    pub fn hasWarnings(self: *Reporter) bool {
+        for (self.diagnostics.items) |diag| {
+            if (diag.severity == .Warning) return true;
+        }
+        return false;
+    }
+
+    pub fn countBySeverity(self: *Reporter, severity: Severity) i32 {
+        var count: i32 = 0;
+        for (self.diagnostics.items) |diag| {
+            if (diag.severity == severity) count += 1;
+        }
+        return count;
+    }
+
+    pub fn totalDiagnostics(self: *Reporter) i32 {
+        return self.diagnostics.items.len;
+    }
+
+    pub fn hasCompileErrors(self: *Reporter) bool {
+        for (self.diagnostics.items) |diag| {
+            if (diag.phase == .CompileTime and (diag.severity == .Error or diag.severity == .Internal)) return true;
+        }
+        return false;
+    }
+
+    ////////
+    /// BATCHING (TODO:for eventual LSP support)
+    ///////
+
+    pub fn reportBatch(self: *Reporter, diags: []const Diagnostic) void {
+        _ = self;
+        _ = diags;
+    }
+
+    pub fn filterBySeverity(self: *Reporter, severity: Severity) []const Diagnostic {
+        // TODO: return filtered view
+        _ = self;
+        _ = severity;
+        return &[_]Diagnostic{};
+    }
+
+    pub fn filterByFile(self: *Reporter, file: []const u8) []const Diagnostic {
+        // TODO: return filtered view
+        _ = self;
+        _ = file;
+        return &[_]Diagnostic{};
+    }
+
+    pub fn toLspDiagnostics(self: *Reporter, allocator: std.mem.Allocator) ![]u8 {
+        // TODO: serialize diagnostics to LSP JSON
+        _ = self;
+        _ = allocator;
+        return "[]";
     }
 };
