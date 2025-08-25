@@ -30,24 +30,25 @@ while has_next() {
 
 ### Do Loops
 
-**Purpose**: Step-focused loop that executes a step before each iteration.
+**Purpose**: Step-focused loop that executes a step following each iteration. Following C traditions, steps always execute after each iteration of the loop body, before the next condition check.
 
 ```doxa
 do <step> { ... }
-do <step> while <condition> { ... }
 ```
 
 **Examples**:
 
 ```doxa
 // Basic do loop with increment
+var i is 0
 do i += 1 {
-  print(i)
+  i? // 0, 1, 2...
 }
 
 // Do-while equivalent
+var i is 0
 do i += 1 while i < 10 {
-  print(i)
+  i? // 0, 1, 2... 9
 }
 
 // Complex step logic
@@ -98,6 +99,25 @@ while true { ... }  // Traditional infinite loop
 do { ... }          // Cleaner do-based infinite loop
 ```
 
+## Loop Combinations
+
+Here are all the possible combinations for loops using these constructs. Notice that regardless of which constructs you choose, they will be ordered for -> while -> do.
+
+Loops while a given condition met  
+`while y`
+
+Loops using a given step  
+`do z`
+
+Loops while a given condition met using a given step  
+`while y do z`
+
+Loops with an index using a given step  
+`for x do z`
+
+Loops with an index while a given condition met using a given step  
+`for x while y do z`
+
 ## Collection Iteration
 
 ### Each Loops
@@ -133,9 +153,4 @@ All loops support:
 - **`break`**: Exit the loop immediately
 - **`continue`**: Skip to next iteration
 
-**Continue behavior**:
-
-- `while <condition> { ... }` → re-checks condition
-- `do <step> { ... }` → runs step, then continues (no condition check)
-- `while <condition> do <step> { ... }` → runs step, then checks condition
-- `for i while <condition> do <step> { ... }` → runs step, then checks condition
+Continues will run any given `do` step before skipping to the next iteration of the loop.
