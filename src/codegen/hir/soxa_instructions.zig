@@ -391,7 +391,7 @@ pub const HIRInstruction = union(enum) {
     Peek: struct {
         name: ?[]const u8,
         value_type: HIRType,
-        location: ?Reporting.Reporter.Location,
+        location: ?Reporting.Location,
         union_members: ?[][]const u8 = null,
     },
 
@@ -403,7 +403,7 @@ pub const HIRInstruction = union(enum) {
         field_count: u32,
         field_names: [][]const u8,
         field_types: []HIRType,
-        location: ?Reporting.Reporter.Location,
+        location: ?Reporting.Location,
         should_pop_after_peek: bool,
     },
 
@@ -432,7 +432,7 @@ pub const HIRInstruction = union(enum) {
     /// VM: Print formatted "Assertion failed at [location]: [message]" and halt
     /// LLVM: Generate formatted error output and exit
     AssertFail: struct {
-        location: Reporting.Reporter.Location,
+        location: Reporting.Location,
         has_message: bool,
     },
 };

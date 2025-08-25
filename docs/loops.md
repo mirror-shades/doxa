@@ -1,46 +1,141 @@
 # Loops
 
-Doxa provides three types of loops: `while`, `for`, and `each`. While `while` and `for` work like traditional loops in most languages, `each` offers a more modern, collection-focused approach.
+Doxa provides two core loop constructs: `while` and `do`. The `for` keyword is optional and provides a loop variable that can be used with either loop type. This design allows flexible loop syntax that can simulate C-style `for` loops when needed.
 
-## While
+## Core Loop Constructs
 
-The `while` loop continues executing as long as a condition remains true:
+### While Loops
 
+**Purpose**: Condition-based loop that executes while a condition is true.
+
+```doxa
+while <condition> { ... }
 ```
-var currentNumber is 0
-while currentNumber <= 100 {
-    currentNumber += 1
+
+**Examples**:
+
+```doxa
+// Basic while loop
+while i < 10 {
+  print(i)
+  i += 1
+}
+
+// With early exit
+while has_next() {
+  const item is next()
+  if item == target { break }
 }
 ```
 
-## For
+### Do Loops
 
-The `for` loop uses traditional C-style syntax with initialization, condition, and increment:
+**Purpose**: Step-focused loop that executes a step before each iteration.
 
+```doxa
+do <step> { ... }
+do <step> while <condition> { ... }
 ```
-for (var i is 0; i < x; i++) {
-    doSomething(myArray[i])
+
+**Examples**:
+
+```doxa
+// Basic do loop with increment
+do i += 1 {
+  print(i)
+}
+
+// Do-while equivalent
+do i += 1 while i < 10 {
+  print(i)
+}
+
+// Complex step logic
+do {
+  i += fibonacci(j)
+  j += 1
+} while i < limit { ... }
+```
+
+## Loop Variables with `for`
+
+The `for` keyword optionally declares a mutable integer variable which is exposed to the loop. `for` can only be used with a corresponding `do`.
+
+```doxa
+for i while <condition> { ... }      // for + while
+for i do <step> { ... }               // for + do
+for i while <condition> do <step> { ... }  // full C-style syntax
+```
+
+**Examples**:
+
+```doxa
+// Simple for loop (simulates for(i=0; i<10; i++))
+for i while i < 10 do i++ {
+  print(i)  // i automatically increments
+}
+
+// Custom step
+for i while i < 20 do i += 2 {
+  print(i)  // i = 0, 2, 4, 6, ...
+}
+
+// complex step
+for i while i < 100 do {
+    if i > 10 then i += 2 else i++
+    if i >= 100 then checkWinCondition()
+    } {
+  print(i)  // i = 0, 10, 20, 30, ...
 }
 ```
 
-## Each
+## Infinite Loops
 
-The `each` loop is Doxa's modern iteration construct for collections. It's cleaner and safer than indexed loops:
+Use `while true` or just `do` for infinite loops:
 
+```doxa
+while true { ... }  // Traditional infinite loop
+do { ... }          // Cleaner do-based infinite loop
 ```
-each x in arr {
-    doSomething(x)
+
+## Collection Iteration
+
+### Each Loops
+
+`each` provides syntactic sugar for iterating over collections:
+
+```doxa
+each item in collection { ... }
+each item at index in collection { ... }
+```
+
+**Expands to**:
+
+```doxa
+for i while i < @length(collection) do i++ {
+  item is collection[i]
+  // or with index:
+  const index is i
+  ...
 }
 ```
 
-### Each with Index
+**Notes**:
 
-You can also access the index using the `at` keyword:
+- The `at` variable provides an immutable copy of the current index
+- Nested loops create independent index copies
+- Modifying the collection during iteration may cause undefined behavior
 
-```
-each x at i in arr {
-    if i < 3 then doSomething(x)
-}
-```
+## Control Flow
 
-The `each` loop eliminates the need for manual index management and reduces the risk of off-by-one errors that are common with traditional `for` loops.
+All loops support:
+
+- **`break`**: Exit the loop immediately
+- **`continue`**: Skip to next iteration
+
+**Continue behavior**:
+
+- `while <condition> { ... }` → re-checks condition
+- `do <step> { ... }` → runs step, then continues (no condition check)
+- `while <condition> do <step> { ... }` → runs step, then checks condition
+- `for i while <condition> do <step> { ... }` → runs step, then checks condition

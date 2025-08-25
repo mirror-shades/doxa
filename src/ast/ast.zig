@@ -2,6 +2,8 @@ const std = @import("std");
 const Token = @import("../types/token.zig").Token;
 const TokenLiteral = @import("../types/types.zig").TokenLiteral;
 const Reporting = @import("../utils/reporting.zig");
+const Location = @import("../utils/reporting.zig").Location;
+const Reporter = @import("../utils/reporting.zig").Reporter;
 const HIRType = @import("../codegen/hir/soxa_types.zig").HIRType;
 
 /// Counter for generating unique node IDs
@@ -18,41 +20,35 @@ pub fn generateNodeId() NodeId {
 
 /// Tracks the exact source code location of an AST node
 pub const SourceSpan = struct {
-    start: Reporting.Reporter.Location,
-    end: Reporting.Reporter.Location,
+    location: Location,
 
     pub fn fromToken(token: Token) SourceSpan {
         return .{
-            .start = .{
-                .file = "", // Default to empty string since Token doesn't have file info
-                .line = token.line,
-                .column = token.column,
-            },
-            .end = .{
-                .file = "", // Default to empty string since Token doesn't have file info
-                .line = token.line,
-                .column = token.column + token.lexeme.len,
+            .location = .{
+                .file = token.file,
+                .range = .{
+                    .start_line = @intCast(token.line),
+                    .start_col = token.column,
+                    .end_line = @intCast(token.line),
+                    .end_col = token.column + token.lexeme.len,
+                },
             },
         };
     }
 
     pub fn merge(start: SourceSpan, end: SourceSpan) SourceSpan {
         return .{
-            .start = start.start,
-            .end = end.end,
+            .location = .{
+                .file = start.location.file,
+                .range = .{
+                    .start_line = start.location.range.start_line,
+                    .start_col = start.location.range.start_col,
+                    .end_line = end.location.range.end_line,
+                    .end_col = end.location.range.end_col,
+                },
+            },
         };
     }
-};
-
-//======================================================================
-// Core Types
-//======================================================================
-
-// TODO: location in Reporting too, why?
-pub const Location = struct {
-    file: []const u8,
-    line: i32,
-    column: usize,
 };
 
 //======================================================================
@@ -154,7 +150,19 @@ pub const ASTVisitor = struct {
 /// Common base for all AST nodes
 pub const Base = struct {
     id: NodeId,
-    span: SourceSpan,
+    span: ?SourceSpan, // Optional for synthetic nodes
+
+    pub fn location(self: *const Base) Location {
+        return if (self.span) |span| span.location else Location{
+            .file = "",
+            .range = .{
+                .start_line = 0,
+                .start_col = 0,
+                .end_line = 0,
+                .end_col = 0,
+            },
+        };
+    }
 };
 
 //======================================================================
@@ -219,7 +227,7 @@ pub const Stmt = struct {
         Break: void,
         Assert: struct {
             condition: *Expr,
-            location: Reporting.Reporter.Location,
+            location: Location,
             message: ?*Expr = null,
         },
         Cast: struct {
@@ -404,7 +412,7 @@ pub const ForEachExpr = struct {
 
 pub const PeekExpr = struct {
     expr: *Expr,
-    location: Reporting.Reporter.Location,
+    location: Location,
     variable_name: ?[]const u8,
     field_name: ?[]const u8 = null,
 };
@@ -435,7 +443,7 @@ pub const Expr = struct {
         Peek: PeekExpr,
         PeekStruct: struct {
             expr: *Expr,
-            location: Reporting.Reporter.Location,
+            location: Location,
             variable_name: ?[]const u8,
         },
         Input: struct {
@@ -609,7 +617,7 @@ pub const Expr = struct {
         CompoundAssign: CompoundAssignment,
         Assert: struct {
             condition: *Expr,
-            location: Reporting.Reporter.Location,
+            location: Location,
             message: ?*Expr = null,
         },
         Cast: struct {
@@ -1042,7 +1050,6 @@ pub const Type = enum {
     Custom,
     Map,
     Nothing,
-    Alias,
     Union,
 };
 
@@ -1056,7 +1063,6 @@ pub const TypeInfo = struct {
     element_type: ?Type = null,
     variants: ?[][]const u8 = null,
     array_size: ?usize = null,
-    alias_type: ?*TypeInfo = null,
     union_type: ?*UnionType = null,
 
     pub fn deinit(self: *TypeInfo, allocator: std.mem.Allocator) void {
@@ -1394,13 +1400,13 @@ pub fn typeInfoFromHIRType(allocator: std.mem.Allocator, hir_type: HIRType) !*Ty
             // Represent as a union with no members to avoid collapsing to a concrete type.
             const union_types = try allocator.alloc(*TypeInfo, 0);
             const union_expr = try allocator.create(TypeExpr);
-            union_expr.* = .{ .base = .{ .id = 0, .span = SourceSpan.fromToken(.{ .line = 0, .column = 0, .file = "", .lexeme = "", .type = undefined, .literal = .{ .nothing = {} } }) }, .data = .{ .Union = union_types } };
+            union_expr.* = .{ .base = .{ .id = 0, .span = null }, .data = .{ .Union = union_types } };
             // Note: We only need TypeInfo; build a bare Union TypeInfo with no members
             const u = try allocator.create(UnionType);
             u.* = .{ .types = union_types, .current_type_index = null };
             break :blk TypeInfo{ .base = .Union, .union_type = u };
         },
-        .Auto => TypeInfo{ .base = .Nothing },
+        .Unknown => TypeInfo{ .base = .Nothing },
     };
 
     return type_info;

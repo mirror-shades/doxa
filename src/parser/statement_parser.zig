@@ -3,8 +3,11 @@ const ast = @import("../ast/ast.zig");
 const Parser = @import("./parser_types.zig").Parser;
 const expr_parser = @import("./expression_parser.zig");
 const Reporting = @import("../utils/reporting.zig");
-const ErrorList = Reporting.ErrorList;
 const Reporter = Reporting.Reporter;
+const Location = Reporting.Location;
+const Errors = @import("../utils/errors.zig");
+const ErrorList = Errors.ErrorList;
+const ErrorCode = Errors.ErrorCode;
 const token = @import("../types/token.zig");
 const declaration_parser = @import("./declaration_parser.zig");
 const expression_parser = @import("./expression_parser.zig");
@@ -273,12 +276,16 @@ pub fn parseReturnStmt(self: *Parser) ErrorList!ast.Stmt {
     } else if (next_type == .RIGHT_BRACE or next_type == .EOF) {
         // do not consume here; caller (block parser) will handle
     } else {
-        const location = Reporter.Location{
+        const location = Reporting.Location{
             .file = self.current_file,
-            .line = self.peek().line,
-            .column = self.peek().column,
+            .range = .{
+                .start_line = @intCast(self.peek().line),
+                .start_col = self.peek().column,
+                .end_line = @intCast(self.peek().line),
+                .end_col = self.peek().column + self.peek().lexeme.len,
+            },
         };
-        self.reporter.reportCompileError(location, "Expected newline or closing brace after return", .{});
+        self.reporter.reportCompileError(location, ErrorCode.EXPECTED_NEWLINE, "Expected newline or closing brace after return", .{});
         return error.ExpectedNewline;
     }
 
@@ -343,10 +350,14 @@ pub fn parseAssertStmt(self: *Parser) ErrorList!ast.Stmt {
 
     // Store location information before advancing
     const assert_token = self.peek();
-    const location = Reporter.Location{
+    const location = Location{
         .file = self.current_file,
-        .line = assert_token.line,
-        .column = assert_token.column,
+        .range = .{
+            .start_line = @intCast(assert_token.line),
+            .start_col = assert_token.column,
+            .end_line = @intCast(assert_token.line),
+            .end_col = assert_token.column + assert_token.lexeme.len,
+        },
     };
 
     self.advance();
@@ -415,12 +426,16 @@ pub fn parseContinueStmt(self: *Parser) ErrorList!ast.Stmt {
         self.advance();
     }
     if (self.peek().type != .NEWLINE and self.peek().type != .RIGHT_BRACE and self.peek().type != .EOF) {
-        const location = Reporter.Location{
+        const location = Reporting.Location{
             .file = self.current_file,
-            .line = self.peek().line,
-            .column = self.peek().column,
+            .range = .{
+                .start_line = @intCast(self.peek().line),
+                .start_col = self.peek().column,
+                .end_line = @intCast(self.peek().line),
+                .end_col = self.peek().column + self.peek().lexeme.len,
+            },
         };
-        self.reporter.reportCompileError(location, "Expected newline", .{});
+        self.reporter.reportCompileError(location, ErrorCode.EXPECTED_NEWLINE, "Expected newline", .{});
         return error.ExpectedNewline;
     }
     if (self.peek().type == .NEWLINE) {
@@ -446,12 +461,16 @@ pub fn parseBreakStmt(self: *Parser) ErrorList!ast.Stmt {
         self.advance();
     }
     if (self.peek().type != .NEWLINE and self.peek().type != .RIGHT_BRACE and self.peek().type != .EOF) {
-        const location = Reporter.Location{
+        const location = Reporting.Location{
             .file = self.current_file,
-            .line = self.peek().line,
-            .column = self.peek().column,
+            .range = .{
+                .start_line = @intCast(self.peek().line),
+                .start_col = self.peek().column,
+                .end_line = @intCast(self.peek().line),
+                .end_col = self.peek().column + self.peek().lexeme.len,
+            },
         };
-        self.reporter.reportCompileError(location, "Expected newline", .{});
+        self.reporter.reportCompileError(location, ErrorCode.EXPECTED_NEWLINE, "Expected newline", .{});
         return error.ExpectedNewline;
     }
     if (self.peek().type == .NEWLINE) {

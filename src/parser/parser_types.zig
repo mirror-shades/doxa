@@ -11,8 +11,12 @@ const ast = @import("../ast/ast.zig");
 const ModuleInfo = ast.ModuleInfo;
 
 const Reporting = @import("../utils/reporting.zig");
-const ErrorList = Reporting.ErrorList;
 const Reporter = Reporting.Reporter;
+const Location = Reporting.Location;
+
+const Errors = @import("../utils/errors.zig");
+const ErrorList = Errors.ErrorList;
+const ErrorCode = Errors.ErrorCode;
 
 //======================================================================
 
@@ -49,28 +53,21 @@ pub const Parser = struct {
     tokens: []const token.Token,
     current: usize,
     allocator: std.mem.Allocator,
-    debug_enabled: bool,
-    current_file: []const u8,
     reporter: *Reporter,
+    debug_enabled: bool = false,
 
-    // Add these fields to track entry points
     has_entry_point: bool = false,
     entry_point_location: ?token.Token = null,
     entry_point_name: ?[]const u8 = null,
 
+    current_file: []const u8,
     current_module: ?ModuleInfo = null,
     module_cache: std.StringHashMap(ModuleInfo),
     module_namespaces: std.StringHashMap(ModuleInfo),
 
-    // Track module imports (which module imports what under which alias)
     module_imports: std.StringHashMap(std.StringHashMap([]const u8)),
 
-    // Track imported symbols
     imported_symbols: ?std.StringHashMap(import_parser.ImportedSymbol) = null,
-
-    // Add lexer field
-    // TODO: Remove this field
-    lexer: LexicalAnalyzer,
 
     declared_types: std.StringHashMap(void),
 
@@ -78,19 +75,17 @@ pub const Parser = struct {
     module_resolution_status: std.StringHashMap(ModuleResolutionStatus),
     import_stack: std.ArrayList(ImportStackEntry),
 
-    pub fn init(allocator: std.mem.Allocator, tokens: []const token.Token, current_file: []const u8, debug_enabled: bool, reporter: *Reporter) Parser {
+    pub fn init(allocator: std.mem.Allocator, tokens: []const token.Token, current_file: []const u8, reporter: *Reporter) Parser {
         const parser = Parser{
             .allocator = allocator,
             .tokens = tokens,
             .current = 0,
-            .debug_enabled = debug_enabled,
-            .current_file = current_file,
             .reporter = reporter,
+            .current_file = current_file,
             .module_cache = std.StringHashMap(ModuleInfo).init(allocator),
             .module_namespaces = std.StringHashMap(ModuleInfo).init(allocator),
             .module_imports = std.StringHashMap(std.StringHashMap([]const u8)).init(allocator),
             .imported_symbols = std.StringHashMap(import_parser.ImportedSymbol).init(allocator),
-            .lexer = LexicalAnalyzer.init(allocator, "", current_file, reporter),
             .declared_types = std.StringHashMap(void).init(allocator),
             .module_resolution_status = std.StringHashMap(ModuleResolutionStatus).init(allocator),
             .import_stack = std.ArrayList(ImportStackEntry).init(allocator),
@@ -433,11 +428,16 @@ pub const Parser = struct {
         // Final check: If entry point marker '->' was found but no function followed
         if (self.has_entry_point and self.entry_point_name == null) {
             // Report error using self.entry_point_location
-            self.reporter.reportCompileError(.{
+            const loc = Location{
                 .file = self.current_file,
-                .line = self.entry_point_location.?.line,
-                .column = self.entry_point_location.?.column,
-            }, "Entry point marker '->' not followed by a function declaration", .{});
+                .range = .{
+                    .start_line = self.entry_point_location.?.line,
+                    .start_col = self.entry_point_location.?.column,
+                    .end_line = self.entry_point_location.?.line,
+                    .end_col = self.entry_point_location.?.column,
+                },
+            };
+            self.reporter.reportCompileError(loc, ErrorCode.MISSING_ENTRY_POINT_FUNCTION, "Entry point marker '->' not followed by a function declaration", .{});
             return error.MissingEntryPointFunction;
         }
 
@@ -449,9 +449,13 @@ pub const Parser = struct {
             if (self.peek().type != .IDENTIFIER) {
                 reporter.reportCompileError(.{
                     .file = self.current_file,
-                    .line = self.peek().line,
-                    .column = self.peek().column,
-                }, "Expected identifier, but found '{s}'", .{@tagName(self.peek().type)});
+                    .range = .{
+                        .start_line = self.peek().line,
+                        .start_col = self.peek().column,
+                        .end_line = self.peek().line,
+                        .end_col = self.peek().column,
+                    },
+                }, ErrorCode.EXPECTED_IDENTIFIER, "Expected identifier, but found '{s}'", .{@tagName(self.peek().type)});
                 return error.ExpectedIdentifier;
             }
 
@@ -621,8 +625,8 @@ pub const Parser = struct {
         if (callee.?.data == .FieldAccess) {
             const fa = callee.?.data.FieldAccess;
             if (Parser.methodNameToTokenType(fa.field.lexeme)) |_| {
-                const loc: Reporter.Location = .{ .file = self.current_file, .line = fa.field.line, .column = fa.field.column };
-                self.reporter.reportCompileError(loc, "Unknown field or method '{s}'. If this is a compiler method, use @{s}(...)", .{ fa.field.lexeme, fa.field.lexeme });
+                const loc: Location = .{ .file = self.current_file, .range = .{ .start_line = fa.field.line, .start_col = fa.field.column, .end_line = fa.field.line, .end_col = fa.field.column } };
+                self.reporter.reportCompileError(loc, ErrorCode.UNKNOWN_METHOD, "Unknown field or method '{s}'. If this is a compiler method, use @{s}(...)", .{ fa.field.lexeme, fa.field.lexeme });
                 return error.UnknownFieldOrMethod;
             }
         }
@@ -1089,8 +1093,8 @@ pub const Parser = struct {
 
         // Check if this is a method name - if so, error early
         if (Parser.methodNameToTokenType(current_token.lexeme)) |_| {
-            const loc: Reporter.Location = .{ .file = self.current_file, .line = current_token.line, .column = current_token.column };
-            self.reporter.reportCompileError(loc, "Unknown field or method '{s}'. If this is a compiler method, use @{s}(...)", .{ current_token.lexeme, current_token.lexeme });
+            const loc: Location = .{ .file = self.current_file, .range = .{ .start_line = current_token.line, .start_col = current_token.column, .end_line = current_token.line, .end_col = current_token.column } };
+            self.reporter.reportCompileError(loc, ErrorCode.UNKNOWN_METHOD, "Unknown field or method '{s}'. If this is a compiler method, use @{s}(...)", .{ current_token.lexeme, current_token.lexeme });
             return error.UnknownFieldOrMethod;
         }
 
@@ -1235,8 +1239,12 @@ pub const Parser = struct {
                     .expr = left.?,
                     .location = .{
                         .file = self.current_file,
-                        .line = self.peek().line,
-                        .column = self.peek().column - 1,
+                        .range = .{
+                            .start_line = @intCast(self.peek().line),
+                            .start_col = self.peek().column - 1,
+                            .end_line = @intCast(self.peek().line),
+                            .end_col = self.peek().column + self.peek().lexeme.len - 1,
+                        },
                     },
                     .variable_name = if (name_token) |token_name| token_name.lexeme else null,
                 },
@@ -1504,7 +1512,7 @@ pub const Parser = struct {
             return err;
         };
 
-        var new_parser = Parser.init(self.allocator, tokens.items, module_data.resolved_path, self.debug_enabled, self.reporter);
+        var new_parser = Parser.init(self.allocator, tokens.items, module_data.resolved_path, self.reporter);
 
         // Copy the resolution status and import stack to the new parser, but exclude the current module
         new_parser.module_resolution_status = std.StringHashMap(ModuleResolutionStatus).init(self.allocator);
@@ -1589,7 +1597,7 @@ pub const Parser = struct {
         try error_msg.appendSlice(" (circular dependency)\n");
 
         // Report the error with correct format
-        self.reporter.reportError("{s}", .{error_msg.items});
+        self.reporter.reportCompileError(null, null, "{s}", .{error_msg.items});
 
         return error.CircularImport;
     }

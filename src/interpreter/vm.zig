@@ -14,8 +14,12 @@ const HIRProgram = hir_types.HIRProgram;
 const HIRType = hir_types.HIRType;
 const HIRFunction = HIRProgram.HIRFunction;
 const instructions = @import("instructions.zig");
-const Reporter = @import("../utils/reporting.zig").Reporter;
-const ErrorList = @import("../utils/reporting.zig").ErrorList;
+const Reporting = @import("../utils/reporting.zig");
+const Location = Reporting.Location;
+const Reporter = Reporting.Reporter;
+const Errors = @import("../utils/errors.zig");
+const ErrorList = Errors.ErrorList;
+const ErrorCode = Errors.ErrorCode;
 const memory = @import("../utils/memory.zig");
 const MemoryManager = memory.MemoryManager;
 const ScopeManager = memory.ScopeManager;
@@ -135,7 +139,7 @@ fn structFieldToHIRStructField(self: *HIRVM, field: types.StructField) !HIRStruc
     return HIRStructField{
         .name = try self.allocator.dupe(u8, field.name),
         .value = self.tokenLiteralToHIRValue(field.value),
-        .field_type = .Auto,
+        .field_type = .Unknown,
         .path = null,
     };
 }
@@ -396,13 +400,13 @@ pub const HIRVM = struct {
             .array => |arr| blk: {
                 // Convert TokenLiteral array to HIRArray
                 var hir_elements = self.allocator.alloc(HIRValue, arr.len) catch break :blk HIRValue.nothing;
-                var element_type: HIRType = .Auto;
+                var element_type: HIRType = .Unknown;
 
                 for (arr, 0..) |element, i| {
                     hir_elements[i] = self.tokenLiteralToHIRValue(element);
 
                     // Infer element type from first element
-                    if (i == 0 and element_type == .Auto) {
+                    if (i == 0 and element_type == .Unknown) {
                         element_type = switch (hir_elements[i]) {
                             .int => .Int,
                             .byte => .Byte,
@@ -412,7 +416,7 @@ pub const HIRVM = struct {
                             .nothing => .Nothing,
                             .array => .Array,
                             .struct_instance => .Struct,
-                            else => .Auto,
+                            else => .Unknown,
                         };
                     }
                 }
@@ -469,7 +473,7 @@ pub const HIRVM = struct {
                             .struct_instance => .Struct,
                             .enum_variant => .Enum,
                             .array => .Array,
-                            else => .Auto,
+                            else => .Unknown,
                         },
                         .path = s.path,
                     };
@@ -496,7 +500,7 @@ pub const HIRVM = struct {
                 break :blk HIRValue{ .map = .{
                     .entries = hir_entries,
                     .key_type = .String,
-                    .value_type = .Auto,
+                    .value_type = .Unknown,
                     .path = null,
                 } };
             },
@@ -740,51 +744,100 @@ pub const HIRVM = struct {
         return null;
     }
 
-    /// CRITICAL: Validate that no Auto types exist in the HIR program
+    /// CRITICAL: Validate that no Unknown types exist in the HIR program
     fn validateHIRProgram(self: *HIRVM) !void {
         for (self.program.instructions, 0..) |instruction, ip| {
             switch (instruction) {
                 .Peek => |i| {
-                    if (i.value_type == .Auto) {
-                        self.reporter.reportError("FATAL: Auto type found in Peek instruction at IP {} for variable '{s}'. Type inference likely failed during code generation.", .{ ip, i.name orelse "unknown" });
+                    if (i.value_type == .Unknown) {
+                        self.reporter.reportCompileError(
+                            Location{
+                                .file = "unknown",
+                                .range = .{
+                                    .start_line = 0,
+                                    .start_col = 0,
+                                    .end_line = 0,
+                                    .end_col = 0,
+                                },
+                            },
+                            ErrorCode.UNKNOWN_TYPE_FOUND_IN_PEEK_INSTRUCTION,
+                            "FATAL: Unknown type found in Peek instruction at IP {} for variable '{s}'. Type inference likely failed during code generation.",
+                            .{ ip, i.name orelse "unknown" },
+                        );
                         return ErrorList.InternalParserError;
                     }
                 },
 
                 .PeekStruct => |i| {
-                    // Check for Auto types in field types
+                    // Check for Unknown types in field types
                     for (i.field_types) |field_type| {
-                        if (field_type == .Auto) {
-                            self.reporter.reportError("FATAL: Auto type found in PeekStruct instruction at IP {} for field {}. Type inference likely failed during code generation.", .{ ip, i });
-                            return error.AutoTypeInPeekStruct;
+                        if (field_type == .Unknown) {
+                            self.reporter.reportCompileError(
+                                Location{
+                                    .file = "unknown",
+                                    .range = .{
+                                        .start_line = 0,
+                                        .start_col = 0,
+                                        .end_line = 0,
+                                        .end_col = 0,
+                                    },
+                                },
+                                ErrorCode.UNKNOWN_TYPE_FOUND_IN_PEEK_INSTRUCTION,
+                                "FATAL: Unknown type found in PeekStruct instruction at IP {} for field {}. Type inference likely failed during code generation.",
+                                .{ ip, i },
+                            );
+                            return ErrorList.InternalParserError;
                         }
                     }
                 },
 
                 .Compare => |c| {
-                    if (c.operand_type == .Auto) {
-                        self.reporter.reportError("FATAL: Auto operand_type found in Compare instruction at IP {}. Type inference likely failed during code generation.", .{ip});
-                        std.debug.print(">>   Compare instruction: {any}\n", .{c});
+                    if (c.operand_type == .Unknown) {
+                        self.reporter.reportCompileError(
+                            Location{
+                                .file = "unknown",
+                                .range = .{
+                                    .start_line = 0,
+                                    .start_col = 0,
+                                    .end_line = 0,
+                                    .end_col = 0,
+                                },
+                            },
+                            ErrorCode.UNKNOWN_TYPE_FOUND_IN_PEEK_INSTRUCTION,
+                            "FATAL: Auto operand_type found in Compare instruction at IP {}. Type inference likely failed during code generation.",
+                            .{ip},
+                        );
                         return ErrorList.InternalParserError;
                     }
                 },
                 .Convert => |c| {
-                    if (c.from_type == .Auto or c.to_type == .Auto) {
-                        self.reporter.reportError("FATAL: Auto type found in Convert instruction at IP {} (from: {s}, to: {s}). Type inference likely failed during code generation.", .{ ip, @tagName(c.from_type), @tagName(c.to_type) });
-                        std.debug.print(">>   Convert instruction: {any}\n", .{c});
+                    if (c.from_type == .Unknown or c.to_type == .Unknown) {
+                        self.reporter.reportCompileError(
+                            Location{
+                                .file = "unknown",
+                                .range = .{
+                                    .start_line = 0,
+                                    .start_col = 0,
+                                    .end_line = 0,
+                                    .end_col = 0,
+                                },
+                            },
+                            ErrorCode.UNKNOWN_TYPE_FOUND_IN_PEEK_INSTRUCTION,
+                            "FATAL: Unknown type found in Convert instruction at IP {} (from: {s}, to: {s}). Type inference likely failed during code generation.",
+                            .{ ip, @tagName(c.from_type), @tagName(c.to_type) },
+                        );
                         return ErrorList.InternalParserError;
                     }
                 },
+                // unknown types are allowed here as we allow union and dynamic cases to flow without concrete return types
+                // TODO see if we can make this more strict to not allow unknown types past this point
                 .Call => |c| {
-                    // Allow Auto here; union and dynamic cases may flow without concrete return types
                     _ = c;
                 },
                 .TailCall => |c| {
-                    // Allow Auto for tail calls as well
                     _ = c;
                 },
                 .Return => |r| {
-                    // Allow Auto to support union/dynamic returns
                     _ = r;
                 },
                 else => {
@@ -828,17 +881,23 @@ pub const HIRVM = struct {
                             self.reporter.debug(
                                 "DBG LoadVar {s}: storage_id={}, token_type={s}, type_info={s}, token_literal={any}, hir_tag={s}",
                                 .{ v.var_name, variable.storage_id, @tagName(storage.type), @tagName(storage.type_info.base), storage.value, @tagName(hir_value) },
+                                @src(),
                             );
                         }
 
                         try self.stack.push(HIRFrame.initFromHIRValue(hir_value));
                     } else {
                         // Propagate error so VM halts execution immediately
-                        return self.reporter.throwError("Variable storage not found for: {s}", .{v.var_name}, ErrorList.VariableNotFound);
+                        return self.reporter.reportRuntimeError(
+                            null,
+                            ErrorCode.VARIABLE_NOT_FOUND,
+                            "Variable storage not found for: {s}",
+                            .{v.var_name},
+                        );
                     }
                 } else {
                     // Propagate undefined variable error
-                    return self.reporter.throwError("Undefined variable: {s}", .{v.var_name}, ErrorList.UndefinedVariable);
+                    return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Undefined variable: {s}", .{v.var_name});
                 }
             },
 
@@ -860,11 +919,13 @@ pub const HIRVM = struct {
                         self.reporter.debug(
                             "DBG StoreVar {s}: storage_id={}, token_type={s}, type_info={s}, token_literal={any}",
                             .{ v.var_name, variable.storage_id, @tagName(token_type), @tagName(type_info.base), token_literal },
+                            @src(),
                         );
                     } else {
                         self.reporter.debug(
                             "DBG StoreVar {s}: storage_id=?, token_type={s}, type_info={s}, token_literal={any}",
                             .{ v.var_name, @tagName(token_type), @tagName(type_info.base), token_literal },
+                            @src(),
                         );
                     }
                 }
@@ -874,7 +935,7 @@ pub const HIRVM = struct {
                     // Variable exists in current scope - update its storage
                     if (self.memory_manager.scope_manager.value_storage.getPtr(variable.storage_id)) |storage| {
                         if (storage.*.constant) {
-                            return self.reporter.reportError("Cannot modify constant variable: {s}", .{v.var_name});
+                            return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot modify constant variable: {s}", .{v.var_name});
                         }
 
                         storage.*.value = token_literal;
@@ -885,18 +946,20 @@ pub const HIRVM = struct {
                         self.reporter.debug(
                             "DBG WRITE StoreVar {s}: storage_id={}, value={any}",
                             .{ v.var_name, variable.storage_id, token_literal },
+                            @src(),
                         );
                     } else {
-                        return self.reporter.reportError("Variable storage not found for: {s}", .{v.var_name});
+                        return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Variable storage not found for: {s}", .{v.var_name});
                     }
                 } else {
                     _ = self.current_scope.createValueBinding(v.var_name, token_literal, token_type, type_info, false) catch |err| {
-                        return self.reporter.reportError("Failed to create variable {s}: {}", .{ v.var_name, err });
+                        return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Failed to create variable {s}: {}", .{ v.var_name, err });
                     };
                     if (self.current_scope.lookupVariable(v.var_name)) |variable2| {
                         self.reporter.debug(
                             "DBG WRITE StoreVar (create) {s}: storage_id={}, value={any}",
                             .{ v.var_name, variable2.storage_id, token_literal },
+                            @src(),
                         );
                     }
                 }
@@ -917,11 +980,13 @@ pub const HIRVM = struct {
                         self.reporter.debug(
                             "DBG StoreConst {s}: storage_id={}, token_type={s}, type_info={s}, token_literal={any}",
                             .{ v.var_name, variable.storage_id, @tagName(token_type), @tagName(type_info.base), token_literal },
+                            @src(),
                         );
                     } else {
                         self.reporter.debug(
                             "DBG StoreConst {s}: storage_id=?, token_type={s}, type_info={s}, token_literal={any}",
                             .{ v.var_name, @tagName(token_type), @tagName(type_info.base), token_literal },
+                            @src(),
                         );
                     }
                 }
@@ -947,19 +1012,21 @@ pub const HIRVM = struct {
                         self.reporter.debug(
                             "DBG WRITE StoreConst {s}: storage_id={}, value={any}",
                             .{ v.var_name, variable.storage_id, token_literal },
+                            @src(),
                         );
                     } else {
-                        return self.reporter.reportError("Variable storage not found for: {s}", .{v.var_name});
+                        return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Variable storage not found for: {s}", .{v.var_name});
                     }
                 } else {
                     // Create constant in the root scope to ensure it survives function scope churn
                     _ = self.current_scope.createCrossScopeValueBinding(v.var_name, token_literal, token_type, type_info, true) catch |err| {
-                        return self.reporter.reportError("Failed to create constant {s}: {}", .{ v.var_name, err });
+                        return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Failed to create constant {s}: {}", .{ v.var_name, err });
                     };
                     if (self.current_scope.lookupVariable(v.var_name)) |variable2| {
                         self.reporter.debug(
                             "DBG WRITE StoreConst (create) {s}: storage_id={}, value={any}",
                             .{ v.var_name, variable2.storage_id, token_literal },
+                            @src(),
                         );
                     }
                 }
@@ -977,15 +1044,15 @@ pub const HIRVM = struct {
                     .string => |s| blk: {
                         // Gracefully allow numeric strings in arithmetic (e.g., "42")
                         const parsed = std.fmt.parseInt(i32, s, 10) catch {
-                            return self.reporter.reportError("Cannot convert string to integer for arithmetic", .{});
+                            return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert string to integer for arithmetic", .{});
                         };
                         break :blk parsed;
                     },
                     .nothing => {
-                        return self.reporter.reportError("Cannot perform arithmetic on 'nothing' value", .{});
+                        return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform arithmetic on 'nothing' value", .{});
                     },
                     else => {
-                        return self.reporter.reportError("Cannot convert {s} to integer for arithmetic", .{@tagName(a_val.value)});
+                        return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert {s} to integer for arithmetic", .{@tagName(a_val.value)});
                     },
                 };
 
@@ -995,15 +1062,15 @@ pub const HIRVM = struct {
                     .tetra => |t| @as(i32, t),
                     .string => |s| blk: {
                         const parsed = std.fmt.parseInt(i32, s, 10) catch {
-                            return self.reporter.reportError("Cannot convert string to integer for arithmetic", .{});
+                            return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert string to integer for arithmetic", .{});
                         };
                         break :blk parsed;
                     },
                     .nothing => {
-                        return self.reporter.reportError("Cannot perform arithmetic on 'nothing' value", .{});
+                        return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform arithmetic on 'nothing' value", .{});
                     },
                     else => {
-                        return self.reporter.reportError("Cannot convert {s} to integer for arithmetic", .{@tagName(b.value)});
+                        return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert {s} to integer for arithmetic", .{@tagName(b.value)});
                     },
                 };
 
@@ -1071,6 +1138,7 @@ pub const HIRVM = struct {
                 self.reporter.debug(
                     "DBG Compare {s}: a={s}, b={s}, operand_type={s}",
                     .{ @tagName(c.op), @tagName(a_val.value), @tagName(b.value), @tagName(c.operand_type) },
+                    @src(),
                 );
 
                 const result = switch (c.op) {
@@ -1090,7 +1158,7 @@ pub const HIRVM = struct {
                 if (self.label_map.get(j.label)) |target_ip| {
                     self.ip = target_ip;
                 } else {
-                    return self.reporter.reportFatalError("Unknown label: {s}", .{j.label});
+                    return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Unknown label: {s}", .{j.label});
                 }
             },
 
@@ -1118,7 +1186,7 @@ pub const HIRVM = struct {
                     // Always set IP explicitly since JumpCond is marked as a "jump" instruction
                     self.ip = target_ip;
                 } else {
-                    return self.reporter.reportFatalError("Unknown label: {s}", .{target_label});
+                    return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Unknown label: {s}", .{target_label});
                 }
             },
 
@@ -1146,10 +1214,10 @@ pub const HIRVM = struct {
 
             .Peek => |peek| {
                 const value = try self.stack.pop();
-                self.reporter.debug("Peek called with value: {any}", .{value});
+                self.reporter.debug("Peek called with value: {any}", .{value}, @src());
 
                 if (peek.location) |location| {
-                    try std.io.getStdOut().writer().print("[{s}:{d}:{d}] ", .{ location.file, location.line, location.column });
+                    try std.io.getStdOut().writer().print("[{s}:{d}:{d}] ", .{ location.file, location.range.start_line, location.range.start_col });
                 }
 
                 // Print variable name before :: if available, then always show type
@@ -1157,9 +1225,9 @@ pub const HIRVM = struct {
 
                 // If we have union member info, print union with '>' on active member; else fallback to concrete type
                 if (peek.name) |name| {
-                    self.reporter.debug("Peek instruction for variable {s}", .{name});
+                    self.reporter.debug("Peek instruction for variable {s}", .{name}, @src());
                     if (peek.union_members) |members| {
-                        self.reporter.debug("Found union members: {any}", .{members});
+                        self.reporter.debug("Found union members: {any}", .{members}, @src());
                         if (members.len > 1) {
                             const active = self.getTypeString(value.value);
                             try writer.print("{s} :: ", .{name});
@@ -1209,19 +1277,19 @@ pub const HIRVM = struct {
 
             .PeekStruct => |i| {
                 const value = try self.stack.pop();
-                self.reporter.debug("PeekStruct called with value: {any}", .{value});
+                self.reporter.debug("PeekStruct called with value: {any}", .{value}, @src());
 
                 // Handle both struct instances and field values
                 switch (value.value) {
                     .struct_instance => |s| {
-                        self.reporter.debug("Processing struct instance of type '{s}' with {d} fields", .{ s.type_name, s.fields.len });
+                        self.reporter.debug("Processing struct instance of type '{s}' with {d} fields", .{ s.type_name, s.fields.len }, @src());
                         // Print each field with proper location formatting
                         for (s.fields) |field| {
-                            self.reporter.debug("Processing field '{s}'", .{field.name});
+                            self.reporter.debug("Processing field '{s}'", .{field.name}, @src());
 
                             // Format with location information like the regular Peek instruction
                             if (i.location) |location| {
-                                try std.io.getStdOut().writer().print("[{s}:{d}:{d}] ", .{ location.file, location.line, location.column });
+                                try std.io.getStdOut().writer().print("[{s}:{d}:{d}] ", .{ location.file, location.range.start_line, location.range.start_col });
                             }
 
                             // Build the full field path
@@ -1271,11 +1339,11 @@ pub const HIRVM = struct {
                         }
                     },
                     else => {
-                        self.reporter.debug("Processing non-struct value with {d} field names", .{i.field_names.len});
+                        self.reporter.debug("Processing non-struct value with {d} field names", .{i.field_names.len}, @src());
                         // For non-struct values (like field access results), print as a single value with location
                         if (i.field_names.len > 0) {
                             if (i.location) |location| {
-                                try std.io.getStdOut().writer().print("[{s}:{d}:{d}] ", .{ location.file, location.line, location.column });
+                                try std.io.getStdOut().writer().print("[{s}:{d}:{d}] ", .{ location.file, location.range.start_line, location.range.start_col });
                             }
 
                             // Show type information for non-struct values
@@ -1319,7 +1387,7 @@ pub const HIRVM = struct {
             .AssertFail => |a| {
 
                 // Format and print assertion failure message
-                const location_str = try std.fmt.allocPrint(self.allocator, "{s}:{}:{}", .{ a.location.file, a.location.line, a.location.column });
+                const location_str = try std.fmt.allocPrint(self.allocator, "{s}:{}:{}", .{ a.location.file, a.location.range.start_line, a.location.range.start_col });
                 defer self.allocator.free(location_str);
 
                 if (a.has_message) {
@@ -1554,7 +1622,7 @@ pub const HIRVM = struct {
                 // IMPROVED: Handle different index types more gracefully
                 const index_val = switch (index.value) {
                     .int => |i| if (i < 0) {
-                        return self.reporter.reportError("Array index cannot be negative: {}", .{i});
+                        return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index cannot be negative: {}", .{i});
                     } else @as(u32, @intCast(i)),
                     .byte => |u| @as(u32, u),
                     .tetra => |t| @as(u32, t), // Allow tetra values as indices
@@ -1565,7 +1633,7 @@ pub const HIRVM = struct {
                             return;
                         };
                         if (parsed < 0) {
-                            return self.reporter.reportError("Array index cannot be negative: {}", .{parsed});
+                            return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index cannot be negative: {}", .{parsed});
                         }
                         break :blk @as(u32, @intCast(parsed));
                     },
@@ -1587,7 +1655,7 @@ pub const HIRVM = struct {
                             if (std.meta.eql(arr.elements[logical_len], HIRValue.nothing)) break;
                         }
                         if (a.bounds_check and index_val >= logical_len) {
-                            self.reporter.reportError("Array index {} out of bounds (array has {} elements)", .{ index_val, logical_len });
+                            self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index {} out of bounds (array has {} elements)", .{ index_val, logical_len });
                             return ErrorList.IndexOutOfBounds;
                         }
 
@@ -1595,7 +1663,7 @@ pub const HIRVM = struct {
 
                         // Debug: Show what element type we're retrieving
                         const elem_tag = @tagName(element);
-                        self.reporter.debug("ArrayGet: array element_type={s}, retrieved element type={s}", .{ @tagName(arr.element_type), elem_tag });
+                        self.reporter.debug("ArrayGet: array element_type={s}, retrieved element type={s}", .{ @tagName(arr.element_type), elem_tag }, @src());
 
                         try self.stack.push(HIRFrame.initFromHIRValue(element));
                     },
@@ -1629,7 +1697,7 @@ pub const HIRVM = struct {
                 // IMPROVED: Handle different index types more gracefully
                 const index_val = switch (index.value) {
                     .int => |i| if (i < 0) {
-                        return self.reporter.reportError("Array index cannot be negative: {}", .{i});
+                        return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index cannot be negative: {}", .{i});
                     } else @as(u32, @intCast(i)),
                     .byte => |u| @as(u32, u),
                     .tetra => |t| @as(u32, t), // Allow tetra values as indices
@@ -1640,7 +1708,7 @@ pub const HIRVM = struct {
                             return;
                         };
                         if (parsed < 0) {
-                            return self.reporter.reportError("Array index cannot be negative: {}", .{parsed});
+                            return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index cannot be negative: {}", .{parsed});
                         }
                         break :blk @as(u32, @intCast(parsed));
                     },
@@ -1660,43 +1728,43 @@ pub const HIRVM = struct {
                         var mutable_arr = arr;
 
                         if (a.bounds_check and index_val >= mutable_arr.elements.len) {
-                            self.reporter.reportError("Array index {} out of bounds for assignment (array has {} elements)", .{ index_val, mutable_arr.elements.len });
+                            self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index {} out of bounds for assignment (array has {} elements)", .{ index_val, mutable_arr.elements.len });
                             return ErrorList.IndexOutOfBounds;
                         }
 
                         // Debug: Show what we're trying to assign
                         const val_tag = @tagName(value.value);
-                        self.reporter.debug("ArraySet: array element_type={s}, trying to assign value type={s}", .{ @tagName(mutable_arr.element_type), val_tag });
+                        self.reporter.debug("ArraySet: array element_type={s}, trying to assign value type={s}", .{ @tagName(mutable_arr.element_type), val_tag }, @src());
 
                         const element_value = switch (mutable_arr.element_type) {
                             .Byte => switch (value.value) {
                                 .int => |i| blk: {
                                     const byte_val = if (i >= 0 and i <= 255) HIRValue{ .byte = @intCast(i) } else HIRValue{ .byte = 0 };
-                                    self.reporter.debug("ArraySet: converted int {d} to byte {d}", .{ i, byte_val.byte });
+                                    self.reporter.debug("ArraySet: converted int {d} to byte {d}", .{ i, byte_val.byte }, @src());
                                     break :blk byte_val;
                                 },
                                 .byte => blk: {
-                                    self.reporter.debug("ArraySet: keeping byte value {d}", .{value.value.byte});
+                                    self.reporter.debug("ArraySet: keeping byte value {d}", .{value.value.byte}, @src());
                                     break :blk value.value; // Already correct type
                                 },
-                                .string => |_| return self.reporter.reportError("Cannot assign string to byte array element", .{}),
-                                else => return self.reporter.reportError("Cannot assign {s} to byte array element", .{@tagName(value.value)}),
+                                .string => |_| return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot assign string to byte array element", .{}),
+                                else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot assign {s} to byte array element", .{@tagName(value.value)}),
                             },
                             .Int => switch (value.value) {
                                 .byte => |b| blk: {
                                     const int_val = HIRValue{ .int = @as(i32, b) };
-                                    self.reporter.debug("ArraySet: converted byte {d} to int {d}", .{ b, int_val.int });
+                                    self.reporter.debug("ArraySet: converted byte {d} to int {d}", .{ b, int_val.int }, @src());
                                     break :blk int_val; // Convert byte to int
                                 },
                                 .int => blk: {
-                                    self.reporter.debug("ArraySet: keeping int value {d}", .{value.value.int});
+                                    self.reporter.debug("ArraySet: keeping int value {d}", .{value.value.int}, @src());
                                     break :blk value.value; // Already correct type
                                 },
-                                .string => |_| return self.reporter.reportError("Cannot assign string to int array element", .{}),
-                                else => return self.reporter.reportError("Cannot assign {s} to int array element", .{@tagName(value.value)}),
+                                .string => |_| return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot assign string to int array element", .{}),
+                                else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot assign {s} to int array element", .{@tagName(value.value)}),
                             },
                             else => blk: {
-                                self.reporter.debug("ArraySet: keeping value as-is for type {s}", .{@tagName(mutable_arr.element_type)});
+                                self.reporter.debug("ArraySet: keeping value as-is for type {s}", .{@tagName(mutable_arr.element_type)}, @src());
                                 break :blk value.value; // For other array types, keep original value
                             },
                         };
@@ -1740,7 +1808,7 @@ pub const HIRVM = struct {
                         }
 
                         if (length == 0) {
-                            return self.reporter.reportError("Cannot pop from empty array", .{});
+                            return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot pop from empty array", .{});
                         }
 
                         const last_element = mutable_arr.elements[length - 1];
@@ -1751,7 +1819,7 @@ pub const HIRVM = struct {
 
                         // Note: We don't push the array back since pop consumes it
                     },
-                    else => return self.reporter.reportError("Cannot pop from non-array value: {s}", .{@tagName(array.value)}),
+                    else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot pop from non-array value: {s}", .{@tagName(array.value)}),
                 }
             },
 
@@ -1800,10 +1868,10 @@ pub const HIRVM = struct {
 
                                 try self.stack.push(HIRFrame.initFromHIRValue(result_array));
                             },
-                            else => return self.reporter.reportError("Cannot concatenate array with non-array: {s}", .{@tagName(b.value)}),
+                            else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot concatenate array with non-array: {s}", .{@tagName(b.value)}),
                         }
                     },
-                    else => return self.reporter.reportError("Cannot concatenate non-array: {s}", .{@tagName(a.value)}),
+                    else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot concatenate non-array: {s}", .{@tagName(a.value)}),
                 }
             },
 
@@ -1814,7 +1882,7 @@ pub const HIRVM = struct {
                     .LocalFunction => {
                         // Tail call optimization for user-defined functions
                         if (c.function_index >= self.program.function_table.len) {
-                            return self.reporter.reportError("Invalid function index: {} (max: {})", .{ c.function_index, self.program.function_table.len });
+                            return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid function index: {} (max: {})", .{ c.function_index, self.program.function_table.len });
                         }
 
                         const function = self.program.function_table[c.function_index];
@@ -1827,11 +1895,11 @@ pub const HIRVM = struct {
                             self.ip = target_ip;
                             return; // Jump to function body
                         } else {
-                            return self.reporter.reportError("Function label not found: {s}", .{target_label});
+                            return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Function label not found: {s}", .{target_label});
                         }
                     },
                     else => {
-                        return self.reporter.reportError("Tail call not supported for call kind: {s}", .{@tagName(c.call_kind)});
+                        return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Tail call not supported for call kind: {s}", .{@tagName(c.call_kind)});
                     },
                 }
             },
@@ -1841,7 +1909,7 @@ pub const HIRVM = struct {
                     .LocalFunction => {
                         // User-defined function call with proper stack management
                         if (c.function_index >= self.program.function_table.len) {
-                            return self.reporter.reportError("Invalid function index: {} (max: {})", .{ c.function_index, self.program.function_table.len });
+                            return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid function index: {} (max: {})", .{ c.function_index, self.program.function_table.len });
                         }
 
                         const function = self.program.function_table[c.function_index];
@@ -1863,7 +1931,7 @@ pub const HIRVM = struct {
                             self.ip = target_ip;
                             return; // Jump to function start
                         } else {
-                            return self.reporter.reportError("Function label not found: {s}", .{function.start_label});
+                            return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Function label not found: {s}", .{function.start_label});
                         }
                     },
                     .BuiltinFunction => {
@@ -1881,7 +1949,7 @@ pub const HIRVM = struct {
                                     }
                                     try self.stack.push(HIRFrame.initInt(@as(i32, @intCast(length))));
                                 },
-                                else => return self.reporter.reportError("Cannot get length of non-array value: {s}", .{@tagName(array.value)}),
+                                else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot get length of non-array value: {s}", .{@tagName(array.value)}),
                             }
                         } else if (std.mem.eql(u8, c.qualified_name, "push")) {
                             // Array push method - expects element and array on stack
@@ -1921,7 +1989,7 @@ pub const HIRVM = struct {
                                     const modified_array_value = HIRValue{ .array = mutable_arr };
                                     try self.stack.push(HIRFrame.initFromHIRValue(modified_array_value));
                                 },
-                                else => return self.reporter.reportError("Cannot push to non-array value: {s}", .{@tagName(array.value)}),
+                                else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot push to non-array value: {s}", .{@tagName(array.value)}),
                             }
                         } else if (std.mem.eql(u8, c.qualified_name, "safeAdd")) {
                             // Safe addition with overflow protection
@@ -1931,13 +1999,13 @@ pub const HIRVM = struct {
                             const a_int = switch (a.value) {
                                 .int => |i| i,
                                 .byte => |u| @as(i32, u),
-                                else => return self.reporter.reportError("safeAdd: first argument must be integer", .{}),
+                                else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "safeAdd: first argument must be integer", .{}),
                             };
 
                             const b_int = switch (b.value) {
                                 .int => |i| i,
                                 .byte => |u| @as(i32, u),
-                                else => return self.reporter.reportError("safeAdd: second argument must be integer", .{}),
+                                else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "safeAdd: second argument must be integer", .{}),
                             };
 
                             const result = std.math.add(i32, a_int, b_int) catch {
@@ -1957,14 +2025,14 @@ pub const HIRVM = struct {
                                 .int => |i| @as(f64, @floatFromInt(i)),
                                 .float => |f| f,
                                 .byte => |b| @as(f64, @floatFromInt(b)),
-                                else => return self.reporter.reportError("power: base must be numeric", .{}),
+                                else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "power: base must be numeric", .{}),
                             };
 
                             const exponent_float = switch (exponent.value) {
                                 .int => |i| @as(f64, @floatFromInt(i)),
                                 .float => |f| f,
                                 .byte => |b| @as(f64, @floatFromInt(b)),
-                                else => return self.reporter.reportError("power: exponent must be numeric", .{}),
+                                else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "power: exponent must be numeric", .{}),
                             };
 
                             const result = std.math.pow(f64, base_float, exponent_float);
@@ -2002,7 +2070,7 @@ pub const HIRVM = struct {
                                     }
                                     try self.stack.push(HIRFrame.initTetra(if (found) 1 else 0));
                                 },
-                                else => return self.reporter.reportError("exists_quantifier_gt: argument must be array", .{}),
+                                else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "exists_quantifier_gt: argument must be array", .{}),
                             }
                         } else if (std.mem.eql(u8, c.qualified_name, "forall_quantifier_gt")) {
                             // Universal quantifier with greater-than condition
@@ -2044,7 +2112,7 @@ pub const HIRVM = struct {
                                     // For empty arrays, forall returns true (vacuous truth)
                                     try self.stack.push(HIRFrame.initTetra(if ((!has_elements) or all_satisfy) 1 else 0));
                                 },
-                                else => return self.reporter.reportError("forall_quantifier_gt: argument must be array", .{}),
+                                else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "forall_quantifier_gt: argument must be array", .{}),
                             }
                         } else if (std.mem.eql(u8, c.qualified_name, "input")) {
                             // Simple approach: use readUntilDelimiterAlloc which is more reliable
@@ -2073,7 +2141,7 @@ pub const HIRVM = struct {
                             const input_string = try self.allocator.dupe(u8, line);
                             try self.stack.push(HIRFrame.initString(input_string));
                         } else {
-                            return self.reporter.reportError("Unknown built-in function: {s}", .{c.qualified_name});
+                            return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Unknown built-in function: {s}", .{c.qualified_name});
                         }
                     },
                     .ModuleFunction => {
@@ -2086,13 +2154,13 @@ pub const HIRVM = struct {
                             const a_int = switch (a.value) {
                                 .int => |i| i,
                                 .byte => |u| @as(i32, u),
-                                else => return self.reporter.reportError("safeAdd: first argument must be integer", .{}),
+                                else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "safeAdd: first argument must be integer", .{}),
                             };
 
                             const b_int = switch (b.value) {
                                 .int => |i| i,
                                 .byte => |u| @as(i32, u),
-                                else => return self.reporter.reportError("safeAdd: second argument must be integer", .{}),
+                                else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "safeAdd: second argument must be integer", .{}),
                             };
 
                             // Apply safeMath.doxa logic: limit = 255
@@ -2126,7 +2194,7 @@ pub const HIRVM = struct {
 
                             try self.stack.push(HIRFrame.initInt(result));
                         } else {
-                            return self.reporter.reportError("Unknown module function: {s}", .{c.qualified_name});
+                            return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Unknown module function: {s}", .{c.qualified_name});
                         }
                     },
                 }
@@ -2178,7 +2246,7 @@ pub const HIRVM = struct {
                     // Store the catch target for use by Throw
                     self.current_catch_target = target_ip;
                 } else {
-                    return self.reporter.reportError("Catch label not found: {s}", .{t.catch_label});
+                    return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Catch label not found: {s}", .{t.catch_label});
                 }
             },
 
@@ -2206,7 +2274,7 @@ pub const HIRVM = struct {
                 if (self.current_catch_target) |target_ip| {
                     self.ip = target_ip;
                 } else {
-                    return self.reporter.reportError("No catch block found for throw with type {s}", .{@tagName(t.exception_type)});
+                    return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "No catch block found for throw with type {s}", .{@tagName(t.exception_type)});
                 }
             },
 
@@ -2226,7 +2294,7 @@ pub const HIRVM = struct {
                     const name_str = switch (field_name.value) {
                         .string => |s_name| s_name,
                         else => {
-                            self.reporter.reportError("Expected string for field name, got {s}", .{@tagName(field_name.value)});
+                            self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Expected string for field name, got {s}", .{@tagName(field_name.value)});
                             return ErrorList.TypeError;
                         },
                     };
@@ -2284,7 +2352,7 @@ pub const HIRVM = struct {
                         try self.stack.push(modified_frame);
                     },
                     else => {
-                        self.reporter.reportError("Cannot store field name on non-struct value: {s}", .{@tagName(frame.value)});
+                        self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot store field name on non-struct value: {s}", .{@tagName(frame.value)});
                         return ErrorList.TypeError;
                     },
                 }
@@ -2318,7 +2386,7 @@ pub const HIRVM = struct {
                                 try self.stack.push(result);
                                 return;
                             } else |_| {
-                                self.reporter.reportError("Invalid string operation: {s}", .{get_field.field_name});
+                                self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid string operation: {s}", .{get_field.field_name});
                                 return ErrorList.TypeError;
                             }
                         }
@@ -2349,11 +2417,11 @@ pub const HIRVM = struct {
                             }
                         }
 
-                        self.reporter.reportError("Field '{s}' not found in struct '{s}'", .{ get_field.field_name, struct_inst.type_name });
+                        self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Field '{s}' not found in struct '{s}'", .{ get_field.field_name, struct_inst.type_name });
                         return ErrorList.FieldNotFound;
                     },
                     else => {
-                        self.reporter.reportError("Cannot get field from non-struct value: {s}", .{@tagName(frame.value)});
+                        self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot get field from non-struct value: {s}", .{@tagName(frame.value)});
                         return ErrorList.TypeError;
                     },
                 }
@@ -2382,11 +2450,11 @@ pub const HIRVM = struct {
                             }
                         }
 
-                        self.reporter.reportError("Field '{s}' not found in struct '{s}'", .{ set_field.field_name, struct_inst.type_name });
+                        self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Field '{s}' not found in struct '{s}'", .{ set_field.field_name, struct_inst.type_name });
                         return ErrorList.FieldNotFound;
                     },
                     else => {
-                        self.reporter.reportError("Cannot set field on non-struct value: {s}", .{@tagName(struct_frame.value)});
+                        self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot set field on non-struct value: {s}", .{@tagName(struct_frame.value)});
                         return ErrorList.TypeError;
                     },
                 }
@@ -2456,7 +2524,7 @@ pub const HIRVM = struct {
                             try self.stack.push(HIRFrame.initFromHIRValue(HIRValue.nothing));
                         }
                     },
-                    else => return self.reporter.reportError("Cannot get from non-map value: {s}", .{@tagName(map.value)}),
+                    else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot get from non-map value: {s}", .{@tagName(map.value)}),
                 }
             },
 
@@ -2610,22 +2678,22 @@ pub const HIRVM = struct {
     fn logicalAnd(self: *HIRVM, a: HIRFrame, b: HIRFrame) !u8 {
         const a_tetra = switch (a.value) {
             .tetra => |val| if (val <= 3) val else {
-                self.reporter.reportError("Invalid tetra value: {}", .{val});
+                self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid tetra value: {}", .{val});
                 return ErrorList.TypeError;
             },
             else => {
-                self.reporter.reportError("Cannot perform AND on non-tetra values: {s} AND {s}", .{ @tagName(a.value), @tagName(b.value) });
+                self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform AND on non-tetra values: {s} AND {s}", .{ @tagName(a.value), @tagName(b.value) });
                 return ErrorList.TypeError;
             },
         };
 
         const b_tetra = switch (b.value) {
             .tetra => |val| if (val <= 3) val else {
-                self.reporter.reportError("Invalid tetra value: {}", .{val});
+                self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid tetra value: {}", .{val});
                 return ErrorList.TypeError;
             },
             else => {
-                self.reporter.reportError("Cannot perform AND on non-tetra values: {s} AND {s}", .{ @tagName(a.value), @tagName(b.value) });
+                self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform AND on non-tetra values: {s} AND {s}", .{ @tagName(a.value), @tagName(b.value) });
                 return ErrorList.TypeError;
             },
         };
@@ -2643,22 +2711,22 @@ pub const HIRVM = struct {
     fn logicalOr(self: *HIRVM, a: HIRFrame, b: HIRFrame) !u8 {
         const a_tetra = switch (a.value) {
             .tetra => |val| if (val <= 3) val else {
-                self.reporter.reportError("Invalid tetra value: {}", .{val});
+                self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid tetra value: {}", .{val});
                 return ErrorList.TypeError;
             },
             else => {
-                self.reporter.reportError("Cannot perform OR on non-tetra values: {s} OR {s}", .{ @tagName(a.value), @tagName(b.value) });
+                self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform OR on non-tetra values: {s} OR {s}", .{ @tagName(a.value), @tagName(b.value) });
                 return ErrorList.TypeError;
             },
         };
 
         const b_tetra = switch (b.value) {
             .tetra => |val| if (val <= 3) val else {
-                self.reporter.reportError("Invalid tetra value: {}", .{val});
+                self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid tetra value: {}", .{val});
                 return ErrorList.TypeError;
             },
             else => {
-                self.reporter.reportError("Cannot perform OR on non-tetra values: {s} OR {s}", .{ @tagName(a.value), @tagName(b.value) });
+                self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform OR on non-tetra values: {s} OR {s}", .{ @tagName(a.value), @tagName(b.value) });
                 return ErrorList.TypeError;
             },
         };
@@ -2674,11 +2742,11 @@ pub const HIRVM = struct {
     fn logicalNot(self: *HIRVM, a: HIRFrame) !u8 {
         const a_tetra = switch (a.value) {
             .tetra => |val| if (val <= 3) val else {
-                self.reporter.reportError("Invalid tetra value: {}", .{val});
+                self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid tetra value: {}", .{val});
                 return ErrorList.TypeError;
             },
             else => {
-                self.reporter.reportError("Cannot perform NOT on a non-tetra value: {s}", .{@tagName(a.value)});
+                self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform NOT on a non-tetra value: {s}", .{@tagName(a.value)});
                 return ErrorList.TypeError;
             },
         };
@@ -2693,22 +2761,22 @@ pub const HIRVM = struct {
     fn logicalIff(self: *HIRVM, a: HIRFrame, b: HIRFrame) !u8 {
         const a_tetra = switch (a.value) {
             .tetra => |val| if (val <= 3) val else {
-                self.reporter.reportError("Invalid tetra value: {}", .{val});
+                self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid tetra value: {}", .{val});
                 return ErrorList.TypeError;
             },
             else => {
-                self.reporter.reportError("Cannot perform IFF on non-tetra values: {s} IFF {s}", .{ @tagName(a.value), @tagName(b.value) });
+                self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform IFF on non-tetra values: {s} IFF {s}", .{ @tagName(a.value), @tagName(b.value) });
                 return ErrorList.TypeError;
             },
         };
 
         const b_tetra = switch (b.value) {
             .tetra => |val| if (val <= 3) val else {
-                self.reporter.reportError("Invalid tetra value: {}", .{val});
+                self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid tetra value: {}", .{val});
                 return ErrorList.TypeError;
             },
             else => {
-                self.reporter.reportError("Cannot perform IFF on non-tetra values: {s} IFF {s}", .{ @tagName(a.value), @tagName(b.value) });
+                self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform IFF on non-tetra values: {s} IFF {s}", .{ @tagName(a.value), @tagName(b.value) });
                 return ErrorList.TypeError;
             },
         };
@@ -2724,22 +2792,22 @@ pub const HIRVM = struct {
     fn logicalXor(self: *HIRVM, a: HIRFrame, b: HIRFrame) !u8 {
         const a_tetra = switch (a.value) {
             .tetra => |val| if (val <= 3) val else {
-                self.reporter.reportError("Invalid tetra value: {}", .{val});
+                self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid tetra value: {}", .{val});
                 return ErrorList.TypeError;
             },
             else => {
-                self.reporter.reportError("Cannot perform XOR on non-tetra values: {s} XOR {s}", .{ @tagName(a.value), @tagName(b.value) });
+                self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform XOR on non-tetra values: {s} XOR {s}", .{ @tagName(a.value), @tagName(b.value) });
                 return ErrorList.TypeError;
             },
         };
 
         const b_tetra = switch (b.value) {
             .tetra => |val| if (val <= 3) val else {
-                self.reporter.reportError("Invalid tetra value: {}", .{val});
+                self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid tetra value: {}", .{val});
                 return ErrorList.TypeError;
             },
             else => {
-                self.reporter.reportError("Cannot perform XOR on non-tetra values: {s} XOR {s}", .{ @tagName(a.value), @tagName(b.value) });
+                self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform XOR on non-tetra values: {s} XOR {s}", .{ @tagName(a.value), @tagName(b.value) });
                 return ErrorList.TypeError;
             },
         };
@@ -2755,22 +2823,22 @@ pub const HIRVM = struct {
     fn logicalNand(self: *HIRVM, a: HIRFrame, b: HIRFrame) !u8 {
         const a_tetra = switch (a.value) {
             .tetra => |val| if (val <= 3) val else {
-                self.reporter.reportError("Invalid tetra value: {}", .{val});
+                self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid tetra value: {}", .{val});
                 return ErrorList.TypeError;
             },
             else => {
-                self.reporter.reportError("Cannot perform NAND on non-tetra values: {s} NAND {s}", .{ @tagName(a.value), @tagName(b.value) });
+                self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform NAND on non-tetra values: {s} NAND {s}", .{ @tagName(a.value), @tagName(b.value) });
                 return ErrorList.TypeError;
             },
         };
 
         const b_tetra = switch (b.value) {
             .tetra => |val| if (val <= 3) val else {
-                self.reporter.reportError("Invalid tetra value: {}", .{val});
+                self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid tetra value: {}", .{val});
                 return ErrorList.TypeError;
             },
             else => {
-                self.reporter.reportError("Cannot perform NAND on non-tetra values: {s} NAND {s}", .{ @tagName(a.value), @tagName(b.value) });
+                self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform NAND on non-tetra values: {s} NAND {s}", .{ @tagName(a.value), @tagName(b.value) });
                 return ErrorList.TypeError;
             },
         };
@@ -2786,22 +2854,22 @@ pub const HIRVM = struct {
     fn logicalNor(self: *HIRVM, a: HIRFrame, b: HIRFrame) !u8 {
         const a_tetra = switch (a.value) {
             .tetra => |val| if (val <= 3) val else {
-                self.reporter.reportError("Invalid tetra value: {}", .{val});
+                self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid tetra value: {}", .{val});
                 return ErrorList.TypeError;
             },
             else => {
-                self.reporter.reportError("Cannot perform NOR on non-tetra values: {s} NOR {s}", .{ @tagName(a.value), @tagName(b.value) });
+                self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform NOR on non-tetra values: {s} NOR {s}", .{ @tagName(a.value), @tagName(b.value) });
                 return ErrorList.TypeError;
             },
         };
 
         const b_tetra = switch (b.value) {
             .tetra => |val| if (val <= 3) val else {
-                self.reporter.reportError("Invalid tetra value: {}", .{val});
+                self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid tetra value: {}", .{val});
                 return ErrorList.TypeError;
             },
             else => {
-                self.reporter.reportError("Cannot perform NOR on non-tetra values: {s} NOR {s}", .{ @tagName(a.value), @tagName(b.value) });
+                self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform NOR on non-tetra values: {s} NOR {s}", .{ @tagName(a.value), @tagName(b.value) });
                 return ErrorList.TypeError;
             },
         };
@@ -2817,22 +2885,22 @@ pub const HIRVM = struct {
     fn logicalImplies(self: *HIRVM, a: HIRFrame, b: HIRFrame) !u8 {
         const a_tetra = switch (a.value) {
             .tetra => |val| if (val <= 3) val else {
-                self.reporter.reportError("Invalid tetra value: {}", .{val});
+                self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid tetra value: {}", .{val});
                 return ErrorList.TypeError;
             },
             else => {
-                self.reporter.reportError("Cannot perform IMPLIES on non-tetra values: {s} IMPLIES {s}", .{ @tagName(a.value), @tagName(b.value) });
+                self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform IMPLIES on non-tetra values: {s} IMPLIES {s}", .{ @tagName(a.value), @tagName(b.value) });
                 return ErrorList.TypeError;
             },
         };
 
         const b_tetra = switch (b.value) {
             .tetra => |val| if (val <= 3) val else {
-                self.reporter.reportError("Invalid tetra value: {}", .{val});
+                self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid tetra value: {}", .{val});
                 return ErrorList.TypeError;
             },
             else => {
-                self.reporter.reportError("Cannot perform IMPLIES on non-tetra values: {s} IMPLIES {s}", .{ @tagName(a.value), @tagName(b.value) });
+                self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform IMPLIES on non-tetra values: {s} IMPLIES {s}", .{ @tagName(a.value), @tagName(b.value) });
                 return ErrorList.TypeError;
             },
         };
@@ -3093,9 +3161,7 @@ pub const HIRVM = struct {
                 .Tetra => "tetra[]",
                 .Array => "array[]", // Nested arrays
                 .Struct => "struct[]",
-                .Auto => "auto[]",
-                .Nothing => "array[]",
-                else => "array[]",
+                else => unreachable,
             },
             .struct_instance => |s| s.type_name,
             .map => "map",
@@ -3185,7 +3251,7 @@ pub const HIRVM = struct {
             },
             else => {
                 std.debug.print("exists_quantifier failed: argument is of type {s}\n", .{@tagName(array.value)});
-                return self.reporter.reportError("exists_quantifier: argument must be array", .{});
+                return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "exists_quantifier: argument must be array", .{});
             },
         }
     }
@@ -3198,7 +3264,7 @@ pub const HIRVM = struct {
             },
             else => {
                 std.debug.print("forall_quantifier failed: argument is of type {s}\n", .{@tagName(array.value)});
-                return self.reporter.reportError("forall_quantifier: argument must be array", .{});
+                return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "forall_quantifier: argument must be array", .{});
             },
         }
     }
@@ -3252,7 +3318,7 @@ pub const HIRVM = struct {
 
         // Find the function's start label in the program's instruction array
         const start_label_idx = self.label_map.get(function.start_label) orelse {
-            return self.reporter.reportError("Function start label not found: {s}", .{function.start_label});
+            return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Function start label not found: {s}", .{function.start_label});
         };
 
         // Save current execution state
@@ -3294,7 +3360,7 @@ pub const HIRVM = struct {
                 var mutable_arr = arr;
 
                 // If array has no concrete element type yet, infer from first pushed element
-                if (mutable_arr.element_type == .Auto or mutable_arr.element_type == .Nothing) {
+                if (mutable_arr.element_type == .Unknown or mutable_arr.element_type == .Nothing) {
                     mutable_arr.element_type = switch (element_value) {
                         .int => .Int,
                         .byte => .Byte,
@@ -3357,7 +3423,7 @@ pub const HIRVM = struct {
                         .tetra => .Tetra,
                         .array => .Array,
                         .struct_instance => .Struct,
-                        else => .Auto,
+                        else => unreachable,
                     },
                     .capacity = 8,
                 };
@@ -3371,7 +3437,7 @@ pub const HIRVM = struct {
                 try self.stack.push(HIRFrame.initFromHIRValue(HIRValue{ .array = new_array }));
             },
             else => {
-                return self.reporter.reportError("Cannot push to non-array value: {s}", .{@tagName(array_frame.value)});
+                return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot push to non-array value: {s}", .{@tagName(array_frame.value)});
             },
         }
     }
@@ -3421,7 +3487,7 @@ pub const HIRVM = struct {
             },
             else => {
                 const op_name = if (is_exists) "exists_quantifier" else "forall_quantifier";
-                return self.reporter.reportError("{s}: argument must be array", .{op_name});
+                return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "{s}: argument must be array", .{op_name});
             },
         }
     }
@@ -3454,8 +3520,8 @@ pub const HIRVM = struct {
     /// Coerce a value to the expected type if possible
     fn coerceValue(self: *HIRVM, value: HIRValue, expected_type: HIRType) HIRValue {
         _ = self;
-        // If expected type is Auto, no coercion needed
-        if (expected_type == .Auto) {
+        // If expected type is Unknown, no coercion needed
+        if (expected_type == .Unknown) {
             return value;
         }
 
