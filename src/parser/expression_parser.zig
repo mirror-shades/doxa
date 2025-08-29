@@ -47,7 +47,21 @@ pub fn parseExpression(self: *Parser) ErrorList!?*ast.Expr {
 pub fn binary(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     if (left == null) return error.ExpectedLeftOperand;
     const operator = self.tokens[self.current - 1];
-    const right = try precedence.parsePrecedence(self, .UNARY) orelse return error.ExpectedRightOperand;
+
+    // Get the precedence of the current operator
+    const rule = precedence.getRule(operator.type);
+
+    // For left-associative operators, we want to bind more tightly to the right
+    const precedence_level = if (rule.associativity == .RIGHT)
+        rule.precedence
+    else if (rule.precedence == .PRIMARY)
+        .PRIMARY
+    else
+        @as(Precedence, @enumFromInt(@intFromEnum(rule.precedence) + 2));
+
+    // Parse the right-hand side with the appropriate precedence
+    const right = try precedence.parsePrecedence(self, precedence_level) orelse
+        return error.ExpectedRightOperand;
 
     const binary_expr = try self.allocator.create(ast.Expr);
     binary_expr.* = .{
@@ -238,9 +252,6 @@ pub fn parseMatchExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*a
         while (self.peek().type == .COMMA) self.advance();
         // If skipping moved us to the closing brace, stop parsing arms
         if (self.peek().type == .RIGHT_BRACE) break;
-        if (self.debug_enabled) {
-            std.debug.print("[DEBUG] Parsing match arm, current token: {s} ('{s}')\n", .{ @tagName(self.peek().type), self.peek().lexeme });
-        }
         if (self.peek().type == .ELSE) {
             // Handle else case
             self.advance();
@@ -1242,7 +1253,6 @@ pub fn grouping(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
     while (self.peek().type == .NEWLINE) self.advance();
 
     if (self.peek().type != .RIGHT_PAREN) {
-        std.debug.print("Expected right parenthesis, got {s}\n", .{@tagName(self.peek().type)});
         return error.ExpectedRightParen;
     }
     self.advance(); // consume )
@@ -1569,9 +1579,6 @@ pub fn parseStructOrMatch(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList
             // Tolerate stray commas between arms
             while (self.peek().type == .COMMA) self.advance();
             if (self.peek().type == .RIGHT_BRACE) break;
-            if (self.debug_enabled) {
-                std.debug.print("[DEBUG] Parsing match arm, current token: {s} ('{s}')\n", .{ @tagName(self.peek().type), self.peek().lexeme });
-            }
             if (self.peek().type == .ELSE) {
                 // Handle else case
                 self.advance();

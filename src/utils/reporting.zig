@@ -20,6 +20,9 @@ pub const ReporterOptions = struct {
     warn_as_error: bool = false,
     debug_mode: bool = false,
     print_immediately: bool = true, // CLI printing control
+    log_to_file: bool = true,
+    log_file_path: []const u8 = "last_diagnostics.log",
+    max_log_bytes: usize = 2 * 1024 * 1024, // 2MB cap, truncates when exceeded
 };
 
 pub const Range = struct {
@@ -166,8 +169,50 @@ pub const Reporter = struct {
             return;
         };
 
+        // Build a rich, single-line diagnostic with location and code
+        var line_buf = std.ArrayList(u8).init(self.allocator);
+        defer line_buf.deinit();
+
+        if (loc) |l| {
+            const file = l.file;
+            const sl = l.range.start_line;
+            const sc = l.range.start_col;
+            if (code) |c| {
+                _ = std.fmt.format(line_buf.writer(), "[{s}][{s}][{s}] {s}:{d}:{d}: {s}", .{
+                    @tagName(phase),
+                    @tagName(final_severity),
+                    c,
+                    file,
+                    sl,
+                    sc,
+                    msg_copy,
+                }) catch {};
+            } else {
+                _ = std.fmt.format(line_buf.writer(), "[{s}][{s}] {s}:{d}:{d}: {s}", .{
+                    @tagName(phase),
+                    @tagName(final_severity),
+                    file,
+                    sl,
+                    sc,
+                    msg_copy,
+                }) catch {};
+            }
+        } else {
+            if (code) |c| {
+                _ = std.fmt.format(line_buf.writer(), "[{s}][{s}][{s}] {s}", .{ @tagName(phase), @tagName(final_severity), c, msg_copy }) catch {};
+            } else {
+                _ = std.fmt.format(line_buf.writer(), "[{s}][{s}] {s}", .{ @tagName(phase), @tagName(final_severity), msg_copy }) catch {};
+            }
+        }
+
+        const line = line_buf.items;
+
         if (self.options.print_immediately) {
-            self.writer.print("DoxVM[{s}]: {s}\n", .{ @tagName(final_severity), msg_copy }) catch {};
+            self.writer.print("DoxVM: {s}\n", .{line}) catch {};
+        }
+
+        if (self.options.log_to_file) {
+            self.writeToLog(line) catch {};
         }
     }
 
@@ -290,5 +335,30 @@ pub const Reporter = struct {
         _ = self;
         _ = allocator;
         return "[]";
+    }
+
+    // Append a single line to the log file; truncate when exceeding max_log_bytes
+    fn writeToLog(self: *Reporter, line: []const u8) !void {
+        const opts = self.options;
+        const cwd = std.fs.cwd();
+        // Try open existing to check size
+        var file = cwd.createFile(opts.log_file_path, .{ .read = true, .truncate = false, .exclusive = false }) catch |e| switch (e) {
+            error.PathAlreadyExists => try cwd.openFile(opts.log_file_path, .{ .mode = .read_write }) ,
+            else => return e,
+        };
+        defer file.close();
+
+        // Determine current size; default to 0 on error
+        const current_size = file.getEndPos() catch 0;
+
+        // Truncate if too large
+        if (current_size >= opts.max_log_bytes) {
+            try file.setEndPos(0);
+        }
+
+        // Seek to end and append
+        try file.seekFromEnd(0);
+        try file.writeAll(line);
+        try file.writeAll("\n");
     }
 };

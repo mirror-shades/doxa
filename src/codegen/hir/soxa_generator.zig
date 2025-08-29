@@ -2792,10 +2792,6 @@ pub const HIRGenerator = struct {
                     // No then branch: keep original value if result is needed, drop if not
                     if (!preserve_result) {
                         try self.instructions.append(.Pop);
-                    } else {
-                        // DEBUG: preserve_result is true, keeping original value on stack
-                        std.debug.print("DEBUG: Cast success branch with preserve_result=true, keeping value on stack\n", .{});
-                        // If preserve_result is true, the original duplicated value remains on stack
                     }
                 }
 

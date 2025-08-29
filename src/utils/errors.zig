@@ -266,6 +266,9 @@ pub const ErrorList = error{
     NotOpenForReading,
     SocketNotConnected,
     IncompleteRead,
+    MissingFromKeyword,
+    ExpectedModulePath,
+    ExpectedImportSymbol,
 
     // LLVM
     UnsupportedOperator,
@@ -317,6 +320,7 @@ pub const ErrorCode = struct {
     pub const UNDEFINED_VARIABLE = "E1020";
     pub const UNKNOWN_TYPE_FOUND_IN_PEEK_INSTRUCTION = "E1021";
     pub const EXPECTED_TYPE_ANNOTATION = "E1022";
+    pub const SELF_REFERENTIAL_INITIALIZER = "E1023";
 
     // 2xxx - Syntax & Parsing
     pub const SYNTAX_ERROR = "E2001";
@@ -390,6 +394,10 @@ pub const ErrorCode = struct {
     pub const IMPORT_MUST_HAVE_ALIAS = "E7003";
     pub const MISPLACED_PUBLIC_MODIFIER = "E7004";
     pub const SYMBOL_NOT_FOUND_IN_IMPORT_MODULE = "E7005";
+    pub const EXPECTED_MODULE_NAME = "E7006";
+    pub const EXPECTED_MODULE_PATH = "E7007";
+    pub const EXPECTED_IMPORT_SYMBOL = "E7007";
+    pub const MISSING_FROM_KEYWORD = "E7008";
 
     // 8xxx - Internal Errors
     pub const INTERNAL_ERROR = "E8001";

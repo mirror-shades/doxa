@@ -1,0 +1,1090 @@
+[Debug][Hint] main.zig:399:0: Debug: Processing script: './test.doxa'
+
+[Debug][Hint] main.zig:419:0: Debug: Absolute path: 'C:\dev\zig\doxa\test.doxa'
+
+[CompileTime][Error][E1001] ./test.doxa:1:11: Undefined variable
+[CompileTime][Error][E1007] ./test.doxa:1:13: Arithmetic requires numeric operands
+[CompileTime][Error][E1007] ./test.doxa:1:18: Arithmetic requires numeric operands
+[CompileTime][Error][E1020] ./test.doxa:1:11: Undefined variable: 'x'
+[CompileTime][Error][E1009] ./test.doxa:1:5: Nothing type variables must be declared as 'const'
+[CompileTime][Error][E1001] ./test.doxa:2:1: Undefined variable
+[Debug][Hint] main.zig:399:0: Debug: Processing script: './test.doxa'
+
+[Debug][Hint] main.zig:419:0: Debug: Absolute path: 'C:\dev\zig\doxa\test.doxa'
+
+[CompileTime][Error][E1001] ./test.doxa:1:10: Undefined variable
+[CompileTime][Error][E1007] ./test.doxa:1:12: Arithmetic requires numeric operands
+[CompileTime][Error][E1020] ./test.doxa:1:10: Undefined variable: 'x'
+[CompileTime][Error][E1009] ./test.doxa:1:5: Nothing type variables must be declared as 'const'
+[CompileTime][Error][E1001] ./test.doxa:2:1: Undefined variable
+[Debug][Hint] main.zig:399:0: Debug: Processing script: './test.doxa'
+
+[Debug][Hint] main.zig:419:0: Debug: Absolute path: 'C:\dev\zig\doxa\test.doxa'
+
+[Debug][Hint] codegen\hir\soxa_generator.zig:540:0: HIR: processing imported module globals: 0
+[Debug][Hint] codegen\hir\soxa_generator.zig:565:0: HIR: processing current module globals
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable x
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for x
+[Debug][Hint] main.zig:176:0: >> Peephole optimizations applied: 0 HIR instruction optimizations
+
+[Debug][Hint] main.zig:198:0: >> Compiled ./test.doxa -> out/test.soxa (10 HIR instructions)
+
+[Debug][Hint] main.zig:486:0: >> Executing with HIR VM
+
+[Debug][Hint] main.zig:209:0: >> Loaded SOXA: 10 instructions, 2 constants
+
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) x: storage_id=1, value=types.types.TokenLiteral{ .int = 15 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 15 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable x
+[Debug][Hint] main.zig:399:0: Debug: Processing script: './test.doxa'
+
+[Debug][Hint] main.zig:419:0: Debug: Absolute path: 'C:\dev\zig\doxa\test.doxa'
+
+[Debug][Hint] codegen\hir\soxa_generator.zig:540:0: HIR: processing imported module globals: 0
+[Debug][Hint] codegen\hir\soxa_generator.zig:565:0: HIR: processing current module globals
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable x
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for x
+[Debug][Hint] main.zig:176:0: >> Peephole optimizations applied: 1 HIR instruction optimizations
+
+[Debug][Hint] main.zig:198:0: >> Compiled ./test.doxa -> out/test.soxa (12 HIR instructions)
+
+[Debug][Hint] main.zig:486:0: >> Executing with HIR VM
+
+[Debug][Hint] main.zig:209:0: >> Loaded SOXA: 12 instructions, 3 constants
+
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) x: storage_id=1, value=types.types.TokenLiteral{ .int = 30 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 30 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable x
+[Debug][Hint] main.zig:399:0: Debug: Processing script: './test.doxa'
+
+[Debug][Hint] main.zig:419:0: Debug: Absolute path: 'C:\dev\zig\doxa\test.doxa'
+
+[Debug][Hint] codegen\hir\soxa_generator.zig:540:0: HIR: processing imported module globals: 0
+[Debug][Hint] codegen\hir\soxa_generator.zig:565:0: HIR: processing current module globals
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable x
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for x
+[Debug][Hint] main.zig:176:0: >> Peephole optimizations applied: 1 HIR instruction optimizations
+
+[Debug][Hint] main.zig:198:0: >> Compiled ./test.doxa -> out/test.soxa (12 HIR instructions)
+
+[Debug][Hint] main.zig:486:0: >> Executing with HIR VM
+
+[Debug][Hint] main.zig:209:0: >> Loaded SOXA: 12 instructions, 3 constants
+
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) x: storage_id=1, value=types.types.TokenLiteral{ .int = 30 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 30 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable x
+[Debug][Hint] main.zig:399:0: Debug: Processing script: './test.doxa'
+
+[Debug][Hint] main.zig:419:0: Debug: Absolute path: 'C:\dev\zig\doxa\test.doxa'
+
+[Debug][Hint] main.zig:399:0: Debug: Processing script: './test.doxa'
+
+[Debug][Hint] main.zig:419:0: Debug: Absolute path: 'C:\dev\zig\doxa\test.doxa'
+
+[Debug][Hint] main.zig:399:0: Debug: Processing script: './test.doxa'
+
+[Debug][Hint] main.zig:419:0: Debug: Absolute path: 'C:\dev\zig\doxa\test.doxa'
+
+[Debug][Hint] codegen\hir\soxa_generator.zig:540:0: HIR: processing imported module globals: 0
+[Debug][Hint] codegen\hir\soxa_generator.zig:565:0: HIR: processing current module globals
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable x
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for x
+[Debug][Hint] main.zig:176:0: >> Peephole optimizations applied: 1 HIR instruction optimizations
+
+[Debug][Hint] main.zig:198:0: >> Compiled ./test.doxa -> out/test.soxa (12 HIR instructions)
+
+[Debug][Hint] main.zig:486:0: >> Executing with HIR VM
+
+[Debug][Hint] main.zig:209:0: >> Loaded SOXA: 12 instructions, 3 constants
+
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) x: storage_id=1, value=types.types.TokenLiteral{ .int = 30 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 30 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable x
+[Debug][Hint] main.zig:399:0: Debug: Processing script: './test.doxa'
+
+[Debug][Hint] main.zig:419:0: Debug: Absolute path: 'C:\dev\zig\doxa\test.doxa'
+
+[Debug][Hint] codegen\hir\soxa_generator.zig:540:0: HIR: processing imported module globals: 0
+[Debug][Hint] codegen\hir\soxa_generator.zig:565:0: HIR: processing current module globals
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable x
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for x
+[Debug][Hint] main.zig:176:0: >> Peephole optimizations applied: 1 HIR instruction optimizations
+
+[Debug][Hint] main.zig:198:0: >> Compiled ./test.doxa -> out/test.soxa (12 HIR instructions)
+
+[Debug][Hint] main.zig:486:0: >> Executing with HIR VM
+
+[Debug][Hint] main.zig:209:0: >> Loaded SOXA: 12 instructions, 3 constants
+
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) x: storage_id=1, value=types.types.TokenLiteral{ .int = 30 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 30 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable x
+[Debug][Hint] main.zig:399:0: Debug: Processing script: './test.doxa'
+
+[Debug][Hint] main.zig:419:0: Debug: Absolute path: 'C:\dev\zig\doxa\test.doxa'
+
+[Debug][Hint] main.zig:399:0: Debug: Processing script: './test.doxa'
+
+[Debug][Hint] main.zig:419:0: Debug: Absolute path: 'C:\dev\zig\doxa\test.doxa'
+
+[Debug][Hint] codegen\hir\soxa_generator.zig:540:0: HIR: processing imported module globals: 0
+[Debug][Hint] codegen\hir\soxa_generator.zig:565:0: HIR: processing current module globals
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable x
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for x
+[Debug][Hint] main.zig:176:0: >> Peephole optimizations applied: 1 HIR instruction optimizations
+
+[Debug][Hint] main.zig:198:0: >> Compiled ./test.doxa -> out/test.soxa (12 HIR instructions)
+
+[Debug][Hint] main.zig:486:0: >> Executing with HIR VM
+
+[Debug][Hint] main.zig:209:0: >> Loaded SOXA: 12 instructions, 3 constants
+
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) x: storage_id=1, value=types.types.TokenLiteral{ .int = 30 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 30 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable x
+[Debug][Hint] main.zig:399:0: Debug: Processing script: './test.doxa'
+
+[Debug][Hint] main.zig:419:0: Debug: Absolute path: 'C:\dev\zig\doxa\test.doxa'
+
+[Debug][Hint] codegen\hir\soxa_generator.zig:540:0: HIR: processing imported module globals: 0
+[Debug][Hint] codegen\hir\soxa_generator.zig:565:0: HIR: processing current module globals
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable x
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for x
+[Debug][Hint] main.zig:176:0: >> Peephole optimizations applied: 1 HIR instruction optimizations
+
+[Debug][Hint] main.zig:198:0: >> Compiled ./test.doxa -> out/test.soxa (12 HIR instructions)
+
+[Debug][Hint] main.zig:486:0: >> Executing with HIR VM
+
+[Debug][Hint] main.zig:209:0: >> Loaded SOXA: 12 instructions, 3 constants
+
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) x: storage_id=1, value=types.types.TokenLiteral{ .int = 30 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 30 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable x
+[Debug][Hint] main.zig:399:0: Debug: Processing script: './test.doxa'
+
+[Debug][Hint] main.zig:419:0: Debug: Absolute path: 'C:\dev\zig\doxa\test.doxa'
+
+[Debug][Hint] codegen\hir\soxa_generator.zig:540:0: HIR: processing imported module globals: 0
+[Debug][Hint] codegen\hir\soxa_generator.zig:565:0: HIR: processing current module globals
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable x
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for x
+[Debug][Hint] main.zig:176:0: >> Peephole optimizations applied: 1 HIR instruction optimizations
+
+[Debug][Hint] main.zig:198:0: >> Compiled ./test.doxa -> out/test.soxa (12 HIR instructions)
+
+[Debug][Hint] main.zig:486:0: >> Executing with HIR VM
+
+[Debug][Hint] main.zig:209:0: >> Loaded SOXA: 12 instructions, 3 constants
+
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) x: storage_id=1, value=types.types.TokenLiteral{ .int = 30 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 30 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable x
+[Debug][Hint] main.zig:399:0: Debug: Processing script: './test.doxa'
+
+[Debug][Hint] main.zig:419:0: Debug: Absolute path: 'C:\dev\zig\doxa\test.doxa'
+
+[Debug][Hint] codegen\hir\soxa_generator.zig:540:0: HIR: processing imported module globals: 0
+[Debug][Hint] codegen\hir\soxa_generator.zig:565:0: HIR: processing current module globals
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable x
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for x
+[Debug][Hint] main.zig:176:0: >> Peephole optimizations applied: 1 HIR instruction optimizations
+
+[Debug][Hint] main.zig:198:0: >> Compiled ./test.doxa -> out/test.soxa (12 HIR instructions)
+
+[Debug][Hint] main.zig:486:0: >> Executing with HIR VM
+
+[Debug][Hint] main.zig:209:0: >> Loaded SOXA: 12 instructions, 3 constants
+
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) x: storage_id=1, value=types.types.TokenLiteral{ .int = 30 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 30 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable x
+[Debug][Hint] main.zig:399:0: Debug: Processing script: './test.doxa'
+
+[Debug][Hint] main.zig:419:0: Debug: Absolute path: 'C:\dev\zig\doxa\test.doxa'
+
+[Debug][Hint] codegen\hir\soxa_generator.zig:540:0: HIR: processing imported module globals: 0
+[Debug][Hint] codegen\hir\soxa_generator.zig:565:0: HIR: processing current module globals
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable x
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for x
+[Debug][Hint] main.zig:176:0: >> Peephole optimizations applied: 1 HIR instruction optimizations
+
+[Debug][Hint] main.zig:198:0: >> Compiled ./test.doxa -> out/test.soxa (12 HIR instructions)
+
+[Debug][Hint] main.zig:486:0: >> Executing with HIR VM
+
+[Debug][Hint] main.zig:209:0: >> Loaded SOXA: 12 instructions, 3 constants
+
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) x: storage_id=1, value=types.types.TokenLiteral{ .int = 30 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 30 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable x
+[Debug][Hint] main.zig:399:0: Debug: Processing script: './test.doxa'
+
+[Debug][Hint] main.zig:419:0: Debug: Absolute path: 'C:\dev\zig\doxa\test.doxa'
+
+[Debug][Hint] codegen\hir\soxa_generator.zig:540:0: HIR: processing imported module globals: 0
+[Debug][Hint] codegen\hir\soxa_generator.zig:565:0: HIR: processing current module globals
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable x
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for x
+[Debug][Hint] main.zig:176:0: >> Peephole optimizations applied: 1 HIR instruction optimizations
+
+[Debug][Hint] main.zig:198:0: >> Compiled ./test.doxa -> out/test.soxa (12 HIR instructions)
+
+[Debug][Hint] main.zig:486:0: >> Executing with HIR VM
+
+[Debug][Hint] main.zig:209:0: >> Loaded SOXA: 12 instructions, 3 constants
+
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) x: storage_id=1, value=types.types.TokenLiteral{ .int = 30 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 30 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable x
+[Debug][Hint] main.zig:399:0: Debug: Processing script: './test.doxa'
+
+[Debug][Hint] main.zig:419:0: Debug: Absolute path: 'C:\dev\zig\doxa\test.doxa'
+
+[Debug][Hint] codegen\hir\soxa_generator.zig:540:0: HIR: processing imported module globals: 0
+[Debug][Hint] codegen\hir\soxa_generator.zig:565:0: HIR: processing current module globals
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable x
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for x
+[Debug][Hint] main.zig:176:0: >> Peephole optimizations applied: 1 HIR instruction optimizations
+
+[Debug][Hint] main.zig:198:0: >> Compiled ./test.doxa -> out/test.soxa (12 HIR instructions)
+
+[Debug][Hint] main.zig:486:0: >> Executing with HIR VM
+
+[Debug][Hint] main.zig:209:0: >> Loaded SOXA: 12 instructions, 3 constants
+
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) x: storage_id=1, value=types.types.TokenLiteral{ .int = 30 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 30 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable x
+[Debug][Hint] main.zig:399:0: Debug: Processing script: './test.doxa'
+
+[Debug][Hint] main.zig:419:0: Debug: Absolute path: 'C:\dev\zig\doxa\test.doxa'
+
+[Debug][Hint] codegen\hir\soxa_generator.zig:540:0: HIR: processing imported module globals: 0
+[Debug][Hint] codegen\hir\soxa_generator.zig:565:0: HIR: processing current module globals
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable x
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for x
+[Debug][Hint] main.zig:176:0: >> Peephole optimizations applied: 1 HIR instruction optimizations
+
+[Debug][Hint] main.zig:198:0: >> Compiled ./test.doxa -> out/test.soxa (12 HIR instructions)
+
+[Debug][Hint] main.zig:486:0: >> Executing with HIR VM
+
+[Debug][Hint] main.zig:209:0: >> Loaded SOXA: 12 instructions, 3 constants
+
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) x: storage_id=1, value=types.types.TokenLiteral{ .int = 30 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 30 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable x
+[Debug][Hint] main.zig:399:0: Debug: Processing script: './test.doxa'
+
+[Debug][Hint] main.zig:419:0: Debug: Absolute path: 'C:\dev\zig\doxa\test.doxa'
+
+[Debug][Hint] codegen\hir\soxa_generator.zig:540:0: HIR: processing imported module globals: 0
+[Debug][Hint] codegen\hir\soxa_generator.zig:565:0: HIR: processing current module globals
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable x
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for x
+[Debug][Hint] main.zig:176:0: >> Peephole optimizations applied: 1 HIR instruction optimizations
+
+[Debug][Hint] main.zig:198:0: >> Compiled ./test.doxa -> out/test.soxa (12 HIR instructions)
+
+[Debug][Hint] main.zig:486:0: >> Executing with HIR VM
+
+[Debug][Hint] main.zig:209:0: >> Loaded SOXA: 12 instructions, 3 constants
+
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) x: storage_id=1, value=types.types.TokenLiteral{ .int = 30 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 30 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable x
+[Debug][Hint] main.zig:399:0: Debug: Processing script: './test.doxa'
+
+[Debug][Hint] main.zig:419:0: Debug: Absolute path: 'C:\dev\zig\doxa\test.doxa'
+
+[Debug][Hint] codegen\hir\soxa_generator.zig:540:0: HIR: processing imported module globals: 0
+[Debug][Hint] codegen\hir\soxa_generator.zig:565:0: HIR: processing current module globals
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable x
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for x
+[Debug][Hint] main.zig:176:0: >> Peephole optimizations applied: 1 HIR instruction optimizations
+
+[Debug][Hint] main.zig:198:0: >> Compiled ./test.doxa -> out/test.soxa (12 HIR instructions)
+
+[Debug][Hint] main.zig:486:0: >> Executing with HIR VM
+
+[Debug][Hint] main.zig:209:0: >> Loaded SOXA: 12 instructions, 3 constants
+
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) x: storage_id=1, value=types.types.TokenLiteral{ .int = 30 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 30 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable x
+[Debug][Hint] main.zig:399:0: Debug: Processing script: './test.doxa'
+
+[Debug][Hint] main.zig:419:0: Debug: Absolute path: 'C:\dev\zig\doxa\test.doxa'
+
+[Debug][Hint] main.zig:399:0: Debug: Processing script: './test.doxa'
+
+[Debug][Hint] main.zig:419:0: Debug: Absolute path: 'C:\dev\zig\doxa\test.doxa'
+
+[Debug][Hint] main.zig:399:0: Debug: Processing script: './test.doxa'
+
+[Debug][Hint] main.zig:419:0: Debug: Absolute path: 'C:\dev\zig\doxa\test.doxa'
+
+[Debug][Hint] main.zig:399:0: Debug: Processing script: './test.doxa'
+
+[Debug][Hint] main.zig:419:0: Debug: Absolute path: 'C:\dev\zig\doxa\test.doxa'
+
+[Debug][Hint] main.zig:399:0: Debug: Processing script: './test.doxa'
+
+[Debug][Hint] main.zig:419:0: Debug: Absolute path: 'C:\dev\zig\doxa\test.doxa'
+
+[Debug][Hint] main.zig:399:0: Debug: Processing script: './test.doxa'
+
+[Debug][Hint] main.zig:419:0: Debug: Absolute path: 'C:\dev\zig\doxa\test.doxa'
+
+[Debug][Hint] main.zig:399:0: Debug: Processing script: './test.doxa'
+
+[Debug][Hint] main.zig:419:0: Debug: Absolute path: 'C:\dev\zig\doxa\test.doxa'
+
+[Debug][Hint] codegen\hir\soxa_generator.zig:540:0: HIR: processing imported module globals: 0
+[Debug][Hint] codegen\hir\soxa_generator.zig:565:0: HIR: processing current module globals
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable x
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for x
+[Debug][Hint] main.zig:176:0: >> Peephole optimizations applied: 1 HIR instruction optimizations
+
+[Debug][Hint] main.zig:198:0: >> Compiled ./test.doxa -> out/test.soxa (12 HIR instructions)
+
+[Debug][Hint] main.zig:486:0: >> Executing with HIR VM
+
+[Debug][Hint] main.zig:209:0: >> Loaded SOXA: 12 instructions, 3 constants
+
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) x: storage_id=1, value=types.types.TokenLiteral{ .int = 30 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 30 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable x
+[Debug][Hint] main.zig:399:0: Debug: Processing script: './test.doxa'
+
+[Debug][Hint] main.zig:419:0: Debug: Absolute path: 'C:\dev\zig\doxa\test.doxa'
+
+[Debug][Hint] codegen\hir\soxa_generator.zig:540:0: HIR: processing imported module globals: 0
+[Debug][Hint] codegen\hir\soxa_generator.zig:565:0: HIR: processing current module globals
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable x
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for x
+[Debug][Hint] main.zig:176:0: >> Peephole optimizations applied: 1 HIR instruction optimizations
+
+[Debug][Hint] main.zig:198:0: >> Compiled ./test.doxa -> out/test.soxa (12 HIR instructions)
+
+[Debug][Hint] main.zig:486:0: >> Executing with HIR VM
+
+[Debug][Hint] main.zig:209:0: >> Loaded SOXA: 12 instructions, 3 constants
+
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) x: storage_id=1, value=types.types.TokenLiteral{ .int = 25 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 25 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable x
+[Debug][Hint] main.zig:399:0: Debug: Processing script: './test/misc/bigfile.doxa'
+
+[Debug][Hint] main.zig:419:0: Debug: Absolute path: 'C:\dev\zig\doxa\test\misc\bigfile.doxa'
+
+[Debug][Hint] codegen\hir\soxa_generator.zig:540:0: HIR: processing imported module globals: 3
+[Debug][Hint] codegen\hir\soxa_generator.zig:548:0: HIR: module 'safeMath' globals count: 2
+[Debug][Hint] codegen\hir\soxa_generator.zig:725:0: Variable limit has type base: Int
+[Debug][Hint] codegen\hir\soxa_generator.zig:548:0: HIR: module 'math' globals count: 1
+[Debug][Hint] codegen\hir\soxa_generator.zig:548:0: HIR: module 'import' globals count: 3
+[Debug][Hint] codegen\hir\soxa_generator.zig:565:0: HIR: processing current module globals
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable import1
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for import1
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable import2
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for import2
+[Debug][Hint] codegen\hir\soxa_generator.zig:725:0: Variable b has type base: Custom
+[Debug][Hint] codegen\hir\soxa_generator.zig:725:0: Variable g has type base: Custom
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable matchResult
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for matchResult
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable matchResult
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for matchResult
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable mixedBranch1
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for mixedBranch1
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable mixedBranch2
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for mixedBranch2
+[Debug][Hint] codegen\hir\soxa_generator.zig:725:0: Variable stringArr has type base: Array
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable index
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for index
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable word
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for word
+[Debug][Hint] codegen\hir\soxa_generator.zig:725:0: Variable asThenUnion has type base: Union
+[Debug][Hint] codegen\hir\soxa_generator.zig:737:0: Found union type with 2 members
+[Debug][Hint] codegen\hir\soxa_generator.zig:743:0: Union member 0: int
+[Debug][Hint] codegen\hir\soxa_generator.zig:743:0: Union member 1: float
+[Debug][Hint] codegen\hir\soxa_generator.zig:743:0: Union member 2: byte
+[Debug][Hint] codegen\hir\soxa_generator.zig:756:0: Recorded union members for variable asThenUnion
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable asThen
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for asThen
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable asThen2
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for asThen2
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable asThen3
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for asThen3
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable asThen4
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for asThen4
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable result
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for result
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable result
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for result
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable asThenUnion
+[Debug][Hint] codegen\hir\soxa_generator.zig:1767:0: Found union members for asThenUnion by index: { { 105, 110, 116 }, { 102, 108, 111, 97, 116 }, { 98, 121, 116, 101 } }
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable asThenUnion
+[Debug][Hint] codegen\hir\soxa_generator.zig:1767:0: Found union members for asThenUnion by index: { { 105, 110, 116 }, { 102, 108, 111, 97, 116 }, { 98, 121, 116, 101 } }
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable asThenUnion
+[Debug][Hint] codegen\hir\soxa_generator.zig:1767:0: Found union members for asThenUnion by index: { { 105, 110, 116 }, { 102, 108, 111, 97, 116 }, { 98, 121, 116, 101 } }
+[Debug][Hint] codegen\hir\soxa_generator.zig:725:0: Variable x has type base: Union
+[Debug][Hint] codegen\hir\soxa_generator.zig:737:0: Found union type with 2 members
+[Debug][Hint] codegen\hir\soxa_generator.zig:743:0: Union member 0: int
+[Debug][Hint] codegen\hir\soxa_generator.zig:743:0: Union member 1: float
+[Debug][Hint] codegen\hir\soxa_generator.zig:756:0: Recorded union members for variable x
+[Debug][Hint] codegen\hir\soxa_generator.zig:725:0: Variable mike has type base: Custom
+[Debug][Hint] codegen\hir\soxa_generator.zig:725:0: Variable firstFold has type base: Tetra
+[Debug][Hint] codegen\hir\soxa_generator.zig:725:0: Variable secondFold has type base: Tetra
+[Debug][Hint] codegen\hir\soxa_generator.zig:725:0: Variable thirdFold has type base: Tetra
+[Debug][Hint] codegen\hir\soxa_generator.zig:725:0: Variable fourthFold has type base: Tetra
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable firstFold
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for firstFold
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable secondFold
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for secondFold
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable thirdFold
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for thirdFold
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable fourthFold
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for fourthFold
+[Debug][Hint] codegen\hir\soxa_generator.zig:725:0: Variable Bob has type base: Tetra
+[Debug][Hint] codegen\hir\soxa_generator.zig:725:0: Variable Shakespere has type base: Tetra
+[Debug][Hint] codegen\hir\soxa_generator.zig:725:0: Variable zombie has type base: Tetra
+[Debug][Hint] codegen\hir\soxa_generator.zig:725:0: Variable angel has type base: Tetra
+[Debug][Hint] codegen\hir\soxa_generator.zig:725:0: Variable arr has type base: Array
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable arr
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for arr
+[Debug][Hint] codegen\hir\soxa_generator.zig:725:0: Variable checkAgainst has type base: Int
+[Debug][Hint] codegen\hir\soxa_generator.zig:725:0: Variable initArr has type base: Array
+[Debug][Hint] codegen\hir\soxa_generator.zig:725:0: Variable floatArr has type base: Array
+[Debug][Hint] codegen\hir\soxa_generator.zig:725:0: Variable byteArr has type base: Array
+[Debug][Hint] codegen\hir\soxa_generator.zig:725:0: Variable tetraArr has type base: Array
+[Debug][Hint] codegen\hir\soxa_generator.zig:725:0: Variable strArr has type base: Array
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable ex
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for ex
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable uni
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for uni
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable condition
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for condition
+[Debug][Hint] codegen\hir\soxa_generator.zig:725:0: Variable un1 has type base: Union
+[Debug][Hint] codegen\hir\soxa_generator.zig:737:0: Found union type with 2 members
+[Debug][Hint] codegen\hir\soxa_generator.zig:743:0: Union member 0: int
+[Debug][Hint] codegen\hir\soxa_generator.zig:743:0: Union member 1: float
+[Debug][Hint] codegen\hir\soxa_generator.zig:756:0: Recorded union members for variable un1
+[Debug][Hint] codegen\hir\soxa_generator.zig:725:0: Variable un2 has type base: Union
+[Debug][Hint] codegen\hir\soxa_generator.zig:737:0: Found union type with 2 members
+[Debug][Hint] codegen\hir\soxa_generator.zig:743:0: Union member 0: int
+[Debug][Hint] codegen\hir\soxa_generator.zig:743:0: Union member 1: float
+[Debug][Hint] codegen\hir\soxa_generator.zig:756:0: Recorded union members for variable un2
+[Debug][Hint] codegen\hir\soxa_generator.zig:725:0: Variable newun has type base: Union
+[Debug][Hint] codegen\hir\soxa_generator.zig:737:0: Found union type with 2 members
+[Debug][Hint] codegen\hir\soxa_generator.zig:743:0: Union member 0: int
+[Debug][Hint] codegen\hir\soxa_generator.zig:743:0: Union member 1: float
+[Debug][Hint] codegen\hir\soxa_generator.zig:756:0: Recorded union members for variable newun
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable resint
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for resint
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable resfloat
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for resfloat
+[Debug][Hint] codegen\hir\soxa_generator.zig:725:0: Variable Map has type base: Map
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable brokenLine
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for brokenLine
+[Debug][Hint] codegen\hir\soxa_generator.zig:725:0: Variable s has type base: String
+[Debug][Hint] codegen\hir\soxa_generator.zig:725:0: Variable _int has type base: Int
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable _int
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for _int
+[Debug][Hint] codegen\hir\soxa_generator.zig:725:0: Variable _float has type base: Float
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable _float
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for _float
+[Debug][Hint] codegen\hir\soxa_generator.zig:725:0: Variable _byte has type base: Byte
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable _byte
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for _byte
+[Debug][Hint] codegen\hir\soxa_generator.zig:725:0: Variable _tetra has type base: Tetra
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable _tetra
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for _tetra
+[Debug][Hint] codegen\hir\soxa_generator.zig:725:0: Variable _string has type base: String
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable _string
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for _string
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable current
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for current
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable x
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for x
+[Debug][Hint] codegen\hir\soxa_generator.zig:725:0: Variable i has type base: Int
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable x
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for x
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable x
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for x
+[Debug][Hint] codegen\hir\soxa_generator.zig:1756:0: Checking union members for variable x
+[Debug][Hint] codegen\hir\soxa_generator.zig:1772:0: No union members found for x
+[Debug][Hint] main.zig:176:0: >> Peephole optimizations applied: 8 HIR instruction optimizations
+
+[Debug][Hint] main.zig:198:0: >> Compiled ./test/misc/bigfile.doxa -> out/bigfile.soxa (1338 HIR instructions)
+
+[Debug][Hint] main.zig:486:0: >> Executing with HIR VM
+
+[Debug][Hint] main.zig:209:0: >> Loaded SOXA: 1338 instructions, 246 constants
+
+[Debug][Hint] interpreter\vm.zig:1029:0: DBG WRITE StoreConst (create) limit: storage_id=115, value=types.types.TokenLiteral{ .int = 255 }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) import1: storage_id=116, value=types.types.TokenLiteral{ .int = 81 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 81 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable import1
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) import2: storage_id=117, value=types.types.TokenLiteral{ .int = -1 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = -1 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable import2
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 105, 109, 112, 111, 114, 116, 101, 100, 32, 102, 117, 110, 99, 116, 105, 111, 110 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) x: storage_id=118, value=types.types.TokenLiteral{ .int = 60 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 60 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable x
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 100 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1029:0: DBG WRITE StoreConst (create) Color: storage_id=119, value=types.types.TokenLiteral{ .string = { 67, 111, 108, 111, 114 } }
+[Debug][Hint] interpreter\vm.zig:1029:0: DBG WRITE StoreConst (create) b: storage_id=120, value=types.types.TokenLiteral{ .enum_variant = { 66, 108, 117, 101 } }
+[Debug][Hint] interpreter\vm.zig:1029:0: DBG WRITE StoreConst (create) g: storage_id=121, value=types.types.TokenLiteral{ .enum_variant = { 71, 114, 101, 101, 110 } }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=enum_variant, b=enum_variant, operand_type=Enum
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=enum_variant, b=enum_variant, operand_type=Enum
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) matchResult: storage_id=122, value=types.types.TokenLiteral{ .string = { 73, 116, 39, 115, 32, 98, 108, 117, 101 } }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 73, 116, 39, 115, 32, 98, 108, 117, 101 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable matchResult
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=enum_variant, b=enum_variant, operand_type=Enum
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=enum_variant, b=enum_variant, operand_type=Enum
+[Debug][Hint] interpreter\vm.zig:949:0: DBG WRITE StoreVar matchResult: storage_id=122, value=types.types.TokenLiteral{ .string = { 73, 116, 39, 115, 32, 115, 111, 109, 101, 116, 104, 105, 110, 103, 32, 101, 108, 115, 101 } }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 73, 116, 39, 115, 32, 115, 111, 109, 101, 116, 104, 105, 110, 103, 32, 101, 108, 115, 101 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable matchResult
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) limit: storage_id=123, value=types.types.TokenLiteral{ .int = 115 }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) x: storage_id=124, value=types.types.TokenLiteral{ .int = 100 }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) current: storage_id=125, value=types.types.TokenLiteral{ .int = 100 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Le: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 98, 117, 122, 122 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:949:0: DBG WRITE StoreVar current: storage_id=125, value=types.types.TokenLiteral{ .int = 101 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Le: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 101 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable current
+[Debug][Hint] interpreter\vm.zig:949:0: DBG WRITE StoreVar current: storage_id=125, value=types.types.TokenLiteral{ .int = 102 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Le: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 102, 105, 122, 122 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:949:0: DBG WRITE StoreVar current: storage_id=125, value=types.types.TokenLiteral{ .int = 103 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Le: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 103 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable current
+[Debug][Hint] interpreter\vm.zig:949:0: DBG WRITE StoreVar current: storage_id=125, value=types.types.TokenLiteral{ .int = 104 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Le: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 104 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable current
+[Debug][Hint] interpreter\vm.zig:949:0: DBG WRITE StoreVar current: storage_id=125, value=types.types.TokenLiteral{ .int = 105 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Le: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 102, 105, 122, 122, 98, 117, 122, 122 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:949:0: DBG WRITE StoreVar current: storage_id=125, value=types.types.TokenLiteral{ .int = 106 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Le: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 106 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable current
+[Debug][Hint] interpreter\vm.zig:949:0: DBG WRITE StoreVar current: storage_id=125, value=types.types.TokenLiteral{ .int = 107 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Le: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 107 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable current
+[Debug][Hint] interpreter\vm.zig:949:0: DBG WRITE StoreVar current: storage_id=125, value=types.types.TokenLiteral{ .int = 108 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Le: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 102, 105, 122, 122 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:949:0: DBG WRITE StoreVar current: storage_id=125, value=types.types.TokenLiteral{ .int = 109 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Le: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 109 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable current
+[Debug][Hint] interpreter\vm.zig:949:0: DBG WRITE StoreVar current: storage_id=125, value=types.types.TokenLiteral{ .int = 110 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Le: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 98, 117, 122, 122 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:949:0: DBG WRITE StoreVar current: storage_id=125, value=types.types.TokenLiteral{ .int = 111 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Le: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 102, 105, 122, 122 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:949:0: DBG WRITE StoreVar current: storage_id=125, value=types.types.TokenLiteral{ .int = 112 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Le: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 112 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable current
+[Debug][Hint] interpreter\vm.zig:949:0: DBG WRITE StoreVar current: storage_id=125, value=types.types.TokenLiteral{ .int = 113 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Le: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 113 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable current
+[Debug][Hint] interpreter\vm.zig:949:0: DBG WRITE StoreVar current: storage_id=125, value=types.types.TokenLiteral{ .int = 114 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Le: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 102, 105, 122, 122 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:949:0: DBG WRITE StoreVar current: storage_id=125, value=types.types.TokenLiteral{ .int = 115 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Le: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 98, 117, 122, 122 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:949:0: DBG WRITE StoreVar current: storage_id=125, value=types.types.TokenLiteral{ .int = 116 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Le: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) limit: storage_id=126, value=types.types.TokenLiteral{ .int = 1015 }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) x: storage_id=127, value=types.types.TokenLiteral{ .int = 1000 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 98, 117, 122, 122, 101, 114 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Lt: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) limit: storage_id=128, value=types.types.TokenLiteral{ .int = 1015 }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) x: storage_id=129, value=types.types.TokenLiteral{ .int = 1001 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 1001 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable x
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Lt: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) limit: storage_id=130, value=types.types.TokenLiteral{ .int = 1015 }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) x: storage_id=131, value=types.types.TokenLiteral{ .int = 1002 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 102, 105, 122, 122, 101, 114 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Lt: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) limit: storage_id=132, value=types.types.TokenLiteral{ .int = 1015 }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) x: storage_id=133, value=types.types.TokenLiteral{ .int = 1003 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 1003 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable x
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Lt: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) limit: storage_id=134, value=types.types.TokenLiteral{ .int = 1015 }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) x: storage_id=135, value=types.types.TokenLiteral{ .int = 1004 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 1004 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable x
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Lt: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) limit: storage_id=136, value=types.types.TokenLiteral{ .int = 1015 }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) x: storage_id=137, value=types.types.TokenLiteral{ .int = 1005 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 102, 105, 122, 122, 98, 117, 122, 122, 101, 114 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Lt: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) limit: storage_id=138, value=types.types.TokenLiteral{ .int = 1015 }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) x: storage_id=139, value=types.types.TokenLiteral{ .int = 1006 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 1006 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable x
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Lt: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) limit: storage_id=140, value=types.types.TokenLiteral{ .int = 1015 }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) x: storage_id=141, value=types.types.TokenLiteral{ .int = 1007 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 1007 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable x
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Lt: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) limit: storage_id=142, value=types.types.TokenLiteral{ .int = 1015 }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) x: storage_id=143, value=types.types.TokenLiteral{ .int = 1008 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 102, 105, 122, 122, 101, 114 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Lt: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) limit: storage_id=144, value=types.types.TokenLiteral{ .int = 1015 }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) x: storage_id=145, value=types.types.TokenLiteral{ .int = 1009 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 1009 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable x
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Lt: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) limit: storage_id=146, value=types.types.TokenLiteral{ .int = 1015 }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) x: storage_id=147, value=types.types.TokenLiteral{ .int = 1010 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 98, 117, 122, 122, 101, 114 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Lt: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) limit: storage_id=148, value=types.types.TokenLiteral{ .int = 1015 }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) x: storage_id=149, value=types.types.TokenLiteral{ .int = 1011 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 102, 105, 122, 122, 101, 114 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Lt: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) limit: storage_id=150, value=types.types.TokenLiteral{ .int = 1015 }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) x: storage_id=151, value=types.types.TokenLiteral{ .int = 1012 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 1012 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable x
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Lt: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) limit: storage_id=152, value=types.types.TokenLiteral{ .int = 1015 }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) x: storage_id=153, value=types.types.TokenLiteral{ .int = 1013 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 1013 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable x
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Lt: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) limit: storage_id=154, value=types.types.TokenLiteral{ .int = 1015 }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) x: storage_id=155, value=types.types.TokenLiteral{ .int = 1014 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 102, 105, 122, 122, 101, 114 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Lt: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) limit: storage_id=156, value=types.types.TokenLiteral{ .int = 1015 }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) x: storage_id=157, value=types.types.TokenLiteral{ .int = 1015 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 98, 117, 122, 122, 101, 114 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Lt: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) x: storage_id=158, value=types.types.TokenLiteral{ .int = 5 }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) i: storage_id=159, value=types.types.TokenLiteral{ .int = 0 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Lt: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 660 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:949:0: DBG WRITE StoreVar i: storage_id=159, value=types.types.TokenLiteral{ .int = 1 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Lt: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 726 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:949:0: DBG WRITE StoreVar i: storage_id=159, value=types.types.TokenLiteral{ .int = 2 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Lt: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 792 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:949:0: DBG WRITE StoreVar i: storage_id=159, value=types.types.TokenLiteral{ .int = 3 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Lt: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 858 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:949:0: DBG WRITE StoreVar i: storage_id=159, value=types.types.TokenLiteral{ .int = 4 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Lt: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 924 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:949:0: DBG WRITE StoreVar i: storage_id=159, value=types.types.TokenLiteral{ .int = 5 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Lt: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) notUsed: storage_id=160, value=types.types.TokenLiteral{ .int = 15 }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) mixedBranch1: storage_id=161, value=types.types.TokenLiteral{ .string = { 116, 114, 117, 101 } }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 116, 114, 117, 101 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable mixedBranch1
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) mixedBranch2: storage_id=162, value=types.types.TokenLiteral{ .string = { 102, 97, 108, 115, 101 } }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 102, 97, 108, 115, 101 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable mixedBranch2
+[Debug][Hint] interpreter\vm.zig:1737:0: ArraySet: array element_type=String, trying to assign value type=string
+[Debug][Hint] interpreter\vm.zig:1767:0: ArraySet: keeping value as-is for type String
+[Debug][Hint] interpreter\vm.zig:1737:0: ArraySet: array element_type=String, trying to assign value type=string
+[Debug][Hint] interpreter\vm.zig:1767:0: ArraySet: keeping value as-is for type String
+[Debug][Hint] interpreter\vm.zig:1737:0: ArraySet: array element_type=String, trying to assign value type=string
+[Debug][Hint] interpreter\vm.zig:1767:0: ArraySet: keeping value as-is for type String
+[Debug][Hint] interpreter\vm.zig:1737:0: ArraySet: array element_type=String, trying to assign value type=string
+[Debug][Hint] interpreter\vm.zig:1767:0: ArraySet: keeping value as-is for type String
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) stringArr: storage_id=163, value=types.types.TokenLiteral{ .array = { types.types.TokenLiteral{ .string = { ... } }, types.types.TokenLiteral{ .string = { ... } }, types.types.TokenLiteral{ .string = { ... } }, types.types.TokenLiteral{ .string = { ... } } } }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) __fe_arr_foreach_start_38: storage_id=164, value=types.types.TokenLiteral{ .array = { types.types.TokenLiteral{ .string = { ... } }, types.types.TokenLiteral{ .string = { ... } }, types.types.TokenLiteral{ .string = { ... } }, types.types.TokenLiteral{ .string = { ... } } } }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) __fe_len_foreach_start_38: storage_id=165, value=types.types.TokenLiteral{ .int = 4 }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) index: storage_id=166, value=types.types.TokenLiteral{ .int = 0 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Lt: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1666:0: ArrayGet: array element_type=String, retrieved element type=string
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) word: storage_id=167, value=types.types.TokenLiteral{ .string = { 104, 101, 108, 108, 111 } }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 0 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable index
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 104, 101, 108, 108, 111 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable word
+[Debug][Hint] interpreter\vm.zig:949:0: DBG WRITE StoreVar index: storage_id=166, value=types.types.TokenLiteral{ .int = 1 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Lt: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1666:0: ArrayGet: array element_type=String, retrieved element type=string
+[Debug][Hint] interpreter\vm.zig:949:0: DBG WRITE StoreVar word: storage_id=167, value=types.types.TokenLiteral{ .string = { 119, 111, 114, 108, 100 } }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 1 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable index
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 119, 111, 114, 108, 100 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable word
+[Debug][Hint] interpreter\vm.zig:949:0: DBG WRITE StoreVar index: storage_id=166, value=types.types.TokenLiteral{ .int = 2 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Lt: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1666:0: ArrayGet: array element_type=String, retrieved element type=string
+[Debug][Hint] interpreter\vm.zig:949:0: DBG WRITE StoreVar word: storage_id=167, value=types.types.TokenLiteral{ .string = { 102, 111, 111 } }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 2 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable index
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 102, 111, 111 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable word
+[Debug][Hint] interpreter\vm.zig:949:0: DBG WRITE StoreVar index: storage_id=166, value=types.types.TokenLiteral{ .int = 3 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Lt: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1666:0: ArrayGet: array element_type=String, retrieved element type=string
+[Debug][Hint] interpreter\vm.zig:949:0: DBG WRITE StoreVar word: storage_id=167, value=types.types.TokenLiteral{ .string = { 98, 97, 114 } }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 3 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable index
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 98, 97, 114 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable word
+[Debug][Hint] interpreter\vm.zig:949:0: DBG WRITE StoreVar index: storage_id=166, value=types.types.TokenLiteral{ .int = 4 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Lt: a=int, b=int, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) asThenUnion: storage_id=168, value=types.types.TokenLiteral{ .int = 10 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=string, operand_type=String
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) asThen: storage_id=169, value=types.types.TokenLiteral{ .int = 10 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 10 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable asThen
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=string, operand_type=String
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) asThen2: storage_id=170, value=types.types.TokenLiteral{ .int = 20 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 20 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable asThen2
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=string, operand_type=String
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) asThen3: storage_id=171, value=types.types.TokenLiteral{ .int = 30 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 30 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable asThen3
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=string, operand_type=String
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) asThen4: storage_id=172, value=types.types.TokenLiteral{ .float = 0e0 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .float = 0e0 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable asThen4
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=string, operand_type=String
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) result: storage_id=173, value=types.types.TokenLiteral{ .int = 50 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 50 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable result
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 10 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable asThenUnion
+[Debug][Hint] interpreter\vm.zig:1230:0: Found union members: { { 105, 110, 116 }, { 102, 108, 111, 97, 116 }, { 98, 121, 116, 101 } }
+[Debug][Hint] interpreter\vm.zig:949:0: DBG WRITE StoreVar asThenUnion: storage_id=168, value=types.types.TokenLiteral{ .float = 1.2345e1 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .float = 1.2345e1 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable asThenUnion
+[Debug][Hint] interpreter\vm.zig:1230:0: Found union members: { { 105, 110, 116 }, { 102, 108, 111, 97, 116 }, { 98, 121, 116, 101 } }
+[Debug][Hint] interpreter\vm.zig:949:0: DBG WRITE StoreVar asThenUnion: storage_id=168, value=types.types.TokenLiteral{ .byte = 10 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .byte = 10 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable asThenUnion
+[Debug][Hint] interpreter\vm.zig:1230:0: Found union members: { { 105, 110, 116 }, { 102, 108, 111, 97, 116 }, { 98, 121, 116, 101 } }
+[Debug][Hint] interpreter\vm.zig:1029:0: DBG WRITE StoreConst (create) x: storage_id=174, value=types.types.TokenLiteral{ .int = 17 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=string, operand_type=String
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) x: storage_id=175, value=types.types.TokenLiteral{ .int = 17 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 17 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable x
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 114, 101, 116, 117, 114, 110 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 105, 109, 112, 108, 105, 99, 105, 116 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) mike: storage_id=176, value=types.types.TokenLiteral{ .struct_value = types.types.TokenLiteral__struct_26686{ .type_name = { 69, 109, 112, 108, 111, 121, 101, 101 }, .fields = { types.types.StructField{ ... }, types.types.StructField{ ... } }, .path = null } }
+[Debug][Hint] interpreter\vm.zig:949:0: DBG WRITE StoreVar mike: storage_id=176, value=types.types.TokenLiteral{ .struct_value = types.types.TokenLiteral__struct_26686{ .type_name = { 69, 109, 112, 108, 111, 121, 101, 101 }, .fields = { types.types.StructField{ ... }, types.types.StructField{ ... } }, .path = null } }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 26 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable mike.person.age
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 4 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .array = codegen.hir.soxa_values.HIRArray{ .elements = { ... }, .element_type = codegen.hir.soxa_types.HIRType.Byte, .capacity = 4, .path = null } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 77 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1666:0: ArrayGet: array element_type=Byte, retrieved element type=byte
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .byte = 77 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 1000 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable mike.salary
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) firstFold: storage_id=177, value=types.types.TokenLiteral{ .tetra = types.types.Tetra.true }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) secondFold: storage_id=178, value=types.types.TokenLiteral{ .tetra = types.types.Tetra.false }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) thirdFold: storage_id=179, value=types.types.TokenLiteral{ .tetra = types.types.Tetra.both }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) fourthFold: storage_id=180, value=types.types.TokenLiteral{ .tetra = types.types.Tetra.neither }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .tetra = 1 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable firstFold
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .tetra = 0 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable secondFold
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .tetra = 2 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable thirdFold
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .tetra = 3 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable fourthFold
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=tetra, b=tetra, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .tetra = 0 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=tetra, b=tetra, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=tetra, b=tetra, operand_type=Int
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .tetra = 0 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1029:0: DBG WRITE StoreConst (create) Bob: storage_id=181, value=types.types.TokenLiteral{ .tetra = types.types.Tetra.true }
+[Debug][Hint] interpreter\vm.zig:1029:0: DBG WRITE StoreConst (create) Shakespere: storage_id=182, value=types.types.TokenLiteral{ .tetra = types.types.Tetra.false }
+[Debug][Hint] interpreter\vm.zig:1029:0: DBG WRITE StoreConst (create) zombie: storage_id=183, value=types.types.TokenLiteral{ .tetra = types.types.Tetra.both }
+[Debug][Hint] interpreter\vm.zig:1029:0: DBG WRITE StoreConst (create) angel: storage_id=184, value=types.types.TokenLiteral{ .tetra = types.types.Tetra.neither }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) alive: storage_id=185, value=types.types.TokenLiteral{ .tetra = types.types.Tetra.true }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 73, 32, 97, 109, 32, 97, 108, 105, 118, 101 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) alive: storage_id=186, value=types.types.TokenLiteral{ .tetra = types.types.Tetra.false }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 73, 32, 97, 109, 32, 100, 101, 97, 100 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) alive: storage_id=187, value=types.types.TokenLiteral{ .tetra = types.types.Tetra.both }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 73, 32, 97, 109, 32, 97, 108, 105, 118, 101 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) alive: storage_id=188, value=types.types.TokenLiteral{ .tetra = types.types.Tetra.neither }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 73, 32, 97, 109, 32, 100, 101, 97, 100 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1737:0: ArraySet: array element_type=Int, trying to assign value type=int
+[Debug][Hint] interpreter\vm.zig:1760:0: ArraySet: keeping int value 111111
+[Debug][Hint] interpreter\vm.zig:1737:0: ArraySet: array element_type=Int, trying to assign value type=int
+[Debug][Hint] interpreter\vm.zig:1760:0: ArraySet: keeping int value 222222
+[Debug][Hint] interpreter\vm.zig:1737:0: ArraySet: array element_type=Int, trying to assign value type=int
+[Debug][Hint] interpreter\vm.zig:1760:0: ArraySet: keeping int value 333333
+[Debug][Hint] interpreter\vm.zig:1737:0: ArraySet: array element_type=Int, trying to assign value type=int
+[Debug][Hint] interpreter\vm.zig:1760:0: ArraySet: keeping int value 444444
+[Debug][Hint] interpreter\vm.zig:1737:0: ArraySet: array element_type=Int, trying to assign value type=int
+[Debug][Hint] interpreter\vm.zig:1760:0: ArraySet: keeping int value 555555
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) arr: storage_id=189, value=types.types.TokenLiteral{ .array = { types.types.TokenLiteral{ .int = 111111 }, types.types.TokenLiteral{ .int = 222222 }, types.types.TokenLiteral{ .int = 333333 }, types.types.TokenLiteral{ .int = 444444 }, types.types.TokenLiteral{ .int = 555555 } } }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .array = codegen.hir.soxa_values.HIRArray{ .elements = { ... }, .element_type = codegen.hir.soxa_types.HIRType.Int, .capacity = 5, .path = null } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable arr
+[Debug][Hint] interpreter\vm.zig:1666:0: ArrayGet: array element_type=Int, retrieved element type=int
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 444444 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1737:0: ArraySet: array element_type=Int, trying to assign value type=int
+[Debug][Hint] interpreter\vm.zig:1760:0: ArraySet: keeping int value 666666
+[Debug][Hint] interpreter\vm.zig:949:0: DBG WRITE StoreVar arr: storage_id=189, value=types.types.TokenLiteral{ .array = { types.types.TokenLiteral{ .int = 111111 }, types.types.TokenLiteral{ .int = 222222 }, types.types.TokenLiteral{ .int = 333333 }, types.types.TokenLiteral{ .int = 666666 }, types.types.TokenLiteral{ .int = 555555 } } }
+[Debug][Hint] interpreter\vm.zig:1666:0: ArrayGet: array element_type=Int, retrieved element type=int
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 666666 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:949:0: DBG WRITE StoreVar arr: storage_id=189, value=types.types.TokenLiteral{ .array = { types.types.TokenLiteral{ .int = 111111 }, types.types.TokenLiteral{ .int = 222222 }, types.types.TokenLiteral{ .int = 333333 }, types.types.TokenLiteral{ .int = 666666 }, types.types.TokenLiteral{ .int = 555555 }, types.types.TokenLiteral{ .int = 420000 }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void } } }
+[Debug][Hint] interpreter\vm.zig:1666:0: ArrayGet: array element_type=Int, retrieved element type=int
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 420000 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1029:0: DBG WRITE StoreConst (create) checkAgainst: storage_id=190, value=types.types.TokenLiteral{ .int = 333333 }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) initArr: storage_id=191, value=types.types.TokenLiteral{ .array = { types.types.TokenLiteral{ .int = 0 }, types.types.TokenLiteral{ .int = 0 }, types.types.TokenLiteral{ .int = 0 }, types.types.TokenLiteral{ .int = 0 }, types.types.TokenLiteral{ .int = 0 }, types.types.TokenLiteral{ .int = 0 }, types.types.TokenLiteral{ .int = 0 }, types.types.TokenLiteral{ .int = 0 }, types.types.TokenLiteral{ .int = 0 }, types.types.TokenLiteral{ .int = 0 } } }
+[Debug][Hint] interpreter\vm.zig:949:0: DBG WRITE StoreVar initArr: storage_id=191, value=types.types.TokenLiteral{ .array = { types.types.TokenLiteral{ .int = 0 }, types.types.TokenLiteral{ .int = 0 }, types.types.TokenLiteral{ .int = 0 }, types.types.TokenLiteral{ .int = 0 }, types.types.TokenLiteral{ .int = 0 }, types.types.TokenLiteral{ .int = 0 }, types.types.TokenLiteral{ .int = 0 }, types.types.TokenLiteral{ .int = 0 }, types.types.TokenLiteral{ .int = 0 }, types.types.TokenLiteral{ .int = 0 } } }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) floatArr: storage_id=192, value=types.types.TokenLiteral{ .array = { types.types.TokenLiteral{ .float = 0e0 }, types.types.TokenLiteral{ .float = 0e0 }, types.types.TokenLiteral{ .float = 0e0 }, types.types.TokenLiteral{ .float = 0e0 }, types.types.TokenLiteral{ .float = 0e0 }, types.types.TokenLiteral{ .float = 0e0 }, types.types.TokenLiteral{ .float = 0e0 }, types.types.TokenLiteral{ .float = 0e0 }, types.types.TokenLiteral{ .float = 0e0 }, types.types.TokenLiteral{ .float = 0e0 } } }
+[Debug][Hint] interpreter\vm.zig:949:0: DBG WRITE StoreVar floatArr: storage_id=192, value=types.types.TokenLiteral{ .array = { types.types.TokenLiteral{ .float = 0e0 }, types.types.TokenLiteral{ .float = 0e0 }, types.types.TokenLiteral{ .float = 0e0 }, types.types.TokenLiteral{ .float = 0e0 }, types.types.TokenLiteral{ .float = 0e0 }, types.types.TokenLiteral{ .float = 0e0 }, types.types.TokenLiteral{ .float = 0e0 }, types.types.TokenLiteral{ .float = 0e0 }, types.types.TokenLiteral{ .float = 0e0 }, types.types.TokenLiteral{ .float = 0e0 } } }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) byteArr: storage_id=193, value=types.types.TokenLiteral{ .array = { types.types.TokenLiteral{ .byte = 0 }, types.types.TokenLiteral{ .byte = 0 }, types.types.TokenLiteral{ .byte = 0 }, types.types.TokenLiteral{ .byte = 0 }, types.types.TokenLiteral{ .byte = 0 }, types.types.TokenLiteral{ .byte = 0 }, types.types.TokenLiteral{ .byte = 0 }, types.types.TokenLiteral{ .byte = 0 }, types.types.TokenLiteral{ .byte = 0 }, types.types.TokenLiteral{ .byte = 0 } } }
+[Debug][Hint] interpreter\vm.zig:949:0: DBG WRITE StoreVar byteArr: storage_id=193, value=types.types.TokenLiteral{ .array = { types.types.TokenLiteral{ .byte = 0 }, types.types.TokenLiteral{ .byte = 0 }, types.types.TokenLiteral{ .byte = 0 }, types.types.TokenLiteral{ .byte = 0 }, types.types.TokenLiteral{ .byte = 0 }, types.types.TokenLiteral{ .byte = 0 }, types.types.TokenLiteral{ .byte = 0 }, types.types.TokenLiteral{ .byte = 0 }, types.types.TokenLiteral{ .byte = 0 }, types.types.TokenLiteral{ .byte = 0 } } }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) tetraArr: storage_id=194, value=types.types.TokenLiteral{ .array = { types.types.TokenLiteral{ .tetra = types.types.Tetra.false }, types.types.TokenLiteral{ .tetra = types.types.Tetra.false }, types.types.TokenLiteral{ .tetra = types.types.Tetra.false }, types.types.TokenLiteral{ .tetra = types.types.Tetra.false }, types.types.TokenLiteral{ .tetra = types.types.Tetra.false }, types.types.TokenLiteral{ .tetra = types.types.Tetra.false }, types.types.TokenLiteral{ .tetra = types.types.Tetra.false }, types.types.TokenLiteral{ .tetra = types.types.Tetra.false }, types.types.TokenLiteral{ .tetra = types.types.Tetra.false }, types.types.TokenLiteral{ .tetra = types.types.Tetra.false } } }
+[Debug][Hint] interpreter\vm.zig:949:0: DBG WRITE StoreVar tetraArr: storage_id=194, value=types.types.TokenLiteral{ .array = { types.types.TokenLiteral{ .tetra = types.types.Tetra.false }, types.types.TokenLiteral{ .tetra = types.types.Tetra.false }, types.types.TokenLiteral{ .tetra = types.types.Tetra.false }, types.types.TokenLiteral{ .tetra = types.types.Tetra.false }, types.types.TokenLiteral{ .tetra = types.types.Tetra.false }, types.types.TokenLiteral{ .tetra = types.types.Tetra.false }, types.types.TokenLiteral{ .tetra = types.types.Tetra.false }, types.types.TokenLiteral{ .tetra = types.types.Tetra.false }, types.types.TokenLiteral{ .tetra = types.types.Tetra.false }, types.types.TokenLiteral{ .tetra = types.types.Tetra.false } } }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) strArr: storage_id=195, value=types.types.TokenLiteral{ .array = { types.types.TokenLiteral{ .string = { ... } }, types.types.TokenLiteral{ .string = { ... } }, types.types.TokenLiteral{ .string = { ... } }, types.types.TokenLiteral{ .string = { ... } }, types.types.TokenLiteral{ .string = { ... } }, types.types.TokenLiteral{ .string = { ... } }, types.types.TokenLiteral{ .string = { ... } }, types.types.TokenLiteral{ .string = { ... } }, types.types.TokenLiteral{ .string = { ... } }, types.types.TokenLiteral{ .string = { ... } } } }
+[Debug][Hint] interpreter\vm.zig:949:0: DBG WRITE StoreVar strArr: storage_id=195, value=types.types.TokenLiteral{ .array = { types.types.TokenLiteral{ .string = { ... } }, types.types.TokenLiteral{ .string = { ... } }, types.types.TokenLiteral{ .string = { ... } }, types.types.TokenLiteral{ .string = { ... } }, types.types.TokenLiteral{ .string = { ... } }, types.types.TokenLiteral{ .string = { ... } }, types.types.TokenLiteral{ .string = { ... } }, types.types.TokenLiteral{ .string = { ... } }, types.types.TokenLiteral{ .string = { ... } }, types.types.TokenLiteral{ .string = { ... } } } }
+[Debug][Hint] interpreter\vm.zig:1666:0: ArrayGet: array element_type=Int, retrieved element type=int
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 0 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1666:0: ArrayGet: array element_type=Int, retrieved element type=int
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 0 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1666:0: ArrayGet: array element_type=Float, retrieved element type=float
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .float = 0e0 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1666:0: ArrayGet: array element_type=Float, retrieved element type=float
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .float = 0e0 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1666:0: ArrayGet: array element_type=Byte, retrieved element type=byte
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .byte = 0 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1666:0: ArrayGet: array element_type=Byte, retrieved element type=byte
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .byte = 0 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1666:0: ArrayGet: array element_type=Tetra, retrieved element type=tetra
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .tetra = 0 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1666:0: ArrayGet: array element_type=Tetra, retrieved element type=tetra
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .tetra = 0 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1666:0: ArrayGet: array element_type=String, retrieved element type=string
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = {  } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1666:0: ArrayGet: array element_type=String, retrieved element type=string
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = {  } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) ex: storage_id=196, value=types.types.TokenLiteral{ .tetra = types.types.Tetra.true }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .tetra = 1 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable ex
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) uni: storage_id=197, value=types.types.TokenLiteral{ .tetra = types.types.Tetra.false }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .tetra = 0 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable uni
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) condition: storage_id=198, value=types.types.TokenLiteral{ .string = { 116, 114, 117, 101 } }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 116, 114, 117, 101 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable condition
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) b: storage_id=199, value=types.types.TokenLiteral{ .int = 2 }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) a: storage_id=200, value=types.types.TokenLiteral{ .int = 777 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 779 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) b: storage_id=201, value=types.types.TokenLiteral{ .int = 5 }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) a: storage_id=202, value=types.types.TokenLiteral{ .int = 777 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 782 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1029:0: DBG WRITE StoreConst (create) un1: storage_id=203, value=types.types.TokenLiteral{ .int = 3 }
+[Debug][Hint] interpreter\vm.zig:1029:0: DBG WRITE StoreConst (create) un2: storage_id=204, value=types.types.TokenLiteral{ .float = 3.5e0 }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) value: storage_id=205, value=types.types.TokenLiteral{ .int = 3 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=string, operand_type=String
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 105, 110, 116, 101, 103, 101, 114 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) value: storage_id=206, value=types.types.TokenLiteral{ .float = 3.5e0 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=float, b=string, operand_type=String
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=float, b=string, operand_type=String
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 102, 108, 111, 97, 116 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) value: storage_id=207, value=types.types.TokenLiteral{ .int = 3 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=string, operand_type=String
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 3 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) value: storage_id=208, value=types.types.TokenLiteral{ .float = 3.5e0 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=float, b=string, operand_type=String
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=float, b=string, operand_type=String
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 0 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) value: storage_id=209, value=types.types.TokenLiteral{ .int = 3 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=string, operand_type=String
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 3 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) value: storage_id=210, value=types.types.TokenLiteral{ .float = 3.5e0 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=float, b=string, operand_type=String
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 0 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) value: storage_id=211, value=types.types.TokenLiteral{ .int = 3 }
+[Debug][Hint] interpreter\vm.zig:989:0: DBG StoreConst newun: storage_id=?, token_type=INT, type_info=Int, token_literal=types.types.TokenLiteral{ .int = 3 }
+[Debug][Hint] interpreter\vm.zig:1029:0: DBG WRITE StoreConst (create) newun: storage_id=212, value=types.types.TokenLiteral{ .int = 3 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=string, operand_type=String
+[Debug][Hint] interpreter\vm.zig:989:0: DBG StoreConst resint: storage_id=?, token_type=INT, type_info=Int, token_literal=types.types.TokenLiteral{ .int = 3 }
+[Debug][Hint] interpreter\vm.zig:1029:0: DBG WRITE StoreConst (create) resint: storage_id=213, value=types.types.TokenLiteral{ .int = 3 }
+[Debug][Hint] interpreter\vm.zig:1141:0: DBG Compare Eq: a=int, b=string, operand_type=String
+[Debug][Hint] interpreter\vm.zig:989:0: DBG StoreConst resfloat: storage_id=?, token_type=INT, type_info=Int, token_literal=types.types.TokenLiteral{ .int = 0 }
+[Debug][Hint] interpreter\vm.zig:1029:0: DBG WRITE StoreConst (create) resfloat: storage_id=214, value=types.types.TokenLiteral{ .int = 0 }
+[Debug][Hint] interpreter\vm.zig:884:0: DBG LoadVar resint: storage_id=213, token_type=INT, type_info=Int, token_literal=types.types.TokenLiteral{ .int = 3 }, hir_tag=int
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 3 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable resint
+[Debug][Hint] interpreter\vm.zig:884:0: DBG LoadVar resfloat: storage_id=214, token_type=INT, type_info=Int, token_literal=types.types.TokenLiteral{ .int = 0 }, hir_tag=int
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 0 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable resfloat
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) Map: storage_id=215, value=types.types.TokenLiteral{ .map = hash_map.HashMap([]const u8,types.types.TokenLiteral,hash_map.StringContext,80){ .unmanaged = hash_map.HashMapUnmanaged([]const u8,types.types.TokenLiteral,hash_map.StringContext,80){ .metadata = hash_map.HashMapUnmanaged([]const u8,types.types.TokenLiteral,hash_map.StringContext,80).Metadata@1a9fba958c0, .size = 3, .available = 3, .pointer_stability = debug.SafetyLock{ ... } }, .allocator = mem.Allocator{ .ptr = anyopaque@3d26de6140, .vtable = mem.Allocator.VTable{ ... } }, .ctx = hash_map.StringContext{ } } }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .float = 1.5e0 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .float = 3.5e0 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .tetra = 1 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .tetra = 0 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .tetra = 1 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .tetra = 1 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .tetra = 0 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .tetra = 0 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .tetra = 1 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .tetra = 1 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .tetra = 0 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .tetra = 0 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1029:0: DBG WRITE StoreConst (create) brokenLine: storage_id=216, value=types.types.TokenLiteral{ .int = -58 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = -58 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable brokenLine
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) alive: storage_id=217, value=types.types.TokenLiteral{ .tetra = types.types.Tetra.true }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 73, 32, 97, 109, 32, 97, 108, 105, 118, 101 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) alive: storage_id=218, value=types.types.TokenLiteral{ .tetra = types.types.Tetra.false }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 73, 32, 97, 109, 32, 100, 101, 97, 100 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) alive: storage_id=219, value=types.types.TokenLiteral{ .tetra = types.types.Tetra.both }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 73, 32, 97, 109, 32, 97, 108, 105, 118, 101 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) alive: storage_id=220, value=types.types.TokenLiteral{ .tetra = types.types.Tetra.neither }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 73, 32, 97, 109, 32, 100, 101, 97, 100 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) s: storage_id=221, value=types.types.TokenLiteral{ .string = { 104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100 } }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 104, 101, 108, 108, 111 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 119, 111, 114, 108, 100 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) _int: storage_id=222, value=types.types.TokenLiteral{ .int = 0 }
+[Debug][Hint] interpreter\vm.zig:949:0: DBG WRITE StoreVar _int: storage_id=222, value=types.types.TokenLiteral{ .int = 0 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 0 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable _int
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) _float: storage_id=223, value=types.types.TokenLiteral{ .float = 0e0 }
+[Debug][Hint] interpreter\vm.zig:949:0: DBG WRITE StoreVar _float: storage_id=223, value=types.types.TokenLiteral{ .float = 0e0 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .float = 0e0 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable _float
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) _byte: storage_id=224, value=types.types.TokenLiteral{ .byte = 0 }
+[Debug][Hint] interpreter\vm.zig:949:0: DBG WRITE StoreVar _byte: storage_id=224, value=types.types.TokenLiteral{ .byte = 0 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .byte = 0 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable _byte
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) _tetra: storage_id=225, value=types.types.TokenLiteral{ .tetra = types.types.Tetra.false }
+[Debug][Hint] interpreter\vm.zig:949:0: DBG WRITE StoreVar _tetra: storage_id=225, value=types.types.TokenLiteral{ .tetra = types.types.Tetra.false }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .tetra = 0 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable _tetra
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) _string: storage_id=226, value=types.types.TokenLiteral{ .string = {  } }
+[Debug][Hint] interpreter\vm.zig:949:0: DBG WRITE StoreVar _string: storage_id=226, value=types.types.TokenLiteral{ .string = {  } }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = {  } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1228:0: Peek instruction for variable _string
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 105, 110, 116 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 98, 121, 116, 101 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 102, 108, 111, 97, 116 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 115, 116, 114, 105, 110, 103 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 116, 101, 116, 114, 97 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 97, 114, 114, 97, 121 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 115, 116, 114, 117, 99, 116 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 69, 109, 112, 108, 111, 121, 101, 101 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 101, 110, 117, 109 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 67, 111, 108, 111, 114 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1217:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 109, 97, 112 } }, .field_name = null, .scope_refs = 0 }
+[Runtime][Error][E1001] Cannot convert float to integer for arithmetic

@@ -54,16 +54,10 @@ pub const SemanticAnalyzer = struct {
     fatal_error: bool,
     current_scope: ?*Scope,
     type_cache: std.AutoHashMap(NodeId, *ast.TypeInfo),
-
-    // NEW: Track custom types for HIR generation
     custom_types: std.StringHashMap(CustomTypeInfo),
-
-    // NEW: Track function return types for inference
     function_return_types: std.AutoHashMap(NodeId, *ast.TypeInfo),
-    // NEW: Track return statements in current function for inference
     current_function_returns: std.ArrayList(*ast.TypeInfo),
-
-    // NEW: Reference to parser for accessing imported symbols
+    current_initializing_var: ?[]const u8 = null,
     parser: ?*const Parser = null,
 
     pub fn init(allocator: std.mem.Allocator, reporter: *Reporter, memory: *MemoryManager, parser: ?*const Parser) SemanticAnalyzer {
@@ -810,23 +804,32 @@ pub const SemanticAnalyzer = struct {
                                 continue;
                             }
 
-                            // Convert TypeInfo to TokenType
                             const token_type = self.convertTypeToTokenType(type_info.base);
 
-                            // Get the actual value from initializer or use default for uninitialized variables
-                            var value = if (decl.initializer) |init_expr|
-                                try self.evaluateExpression(init_expr)
-                            else
+                            var value: TokenLiteral = undefined;
+
+                            if (decl.initializer) |init_expr| {
+                                self.current_initializing_var = decl.name.lexeme;
+                                defer {
+                                    self.current_initializing_var = null;
+                                }
+
+                                value = try self.evaluateExpression(init_expr);
+                            } else {
                                 // Only use defaults for uninitialized variables
-                                switch (type_info.base) {
+                                value = switch (type_info.base) {
                                     .Int => TokenLiteral{ .int = 0 },
                                     .Float => TokenLiteral{ .float = 0.0 },
                                     .String => TokenLiteral{ .string = "" },
                                     .Tetra => TokenLiteral{ .tetra = .false },
                                     .Byte => TokenLiteral{ .byte = 0 },
-                                    .Union => if (type_info.union_type) |ut| self.getUnionDefaultValue(ut) else TokenLiteral{ .nothing = {} },
+                                    .Union => if (type_info.union_type) |ut|
+                                        self.getUnionDefaultValue(ut)
+                                    else
+                                        TokenLiteral{ .nothing = {} },
                                     else => TokenLiteral{ .nothing = {} },
                                 };
+                            }
 
                             // Convert value to match the declared type
                             value = try self.convertValueToType(value, type_info.base);
@@ -3856,13 +3859,33 @@ pub const SemanticAnalyzer = struct {
                 }
             },
             .Variable => |var_token| {
-                // Look up variable in current scope
+                if (self.current_initializing_var) |current_var| {
+                    if (std.mem.eql(u8, var_token.lexeme, current_var)) {
+                        self.reporter.reportCompileError(
+                            getLocationFromBase(expr.base),
+                            ErrorCode.SELF_REFERENTIAL_INITIALIZER,
+                            "Variable '{s}' cannot reference itself in its own initializer",
+                            .{current_var},
+                        );
+                        self.fatal_error = true;
+                        return TokenLiteral{ .nothing = {} };
+                    }
+                }
+
+                // Original variable lookup logic
                 if (self.lookupVariable(var_token.lexeme)) |variable| {
                     if (self.memory.scope_manager.value_storage.get(variable.storage_id)) |storage| {
                         return storage.value;
                     }
                 }
-                // Return default value if variable not found (shouldn't happen in well-formed code)
+
+                self.reporter.reportCompileError(
+                    getLocationFromBase(expr.base),
+                    ErrorCode.UNDEFINED_VARIABLE,
+                    "Undefined variable: '{s}'",
+                    .{var_token.lexeme},
+                );
+                self.fatal_error = true;
                 return TokenLiteral{ .nothing = {} };
             },
             .Cast => |cast| {
