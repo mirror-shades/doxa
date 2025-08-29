@@ -3,9 +3,11 @@ const Parser = @import("./parser_types.zig").Parser;
 const ast = @import("../ast/ast.zig");
 const token = @import("../types/token.zig");
 const Reporting = @import("../utils/reporting.zig");
+const Reporter = Reporting.Reporter;
+const Location = Reporting.Location;
 const Errors = @import("../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
-const printDebug = std.debug.print;
+const ErrorCode = Errors.ErrorCode;
 
 // Struct to track imported symbols
 pub const ImportedSymbol = struct {
@@ -24,22 +26,53 @@ pub fn parseModuleStmt(self: *Parser) !ast.Stmt {
 
     // Parse namespace
     if (self.peek().type != .IDENTIFIER) {
-        printDebug("use the syntax: \n'module moduleName from \"./file.doxa\";'\n", .{});
-        return error.ExpectedIdentifier;
+        const current_token = self.peek();
+        const location = Location{
+            .file = self.current_file,
+            .range = .{
+                .start_line = current_token.line,
+                .start_col = current_token.column,
+                .end_line = current_token.line,
+                .end_col = current_token.column,
+            },
+        };
+        self.reporter.reportCompileError(location, ErrorCode.EXPECTED_MODULE_NAME, "expected module name after 'module' keyword", .{});
+        return error.ExpectedModuleName;
     }
     const namespace = self.peek().lexeme;
     self.advance();
 
     // Must have 'from' keyword
     if (self.peek().type != .FROM) {
-        printDebug("use the syntax: \n'module moduleName from \"./file.doxa\";'\n", .{});
-        return error.ImportMustHaveFrom;
+        const current_token = self.peek();
+        const location = Location{
+            .file = self.current_file,
+            .range = .{
+                .start_line = current_token.line,
+                .start_col = current_token.column,
+                .end_line = current_token.line,
+                .end_col = current_token.column,
+            },
+        };
+        self.reporter.reportCompileError(location, ErrorCode.MISSING_FROM_KEYWORD, "missing 'from' keyword after module name", .{});
+        return error.MissingFromKeyword;
     }
     self.advance();
 
     // Parse module path
     if (self.peek().type != .STRING) {
-        return error.ExpectedString;
+        const current_token = self.peek();
+        const location = Location{
+            .file = self.current_file,
+            .range = .{
+                .start_line = current_token.line,
+                .start_col = current_token.column,
+                .end_line = current_token.line,
+                .end_col = current_token.column,
+            },
+        };
+        self.reporter.reportCompileError(location, ErrorCode.EXPECTED_MODULE_PATH, "expected string literal with module path after 'from' keyword", .{});
+        return error.ExpectedModulePath;
     }
 
     // Get the module path and strip the quotes
@@ -60,9 +93,6 @@ pub fn parseModuleStmt(self: *Parser) !ast.Stmt {
 
     // Load and register the entire module as a namespace
     try self.loadAndRegisterModule(module_path, namespace, null);
-    if (self.debug_enabled) {
-        std.debug.print("Parser: module alias '{s}' -> {s}\n", .{ namespace, module_path });
-    }
 
     // Record this module import so transitive imports are visible during
     // module info extraction (since top-level imports are consumed in pass 1)
@@ -97,8 +127,18 @@ pub fn parseImportStmt(self: *Parser) !ast.Stmt {
 
     // Parse first symbol
     if (self.peek().type != .IDENTIFIER) {
-        printDebug("use the syntax: \n'import symbolName from \"./file.doxa\";'\n", .{});
-        return error.ExpectedIdentifier;
+        const current_token = self.peek();
+        const location = Location{
+            .file = self.current_file,
+            .range = .{
+                .start_line = current_token.line,
+                .start_col = current_token.column,
+                .end_line = current_token.line,
+                .end_col = current_token.column,
+            },
+        };
+        self.reporter.reportCompileError(location, ErrorCode.EXPECTED_IMPORT_SYMBOL, "expected symbol name after 'import' keyword", .{});
+        return error.ExpectedImportSymbol;
     }
     try symbols.append(self.peek().lexeme);
     self.advance();
@@ -108,7 +148,18 @@ pub fn parseImportStmt(self: *Parser) !ast.Stmt {
         self.advance(); // consume comma
 
         if (self.peek().type != .IDENTIFIER) {
-            return error.ExpectedIdentifier;
+            const current_token = self.peek();
+            const location = Location{
+                .file = self.current_file,
+                .range = .{
+                    .start_line = current_token.line,
+                    .start_col = current_token.column,
+                    .end_line = current_token.line,
+                    .end_col = current_token.column,
+                },
+            };
+            self.reporter.reportCompileError(location, ErrorCode.EXPECTED_IMPORT_SYMBOL, "expected symbol name after comma in import list", .{});
+            return error.ExpectedImportSymbol;
         }
         try symbols.append(self.peek().lexeme);
         self.advance();
@@ -116,14 +167,35 @@ pub fn parseImportStmt(self: *Parser) !ast.Stmt {
 
     // Must have 'from' keyword
     if (self.peek().type != .FROM) {
-        printDebug("use the syntax: \n'import symbolName from \"./file.doxa\";'\n", .{});
-        return error.ImportMustHaveFrom;
+        const current_token = self.peek();
+        const location = Location{
+            .file = self.current_file,
+            .range = .{
+                .start_line = current_token.line,
+                .start_col = current_token.column,
+                .end_line = current_token.line,
+                .end_col = current_token.column,
+            },
+        };
+        self.reporter.reportCompileError(location, ErrorCode.MISSING_FROM_KEYWORD, "missing 'from' keyword after import list", .{});
+        return error.MissingFromKeyword;
     }
     self.advance();
 
     // Parse module path
     if (self.peek().type != .STRING) {
-        return error.ExpectedString;
+        const current_token = self.peek();
+        const location = Location{
+            .file = self.current_file,
+            .range = .{
+                .start_line = current_token.line,
+                .start_col = current_token.column,
+                .end_line = current_token.line,
+                .end_col = current_token.column,
+            },
+        };
+        self.reporter.reportCompileError(location, ErrorCode.EXPECTED_MODULE_PATH, "expected string literal with module path after 'from' keyword", .{});
+        return error.ExpectedModulePath;
     }
 
     // Get the module path and strip the quotes
@@ -148,11 +220,6 @@ pub fn parseImportStmt(self: *Parser) !ast.Stmt {
     // Load and register specific symbols from the module
     for (owned_symbols) |symbol| {
         try self.loadAndRegisterSpecificSymbol(module_path, symbol);
-    }
-    if (self.debug_enabled) {
-        for (owned_symbols) |symbol| {
-            std.debug.print("Parser: import symbol '{s}' from {s}\n", .{ symbol, module_path });
-        }
     }
 
     return ast.Stmt{
@@ -283,8 +350,6 @@ fn registerPublicSymbols(self: *Parser, module_ast: *ast.Expr, module_path: []co
         self.imported_symbols = std.StringHashMap(ImportedSymbol).init(self.allocator);
     }
 
-    std.debug.print("Module AST type: {s}\n", .{@tagName(module_ast.*)});
-
     switch (module_ast.*) {
         .Block => {
             const statements = module_ast.Block.statements;
@@ -350,11 +415,9 @@ fn registerPublicSymbols(self: *Parser, module_ast: *ast.Expr, module_path: []co
                         }
                     },
                     .VarDecl => |var_decl| {
-                        std.debug.print("VarDecl: {s}\n", .{var_decl.name.lexeme});
                         const is_public = var_decl.is_public;
                         if (is_public) {
                             const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ namespace, var_decl.name.lexeme });
-                            std.debug.print("Importing variable: {s}\n", .{full_name});
                             try self.imported_symbols.?.put(full_name, .{
                                 .kind = .Variable,
                                 .name = var_decl.name.lexeme,
@@ -363,9 +426,6 @@ fn registerPublicSymbols(self: *Parser, module_ast: *ast.Expr, module_path: []co
                         }
                     },
                     .Import => |import_info| {
-                        if (self.debug_enabled) {
-                            std.debug.print("Found import: {s} as {?s}\n", .{ import_info.module_path, import_info.namespace_alias });
-                        }
                         try self.imported_symbols.?.put(import_info.module_path, .{
                             .kind = .Import,
                             .name = import_info.module_path,
@@ -378,18 +438,9 @@ fn registerPublicSymbols(self: *Parser, module_ast: *ast.Expr, module_path: []co
                             // Skip self-imports
                             if (!std.mem.eql(u8, import_info.module_path, module_path)) {
                                 // Resolve the imported module and put into namespaces map
-                                const imported_info = self.resolveModule(import_info.module_path) catch |err| blk: {
-                                    if (self.debug_enabled) {
-                                        std.debug.print("Failed to resolve imported module {s}: {}\n", .{ import_info.module_path, err });
-                                    }
-                                    break :blk null;
-                                };
+                                const imported_info = self.resolveModule(import_info.module_path) catch null;
                                 if (imported_info) |mi| {
-                                    _ = self.module_namespaces.put(alias, mi) catch |err| {
-                                        if (self.debug_enabled) {
-                                            std.debug.print("Failed to register namespace {s}: {}\n", .{ alias, err });
-                                        }
-                                    };
+                                    _ = try self.module_namespaces.put(alias, mi);
                                 }
                             }
                         }

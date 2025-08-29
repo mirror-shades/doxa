@@ -61,23 +61,22 @@ pub const Associativity = enum {
 
 pub const Precedence = enum(u8) {
     NONE = 0,
-    TRY = 2,
-    ASSIGNMENT = 4, // =
-    OR = 6, // or
-    AND = 8, // and
-    XOR = 10, // xor
-    NAND = 12, // ↑
-    NOR = 14, // ↓
-    IFF = 16, // iff
-    IMPLIES = 18, // →
-    EQUALITY = 20, // == !=
-    COMPARISON = 22, // < > <= >=
-    QUANTIFIER = 24, // ∃ ∀
-    TERM = 26, // + -
-    FACTOR = 28, // * /
-    UNARY = 30, // ! -
-    CALL = 32, // . () []
-    PRIMARY = 34,
+    ASSIGNMENT = 2, // =
+    OR = 4, // or
+    AND = 6, // and
+    XOR = 8, // xor
+    NAND = 10, // ↑
+    NOR = 12, // ↓
+    IFF = 14, // iff
+    IMPLIES = 16, // →
+    EQUALITY = 18, // == !=
+    COMPARISON = 20, // < > <= >=
+    QUANTIFIER = 22, // ∃ ∀
+    TERM = 24, // + -
+    FACTOR = 26, // * / (higher than TERM)
+    UNARY = 28, // ! -
+    CALL = 30, // . () []
+    PRIMARY = 32,
 };
 
 pub const ParseRule = struct {
@@ -266,39 +265,51 @@ pub fn getRule(token_type: token.TokenType) ParseRule {
     return rules.get(token_type);
 }
 
-pub fn parsePrecedence(self: *Parser, prec: Precedence) ErrorList!?*ast.Expr {
-
-    // Get the prefix rule for the current token
+pub fn parsePrecedence(self: *Parser, precedence_level: Precedence) ErrorList!?*ast.Expr {
     const prefix_rule = getRule(self.peek().type).prefix;
     if (prefix_rule == null) {
         return null;
     }
 
-    // Parse prefix expression with error handling
-    var left = try prefix_rule.?(self, null, prec) orelse return null;
+    var left = try prefix_rule.?(self, null, precedence_level) orelse return null;
     errdefer {
         left.deinit(self.allocator);
         self.allocator.destroy(left);
     }
 
-    // Keep parsing infix expressions as long as we have higher precedence
-    while (@intFromEnum(prec) <= @intFromEnum(getRule(self.peek().type).precedence)) {
-        const infix_rule = getRule(self.peek().type).infix;
-        if (infix_rule == null) break;
+    while (true) {
+        const next_rule = getRule(self.peek().type);
 
-        // Don't advance here for function calls or indexing operations
+        if (next_rule.infix == null) {
+            break;
+        }
+
+        const rule_precedence = next_rule.precedence;
+
+        if (@intFromEnum(rule_precedence) < @intFromEnum(precedence_level)) {
+            break;
+        }
+
         if (self.peek().type != .LEFT_PAREN and self.peek().type != .LEFT_BRACKET) {
             self.advance();
         }
 
-        const new_left = try infix_rule.?(self, left, prec);
-        if (new_left == null) {
-            // Clean up left if infix parsing fails
+        var new_precedence = rule_precedence;
+        if (next_rule.associativity != .RIGHT and rule_precedence != .PRIMARY) {
+            const current_level = @intFromEnum(rule_precedence);
+            const next_level = current_level + 2;
+            if (next_level > @intFromEnum(Precedence.PRIMARY)) {
+                new_precedence = Precedence.PRIMARY;
+            } else {
+                new_precedence = @as(Precedence, @enumFromInt(next_level));
+            }
+        }
+
+        left = try next_rule.infix.?(self, left, new_precedence) orelse {
             left.deinit(self.allocator);
             self.allocator.destroy(left);
             return null;
-        }
-        left = new_left.?;
+        };
     }
 
     return left;

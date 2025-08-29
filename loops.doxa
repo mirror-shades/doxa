@@ -1,0 +1,21 @@
+// var x is 0
+// do {
+//     x += 1
+//     if x == 2 then continue
+//     x?
+// }
+
+var y is 0
+do y += 1 {
+    if y == 2 then continue
+    if y == 5 then break
+    y?
+}
+
+var z is 0
+while z < 5 do {
+    z += 1
+    if z == 2 then continue
+} {
+    z?
+}

@@ -179,9 +179,6 @@ fn parseReturn(self: *Parser) ErrorList!ast.Stmt {
 }
 
 fn map(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-    if (self.debug_enabled) {
-        std.debug.print("\nParsing map literal...\n", .{});
-    }
 
     // Consume the left brace
     self.advance();
