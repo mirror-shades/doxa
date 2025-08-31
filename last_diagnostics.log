@@ -4982,3 +4982,94 @@
 [Debug][Hint] interpreter\vm.zig:1309:0: Peek instruction for variable expr7
 [Debug][Hint] interpreter\vm.zig:1298:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = -75 }, .field_name = null, .scope_refs = 0 }
 [Debug][Hint] interpreter\vm.zig:1309:0: Peek instruction for variable expr8
+[Debug][Hint] main.zig:395:0: Debug: Processing script: './test.doxa'
+
+[Debug][Hint] main.zig:415:0: Debug: Absolute path: 'C:\dev\zig\doxa\test.doxa'
+
+[Debug][Hint] main.zig:420:0: reporter debug method working
+
+[Debug][Hint] codegen\hir\soxa_generator.zig:540:0: HIR: processing imported module globals: 0
+[Debug][Hint] codegen\hir\soxa_generator.zig:565:0: HIR: processing current module globals
+[Debug][Hint] codegen\hir\soxa_generator.zig:3855:0: inferBinaryOpResultType: Int PLUS Int
+[Debug][Hint] codegen\hir\soxa_generator.zig:1231:0: Binary op PLUS: left_type=Int, right_type=Int, result_type=Int
+
+[Debug][Hint] codegen\hir\soxa_generator.zig:3855:0: inferBinaryOpResultType: Int ASTERISK Int
+[Debug][Hint] codegen\hir\soxa_generator.zig:1231:0: Binary op ASTERISK: left_type=Int, right_type=Int, result_type=Int
+
+[Debug][Hint] codegen\hir\soxa_generator.zig:3855:0: inferBinaryOpResultType: Int POWER Int
+[Debug][Hint] codegen\hir\soxa_generator.zig:3902:0: inferBinaryOpResultType: result = Int
+
+[Debug][Hint] codegen\hir\soxa_generator.zig:1231:0: Binary op POWER: left_type=Int, right_type=Int, result_type=Int
+
+[Debug][Hint] codegen\hir\soxa_generator.zig:3855:0: inferBinaryOpResultType: Int POWER Int
+[Debug][Hint] codegen\hir\soxa_generator.zig:3902:0: inferBinaryOpResultType: result = Int
+
+[Debug][Hint] codegen\hir\soxa_generator.zig:1231:0: Binary op POWER: left_type=Int, right_type=Int, result_type=Int
+
+[Debug][Hint] codegen\hir\soxa_generator.zig:1823:0: Checking union members for variable expr
+[Debug][Hint] codegen\hir\soxa_generator.zig:1839:0: No union members found for expr
+[Debug][Hint] main.zig:176:0: >> Peephole optimizations applied: 0 HIR instruction optimizations
+
+[Debug][Hint] main.zig:198:0: >> Compiled ./test.doxa -> out/test.soxa (20 HIR instructions)
+
+[Debug][Hint] main.zig:487:0: >> Executing with HIR VM
+
+[Debug][Hint] main.zig:209:0: >> Loaded SOXA: 20 instructions, 5 constants
+
+[Debug][Hint] interpreter\vm.zig:2098:0: CALL powi
+[Debug][Hint] interpreter\vm.zig:2098:0: CALL powi
+[Debug][Hint] interpreter\vm.zig:1040:0: INTARITH Mul: a=int, b=int
+[Debug][Hint] interpreter\vm.zig:1040:0: INTARITH Add: a=int, b=int
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) expr: storage_id=1, value=types.types.TokenLiteral{ .int = 1026 }
+[Debug][Hint] interpreter\vm.zig:1296:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .int = 1026 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1307:0: Peek instruction for variable expr
+[Debug][Hint] main.zig:395:0: Debug: Processing script: './test.doxa'
+
+[Debug][Hint] main.zig:415:0: Debug: Absolute path: 'C:\dev\zig\doxa\test.doxa'
+
+[Debug][Hint] main.zig:420:0: reporter debug method working
+
+[Debug][Hint] codegen\hir\soxa_generator.zig:540:0: HIR: processing imported module globals: 0
+[Debug][Hint] codegen\hir\soxa_generator.zig:565:0: HIR: processing current module globals
+[Debug][Hint] codegen\hir\soxa_generator.zig:3855:0: inferBinaryOpResultType: Float PLUS Float
+[Debug][Hint] codegen\hir\soxa_generator.zig:1231:0: Binary op PLUS: left_type=Float, right_type=Float, result_type=Float
+
+[Debug][Hint] codegen\hir\soxa_generator.zig:1823:0: Checking union members for variable expr29
+[Debug][Hint] codegen\hir\soxa_generator.zig:1839:0: No union members found for expr29
+[Debug][Hint] main.zig:176:0: >> Peephole optimizations applied: 0 HIR instruction optimizations
+
+[Debug][Hint] main.zig:198:0: >> Compiled ./test.doxa -> out/test.soxa (10 HIR instructions)
+
+[Debug][Hint] main.zig:487:0: >> Executing with HIR VM
+
+[Debug][Hint] main.zig:209:0: >> Loaded SOXA: 10 instructions, 2 constants
+
+[Debug][Hint] interpreter\vm.zig:1157:0: FLOATARITH Add: a=float, b=float
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) expr29: storage_id=1, value=types.types.TokenLiteral{ .float = 1.000000000001e6 }
+[Debug][Hint] interpreter\vm.zig:1296:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .float = 1.000000000001e6 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1307:0: Peek instruction for variable expr29
+[Debug][Hint] main.zig:395:0: Debug: Processing script: './test.doxa'
+
+[Debug][Hint] main.zig:415:0: Debug: Absolute path: 'C:\dev\zig\doxa\test.doxa'
+
+[Debug][Hint] main.zig:420:0: reporter debug method working
+
+[Debug][Hint] codegen\hir\soxa_generator.zig:540:0: HIR: processing imported module globals: 0
+[Debug][Hint] codegen\hir\soxa_generator.zig:565:0: HIR: processing current module globals
+[Debug][Hint] codegen\hir\soxa_generator.zig:3855:0: inferBinaryOpResultType: Float PLUS Float
+[Debug][Hint] codegen\hir\soxa_generator.zig:1231:0: Binary op PLUS: left_type=Float, right_type=Float, result_type=Float
+
+[Debug][Hint] codegen\hir\soxa_generator.zig:1823:0: Checking union members for variable expr29
+[Debug][Hint] codegen\hir\soxa_generator.zig:1839:0: No union members found for expr29
+[Debug][Hint] main.zig:176:0: >> Peephole optimizations applied: 0 HIR instruction optimizations
+
+[Debug][Hint] main.zig:198:0: >> Compiled ./test.doxa -> out/test.soxa (10 HIR instructions)
+
+[Debug][Hint] main.zig:487:0: >> Executing with HIR VM
+
+[Debug][Hint] main.zig:209:0: >> Loaded SOXA: 10 instructions, 2 constants
+
+[Debug][Hint] interpreter\vm.zig:1157:0: FLOATARITH Add: a=float, b=float
+[Debug][Hint] interpreter\vm.zig:962:0: DBG WRITE StoreVar (create) expr29: storage_id=1, value=types.types.TokenLiteral{ .float = 1.000000000001e6 }
+[Debug][Hint] interpreter\vm.zig:1296:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .float = 1.000000000001e6 }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:1307:0: Peek instruction for variable expr29
