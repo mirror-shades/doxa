@@ -1221,14 +1221,41 @@ pub const HIRGenerator = struct {
             },
 
             .Binary => |bin| {
-                // Generate left operand (pushes to stack)
-                try self.generateExpression(bin.left.?, true);
+                // Get the types of both operands
+                const left_type = self.inferTypeFromExpression(bin.left.?);
+                const right_type = self.inferTypeFromExpression(bin.right.?);
 
-                // Generate right operand (pushes to stack)
-                try self.generateExpression(bin.right.?, true);
-
-                // Determine the result type for proper instruction selection
+                // Determine the result type based on the operation and operand types
                 const result_type = self.inferBinaryOpResultType(bin.operator.type, bin.left.?, bin.right.?);
+
+                self.reporter.debug("Binary op {s}: left_type={s}, right_type={s}, result_type={s}\n", .{ @tagName(bin.operator.type), @tagName(self.inferTypeFromExpression(bin.left.?)), @tagName(self.inferTypeFromExpression(bin.right.?)), @tagName(result_type) }, @src());
+
+                if (bin.operator.type == .SLASH) {
+                    self.reporter.debug("GEN DIV: Converting both operands to Float for division", .{}, @src());
+                    try self.generateExpression(bin.left.?, true);
+                    if (left_type != .Float) {
+                        self.reporter.debug("Converting left operand from {s} to Float\n", .{@tagName(left_type)}, @src());
+                        try self.instructions.append(.{ .Convert = .{ .from_type = left_type, .to_type = .Float } });
+                    }
+
+                    try self.generateExpression(bin.right.?, true);
+                    if (right_type != .Float) {
+                        self.reporter.debug("Converting right operand from {s} to Float\n", .{@tagName(right_type)}, @src());
+                        try self.instructions.append(.{ .Convert = .{ .from_type = right_type, .to_type = .Float } });
+                    }
+                } else {
+                    try self.generateExpression(bin.left.?, true);
+                    if (left_type != result_type) {
+                        self.reporter.debug("Converting left operand from {s} to {s}\n", .{ @tagName(left_type), @tagName(result_type) }, @src());
+                        try self.instructions.append(.{ .Convert = .{ .from_type = left_type, .to_type = result_type } });
+                    }
+
+                    try self.generateExpression(bin.right.?, true);
+                    if (right_type != result_type) {
+                        self.reporter.debug("Converting right operand from {s} to {s}\n", .{ @tagName(right_type), @tagName(result_type) }, @src());
+                        try self.instructions.append(.{ .Convert = .{ .from_type = right_type, .to_type = result_type } });
+                    }
+                }
 
                 switch (bin.operator.type) {
                     .PLUS => {
@@ -1241,7 +1268,7 @@ pub const HIRGenerator = struct {
                             // we need top to be left. So swap the top two values before Concat.
                             try self.instructions.append(.Swap);
                             try self.instructions.append(.{ .StringOp = .{ .op = .Concat } });
-                        } else if (result_type == .Float) {
+                        } else if (result_type == .Float and bin.operator.type != .POWER) {
                             try self.instructions.append(.{ .FloatArith = .{ .op = .Add, .exception_behavior = .Trap } });
                         } else {
                             try self.instructions.append(.{ .IntArith = .{ .op = .Add, .overflow_behavior = .Wrap } });
@@ -1262,6 +1289,7 @@ pub const HIRGenerator = struct {
                         }
                     },
                     .SLASH => {
+                        self.reporter.debug("EMIT FloatArith.Div (division returns float)", .{}, @src());
                         // Division always returns float
                         try self.instructions.append(.{ .FloatArith = .{ .op = .Div, .exception_behavior = .Trap } });
                     },
@@ -1270,18 +1298,57 @@ pub const HIRGenerator = struct {
                         try self.instructions.append(.{ .IntArith = .{ .op = .Mod, .overflow_behavior = .Wrap } });
                     },
                     .POWER => {
-                        // POWER always returns float, so we need to convert operands to float first
-                        // For now, use a builtin function call since we don't have a direct power instruction
-                        try self.instructions.append(.{
-                            .Call = .{
-                                .function_index = 0, // Will be resolved to builtin power function
-                                .call_kind = .BuiltinFunction,
-                                .qualified_name = "power",
-                                .arg_count = 2,
-                                .target_module = null,
-                                .return_type = .Float,
-                            },
-                        });
+                        // POWER: if both operands are integer-like -> int result using powi, else float power
+                        const lt = self.inferTypeFromExpression(bin.left.?);
+                        const rt = self.inferTypeFromExpression(bin.right.?);
+                        if ((lt == .Int or lt == .Byte) and (rt == .Int or rt == .Byte)) {
+                            // Ensure operands are Int
+                            // They have already been generated above; convert to Int if needed
+                            // Stack: [..., left, right]
+                            // Convert left to Int
+                            try self.instructions.append(.Swap);
+                            if (lt != .Int) {
+                                try self.instructions.append(.{ .Convert = .{ .from_type = lt, .to_type = .Int } });
+                            }
+                            // Convert right to Int
+                            try self.instructions.append(.Swap);
+                            if (rt != .Int) {
+                                try self.instructions.append(.{ .Convert = .{ .from_type = rt, .to_type = .Int } });
+                            }
+                            try self.instructions.append(.{
+                                .Call = .{
+                                    .function_index = 0,
+                                    .call_kind = .BuiltinFunction,
+                                    .qualified_name = "powi",
+                                    .arg_count = 2,
+                                    .target_module = null,
+                                    .return_type = .Int,
+                                },
+                            });
+                        } else {
+                            // Convert to Float and call float power
+                            // Stack: [..., left, right]
+                            // Convert left to Float
+                            try self.instructions.append(.Swap);
+                            if (lt != .Float) {
+                                try self.instructions.append(.{ .Convert = .{ .from_type = lt, .to_type = .Float } });
+                            }
+                            // Convert right to Float
+                            try self.instructions.append(.Swap);
+                            if (rt != .Float) {
+                                try self.instructions.append(.{ .Convert = .{ .from_type = rt, .to_type = .Float } });
+                            }
+                            try self.instructions.append(.{
+                                .Call = .{
+                                    .function_index = 0, // builtin float power
+                                    .call_kind = .BuiltinFunction,
+                                    .qualified_name = "power",
+                                    .arg_count = 2,
+                                    .target_module = null,
+                                    .return_type = .Float,
+                                },
+                            });
+                        }
                     },
                     .EQUALITY => try self.instructions.append(.{ .Compare = .{ .op = .Eq, .operand_type = result_type } }),
                     .BANG_EQUAL => try self.instructions.append(.{ .Compare = .{ .op = .Ne, .operand_type = result_type } }),
@@ -2065,7 +2132,25 @@ pub const HIRGenerator = struct {
                     .PLUS_EQUAL => try self.instructions.append(.{ .IntArith = .{ .op = .Add, .overflow_behavior = .Wrap } }),
                     .MINUS_EQUAL => try self.instructions.append(.{ .IntArith = .{ .op = .Sub, .overflow_behavior = .Wrap } }),
                     .ASTERISK_EQUAL => try self.instructions.append(.{ .IntArith = .{ .op = .Mul, .overflow_behavior = .Wrap } }),
-                    .SLASH_EQUAL => try self.instructions.append(.{ .IntArith = .{ .op = .Div, .overflow_behavior = .Trap } }),
+                    .SLASH_EQUAL => {
+                        self.reporter.debug("COMPOUND '/=': converting both operands to Float and emitting FloatArith.Div", .{}, @src());
+                        // For '/=' always perform float division: convert both operands to Float
+                        const left_type = self.getTrackedVariableType(compound.name.lexeme) orelse .Unknown;
+                        const right_type = self.inferTypeFromExpression(compound.value.?);
+                        // Stack: [..., left, right]
+                        // Convert left to Float
+                        try self.instructions.append(.Swap);
+                        if (left_type != .Float) {
+                            try self.instructions.append(.{ .Convert = .{ .from_type = left_type, .to_type = .Float } });
+                        }
+                        // Convert right to Float
+                        try self.instructions.append(.Swap);
+                        if (right_type != .Float) {
+                            try self.instructions.append(.{ .Convert = .{ .from_type = right_type, .to_type = .Float } });
+                        }
+                        // Now do float division
+                        try self.instructions.append(.{ .FloatArith = .{ .op = .Div, .exception_behavior = .Trap } });
+                    },
                     .POWER_EQUAL => try self.instructions.append(.{ .IntArith = .{ .op = .Mul, .overflow_behavior = .Wrap } }), // TODO: Implement power operation
                     else => {
                         const location = Location{
@@ -3469,6 +3554,12 @@ pub const HIRGenerator = struct {
                         }
                         return .Int; // Default to int for arithmetic
                     },
+                    .POWER => {
+                        // Power: float if any side is float, otherwise int for int/byte pairs
+                        if (left_type == .Float or right_type == .Float) return .Float;
+                        if ((left_type == .Int or left_type == .Byte) and (right_type == .Int or right_type == .Byte)) return .Int;
+                        return .Int; // Default to int when unknown
+                    },
                     else => .Tetra, // Default to Tetra for any other binary operations
                 };
             },
@@ -3757,64 +3848,43 @@ pub const HIRGenerator = struct {
         return self.variable_array_element_types.get(var_name);
     }
 
-    /// NEW: Infer the result type of a binary operation
     fn inferBinaryOpResultType(self: *HIRGenerator, operator_type: TokenType, left_expr: *ast.Expr, right_expr: *ast.Expr) HIRType {
         const left_type = self.inferTypeFromExpression(left_expr);
         const right_type = self.inferTypeFromExpression(right_expr);
 
-        return switch (operator_type) {
-            .PLUS => switch (left_type) {
-                .Int => switch (right_type) {
-                    .Int => .Int,
-                    .Float => .Float,
-                    .Byte => .Int,
-                    else => .Int,
-                },
-                .Float => .Float, // Any float operand makes result float
-                .Byte => switch (right_type) {
-                    .Int => .Int,
-                    .Float => .Float,
-                    .Byte => .Byte,
-                    else => .Int,
-                },
-                else => .Int,
+        self.reporter.debug("inferBinaryOpResultType: {s} {s} {s}", .{ @tagName(left_type), @tagName(operator_type), @tagName(right_type) }, @src());
+
+        // For arithmetic operations, we need to handle type promotion
+        const result_type = switch (operator_type) {
+            .PLUS, .MINUS, .ASTERISK, .SLASH => {
+                // If either operand is a float, the result is float
+                if (left_type == .Float or right_type == .Float) {
+                    return .Float;
+                }
+                // If either operand is an int, the result is int
+                if (left_type == .Int or right_type == .Int) {
+                    // For division, always promote to float
+                    if (operator_type == .SLASH) return .Float;
+                    return .Int;
+                }
+                // If both are bytes, the result is byte (except for division)
+                if (left_type == .Byte and right_type == .Byte) {
+                    if (operator_type == .SLASH) return .Float;
+                    return .Byte;
+                }
+                // For division, default to float, otherwise int
+                if (operator_type == .SLASH) return .Float;
+                return .Int;
             },
-            .MINUS => switch (left_type) {
-                .Int => switch (right_type) {
-                    .Int => .Int,
-                    .Float => .Float,
-                    .Byte => .Int,
-                    else => .Int,
-                },
-                .Float => .Float, // Any float operand makes result float
-                .Byte => switch (right_type) {
-                    .Int => .Int,
-                    .Float => .Float,
-                    .Byte => .Byte,
-                    else => .Int,
-                },
-                else => .Int,
+            .MODULO => {
+                // Modulo only works with integers, so we need to ensure both operands are integers
+                if (left_type == .Float or right_type == .Float) {
+                    return .Float;
+                }
+                return .Int;
             },
-            .ASTERISK => switch (left_type) {
-                .Int => switch (right_type) {
-                    .Int => .Int,
-                    .Float => .Float,
-                    .Byte => .Int,
-                    else => .Int,
-                },
-                .Float => .Float, // Any float operand makes result float
-                .Byte => switch (right_type) {
-                    .Int => .Int,
-                    .Float => .Float,
-                    .Byte => .Byte,
-                    else => .Int,
-                },
-                else => .Int,
-            },
-            .SLASH => .Float, // Division always returns float
-            .MODULO => .Int, // Modulo only works with integers
             .EQUALITY, .BANG_EQUAL, .LESS, .GREATER, .LESS_EQUAL, .GREATER_EQUAL => {
-                // For comparisons, we need to determine the comparison type
+                // For comparisons, promote to the more general type
                 // If either operand is float, use float comparison
                 if (left_type == .Float or right_type == .Float) {
                     return .Float;
@@ -3828,6 +3898,9 @@ pub const HIRGenerator = struct {
             },
             else => .Int, // Default to int for other operations
         };
+
+        self.reporter.debug("inferBinaryOpResultType: result = {s}\n", .{@tagName(result_type)}, @src());
+        return result_type;
     }
 
     /// NEW: Register a custom type (struct or enum)

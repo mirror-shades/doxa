@@ -73,10 +73,11 @@ pub const Precedence = enum(u8) {
     COMPARISON = 20, // < > <= >=
     QUANTIFIER = 22, // ∃ ∀
     TERM = 24, // + -
-    FACTOR = 26, // * / (higher than TERM)
-    UNARY = 28, // ! -
-    CALL = 30, // . () []
-    PRIMARY = 32,
+    FACTOR = 26, // * / % (higher than TERM)
+    EXPONENT = 28, // ** (higher than FACTOR)
+    UNARY = 30, // ! -
+    CALL = 32, // . () []
+    PRIMARY = 34,
 };
 
 pub const ParseRule = struct {
@@ -98,7 +99,7 @@ pub const rules = blk: {
     r.set(.ASTERISK, .{ .infix = binary, .precedence = .FACTOR });
     r.set(.SLASH, .{ .infix = binary, .precedence = .FACTOR });
     r.set(.MODULO, .{ .infix = binary, .precedence = .FACTOR });
-    r.set(.POWER, .{ .infix = binary, .precedence = .UNARY, .associativity = .RIGHT }); // Right associative for exponentiation
+    r.set(.POWER, .{ .infix = binary, .precedence = .EXPONENT, .associativity = .RIGHT }); // Right associative for exponentiation
 
     // Add compound assignment operators
     r.set(.PLUS_EQUAL, .{ .infix = compound_assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });

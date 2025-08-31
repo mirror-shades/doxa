@@ -252,7 +252,25 @@ pub const LLVMGenerator = struct {
                     .PLUS => LLVMCore.LLVMBuildAdd(self.builder, lhs, rhs, "add"),
                     .MINUS => LLVMCore.LLVMBuildSub(self.builder, lhs, rhs, "sub"),
                     .ASTERISK => LLVMCore.LLVMBuildMul(self.builder, lhs, rhs, "mul"),
-                    .SLASH => LLVMCore.LLVMBuildSDiv(self.builder, lhs, rhs, "div"),
+                    .SLASH => blk: {
+                        // Promote to double if needed and perform floating division
+                        var L = lhs;
+                        var R = rhs;
+                        const doubleTy = LLVMCore.LLVMDoubleTypeInContext(self.context);
+                        const lhsTy = LLVMCore.LLVMTypeOf(L);
+                        const rhsTy = LLVMCore.LLVMTypeOf(R);
+                        if (LLVMCore.LLVMGetTypeKind(lhsTy) == LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind) {
+                            L = LLVMCore.LLVMBuildSIToFP(self.builder, L, doubleTy, "si2fp.lhs");
+                        } else if (LLVMCore.LLVMGetTypeKind(lhsTy) == LLVMTypes.LLVMTypeKind.LLVMFloatTypeKind) {
+                            L = LLVMCore.LLVMBuildFPExt(self.builder, L, doubleTy, "fpext.lhs");
+                        }
+                        if (LLVMCore.LLVMGetTypeKind(rhsTy) == LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind) {
+                            R = LLVMCore.LLVMBuildSIToFP(self.builder, R, doubleTy, "si2fp.rhs");
+                        } else if (LLVMCore.LLVMGetTypeKind(rhsTy) == LLVMTypes.LLVMTypeKind.LLVMFloatTypeKind) {
+                            R = LLVMCore.LLVMBuildFPExt(self.builder, R, doubleTy, "fpext.rhs");
+                        }
+                        break :blk LLVMCore.LLVMBuildFDiv(self.builder, L, R, "fdiv");
+                    },
                     .MODULO => LLVMCore.LLVMBuildSRem(self.builder, lhs, rhs, "mod"),
                     else => error.UnsupportedBinaryOperator,
                 };

@@ -1036,13 +1036,66 @@ pub const HIRVM = struct {
                 const b = try self.stack.pop();
                 const a_val = try self.stack.pop();
 
-                // IMPROVED TYPE CHECKING: Handle non-integer values gracefully and preserve original type
+                // Debug: show op and operand tags
+                self.reporter.debug("INTARITH {s}: a={s}, b={s}", .{ @tagName(a.op), @tagName(a_val.value), @tagName(b.value) }, @src());
+
+                // Check if either operand is a float and needs promotion
+                const a_is_float = a_val.value == .float;
+                const b_is_float = b.value == .float;
+
+                // All division promotes to float. If either operand is float or op is Div, promote both to float path.
+                if (a_is_float or b_is_float or a.op == .Div) {
+                    // Convert both operands to float and perform float arithmetic
+                    const a_float = switch (a_val.value) {
+                        .int => |i| @as(f64, @floatFromInt(i)),
+                        .byte => |u| @as(f64, @floatFromInt(u)),
+                        .float => |f| f,
+                        .string => |s| blk: {
+                            const parsed = std.fmt.parseFloat(f64, s) catch {
+                                return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert string '{s}' to float for arithmetic", .{s});
+                            };
+                            break :blk parsed;
+                        },
+                        else => {
+                            return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert {s} to float for arithmetic", .{@tagName(a_val.value)});
+                        },
+                    };
+
+                    const b_float = switch (b.value) {
+                        .int => |i| @as(f64, @floatFromInt(i)),
+                        .byte => |u| @as(f64, @floatFromInt(u)),
+                        .float => |f| f,
+                        .string => |s| blk: {
+                            const parsed = std.fmt.parseFloat(f64, s) catch {
+                                return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert string '{s}' to float for arithmetic", .{s});
+                            };
+                            break :blk parsed;
+                        },
+                        else => {
+                            return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert {s} to float for arithmetic", .{@tagName(b.value)});
+                        },
+                    };
+
+                    const result = switch (a.op) {
+                        .Add => a_float + b_float,
+                        .Sub => a_float - b_float,
+                        .Mul => a_float * b_float,
+                        .Div => if (b_float == 0.0) {
+                            return ErrorList.DivisionByZero;
+                        } else a_float / b_float,
+                        .Mod => @mod(a_float, b_float),
+                    };
+
+                    try self.stack.push(HIRFrame.initFloat(result));
+                    return;
+                }
+
+                // Both operands are integers, perform integer arithmetic
                 const a_int = switch (a_val.value) {
                     .int => |i| i,
                     .byte => |u| @as(i32, u),
                     .tetra => |t| @as(i32, t),
                     .string => |s| blk: {
-                        // Gracefully allow numeric strings in arithmetic (e.g., "42")
                         const parsed = std.fmt.parseInt(i32, s, 10) catch {
                             return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert string to integer for arithmetic", .{});
                         };
@@ -1074,28 +1127,25 @@ pub const HIRVM = struct {
                     },
                 };
 
-                const result = switch (a.op) {
-                    .Add => std.math.add(i32, a_int, b_int) catch |err| {
-                        return err;
+                const int_result = switch (a.op) {
+                    .Add => std.math.add(i32, a_int, b_int) catch {
+                        return self.reporter.reportRuntimeError(null, ErrorCode.ARITHMETIC_OVERFLOW, "Integer addition overflow", .{});
                     },
-                    .Sub => std.math.sub(i32, a_int, b_int) catch |err| {
-                        return err;
+                    .Sub => std.math.sub(i32, a_int, b_int) catch {
+                        return self.reporter.reportRuntimeError(null, ErrorCode.ARITHMETIC_OVERFLOW, "Integer subtraction overflow", .{});
                     },
-                    .Mul => std.math.mul(i32, a_int, b_int) catch |err| {
-                        return err;
+                    .Mul => std.math.mul(i32, a_int, b_int) catch {
+                        return self.reporter.reportRuntimeError(null, ErrorCode.ARITHMETIC_OVERFLOW, "Integer multiplication overflow", .{});
                     },
-                    .Div => if (b_int == 0) {
-                        return ErrorList.DivisionByZero;
-                    } else @divTrunc(a_int, b_int),
-                    .Mod => try self.fastIntMod(a_int, b_int), // Use optimized modulo
+                    .Div => unreachable,
+                    .Mod => try self.fastIntMod(a_int, b_int),
                 };
 
-                // CRITICAL FIX: Preserve the original type when possible
-                // If the first operand was a byte and result fits in byte range, return as byte
-                if (a_val.value == .byte and result >= 0 and result <= 255) {
-                    try self.stack.push(HIRFrame.initByte(@intCast(result)));
+                // Preserve the original type when possible
+                if (a_val.value == .byte and int_result >= 0 and int_result <= 255) {
+                    try self.stack.push(HIRFrame.initByte(@intCast(int_result)));
                 } else {
-                    try self.stack.push(HIRFrame.initInt(result));
+                    try self.stack.push(HIRFrame.initInt(int_result));
                 }
             },
 
@@ -1103,9 +1153,38 @@ pub const HIRVM = struct {
                 const b = try self.stack.pop();
                 const a_val = try self.stack.pop();
 
-                // PERFORMANCE: Inline float operations for maximum speed
-                const a_float = try a_val.asFloat();
-                const b_float = try b.asFloat();
+                // Debug: show float op and operand tags
+                self.reporter.debug("FLOATARITH {s}: a={s}, b={s}", .{ @tagName(a.op), @tagName(a_val.value), @tagName(b.value) }, @src());
+
+                const a_float = switch (a_val.value) {
+                    .int => |i| @as(f64, @floatFromInt(i)),
+                    .byte => |u| @as(f64, @floatFromInt(u)),
+                    .float => |f| f,
+                    .string => |s| blk: {
+                        const parsed = std.fmt.parseFloat(f64, s) catch {
+                            return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert string '{s}' to float for arithmetic", .{s});
+                        };
+                        break :blk parsed;
+                    },
+                    else => {
+                        return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform float arithmetic on type: {s}", .{@tagName(a_val.value)});
+                    },
+                };
+
+                const b_float = switch (b.value) {
+                    .int => |i| @as(f64, @floatFromInt(i)),
+                    .byte => |u| @as(f64, @floatFromInt(u)),
+                    .float => |f| f,
+                    .string => |s| blk: {
+                        const parsed = std.fmt.parseFloat(f64, s) catch {
+                            return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert string '{s}' to float for arithmetic", .{s});
+                        };
+                        break :blk parsed;
+                    },
+                    else => {
+                        return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform float arithmetic on type: {s}", .{@tagName(b.value)});
+                    },
+                };
 
                 const result = switch (a.op) {
                     .Add => a_float + b_float,
@@ -1114,7 +1193,7 @@ pub const HIRVM = struct {
                     .Div => if (b_float == 0.0) {
                         return ErrorList.DivisionByZero;
                     } else a_float / b_float,
-                    .Mod => return ErrorList.UnsupportedOperator, // Float modulo not supported
+                    .Mod => @mod(a_float, b_float), // Now supports float modulo
                 };
 
                 try self.stack.push(HIRFrame.initFloat(result));
@@ -2015,11 +2094,28 @@ pub const HIRVM = struct {
                             };
 
                             try self.stack.push(HIRFrame.initInt(result));
-                        } else if (std.mem.eql(u8, c.qualified_name, "power")) {
+                        } else if (std.mem.eql(u8, c.qualified_name, "power") or std.mem.eql(u8, c.qualified_name, "powi")) {
+                            self.reporter.debug("CALL {s}", .{c.qualified_name}, @src());
                             // Power function - expects base and exponent on stack
                             const exponent = try self.stack.pop();
                             const base = try self.stack.pop();
 
+                            if (std.mem.eql(u8, c.qualified_name, "powi")) {
+                                // Integer power: both operands must be Int
+                                const base_int = switch (base.value) {
+                                    .int => |i| i,
+                                    .byte => |b| @as(i32, b),
+                                    else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "powi: base must be integer", .{}),
+                                };
+                                const exp_int = switch (exponent.value) {
+                                    .int => |i| i,
+                                    .byte => |b| @as(i32, b),
+                                    else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "powi: exponent must be integer", .{}),
+                                };
+                                const result = std.math.pow(i32, base_int, @intCast(exp_int));
+                                try self.stack.push(HIRFrame.initInt(result));
+                                return;
+                            }
                             // Convert both operands to float for power calculation
                             const base_float = switch (base.value) {
                                 .int => |i| @as(f64, @floatFromInt(i)),
@@ -2528,6 +2624,50 @@ pub const HIRVM = struct {
                 }
             },
 
+            .Convert => |c| {
+                // Pop the value to convert, perform conversion, and push result
+                const frame = try self.stack.pop();
+                self.reporter.debug("CONVERT {s}->{s}: in={s}", .{ @tagName(c.from_type), @tagName(c.to_type), @tagName(frame.value) }, @src());
+
+                var out: HIRValue = frame.value;
+                switch (c.to_type) {
+                    .Float => {
+                        // Convert ints/bytes to float; leave float as-is
+                        out = switch (frame.value) {
+                            .int => |i| HIRValue{ .float = @as(f64, @floatFromInt(i)) },
+                            .byte => |u| HIRValue{ .float = @as(f64, @floatFromInt(u)) },
+                            .float => frame.value,
+                            else => frame.value,
+                        };
+                    },
+                    .Int => {
+                        out = switch (frame.value) {
+                            .int => frame.value,
+                            .byte => |u| HIRValue{ .int = @as(i32, u) },
+                            .float => |f| HIRValue{ .int = @as(i32, @intFromFloat(f)) },
+                            else => frame.value,
+                        };
+                    },
+                    .Byte => {
+                        out = switch (frame.value) {
+                            .byte => frame.value,
+                            .int => |i| HIRValue{ .byte = if (i >= 0 and i <= 255) @intCast(i) else 0 },
+                            .float => |f| blk: {
+                                const i: i32 = @as(i32, @intFromFloat(f));
+                                break :blk HIRValue{ .byte = if (i >= 0 and i <= 255) @intCast(i) else 0 };
+                            },
+                            else => frame.value,
+                        };
+                    },
+                    else => {
+                        // Other conversions not needed for current arithmetic paths
+                        out = frame.value;
+                    },
+                }
+
+                self.reporter.debug("CONVERT RESULT -> {s}", .{ @tagName(out) }, @src());
+                try self.stack.push(HIRFrame.initFromHIRValue(out));
+            },
             else => {
                 std.debug.print("\n!! Unhandled HIR instruction at IP {d}:\n", .{self.ip});
                 std.debug.print("  Type: {s}\n", .{@tagName(instruction)});

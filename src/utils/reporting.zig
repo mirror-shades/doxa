@@ -19,7 +19,6 @@ pub const ReporterOptions = struct {
     max_diagnostics: i32 = 1000,
     warn_as_error: bool = false,
     debug_mode: bool = false,
-    print_immediately: bool = true, // CLI printing control
     log_to_file: bool = true,
     log_file_path: []const u8 = "last_diagnostics.log",
     max_log_bytes: usize = 2 * 1024 * 1024, // 2MB cap, truncates when exceeded
@@ -122,9 +121,8 @@ pub const Reporter = struct {
                 return;
             };
 
-            if (self.options.print_immediately) {
-                self.writer.print("DoxVM[{s}]: {s}\n", .{ @tagName(final_severity), msg_copy }) catch {};
-            }
+            std.debug.print("DoxVM[{s}]: {s}\n", .{ @tagName(final_severity), msg_copy });
+
             return;
         };
 
@@ -148,9 +146,7 @@ pub const Reporter = struct {
                 return;
             };
 
-            if (self.options.print_immediately) {
-                self.writer.print("DoxVM[{s}]: {s}\n", .{ @tagName(final_severity), fallback_copy }) catch {};
-            }
+            std.debug.print("DoxVM[{s}]: {s}\n", .{ @tagName(final_severity), fallback_copy });
             return;
         };
 
@@ -207,9 +203,7 @@ pub const Reporter = struct {
 
         const line = line_buf.items;
 
-        if (self.options.print_immediately) {
-            self.writer.print("DoxVM: {s}\n", .{line}) catch {};
-        }
+        std.debug.print("DoxVM: {s}\n", .{line});
 
         if (self.options.log_to_file) {
             self.writeToLog(line) catch {};
@@ -343,7 +337,7 @@ pub const Reporter = struct {
         const cwd = std.fs.cwd();
         // Try open existing to check size
         var file = cwd.createFile(opts.log_file_path, .{ .read = true, .truncate = false, .exclusive = false }) catch |e| switch (e) {
-            error.PathAlreadyExists => try cwd.openFile(opts.log_file_path, .{ .mode = .read_write }) ,
+            error.PathAlreadyExists => try cwd.openFile(opts.log_file_path, .{ .mode = .read_write }),
             else => return e,
         };
         defer file.close();

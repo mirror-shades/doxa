@@ -322,20 +322,24 @@ pub const ConstantFolder = struct {
 
     fn foldDiv(self: *ConstantFolder, left: TokenLiteral, right: TokenLiteral) ?TokenLiteral {
         _ = self;
+        // All division promotes to float. Return null on divide-by-zero.
         return switch (left) {
             .int => |l| switch (right) {
-                .int => |r| if (r != 0) TokenLiteral{ .int = @divTrunc(l, r) } else null,
                 .float => |r| if (r != 0.0) TokenLiteral{ .float = @as(f64, @floatFromInt(l)) / r } else null,
+                .int => |r| if (r != 0) TokenLiteral{ .float = @as(f64, @floatFromInt(l)) / @as(f64, @floatFromInt(r)) } else null,
+                .byte => |r| if (r != 0) TokenLiteral{ .float = @as(f64, @floatFromInt(l)) / @as(f64, @floatFromInt(r)) } else null,
                 else => null,
             },
             .byte => |l| switch (right) {
-                .byte => |r| if (r != 0) TokenLiteral{ .byte = l / r } else null,
-                .int => |r| if (r > 0 and r <= 255) TokenLiteral{ .byte = l / @as(u8, @intCast(r)) } else null,
+                .float => |r| if (r != 0.0) TokenLiteral{ .float = @as(f64, @floatFromInt(l)) / r } else null,
+                .int => |r| if (r != 0) TokenLiteral{ .float = @as(f64, @floatFromInt(l)) / @as(f64, @floatFromInt(r)) } else null,
+                .byte => |r| if (r != 0) TokenLiteral{ .float = @as(f64, @floatFromInt(l)) / @as(f64, @floatFromInt(r)) } else null,
                 else => null,
             },
             .float => |l| switch (right) {
                 .float => |r| if (r != 0.0) TokenLiteral{ .float = l / r } else null,
                 .int => |r| if (r != 0) TokenLiteral{ .float = l / @as(f64, @floatFromInt(r)) } else null,
+                .byte => |r| if (r != 0) TokenLiteral{ .float = l / @as(f64, @floatFromInt(r)) } else null,
                 else => null,
             },
             else => null,
