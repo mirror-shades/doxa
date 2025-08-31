@@ -233,7 +233,6 @@ fn parseArgs(allocator: std.mem.Allocator) !CLI {
             .max_diagnostics = 1000,
             .warn_as_error = false,
             .debug_mode = false,
-            .print_immediately = true,
         },
         .keep_artifacts = false,
         .output = null,
@@ -249,9 +248,6 @@ fn parseArgs(allocator: std.mem.Allocator) !CLI {
         // Handle global flags first
         if (stringEquals(arg, "--debug")) {
             options.reporter_options.debug_mode = true;
-            continue;
-        } else if (stringEquals(arg, "--keep-intermediate")) {
-            options.keep_artifacts = true;
             continue;
         } else if (stringEquals(arg, "--output") or stringEquals(arg, "-o")) {
             if (i + 1 >= args.len) {
@@ -417,6 +413,11 @@ pub fn main() !void {
     const abs_path = try std.fs.cwd().realpath(path, &path_buffer);
 
     reporter.debug("Debug: Absolute path: '{s}'\n", .{abs_path}, @src());
+
+    if (cli_options.reporter_options.debug_mode) {
+        std.debug.print("Debug mode enabled\n", .{});
+    }
+    reporter.debug("reporter debug method working\n", .{}, @src());
 
     // Read source file for AST interpretation
     const source = try std.fs.cwd().readFileAlloc(memoryManager.getAllocator(), path, MAX_FILE_SIZE);

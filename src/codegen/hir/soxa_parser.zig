@@ -9,6 +9,7 @@ const HIRMapEntry = SoxaValues.HIRMapEntry;
 
 const SoxaInstructions = @import("soxa_instructions.zig");
 const HIRInstruction = SoxaInstructions.HIRInstruction;
+const ExceptionBehavior = SoxaInstructions.ExceptionBehavior;
 const ArithOp = SoxaInstructions.ArithOp;
 const ResizeBehavior = SoxaInstructions.ResizeBehavior;
 const CompareOp = SoxaInstructions.CompareOp;
@@ -330,9 +331,23 @@ pub const SoxaTextParser = struct {
             const var_name = try self.parseQuotedString(name_quoted);
             try self.instructions.append(HIRInstruction{ .StoreConst = .{ .var_index = var_index, .var_name = var_name } });
         } else if (std.mem.eql(u8, op, "IntArith")) {
+            // Int arithmetic instruction
+
             const op_str = tokens.next() orelse return;
             const arith_op = if (std.mem.eql(u8, op_str, "Add")) ArithOp.Add else if (std.mem.eql(u8, op_str, "Sub")) ArithOp.Sub else if (std.mem.eql(u8, op_str, "Mul")) ArithOp.Mul else if (std.mem.eql(u8, op_str, "Div")) ArithOp.Div else if (std.mem.eql(u8, op_str, "Mod")) ArithOp.Mod else ArithOp.Add;
             try self.instructions.append(HIRInstruction{ .IntArith = .{ .op = arith_op, .overflow_behavior = .Wrap } });
+        } else if (std.mem.eql(u8, op, "FloatArith")) {
+            // Float arithmetic instruction
+            const op_str = tokens.next() orelse return;
+            const arith_op = if (std.mem.eql(u8, op_str, "Add")) ArithOp.Add else if (std.mem.eql(u8, op_str, "Sub")) ArithOp.Sub else if (std.mem.eql(u8, op_str, "Mul")) ArithOp.Mul else if (std.mem.eql(u8, op_str, "Div")) ArithOp.Div else if (std.mem.eql(u8, op_str, "Mod")) ArithOp.Mod else ArithOp.Add;
+            try self.instructions.append(HIRInstruction{ .FloatArith = .{ .op = arith_op, .exception_behavior = ExceptionBehavior.Trap } });
+        } else if (std.mem.eql(u8, op, "Convert")) {
+            // Type conversion instruction
+            const from_str = tokens.next() orelse return;
+            const to_str = tokens.next() orelse return;
+            const from_type: HIRType = if (std.mem.eql(u8, from_str, "Int")) .Int else if (std.mem.eql(u8, from_str, "Byte")) .Byte else if (std.mem.eql(u8, from_str, "Float")) .Float else if (std.mem.eql(u8, from_str, "String")) .String else if (std.mem.eql(u8, from_str, "Tetra")) .Tetra else if (std.mem.eql(u8, from_str, "Nothing")) .Nothing else .Unknown;
+            const to_type: HIRType = if (std.mem.eql(u8, to_str, "Int")) .Int else if (std.mem.eql(u8, to_str, "Byte")) .Byte else if (std.mem.eql(u8, to_str, "Float")) .Float else if (std.mem.eql(u8, to_str, "String")) .String else if (std.mem.eql(u8, to_str, "Tetra")) .Tetra else if (std.mem.eql(u8, to_str, "Nothing")) .Nothing else .Unknown;
+            try self.instructions.append(HIRInstruction{ .Convert = .{ .from_type = from_type, .to_type = to_type } });
         } else if (std.mem.eql(u8, op, "Compare")) {
             const op_str = tokens.next() orelse return;
             const comp_op = if (std.mem.eql(u8, op_str, "Eq")) CompareOp.Eq else if (std.mem.eql(u8, op_str, "Ne")) CompareOp.Ne else if (std.mem.eql(u8, op_str, "Lt")) CompareOp.Lt else if (std.mem.eql(u8, op_str, "Le")) CompareOp.Le else if (std.mem.eql(u8, op_str, "Gt")) CompareOp.Gt else if (std.mem.eql(u8, op_str, "Ge")) CompareOp.Ge else CompareOp.Eq;

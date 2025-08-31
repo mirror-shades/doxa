@@ -68,12 +68,12 @@ pub fn translateToVMBytecode(program: *HIRProgram, allocator: std.mem.Allocator,
                 try bytecode.append(@intFromEnum(instructions.OpCode.OP_SET_CONST));
                 try bytecode.append(@intCast(v.var_index));
             },
-            .IntArith => |a| {
+            .IntArith => |a| { 
                 const opcode = switch (a.op) {
                     .Add => instructions.OpCode.OP_IADD,
                     .Sub => instructions.OpCode.OP_ISUB,
                     .Mul => instructions.OpCode.OP_IMUL,
-                    .Div => instructions.OpCode.OP_IADD, // TODO: Add OP_IDIV to your VM
+                    .Div => unreachable, // Division never maps to IntArith
                     .Mod => instructions.OpCode.OP_IADD, // TODO: Add OP_IMOD to your VM
                 };
                 try bytecode.append(@intFromEnum(opcode));
@@ -152,7 +152,7 @@ pub fn translateToVMBytecode(program: *HIRProgram, allocator: std.mem.Allocator,
 fn getBytecodeSize(instruction: HIRInstruction) u32 {
     return switch (instruction) {
         .Const, .LoadVar, .StoreVar, .StoreConst, .Jump, .JumpCond, .Call, .TailCall => 2, // opcode + operand
-        .IntArith, .Compare, .Return, .Dup, .Pop, .Swap, .Peek, .Halt, .AssertFail => 1, // opcode only
+        .IntArith, .FloatArith, .Convert, .Compare, .Return, .Dup, .Pop, .Swap, .Peek, .Halt, .AssertFail => 1, // opcode only
         .Label => 0, // No bytecode generated
         else => 1, // Default to 1 byte
     };
@@ -796,6 +796,10 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
         .StoreConst => |v| try writer.print("    StoreConst {} \"{s}\"        ; Store constant\n", .{ v.var_index, v.var_name }),
 
         .IntArith => |a| try writer.print("    IntArith {s}                ; Integer arithmetic\n", .{@tagName(a.op)}),
+
+        .FloatArith => |a| try writer.print("    FloatArith {s}             ; Float arithmetic\n", .{@tagName(a.op)}),
+
+        .Convert => |c| try writer.print("    Convert {s} {s}            ; Type conversion\n", .{ @tagName(c.from_type), @tagName(c.to_type) }),
 
         .Compare => |c| try writer.print("    Compare {s} {s}                 ; Comparison\n", .{ @tagName(c.op), @tagName(c.operand_type) }),
 

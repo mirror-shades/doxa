@@ -321,6 +321,7 @@ pub const ErrorCode = struct {
     pub const UNKNOWN_TYPE_FOUND_IN_PEEK_INSTRUCTION = "E1021";
     pub const EXPECTED_TYPE_ANNOTATION = "E1022";
     pub const SELF_REFERENTIAL_INITIALIZER = "E1023";
+    pub const ARITHMETIC_OVERFLOW = "E1024";
 
     // 2xxx - Syntax & Parsing
     pub const SYNTAX_ERROR = "E2001";
