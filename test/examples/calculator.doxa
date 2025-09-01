@@ -49,8 +49,6 @@ entry function main() {
     } else {
         "tokens failed to parse"?
     }
-
-    return
 }
 
 function split(input :: string) returns string[] {
