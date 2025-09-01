@@ -330,17 +330,12 @@ pub const SoxaTextParser = struct {
             const name_quoted = tokens.next() orelse return;
             const var_name = try self.parseQuotedString(name_quoted);
             try self.instructions.append(HIRInstruction{ .StoreConst = .{ .var_index = var_index, .var_name = var_name } });
-        } else if (std.mem.eql(u8, op, "IntArith")) {
+        } else if (std.mem.eql(u8, op, "Arith")) {
             // Int arithmetic instruction
 
             const op_str = tokens.next() orelse return;
-            const arith_op = if (std.mem.eql(u8, op_str, "Add")) ArithOp.Add else if (std.mem.eql(u8, op_str, "Sub")) ArithOp.Sub else if (std.mem.eql(u8, op_str, "Mul")) ArithOp.Mul else if (std.mem.eql(u8, op_str, "Div")) ArithOp.Div else if (std.mem.eql(u8, op_str, "Mod")) ArithOp.Mod else ArithOp.Add;
-            try self.instructions.append(HIRInstruction{ .IntArith = .{ .op = arith_op, .overflow_behavior = .Wrap } });
-        } else if (std.mem.eql(u8, op, "FloatArith")) {
-            // Float arithmetic instruction
-            const op_str = tokens.next() orelse return;
-            const arith_op = if (std.mem.eql(u8, op_str, "Add")) ArithOp.Add else if (std.mem.eql(u8, op_str, "Sub")) ArithOp.Sub else if (std.mem.eql(u8, op_str, "Mul")) ArithOp.Mul else if (std.mem.eql(u8, op_str, "Div")) ArithOp.Div else if (std.mem.eql(u8, op_str, "Mod")) ArithOp.Mod else ArithOp.Add;
-            try self.instructions.append(HIRInstruction{ .FloatArith = .{ .op = arith_op, .exception_behavior = ExceptionBehavior.Trap } });
+            const arith_op = if (std.mem.eql(u8, op_str, "Add")) ArithOp.Add else if (std.mem.eql(u8, op_str, "Sub")) ArithOp.Sub else if (std.mem.eql(u8, op_str, "Mul")) ArithOp.Mul else if (std.mem.eql(u8, op_str, "Div")) ArithOp.Div else if (std.mem.eql(u8, op_str, "Mod")) ArithOp.Mod else if (std.mem.eql(u8, op_str, "Pow")) ArithOp.Pow else unreachable;
+            try self.instructions.append(HIRInstruction{ .Arith = .{ .op = arith_op } });
         } else if (std.mem.eql(u8, op, "Convert")) {
             // Type conversion instruction
             const from_str = tokens.next() orelse return;

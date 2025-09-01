@@ -68,7 +68,7 @@ pub fn translateToVMBytecode(program: *HIRProgram, allocator: std.mem.Allocator,
                 try bytecode.append(@intFromEnum(instructions.OpCode.OP_SET_CONST));
                 try bytecode.append(@intCast(v.var_index));
             },
-            .IntArith => |a| { 
+            .IntArith => |a| {
                 const opcode = switch (a.op) {
                     .Add => instructions.OpCode.OP_IADD,
                     .Sub => instructions.OpCode.OP_ISUB,
@@ -795,9 +795,7 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
         .StoreVar => |v| try writer.print("    StoreVar {} \"{s}\"          ; Store variable\n", .{ v.var_index, v.var_name }),
         .StoreConst => |v| try writer.print("    StoreConst {} \"{s}\"        ; Store constant\n", .{ v.var_index, v.var_name }),
 
-        .IntArith => |a| try writer.print("    IntArith {s}                ; Integer arithmetic\n", .{@tagName(a.op)}),
-
-        .FloatArith => |a| try writer.print("    FloatArith {s}             ; Float arithmetic\n", .{@tagName(a.op)}),
+        .Arith => |a| try writer.print("    Arith {s}                ; Integer arithmetic\n", .{@tagName(a.op)}),
 
         .Convert => |c| try writer.print("    Convert {s} {s}            ; Type conversion\n", .{ @tagName(c.from_type), @tagName(c.to_type) }),
 

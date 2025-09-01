@@ -1221,22 +1221,6 @@ pub const SemanticAnalyzer = struct {
                     } else {
                         type_info.* = .{ .base = .Byte };
                     }
-                } else if (std.mem.eql(u8, op, "**") or std.mem.eql(u8, op, "^")) {
-                    // Exponentiation promotes to float for safety
-                    if ((left_type.base != .Int and left_type.base != .Float and left_type.base != .Byte) or
-                        (right_type.base != .Int and right_type.base != .Float and right_type.base != .Byte))
-                    {
-                        self.reporter.reportCompileError(
-                            getLocationFromBase(expr.base),
-                            ErrorCode.EXPONENTIATION_REQUIRES_NUMERIC_OPERANDS,
-                            "Exponentiation requires numeric operands",
-                            .{},
-                        );
-                        self.fatal_error = true;
-                        type_info.base = .Nothing;
-                        return type_info;
-                    }
-                    type_info.* = .{ .base = .Float };
                 } else if (std.mem.eql(u8, op, "<") or std.mem.eql(u8, op, ">") or
                     std.mem.eql(u8, op, "<=") or std.mem.eql(u8, op, ">=") or
                     std.mem.eql(u8, op, "==") or std.mem.eql(u8, op, "equals") or std.mem.eql(u8, op, "!="))
@@ -4064,7 +4048,14 @@ pub const SemanticAnalyzer = struct {
             },
             .POWER => switch (left) {
                 .int => |l| switch (right) {
-                    .int => |r| TokenLiteral{ .float = std.math.pow(f64, @as(f64, @floatFromInt(l)), @as(f64, @floatFromInt(r))) },
+                    .int => |r| blk: {
+                        // If both operands are integers and the exponent is non-negative, return an integer
+                        if (r >= 0) {
+                            break :blk TokenLiteral{ .int = std.math.pow(i32, l, @as(i32, @intCast(r))) };
+                        }
+                        // Fall back to float for negative exponents
+                        break :blk TokenLiteral{ .float = std.math.pow(f64, @as(f64, @floatFromInt(l)), @as(f64, @floatFromInt(r))) };
+                    },
                     .float => |r| TokenLiteral{ .float = std.math.pow(f64, @as(f64, @floatFromInt(l)), r) },
                     .byte => |r| TokenLiteral{ .float = std.math.pow(f64, @as(f64, @floatFromInt(l)), @as(f64, @floatFromInt(r))) },
                     else => TokenLiteral{ .nothing = {} },

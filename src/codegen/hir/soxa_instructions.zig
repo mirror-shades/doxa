@@ -5,7 +5,7 @@ const ScopeKind = @import("soxa_types.zig").ScopeKind;
 const CallKind = @import("soxa_types.zig").CallKind;
 const Reporting = @import("../../utils/reporting.zig");
 
-pub const ArithOp = enum { Add, Sub, Mul, Div, Mod };
+pub const ArithOp = enum { Add, Sub, Mul, Div, Mod, Pow };
 
 pub const CompareOp = enum { Eq, Ne, Lt, Le, Gt, Ge };
 
@@ -100,17 +100,8 @@ pub const HIRInstruction = union(enum) {
     /// Integer arithmetic
     /// VM: OP_IADD, OP_ISUB, OP_IMUL
     /// LLVM: LLVMBuildAdd, LLVMBuildSub, LLVMBuildMul
-    IntArith: struct {
+    Arith: struct {
         op: ArithOp,
-        overflow_behavior: OverflowBehavior, // For VM error handling and LLVM optimization
-    },
-
-    /// Float arithmetic
-    /// VM: OP_FADD, OP_FSUB, OP_FMUL, OP_FDIV
-    /// LLVM: LLVMBuildFAdd, LLVMBuildFSub, etc.
-    FloatArith: struct {
-        op: ArithOp,
-        exception_behavior: ExceptionBehavior, // For division by zero handling
     },
 
     /// Type conversion
