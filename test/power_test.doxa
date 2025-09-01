@@ -1,0 +1,3 @@
+// Simple power operation test
+var result is 2 ** 3 ** 2  // Should be 512
+result?

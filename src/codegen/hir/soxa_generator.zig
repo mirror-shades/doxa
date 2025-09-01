@@ -1243,6 +1243,10 @@ pub const HIRGenerator = struct {
                         self.reporter.debug("Converting right operand from {s} to Float\n", .{@tagName(right_type)}, @src());
                         try self.instructions.append(.{ .Convert = .{ .from_type = right_type, .to_type = .Float } });
                     }
+                } else if (bin.operator.type == .POWER) {
+                    // Do not pre-convert for POWER; let the POWER case handle precise integer/float behavior
+                    try self.generateExpression(bin.left.?, true);
+                    try self.generateExpression(bin.right.?, true);
                 } else {
                     try self.generateExpression(bin.left.?, true);
                     if (left_type != result_type) {
@@ -1261,101 +1265,27 @@ pub const HIRGenerator = struct {
                     .PLUS => {
                         // If either operand is a string, emit string concatenation
                         const lt = self.inferTypeFromExpression(bin.left.?);
-                        const rt = self.inferTypeFromExpression(bin.right.?);
-                        if (lt == .String or rt == .String) {
+                        if (lt == .String) {
                             // We pushed left, then right. VM pops top as receiver (s_val),
                             // and then pops the next as the second string. To compute left + right,
                             // we need top to be left. So swap the top two values before Concat.
                             try self.instructions.append(.Swap);
                             try self.instructions.append(.{ .StringOp = .{ .op = .Concat } });
-                        } else if (result_type == .Float and bin.operator.type != .POWER) {
-                            try self.instructions.append(.{ .FloatArith = .{ .op = .Add, .exception_behavior = .Trap } });
                         } else {
-                            try self.instructions.append(.{ .IntArith = .{ .op = .Add, .overflow_behavior = .Wrap } });
+                            try self.instructions.append(.{ .Arith = .{ .op = .Add } });
                         }
                     },
-                    .MINUS => {
-                        if (result_type == .Float) {
-                            try self.instructions.append(.{ .FloatArith = .{ .op = .Sub, .exception_behavior = .Trap } });
-                        } else {
-                            try self.instructions.append(.{ .IntArith = .{ .op = .Sub, .overflow_behavior = .Wrap } });
-                        }
-                    },
-                    .ASTERISK => {
-                        if (result_type == .Float) {
-                            try self.instructions.append(.{ .FloatArith = .{ .op = .Mul, .exception_behavior = .Trap } });
-                        } else {
-                            try self.instructions.append(.{ .IntArith = .{ .op = .Mul, .overflow_behavior = .Wrap } });
-                        }
-                    },
-                    .SLASH => {
-                        self.reporter.debug("EMIT FloatArith.Div (division returns float)", .{}, @src());
-                        // Division always returns float
-                        try self.instructions.append(.{ .FloatArith = .{ .op = .Div, .exception_behavior = .Trap } });
-                    },
-                    .MODULO => {
-                        // Modulo only works with integers
-                        try self.instructions.append(.{ .IntArith = .{ .op = .Mod, .overflow_behavior = .Wrap } });
-                    },
-                    .POWER => {
-                        // POWER: if both operands are integer-like -> int result using powi, else float power
-                        const lt = self.inferTypeFromExpression(bin.left.?);
-                        const rt = self.inferTypeFromExpression(bin.right.?);
-                        if ((lt == .Int or lt == .Byte) and (rt == .Int or rt == .Byte)) {
-                            // Ensure operands are Int
-                            // They have already been generated above; convert to Int if needed
-                            // Stack: [..., left, right]
-                            // Convert left to Int
-                            try self.instructions.append(.Swap);
-                            if (lt != .Int) {
-                                try self.instructions.append(.{ .Convert = .{ .from_type = lt, .to_type = .Int } });
-                            }
-                            // Convert right to Int
-                            try self.instructions.append(.Swap);
-                            if (rt != .Int) {
-                                try self.instructions.append(.{ .Convert = .{ .from_type = rt, .to_type = .Int } });
-                            }
-                            try self.instructions.append(.{
-                                .Call = .{
-                                    .function_index = 0,
-                                    .call_kind = .BuiltinFunction,
-                                    .qualified_name = "powi",
-                                    .arg_count = 2,
-                                    .target_module = null,
-                                    .return_type = .Int,
-                                },
-                            });
-                        } else {
-                            // Convert to Float and call float power
-                            // Stack: [..., left, right]
-                            // Convert left to Float
-                            try self.instructions.append(.Swap);
-                            if (lt != .Float) {
-                                try self.instructions.append(.{ .Convert = .{ .from_type = lt, .to_type = .Float } });
-                            }
-                            // Convert right to Float
-                            try self.instructions.append(.Swap);
-                            if (rt != .Float) {
-                                try self.instructions.append(.{ .Convert = .{ .from_type = rt, .to_type = .Float } });
-                            }
-                            try self.instructions.append(.{
-                                .Call = .{
-                                    .function_index = 0, // builtin float power
-                                    .call_kind = .BuiltinFunction,
-                                    .qualified_name = "power",
-                                    .arg_count = 2,
-                                    .target_module = null,
-                                    .return_type = .Float,
-                                },
-                            });
-                        }
-                    },
-                    .EQUALITY => try self.instructions.append(.{ .Compare = .{ .op = .Eq, .operand_type = result_type } }),
-                    .BANG_EQUAL => try self.instructions.append(.{ .Compare = .{ .op = .Ne, .operand_type = result_type } }),
-                    .LESS => try self.instructions.append(.{ .Compare = .{ .op = .Lt, .operand_type = result_type } }),
-                    .GREATER => try self.instructions.append(.{ .Compare = .{ .op = .Gt, .operand_type = result_type } }),
-                    .LESS_EQUAL => try self.instructions.append(.{ .Compare = .{ .op = .Le, .operand_type = result_type } }),
-                    .GREATER_EQUAL => try self.instructions.append(.{ .Compare = .{ .op = .Ge, .operand_type = result_type } }),
+                    .MINUS => try self.instructions.append(.{ .Arith = .{ .op = .Sub } }),
+                    .ASTERISK => try self.instructions.append(.{ .Arith = .{ .op = .Mul } }),
+                    .SLASH => try self.instructions.append(.{ .Arith = .{ .op = .Div } }),
+                    .MODULO => try self.instructions.append(.{ .Arith = .{ .op = .Mod } }),
+                    .POWER => try self.instructions.append(.{ .Arith = .{ .op = .Pow } }),
+                    .EQUALITY => try self.instructions.append(.{ .Compare = .{ .op = .Eq, .operand_type = .Int } }),
+                    .BANG_EQUAL => try self.instructions.append(.{ .Compare = .{ .op = .Ne, .operand_type = .Int } }),
+                    .LESS => try self.instructions.append(.{ .Compare = .{ .op = .Lt, .operand_type = .Int } }),
+                    .GREATER => try self.instructions.append(.{ .Compare = .{ .op = .Gt, .operand_type = .Int } }),
+                    .LESS_EQUAL => try self.instructions.append(.{ .Compare = .{ .op = .Le, .operand_type = .Int } }),
+                    .GREATER_EQUAL => try self.instructions.append(.{ .Compare = .{ .op = .Ge, .operand_type = .Int } }),
                     else => {
                         self.reporter.reportCompileError(
                             expr.base.location(),
@@ -2129,11 +2059,10 @@ pub const HIRGenerator = struct {
 
                 // Generate the compound operation based on operator
                 switch (compound.operator.type) {
-                    .PLUS_EQUAL => try self.instructions.append(.{ .IntArith = .{ .op = .Add, .overflow_behavior = .Wrap } }),
-                    .MINUS_EQUAL => try self.instructions.append(.{ .IntArith = .{ .op = .Sub, .overflow_behavior = .Wrap } }),
-                    .ASTERISK_EQUAL => try self.instructions.append(.{ .IntArith = .{ .op = .Mul, .overflow_behavior = .Wrap } }),
+                    .PLUS_EQUAL => try self.instructions.append(.{ .Arith = .{ .op = .Add } }),
+                    .MINUS_EQUAL => try self.instructions.append(.{ .Arith = .{ .op = .Sub } }),
+                    .ASTERISK_EQUAL => try self.instructions.append(.{ .Arith = .{ .op = .Mul } }),
                     .SLASH_EQUAL => {
-                        self.reporter.debug("COMPOUND '/=': converting both operands to Float and emitting FloatArith.Div", .{}, @src());
                         // For '/=' always perform float division: convert both operands to Float
                         const left_type = self.getTrackedVariableType(compound.name.lexeme) orelse .Unknown;
                         const right_type = self.inferTypeFromExpression(compound.value.?);
@@ -2149,9 +2078,9 @@ pub const HIRGenerator = struct {
                             try self.instructions.append(.{ .Convert = .{ .from_type = right_type, .to_type = .Float } });
                         }
                         // Now do float division
-                        try self.instructions.append(.{ .FloatArith = .{ .op = .Div, .exception_behavior = .Trap } });
+                        try self.instructions.append(.{ .Arith = .{ .op = .Div } });
                     },
-                    .POWER_EQUAL => try self.instructions.append(.{ .IntArith = .{ .op = .Mul, .overflow_behavior = .Wrap } }), // TODO: Implement power operation
+                    .POWER_EQUAL => try self.instructions.append(.{ .Arith = .{ .op = .Pow } }),
                     else => {
                         const location = Location{
                             .file = compound.operator.file,
@@ -2226,7 +2155,7 @@ pub const HIRGenerator = struct {
 
                         // Swap operands so we have: 0, operand on stack
                         // Then subtract: 0 - operand = -operand
-                        try self.instructions.append(.{ .IntArith = .{ .op = .Sub, .overflow_behavior = .Wrap } });
+                        try self.instructions.append(.{ .Arith = .{ .op = .Sub } });
                     },
                     .PLUS => {
                         // Unary plus: just return the operand unchanged (no-op)
@@ -3132,7 +3061,7 @@ pub const HIRGenerator = struct {
                 try self.instructions.append(.{ .LoadVar = .{ .var_index = idx_tmp_idx, .var_name = idx_var_name, .scope_kind = .Local, .module_context = null } });
                 const one_idx = try self.addConstant(HIRValue{ .int = 1 });
                 try self.instructions.append(.{ .Const = .{ .value = HIRValue{ .int = 1 }, .constant_id = one_idx } });
-                try self.instructions.append(.{ .IntArith = .{ .op = .Add, .overflow_behavior = .Wrap } });
+                try self.instructions.append(.{ .Arith = .{ .op = .Add } });
                 try self.instructions.append(.{ .StoreVar = .{ .var_index = idx_tmp_idx, .var_name = idx_var_name, .scope_kind = .Local, .module_context = null, .expected_type = .Int } });
 
                 // Jump back to condition
@@ -3555,10 +3484,16 @@ pub const HIRGenerator = struct {
                         return .Int; // Default to int for arithmetic
                     },
                     .POWER => {
-                        // Power: float if any side is float, otherwise int for int/byte pairs
+                        // For power operation, if both operands are integers, return integer type
+                        // This matches the runtime behavior where integer exponents with non-negative
+                        // integer powers return integers
+                        if ((left_type == .Int or left_type == .Byte) and (right_type == .Int or right_type == .Byte)) {
+                            return .Int;
+                        }
+                        // If either operand is float, return float
                         if (left_type == .Float or right_type == .Float) return .Float;
-                        if ((left_type == .Int or left_type == .Byte) and (right_type == .Int or right_type == .Byte)) return .Int;
-                        return .Int; // Default to int when unknown
+                        // Default to int for other cases (shouldn't normally happen)
+                        return .Int;
                     },
                     else => .Tetra, // Default to Tetra for any other binary operations
                 };

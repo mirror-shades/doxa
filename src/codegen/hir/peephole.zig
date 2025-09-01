@@ -173,10 +173,10 @@ pub const PeepholeOptimizer = struct {
         // Pattern 1: Arithmetic identity operations (x + 0, x * 1, etc.)
         if (i + 2 < instructions.len and
             std.meta.activeTag(instructions[i + 1]) == .Const and
-            std.meta.activeTag(instructions[i + 2]) == .IntArith)
+            std.meta.activeTag(instructions[i + 2]) == .Arith)
         {
             const const_instr = instructions[i + 1].Const;
-            const arith_instr = instructions[i + 2].IntArith;
+            const arith_instr = instructions[i + 2].Arith;
 
             // Check for arithmetic identity operations
             switch (const_instr.value) {
@@ -220,10 +220,10 @@ pub const PeepholeOptimizer = struct {
         // Pattern 2: Strength reduction for multiplication by 2
         if (i + 2 < instructions.len and
             std.meta.activeTag(instructions[i + 1]) == .Const and
-            std.meta.activeTag(instructions[i + 2]) == .IntArith)
+            std.meta.activeTag(instructions[i + 2]) == .Arith)
         {
             const const_instr = instructions[i + 1].Const;
-            const arith_instr = instructions[i + 2].IntArith;
+            const arith_instr = instructions[i + 2].Arith;
 
             switch (const_instr.value) {
                 .int => |val| {
@@ -231,7 +231,7 @@ pub const PeepholeOptimizer = struct {
                         // x * 2 → x + x (addition faster than multiplication)
                         try optimized.append(instructions[i]); // First operand
                         try optimized.append(.Dup); // Duplicate it
-                        try optimized.append(.{ .IntArith = .{ .op = .Add, .overflow_behavior = arith_instr.overflow_behavior } });
+                        try optimized.append(.{ .Arith = .{ .op = .Add } });
                         self.arithmetic_optimizations += 1;
                         return 3;
                     }

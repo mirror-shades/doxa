@@ -1032,12 +1032,9 @@ pub const HIRVM = struct {
                 }
             },
 
-            .IntArith => |a| {
+            .Arith => |a| {
                 const b = try self.stack.pop();
                 const a_val = try self.stack.pop();
-
-                // Debug: show op and operand tags
-                self.reporter.debug("INTARITH {s}: a={s}, b={s}", .{ @tagName(a.op), @tagName(a_val.value), @tagName(b.value) }, @src());
 
                 // Check if either operand is a float and needs promotion
                 const a_is_float = a_val.value == .float;
@@ -1076,15 +1073,21 @@ pub const HIRVM = struct {
                         },
                     };
 
-                    const result = switch (a.op) {
-                        .Add => a_float + b_float,
-                        .Sub => a_float - b_float,
-                        .Mul => a_float * b_float,
-                        .Div => if (b_float == 0.0) {
-                            return ErrorList.DivisionByZero;
-                        } else a_float / b_float,
-                        .Mod => @mod(a_float, b_float),
-                    };
+                    var result: f64 = 0.0;
+                    switch (a.op) {
+                        .Add => result = a_float + b_float,
+                        .Sub => result = a_float - b_float,
+                        .Mul => result = a_float * b_float,
+                        .Div => {
+                            if (b_float == 0.0) {
+                                return ErrorList.DivisionByZero;
+                            } else result = a_float / b_float;
+                        },
+                        .Mod => result = @mod(a_float, b_float),
+                        .Pow => {
+                            result = std.math.pow(f64, a_float, b_float);
+                        },
+                    }
 
                     try self.stack.push(HIRFrame.initFloat(result));
                     return;
@@ -1127,19 +1130,23 @@ pub const HIRVM = struct {
                     },
                 };
 
-                const int_result = switch (a.op) {
-                    .Add => std.math.add(i32, a_int, b_int) catch {
+                var int_result: i32 = undefined;
+                switch (a.op) {
+                    .Add => int_result = std.math.add(i32, a_int, b_int) catch {
                         return self.reporter.reportRuntimeError(null, ErrorCode.ARITHMETIC_OVERFLOW, "Integer addition overflow", .{});
                     },
-                    .Sub => std.math.sub(i32, a_int, b_int) catch {
+                    .Sub => int_result = std.math.sub(i32, a_int, b_int) catch {
                         return self.reporter.reportRuntimeError(null, ErrorCode.ARITHMETIC_OVERFLOW, "Integer subtraction overflow", .{});
                     },
-                    .Mul => std.math.mul(i32, a_int, b_int) catch {
+                    .Mul => int_result = std.math.mul(i32, a_int, b_int) catch {
                         return self.reporter.reportRuntimeError(null, ErrorCode.ARITHMETIC_OVERFLOW, "Integer multiplication overflow", .{});
                     },
                     .Div => unreachable,
-                    .Mod => try self.fastIntMod(a_int, b_int),
-                };
+                    .Mod => int_result = try self.fastIntMod(a_int, b_int),
+                    .Pow => {
+                        int_result = std.math.pow(i32, a_int, b_int);
+                    },
+                }
 
                 // Preserve the original type when possible
                 if (a_val.value == .byte and int_result >= 0 and int_result <= 255) {
@@ -1147,56 +1154,6 @@ pub const HIRVM = struct {
                 } else {
                     try self.stack.push(HIRFrame.initInt(int_result));
                 }
-            },
-
-            .FloatArith => |a| {
-                const b = try self.stack.pop();
-                const a_val = try self.stack.pop();
-
-                // Debug: show float op and operand tags
-                self.reporter.debug("FLOATARITH {s}: a={s}, b={s}", .{ @tagName(a.op), @tagName(a_val.value), @tagName(b.value) }, @src());
-
-                const a_float = switch (a_val.value) {
-                    .int => |i| @as(f64, @floatFromInt(i)),
-                    .byte => |u| @as(f64, @floatFromInt(u)),
-                    .float => |f| f,
-                    .string => |s| blk: {
-                        const parsed = std.fmt.parseFloat(f64, s) catch {
-                            return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert string '{s}' to float for arithmetic", .{s});
-                        };
-                        break :blk parsed;
-                    },
-                    else => {
-                        return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform float arithmetic on type: {s}", .{@tagName(a_val.value)});
-                    },
-                };
-
-                const b_float = switch (b.value) {
-                    .int => |i| @as(f64, @floatFromInt(i)),
-                    .byte => |u| @as(f64, @floatFromInt(u)),
-                    .float => |f| f,
-                    .string => |s| blk: {
-                        const parsed = std.fmt.parseFloat(f64, s) catch {
-                            return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert string '{s}' to float for arithmetic", .{s});
-                        };
-                        break :blk parsed;
-                    },
-                    else => {
-                        return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform float arithmetic on type: {s}", .{@tagName(b.value)});
-                    },
-                };
-
-                const result = switch (a.op) {
-                    .Add => a_float + b_float,
-                    .Sub => a_float - b_float,
-                    .Mul => a_float * b_float,
-                    .Div => if (b_float == 0.0) {
-                        return ErrorList.DivisionByZero;
-                    } else a_float / b_float,
-                    .Mod => @mod(a_float, b_float), // Now supports float modulo
-                };
-
-                try self.stack.push(HIRFrame.initFloat(result));
             },
 
             .Compare => |c| {
@@ -2665,7 +2622,7 @@ pub const HIRVM = struct {
                     },
                 }
 
-                self.reporter.debug("CONVERT RESULT -> {s}", .{ @tagName(out) }, @src());
+                self.reporter.debug("CONVERT RESULT -> {s}", .{@tagName(out)}, @src());
                 try self.stack.push(HIRFrame.initFromHIRValue(out));
             },
             else => {

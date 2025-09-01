@@ -207,7 +207,8 @@ pub const ConstantFolder = struct {
             .ASTERISK => self.foldMul(left, right),
             .SLASH => self.foldDiv(left, right),
             .MODULO => self.foldMod(left, right),
-            .POWER => self.foldPow(left, right),
+            // Disable constant folding for power operator to ensure consistent behavior during debugging
+            .POWER => null, // self.foldPow(left, right),
 
             // Comparison operations
             .LESS => self.foldLess(left, right),
