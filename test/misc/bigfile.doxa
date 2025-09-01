@@ -145,7 +145,6 @@ asThenUnion? // 0x0A
 // as narrowing
 function onlyUsesInt(x :: int) {
     x?
-    return
 }
 
 const x :: int | float is 17
