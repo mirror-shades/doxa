@@ -53,6 +53,7 @@ const Command = enum {
 
 const CLI = struct {
     command: Command,
+    debug_lexer: bool,
     reporter_options: ReporterOptions,
     keep_artifacts: bool,
     output: ?[]const u8,
@@ -235,6 +236,7 @@ fn parseArgs(allocator: std.mem.Allocator) !CLI {
             .debug_mode = false,
         },
         .keep_artifacts = false,
+        .debug_lexer = false,
         .output = null,
         .script_path = null,
     };
@@ -248,6 +250,9 @@ fn parseArgs(allocator: std.mem.Allocator) !CLI {
         // Handle global flags first
         if (stringEquals(arg, "--debug")) {
             options.reporter_options.debug_mode = true;
+            continue;
+        } else if (stringEquals(arg, "--debug-lexer")) {
+            options.debug_lexer = true;
             continue;
         } else if (stringEquals(arg, "--output") or stringEquals(arg, "-o")) {
             if (i + 1 >= args.len) {
@@ -427,6 +432,12 @@ pub fn main() !void {
     defer lexer.deinit();
     try lexer.initKeywords();
     const tokens = try lexer.lexTokens();
+
+    if (cli_options.debug_lexer) {
+        for (tokens.items) |token| {
+            std.debug.print("{any} {s}\n", .{ token.type, token.lexeme });
+        }
+    }
 
     //==========================================================================
     // Parsing phase

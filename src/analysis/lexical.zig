@@ -407,7 +407,13 @@ pub const LexicalAnalyzer = struct {
                 }
             },
             '~' => try self.addMinimalToken(.TILDE),
-            '?' => try self.addMinimalToken(.PEEK),
+            '?' => {
+                if (self.match('?')) {
+                    try self.addMinimalToken(.SHOW);
+                } else {
+                    try self.addMinimalToken(.PEEK);
+                }
+            },
         }
     }
 

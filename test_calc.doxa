@@ -1,0 +1,78 @@
+enum TokenType {
+    NUMBER,
+    OPERATOR,
+    LPAREN,
+    RPAREN,
+}
+
+struct Token {
+    token_type :: TokenType,
+    value :: string,
+}
+
+function precedence(op :: string) returns int {
+    return match op {
+        "(" then 0,
+        ")" then 0,
+        "+" then 1,
+        "-" then 1,
+        "*" then 2,
+        "/" then 2,
+        else -1,
+    }
+}
+
+entry function main() {
+    // Test the full calculator with an expression
+    const input is "5 + 6"
+    ("Input: " + input)?
+    const splitInput is split(input)
+    "Split input:"?
+    each s in splitInput {
+        s?
+    }
+}
+
+function split(input :: string) returns string[] {
+    var result :: string[]
+    var current is ""
+
+    const lin is @length(input)
+
+    // `each` loops iterate through each element
+    // they can work on strings as well as arrays
+    // `at` is optional syntax for a loop index
+    each c at i in input {
+        // breaks number if operator is found
+        if c == " " then {
+            if current != "" then {
+                @push(result, current)
+                current is ""
+            }
+        }
+
+        else if c == "+" or c == "*" or c == "/" or c == "(" or c == ")" then {
+            if current != "" then {
+                @push(result, current)
+                current is ""
+            }
+            @push(result, c)
+        }
+
+        // make sure - isn't a negative sign
+        else if c == "-" and input[i+1] == " " then {
+            if current != "" then {
+                @push(result, current)
+                current is ""
+            }
+            @push(result, c)
+        } 
+
+        else if c != " " {
+            current is current + c
+        }
+
+    }
+    @push(result, current)
+    return result
+}

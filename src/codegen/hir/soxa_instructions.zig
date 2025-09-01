@@ -124,6 +124,13 @@ pub const HIRInstruction = union(enum) {
         operand_type: HIRType, // Determines VM behavior and LLVM predicate
     },
 
+    /// Type checking for union types and as expressions
+    /// VM: Check runtime type against target type
+    /// LLVM: Generate type checking code
+    TypeCheck: struct {
+        target_type: []const u8, // The type name to check against
+    },
+
     //==================================================================
     // LOGICAL OPERATIONS (From old VM - proven implementations)
     //==================================================================
@@ -390,6 +397,28 @@ pub const HIRInstruction = union(enum) {
     /// VM: OP_PEEK_STRUCT
     /// LLVM: Generate constant string based on LLVM type
     PeekStruct: struct {
+        type_name: []const u8, // Changed from struct_name to type_name
+        field_count: u32,
+        field_names: [][]const u8,
+        field_types: []HIRType,
+        location: ?Reporting.Location,
+        should_pop_after_peek: bool,
+    },
+
+    /// Print/peek value
+    /// VM: Complex printValue logic
+    /// LLVM: Generate printf calls with format strings
+    Show: struct {
+        name: ?[]const u8,
+        value_type: HIRType,
+        location: ?Reporting.Location,
+        union_members: ?[][]const u8 = null,
+    },
+
+    /// Prints a struct
+    /// VM: OP_PEEK_STRUCT
+    /// LLVM: Generate constant string based on LLVM type
+    ShowStruct: struct {
         type_name: []const u8, // Changed from struct_name to type_name
         field_count: u32,
         field_names: [][]const u8,

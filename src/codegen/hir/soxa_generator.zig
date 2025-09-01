@@ -1233,13 +1233,13 @@ pub const HIRGenerator = struct {
                 if (bin.operator.type == .SLASH) {
                     self.reporter.debug("GEN DIV: Converting both operands to Float for division", .{}, @src());
                     try self.generateExpression(bin.left.?, true);
-                    if (left_type != .Float) {
+                    if (left_type != .Float and left_type != .Unknown) {
                         self.reporter.debug("Converting left operand from {s} to Float\n", .{@tagName(left_type)}, @src());
                         try self.instructions.append(.{ .Convert = .{ .from_type = left_type, .to_type = .Float } });
                     }
 
                     try self.generateExpression(bin.right.?, true);
-                    if (right_type != .Float) {
+                    if (right_type != .Float and right_type != .Unknown) {
                         self.reporter.debug("Converting right operand from {s} to Float\n", .{@tagName(right_type)}, @src());
                         try self.instructions.append(.{ .Convert = .{ .from_type = right_type, .to_type = .Float } });
                     }
@@ -1247,15 +1247,22 @@ pub const HIRGenerator = struct {
                     // Do not pre-convert for POWER; let the POWER case handle precise integer/float behavior
                     try self.generateExpression(bin.left.?, true);
                     try self.generateExpression(bin.right.?, true);
+                } else if (bin.operator.type == .EQUALITY or bin.operator.type == .BANG_EQUAL or
+                    bin.operator.type == .LESS or bin.operator.type == .GREATER or
+                    bin.operator.type == .LESS_EQUAL or bin.operator.type == .GREATER_EQUAL)
+                {
+                    // For comparison operators, don't pre-convert operands - let the Compare instruction handle it
+                    try self.generateExpression(bin.left.?, true);
+                    try self.generateExpression(bin.right.?, true);
                 } else {
                     try self.generateExpression(bin.left.?, true);
-                    if (left_type != result_type) {
+                    if (left_type != result_type and left_type != .Unknown and result_type != .Unknown) {
                         self.reporter.debug("Converting left operand from {s} to {s}\n", .{ @tagName(left_type), @tagName(result_type) }, @src());
                         try self.instructions.append(.{ .Convert = .{ .from_type = left_type, .to_type = result_type } });
                     }
 
                     try self.generateExpression(bin.right.?, true);
-                    if (right_type != result_type) {
+                    if (right_type != result_type and right_type != .Unknown and result_type != .Unknown) {
                         self.reporter.debug("Converting right operand from {s} to {s}\n", .{ @tagName(right_type), @tagName(result_type) }, @src());
                         try self.instructions.append(.{ .Convert = .{ .from_type = right_type, .to_type = result_type } });
                     }
@@ -1280,12 +1287,30 @@ pub const HIRGenerator = struct {
                     .SLASH => try self.instructions.append(.{ .Arith = .{ .op = .Div } }),
                     .MODULO => try self.instructions.append(.{ .Arith = .{ .op = .Mod } }),
                     .POWER => try self.instructions.append(.{ .Arith = .{ .op = .Pow } }),
-                    .EQUALITY => try self.instructions.append(.{ .Compare = .{ .op = .Eq, .operand_type = .Int } }),
-                    .BANG_EQUAL => try self.instructions.append(.{ .Compare = .{ .op = .Ne, .operand_type = .Int } }),
-                    .LESS => try self.instructions.append(.{ .Compare = .{ .op = .Lt, .operand_type = .Int } }),
-                    .GREATER => try self.instructions.append(.{ .Compare = .{ .op = .Gt, .operand_type = .Int } }),
-                    .LESS_EQUAL => try self.instructions.append(.{ .Compare = .{ .op = .Le, .operand_type = .Int } }),
-                    .GREATER_EQUAL => try self.instructions.append(.{ .Compare = .{ .op = .Ge, .operand_type = .Int } }),
+                    .EQUALITY => {
+                        const operand_type = self.inferComparisonOperandType(bin.left.?, bin.right.?);
+                        try self.instructions.append(.{ .Compare = .{ .op = .Eq, .operand_type = operand_type } });
+                    },
+                    .BANG_EQUAL => {
+                        const operand_type = self.inferComparisonOperandType(bin.left.?, bin.right.?);
+                        try self.instructions.append(.{ .Compare = .{ .op = .Ne, .operand_type = operand_type } });
+                    },
+                    .LESS => {
+                        const operand_type = self.inferComparisonOperandType(bin.left.?, bin.right.?);
+                        try self.instructions.append(.{ .Compare = .{ .op = .Lt, .operand_type = operand_type } });
+                    },
+                    .GREATER => {
+                        const operand_type = self.inferComparisonOperandType(bin.left.?, bin.right.?);
+                        try self.instructions.append(.{ .Compare = .{ .op = .Gt, .operand_type = operand_type } });
+                    },
+                    .LESS_EQUAL => {
+                        const operand_type = self.inferComparisonOperandType(bin.left.?, bin.right.?);
+                        try self.instructions.append(.{ .Compare = .{ .op = .Le, .operand_type = operand_type } });
+                    },
+                    .GREATER_EQUAL => {
+                        const operand_type = self.inferComparisonOperandType(bin.left.?, bin.right.?);
+                        try self.instructions.append(.{ .Compare = .{ .op = .Ge, .operand_type = operand_type } });
+                    },
                     else => {
                         self.reporter.reportCompileError(
                             expr.base.location(),
@@ -1783,6 +1808,258 @@ pub const HIRGenerator = struct {
                 if (!preserve_result) {
                     try self.instructions.append(.Pop);
                 }
+            },
+
+            .Show => |peek| {
+
+                // Set current peek expression for field access tracking
+                self.current_peek_expr = peek.expr;
+                defer self.current_peek_expr = null;
+
+                // Generate the expression to peek (leaves value on stack)
+                try self.generateExpression(peek.expr, true);
+
+                // Build the full path for the peek expression (handles field access)
+                // Special case: Don't show variable name for enum member access like Color.Red
+                const peek_path = if (peek.expr.data == .FieldAccess) blk: {
+                    const field = peek.expr.data.FieldAccess;
+                    const obj_type = self.inferTypeFromExpression(field.object);
+                    // If this is enum member access (Color.Red), don't show variable name
+                    if (obj_type == .Enum and field.object.data == .Variable) {
+                        break :blk null; // No variable name for enum member access
+                    } else {
+                        break :blk try self.buildPeekPath(peek.expr);
+                    }
+                } else try self.buildPeekPath(peek.expr);
+
+                // NEW: Prefer expression inference; refine for array indexing
+                var inferred_type: HIRType = self.inferTypeFromExpression(peek.expr);
+                if (peek.expr.data == .Index and peek.expr.data.Index.array.data == .Variable) {
+                    if (self.getTrackedArrayElementType(peek.expr.data.Index.array.data.Variable.lexeme)) |elem_type| {
+                        inferred_type = elem_type;
+                    }
+                } else if (peek.expr.data == .Variable) {
+                    if (self.getTrackedVariableType(peek.expr.data.Variable.lexeme)) |tracked_type| {
+                        inferred_type = tracked_type;
+                    }
+                }
+
+                // New: include union member list for variables declared as unions
+                var union_members: ?[][]const u8 = null;
+                // If peeking a StringToInt expression directly, attach union members inline
+                if (peek.expr.data == .StringToInt) {
+                    const members = try self.allocator.alloc([]const u8, 2);
+                    members[0] = "int";
+                    members[1] = "NumberError";
+                    union_members = members;
+                }
+                // If peeking a direct @substring expression, attach union members inline
+                if (peek.expr.data == .MethodCall) {
+                    const m = peek.expr.data.MethodCall;
+                    if (std.mem.eql(u8, m.method.lexeme, "substring")) {
+                        const members = try self.allocator.alloc([]const u8, 2);
+                        members[0] = "string";
+                        members[1] = "IndexError";
+                        union_members = members;
+                    }
+                }
+                if (peek.expr.data == .Variable) {
+                    const var_name = peek.expr.data.Variable.lexeme;
+                    self.reporter.debug("Checking union members for variable {s}", .{var_name}, @src());
+                    // Prefer index-based lookup to avoid name collisions; do this for all scopes
+                    var maybe_index: ?u32 = null;
+                    if (self.current_function != null) {
+                        maybe_index = self.local_variables.get(var_name);
+                    } else {
+                        maybe_index = self.variables.get(var_name);
+                    }
+                    if (maybe_index) |var_index| {
+                        if (self.variable_union_members_by_index.get(var_index)) |members2| {
+                            union_members = members2;
+                            self.reporter.debug("Found union members for {s} by index: {any}", .{ var_name, members2 }, @src());
+                        }
+                    }
+                    // Regression fix: do NOT fallback to name-based lookup; avoid cross-scope collisions
+                    if (union_members == null) {
+                        self.reporter.debug("No union members found for {s}", .{var_name}, @src());
+                    }
+                }
+
+                // Generate peek instruction with full path and correct type
+                try self.instructions.append(.{ .Show = .{
+                    .name = peek_path,
+                    .value_type = inferred_type,
+                    .location = peek.location,
+                    .union_members = union_members,
+                } });
+
+                // IMPORTANT: Peek pops the value, prints, then pushes it back.
+                // If the caller does not need the result (statement context), drop it now
+                if (!preserve_result) {
+                    try self.instructions.append(.Pop);
+                }
+            },
+
+            .PeekStruct => |peek| {
+
+                // Generate the expression to peek
+                try self.generateExpression(peek.expr, true);
+
+                // Get struct info from the expression
+                const struct_info: StructPeekInfo = switch (peek.expr.data) {
+                    .StructLiteral => |struct_lit| blk: {
+                        const field_count: u32 = @truncate(struct_lit.fields.len);
+                        const field_names = try self.allocator.alloc([]const u8, struct_lit.fields.len);
+                        const field_types = try self.allocator.alloc(HIRType, struct_lit.fields.len);
+                        break :blk StructPeekInfo{
+                            .name = struct_lit.name.lexeme,
+                            .field_count = field_count,
+                            .field_names = field_names,
+                            .field_types = field_types,
+                        };
+                    },
+                    .Variable => |var_token| if (self.getTrackedVariableType(var_token.lexeme)) |var_type| blk: {
+                        if (var_type != .Struct) {
+                            return error.ExpectedStructType;
+                        }
+                        const field_names = try self.allocator.alloc([]const u8, 0);
+                        const field_types = try self.allocator.alloc(HIRType, 0);
+                        break :blk StructPeekInfo{
+                            .name = var_token.lexeme,
+                            .field_count = 0,
+                            .field_names = field_names,
+                            .field_types = field_types,
+                        };
+                    } else {
+                        return error.UnknownVariableType;
+                    },
+                    .FieldAccess => |field| blk: {
+                        // For field access, we need to generate the field access code first
+                        try self.generateExpression(field.object, true);
+                        try self.instructions.append(.{
+                            .StoreFieldName = .{
+                                .field_name = field.field.lexeme,
+                            },
+                        });
+
+                        // Generate GetField instruction to access the field
+                        try self.instructions.append(.{
+                            .GetField = .{
+                                .field_name = field.field.lexeme,
+                                .container_type = .Struct,
+                                .field_index = 0,
+                                .field_for_peek = true,
+                            },
+                        });
+
+                        // Create a single-field struct info
+                        const field_names = try self.allocator.alloc([]const u8, 1);
+                        const field_types = try self.allocator.alloc(HIRType, 1);
+                        field_names[0] = field.field.lexeme;
+                        field_types[0] = self.inferTypeFromExpression(peek.expr);
+
+                        break :blk StructPeekInfo{
+                            .name = field.field.lexeme,
+                            .field_count = 1,
+                            .field_names = field_names,
+                            .field_types = field_types,
+                        };
+                    },
+                    else => {
+                        return error.ExpectedStructType;
+                    },
+                };
+
+                // Add the PeekStruct instruction with the gathered info
+                try self.instructions.append(.{ .PeekStruct = .{
+                    .type_name = struct_info.name,
+                    .field_count = struct_info.field_count,
+                    .field_names = struct_info.field_names,
+                    .field_types = struct_info.field_types,
+                    .location = peek.location,
+                    .should_pop_after_peek = !preserve_result,
+                } });
+            },
+
+            .ShowStruct => |peek| {
+
+                // Generate the expression to peek
+                try self.generateExpression(peek.expr, true);
+
+                // Get struct info from the expression
+                const struct_info: StructPeekInfo = switch (peek.expr.data) {
+                    .StructLiteral => |struct_lit| blk: {
+                        const field_count: u32 = @truncate(struct_lit.fields.len);
+                        const field_names = try self.allocator.alloc([]const u8, struct_lit.fields.len);
+                        const field_types = try self.allocator.alloc(HIRType, struct_lit.fields.len);
+                        break :blk StructPeekInfo{
+                            .name = struct_lit.name.lexeme,
+                            .field_count = field_count,
+                            .field_names = field_names,
+                            .field_types = field_types,
+                        };
+                    },
+                    .Variable => |var_token| if (self.getTrackedVariableType(var_token.lexeme)) |var_type| blk: {
+                        if (var_type != .Struct) {
+                            return error.ExpectedStructType;
+                        }
+                        const field_names = try self.allocator.alloc([]const u8, 0);
+                        const field_types = try self.allocator.alloc(HIRType, 0);
+                        break :blk StructPeekInfo{
+                            .name = var_token.lexeme,
+                            .field_count = 0,
+                            .field_names = field_names,
+                            .field_types = field_types,
+                        };
+                    } else {
+                        return error.UnknownVariableType;
+                    },
+                    .FieldAccess => |field| blk: {
+                        // For field access, we need to generate the field access code first
+                        try self.generateExpression(field.object, true);
+                        try self.instructions.append(.{
+                            .StoreFieldName = .{
+                                .field_name = field.field.lexeme,
+                            },
+                        });
+
+                        // Generate GetField instruction to access the field
+                        try self.instructions.append(.{
+                            .GetField = .{
+                                .field_name = field.field.lexeme,
+                                .container_type = .Struct,
+                                .field_index = 0,
+                                .field_for_peek = true,
+                            },
+                        });
+
+                        // Create a single-field struct info
+                        const field_names = try self.allocator.alloc([]const u8, 1);
+                        const field_types = try self.allocator.alloc(HIRType, 1);
+                        field_names[0] = field.field.lexeme;
+                        field_types[0] = self.inferTypeFromExpression(peek.expr);
+
+                        break :blk StructPeekInfo{
+                            .name = field.field.lexeme,
+                            .field_count = 1,
+                            .field_names = field_names,
+                            .field_types = field_types,
+                        };
+                    },
+                    else => {
+                        return error.ExpectedStructType;
+                    },
+                };
+
+                // Add the ShowStruct instruction with the gathered info
+                try self.instructions.append(.{ .ShowStruct = .{
+                    .type_name = struct_info.name,
+                    .field_count = struct_info.field_count,
+                    .field_names = struct_info.field_names,
+                    .field_types = struct_info.field_types,
+                    .location = peek.location,
+                    .should_pop_after_peek = !preserve_result,
+                } });
             },
 
             .Assignment => |assign| {
@@ -2414,15 +2691,24 @@ pub const HIRGenerator = struct {
                         try self.instructions.append(.Pop);
                         try self.instructions.append(.{ .Jump = .{ .label = case_labels.items[i], .vm_offset = 0 } });
                     } else {
-                        // Generate the pattern value (enum member with proper context)
-                        const pattern_value = if (match_enum_type) |enum_type_name| blk: {
-                            // Look up the actual variant index from registered enum type
+                        // Check if this is a type pattern for union matching
+                        const is_type_pattern = switch (case.pattern.type) {
+                            .INT_TYPE, .FLOAT_TYPE, .STRING_TYPE, .BYTE_TYPE, .TETRA_TYPE, .NOTHING_TYPE => true,
+                            else => false,
+                        };
+
+                        if (is_type_pattern) {
+                            // This is a type pattern - use TypeCheck instruction
+                            const type_name = case.pattern.lexeme;
+                            try self.instructions.append(.{ .TypeCheck = .{ .target_type = type_name } });
+                        } else if (match_enum_type) |enum_type_name| {
+                            // Generate the pattern value (enum member with proper context)
                             const variant_index = if (self.custom_types.get(enum_type_name)) |custom_type|
                                 custom_type.getEnumVariantIndex(case.pattern.lexeme) orelse 0
                             else
                                 0;
 
-                            break :blk HIRValue{
+                            const pattern_value = HIRValue{
                                 .enum_variant = HIREnum{
                                     .type_name = enum_type_name,
                                     .variant_name = case.pattern.lexeme,
@@ -2430,14 +2716,21 @@ pub const HIRGenerator = struct {
                                     .path = null,
                                 },
                             };
-                        } else HIRValue{ .string = case.pattern.lexeme };
 
-                        const pattern_idx = try self.addConstant(pattern_value);
-                        try self.instructions.append(.{ .Const = .{ .value = pattern_value, .constant_id = pattern_idx } });
+                            const pattern_idx = try self.addConstant(pattern_value);
+                            try self.instructions.append(.{ .Const = .{ .value = pattern_value, .constant_id = pattern_idx } });
 
-                        // Compare and jump if equal (use appropriate operand type)
-                        const operand_type: HIRType = if (match_enum_type != null) .Enum else .String;
-                        try self.instructions.append(.{ .Compare = .{ .op = .Eq, .operand_type = operand_type } });
+                            // Compare and jump if equal (use Enum operand type)
+                            try self.instructions.append(.{ .Compare = .{ .op = .Eq, .operand_type = .Enum } });
+                        } else {
+                            // Regular string literal pattern
+                            const pattern_value = HIRValue{ .string = case.pattern.lexeme };
+                            const pattern_idx = try self.addConstant(pattern_value);
+                            try self.instructions.append(.{ .Const = .{ .value = pattern_value, .constant_id = pattern_idx } });
+
+                            // Compare and jump if equal (use String operand type)
+                            try self.instructions.append(.{ .Compare = .{ .op = .Eq, .operand_type = .String } });
+                        }
 
                         // FIXED: When condition is false, continue to next case check instead of jumping to end
                         const false_label = if (i < match_expr.cases.len - 1)
@@ -2770,13 +3063,8 @@ pub const HIRGenerator = struct {
                     }
                 };
 
-                // Push target type name as constant
-                const target_const = HIRValue{ .string = target_name };
-                const target_idx = try self.addConstant(target_const);
-                try self.instructions.append(.{ .Const = .{ .value = target_const, .constant_id = target_idx } });
-
-                // Compare runtime type of value against target type name
-                try self.instructions.append(.{ .Compare = .{ .op = .Eq, .operand_type = .String } });
+                // Check runtime type against target type using dedicated TypeCheck instruction
+                try self.instructions.append(.{ .TypeCheck = .{ .target_type = target_name } });
 
                 // Branch based on comparison
                 const ok_label = try self.generateLabel("cast_ok");
@@ -3154,87 +3442,6 @@ pub const HIRGenerator = struct {
                 // Push nothing as a placeholder value
                 const nothing_idx = try self.addConstant(HIRValue.nothing);
                 try self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } });
-            },
-
-            .PeekStruct => |peek| {
-
-                // Generate the expression to peek
-                try self.generateExpression(peek.expr, true);
-
-                // Get struct info from the expression
-                const struct_info: StructPeekInfo = switch (peek.expr.data) {
-                    .StructLiteral => |struct_lit| blk: {
-                        const field_count: u32 = @truncate(struct_lit.fields.len);
-                        const field_names = try self.allocator.alloc([]const u8, struct_lit.fields.len);
-                        const field_types = try self.allocator.alloc(HIRType, struct_lit.fields.len);
-                        break :blk StructPeekInfo{
-                            .name = struct_lit.name.lexeme,
-                            .field_count = field_count,
-                            .field_names = field_names,
-                            .field_types = field_types,
-                        };
-                    },
-                    .Variable => |var_token| if (self.getTrackedVariableType(var_token.lexeme)) |var_type| blk: {
-                        if (var_type != .Struct) {
-                            return error.ExpectedStructType;
-                        }
-                        const field_names = try self.allocator.alloc([]const u8, 0);
-                        const field_types = try self.allocator.alloc(HIRType, 0);
-                        break :blk StructPeekInfo{
-                            .name = var_token.lexeme,
-                            .field_count = 0,
-                            .field_names = field_names,
-                            .field_types = field_types,
-                        };
-                    } else {
-                        return error.UnknownVariableType;
-                    },
-                    .FieldAccess => |field| blk: {
-                        // For field access, we need to generate the field access code first
-                        try self.generateExpression(field.object, true);
-                        try self.instructions.append(.{
-                            .StoreFieldName = .{
-                                .field_name = field.field.lexeme,
-                            },
-                        });
-
-                        // Generate GetField instruction to access the field
-                        try self.instructions.append(.{
-                            .GetField = .{
-                                .field_name = field.field.lexeme,
-                                .container_type = .Struct,
-                                .field_index = 0,
-                                .field_for_peek = true,
-                            },
-                        });
-
-                        // Create a single-field struct info
-                        const field_names = try self.allocator.alloc([]const u8, 1);
-                        const field_types = try self.allocator.alloc(HIRType, 1);
-                        field_names[0] = field.field.lexeme;
-                        field_types[0] = self.inferTypeFromExpression(peek.expr);
-
-                        break :blk StructPeekInfo{
-                            .name = field.field.lexeme,
-                            .field_count = 1,
-                            .field_names = field_names,
-                            .field_types = field_types,
-                        };
-                    },
-                    else => {
-                        return error.ExpectedStructType;
-                    },
-                };
-
-                // Add the PeekStruct instruction with the gathered info
-                try self.instructions.append(.{ .PeekStruct = .{
-                    .type_name = struct_info.name,
-                    .field_count = struct_info.field_count,
-                    .field_names = struct_info.field_names,
-                    .field_types = struct_info.field_types,
-                    .location = peek.location,
-                    .should_pop_after_peek = !preserve_result,
-                } });
             },
 
             .Input => |input| {
@@ -3888,6 +4095,40 @@ pub const HIRGenerator = struct {
             .struct_fields = struct_fields,
         };
         try self.custom_types.put(struct_name, custom_type);
+    }
+
+    /// Infer the appropriate operand type for comparison operations
+    fn inferComparisonOperandType(self: *HIRGenerator, left_expr: *ast.Expr, right_expr: *ast.Expr) HIRType {
+        const left_type = self.inferTypeFromExpression(left_expr);
+        const right_type = self.inferTypeFromExpression(right_expr);
+
+        // If either operand is an enum, use Enum operand type
+        if (left_type == .Enum or right_type == .Enum) {
+            return .Enum;
+        }
+
+        // If either operand is a string, use String operand type
+        if (left_type == .String or right_type == .String) {
+            return .String;
+        }
+
+        // If either operand is float, use Float operand type
+        if (left_type == .Float or right_type == .Float) {
+            return .Float;
+        }
+
+        // If either operand is int, use Int operand type
+        if (left_type == .Int or right_type == .Int) {
+            return .Int;
+        }
+
+        // If either operand is byte, use Byte operand type
+        if (left_type == .Byte or right_type == .Byte) {
+            return .Byte;
+        }
+
+        // Default to Int for other types
+        return .Int;
     }
 
     /// NEW: Infer parameter type from usage in function body

@@ -775,7 +775,20 @@ fn writeHIRValueText(writer: anytype, value: HIRValue) !void {
     switch (value) {
         .int => |i| try writer.print("int {}", .{i}),
         .float => |f| try writer.print("float {d}", .{f}),
-        .string => |s| try writer.print("string \"{s}\"", .{s}),
+        .string => |s| {
+            try writer.print("string \"", .{});
+            // Escape special characters when writing to HIR text format
+            for (s) |c| {
+                switch (c) {
+                    '\n' => try writer.print("\\n", .{}),
+                    '\t' => try writer.print("\\t", .{}),
+                    '"' => try writer.print("\\\"", .{}),
+                    '\\' => try writer.print("\\\\", .{}),
+                    else => try writer.writeByte(c),
+                }
+            }
+            try writer.print("\"", .{});
+        },
         .tetra => |t| try writer.print("tetra {}", .{t}),
         .byte => |u| try writer.print("byte {}", .{u}),
         .nothing => try writer.print("nothing", .{}),
@@ -844,6 +857,46 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
             try writer.print("         ; Debug print\n", .{});
         },
 
+        .PeekStruct => |i| {
+            try writer.print("    PeekStruct \"{s}\" {} [", .{ i.type_name, i.field_count });
+            for (i.field_names, 0..) |name, idx| {
+                try writer.print("\"{s}\"", .{name});
+                if (idx < i.field_names.len - 1) try writer.writeByte(',');
+            }
+            try writer.writeAll("] [");
+            for (i.field_types, 0..) |type_info, idx| {
+                try writer.print("{s}", .{@tagName(type_info)});
+                if (idx < i.field_types.len - 1) try writer.writeByte(',');
+            }
+            try writer.writeAll("]");
+            if (i.location) |loc| {
+                try writer.print(" @{s}:{d}:{d}", .{ loc.file, loc.range.start_line, loc.range.start_col });
+            }
+            try writer.writeAll("         ; Peek struct\n");
+        },
+
+        .Show => |i| {
+            try writer.print("    Show {s}         ; Show value\n", .{@tagName(i.value_type)});
+        },
+
+        .ShowStruct => |i| {
+            try writer.print("    ShowStruct \"{s}\" {} [", .{ i.type_name, i.field_count });
+            for (i.field_names, 0..) |name, idx| {
+                try writer.print("\"{s}\"", .{name});
+                if (idx < i.field_names.len - 1) try writer.writeByte(',');
+            }
+            try writer.writeAll("] [");
+            for (i.field_types, 0..) |type_info, idx| {
+                try writer.print("{s}", .{@tagName(type_info)});
+                if (idx < i.field_types.len - 1) try writer.writeByte(',');
+            }
+            try writer.writeAll("]");
+            if (i.location) |loc| {
+                try writer.print(" @{s}:{d}:{d}", .{ loc.file, loc.range.start_line, loc.range.start_col });
+            }
+            try writer.writeAll("         ; Show struct\n");
+        },
+
         .AssertFail => |a| {
             try writer.print("    AssertFail @{s}:{}:{}{s}        ; Assertion failure\n", .{ a.location.file, a.location.range.start_line, a.location.range.start_col, if (a.has_message) " with message" else "" });
         },
@@ -872,24 +925,6 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
         .EnterScope => |s| try writer.print("    EnterScope {} {}            ; Enter new scope\n", .{ s.scope_id, s.var_count }),
         .ExitScope => |s| try writer.print("    ExitScope {}                ; Exit scope\n", .{s.scope_id}),
 
-        .PeekStruct => |i| {
-            try writer.print("    PeekStruct \"{s}\" {} [", .{ i.type_name, i.field_count });
-            for (i.field_names, 0..) |name, idx| {
-                try writer.print("\"{s}\"", .{name});
-                if (idx < i.field_names.len - 1) try writer.writeByte(',');
-            }
-            try writer.writeAll("] [");
-            for (i.field_types, 0..) |type_info, idx| {
-                try writer.print("{s}", .{@tagName(type_info)});
-                if (idx < i.field_types.len - 1) try writer.writeByte(',');
-            }
-            try writer.writeAll("]");
-            if (i.location) |loc| {
-                try writer.print(" @{s}:{d}:{d}", .{ loc.file, loc.range.start_line, loc.range.start_col });
-            }
-            try writer.writeAll("         ; Peek struct\n");
-        },
-
         .StringOp => |s| {
             const op_name = switch (s.op) {
                 .Length => "Length",
@@ -914,6 +949,8 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
             };
             try writer.print("    LogicalOp {s}                ; Logical operation\n", .{op_name});
         },
+
+        .TypeCheck => |tc| try writer.print("    TypeCheck \"{s}\"              ; Type check\n", .{tc.target_type}),
 
         else => try writer.print("    ; TODO: {s}\n", .{@tagName(instruction)}),
     }
