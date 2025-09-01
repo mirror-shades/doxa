@@ -227,6 +227,14 @@ const HIRStack = struct {
         return self.data[@intCast(self.sp - 1)];
     }
 
+    pub fn show(self: HIRStack) !HIRFrame {
+        if (self.sp <= 0) {
+            std.debug.print("Stack underflow: Attempted to peek at sp={}\n", .{self.sp});
+            return ErrorList.StackUnderflow;
+        }
+        return self.data[@intCast(self.sp - 1)];
+    }
+
     pub fn size(self: HIRStack) i32 {
         return self.sp;
     }
@@ -727,6 +735,7 @@ pub const HIRVM = struct {
 
         while (self.running and self.ip < self.program.instructions.len) {
             const instruction = self.program.instructions[self.ip];
+            self.reporter.debug("DBG VM: executing instruction {} at IP {}: {s}", .{ self.ip, self.ip, @tagName(instruction) }, @src());
 
             try self.executeInstruction(instruction);
 
@@ -769,6 +778,29 @@ pub const HIRVM = struct {
                 },
 
                 .PeekStruct => |i| {
+                    // Check for Unknown types in field types
+                    for (i.field_types) |field_type| {
+                        if (field_type == .Unknown) {
+                            self.reporter.reportCompileError(
+                                Location{
+                                    .file = "unknown",
+                                    .range = .{
+                                        .start_line = 0,
+                                        .start_col = 0,
+                                        .end_line = 0,
+                                        .end_col = 0,
+                                    },
+                                },
+                                ErrorCode.UNKNOWN_TYPE_FOUND_IN_PEEK_INSTRUCTION,
+                                "FATAL: Unknown type found in PeekStruct instruction at IP {} for field {}. Type inference likely failed during code generation.",
+                                .{ ip, i },
+                            );
+                            return ErrorList.InternalParserError;
+                        }
+                    }
+                },
+
+                .ShowStruct => |i| {
                     // Check for Unknown types in field types
                     for (i.field_types) |field_type| {
                         if (field_type == .Unknown) {
@@ -1160,33 +1192,43 @@ pub const HIRVM = struct {
                 const b = try self.stack.pop();
                 const a_val = try self.stack.pop();
 
-                // Special handling: if operand_type signals String and RHS is a string, compare
-                // the runtime type of the left value to the provided type name string.
-                const eq_with_type_name = blk: {
-                    if (c.operand_type == .String and b.value == .string) {
-                        const type_name = self.getTypeString(a_val.value);
-                        break :blk std.mem.eql(u8, type_name, b.value.string);
-                    }
-                    break :blk null;
-                };
-
-                // Debug: log operand tags for comparisons
+                // Enhanced debug: log operand values and types for comparisons
                 self.reporter.debug(
-                    "DBG Compare {s}: a={s}, b={s}, operand_type={s}",
-                    .{ @tagName(c.op), @tagName(a_val.value), @tagName(b.value), @tagName(c.operand_type) },
+                    "DBG Compare {s}: a={s} (value: {any}), b={s} (value: {any}), operand_type={s}",
+                    .{ @tagName(c.op), @tagName(a_val.value), a_val.value, @tagName(b.value), b.value, @tagName(c.operand_type) },
                     @src(),
                 );
 
                 const result = switch (c.op) {
-                    .Eq => if (eq_with_type_name) |is_eq| is_eq else try self.compareEqual(a_val, b),
-                    .Ne => if (eq_with_type_name) |is_eq| !is_eq else !(try self.compareEqual(a_val, b)),
+                    .Eq => try self.compareEqual(a_val, b),
+                    .Ne => !(try self.compareEqual(a_val, b)),
                     .Lt => try self.compareLess(a_val, b),
                     .Le => (try self.compareLess(a_val, b)) or (try self.compareEqual(a_val, b)),
                     .Gt => try self.compareGreater(a_val, b),
                     .Ge => (try self.compareGreater(a_val, b)) or (try self.compareEqual(a_val, b)),
                 };
 
+                self.reporter.debug("DBG Compare result: {s} = {any}", .{ @tagName(c.op), result }, @src());
                 try self.stack.push(HIRFrame.initTetra(if (result) 1 else 0));
+            },
+
+            .TypeCheck => |tc| {
+                const value = try self.stack.pop();
+
+                // Get the runtime type of the value
+                const runtime_type = self.getTypeString(value.value);
+
+                // Compare with target type
+                const type_match = std.mem.eql(u8, runtime_type, tc.target_type);
+
+                self.reporter.debug(
+                    "DBG TypeCheck: checking runtime type '{s}' against target '{s}', result: {}",
+                    .{ runtime_type, tc.target_type, type_match },
+                    @src(),
+                );
+
+                // Push result as tetra (1 for match, 0 for no match)
+                try self.stack.push(HIRFrame.initTetra(if (type_match) 1 else 0));
             },
 
             .Jump => |j| {
@@ -1217,10 +1259,12 @@ pub const HIRVM = struct {
                 };
 
                 const target_label = if (should_jump) j.label_true else j.label_false;
+                self.reporter.debug("DBG JumpCond: condition={any}, should_jump={}, target_label={s}", .{ condition.value, should_jump, target_label }, @src());
 
                 if (self.label_map.get(target_label)) |target_ip| {
                     // Always set IP explicitly since JumpCond is marked as a "jump" instruction
                     self.ip = target_ip;
+                    self.reporter.debug("DBG JumpCond: jumping to IP {} (label: {s})", .{ target_ip, target_label }, @src());
                 } else {
                     return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Unknown label: {s}", .{target_label});
                 }
@@ -1370,6 +1414,98 @@ pub const HIRVM = struct {
                                 else => {
                                     try self.formatHIRValue(std.io.getStdOut().writer(), field.value);
                                     try std.io.getStdOut().writer().print("\n", .{});
+                                },
+                            }
+                        }
+                    },
+                    else => {
+                        self.reporter.debug("Processing non-struct value with {d} field names", .{i.field_names.len}, @src());
+                        // For non-struct values (like field access results), print as a single value with location
+                        if (i.field_names.len > 0) {
+                            if (i.location) |location| {
+                                try std.io.getStdOut().writer().print("[{s}:{d}:{d}] ", .{ location.file, location.range.start_line, location.range.start_col });
+                            }
+
+                            // Show type information for non-struct values
+                            const value_type_string = self.getTypeString(value.value);
+                            try std.io.getStdOut().writer().print(":: {s} is ", .{value_type_string});
+                            try self.formatHIRValue(std.io.getStdOut().writer(), value.value);
+                            try std.io.getStdOut().writer().print("\n", .{});
+                        }
+                    },
+                }
+
+                if (!i.should_pop_after_peek) {
+                    // Push the value back onto the stack for potential further use
+                    try self.stack.push(value);
+                }
+            },
+
+            .Show => {
+                self.reporter.debug("DBG Show: executing Show instruction", .{}, @src());
+                const value = try self.stack.pop();
+                self.reporter.debug("Show called with value: {any}", .{value}, @src());
+
+                // Show instruction doesn't include variable name, just the value
+                // Format the value directly without quotes or extra formatting
+                try self.formatHIRValueRaw(std.io.getStdOut().writer(), value.value);
+
+                // Output will be flushed automatically on newline
+
+                // Push the value back onto the stack for potential further use
+                try self.stack.push(value);
+            },
+
+            .ShowStruct => |i| {
+                const value = try self.stack.pop();
+                self.reporter.debug("PeekStruct called with value: {any}", .{value}, @src());
+
+                // Handle both struct instances and field values
+                switch (value.value) {
+                    .struct_instance => |s| {
+                        self.reporter.debug("Processing struct instance of type '{s}' with {d} fields", .{ s.type_name, s.fields.len }, @src());
+                        // Print each field with proper location formatting
+                        for (s.fields) |field| {
+                            self.reporter.debug("Processing field '{s}'", .{field.name}, @src());
+
+                            // Build the full field path
+                            var field_path: []const u8 = undefined;
+                            if (s.path) |path| {
+                                field_path = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ path, field.name });
+                            } else {
+                                field_path = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ s.type_name, field.name });
+                            }
+                            defer self.allocator.free(field_path);
+
+                            // For nested structs, recursively print their fields
+                            switch (field.value) {
+                                .struct_instance => |nested| {
+                                    // Create a new PeekStruct instruction for the nested struct
+                                    const field_names = try self.allocator.alloc([]const u8, nested.fields.len);
+                                    const field_types = try self.allocator.alloc(HIRType, nested.fields.len);
+                                    for (nested.fields, 0..) |nested_field, field_idx| {
+                                        field_names[field_idx] = nested_field.name;
+                                        field_types[field_idx] = nested_field.field_type;
+                                    }
+                                    const nested_peek = HIRInstruction{
+                                        .PeekStruct = .{
+                                            .location = i.location,
+                                            .field_names = field_names,
+                                            .type_name = nested.type_name,
+                                            .field_count = @intCast(nested.fields.len),
+                                            .field_types = field_types,
+                                            .should_pop_after_peek = i.should_pop_after_peek, // Pass the flag down
+                                        },
+                                    };
+                                    // Push the nested struct onto the stack with updated path
+                                    var nested_with_path = nested;
+                                    nested_with_path.path = field_path;
+                                    try self.stack.push(HIRFrame{ .value = HIRValue{ .struct_instance = nested_with_path } });
+                                    // Recursively peek the nested struct
+                                    try self.executeInstruction(nested_peek);
+                                },
+                                else => {
+                                    try self.formatHIRValueRaw(std.io.getStdOut().writer(), field.value);
                                 },
                             }
                         }
@@ -3104,7 +3240,6 @@ pub const HIRVM = struct {
 
     /// Enhanced comparison with mixed int/float support from old VM
     fn compareEqual(self: *HIRVM, a: HIRFrame, b: HIRFrame) !bool {
-        _ = self;
         return switch (a.value) {
             .int => |a_val| switch (b.value) {
                 .int => |b_val| a_val == b_val,
@@ -3125,7 +3260,15 @@ pub const HIRVM = struct {
                 else => false,
             },
             .string => |a_val| switch (b.value) {
-                .string => |b_val| std.mem.eql(u8, a_val, b_val),
+                .string => |b_val| blk: {
+                    const result = std.mem.eql(u8, a_val, b_val);
+                    self.reporter.debug(
+                        "DBG compareEqual: comparing strings '{}' and '{}', lengths: {} and {}, result: {}",
+                        .{ std.zig.fmtEscapes(a_val), std.zig.fmtEscapes(b_val), a_val.len, b_val.len, result },
+                        @src(),
+                    );
+                    break :blk result;
+                },
                 else => false,
             },
             .nothing => switch (b.value) {
@@ -3306,6 +3449,46 @@ pub const HIRVM = struct {
                 for (s.fields, 0..) |field, i| {
                     try writer.print("{s}: ", .{field.name});
                     try self.formatHIRValue(writer, field.value);
+                    if (i < s.fields.len - 1) try writer.print(", ", .{});
+                }
+                try writer.print(" }}", .{}); // Fix closing bracket
+            },
+            .enum_variant => |e| try writer.print(".{s}", .{e.variant_name}),
+            else => try writer.print("{s}", .{@tagName(value)}),
+        }
+    }
+
+    /// Format HIR value to a writer without quotes or extra formatting (for Show instruction)
+    pub fn formatHIRValueRaw(self: *HIRVM, writer: anytype, value: HIRValue) !void {
+        switch (value) {
+            .int => |i| try writer.print("{}", .{i}),
+            .byte => |u| try writer.print("0x{X:0>2}", .{u}),
+            .float => |f| try printFloat(writer, f),
+            .string => |s| try writer.writeAll(s), // No quotes around strings, direct write
+            .tetra => |t| try writer.print("{s}", .{switch (t) {
+                0 => "false",
+                1 => "true",
+                2 => "both",
+                3 => "neither",
+                else => "invalid",
+            }}),
+            .nothing => try writer.print("nothing", .{}),
+            .array => |arr| {
+                try writer.print("[", .{});
+                var first = true;
+                for (arr.elements) |elem| {
+                    if (std.meta.eql(elem, HIRValue.nothing)) break; // Stop at first nothing element
+                    if (!first) try writer.print(", ", .{});
+                    try self.formatHIRValueRaw(writer, elem);
+                    first = false;
+                }
+                try writer.print("]", .{});
+            },
+            .struct_instance => |s| {
+                try writer.print("{{ ", .{}); // Add opening bracket
+                for (s.fields, 0..) |field, i| {
+                    try writer.print("{s}: ", .{field.name});
+                    try self.formatHIRValueRaw(writer, field.value);
                     if (i < s.fields.len - 1) try writer.print(", ", .{});
                 }
                 try writer.print(" }}", .{}); // Fix closing bracket

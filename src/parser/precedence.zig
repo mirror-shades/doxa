@@ -163,6 +163,8 @@ pub const rules = blk: {
 
     // Add rule for the ? operator with lower precedence
     r.set(.PEEK, .{ .infix = peekValue, .precedence = .CALL });
+    // Add rule for the ? operator with lower precedence
+    r.set(.SHOW, .{ .infix = showValue, .precedence = .CALL });
 
     // Add loop support
     r.set(.WHILE, .{ .prefix = whileExpr });
@@ -482,4 +484,56 @@ fn peekValue(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Exp
     };
 
     return peek_expr;
+}
+
+fn showValue(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+    if (left == null) return error.ExpectedLeftOperand;
+
+    // Get the variable name if this is a variable expression
+    var name_token: ?[]const u8 = null;
+    if (left.?.data == .Variable) {
+        name_token = left.?.data.Variable.lexeme;
+    }
+
+    // Use the '?' token (previous) for accurate location info. After infix dispatch,
+    // parsePrecedence has already advanced past '?', so peek() would point at the next token
+    // (possibly EOF/newline) which may have empty file information.
+    const qm_token = self.previous();
+
+    // Create the show expression
+    const show_expr = try self.allocator.create(ast.Expr);
+    show_expr.* = .{
+        .base = .{
+            .id = ast.generateNodeId(),
+            .span = .{
+                .location = .{
+                    .file = qm_token.file,
+                    .range = .{
+                        .start_line = @intCast(qm_token.line),
+                        .start_col = qm_token.column,
+                        .end_line = @intCast(qm_token.line),
+                        .end_col = qm_token.column + qm_token.lexeme.len,
+                    },
+                },
+            },
+        },
+        .data = .{
+            // Use regular Show for non-struct values
+            .Show = .{
+                .expr = left.?,
+                .location = .{
+                    .file = qm_token.file,
+                    .range = .{
+                        .start_line = @intCast(qm_token.line),
+                        .start_col = qm_token.column,
+                        .end_line = @intCast(qm_token.line),
+                        .end_col = qm_token.column + qm_token.lexeme.len,
+                    },
+                },
+                .variable_name = name_token,
+            },
+        },
+    };
+
+    return show_expr;
 }

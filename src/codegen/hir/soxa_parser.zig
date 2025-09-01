@@ -553,6 +553,126 @@ pub const SoxaTextParser = struct {
                     .union_members = union_members,
                 } });
             }
+        } else if (std.mem.eql(u8, op, "Show")) {
+            const name_or_type = tokens.next() orelse return;
+            var name: ?[]const u8 = null;
+            var value_type: HIRType = .String;
+            var location: ?Location = null;
+            var union_members: ?[][]const u8 = null;
+
+            if (name_or_type.len > 2 and name_or_type[0] == '"' and name_or_type[name_or_type.len - 1] == '"') {
+                // Has quoted name, get type from next token
+                name = try self.parseQuotedString(name_or_type);
+                const type_str = tokens.next() orelse "String";
+                value_type = if (std.mem.eql(u8, type_str, "Int")) HIRType.Int else if (std.mem.eql(u8, type_str, "Float")) HIRType.Float else if (std.mem.eql(u8, type_str, "String")) HIRType.String else if (std.mem.eql(u8, type_str, "Tetra")) HIRType.Tetra else if (std.mem.eql(u8, type_str, "Array")) HIRType.Array else if (std.mem.eql(u8, type_str, "Map")) HIRType.Map else if (std.mem.eql(u8, type_str, "Struct")) HIRType.Struct else if (std.mem.eql(u8, type_str, "Enum")) HIRType.Enum else HIRType.String;
+
+                // Check for location info
+                if (tokens.next()) |location_str| {
+                    if (std.mem.startsWith(u8, location_str, "@")) {
+                        location = try self.parseLocationString(location_str);
+                    }
+                }
+            } else {
+                // No quoted name, just type
+                value_type = if (std.mem.eql(u8, name_or_type, "Int")) HIRType.Int else if (std.mem.eql(u8, name_or_type, "Float")) HIRType.Float else if (std.mem.eql(u8, name_or_type, "String")) HIRType.String else if (std.mem.eql(u8, name_or_type, "Tetra")) HIRType.Tetra else if (std.mem.eql(u8, name_or_type, "Array")) HIRType.Array else if (std.mem.eql(u8, name_or_type, "Map")) HIRType.Map else if (std.mem.eql(u8, name_or_type, "Struct")) HIRType.Struct else if (std.mem.eql(u8, name_or_type, "Enum")) HIRType.Enum else HIRType.String;
+
+                // Check for location info after type
+                if (tokens.next()) |location_str| {
+                    if (std.mem.startsWith(u8, location_str, "@")) {
+                        location = try self.parseLocationString(location_str);
+                    }
+                }
+            }
+
+            // Try to parse optional union member list embedded in the line text: " ; union [t1,t2,...]"
+            const union_marker = std.mem.indexOf(u8, trimmed, "; union [");
+            if (union_marker) |marker_pos| {
+                const list_start = marker_pos + 9; // after "; union ["
+                if (std.mem.indexOfPos(u8, trimmed, list_start, "]")) |end_pos| {
+                    const inner = std.mem.trim(u8, trimmed[list_start..end_pos], " \t");
+                    // Split by commas
+                    var items = std.mem.splitScalar(u8, inner, ',');
+                    var tmp = std.ArrayList([]const u8).init(self.allocator);
+                    defer tmp.deinit();
+                    while (items.next()) |it| {
+                        const item_trim = std.mem.trim(u8, it, " \t");
+                        if (item_trim.len > 0) {
+                            const s = try self.allocator.dupe(u8, item_trim);
+                            try tmp.append(s);
+                        }
+                    }
+                    union_members = try tmp.toOwnedSlice();
+                }
+            }
+
+            try self.instructions.append(.{ .Show = .{
+                .name = name,
+                .value_type = value_type,
+                .location = location,
+                .union_members = union_members,
+            } });
+        } else if (std.mem.eql(u8, op, "ShowStruct")) {
+            // Parse: ShowStruct "Person" 2 ["name", "age"] [String, Int]
+            const struct_name_start = std.mem.indexOf(u8, trimmed, "\"").? + 1;
+            const struct_name_end = std.mem.indexOfPos(u8, trimmed, struct_name_start, "\"").?;
+            const struct_name = try self.allocator.dupe(u8, trimmed[struct_name_start..struct_name_end]);
+
+            // Get field count
+            const count_start = struct_name_end + 2;
+            const count_end = std.mem.indexOfAny(u8, trimmed[count_start..], " [").? + count_start;
+            const field_count = try std.fmt.parseInt(u32, trimmed[count_start..count_end], 10);
+
+            // Initialize new struct context
+            var field_names = std.ArrayList([]const u8).init(self.allocator);
+            var field_types = std.ArrayList(HIRType).init(self.allocator);
+
+            // Parse field names and types
+            var in_names = true;
+            var current_pos = count_end;
+            while (current_pos < trimmed.len) : (current_pos += 1) {
+                if (trimmed[current_pos] == '[') {
+                    continue;
+                } else if (trimmed[current_pos] == ']') {
+                    if (in_names) {
+                        in_names = false;
+                    } else {
+                        break;
+                    }
+                } else if (trimmed[current_pos] == '"') {
+                    const name_start = current_pos + 1;
+                    const name_end = std.mem.indexOfPos(u8, trimmed, name_start, "\"").?;
+                    const name = try self.allocator.dupe(u8, trimmed[name_start..name_end]);
+                    try field_names.append(name);
+                    current_pos = name_end;
+                } else if (std.mem.indexOfPos(u8, trimmed, current_pos, "String")) |type_pos| {
+                    if (type_pos == current_pos) {
+                        try field_types.append(.String);
+                        current_pos = type_pos + 5;
+                    }
+                } else if (std.mem.indexOfPos(u8, trimmed, current_pos, "Int")) |type_pos| {
+                    if (type_pos == current_pos) {
+                        try field_types.append(.Int);
+                        current_pos = type_pos + 2;
+                    }
+                }
+            }
+
+            // Parse location info if present
+            var location: ?Location = null;
+            const location_marker = std.mem.indexOf(u8, trimmed, "@");
+            if (location_marker) |marker_pos| {
+                const location_str = trimmed[marker_pos..];
+                location = self.parseLocationString(location_str) catch null;
+            }
+
+            try self.instructions.append(.{ .ShowStruct = .{
+                .type_name = struct_name,
+                .field_count = field_count,
+                .field_names = try field_names.toOwnedSlice(),
+                .field_types = try field_types.toOwnedSlice(),
+                .location = location,
+                .should_pop_after_peek = false,
+            } });
         } else if (std.mem.eql(u8, op, "ArrayNew")) {
             const type_str = tokens.next() orelse return;
             const size_str = tokens.next() orelse return;
@@ -709,6 +829,12 @@ pub const SoxaTextParser = struct {
             try self.instructions.append(HIRInstruction{ .LogicalOp = .{
                 .op = logical_op,
             } });
+        } else if (std.mem.eql(u8, op, "TypeCheck")) {
+            const target_type_quoted = tokens.next() orelse return;
+            const target_type = try self.parseQuotedString(target_type_quoted);
+            try self.instructions.append(HIRInstruction{ .TypeCheck = .{
+                .target_type = target_type,
+            } });
         } else if (std.mem.eql(u8, op, "AssertFail")) {
             // Parse: AssertFail @file:line:column with message
             // or: AssertFail @file:line:column
@@ -750,7 +876,34 @@ pub const SoxaTextParser = struct {
 
     fn parseQuotedString(self: *SoxaTextParser, quoted: []const u8) ![]const u8 {
         if (quoted.len >= 2 and quoted[0] == '"' and quoted[quoted.len - 1] == '"') {
-            return try self.allocator.dupe(u8, quoted[1 .. quoted.len - 1]);
+            const content = quoted[1 .. quoted.len - 1];
+
+            // Handle escaped sequences
+            var result = std.ArrayList(u8).init(self.allocator);
+            defer result.deinit();
+
+            var i: usize = 0;
+            while (i < content.len) {
+                if (content[i] == '\\' and i + 1 < content.len) {
+                    i += 1; // Skip the backslash
+                    switch (content[i]) {
+                        'n' => try result.append('\n'),
+                        't' => try result.append('\t'),
+                        '"' => try result.append('"'),
+                        '\\' => try result.append('\\'),
+                        else => {
+                            // Unknown escape sequence - just include both characters
+                            try result.append('\\');
+                            try result.append(content[i]);
+                        },
+                    }
+                } else {
+                    try result.append(content[i]);
+                }
+                i += 1;
+            }
+
+            return try result.toOwnedSlice();
         }
         return try self.allocator.dupe(u8, quoted);
     }

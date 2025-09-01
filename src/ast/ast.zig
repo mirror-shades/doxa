@@ -417,6 +417,13 @@ pub const PeekExpr = struct {
     field_name: ?[]const u8 = null,
 };
 
+pub const ShowExpr = struct {
+    expr: *Expr,
+    location: Location,
+    variable_name: ?[]const u8,
+    field_name: ?[]const u8 = null,
+};
+
 pub const FieldAccess = struct {
     object: *Expr,
     field: Token,
@@ -441,7 +448,13 @@ pub const Expr = struct {
         Binary: Binary,
         Unary: Unary,
         Peek: PeekExpr,
+        Show: ShowExpr,
         PeekStruct: struct {
+            expr: *Expr,
+            location: Location,
+            variable_name: ?[]const u8,
+        },
+        ShowStruct: struct {
             expr: *Expr,
             location: Location,
             variable_name: ?[]const u8,
@@ -760,6 +773,18 @@ pub const Expr = struct {
                 i.expr.deinit(allocator);
                 allocator.destroy(i.expr);
             },
+            .Show => |i| {
+                i.expr.deinit(allocator);
+                allocator.destroy(i.expr);
+            },
+            .PeekStruct => |peek| {
+                peek.expr.deinit(allocator);
+                allocator.destroy(peek.expr);
+            },
+            .ShowStruct => |peek| {
+                peek.expr.deinit(allocator);
+                allocator.destroy(peek.expr);
+            },
             .While => |*w| {
                 w.condition.deinit(allocator);
                 allocator.destroy(w.condition);
@@ -1014,10 +1039,6 @@ pub const Expr = struct {
             .TypeExpr => |type_expr| {
                 type_expr.deinit(allocator);
                 allocator.destroy(type_expr);
-            },
-            .PeekStruct => |peek| {
-                peek.expr.deinit(allocator);
-                allocator.destroy(peek.expr);
             },
             .Cast => |*c| {
                 c.value.deinit(allocator);
