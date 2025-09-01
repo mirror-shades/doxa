@@ -269,9 +269,9 @@ fn parseArgs(allocator: std.mem.Allocator) !CLI {
             i += 1; // Move to next argument (should be file)
             break;
         } else if (stringEquals(arg, "compile")) {
-            options.command = .compile;
-            i += 1; // Move to next argument (should be file)
-            break;
+            std.debug.print("native compilation not yet implemented\n", .{});
+            printUsage();
+            std.process.exit(EXIT_CODE_USAGE);
         } else if (stringEndsWith(arg, DOXA_EXTENSION)) {
             // Direct file execution: doxa file.doxa -> defaults to run
             options.command = .run;
@@ -325,18 +325,13 @@ fn printUsage() void {
     std.debug.print("Doxa Programming Language\n", .{});
     std.debug.print("\nUsage:\n", .{});
     std.debug.print("  doxa run [options] <file.doxa>          # Execute with HIR VM (explicit)\n", .{});
-    std.debug.print("  doxa compile [options] <file.doxa>      # Compile to native binary\n", .{});
-    std.debug.print("  doxa old [options] <file.doxa>          # Debug with old AST interpreter (deprecated)\n", .{});
     std.debug.print("\nOptions:\n", .{});
     std.debug.print("  --debug                                 Enable debug output\n", .{});
     std.debug.print("  --keep-intermediate                     Keep .soxa files for debugging\n", .{});
-    std.debug.print("  --output <file>, -o <file>             Specify output file (compile mode)\n", .{});
     std.debug.print("  --help, -h                             Show this help message\n", .{});
     std.debug.print("\nExamples:\n", .{});
     std.debug.print("  doxa script.doxa                       # Execute with HIR VM\n", .{});
     std.debug.print("  doxa run script.doxa                   # Same as above (explicit)\n", .{});
-    std.debug.print("  doxa compile --output app script.doxa  # Compile to native binary 'app'\n", .{});
-    std.debug.print("  doxa old script.doxa                   # Test with AST interpreter\n", .{});
 }
 
 // Helper functions to avoid comptime issues with string comparisons
