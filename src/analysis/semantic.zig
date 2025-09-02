@@ -4501,6 +4501,9 @@ pub const SemanticAnalyzer = struct {
                             if (if_returns) {
                                 has_return = true;
                             }
+                        } else if (expression.data == .ForEach) {
+                            // ForEach expressions don't return values - they're control flow constructs
+                            // No need to check for return values
                         }
                     }
                 },
@@ -4713,6 +4716,10 @@ pub const SemanticAnalyzer = struct {
                 } else {
                     return block_returns;
                 }
+            },
+            .ForEach => {
+                // ForEach expressions don't return values - they're control flow constructs
+                return false;
             },
             else => {
                 // Other expressions don't return values in the control flow sense
