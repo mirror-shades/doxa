@@ -53,7 +53,7 @@ function shunt(tokens :: Token[]) returns Token[] | nothing {
                 const prev_op is operators[op_stack_length - 1].value
                 prev_prec is precedence(prev_op)
                 if(op_prec < prev_prec) then {
-
+                    
                 } else {
                     @push(operators, t)
                 }
