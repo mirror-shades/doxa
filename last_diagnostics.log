@@ -20083,3 +20083,66 @@
 [Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 34 at IP 34: Halt
 [CompileTime][Error][E1011] ./test.doxa:21:18: Field 'value' not found in struct 'Animal'
 [CompileTime][Error][E1011] ./test.doxa:25:18: Field 'value' not found in struct 'Animal'
+[CompileTime][Error][E1001] ./test.doxa:15:23: Undefined variable
+[CompileTime][Error][E6011] ./test.doxa:15:38: Cannot access field on non-struct type Nothing
+[CompileTime][Error][E1003] ./test.doxa:15:9: Type mismatch: expected Custom, got Nothing
+[CompileTime][Error][E1001] ./test.doxa:19:23: Undefined variable
+[CompileTime][Error][E6011] ./test.doxa:19:41: Cannot access field on non-struct type Nothing
+[CompileTime][Error][E1003] ./test.doxa:19:9: Type mismatch: expected Custom, got Nothing
+[CompileTime][Error][E1001] ./test.doxa:23:23: Undefined variable
+[CompileTime][Error][E6011] ./test.doxa:23:39: Cannot access field on non-struct type Nothing
+[CompileTime][Error][E1003] ./test.doxa:23:9: Type mismatch: expected Custom, got Nothing
+[CompileTime][Error][E1001] ./test.doxa:15:23: Undefined variable
+[CompileTime][Error][E6011] ./test.doxa:15:40: Cannot access field on non-struct type Nothing
+[CompileTime][Error][E1003] ./test.doxa:15:9: Type mismatch: expected Custom, got Nothing
+[CompileTime][Error][E1001] ./test.doxa:19:23: Undefined variable
+[CompileTime][Error][E6011] ./test.doxa:19:42: Cannot access field on non-struct type Nothing
+[CompileTime][Error][E1003] ./test.doxa:19:9: Type mismatch: expected Custom, got Nothing
+[CompileTime][Error][E1001] ./test.doxa:23:23: Undefined variable
+[CompileTime][Error][E6011] ./test.doxa:23:40: Cannot access field on non-struct type Nothing
+[CompileTime][Error][E1003] ./test.doxa:23:9: Type mismatch: expected Custom, got Nothing
+[CompileTime][Error][E1001] ./test.doxa:15:23: Undefined variable
+[CompileTime][Error][E6011] ./test.doxa:15:40: Cannot access field on non-struct type Nothing
+[CompileTime][Error][E1003] ./test.doxa:15:9: Type mismatch: expected Custom, got Nothing
+[CompileTime][Error][E1001] ./test.doxa:19:23: Undefined variable
+[CompileTime][Error][E6011] ./test.doxa:19:42: Cannot access field on non-struct type Nothing
+[CompileTime][Error][E1003] ./test.doxa:19:9: Type mismatch: expected Custom, got Nothing
+[CompileTime][Error][E1001] ./test.doxa:23:23: Undefined variable
+[CompileTime][Error][E6011] ./test.doxa:23:40: Cannot access field on non-struct type Nothing
+[CompileTime][Error][E1003] ./test.doxa:23:9: Type mismatch: expected Custom, got Nothing
+[CompileTime][Error][E1001] ./test.doxa:15:23: Undefined variable
+[CompileTime][Error][E6011] ./test.doxa:15:40: Cannot access field on non-struct type Nothing
+[CompileTime][Error][E1003] ./test.doxa:15:9: Type mismatch: expected Custom, got Nothing
+[CompileTime][Error][E1001] ./test.doxa:19:23: Undefined variable
+[CompileTime][Error][E6011] ./test.doxa:19:42: Cannot access field on non-struct type Nothing
+[CompileTime][Error][E1003] ./test.doxa:19:9: Type mismatch: expected Custom, got Nothing
+[CompileTime][Error][E1001] ./test.doxa:23:23: Undefined variable
+[CompileTime][Error][E6011] ./test.doxa:23:40: Cannot access field on non-struct type Nothing
+[CompileTime][Error][E1003] ./test.doxa:23:9: Type mismatch: expected Custom, got Nothing
+[CompileTime][Error][E1001] ./test.doxa:15:23: Undefined variable
+[CompileTime][Error][E6011] ./test.doxa:15:40: Cannot access field on non-struct type Nothing
+[CompileTime][Error][E1003] ./test.doxa:15:9: Type mismatch: expected Custom, got Nothing
+[CompileTime][Error][E1001] ./test.doxa:19:23: Undefined variable
+[CompileTime][Error][E6011] ./test.doxa:19:42: Cannot access field on non-struct type Nothing
+[CompileTime][Error][E1003] ./test.doxa:19:9: Type mismatch: expected Custom, got Nothing
+[CompileTime][Error][E1001] ./test.doxa:23:23: Undefined variable
+[CompileTime][Error][E6011] ./test.doxa:23:40: Cannot access field on non-struct type Nothing
+[CompileTime][Error][E1003] ./test.doxa:23:9: Type mismatch: expected Custom, got Nothing
+[CompileTime][Error][E1001] ./test.doxa:40:35: Undefined variable
+[CompileTime][Error][E5002] ./test.doxa:40:1: Cannot call non-function type Nothing
+[Runtime][Error][E1001] Unknown built-in function: precedence
+[CompileTime][Error][E1001] ./test.doxa:40:35: Undefined variable
+[CompileTime][Error][E5002] ./test.doxa:40:1: Cannot call non-function type Nothing
+[Runtime][Error][E1001] Unknown built-in function: precedence
+[CompileTime][Error][E1001] ./test.doxa:40:35: Undefined variable
+[CompileTime][Error][E5002] ./test.doxa:40:1: Cannot call non-function type Nothing
+[Runtime][Error][E1001] Unknown built-in function: precedence
+[CompileTime][Error][E5011] ./test.doxa:67:5: Function expects return value of type Union, but return statement has no value
+[CompileTime][Error][E5011] ./test.doxa:67:5: Function expects return value of type Union, but return statement has no value
+[CompileTime][Error][E5011] ./test.doxa:68:5: Function expects return value of type Union, but return statement has no value
+[CompileTime][Error][E5011] ./test.doxa:68:5: Function expects return value of type Union, but return statement has no value
+[CompileTime][Error][E5011] ./test.doxa:68:5: Function expects return value of type Union, but return statement has no value
+[CompileTime][Error][E1003] ./test.doxa:70:1: Type mismatch: expected Custom, got Nothing
+[CompileTime][Error][E1003] ./test.doxa:70:1: Type mismatch: expected Custom, got Nothing
+[CompileTime][Error][E1003] ./test.doxa:70:1: Type mismatch: expected Custom, got Nothing
+[CompileTime][Error][E1003] ./test.doxa:70:1: Type mismatch: expected Custom, got Nothing
