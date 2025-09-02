@@ -1551,56 +1551,10 @@ pub const SemanticAnalyzer = struct {
             },
             .FieldAccess => |field| {
                 const object_type = try self.inferTypeFromExpr(field.object);
-                if (object_type.base == .Struct) {
-                    if (object_type.struct_fields) |fields| {
-                        for (fields) |struct_field| {
-                            if (std.mem.eql(u8, struct_field.name, field.field.lexeme)) {
 
-                                // Copy the field type info
-                                type_info.* = struct_field.type_info.*;
-
-                                // If this field is a struct type, look up its fields from custom_types
-                                if (type_info.base == .Custom and type_info.custom_type != null) {
-                                    if (self.custom_types.get(type_info.custom_type.?)) |custom_type| {
-                                        if (custom_type.kind == .Struct) {
-                                            // Convert CustomTypeInfo.StructField to ast.StructFieldType
-                                            const struct_fields = try self.allocator.alloc(ast.StructFieldType, custom_type.struct_fields.?.len);
-                                            for (custom_type.struct_fields.?, 0..) |custom_field, i| {
-                                                struct_fields[i] = .{
-                                                    .name = custom_field.name,
-                                                    .type_info = custom_field.field_type_info,
-                                                };
-                                            }
-                                            type_info.* = .{ .base = .Struct, .custom_type = type_info.custom_type, .struct_fields = struct_fields, .is_mutable = false };
-                                        }
-                                    }
-                                }
-                                break;
-                            }
-                        } else {
-                            self.reporter.reportCompileError(
-                                getLocationFromBase(expr.base),
-                                ErrorCode.FIELD_NOT_FOUND,
-                                "Field '{s}' not found in struct",
-                                .{field.field.lexeme},
-                            );
-                            self.fatal_error = true;
-                            type_info.base = .Nothing;
-                            return type_info;
-                        }
-                    } else {
-                        self.reporter.reportCompileError(
-                            getLocationFromBase(expr.base),
-                            ErrorCode.STRUCT_HAS_NO_FIELDS,
-                            "Struct has no fields defined",
-                            .{},
-                        );
-                        self.fatal_error = true;
-                        type_info.base = .Nothing;
-                        return type_info;
-                    }
-                } else if (object_type.base == .Custom) {
-                    // Check if this is a struct type by looking up in custom_types
+                // First check if the object type is Custom and needs to be resolved to a struct
+                var resolved_object_type = object_type;
+                if (object_type.base == .Custom) {
                     if (object_type.custom_type) |custom_type_name| {
                         // First check if this is a module namespace
                         if (self.isModuleNamespace(custom_type_name)) {
@@ -1610,43 +1564,21 @@ pub const SemanticAnalyzer = struct {
 
                         if (self.custom_types.get(custom_type_name)) |custom_type| {
                             if (custom_type.kind == .Struct) {
-                                // This is a struct, handle field access
-                                if (custom_type.struct_fields) |fields| {
-                                    for (fields) |struct_field| {
-                                        if (std.mem.eql(u8, struct_field.name, field.field.lexeme)) {
-                                            if (struct_field.field_type_info.base == .Struct and struct_field.custom_type_name != null) {
-                                                // This is a custom struct field
-                                                type_info.* = .{ .base = .Custom, .custom_type = struct_field.custom_type_name };
-                                            } else {
-                                                type_info.* = struct_field.field_type_info.*;
-                                            }
-                                            break;
-                                        }
-                                    } else {
-                                        self.reporter.reportCompileError(
-                                            getLocationFromBase(expr.base),
-                                            ErrorCode.FIELD_NOT_FOUND,
-                                            "Field '{s}' not found in struct '{s}'",
-                                            .{ field.field.lexeme, custom_type_name },
-                                        );
-                                        self.fatal_error = true;
-                                        type_info.base = .Nothing;
-                                        return type_info;
-                                    }
-                                } else {
-                                    self.reporter.reportCompileError(
-                                        getLocationFromBase(expr.base),
-                                        ErrorCode.STRUCT_HAS_NO_FIELDS,
-                                        "Struct '{s}' has no fields defined",
-                                        .{custom_type_name},
-                                    );
-                                    self.fatal_error = true;
-                                    type_info.base = .Nothing;
-                                    return type_info;
+                                // Convert the Custom type to a Struct type for consistent handling
+                                const struct_fields = try self.allocator.alloc(ast.StructFieldType, custom_type.struct_fields.?.len);
+                                for (custom_type.struct_fields.?, 0..) |custom_field, i| {
+                                    struct_fields[i] = .{
+                                        .name = custom_field.name,
+                                        .type_info = custom_field.field_type_info,
+                                    };
                                 }
+                                const resolved_type_info = try self.allocator.create(ast.TypeInfo);
+                                resolved_type_info.* = ast.TypeInfo{ .base = .Struct, .custom_type = custom_type_name, .struct_fields = struct_fields, .is_mutable = object_type.is_mutable };
+                                resolved_object_type = resolved_type_info;
                             } else {
                                 // Not a struct, treat as enum variant access
                                 type_info.* = .{ .base = .Enum };
+                                return type_info;
                             }
                         } else {
                             self.reporter.reportCompileError(
@@ -1662,8 +1594,60 @@ pub const SemanticAnalyzer = struct {
                     } else {
                         // No custom type name, treat as enum variant access
                         type_info.* = .{ .base = .Enum };
+                        return type_info;
                     }
-                } else if (object_type.base == .Enum) {
+                }
+
+                // Now handle field access on the resolved object type
+                if (resolved_object_type.base == .Struct) {
+                    if (resolved_object_type.struct_fields) |fields| {
+                        for (fields) |struct_field| {
+                            if (std.mem.eql(u8, struct_field.name, field.field.lexeme)) {
+
+                                // Copy the field type info
+                                type_info.* = struct_field.type_info.*;
+
+                                // If this field is a struct type, look up its fields from custom_types
+                                if (type_info.base == .Custom and type_info.custom_type != null) {
+                                    if (self.custom_types.get(type_info.custom_type.?)) |custom_type| {
+                                        if (custom_type.kind == .Struct) {
+                                            // Convert CustomTypeInfo.StructField to ast.StructFieldType
+                                            const struct_fields_inner = try self.allocator.alloc(ast.StructFieldType, custom_type.struct_fields.?.len);
+                                            for (custom_type.struct_fields.?, 0..) |custom_field, i| {
+                                                struct_fields_inner[i] = .{
+                                                    .name = custom_field.name,
+                                                    .type_info = custom_field.field_type_info,
+                                                };
+                                            }
+                                            type_info.* = .{ .base = .Struct, .custom_type = type_info.custom_type, .struct_fields = struct_fields_inner, .is_mutable = false };
+                                        }
+                                    }
+                                }
+                                return type_info;
+                            }
+                        } else {
+                            self.reporter.reportCompileError(
+                                getLocationFromBase(expr.base),
+                                ErrorCode.FIELD_NOT_FOUND,
+                                "Field '{s}' not found in struct{s}",
+                                .{ field.field.lexeme, if (resolved_object_type.custom_type) |name| std.fmt.allocPrint(self.allocator, " '{s}'", .{name}) catch "" else "" },
+                            );
+                            self.fatal_error = true;
+                            type_info.base = .Nothing;
+                            return type_info;
+                        }
+                    } else {
+                        self.reporter.reportCompileError(
+                            getLocationFromBase(expr.base),
+                            ErrorCode.STRUCT_HAS_NO_FIELDS,
+                            "Struct{s} has no fields defined",
+                            .{if (resolved_object_type.custom_type) |name| std.fmt.allocPrint(self.allocator, " '{s}'", .{name}) catch "" else ""},
+                        );
+                        self.fatal_error = true;
+                        type_info.base = .Nothing;
+                        return type_info;
+                    }
+                } else if (resolved_object_type.base == .Enum) {
                     // Allow enum variant access: Color.Red
                     // You may want to check if the variant exists, but for now just return Enum type
                     type_info.* = .{ .base = .Enum };
@@ -1672,7 +1656,7 @@ pub const SemanticAnalyzer = struct {
                         getLocationFromBase(expr.base),
                         ErrorCode.CANNOT_ACCESS_FIELD_ON_TYPE,
                         "Cannot access field on non-struct type {s}",
-                        .{@tagName(object_type.base)},
+                        .{@tagName(resolved_object_type.base)},
                     );
                     self.fatal_error = true;
                     type_info.base = .Nothing;
@@ -4210,8 +4194,21 @@ pub const SemanticAnalyzer = struct {
             .Map => "map",
             .Enum => "enum",
             .Union => "union",
+            .Custom => "custom",
             .Nothing => "nothing",
-            else => "unknown",
+            else => blk: {
+                // Fallback: try evaluating the expression and derive type from its runtime value
+                const val = try self.evaluateExpression(expr);
+                break :blk switch (val) {
+                    .int => "int",
+                    .float => "float",
+                    .byte => "byte",
+                    .string => "string",
+                    .tetra => "tetra",
+                    .nothing => "nothing",
+                    else => "unknown",
+                };
+            },
         };
 
         return TokenLiteral{ .string = type_string };

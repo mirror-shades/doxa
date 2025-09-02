@@ -3802,6 +3802,30 @@ pub const HIRGenerator = struct {
                 const var_type = self.variable_types.get(var_token.lexeme) orelse .Unknown;
                 return var_type;
             },
+            .FieldAccess => |field| {
+                // Try to infer based on the object type and common field names
+                // Special-case: Enum member access like Color.Blue
+                if (field.object.data == .Variable) {
+                    const obj_name = field.object.data.Variable.lexeme;
+                    if (self.isCustomType(obj_name)) |custom_type| {
+                        if (custom_type.kind == .Enum) {
+                            return .Enum;
+                        }
+                        if (custom_type.kind == .Struct) {
+                            return .Struct;
+                        }
+                    }
+                }
+
+                const obj_type = self.inferTypeFromExpression(field.object);
+                // Heuristic: Many structs expose a 'value' (string) and 'token_type' (enum)
+                if (std.mem.eql(u8, field.field.lexeme, "value")) return .String;
+                if (std.mem.eql(u8, field.field.lexeme, "token_type")) return .Enum;
+                if (obj_type == .Struct) {
+                    return .Unknown; // Unknown specific field, but it's a struct
+                }
+                return .Unknown;
+            },
             .Binary => |binary| {
                 // Simple type inference for binary operations
                 const left_type = if (binary.left) |left| self.inferTypeFromExpression(left) else .Unknown;
@@ -3889,110 +3913,6 @@ pub const HIRGenerator = struct {
                 }
                 return .Unknown; // Default for unrecognized function calls
             },
-            .If => |if_expr| {
-                // If both branches have the same type, return that
-                if (if_expr.then_branch) |then_branch| {
-                    const then_type = self.inferTypeFromExpression(then_branch);
-                    if (if_expr.else_branch) |else_branch| {
-                        const else_type = self.inferTypeFromExpression(else_branch);
-                        if (then_type == else_type) return then_type;
-                    }
-                    return then_type;
-                }
-                return .Unknown;
-            },
-            .MethodCall => |m| {
-                // Only infer types for compiler methods - DO NOT generate code here
-                const name = m.method.lexeme;
-                if (std.mem.eql(u8, name, "substring")) {
-                    return .String; // substring returns string
-                } else if (std.mem.eql(u8, name, "string")) {
-                    return .String; // @string converts to string
-                } else if (std.mem.eql(u8, name, "length")) {
-                    return .Int; // @length returns int
-                } else if (std.mem.eql(u8, name, "int")) {
-                    return .Int; // @int returns int
-                } else if (std.mem.eql(u8, name, "float")) {
-                    return .Float; // @float returns float
-                } else if (std.mem.eql(u8, name, "byte")) {
-                    return .Byte; // @byte returns byte
-                }
-                return .Unknown; // Unknown method calls
-            },
-            .Match => .String, // Match expressions typically return strings in this codebase
-            .StructLiteral => .Struct,
-            .EnumMember => .Enum,
-            .FieldAccess => |field| {
-                // First check the type of the object being accessed
-                const obj_type = self.inferTypeFromExpression(field.object);
-
-                // Handle string operations
-                if (obj_type == .String) {
-                    if (std.mem.eql(u8, field.field.lexeme, "length")) {
-                        return .Int; // String length returns int
-                    }
-                    if (std.mem.eql(u8, field.field.lexeme, "bytes")) {
-                        return .Array; // String bytes returns array of byte
-                    }
-                    // String indexing returns a single character string
-                    if (std.fmt.parseInt(i32, field.field.lexeme, 10)) |_| {
-                        return .String;
-                    } else |_| {
-                        return .Unknown; // Invalid string operation
-                    }
-                }
-
-                // Handle enum member access
-                if (obj_type == .Enum) {
-                    // For enum member access like Color.Blue, return the enum type
-                    if (field.object.data == .Variable) {
-                        const enum_name = field.object.data.Variable.lexeme;
-                        if (self.isCustomType(enum_name)) |custom_type| {
-                            if (custom_type.kind == .Enum) {
-                                return .Enum; // Return enum type for enum member access
-                            }
-                        }
-                    }
-                    return .Enum; // Generic enum type for other enum member accesses
-                }
-
-                // Handle struct fields
-                if (obj_type == .Struct) {
-                    // Check if this is a nested field access
-                    if (field.object.data == .FieldAccess) {
-                        const parent_field = field.object.data.FieldAccess;
-                        const parent_type = self.inferTypeFromExpression(parent_field.object);
-                        if (parent_type == .Struct) {
-                            // Handle nested struct fields
-                            if (std.mem.eql(u8, parent_field.field.lexeme, "person")) {
-                                // Person struct fields
-                                if (std.mem.eql(u8, field.field.lexeme, "age")) {
-                                    return .Int;
-                                }
-                                if (std.mem.eql(u8, field.field.lexeme, "name")) {
-                                    return .String;
-                                }
-                            }
-                        }
-                    } else {
-                        // Top-level struct fields
-                        if (std.mem.eql(u8, field.field.lexeme, "age") or
-                            std.mem.eql(u8, field.field.lexeme, "salary"))
-                        {
-                            return .Int; // Numeric fields
-                        }
-                        if (std.mem.eql(u8, field.field.lexeme, "name")) {
-                            return .String; // String fields
-                        }
-                        if (std.mem.eql(u8, field.field.lexeme, "person")) {
-                            return .Struct; // Nested struct fields
-                        }
-                    }
-                }
-
-                return .Unknown; // Default for unknown object types
-            },
-            .Exists, .ForAll => .Tetra, // Quantifiers return tetra values
             .Logical => .Tetra, // Logical operations (↔, ⊕, ∧, ∨, ↑, ↓, →) return tetra values
             .Unary => {
                 // Unary operations: negation (¬) returns tetra, others depend on operand
