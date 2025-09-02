@@ -164,7 +164,7 @@ pub const rules = blk: {
     // Add rule for the ? operator with lower precedence
     r.set(.PEEK, .{ .infix = peekValue, .precedence = .CALL });
     // Add rule for the ? operator with lower precedence
-    r.set(.SHOW, .{ .infix = showValue, .precedence = .CALL });
+    r.set(.PRINT, .{ .infix = printValue, .precedence = .CALL });
 
     // Add loop support
     r.set(.WHILE, .{ .prefix = whileExpr });
@@ -486,7 +486,7 @@ fn peekValue(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Exp
     return peek_expr;
 }
 
-fn showValue(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+fn printValue(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     if (left == null) return error.ExpectedLeftOperand;
 
     // Get the variable name if this is a variable expression
@@ -500,9 +500,9 @@ fn showValue(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Exp
     // (possibly EOF/newline) which may have empty file information.
     const qm_token = self.previous();
 
-    // Create the show expression
-    const show_expr = try self.allocator.create(ast.Expr);
-    show_expr.* = .{
+    // Create the print expression
+    const print_expr = try self.allocator.create(ast.Expr);
+    print_expr.* = .{
         .base = .{
             .id = ast.generateNodeId(),
             .span = .{
@@ -518,22 +518,12 @@ fn showValue(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Exp
             },
         },
         .data = .{
-            // Use regular Show for non-struct values
-            .Show = .{
+            // Use regular Print for non-struct values
+            .Print = .{
                 .expr = left.?,
-                .location = .{
-                    .file = qm_token.file,
-                    .range = .{
-                        .start_line = @intCast(qm_token.line),
-                        .start_col = qm_token.column,
-                        .end_line = @intCast(qm_token.line),
-                        .end_col = qm_token.column + qm_token.lexeme.len,
-                    },
-                },
-                .variable_name = name_token,
             },
         },
     };
 
-    return show_expr;
+    return print_expr;
 }

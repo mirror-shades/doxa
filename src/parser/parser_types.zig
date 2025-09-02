@@ -623,7 +623,7 @@ pub const Parser = struct {
         if (std.mem.eql(u8, name, "string")) return .TOSTRING;
         if (std.mem.eql(u8, name, "int")) return .PARSEINT;
         if (std.mem.eql(u8, name, "float")) return .PARSEFLOAT;
-        if (std.mem.eql(u8, name, "bytes")) return .PARSEBYTE;
+        if (std.mem.eql(u8, name, "byte")) return .PARSEBYTE;
 
         // String
         if (std.mem.eql(u8, name, "split")) return .SPLIT;

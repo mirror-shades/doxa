@@ -4,6 +4,7 @@ const HIRMapEntry = @import("soxa_values.zig").HIRMapEntry;
 const ScopeKind = @import("soxa_types.zig").ScopeKind;
 const CallKind = @import("soxa_types.zig").CallKind;
 const Reporting = @import("../../utils/reporting.zig");
+const Expr = @import("../../ast/ast.zig").Expr;
 
 pub const ArithOp = enum { Add, Sub, Mul, Div, Mod, Pow };
 
@@ -11,7 +12,7 @@ pub const CompareOp = enum { Eq, Ne, Lt, Le, Gt, Ge };
 
 pub const LogicalOpType = enum { And, Or, Not, Iff, Xor, Nand, Nor, Implies };
 
-pub const StringOpType = enum { Concat, Length, Substring, Bytes, ToInt };
+pub const StringOpType = enum { Concat, Length, Substring, Bytes, ToInt, ToFloat, ToByte, ToString };
 
 pub const OverflowBehavior = enum {
     Trap, // VM: throw error, LLVM: generate trap
@@ -102,6 +103,7 @@ pub const HIRInstruction = union(enum) {
     /// LLVM: LLVMBuildAdd, LLVMBuildSub, LLVMBuildMul
     Arith: struct {
         op: ArithOp,
+        operand_type: HIRType,
     },
 
     /// Type conversion
@@ -408,17 +410,12 @@ pub const HIRInstruction = union(enum) {
     /// Print/peek value
     /// VM: Complex printValue logic
     /// LLVM: Generate printf calls with format strings
-    Show: struct {
-        name: ?[]const u8,
-        value_type: HIRType,
-        location: ?Reporting.Location,
-        union_members: ?[][]const u8 = null,
-    },
+    Print: struct {},
 
     /// Prints a struct
     /// VM: OP_PEEK_STRUCT
     /// LLVM: Generate constant string based on LLVM type
-    ShowStruct: struct {
+    PrintStruct: struct {
         type_name: []const u8, // Changed from struct_name to type_name
         field_count: u32,
         field_names: [][]const u8,

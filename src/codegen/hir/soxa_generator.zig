@@ -1228,65 +1228,118 @@ pub const HIRGenerator = struct {
                 // Determine the result type based on the operation and operand types
                 const result_type = self.inferBinaryOpResultType(bin.operator.type, bin.left.?, bin.right.?);
 
-                self.reporter.debug("Binary op {s}: left_type={s}, right_type={s}, result_type={s}\n", .{ @tagName(bin.operator.type), @tagName(self.inferTypeFromExpression(bin.left.?)), @tagName(self.inferTypeFromExpression(bin.right.?)), @tagName(result_type) }, @src());
+                self.reporter.debug("Binary op {s}: left_type={s}, right_type={s}, result_type={s}\n", .{ @tagName(bin.operator.type), @tagName(left_type), @tagName(right_type), @tagName(result_type) }, @src());
 
-                if (bin.operator.type == .SLASH) {
-                    self.reporter.debug("GEN DIV: Converting both operands to Float for division", .{}, @src());
-                    try self.generateExpression(bin.left.?, true);
-                    if (left_type != .Float and left_type != .Unknown) {
-                        self.reporter.debug("Converting left operand from {s} to Float\n", .{@tagName(left_type)}, @src());
-                        try self.instructions.append(.{ .Convert = .{ .from_type = left_type, .to_type = .Float } });
-                    }
+                // Generate expressions for both operands first
+                try self.generateExpression(bin.left.?, true);
+                try self.generateExpression(bin.right.?, true);
 
-                    try self.generateExpression(bin.right.?, true);
-                    if (right_type != .Float and right_type != .Unknown) {
-                        self.reporter.debug("Converting right operand from {s} to Float\n", .{@tagName(right_type)}, @src());
-                        try self.instructions.append(.{ .Convert = .{ .from_type = right_type, .to_type = .Float } });
-                    }
-                } else if (bin.operator.type == .POWER) {
-                    // Do not pre-convert for POWER; let the POWER case handle precise integer/float behavior
-                    try self.generateExpression(bin.left.?, true);
-                    try self.generateExpression(bin.right.?, true);
-                } else if (bin.operator.type == .EQUALITY or bin.operator.type == .BANG_EQUAL or
-                    bin.operator.type == .LESS or bin.operator.type == .GREATER or
-                    bin.operator.type == .LESS_EQUAL or bin.operator.type == .GREATER_EQUAL)
-                {
-                    // For comparison operators, don't pre-convert operands - let the Compare instruction handle it
-                    try self.generateExpression(bin.left.?, true);
-                    try self.generateExpression(bin.right.?, true);
-                } else {
-                    try self.generateExpression(bin.left.?, true);
-                    if (left_type != result_type and left_type != .Unknown and result_type != .Unknown) {
-                        self.reporter.debug("Converting left operand from {s} to {s}\n", .{ @tagName(left_type), @tagName(result_type) }, @src());
-                        try self.instructions.append(.{ .Convert = .{ .from_type = left_type, .to_type = result_type } });
-                    }
-
-                    try self.generateExpression(bin.right.?, true);
-                    if (right_type != result_type and right_type != .Unknown and result_type != .Unknown) {
-                        self.reporter.debug("Converting right operand from {s} to {s}\n", .{ @tagName(right_type), @tagName(result_type) }, @src());
-                        try self.instructions.append(.{ .Convert = .{ .from_type = right_type, .to_type = result_type } });
-                    }
-                }
+                // Centralized type promotion rules:
+                // 1. Float dominance: If either operand is Float or operator is division (/), promote to Float
+                // 2. Int fallback: If either operand is Int, promote to Int
+                // 3. No promotion: If neither is Float or Int, leave operands as-is (e.g., Byte)
 
                 switch (bin.operator.type) {
                     .PLUS => {
-                        // If either operand is a string, emit string concatenation
-                        const lt = self.inferTypeFromExpression(bin.left.?);
-                        if (lt == .String) {
-                            // We pushed left, then right. VM pops top as receiver (s_val),
-                            // and then pops the next as the second string. To compute left + right,
-                            // we need top to be left. So swap the top two values before Concat.
+                        // Handle string concatenation and array concatenation
+                        if (left_type == .String and right_type == .String) {
                             try self.instructions.append(.Swap);
                             try self.instructions.append(.{ .StringOp = .{ .op = .Concat } });
+                        } else if (left_type == .Array and right_type == .Array) {
+                            try self.instructions.append(.{ .Arith = .{ .op = .Add, .operand_type = .Array } });
                         } else {
-                            try self.instructions.append(.{ .Arith = .{ .op = .Add } });
+                            // For numeric types, use the promoted common type
+                            const common_type = self.computeNumericCommonType(left_type, right_type, bin.operator.type);
+                            if (common_type != .Unknown) {
+                                // Apply type promotion if needed
+                                _ = try self.applyTypePromotionIfNeeded(left_type, right_type, common_type);
+                                try self.instructions.append(.{ .Arith = .{ .op = .Add, .operand_type = common_type } });
+                            } else {
+                                self.reporter.reportCompileError(
+                                    bin.left.?.base.location(),
+                                    ErrorCode.TYPE_MISMATCH,
+                                    "Cannot use + operator between {s} and {s}",
+                                    .{ @tagName(left_type), @tagName(right_type) },
+                                );
+                                return ErrorList.TypeMismatch;
+                            }
                         }
                     },
-                    .MINUS => try self.instructions.append(.{ .Arith = .{ .op = .Sub } }),
-                    .ASTERISK => try self.instructions.append(.{ .Arith = .{ .op = .Mul } }),
-                    .SLASH => try self.instructions.append(.{ .Arith = .{ .op = .Div } }),
-                    .MODULO => try self.instructions.append(.{ .Arith = .{ .op = .Mod } }),
-                    .POWER => try self.instructions.append(.{ .Arith = .{ .op = .Pow } }),
+                    .MINUS => {
+                        const common_type = self.computeNumericCommonType(left_type, right_type, bin.operator.type);
+                        if (common_type != .Unknown) {
+                            _ = try self.applyTypePromotionIfNeeded(left_type, right_type, common_type);
+                            try self.instructions.append(.{ .Arith = .{ .op = .Sub, .operand_type = common_type } });
+                        } else {
+                            self.reporter.reportCompileError(
+                                bin.left.?.base.location(),
+                                ErrorCode.TYPE_MISMATCH,
+                                "Cannot use - operator between {s} and {s}",
+                                .{ @tagName(left_type), @tagName(right_type) },
+                            );
+                            return ErrorList.TypeMismatch;
+                        }
+                    },
+                    .ASTERISK => {
+                        const common_type = self.computeNumericCommonType(left_type, right_type, bin.operator.type);
+                        if (common_type != .Unknown) {
+                            _ = try self.applyTypePromotionIfNeeded(left_type, right_type, common_type);
+                            try self.instructions.append(.{ .Arith = .{ .op = .Mul, .operand_type = common_type } });
+                        } else {
+                            self.reporter.reportCompileError(
+                                bin.left.?.base.location(),
+                                ErrorCode.TYPE_MISMATCH,
+                                "Cannot use * operator between {s} and {s}",
+                                .{ @tagName(left_type), @tagName(right_type) },
+                            );
+                            return ErrorList.TypeMismatch;
+                        }
+                    },
+                    .SLASH => {
+                        const common_type = self.computeNumericCommonType(left_type, right_type, bin.operator.type);
+                        if (common_type != .Unknown) {
+                            _ = try self.applyTypePromotionIfNeeded(left_type, right_type, common_type);
+                            try self.instructions.append(.{ .Arith = .{ .op = .Div, .operand_type = common_type } });
+                        } else {
+                            self.reporter.reportCompileError(
+                                bin.left.?.base.location(),
+                                ErrorCode.TYPE_MISMATCH,
+                                "Cannot use / operator between {s} and {s}",
+                                .{ @tagName(left_type), @tagName(right_type) },
+                            );
+                            return ErrorList.TypeMismatch;
+                        }
+                    },
+                    .MODULO => {
+                        const common_type = self.computeNumericCommonType(left_type, right_type, bin.operator.type);
+                        if (common_type != .Unknown) {
+                            _ = try self.applyTypePromotionIfNeeded(left_type, right_type, common_type);
+                            try self.instructions.append(.{ .Arith = .{ .op = .Mod, .operand_type = common_type } });
+                        } else {
+                            self.reporter.reportCompileError(
+                                bin.left.?.base.location(),
+                                ErrorCode.TYPE_MISMATCH,
+                                "Cannot use % operator between {s} and {s}",
+                                .{ @tagName(left_type), @tagName(right_type) },
+                            );
+                            return ErrorList.TypeMismatch;
+                        }
+                    },
+                    .POWER => {
+                        const common_type = self.computeNumericCommonType(left_type, right_type, bin.operator.type);
+                        if (common_type != .Unknown) {
+                            _ = try self.applyTypePromotionIfNeeded(left_type, right_type, common_type);
+                            try self.instructions.append(.{ .Arith = .{ .op = .Pow, .operand_type = common_type } });
+                        } else {
+                            self.reporter.reportCompileError(
+                                bin.left.?.base.location(),
+                                ErrorCode.TYPE_MISMATCH,
+                                "Cannot use ** operator between {s} and {s}",
+                                .{ @tagName(left_type), @tagName(right_type) },
+                            );
+                            return ErrorList.TypeMismatch;
+                        }
+                    },
                     .EQUALITY => {
                         const operand_type = self.inferComparisonOperandType(bin.left.?, bin.right.?);
                         try self.instructions.append(.{ .Compare = .{ .op = .Eq, .operand_type = operand_type } });
@@ -1810,90 +1863,13 @@ pub const HIRGenerator = struct {
                 }
             },
 
-            .Show => |peek| {
+            .Print => |print| {
+                // Generate the expression to print (leaves value on stack)
+                try self.generateExpression(print.expr, true);
 
-                // Set current peek expression for field access tracking
-                self.current_peek_expr = peek.expr;
-                defer self.current_peek_expr = null;
+                // Generate print instruction
+                try self.instructions.append(.{ .Print = .{} });
 
-                // Generate the expression to peek (leaves value on stack)
-                try self.generateExpression(peek.expr, true);
-
-                // Build the full path for the peek expression (handles field access)
-                // Special case: Don't show variable name for enum member access like Color.Red
-                const peek_path = if (peek.expr.data == .FieldAccess) blk: {
-                    const field = peek.expr.data.FieldAccess;
-                    const obj_type = self.inferTypeFromExpression(field.object);
-                    // If this is enum member access (Color.Red), don't show variable name
-                    if (obj_type == .Enum and field.object.data == .Variable) {
-                        break :blk null; // No variable name for enum member access
-                    } else {
-                        break :blk try self.buildPeekPath(peek.expr);
-                    }
-                } else try self.buildPeekPath(peek.expr);
-
-                // NEW: Prefer expression inference; refine for array indexing
-                var inferred_type: HIRType = self.inferTypeFromExpression(peek.expr);
-                if (peek.expr.data == .Index and peek.expr.data.Index.array.data == .Variable) {
-                    if (self.getTrackedArrayElementType(peek.expr.data.Index.array.data.Variable.lexeme)) |elem_type| {
-                        inferred_type = elem_type;
-                    }
-                } else if (peek.expr.data == .Variable) {
-                    if (self.getTrackedVariableType(peek.expr.data.Variable.lexeme)) |tracked_type| {
-                        inferred_type = tracked_type;
-                    }
-                }
-
-                // New: include union member list for variables declared as unions
-                var union_members: ?[][]const u8 = null;
-                // If peeking a StringToInt expression directly, attach union members inline
-                if (peek.expr.data == .StringToInt) {
-                    const members = try self.allocator.alloc([]const u8, 2);
-                    members[0] = "int";
-                    members[1] = "NumberError";
-                    union_members = members;
-                }
-                // If peeking a direct @substring expression, attach union members inline
-                if (peek.expr.data == .MethodCall) {
-                    const m = peek.expr.data.MethodCall;
-                    if (std.mem.eql(u8, m.method.lexeme, "substring")) {
-                        const members = try self.allocator.alloc([]const u8, 2);
-                        members[0] = "string";
-                        members[1] = "IndexError";
-                        union_members = members;
-                    }
-                }
-                if (peek.expr.data == .Variable) {
-                    const var_name = peek.expr.data.Variable.lexeme;
-                    self.reporter.debug("Checking union members for variable {s}", .{var_name}, @src());
-                    // Prefer index-based lookup to avoid name collisions; do this for all scopes
-                    var maybe_index: ?u32 = null;
-                    if (self.current_function != null) {
-                        maybe_index = self.local_variables.get(var_name);
-                    } else {
-                        maybe_index = self.variables.get(var_name);
-                    }
-                    if (maybe_index) |var_index| {
-                        if (self.variable_union_members_by_index.get(var_index)) |members2| {
-                            union_members = members2;
-                            self.reporter.debug("Found union members for {s} by index: {any}", .{ var_name, members2 }, @src());
-                        }
-                    }
-                    // Regression fix: do NOT fallback to name-based lookup; avoid cross-scope collisions
-                    if (union_members == null) {
-                        self.reporter.debug("No union members found for {s}", .{var_name}, @src());
-                    }
-                }
-
-                // Generate peek instruction with full path and correct type
-                try self.instructions.append(.{ .Show = .{
-                    .name = peek_path,
-                    .value_type = inferred_type,
-                    .location = peek.location,
-                    .union_members = union_members,
-                } });
-
-                // IMPORTANT: Peek pops the value, prints, then pushes it back.
                 // If the caller does not need the result (statement context), drop it now
                 if (!preserve_result) {
                     try self.instructions.append(.Pop);
@@ -1981,13 +1957,13 @@ pub const HIRGenerator = struct {
                 } });
             },
 
-            .ShowStruct => |peek| {
+            .PrintStruct => |print| {
 
                 // Generate the expression to peek
-                try self.generateExpression(peek.expr, true);
+                try self.generateExpression(print.expr, true);
 
                 // Get struct info from the expression
-                const struct_info: StructPeekInfo = switch (peek.expr.data) {
+                const struct_info: StructPeekInfo = switch (print.expr.data) {
                     .StructLiteral => |struct_lit| blk: {
                         const field_count: u32 = @truncate(struct_lit.fields.len);
                         const field_names = try self.allocator.alloc([]const u8, struct_lit.fields.len);
@@ -2037,7 +2013,7 @@ pub const HIRGenerator = struct {
                         const field_names = try self.allocator.alloc([]const u8, 1);
                         const field_types = try self.allocator.alloc(HIRType, 1);
                         field_names[0] = field.field.lexeme;
-                        field_types[0] = self.inferTypeFromExpression(peek.expr);
+                        field_types[0] = self.inferTypeFromExpression(print.expr);
 
                         break :blk StructPeekInfo{
                             .name = field.field.lexeme,
@@ -2051,13 +2027,13 @@ pub const HIRGenerator = struct {
                     },
                 };
 
-                // Add the ShowStruct instruction with the gathered info
-                try self.instructions.append(.{ .ShowStruct = .{
+                // Add the PrintStruct instruction with the gathered info
+                try self.instructions.append(.{ .PrintStruct = .{
                     .type_name = struct_info.name,
                     .field_count = struct_info.field_count,
                     .field_names = struct_info.field_names,
                     .field_types = struct_info.field_types,
-                    .location = peek.location,
+                    .location = print.location,
                     .should_pop_after_peek = !preserve_result,
                 } });
             },
@@ -2334,15 +2310,96 @@ pub const HIRGenerator = struct {
                 // Generate the value expression (e.g., the "1" in "current += 1")
                 try self.generateExpression(compound.value.?, true);
 
-                // Generate the compound operation based on operator
+                const left_type = self.getTrackedVariableType(compound.name.lexeme) orelse .Unknown;
+                const right_type = self.inferTypeFromExpression(compound.value.?);
                 switch (compound.operator.type) {
-                    .PLUS_EQUAL => try self.instructions.append(.{ .Arith = .{ .op = .Add } }),
-                    .MINUS_EQUAL => try self.instructions.append(.{ .Arith = .{ .op = .Sub } }),
-                    .ASTERISK_EQUAL => try self.instructions.append(.{ .Arith = .{ .op = .Mul } }),
+                    .PLUS_EQUAL => {
+                        if (left_type == .Int and right_type == .Int) {
+                            try self.instructions.append(.{ .Arith = .{ .op = .Add, .operand_type = .Int } });
+                        } else if (left_type == .Float and right_type == .Float) {
+                            try self.instructions.append(.{ .Arith = .{ .op = .Add, .operand_type = .Float } });
+                        } else if (left_type == .Byte and right_type == .Byte) {
+                            try self.instructions.append(.{ .Arith = .{ .op = .Add, .operand_type = .Byte } });
+                        } else if (left_type == .Byte and right_type == .Int) {
+                            // Implicitly convert RHS Int to Byte for byte arithmetic
+                            try self.instructions.append(.{ .Convert = .{ .from_type = .Int, .to_type = .Byte } });
+                            try self.instructions.append(.{ .Arith = .{ .op = .Add, .operand_type = .Byte } });
+                        } else if (left_type == .String and right_type == .String) {
+                            try self.instructions.append(.{ .StringOp = .{ .op = .Concat } });
+                        } else if (left_type == .Array and right_type == .Array) {
+                            try self.instructions.append(.{ .Arith = .{ .op = .Add, .operand_type = .Array } });
+                        } else {
+                            const location = Location{
+                                .file = compound.name.file,
+                                .range = .{
+                                    .start_line = compound.name.line,
+                                    .start_col = compound.name.column,
+                                    .end_line = compound.name.line,
+                                    .end_col = compound.name.column + compound.name.lexeme.len,
+                                },
+                            };
+                            self.reporter.reportCompileError(
+                                location,
+                                ErrorCode.TYPE_MISMATCH,
+                                "Cannot use += operator between {s} and {s}. Both operands must be the same type.",
+                                .{ @tagName(left_type), @tagName(right_type) },
+                            );
+                            return ErrorList.TypeMismatch;
+                        }
+                    },
+                    .MINUS_EQUAL => {
+                        if (left_type == .Int and right_type == .Int) {
+                            try self.instructions.append(.{ .Arith = .{ .op = .Sub, .operand_type = .Int } });
+                        } else if (left_type == .Float and right_type == .Float) {
+                            try self.instructions.append(.{ .Arith = .{ .op = .Sub, .operand_type = .Float } });
+                        } else if (left_type == .Byte and right_type == .Byte) {
+                            try self.instructions.append(.{ .Arith = .{ .op = .Sub, .operand_type = .Byte } });
+                        } else {
+                            const location = Location{
+                                .file = compound.name.file,
+                                .range = .{
+                                    .start_line = compound.name.line,
+                                    .start_col = compound.name.column,
+                                    .end_line = compound.name.line,
+                                    .end_col = compound.name.column + compound.name.lexeme.len,
+                                },
+                            };
+                            self.reporter.reportCompileError(
+                                location,
+                                ErrorCode.TYPE_MISMATCH,
+                                "Cannot use += operator between {s} and {s}. Both operands must be the same type.",
+                                .{ @tagName(left_type), @tagName(right_type) },
+                            );
+                            return ErrorList.TypeMismatch;
+                        }
+                    },
+                    .ASTERISK_EQUAL => {
+                        if (left_type == .Int and right_type == .Int) {
+                            try self.instructions.append(.{ .Arith = .{ .op = .Mul, .operand_type = .Int } });
+                        } else if (left_type == .Float and right_type == .Float) {
+                            try self.instructions.append(.{ .Arith = .{ .op = .Mul, .operand_type = .Float } });
+                        } else if (left_type == .Byte and right_type == .Byte) {
+                            try self.instructions.append(.{ .Arith = .{ .op = .Mul, .operand_type = .Byte } });
+                        } else {
+                            const location = Location{
+                                .file = compound.name.file,
+                                .range = .{
+                                    .start_line = compound.name.line,
+                                    .start_col = compound.name.column,
+                                    .end_line = compound.name.line,
+                                    .end_col = compound.name.column + compound.name.lexeme.len,
+                                },
+                            };
+                            self.reporter.reportCompileError(
+                                location,
+                                ErrorCode.TYPE_MISMATCH,
+                                "Cannot use += operator between {s} and {s}. Both operands must be the same type.",
+                                .{ @tagName(left_type), @tagName(right_type) },
+                            );
+                            return ErrorList.TypeMismatch;
+                        }
+                    },
                     .SLASH_EQUAL => {
-                        // For '/=' always perform float division: convert both operands to Float
-                        const left_type = self.getTrackedVariableType(compound.name.lexeme) orelse .Unknown;
-                        const right_type = self.inferTypeFromExpression(compound.value.?);
                         // Stack: [..., left, right]
                         // Convert left to Float
                         try self.instructions.append(.Swap);
@@ -2355,9 +2412,34 @@ pub const HIRGenerator = struct {
                             try self.instructions.append(.{ .Convert = .{ .from_type = right_type, .to_type = .Float } });
                         }
                         // Now do float division
-                        try self.instructions.append(.{ .Arith = .{ .op = .Div } });
+                        try self.instructions.append(.{ .Arith = .{ .op = .Div, .operand_type = .Float } });
                     },
-                    .POWER_EQUAL => try self.instructions.append(.{ .Arith = .{ .op = .Pow } }),
+                    .POWER_EQUAL => {
+                        if (left_type == .Int and right_type == .Int) {
+                            try self.instructions.append(.{ .Arith = .{ .op = .Pow, .operand_type = .Int } });
+                        } else if (left_type == .Float and right_type == .Float) {
+                            try self.instructions.append(.{ .Arith = .{ .op = .Pow, .operand_type = .Float } });
+                        } else if (left_type == .Byte and right_type == .Byte) {
+                            try self.instructions.append(.{ .Arith = .{ .op = .Pow, .operand_type = .Byte } });
+                        } else {
+                            const location = Location{
+                                .file = compound.name.file,
+                                .range = .{
+                                    .start_line = compound.name.line,
+                                    .start_col = compound.name.column,
+                                    .end_line = compound.name.line,
+                                    .end_col = compound.name.column + compound.name.lexeme.len,
+                                },
+                            };
+                            self.reporter.reportCompileError(
+                                location,
+                                ErrorCode.TYPE_MISMATCH,
+                                "Cannot use **= operator between {s} and {s}. Both operands must be the same type.",
+                                .{ @tagName(left_type), @tagName(right_type) },
+                            );
+                            return ErrorList.TypeMismatch;
+                        }
+                    },
                     else => {
                         const location = Location{
                             .file = compound.operator.file,
@@ -2427,12 +2509,19 @@ pub const HIRGenerator = struct {
                     },
                     .MINUS => {
                         // Unary minus: 0 - operand
-                        const zero_idx = try self.addConstant(HIRValue{ .int = 0 });
-                        try self.instructions.append(.{ .Const = .{ .value = HIRValue{ .int = 0 }, .constant_id = zero_idx } });
+                        const operand_type = self.inferTypeFromExpression(unary.right.?);
+                        const zero_value = switch (operand_type) {
+                            .Int => HIRValue{ .int = 0 },
+                            .Float => HIRValue{ .float = 0.0 },
+                            .Byte => HIRValue{ .byte = 0 },
+                            else => HIRValue{ .int = 0 }, // fallback
+                        };
+                        const zero_idx = try self.addConstant(zero_value);
+                        try self.instructions.append(.{ .Const = .{ .value = zero_value, .constant_id = zero_idx } });
 
                         // Swap operands so we have: 0, operand on stack
                         // Then subtract: 0 - operand = -operand
-                        try self.instructions.append(.{ .Arith = .{ .op = .Sub } });
+                        try self.instructions.append(.{ .Arith = .{ .op = .Sub, .operand_type = operand_type } });
                     },
                     .PLUS => {
                         // Unary plus: just return the operand unchanged (no-op)
@@ -3349,7 +3438,7 @@ pub const HIRGenerator = struct {
                 try self.instructions.append(.{ .LoadVar = .{ .var_index = idx_tmp_idx, .var_name = idx_var_name, .scope_kind = .Local, .module_context = null } });
                 const one_idx = try self.addConstant(HIRValue{ .int = 1 });
                 try self.instructions.append(.{ .Const = .{ .value = HIRValue{ .int = 1 }, .constant_id = one_idx } });
-                try self.instructions.append(.{ .Arith = .{ .op = .Add } });
+                try self.instructions.append(.{ .Arith = .{ .op = .Add, .operand_type = .Int } });
                 try self.instructions.append(.{ .StoreVar = .{ .var_index = idx_tmp_idx, .var_name = idx_var_name, .scope_kind = .Local, .module_context = null, .expected_type = .Int } });
 
                 // Jump back to condition
@@ -3478,6 +3567,44 @@ pub const HIRGenerator = struct {
                             .return_type = .String,
                         },
                     });
+                }
+            },
+
+            .MethodCall => |m| {
+                // Generate HIR for compiler methods like @string, @length, @substring
+                const name = m.method.lexeme;
+                if (std.mem.eql(u8, name, "substring")) {
+                    // Evaluate in VM-expected order: start, length, then receiver on top
+                    try self.generateExpression(m.arguments[0], true);
+                    try self.generateExpression(m.arguments[1], true);
+                    try self.generateExpression(m.receiver, true);
+                    try self.instructions.append(.{ .StringOp = .{ .op = .Substring } });
+                } else if (std.mem.eql(u8, name, "string")) {
+                    // Evaluate receiver (the value to convert to string)
+                    try self.generateExpression(m.receiver, true);
+                    // Generate StringOp.ToString instruction
+                    try self.instructions.append(.{ .StringOp = .{ .op = .ToString } });
+                } else if (std.mem.eql(u8, name, "length")) {
+                    // Evaluate receiver (the value to get length of)
+                    try self.generateExpression(m.receiver, true);
+                    // Generate StringOp.Length instruction
+                    try self.instructions.append(.{ .StringOp = .{ .op = .Length } });
+                } else if (std.mem.eql(u8, name, "int")) {
+                    // Evaluate receiver and convert to int
+                    try self.generateExpression(m.receiver, true);
+                    try self.instructions.append(.{ .StringOp = .{ .op = .ToInt } });
+                } else if (std.mem.eql(u8, name, "float")) {
+                    // Evaluate receiver and convert to float
+                    try self.generateExpression(m.receiver, true);
+                    try self.instructions.append(.{ .StringOp = .{ .op = .ToFloat } });
+                } else if (std.mem.eql(u8, name, "byte")) {
+                    // Evaluate receiver and convert to byte
+                    try self.generateExpression(m.receiver, true);
+                    try self.instructions.append(.{ .StringOp = .{ .op = .ToByte } });
+                } else {
+                    // Unknown method - fallback to nothing
+                    const nothing_idx = try self.addConstant(HIRValue.nothing);
+                    try self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } });
                 }
             },
 
@@ -3731,7 +3858,9 @@ pub const HIRGenerator = struct {
                         if (std.mem.eql(u8, method.method.lexeme, "substring")) return .String;
                         if (std.mem.eql(u8, method.method.lexeme, "length")) return .Int;
                         if (std.mem.eql(u8, method.method.lexeme, "bytes")) return .Array;
-                        if (std.mem.eql(u8, method.method.lexeme, "int")) return .Int; // union at semantic level
+                        if (std.mem.eql(u8, method.method.lexeme, "int")) return .Int;
+                        if (std.mem.eql(u8, method.method.lexeme, "float")) return .Float;
+                        if (std.mem.eql(u8, method.method.lexeme, "byte")) return .Byte;
                         if (std.mem.eql(u8, method.method.lexeme, "safeAdd")) return .Int;
                     },
                     .FieldAccess => |field| {
@@ -3773,52 +3902,22 @@ pub const HIRGenerator = struct {
                 return .Unknown;
             },
             .MethodCall => |m| {
-                // Emit HIR for compiler methods
+                // Only infer types for compiler methods - DO NOT generate code here
                 const name = m.method.lexeme;
                 if (std.mem.eql(u8, name, "substring")) {
-                    // Evaluate in VM-expected order: start, length, then receiver on top
-                    self.generateExpression(m.arguments[0], true) catch {
-                        const nothing_idx = self.addConstant(HIRValue.nothing) catch 0;
-                        self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } }) catch {};
-                        return .Nothing;
-                    };
-                    self.generateExpression(m.arguments[1], true) catch {
-                        const nothing_idx = self.addConstant(HIRValue.nothing) catch 0;
-                        self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } }) catch {};
-                        return .Nothing;
-                    };
-                    self.generateExpression(m.receiver, true) catch {
-                        const nothing_idx = self.addConstant(HIRValue.nothing) catch 0;
-                        self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } }) catch {};
-                        return .Nothing;
-                    };
-                    self.instructions.append(.{ .StringOp = .{ .op = .Substring } }) catch return .Nothing;
-                    // Inform peeks about union members for direct expressions
-                    if (self.current_peek_expr) |peek_expr| {
-                        if (peek_expr == expr) {
-                            const members = self.allocator.alloc([]const u8, 2) catch null;
-                            if (members) |marr| {
-                                marr[0] = "string";
-                                marr[1] = "IndexError";
-                                // We don't have a direct hook to attach here; Peek building handles expression-specific unions like StringToInt
-                                // Left intentionally minimal; variable tracking handles union metadata on assignment
-                            }
-                        }
-                    }
-                    return .String; // runtime value will be string or error enum; type system tracks union
+                    return .String; // substring returns string
+                } else if (std.mem.eql(u8, name, "string")) {
+                    return .String; // @string converts to string
+                } else if (std.mem.eql(u8, name, "length")) {
+                    return .Int; // @length returns int
+                } else if (std.mem.eql(u8, name, "int")) {
+                    return .Int; // @int returns int
+                } else if (std.mem.eql(u8, name, "float")) {
+                    return .Float; // @float returns float
+                } else if (std.mem.eql(u8, name, "byte")) {
+                    return .Byte; // @byte returns byte
                 }
-                // Fallback: just evaluate receiver and args and return Auto type
-                self.generateExpression(m.receiver, true) catch {
-                    const nothing_idx = self.addConstant(HIRValue.nothing) catch 0;
-                    self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } }) catch {};
-                    return .Nothing;
-                };
-                for (m.arguments) |a| self.generateExpression(a, true) catch {
-                    const nothing_idx = self.addConstant(HIRValue.nothing) catch 0;
-                    self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } }) catch {};
-                    return .Nothing;
-                };
-                return .Unknown;
+                return .Unknown; // Unknown method calls
             },
             .Match => .String, // Match expressions typically return strings in this codebase
             .StructLiteral => .Struct,
@@ -3996,47 +4095,49 @@ pub const HIRGenerator = struct {
 
         self.reporter.debug("inferBinaryOpResultType: {s} {s} {s}", .{ @tagName(left_type), @tagName(operator_type), @tagName(right_type) }, @src());
 
-        // For arithmetic operations, we need to handle type promotion
+        // For PLUS operator, handle string/array concatenation and numeric promotion
+        if (operator_type == .PLUS) {
+            if (left_type == .String and right_type == .String) {
+                return .String; // String concatenation
+            } else if (left_type == .Array and right_type == .Array) {
+                return .Array; // Array concatenation
+            } else {
+                // For numeric types, use centralized promotion rules
+                const common_type = self.computeNumericCommonType(left_type, right_type, operator_type);
+                if (common_type != .Unknown) {
+                    return common_type;
+                }
+                // Type mismatch - report compile error
+                self.reporter.reportCompileError(
+                    left_expr.base.location(),
+                    ErrorCode.TYPE_MISMATCH,
+                    "Cannot use + operator between {s} and {s}",
+                    .{ @tagName(left_type), @tagName(right_type) },
+                );
+                return .Unknown; // Return Unknown to indicate error
+            }
+        }
+
+        // For arithmetic operations, use centralized type promotion
         const result_type = switch (operator_type) {
-            .PLUS, .MINUS, .ASTERISK, .SLASH => {
-                // If either operand is a float, the result is float
-                if (left_type == .Float or right_type == .Float) {
-                    return .Float;
+            .MINUS, .ASTERISK, .SLASH, .MODULO, .POWER => {
+                const common_type = self.computeNumericCommonType(left_type, right_type, operator_type);
+                if (common_type != .Unknown) {
+                    return common_type;
                 }
-                // If either operand is an int, the result is int
-                if (left_type == .Int or right_type == .Int) {
-                    // For division, always promote to float
-                    if (operator_type == .SLASH) return .Float;
-                    return .Int;
-                }
-                // If both are bytes, the result is byte (except for division)
-                if (left_type == .Byte and right_type == .Byte) {
-                    if (operator_type == .SLASH) return .Float;
-                    return .Byte;
-                }
-                // For division, default to float, otherwise int
-                if (operator_type == .SLASH) return .Float;
-                return .Int;
-            },
-            .MODULO => {
-                // Modulo only works with integers, so we need to ensure both operands are integers
-                if (left_type == .Float or right_type == .Float) {
-                    return .Float;
-                }
-                return .Int;
+                // Type mismatch - report compile error
+                self.reporter.reportCompileError(
+                    left_expr.base.location(),
+                    ErrorCode.TYPE_MISMATCH,
+                    "Cannot use {s} operator between {s} and {s}",
+                    .{ @tagName(operator_type), @tagName(left_type), @tagName(right_type) },
+                );
+                return .Unknown; // Return Unknown to indicate error
             },
             .EQUALITY, .BANG_EQUAL, .LESS, .GREATER, .LESS_EQUAL, .GREATER_EQUAL => {
-                // For comparisons, promote to the more general type
-                // If either operand is float, use float comparison
-                if (left_type == .Float or right_type == .Float) {
-                    return .Float;
-                } else if (left_type == .Int or right_type == .Int) {
-                    return .Int;
-                } else if (left_type == .Byte or right_type == .Byte) {
-                    return .Byte;
-                } else {
-                    return .Int; // Default to int comparison
-                }
+                // For comparisons, use separate comparison operand type resolution
+                // This is handled by inferComparisonOperandType
+                return .Tetra; // Comparisons return tetra values
             },
             else => .Int, // Default to int for other operations
         };
@@ -4420,5 +4521,74 @@ pub const HIRGenerator = struct {
             }
         }
         return false;
+    }
+
+    /// Promotion Rules:
+    /// 1. Float dominance: If either operand is Float or operator is division (/), promote to Float
+    /// 2. Int fallback: If either operand is Int, promote to Int
+    /// 3. No promotion: If neither is Float or Int, operands are Byte
+    ///
+    /// Exceptions:
+    /// - Strings, arrays, and other non-numeric types do not follow numeric promotion
+    /// - Comparisons use separate comparison operand type resolution
+    fn computeNumericCommonType(_: *HIRGenerator, left_type: HIRType, right_type: HIRType, operator_type: TokenType) HIRType {
+        // Non-numeric types don't follow numeric promotion rules
+        if (left_type == .String or right_type == .String or
+            left_type == .Array or right_type == .Array or
+            left_type == .Map or right_type == .Map or
+            left_type == .Struct or right_type == .Struct or
+            left_type == .Enum or right_type == .Enum or
+            left_type == .Union or right_type == .Union or
+            left_type == .Function or right_type == .Function or
+            left_type == .Nothing or right_type == .Nothing)
+        {
+            return .Unknown; // Indicates no numeric promotion should occur
+        }
+
+        // Rule 1: Float dominance - division always promotes to float, or if either operand is float
+        if (operator_type == .SLASH or left_type == .Float or right_type == .Float) {
+            return .Float;
+        }
+
+        // Rule 2: Int fallback - if either operand is int, promote to int
+        if (left_type == .Int or right_type == .Int) {
+            return .Int;
+        }
+
+        // Rule 3: No promotion - both operands are the same numeric type (e.g., Byte)
+        if (left_type == right_type) {
+            return left_type;
+        }
+
+        // Mixed byte types - promote to int for consistency
+        if ((left_type == .Byte and right_type == .Tetra) or
+            (left_type == .Tetra and right_type == .Byte))
+        {
+            return .Int;
+        }
+
+        // Default fallback to int for mixed numeric types
+        return .Int;
+    }
+
+    /// NEW: Check if type promotion is needed and apply it
+    /// Returns true if promotion was applied, false if no promotion needed
+    fn applyTypePromotionIfNeeded(self: *HIRGenerator, left_type: HIRType, right_type: HIRType, target_type: HIRType) !bool {
+        // No promotion needed if types already match target
+        if (left_type == target_type and right_type == target_type) {
+            return false;
+        }
+
+        // Promote left operand if needed
+        if (left_type != target_type and left_type != .Unknown) {
+            try self.instructions.append(.{ .Convert = .{ .from_type = left_type, .to_type = target_type } });
+        }
+
+        // Promote right operand if needed
+        if (right_type != target_type and right_type != .Unknown) {
+            try self.instructions.append(.{ .Convert = .{ .from_type = right_type, .to_type = target_type } });
+        }
+
+        return true;
     }
 };
