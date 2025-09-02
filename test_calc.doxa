@@ -11,7 +11,6 @@ struct Token {
 }
 
 function precedence(op :: string) returns int {
-    op??
     return match op {
         "(" then 0,
         ")" then 0,
@@ -27,13 +26,8 @@ function precedence(op :: string) returns int {
 entry function main() {
 
     const input is "5 + 6"
-    ("Input: " + input)??
     
     const splitInput is split(input)
-    "Split input:"??
-    each s in splitInput {
-        s??
-    }
     
     const tokens is tokenize(splitInput)
     tokens as Token[] then {
@@ -49,19 +43,25 @@ function shunt(tokens :: Token[]) returns Token[] | nothing {
     var operators :: Token[]
     each t in tokens {
         if t.token_type == TokenType.NUMBER then {
-            "number found"??
             @push(stack, t)
         }
         if t.token_type == TokenType.OPERATOR then {
-            t.value??
-            @type(t.value)??
-            precedence(t.value)??
-            @push(operators, t)
+            const op_stack_length is @length(operators)
+            const op_prec is precedence(t.value)
+            var prev_prec is -1
+            if op_stack_length > 0 then {
+                const prev_op is operators[op_stack_length - 1].value
+                prev_prec is precedence(prev_op)
+                if(op_prec < prev_prec) then {
+
+                } else {
+                    @push(operators, t)
+                }
+            }
         }
         if t.token_type == TokenType.RPAREN then "right parentheses found"??
         if t.token_type == TokenType.LPAREN then "left parentheses found"??
     }
-    stack??
 }
 
 function split(input :: string) returns string[] {
