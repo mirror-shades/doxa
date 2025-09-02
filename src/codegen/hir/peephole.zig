@@ -231,7 +231,7 @@ pub const PeepholeOptimizer = struct {
                         // x * 2 → x + x (addition faster than multiplication)
                         try optimized.append(instructions[i]); // First operand
                         try optimized.append(.Dup); // Duplicate it
-                        try optimized.append(.{ .Arith = .{ .op = .Add } });
+                        try optimized.append(.{ .Arith = .{ .op = .Add, .operand_type = arith_instr.operand_type } });
                         self.arithmetic_optimizations += 1;
                         return 3;
                     }

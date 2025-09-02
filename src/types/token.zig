@@ -16,8 +16,8 @@ pub const TokenType = enum {
     SEMICOLON, // ;
 
     //one or two character tokens
-    PEEK, // ?
-    SHOW, // ??
+    PRINT, // ?
+    PEEK, // ??
     DOT, // .
     DOT_DOT, // ..
     AMPERSAND, // &

@@ -58,8 +58,8 @@ function interpret(scan :: string) {
         var currentInstruction is scan[ip]
         if(currentInstruction == ">") then tp += 1
         if(currentInstruction == "<") then tp -= 1
-        if(currentInstruction == "+") then tape[tp] += 1
-        if(currentInstruction == "-") then tape[tp] -= 1
+        if(currentInstruction == "+") then tape[tp] += 0x01
+        if(currentInstruction == "-") then tape[tp] -= 0x01
         if(currentInstruction == ".") then tape[tp]?
         if(currentInstruction == ",") then tape[tp] is getInput()
         if(currentInstruction == "[") then startLoop()

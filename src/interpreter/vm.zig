@@ -227,9 +227,9 @@ const HIRStack = struct {
         return self.data[@intCast(self.sp - 1)];
     }
 
-    pub fn show(self: HIRStack) !HIRFrame {
+    pub fn print(self: HIRStack) !HIRFrame {
         if (self.sp <= 0) {
-            std.debug.print("Stack underflow: Attempted to peek at sp={}\n", .{self.sp});
+            std.debug.print("Stack underflow: Attempted to print at sp={}\n", .{self.sp});
             return ErrorList.StackUnderflow;
         }
         return self.data[@intCast(self.sp - 1)];
@@ -800,7 +800,7 @@ pub const HIRVM = struct {
                     }
                 },
 
-                .ShowStruct => |i| {
+                .PrintStruct => |i| {
                     // Check for Unknown types in field types
                     for (i.field_types) |field_type| {
                         if (field_type == .Unknown) {
@@ -1441,12 +1441,12 @@ pub const HIRVM = struct {
                 }
             },
 
-            .Show => {
-                self.reporter.debug("DBG Show: executing Show instruction", .{}, @src());
+            .Print => {
+                self.reporter.debug("DBG Print: executing Print instruction", .{}, @src());
                 const value = try self.stack.pop();
-                self.reporter.debug("Show called with value: {any}", .{value}, @src());
+                self.reporter.debug("Print called with value: {any}", .{value}, @src());
 
-                // Show instruction doesn't include variable name, just the value
+                // Print instruction doesn't include variable name, just the value
                 // Format the value directly without quotes or extra formatting
                 try self.formatHIRValueRaw(std.io.getStdOut().writer(), value.value);
 
@@ -1456,7 +1456,7 @@ pub const HIRVM = struct {
                 try self.stack.push(value);
             },
 
-            .ShowStruct => |i| {
+            .PrintStruct => |i| {
                 const value = try self.stack.pop();
                 self.reporter.debug("PeekStruct called with value: {any}", .{value}, @src());
 
@@ -1640,6 +1640,74 @@ pub const HIRVM = struct {
                     return; // done handling Length
                 }
 
+                // Fast-path for ToString which is valid for any type
+                if (s.op == .ToString) {
+                    const result = try self.valueToString(val.value);
+                    try self.stack.push(HIRFrame.initString(result));
+                    return; // done handling ToString
+                }
+
+                // Numeric conversions: accept string, int, float, byte
+                if (s.op == .ToInt) {
+                    const out: HIRValue = switch (val.value) {
+                        .int => val.value,
+                        .byte => |u| HIRValue{ .int = @as(i32, u) },
+                        .float => |f| HIRValue{ .int = @as(i32, @intFromFloat(f)) },
+                        .string => |s_val| blk: {
+                            const parsed = std.fmt.parseInt(i32, s_val, 10) catch {
+                                // On failure, mirror existing behavior: return NumberError.ParseFailed if available; else 0
+                                var variant_index: u32 = 0;
+                                if (self.custom_type_registry.get("NumberError")) |ct| {
+                                    if (ct.enum_variants) |variants| {
+                                        for (variants, 0..) |v, i| {
+                                            if (std.mem.eql(u8, v.name, "ParseFailed")) {
+                                                variant_index = @intCast(i);
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                                break :blk HIRValue{ .enum_variant = .{ .type_name = "NumberError", .variant_name = "ParseFailed", .variant_index = variant_index } };
+                            };
+                            break :blk HIRValue{ .int = parsed };
+                        },
+                        else => HIRValue{ .int = 0 },
+                    };
+                    try self.stack.push(HIRFrame.initFromHIRValue(out));
+                    return;
+                }
+                if (s.op == .ToFloat) {
+                    const out: HIRValue = switch (val.value) {
+                        .float => val.value,
+                        .int => |i| HIRValue{ .float = @as(f64, @floatFromInt(i)) },
+                        .byte => |u| HIRValue{ .float = @as(f64, @floatFromInt(u)) },
+                        .string => |s_val| blk: {
+                            const parsed = std.fmt.parseFloat(f64, s_val) catch 0.0;
+                            break :blk HIRValue{ .float = parsed };
+                        },
+                        else => HIRValue{ .float = 0.0 },
+                    };
+                    try self.stack.push(HIRFrame.initFromHIRValue(out));
+                    return;
+                }
+                if (s.op == .ToByte) {
+                    const out: HIRValue = switch (val.value) {
+                        .byte => val.value,
+                        .int => |i| HIRValue{ .byte = if (i >= 0 and i <= 255) @intCast(i) else 0 },
+                        .float => |f| blk: {
+                            const i: i32 = @as(i32, @intFromFloat(f));
+                            break :blk HIRValue{ .byte = if (i >= 0 and i <= 255) @intCast(i) else 0 };
+                        },
+                        .string => |s_val| blk: {
+                            const parsed = std.fmt.parseInt(i32, s_val, 10) catch 0;
+                            break :blk HIRValue{ .byte = if (parsed >= 0 and parsed <= 255) @intCast(parsed) else 0 };
+                        },
+                        else => HIRValue{ .byte = 0 },
+                    };
+                    try self.stack.push(HIRFrame.initFromHIRValue(out));
+                    return;
+                }
+
                 // For the remaining ops we expect a string value
                 switch (val.value) {
                     .string => |s_val| {
@@ -1752,6 +1820,11 @@ pub const HIRVM = struct {
                                 };
                                 try self.stack.push(HIRFrame.initInt(parsed_int));
                             },
+                            .ToString => {
+                                // This should never happen since ToString operates on any type, not just strings
+                                // But if it does, just return the string as-is
+                                try self.stack.push(HIRFrame.initString(s_val));
+                            },
                             else => return ErrorList.TypeError,
                         }
                     },
@@ -1826,9 +1899,13 @@ pub const HIRVM = struct {
                         while (logical_len < arr.elements.len) : (logical_len += 1) {
                             if (std.meta.eql(arr.elements[logical_len], HIRValue.nothing)) break;
                         }
+
+                        // FIX: Return default value of array element type instead of nothing for out-of-bounds
                         if (a.bounds_check and index_val >= logical_len) {
-                            self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index {} out of bounds (array has {} elements)", .{ index_val, logical_len });
-                            return ErrorList.IndexOutOfBounds;
+                            // Return default value based on array element type instead of error
+                            const default_value = self.getDefaultValueForArrayType(arr.element_type);
+                            try self.stack.push(HIRFrame.initFromHIRValue(default_value));
+                            return;
                         }
 
                         const element = arr.elements[index_val];
@@ -3409,6 +3486,64 @@ pub const HIRVM = struct {
         };
     }
 
+    /// Convert HIR value to string representation
+    fn valueToString(self: *HIRVM, value: HIRValue) ![]const u8 {
+        return switch (value) {
+            .int => |i| try std.fmt.allocPrint(self.allocator, "{}", .{i}),
+            .byte => |u| try std.fmt.allocPrint(self.allocator, "0x{X:0>2}", .{u}),
+            .float => |f| {
+                const roundedDown = std.math.floor(f);
+                if (f - roundedDown == 0) {
+                    return try std.fmt.allocPrint(self.allocator, "{d}.0", .{f});
+                } else {
+                    return try std.fmt.allocPrint(self.allocator, "{d}", .{f});
+                }
+            },
+            .string => |s| try self.allocator.dupe(u8, s),
+            .tetra => |t| try std.fmt.allocPrint(self.allocator, "{s}", .{switch (t) {
+                0 => "false",
+                1 => "true",
+                2 => "both",
+                3 => "neither",
+                else => "invalid",
+            }}),
+            .nothing => try self.allocator.dupe(u8, "nothing"),
+            .array => |arr| {
+                var result = std.ArrayList(u8).init(self.allocator);
+                defer result.deinit();
+                try result.append('[');
+                var first = true;
+                for (arr.elements) |elem| {
+                    if (std.meta.eql(elem, HIRValue.nothing)) break; // Stop at first nothing element
+                    if (!first) try result.appendSlice(", ");
+                    const elem_str = try self.valueToString(elem);
+                    defer self.allocator.free(elem_str);
+                    try result.appendSlice(elem_str);
+                    first = false;
+                }
+                try result.append(']');
+                return try result.toOwnedSlice();
+            },
+            .struct_instance => |s| {
+                var result = std.ArrayList(u8).init(self.allocator);
+                defer result.deinit();
+                try result.appendSlice("{ ");
+                for (s.fields, 0..) |field, i| {
+                    if (i > 0) try result.appendSlice(", ");
+                    try result.appendSlice(field.name);
+                    try result.appendSlice(": ");
+                    const field_str = try self.valueToString(field.value);
+                    defer self.allocator.free(field_str);
+                    try result.appendSlice(field_str);
+                }
+                try result.appendSlice(" }");
+                return try result.toOwnedSlice();
+            },
+            .enum_variant => |e| try std.fmt.allocPrint(self.allocator, ".{s}", .{e.variant_name}),
+            else => try std.fmt.allocPrint(self.allocator, "{s}", .{@tagName(value)}),
+        };
+    }
+
     fn printFloat(writer: anytype, f: f64) !void {
         const roundedDown = std.math.floor(f);
         if (f - roundedDown == 0) {
@@ -3831,6 +3966,19 @@ pub const HIRVM = struct {
 
     pub fn getDefaultValue(hir_type: HIRType) HIRValue {
         return switch (hir_type) {
+            .Int => HIRValue{ .int = 0 },
+            .Byte => HIRValue{ .byte = 0 },
+            .Float => HIRValue{ .float = 0.0 },
+            .String => HIRValue{ .string = "" },
+            .Tetra => HIRValue{ .tetra = 0 }, // false
+            .Nothing => HIRValue.nothing,
+            else => HIRValue.nothing, // Default for complex types
+        };
+    }
+
+    fn getDefaultValueForArrayType(self: *HIRVM, element_type: HIRType) HIRValue {
+        _ = self;
+        return switch (element_type) {
             .Int => HIRValue{ .int = 0 },
             .Byte => HIRValue{ .byte = 0 },
             .Float => HIRValue{ .float = 0.0 },

@@ -931,6 +931,7 @@ pub const SemanticAnalyzer = struct {
     }
 
     fn unifyTypes(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual: *ast.TypeInfo, span: ast.SourceSpan) !void {
+
         // Handle union types first - check if actual type is compatible with the expected union
         if (expected.base == .Union) {
             if (expected.union_type) |exp_union| {
@@ -998,13 +999,12 @@ pub const SemanticAnalyzer = struct {
         }
 
         if (expected.base != actual.base) {
+
             // Special cases for type conversions
             if (expected.base == .Float and (actual.base == .Int or actual.base == .Byte)) {
                 return; // Allow implicit int/byte to float
             }
             if (expected.base == .Byte and actual.base == .Int) {
-                // Allow int to byte conversion if the value is in range
-                // We'll need to check the actual value during evaluation
                 return; // Allow implicit int to byte
             }
             if (expected.base == .Int and actual.base == .Byte) {
@@ -1037,7 +1037,7 @@ pub const SemanticAnalyzer = struct {
                 .{ @tagName(expected.base), @tagName(actual.base) },
             );
             self.fatal_error = true;
-        }
+        } else {}
 
         // Handle complex type unification (arrays, structs, etc)
         switch (expected.base) {
@@ -1103,6 +1103,7 @@ pub const SemanticAnalyzer = struct {
     }
 
     fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInfo {
+
         // Check cache first
         if (self.type_cache.get(expr.base.id)) |cached| {
             return cached;
@@ -1169,25 +1170,15 @@ pub const SemanticAnalyzer = struct {
                         type_info.* = .{ .base = .Byte };
                     }
                 } else if (std.mem.eql(u8, op, "+")) {
-                    // String concatenation if either side is string
-                    if (left_type.base == .String or right_type.base == .String) {
-                        type_info.* = .{ .base = .String };
-                    } else {
-                        // Arithmetic with type promotion
-                        if ((left_type.base != .Int and left_type.base != .Float and left_type.base != .Byte) or
-                            (right_type.base != .Int and right_type.base != .Float and right_type.base != .Byte))
-                        {
-                            self.reporter.reportCompileError(
-                                getLocationFromBase(expr.base),
-                                ErrorCode.ARITHMETIC_REQUIRES_NUMERIC_OPERANDS,
-                                "Arithmetic requires numeric operands",
-                                .{},
-                            );
-                            self.fatal_error = true;
-                            type_info.base = .Nothing;
-                            return type_info;
-                        }
-
+                    // Handle string and array concatenation first
+                    if (left_type.base == .String and right_type.base == .String) {
+                        type_info.* = .{ .base = .String }; // String concatenation
+                    } else if (left_type.base == .Array and right_type.base == .Array) {
+                        type_info.* = .{ .base = .Array }; // Array concatenation
+                    } else if (left_type.base == .Int or left_type.base == .Float or left_type.base == .Byte or
+                        right_type.base == .Int or right_type.base == .Float or right_type.base == .Byte)
+                    {
+                        // Numeric addition with type promotion
                         // Type promotion rules: Float > Int > Byte
                         if (left_type.base == .Float or right_type.base == .Float) {
                             type_info.* = .{ .base = .Float };
@@ -1196,6 +1187,17 @@ pub const SemanticAnalyzer = struct {
                         } else {
                             type_info.* = .{ .base = .Byte };
                         }
+                    } else {
+                        // Type mismatch - report compile error
+                        self.reporter.reportCompileError(
+                            getLocationFromBase(expr.base),
+                            ErrorCode.TYPE_MISMATCH,
+                            "Cannot use + operator between {s} and {s}. Both operands must be the same type.",
+                            .{ @tagName(left_type.base), @tagName(right_type.base) },
+                        );
+                        self.fatal_error = true;
+                        type_info.base = .Nothing;
+                        return type_info;
                     }
                 } else if (std.mem.eql(u8, op, "-") or std.mem.eql(u8, op, "*")) {
                     // Arithmetic with type promotion
@@ -1214,6 +1216,31 @@ pub const SemanticAnalyzer = struct {
                     }
 
                     // Type promotion rules: Float > Int > Byte
+                    if (left_type.base == .Float or right_type.base == .Float) {
+                        type_info.* = .{ .base = .Float };
+                    } else if (left_type.base == .Int or right_type.base == .Int) {
+                        type_info.* = .{ .base = .Int };
+                    } else {
+                        type_info.* = .{ .base = .Byte };
+                    }
+                } else if (std.mem.eql(u8, op, "**")) {
+                    // Power operator with type promotion
+                    if ((left_type.base != .Int and left_type.base != .Float and left_type.base != .Byte) or
+                        (right_type.base != .Int and right_type.base != .Float and right_type.base != .Byte))
+                    {
+                        self.reporter.reportCompileError(
+                            getLocationFromBase(expr.base),
+                            ErrorCode.ARITHMETIC_REQUIRES_NUMERIC_OPERANDS,
+                            "Power operator requires numeric operands",
+                            .{},
+                        );
+                        self.fatal_error = true;
+                        type_info.base = .Nothing;
+                        return type_info;
+                    }
+
+                    // Power operator type promotion: Float > Int > Byte
+                    // If either operand is Float, result is Float
                     if (left_type.base == .Float or right_type.base == .Float) {
                         type_info.* = .{ .base = .Float };
                     } else if (left_type.base == .Int or right_type.base == .Int) {
@@ -1458,6 +1485,25 @@ pub const SemanticAnalyzer = struct {
                     if (array_type.array_type) |elem_type| {
                         type_info.* = elem_type.*;
                     } else {
+                        // FIX: If no array_type is set, try to infer from the variable declaration
+                        // This handles cases like "var tape :: byte[] is [...]" where the type annotation
+                        // should be used to determine the return type
+                        if (index.array.data == .Variable) {
+                            const var_name = index.array.data.Variable.lexeme;
+                            if (self.current_scope) |scope| {
+                                if (scope.lookupVariable(var_name)) |variable| {
+                                    // Access the type info through the scope manager's value storage
+                                    if (scope.manager.value_storage.get(variable.storage_id)) |storage| {
+                                        if (storage.type_info.base == .Array) {
+                                            if (storage.type_info.array_type) |declared_elem_type| {
+                                                type_info.* = declared_elem_type.*;
+                                                return type_info;
+                                            } else {}
+                                        }
+                                    } else {}
+                                } else {}
+                            } else {}
+                        } else {}
                         type_info.base = .Nothing;
                     }
                 } else if (array_type.base == .Map) {
@@ -1675,6 +1721,15 @@ pub const SemanticAnalyzer = struct {
                 const then_type = try self.inferTypeFromExpr(if_expr.then_branch.?);
                 if (if_expr.else_branch) |else_branch| {
                     const else_type = try self.inferTypeFromExpr(else_branch);
+
+                    // If the parser produced an implicit else that is a Nothing literal,
+                    // treat this as if there is no else-branch to avoid forcing unification
+                    // of a concrete then-type with Nothing in statement contexts.
+                    const else_is_implicit_nothing = (else_branch.data == .Literal and else_type.base == .Nothing);
+                    if (else_is_implicit_nothing) {
+                        type_info.* = then_type.*;
+                        return type_info;
+                    }
 
                     // Special handling for peek expressions - allow different types
                     // since peek is used for output/printing and the actual return value
@@ -2627,20 +2682,20 @@ pub const SemanticAnalyzer = struct {
                                 // Any type can be converted to string
                                 type_info.* = .{ .base = .String };
                             },
-                            .PARSEINT, .PARSEFLOAT => {
+                            .PARSEINT, .PARSEFLOAT, .PARSEBYTE => {
                                 // Check receiver is string
                                 if (receiver_type.base != .String) {
-                                    self.reporter.reportCompileError(
-                                        getLocationFromBase(method_call.receiver.base),
-                                        ErrorCode.INVALID_STRING_TYPE,
-                                        "Cannot parse non-string type {s} as number",
-                                        .{@tagName(receiver_type.base)},
-                                    );
-                                    self.fatal_error = true;
-                                    type_info.* = .{ .base = .Nothing };
+                                    // Non-string receivers are allowed for numeric conversions; set return type directly
+                                    switch (method_call.method.type) {
+                                        .PARSEINT => type_info.* = .{ .base = .Int },
+                                        .PARSEFLOAT => type_info.* = .{ .base = .Float },
+                                        .PARSEBYTE => type_info.* = .{ .base = .Byte },
+                                        else => unreachable,
+                                    }
                                     return type_info;
                                 }
 
+                                // For string receivers, handle parse semantics and unions where applicable
                                 // For now, do not fold literals; lower all @int to runtime StringToInt to preserve union type
                                 if (method_call.method.type == .PARSEINT and method_call.receiver.data == .Literal) {
                                     expr.data = .{ .StringToInt = .{ .string = method_call.receiver } };
@@ -2667,16 +2722,16 @@ pub const SemanticAnalyzer = struct {
                                     type_info.* = u.*;
                                     return type_info;
                                 }
-                                // For float: keep current behavior (not implemented)
-                                self.reporter.reportCompileError(
-                                    getLocationFromBase(method_call.receiver.base),
-                                    ErrorCode.NOT_IMPLEMENTED,
-                                    "@float on non-literal not implemented",
-                                    .{},
-                                );
-                                self.fatal_error = true;
-                                type_info.* = .{ .base = .Nothing };
-                                return type_info;
+                                if (method_call.method.type == .PARSEFLOAT) {
+                                    // Return type: float (no typed error union in current VM path)
+                                    type_info.* = .{ .base = .Float };
+                                    return type_info;
+                                }
+                                if (method_call.method.type == .PARSEBYTE) {
+                                    // Return type: byte (no typed error union in current VM path)
+                                    type_info.* = .{ .base = .Byte };
+                                    return type_info;
+                                }
                             },
                             .SPLIT => {
                                 // Check receiver is string for split
@@ -2865,18 +2920,6 @@ pub const SemanticAnalyzer = struct {
 
                     // Other methods
                     else => {
-                        // Debug: print method token details to diagnose empty lexeme
-                        std.debug.print(
-                            "Unknown method debug: type={s} lexeme='{s}' len={d} at {s}:{d}:{d}\n",
-                            .{
-                                @tagName(method_call.method.type),
-                                method_call.method.lexeme,
-                                method_call.method.lexeme.len,
-                                method_call.method.file,
-                                method_call.method.line,
-                                method_call.method.column,
-                            },
-                        );
                         self.reporter.reportCompileError(
                             getLocationFromBase(method_call.receiver.base),
                             ErrorCode.NOT_IMPLEMENTED,
@@ -2906,12 +2949,13 @@ pub const SemanticAnalyzer = struct {
                 const expr_type = try self.inferTypeFromExpr(_peek_struct.expr);
                 type_info.* = expr_type.*; // PeekStruct returns the same type as the expression
             },
-            .Show => |_peek| {
-                const expr_type = try self.inferTypeFromExpr(_peek.expr);
-                type_info.* = expr_type.*; // Peek returns the same type as the expression
+            .Print => |print| {
+                const expr_type = try self.inferTypeFromExpr(print.expr);
+                type_info.* = expr_type.*; // Print returns the same type as the expression
+                return type_info;
             },
-            .ShowStruct => |_peek_struct| {
-                const expr_type = try self.inferTypeFromExpr(_peek_struct.expr);
+            .PrintStruct => |_print_struct| {
+                const expr_type = try self.inferTypeFromExpr(_print_struct.expr);
                 type_info.* = expr_type.*; // PeekStruct returns the same type as the expression
             },
             .IndexAssign => |index_assign| {

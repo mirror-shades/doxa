@@ -417,11 +417,8 @@ pub const PeekExpr = struct {
     field_name: ?[]const u8 = null,
 };
 
-pub const ShowExpr = struct {
+pub const PrintExpr = struct {
     expr: *Expr,
-    location: Location,
-    variable_name: ?[]const u8,
-    field_name: ?[]const u8 = null,
 };
 
 pub const FieldAccess = struct {
@@ -448,13 +445,13 @@ pub const Expr = struct {
         Binary: Binary,
         Unary: Unary,
         Peek: PeekExpr,
-        Show: ShowExpr,
+        Print: PrintExpr,
         PeekStruct: struct {
             expr: *Expr,
             location: Location,
             variable_name: ?[]const u8,
         },
-        ShowStruct: struct {
+        PrintStruct: struct {
             expr: *Expr,
             location: Location,
             variable_name: ?[]const u8,
@@ -773,7 +770,7 @@ pub const Expr = struct {
                 i.expr.deinit(allocator);
                 allocator.destroy(i.expr);
             },
-            .Show => |i| {
+            .Print => |i| {
                 i.expr.deinit(allocator);
                 allocator.destroy(i.expr);
             },
@@ -781,7 +778,7 @@ pub const Expr = struct {
                 peek.expr.deinit(allocator);
                 allocator.destroy(peek.expr);
             },
-            .ShowStruct => |peek| {
+            .PrintStruct => |peek| {
                 peek.expr.deinit(allocator);
                 allocator.destroy(peek.expr);
             },

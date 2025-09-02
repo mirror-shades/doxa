@@ -409,9 +409,9 @@ pub const LexicalAnalyzer = struct {
             '~' => try self.addMinimalToken(.TILDE),
             '?' => {
                 if (self.match('?')) {
-                    try self.addMinimalToken(.SHOW);
-                } else {
                     try self.addMinimalToken(.PEEK);
+                } else {
+                    try self.addMinimalToken(.PRINT);
                 }
             },
         }
@@ -761,7 +761,7 @@ pub const LexicalAnalyzer = struct {
             try self.addToken(.PARSEINT, .nothing);
         } else if (std.mem.eql(u8, method_name, "float")) {
             try self.addToken(.PARSEFLOAT, .nothing);
-        } else if (std.mem.eql(u8, method_name, "bytes")) {
+        } else if (std.mem.eql(u8, method_name, "byte")) {
             try self.addToken(.PARSEBYTE, .nothing);
 
             // String methods

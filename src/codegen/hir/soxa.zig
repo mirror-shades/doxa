@@ -875,12 +875,12 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
             try writer.writeAll("         ; Peek struct\n");
         },
 
-        .Show => |i| {
-            try writer.print("    Show {s}         ; Show value\n", .{@tagName(i.value_type)});
+        .Print => {
+            try writer.print("    Print         ; Print value\n", .{});
         },
 
-        .ShowStruct => |i| {
-            try writer.print("    ShowStruct \"{s}\" {} [", .{ i.type_name, i.field_count });
+        .PrintStruct => |i| {
+            try writer.print("    PrintStruct \"{s}\" {} [", .{ i.type_name, i.field_count });
             for (i.field_names, 0..) |name, idx| {
                 try writer.print("\"{s}\"", .{name});
                 if (idx < i.field_names.len - 1) try writer.writeByte(',');
@@ -894,7 +894,7 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
             if (i.location) |loc| {
                 try writer.print(" @{s}:{d}:{d}", .{ loc.file, loc.range.start_line, loc.range.start_col });
             }
-            try writer.writeAll("         ; Show struct\n");
+            try writer.writeAll("         ; Print struct\n");
         },
 
         .AssertFail => |a| {
@@ -932,6 +932,9 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
                 .Substring => "Substring",
                 .Concat => "Concat",
                 .ToInt => "ToInt",
+                .ToFloat => "ToFloat",
+                .ToByte => "ToByte",
+                .ToString => "ToString",
             };
             try writer.print("    StringOp {s}                 ; String operation\n", .{op_name});
         },

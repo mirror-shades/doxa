@@ -334,8 +334,10 @@ pub const SoxaTextParser = struct {
             // Int arithmetic instruction
 
             const op_str = tokens.next() orelse return;
+            const type_str = tokens.next() orelse return;
             const arith_op = if (std.mem.eql(u8, op_str, "Add")) ArithOp.Add else if (std.mem.eql(u8, op_str, "Sub")) ArithOp.Sub else if (std.mem.eql(u8, op_str, "Mul")) ArithOp.Mul else if (std.mem.eql(u8, op_str, "Div")) ArithOp.Div else if (std.mem.eql(u8, op_str, "Mod")) ArithOp.Mod else if (std.mem.eql(u8, op_str, "Pow")) ArithOp.Pow else unreachable;
-            try self.instructions.append(HIRInstruction{ .Arith = .{ .op = arith_op } });
+            const operand_type = if (std.mem.eql(u8, type_str, "Int")) HIRType.Int else if (std.mem.eql(u8, type_str, "Float")) HIRType.Float else if (std.mem.eql(u8, type_str, "Byte")) HIRType.Byte else HIRType.Int;
+            try self.instructions.append(HIRInstruction{ .Arith = .{ .op = arith_op, .operand_type = operand_type } });
         } else if (std.mem.eql(u8, op, "Convert")) {
             // Type conversion instruction
             const from_str = tokens.next() orelse return;
@@ -553,66 +555,10 @@ pub const SoxaTextParser = struct {
                     .union_members = union_members,
                 } });
             }
-        } else if (std.mem.eql(u8, op, "Show")) {
-            const name_or_type = tokens.next() orelse return;
-            var name: ?[]const u8 = null;
-            var value_type: HIRType = .String;
-            var location: ?Location = null;
-            var union_members: ?[][]const u8 = null;
-
-            if (name_or_type.len > 2 and name_or_type[0] == '"' and name_or_type[name_or_type.len - 1] == '"') {
-                // Has quoted name, get type from next token
-                name = try self.parseQuotedString(name_or_type);
-                const type_str = tokens.next() orelse "String";
-                value_type = if (std.mem.eql(u8, type_str, "Int")) HIRType.Int else if (std.mem.eql(u8, type_str, "Float")) HIRType.Float else if (std.mem.eql(u8, type_str, "String")) HIRType.String else if (std.mem.eql(u8, type_str, "Tetra")) HIRType.Tetra else if (std.mem.eql(u8, type_str, "Array")) HIRType.Array else if (std.mem.eql(u8, type_str, "Map")) HIRType.Map else if (std.mem.eql(u8, type_str, "Struct")) HIRType.Struct else if (std.mem.eql(u8, type_str, "Enum")) HIRType.Enum else HIRType.String;
-
-                // Check for location info
-                if (tokens.next()) |location_str| {
-                    if (std.mem.startsWith(u8, location_str, "@")) {
-                        location = try self.parseLocationString(location_str);
-                    }
-                }
-            } else {
-                // No quoted name, just type
-                value_type = if (std.mem.eql(u8, name_or_type, "Int")) HIRType.Int else if (std.mem.eql(u8, name_or_type, "Float")) HIRType.Float else if (std.mem.eql(u8, name_or_type, "String")) HIRType.String else if (std.mem.eql(u8, name_or_type, "Tetra")) HIRType.Tetra else if (std.mem.eql(u8, name_or_type, "Array")) HIRType.Array else if (std.mem.eql(u8, name_or_type, "Map")) HIRType.Map else if (std.mem.eql(u8, name_or_type, "Struct")) HIRType.Struct else if (std.mem.eql(u8, name_or_type, "Enum")) HIRType.Enum else HIRType.String;
-
-                // Check for location info after type
-                if (tokens.next()) |location_str| {
-                    if (std.mem.startsWith(u8, location_str, "@")) {
-                        location = try self.parseLocationString(location_str);
-                    }
-                }
-            }
-
-            // Try to parse optional union member list embedded in the line text: " ; union [t1,t2,...]"
-            const union_marker = std.mem.indexOf(u8, trimmed, "; union [");
-            if (union_marker) |marker_pos| {
-                const list_start = marker_pos + 9; // after "; union ["
-                if (std.mem.indexOfPos(u8, trimmed, list_start, "]")) |end_pos| {
-                    const inner = std.mem.trim(u8, trimmed[list_start..end_pos], " \t");
-                    // Split by commas
-                    var items = std.mem.splitScalar(u8, inner, ',');
-                    var tmp = std.ArrayList([]const u8).init(self.allocator);
-                    defer tmp.deinit();
-                    while (items.next()) |it| {
-                        const item_trim = std.mem.trim(u8, it, " \t");
-                        if (item_trim.len > 0) {
-                            const s = try self.allocator.dupe(u8, item_trim);
-                            try tmp.append(s);
-                        }
-                    }
-                    union_members = try tmp.toOwnedSlice();
-                }
-            }
-
-            try self.instructions.append(.{ .Show = .{
-                .name = name,
-                .value_type = value_type,
-                .location = location,
-                .union_members = union_members,
-            } });
-        } else if (std.mem.eql(u8, op, "ShowStruct")) {
-            // Parse: ShowStruct "Person" 2 ["name", "age"] [String, Int]
+        } else if (std.mem.eql(u8, op, "Print")) {
+            try self.instructions.append(.{ .Print = .{} });
+        } else if (std.mem.eql(u8, op, "PrintStruct")) {
+            // Parse: PrintStruct "Person" 2 ["name", "age"] [String, Int]
             const struct_name_start = std.mem.indexOf(u8, trimmed, "\"").? + 1;
             const struct_name_end = std.mem.indexOfPos(u8, trimmed, struct_name_start, "\"").?;
             const struct_name = try self.allocator.dupe(u8, trimmed[struct_name_start..struct_name_end]);
@@ -665,7 +611,7 @@ pub const SoxaTextParser = struct {
                 location = self.parseLocationString(location_str) catch null;
             }
 
-            try self.instructions.append(.{ .ShowStruct = .{
+            try self.instructions.append(.{ .PrintStruct = .{
                 .type_name = struct_name,
                 .field_count = field_count,
                 .field_names = try field_names.toOwnedSlice(),
@@ -799,6 +745,12 @@ pub const SoxaTextParser = struct {
                 StringOpType.Concat
             else if (std.mem.eql(u8, op_str, "ToInt"))
                 StringOpType.ToInt
+            else if (std.mem.eql(u8, op_str, "ToFloat"))
+                StringOpType.ToFloat
+            else if (std.mem.eql(u8, op_str, "ToByte"))
+                StringOpType.ToByte
+            else if (std.mem.eql(u8, op_str, "ToString"))
+                StringOpType.ToString
             else
                 StringOpType.Length; // Default fallback
 
