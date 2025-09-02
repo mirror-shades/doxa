@@ -1,0 +1,28 @@
+// Test array methods, especially pop
+var numbers :: int[] is [1, 2, 3, 4, 5];
+
+// Test pop method
+var last_number :: int is numbers.pop();
+peek last_number; // Should print 5
+
+// Test push method
+numbers.push(6);
+peek numbers; // Should print [1, 2, 3, 4, 6]
+
+// Test insert method
+numbers.insert(2, 10);
+peek numbers; // Should print [1, 2, 10, 3, 4, 6]
+
+// Test remove method
+var removed :: int is numbers.remove(2);
+peek removed; // Should print 10
+peek numbers; // Should print [1, 2, 3, 4, 6]
+
+// Test clear method
+numbers.clear();
+peek numbers; // Should print []
+
+// Test index method
+var new_array :: int[] is [10, 20, 30, 40];
+var position :: int is new_array.index(30);
+peek position; // Should print 2 

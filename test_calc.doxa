@@ -11,6 +11,7 @@ struct Token {
 }
 
 function precedence(op :: string) returns int {
+    op??
     return match op {
         "(" then 0,
         ")" then 0,

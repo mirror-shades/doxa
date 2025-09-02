@@ -566,8 +566,21 @@ pub const SemanticAnalyzer = struct {
 
                     // Check if we have an explicit type annotation
                     if (decl.type_info.base != .Nothing) {
-                        // Use explicit type, but resolve custom types
-                        type_info.* = try self.resolveTypeInfo(decl.type_info);
+                        // If parser provided an incomplete array type (no element), prefer inferring from initializer if present
+                        if (decl.type_info.base == .Array and decl.type_info.array_type == null) {
+                            if (decl.initializer) |init_expr| {
+                                const inferred = try self.inferTypeFromExpr(init_expr);
+                                type_info.* = inferred.*;
+                            } else {
+                                // Use explicit type, but resolve custom types
+                                type_info.* = try self.resolveTypeInfo(decl.type_info);
+                            }
+                        } else {
+                            // Use explicit type, but resolve custom types
+                            type_info.* = try self.resolveTypeInfo(decl.type_info);
+                        }
+                        // Preserve mutability from the variable declaration (var vs const)
+                        type_info.is_mutable = decl.type_info.is_mutable;
                     } else if (decl.initializer) |init_expr| {
                         // Infer from initializer
                         const inferred = try self.inferTypeFromExpr(init_expr);
@@ -786,8 +799,21 @@ pub const SemanticAnalyzer = struct {
 
                             // Check if we have an explicit type annotation
                             if (decl.type_info.base != .Nothing) {
-                                // Use explicit type, but resolve custom types
-                                type_info.* = try self.resolveTypeInfo(decl.type_info);
+                                // If parser provided an incomplete array type (no element), prefer inferring from initializer if present
+                                if (decl.type_info.base == .Array and decl.type_info.array_type == null) {
+                                    if (decl.initializer) |init_expr| {
+                                        const inferred = try self.inferTypeFromExpr(init_expr);
+                                        type_info.* = inferred.*;
+                                    } else {
+                                        // Use explicit type, but resolve custom types
+                                        type_info.* = try self.resolveTypeInfo(decl.type_info);
+                                    }
+                                } else {
+                                    // Use explicit type, but resolve custom types
+                                    type_info.* = try self.resolveTypeInfo(decl.type_info);
+                                }
+                                // Preserve mutability from the variable declaration (var vs const)
+                                type_info.is_mutable = decl.type_info.is_mutable;
                             } else if (decl.initializer) |init_expr| {
                                 // Infer from initializer
                                 const inferred = try self.inferTypeFromExpr(init_expr);
@@ -2549,6 +2575,148 @@ pub const SemanticAnalyzer = struct {
                                     },
                                 };
                                 type_info.* = .{ .base = .Nothing }; // push returns nothing
+                            },
+                            .POP => {
+                                if (method_call.arguments.len != 0) {
+                                    self.reporter.reportCompileError(
+                                        getLocationFromBase(method_call.receiver.base),
+                                        ErrorCode.INVALID_ARGUMENT_COUNT,
+                                        "@pop requires no arguments",
+                                        .{},
+                                    );
+                                    self.fatal_error = true;
+                                    type_info.* = .{ .base = .Nothing };
+                                    return type_info;
+                                }
+
+                                // Transform to ArrayPop
+                                expr.data = .{
+                                    .ArrayPop = .{
+                                        .array = method_call.receiver,
+                                    },
+                                };
+
+                                // Return type is the array element type
+                                if (receiver_type.array_type) |elem_type| {
+                                    type_info.* = elem_type.*; // pop returns the element type
+                                } else {
+                                    type_info.* = .{ .base = .Nothing };
+                                }
+                            },
+                            .INSERT => {
+                                if (method_call.arguments.len != 2) {
+                                    self.reporter.reportCompileError(
+                                        getLocationFromBase(method_call.receiver.base),
+                                        ErrorCode.INVALID_ARGUMENT_COUNT,
+                                        "@insert requires exactly two arguments (index, element)",
+                                        .{},
+                                    );
+                                    self.fatal_error = true;
+                                    type_info.* = .{ .base = .Nothing };
+                                    return type_info;
+                                }
+
+                                // Check index is integer
+                                const index_type = try self.inferTypeFromExpr(method_call.arguments[0]);
+                                if (index_type.base != .Int) {
+                                    self.reporter.reportCompileError(
+                                        getLocationFromBase(method_call.arguments[0].base),
+                                        ErrorCode.INVALID_ARRAY_INDEX_TYPE,
+                                        "@insert index must be integer, got {s}",
+                                        .{@tagName(index_type.base)},
+                                    );
+                                    self.fatal_error = true;
+                                    type_info.* = .{ .base = .Nothing };
+                                    return type_info;
+                                }
+
+                                // Check element type matches array
+                                const value_type = try self.inferTypeFromExpr(method_call.arguments[1]);
+                                if (receiver_type.array_type) |elem_type| {
+                                    try self.unifyTypes(elem_type, value_type, .{ .location = getLocationFromBase(method_call.arguments[1].base) });
+                                }
+
+                                // Transform to ArrayInsert (if it exists) or keep as method call for now
+                                // For now, we'll keep it as a method call since ArrayInsert might not be implemented yet
+                                type_info.* = .{ .base = .Nothing }; // insert returns nothing
+                            },
+                            .REMOVE => {
+                                if (method_call.arguments.len != 1) {
+                                    self.reporter.reportCompileError(
+                                        getLocationFromBase(method_call.receiver.base),
+                                        ErrorCode.INVALID_ARGUMENT_COUNT,
+                                        "@remove requires exactly one argument (index)",
+                                        .{},
+                                    );
+                                    self.fatal_error = true;
+                                    type_info.* = .{ .base = .Nothing };
+                                    return type_info;
+                                }
+
+                                // Check index is integer
+                                const index_type = try self.inferTypeFromExpr(method_call.arguments[0]);
+                                if (index_type.base != .Int) {
+                                    self.reporter.reportCompileError(
+                                        getLocationFromBase(method_call.arguments[0].base),
+                                        ErrorCode.INVALID_ARRAY_INDEX_TYPE,
+                                        "@remove index must be integer, got {s}",
+                                        .{@tagName(index_type.base)},
+                                    );
+                                    self.fatal_error = true;
+                                    type_info.* = .{ .base = .Nothing };
+                                    return type_info;
+                                }
+
+                                // Return type is the array element type
+                                if (receiver_type.array_type) |elem_type| {
+                                    type_info.* = elem_type.*; // remove returns the removed element
+                                } else {
+                                    type_info.* = .{ .base = .Nothing };
+                                }
+                            },
+                            .CLEAR => {
+                                if (method_call.arguments.len != 0) {
+                                    self.reporter.reportCompileError(
+                                        getLocationFromBase(method_call.receiver.base),
+                                        ErrorCode.INVALID_ARGUMENT_COUNT,
+                                        "@clear requires no arguments",
+                                        .{},
+                                    );
+                                    self.fatal_error = true;
+                                    type_info.* = .{ .base = .Nothing };
+                                    return type_info;
+                                }
+
+                                // Transform to ArrayClear
+                                expr.data = .{
+                                    .ArrayClear = .{
+                                        .array = method_call.receiver,
+                                    },
+                                };
+
+                                type_info.* = .{ .base = .Nothing }; // clear returns nothing
+                            },
+                            .INDEX => {
+                                if (method_call.arguments.len != 1) {
+                                    self.reporter.reportCompileError(
+                                        getLocationFromBase(method_call.receiver.base),
+                                        ErrorCode.INVALID_ARGUMENT_COUNT,
+                                        "@index requires exactly one argument (element)",
+                                        .{},
+                                    );
+                                    self.fatal_error = true;
+                                    type_info.* = .{ .base = .Nothing };
+                                    return type_info;
+                                }
+
+                                // Check element type matches array
+                                const value_type = try self.inferTypeFromExpr(method_call.arguments[0]);
+                                if (receiver_type.array_type) |elem_type| {
+                                    try self.unifyTypes(elem_type, value_type, .{ .location = getLocationFromBase(method_call.arguments[0].base) });
+                                }
+
+                                // Return type is integer (index)
+                                type_info.* = .{ .base = .Int }; // index returns the position
                             },
                             else => {
                                 // For now, other array methods not implemented

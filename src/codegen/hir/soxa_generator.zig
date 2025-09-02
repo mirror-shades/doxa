@@ -2260,6 +2260,32 @@ pub const HIRGenerator = struct {
                 }
             },
 
+            .ArrayPop => |pop| {
+                // Generate array expression (stack: [..., array])
+                try self.generateExpression(pop.array, true);
+
+                // Emit ArrayPop. VM pushes popped element, then updated array
+                try self.instructions.append(.ArrayPop);
+
+                // If the array is a variable, store the updated array back
+                if (pop.array.data == .Variable) {
+                    const var_name = pop.array.data.Variable.lexeme;
+                    const var_idx = try self.getOrCreateVariable(var_name);
+                    const expected_type = self.getTrackedVariableType(var_name) orelse .Unknown;
+
+                    // Stack is [ ..., element, array ] -> swap to store array, leave element as result
+                    try self.instructions.append(.Swap);
+                    try self.instructions.append(.{ .StoreVar = .{
+                        .var_index = var_idx,
+                        .var_name = var_name,
+                        .scope_kind = .Local,
+                        .module_context = null,
+                        .expected_type = expected_type,
+                    } });
+                    // After StoreVar, element remains on stack as the expression result
+                }
+            },
+
             .Grouping => |grouping| {
                 // Grouping is just parentheses - generate the inner expression
                 if (grouping) |inner_expr| {
@@ -2813,7 +2839,7 @@ pub const HIRGenerator = struct {
                             try self.instructions.append(.{ .Compare = .{ .op = .Eq, .operand_type = .Enum } });
                         } else {
                             // Regular string literal pattern
-                            const pattern_value = HIRValue{ .string = case.pattern.lexeme };
+                            const pattern_value = HIRValue{ .string = case.pattern.literal.string };
                             const pattern_idx = try self.addConstant(pattern_value);
                             try self.instructions.append(.{ .Const = .{ .value = pattern_value, .constant_id = pattern_idx } });
 
