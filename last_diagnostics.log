@@ -16166,3 +16166,21 @@
 [CompileTime][Error][E1001] ./test/misc/expressions.doxa:285:1: Undefined variable
 [CompileTime][Error][E5004] ./test/examples/brainfuck.doxa:52:10: Function has no return type specified but final expression produces value of type Byte
 [CompileTime][Error][E5004] ./test/examples/brainfuck.doxa:52:10: Function has no return type specified but final expression produces value of type Byte
+[CompileTime][Error][E1003] ./test.doxa:5:53: Cannot use + operator between Int and String
+[CompileTime][Error][E1003] ./test.doxa:5:41: Cannot use + operator between String and Int
+[CompileTime][Error][E1003] ./test.doxa:5:41: Cannot use + operator between String and Int
+[CompileTime][Error][E2004] ./test/misc/methods.doxa:9:14: equals sign '=' is not used for variable declarations, use 'is' instead
+[CompileTime][Error][E2004] ./test/misc/methods.doxa:9:14: equals sign '=' is not used for variable declarations, use 'is' instead
+[CompileTime][Error][E1003] ./test/misc/methods.doxa:11:2: Cannot use + operator between String and Int
+[CompileTime][Error][E1003] ./test/misc/methods.doxa:11:2: Cannot use + operator between String and Int
+[CompileTime][Error][E8002] ./test/misc/methods.doxa:45:20: Array method 'pop' not yet implemented
+[CompileTime][Error][E1009] ./test/misc/methods.doxa:45:5: Nothing type variables must be declared as 'const'
+[CompileTime][Error][E1001] ./test/misc/methods.doxa:46:1: Undefined variable
+[CompileTime][Error][E1001] ./test/misc/methods.doxa:46:9: Undefined variable
+[CompileTime][Error][E6001] ./test/misc/methods.doxa:46:9: Cannot call length on non-array/string type Nothing
+[CompileTime][Error][E1001] ./test/misc/methods.doxa:52:1: Undefined variable
+[CompileTime][Error][E1001] ./test/misc/methods.doxa:53:7: Undefined variable
+[CompileTime][Error][E6001] ./test/misc/methods.doxa:53:7: Cannot call array method 'push' on non-array type Nothing
+[CompileTime][Error][E1001] ./test/misc/methods.doxa:54:1: Undefined variable
+[CompileTime][Error][E1001] ./test/misc/expressions.doxa:16:11: Undefined variable
+[CompileTime][Error][E1007] ./test/misc/expressions.doxa:16:9: Arithmetic requires numeric operands
