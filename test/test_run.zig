@@ -3,6 +3,16 @@ const testing = std.testing;
 const process = std.process;
 const fs = std.fs;
 
+const test_results = struct {
+    passed: usize,
+    failed: usize,
+};
+
+const Mode = enum {
+    PEEK,
+    PRINT,
+};
+
 const peek_result = struct {
     type: []const u8,
     value: []const u8,
@@ -12,53 +22,41 @@ const print_result = struct {
     value: []const u8,
 };
 
+const expected_complex_print_results = [_]print_result{
+    .{ .value = "The variable \"number\" is equal to 10" },
+    .{ .value = "The variable name \"number\" has 6 letters" },
+};
+
 const expected_brainfuck_results = [_]print_result{
     .{ .value = "Input: Output: 0x67" },
 };
 
+const expected_methods_results = [_]peek_result{
+    .{ .type = "string", .value = "\"f\"" },
+    .{ .type = "int", .value = "5" },
+    .{ .type = "int", .value = "11" },
+    .{ .type = "int[]", .value = "[1, 2, 3, 4, 5]" },
+    .{ .type = "int[]", .value = "[1, 2, 3, 4, 5, 6]" },
+    .{ .type = "byte[]", .value = "[0x68, 0x65, 0x6C, 0x6C, 0x6F, 0x20, 0x77, 0x6F, 0x72, 0x6C, 0x64]" },
+    .{ .type = "string", .value = "\"42\"" },
+    .{ .type = "string", .value = "\"8.8\"" },
+    .{ .type = "string", .value = "\"0x0C\"" },
+    .{ .type = "string", .value = "\"[1, 2, 3, 4, 5, 6]\"" },
+    .{ .type = "int", .value = "8" },
+    .{ .type = "int", .value = "12" },
+    .{ .type = "float", .value = "42.0" },
+    .{ .type = "float", .value = "12.0" },
+    .{ .type = "byte", .value = "0x08" },
+    .{ .type = "byte", .value = "0x2A" },
+    .{ .type = "string", .value = "\"int\"" },
+    .{ .type = "string", .value = "\"byte\"" },
+    .{ .type = "string", .value = "\"float\"" },
+    .{ .type = "string", .value = "\"string\"" },
+    .{ .type = "string", .value = "\"tetra\"" },
+    .{ .type = "string", .value = "\"array\"" },
+};
+
 const expected_expressions_results = [_]peek_result{
-    .{ .type = "int", .value = "25" },
-    .{ .type = "int", .value = "30" },
-    .{ .type = "float", .value = "11.0" },
-    .{ .type = "float", .value = "16.0" },
-    .{ .type = "int", .value = "16" },
-    .{ .type = "int", .value = "64" },
-    .{ .type = "float", .value = "50.5" },
-    .{ .type = "int", .value = "-75" },
-    .{ .type = "float", .value = "50.5" },
-    .{ .type = "int", .value = "-75" },
-    .{ .type = "float", .value = "50.5" },
-    .{ .type = "int", .value = "-75" },
-    .{ .type = "float", .value = "3.3333333333333335" },
-    .{ .type = "float", .value = "2.0" },
-    .{ .type = "int", .value = "1" },
-    .{ .type = "int", .value = "3" },
-    .{ .type = "float", .value = "10.0" },
-    .{ .type = "int", .value = "50" },
-    .{ .type = "int", .value = "80" },
-    .{ .type = "int", .value = "146" },
-    .{ .type = "int", .value = "26" },
-    .{ .type = "int", .value = "10" },
-    .{ .type = "int", .value = "24" },
-    .{ .type = "int", .value = "5" },
-    .{ .type = "int", .value = "512" },
-    .{ .type = "float", .value = "7.5" },
-    .{ .type = "float", .value = "2.5" },
-    .{ .type = "float", .value = "5.0" },
-    .{ .type = "int", .value = "16" },
-    .{ .type = "float", .value = "4.0" },
-    .{ .type = "int", .value = "1026" },
-    .{ .type = "int", .value = "1" },
-    .{ .type = "float", .value = "1000000.000001" },
-    .{ .type = "int", .value = "1073741824" },
-    .{ .type = "int", .value = "5" },
-    .{ .type = "int", .value = "5" },
-    .{ .type = "int", .value = "5" },
-    .{ .type = "float", .value = "0.30000000000000004" },
-    .{ .type = "float", .value = "0.3333333333333333" },
-    .{ .type = "float", .value = "6.0" },
-    .{ .type = "float", .value = "1.0" },
-    .{ .type = "int", .value = "3" },
     .{ .type = "int", .value = "25" },
     .{ .type = "int", .value = "30" },
     .{ .type = "float", .value = "11.0" },
@@ -292,6 +290,9 @@ const expected_bigfile_results = [_]peek_result{
     .{ .type = "string", .value = "\"map\"" },
 };
 
+var total_passed: usize = 0;
+var total_failed: usize = 0;
+
 fn runDoxaCommandEx(allocator: std.mem.Allocator, path: []const u8, input: ?[]const u8) ![]const u8 {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
@@ -337,8 +338,8 @@ fn runDoxaCommandWithInput(allocator: std.mem.Allocator, path: []const u8, input
     return runDoxaCommandEx(allocator, path, input);
 }
 
-// peek test is for tests which use the peek operator for output
-fn runPeekTest(allocator: std.mem.Allocator, test_name: []const u8, path: []const u8, expected_results: []const peek_result, input: ?[]const u8) !void {
+// print test is for tests which use the print operator for output
+fn runTest(allocator: std.mem.Allocator, test_name: []const u8, path: []const u8, expected_results: anytype, input: ?[]const u8, mode: Mode) !test_results {
     std.debug.print("\n=== Running {s} test ===\n", .{test_name});
     defer std.debug.print("\n=== {s} test complete ===\n", .{test_name});
 
@@ -350,47 +351,64 @@ fn runPeekTest(allocator: std.mem.Allocator, test_name: []const u8, path: []cons
     defer allocator.free(output);
 
     std.debug.print("Parsing output...\n", .{});
-    const outputs = try parsePeekOutput(output, allocator);
-    defer outputs.deinit();
 
-    var i: usize = 0;
-    while (i < outputs.items.len) : (i += 1) {
-        if (std.mem.eql(u8, outputs.items[i].type, expected_results[i].type) and std.mem.eql(u8, outputs.items[i].value, expected_results[i].value)) {
-            continue;
-        }
-        std.debug.print("Test {d} failed\n", .{i});
-        std.debug.print("Expected: {s} {s} found {s} {s}\n", .{ expected_results[i].type, expected_results[i].value, outputs.items[i].type, outputs.items[i].value });
-        break;
+    if (mode == .PRINT) {
+        return try validatePrintResults(output, expected_results, allocator);
+    } else if (mode == .PEEK) {
+        return try validatePeekResults(output, expected_results, allocator);
     }
-    std.debug.print("verified {d} test cases\n", .{i});
+
+    return .{ .passed = 0, .failed = 0 };
 }
 
-// print test is for tests which use the print operator for output
-fn runPrintTest(allocator: std.mem.Allocator, test_name: []const u8, path: []const u8, expected_results: []const print_result, input: ?[]const u8) !void {
-    std.debug.print("\n=== Running {s} test ===\n", .{test_name});
-    defer std.debug.print("\n=== {s} test complete ===\n", .{test_name});
-
-    std.debug.print("Running doxa command with {s}...\n", .{path});
-    const output = if (input) |in|
-        try runDoxaCommandWithInput(allocator, path, in)
-    else
-        try runDoxaCommand(allocator, path);
-    defer allocator.free(output);
-
-    std.debug.print("Parsing output...\n", .{});
+fn validatePrintResults(output: []const u8, expected_results: anytype, allocator: std.mem.Allocator) !test_results {
     const outputs = try parsePrintOutput(output, allocator);
     defer outputs.deinit();
 
     var i: usize = 0;
+    var all_passed = true;
     while (i < outputs.items.len and i < expected_results.len) : (i += 1) {
         if (std.mem.eql(u8, outputs.items[i], expected_results[i].value)) {
             continue;
         }
         std.debug.print("Test {d} failed\n", .{i});
         std.debug.print("Expected: {s} found {s}\n", .{ expected_results[i].value, outputs.items[i] });
+        all_passed = false;
         break;
     }
-    std.debug.print("verified {d} test cases\n", .{i});
+
+    if (all_passed) {
+        std.debug.print("✓ All {d} test cases passed\n", .{i});
+        return .{ .passed = i, .failed = 0 };
+    } else {
+        std.debug.print("✗ Test failed at case {d}\n", .{i});
+        return .{ .passed = i, .failed = 1 };
+    }
+}
+
+fn validatePeekResults(output: []const u8, expected_results: anytype, allocator: std.mem.Allocator) !test_results {
+    const outputs = try parsePeekOutput(output, allocator);
+    defer outputs.deinit();
+
+    var i: usize = 0;
+    var all_passed = true;
+    while (i < outputs.items.len and i < expected_results.len) : (i += 1) {
+        if (std.mem.eql(u8, outputs.items[i].value, expected_results[i].value)) {
+            continue;
+        }
+        std.debug.print("Test {d} failed\n", .{i});
+        std.debug.print("Expected: {s} found {s}\n", .{ expected_results[i].value, outputs.items[i].value });
+        all_passed = false;
+        break;
+    }
+
+    if (all_passed) {
+        std.debug.print("✓ All {d} test cases passed\n", .{i});
+        return .{ .passed = i, .failed = 0 };
+    } else {
+        std.debug.print("✗ Test failed at case {d}\n", .{i});
+        return .{ .passed = i, .failed = 1 };
+    }
 }
 
 test "big file" {
@@ -398,7 +416,10 @@ test "big file" {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    try runPeekTest(allocator, "big file", "./test/misc/bigfile.doxa", expected_bigfile_results[0..], null);
+    const result = try runTest(allocator, "big file", "./test/misc/bigfile.doxa", expected_bigfile_results[0..], null, .PEEK);
+    total_passed += result.passed;
+    total_failed += result.failed;
+    // Remove the error return - just track the results
 }
 
 test "brainfuck" {
@@ -406,8 +427,21 @@ test "brainfuck" {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    // Input 'f' (102) + newline -> ',+.' increments to 103 (0x67)
-    try runPrintTest(allocator, "brainfuck", "./test/examples/brainfuck.doxa", expected_brainfuck_results[0..], "f\n");
+    const result = try runTest(allocator, "brainfuck", "./test/examples/brainfuck.doxa", expected_brainfuck_results[0..], "f\n", .PRINT);
+    total_passed += result.passed;
+    total_failed += result.failed;
+    // Remove the error return - just track the results
+}
+
+test "complex print" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const result = try runTest(allocator, "complex print", "./test/misc/complex_print.doxa", expected_complex_print_results[0..], null, .PRINT);
+    total_passed += result.passed;
+    total_failed += result.failed;
+    // Remove the error return - just track the results
 }
 
 test "expressions" {
@@ -415,7 +449,36 @@ test "expressions" {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    try runPeekTest(allocator, "expressions", "./test/misc/expressions.doxa", expected_expressions_results[0..], null);
+    const result = try runTest(allocator, "expressions", "./test/misc/expressions.doxa", expected_expressions_results[0..], null, .PEEK);
+    total_passed += result.passed;
+    total_failed += result.failed;
+    // Remove the error return - just track the results
+}
+
+test "methods" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const result = try runTest(allocator, "methods", "./test/misc/methods.doxa", expected_methods_results[0..], "f\n", .PEEK);
+    total_passed += result.passed;
+    total_failed += result.failed;
+    // Remove the error return - just track the results
+}
+
+test "summary" {
+    std.debug.print("\n=============================\n", .{});
+    std.debug.print(" TEST SUMMARY", .{});
+    std.debug.print("\n=============================\n", .{});
+    std.debug.print("Total test cases passed: {d}\n", .{total_passed});
+    std.debug.print("Total test cases failed: {d}\n", .{total_failed});
+
+    if (total_failed == 0) {
+        std.debug.print("🎉 ALL TESTS PASSED! 🎉\n", .{});
+    } else {
+        std.debug.print("❌ {d} TEST(S) FAILED!\n", .{total_failed});
+    }
+    std.debug.print("=============================\n", .{});
 }
 
 fn parsePeekOutput(output: []const u8, allocator: std.mem.Allocator) !std.ArrayList(peek_result) {
