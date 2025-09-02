@@ -1419,6 +1419,9 @@ pub fn arrayType(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Ex
 pub fn parseArrayLiteral(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     self.advance(); // consume '['
 
+    // Skip optional newlines after '['
+    while (self.peek().type == .NEWLINE) self.advance();
+
     var elements = std.ArrayList(*ast.Expr).init(self.allocator);
     errdefer {
         for (elements.items) |element| {
@@ -1436,12 +1439,17 @@ pub fn parseArrayLiteral(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!
         // Parse remaining elements without type checking
         while (self.peek().type == .COMMA) {
             self.advance(); // consume comma
+            // Skip optional newlines after comma
+            while (self.peek().type == .NEWLINE) self.advance();
             if (self.peek().type == .RIGHT_BRACKET) break;
 
             const element = try parseExpression(self) orelse return error.ExpectedExpression;
             try elements.append(element);
         }
     }
+
+    // Allow trailing newlines before closing bracket
+    while (self.peek().type == .NEWLINE) self.advance();
 
     if (self.peek().type != .RIGHT_BRACKET) {
         return error.ExpectedRightBracket;

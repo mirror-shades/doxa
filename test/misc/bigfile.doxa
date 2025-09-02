@@ -109,6 +109,14 @@ each word at index in stringArr {
     word??
 }
 
+var condition is if true then "true" else "false"
+condition?? // true
+
+
+/////
+// UNION NARROWING 
+/////
+
 var asThenUnion :: int | float | byte is 10
 var asThen is asThenUnion as int else 0
 
@@ -151,7 +159,10 @@ const x :: int | float is 17
 
 x as int then onlyUsesInt(x) else "failure"??
 
-// return statements
+
+/////
+// RETURNS 
+/////
 function return_test() returns string {
     return "return"
 }
@@ -242,6 +253,7 @@ living(zombie)
 living(angel) 
 
 
+
 /////
 // ARRAYS
 /////
@@ -287,21 +299,44 @@ tetraArr[9]??
 strArr[0]??
 strArr[9]??
 
-
-// quantifiers
-var ex is exists e in arr where e > checkAgainst
-
-ex?? // true
-
-var uni is forall u in arr where u > checkAgainst
-uni?? // false
-
 /////
-// CONDITIONALS
+// ARRAY OF STRUCT
 /////
-var condition is if true then "true" else "false"
-condition?? // true
 
+enum Species {
+    FROG,
+    WHALE,
+    PENGUIN,
+    HIPPO,
+    LION,
+}
+
+struct Animal {
+    animal_type :: Species,
+    name :: string,
+}
+
+const zoo :: Animal[] is [
+    Animal { 
+        animal_type is Species.LION,
+        name is "Fluffy",
+     },
+    Animal { 
+        animal_type is Species.PENGUIN,
+        name is "Sam",
+     },
+    Animal { 
+        animal_type is Species.WHALE,
+        name is "Nemo",
+     },
+]
+
+zoo[0].name??
+zoo[0].animal_type??
+zoo[1].name??
+zoo[1].animal_type??
+zoo[2].name??
+zoo[2].animal_type??
 
 
 /////
@@ -385,6 +420,15 @@ Map["c"]?? // 3.5
 (true ↑ false)?? // true  74
 (true ↓ false)?? // false  75
 (true → false)?? // false  76
+
+
+// quantifiers
+var ex is exists e in arr where e > checkAgainst
+
+ex?? // true
+
+var uni is forall u in arr where u > checkAgainst
+uni?? // false
 
 
 /////

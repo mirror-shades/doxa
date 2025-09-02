@@ -20009,3 +20009,77 @@
 [Debug][Hint] interpreter/vm.zig:1367:0: Peek instruction for variable bigArr
 [Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 68 at IP 68: Pop
 [Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 69 at IP 69: Halt
+[Debug][Hint] main.zig:409:0: Debug: Processing script: './test.doxa'
+
+[Debug][Hint] main.zig:429:0: Debug: Absolute path: '/home/user/dev/doxa/test.doxa'
+
+[Debug][Hint] main.zig:434:0: reporter debug method working
+
+[Debug][Hint] main.zig:409:0: Debug: Processing script: './test.doxa'
+
+[Debug][Hint] main.zig:429:0: Debug: Absolute path: '/home/user/dev/doxa/test.doxa'
+
+[Debug][Hint] main.zig:434:0: reporter debug method working
+
+[Debug][Hint] main.zig:164:0: >> Constant folding applied: 0 optimizations
+
+[Debug][Hint] codegen/hir/soxa_generator.zig:540:0: HIR: processing imported module globals: 0
+[Debug][Hint] codegen/hir/soxa_generator.zig:565:0: HIR: processing current module globals
+[Debug][Hint] codegen/hir/soxa_generator.zig:725:0: Variable equation has type base: Array
+[Debug][Hint] codegen/hir/soxa_generator.zig:1831:0: Checking union members for variable equation
+[Debug][Hint] codegen/hir/soxa_generator.zig:1847:0: No union members found for equation
+[Debug][Hint] main.zig:191:0: >> Peephole optimizations applied: 0 HIR instruction optimizations
+
+[Debug][Hint] main.zig:213:0: >> Compiled ./test.doxa -> out/test.soxa (35 HIR instructions)
+
+[Debug][Hint] main.zig:507:0: >> Executing with HIR VM
+
+[Debug][Hint] main.zig:224:0: >> Loaded SOXA: 35 instructions, 17 constants
+
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 0 at IP 0: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 1 at IP 1: StoreConst
+[Debug][Hint] interpreter/vm.zig:1061:0: DBG WRITE StoreConst (create) TokenType: storage_id=3, value=types.types.TokenLiteral{ .string = { 84, 111, 107, 101, 110, 84, 121, 112, 101 } }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 2 at IP 2: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 3 at IP 3: ArrayNew
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 4 at IP 4: Dup
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 5 at IP 5: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 6 at IP 6: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 7 at IP 7: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 8 at IP 8: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 9 at IP 9: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 10 at IP 10: StructNew
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 11 at IP 11: ArraySet
+[Debug][Hint] interpreter/vm.zig:2045:0: ArraySet: array element_type=Unknown, trying to assign value type=struct_instance
+[Debug][Hint] interpreter/vm.zig:2075:0: ArraySet: keeping value as-is for type Unknown
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 12 at IP 12: Dup
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 13 at IP 13: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 14 at IP 14: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 15 at IP 15: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 16 at IP 16: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 17 at IP 17: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 18 at IP 18: StructNew
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 19 at IP 19: ArraySet
+[Debug][Hint] interpreter/vm.zig:2045:0: ArraySet: array element_type=Unknown, trying to assign value type=struct_instance
+[Debug][Hint] interpreter/vm.zig:2075:0: ArraySet: keeping value as-is for type Unknown
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 20 at IP 20: Dup
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 21 at IP 21: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 22 at IP 22: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 23 at IP 23: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 24 at IP 24: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 25 at IP 25: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 26 at IP 26: StructNew
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 27 at IP 27: ArraySet
+[Debug][Hint] interpreter/vm.zig:2045:0: ArraySet: array element_type=Unknown, trying to assign value type=struct_instance
+[Debug][Hint] interpreter/vm.zig:2075:0: ArraySet: keeping value as-is for type Unknown
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 28 at IP 28: Dup
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 29 at IP 29: StoreConst
+[Debug][Hint] interpreter/vm.zig:1061:0: DBG WRITE StoreConst (create) equation: storage_id=4, value=types.types.TokenLiteral{ .array = { types.types.TokenLiteral{ .struct_value = types.types.TokenLiteral__struct_24599{ ... } }, types.types.TokenLiteral{ .struct_value = types.types.TokenLiteral__struct_24599{ ... } }, types.types.TokenLiteral{ .struct_value = types.types.TokenLiteral__struct_24599{ ... } } } }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 30 at IP 30: Pop
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 31 at IP 31: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 32 at IP 32: Peek
+[Debug][Hint] interpreter/vm.zig:1356:0: Peek called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .array = codegen.hir.soxa_values.HIRArray{ .elements = { ... }, .element_type = codegen.hir.soxa_types.HIRType.Struct, .capacity = 3, .path = null } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter/vm.zig:1367:0: Peek instruction for variable equation
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 33 at IP 33: Pop
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 34 at IP 34: Halt
+[CompileTime][Error][E1011] ./test.doxa:21:18: Field 'value' not found in struct 'Animal'
+[CompileTime][Error][E1011] ./test.doxa:25:18: Field 'value' not found in struct 'Animal'
