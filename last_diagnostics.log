@@ -16164,3 +16164,5 @@
 [CompileTime][Error][E1001] ./test/misc/expressions.doxa:283:1: Undefined variable
 [CompileTime][Error][E1001] ./test/misc/expressions.doxa:284:1: Undefined variable
 [CompileTime][Error][E1001] ./test/misc/expressions.doxa:285:1: Undefined variable
+[CompileTime][Error][E5004] ./test/examples/brainfuck.doxa:52:10: Function has no return type specified but final expression produces value of type Byte
+[CompileTime][Error][E5004] ./test/examples/brainfuck.doxa:52:10: Function has no return type specified but final expression produces value of type Byte

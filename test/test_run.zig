@@ -3,16 +3,20 @@ const testing = std.testing;
 const process = std.process;
 const fs = std.fs;
 
-const result = struct {
+const peek_result = struct {
     type: []const u8,
     value: []const u8,
 };
 
-const expected_brainfuck_results = [_]result{
-    .{ .type = "byte", .value = "0x67" },
+const print_result = struct {
+    value: []const u8,
 };
 
-const expected_expressions_results = [_]result{
+const expected_brainfuck_results = [_]print_result{
+    .{ .value = "Input: Output: 0x67" },
+};
+
+const expected_expressions_results = [_]peek_result{
     .{ .type = "int", .value = "25" },
     .{ .type = "int", .value = "30" },
     .{ .type = "float", .value = "11.0" },
@@ -141,7 +145,7 @@ const expected_expressions_results = [_]result{
     .{ .type = "int", .value = "3" },
 };
 
-const expected_bigfile_results = [_]result{
+const expected_bigfile_results = [_]peek_result{
     .{ .type = "int", .value = "81" },
     .{ .type = "string", .value = "\"Overflow\"" },
     .{ .type = "int", .value = "-1" },
@@ -333,7 +337,8 @@ fn runDoxaCommandWithInput(allocator: std.mem.Allocator, path: []const u8, input
     return runDoxaCommandEx(allocator, path, input);
 }
 
-fn runTest(allocator: std.mem.Allocator, test_name: []const u8, path: []const u8, expected_results: []const result, input: ?[]const u8) !void {
+// peek test is for tests which use the peek operator for output
+fn runPeekTest(allocator: std.mem.Allocator, test_name: []const u8, path: []const u8, expected_results: []const peek_result, input: ?[]const u8) !void {
     std.debug.print("\n=== Running {s} test ===\n", .{test_name});
     defer std.debug.print("\n=== {s} test complete ===\n", .{test_name});
 
@@ -345,7 +350,7 @@ fn runTest(allocator: std.mem.Allocator, test_name: []const u8, path: []const u8
     defer allocator.free(output);
 
     std.debug.print("Parsing output...\n", .{});
-    const outputs = try parseOutput(output, allocator);
+    const outputs = try parsePeekOutput(output, allocator);
     defer outputs.deinit();
 
     var i: usize = 0;
@@ -360,12 +365,40 @@ fn runTest(allocator: std.mem.Allocator, test_name: []const u8, path: []const u8
     std.debug.print("verified {d} test cases\n", .{i});
 }
 
+// print test is for tests which use the print operator for output
+fn runPrintTest(allocator: std.mem.Allocator, test_name: []const u8, path: []const u8, expected_results: []const print_result, input: ?[]const u8) !void {
+    std.debug.print("\n=== Running {s} test ===\n", .{test_name});
+    defer std.debug.print("\n=== {s} test complete ===\n", .{test_name});
+
+    std.debug.print("Running doxa command with {s}...\n", .{path});
+    const output = if (input) |in|
+        try runDoxaCommandWithInput(allocator, path, in)
+    else
+        try runDoxaCommand(allocator, path);
+    defer allocator.free(output);
+
+    std.debug.print("Parsing output...\n", .{});
+    const outputs = try parsePrintOutput(output, allocator);
+    defer outputs.deinit();
+
+    var i: usize = 0;
+    while (i < outputs.items.len and i < expected_results.len) : (i += 1) {
+        if (std.mem.eql(u8, outputs.items[i], expected_results[i].value)) {
+            continue;
+        }
+        std.debug.print("Test {d} failed\n", .{i});
+        std.debug.print("Expected: {s} found {s}\n", .{ expected_results[i].value, outputs.items[i] });
+        break;
+    }
+    std.debug.print("verified {d} test cases\n", .{i});
+}
+
 test "big file" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    try runTest(allocator, "big file", "./test/misc/bigfile.doxa", expected_bigfile_results[0..], null);
+    try runPeekTest(allocator, "big file", "./test/misc/bigfile.doxa", expected_bigfile_results[0..], null);
 }
 
 test "brainfuck" {
@@ -374,7 +407,7 @@ test "brainfuck" {
     const allocator = arena.allocator();
 
     // Input 'f' (102) + newline -> ',+.' increments to 103 (0x67)
-    try runTest(allocator, "brainfuck", "./test/examples/brainfuck.doxa", expected_brainfuck_results[0..], "f\n");
+    try runPrintTest(allocator, "brainfuck", "./test/examples/brainfuck.doxa", expected_brainfuck_results[0..], "f\n");
 }
 
 test "expressions" {
@@ -382,11 +415,11 @@ test "expressions" {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    try runTest(allocator, "expressions", "./test/misc/expressions.doxa", expected_expressions_results[0..], null);
+    try runPeekTest(allocator, "expressions", "./test/misc/expressions.doxa", expected_expressions_results[0..], null);
 }
 
-fn parseOutput(output: []const u8, allocator: std.mem.Allocator) !std.ArrayList(result) {
-    var outputs = std.ArrayList(result).init(allocator);
+fn parsePeekOutput(output: []const u8, allocator: std.mem.Allocator) !std.ArrayList(peek_result) {
+    var outputs = std.ArrayList(peek_result).init(allocator);
 
     var lines = std.mem.splitScalar(u8, output, '\n');
     while (lines.next()) |line| {
@@ -407,6 +440,19 @@ fn parseOutput(output: []const u8, allocator: std.mem.Allocator) !std.ArrayList(
     return outputs;
 }
 
+fn parsePrintOutput(output: []const u8, allocator: std.mem.Allocator) !std.ArrayList([]const u8) {
+    var outputs = std.ArrayList([]const u8).init(allocator);
+
+    var lines = std.mem.splitScalar(u8, output, '\n');
+    while (lines.next()) |line| {
+        if (line.len == 0) continue;
+
+        // For print output, we just get the raw value
+        try outputs.append(line);
+    }
+    return outputs;
+}
+
 fn grabType(output: []const u8) []const u8 {
     var foundType: []const u8 = "";
     for (output, 0..) |_, i| {
@@ -423,4 +469,18 @@ fn grabValue(output: []const u8) []const u8 {
     if (i == 0) unreachable;
     const trimmedLine = output[i + 3 ..];
     return trimmedLine;
+}
+
+fn inferTypeFromValue(value: []const u8) []const u8 {
+    if (std.mem.startsWith(u8, value, "0x")) {
+        return "byte";
+    } else if (std.mem.indexOf(u8, value, ".") != null) {
+        return "float";
+    } else if (std.mem.startsWith(u8, value, "\"") and std.mem.endsWith(u8, value, "\"")) {
+        return "string";
+    } else if (std.mem.eql(u8, value, "true") or std.mem.eql(u8, value, "false")) {
+        return "tetra";
+    } else {
+        return "int";
+    }
 }
