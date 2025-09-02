@@ -16184,3 +16184,14 @@
 [CompileTime][Error][E1001] ./test/misc/methods.doxa:54:1: Undefined variable
 [CompileTime][Error][E1001] ./test/misc/expressions.doxa:16:11: Undefined variable
 [CompileTime][Error][E1007] ./test/misc/expressions.doxa:16:9: Arithmetic requires numeric operands
+[CompileTime][Error][E6001] ./test_calc.doxa:38:5: ForEach requires array or string type, got Union
+[CompileTime][Error][E2011] ./test_calc.doxa:40:5: 'as' requires an 'else' block
+[CompileTime][Error][E1001] ./test_calc.doxa:43:22: Undefined variable
+[CompileTime][Error][E5002] ./test_calc.doxa:43:1: Cannot call non-function type Nothing
+[CompileTime][Error][E1001] ./test_calc.doxa:49:5: Undefined variable
+[CompileTime][Error][E5002] ./test_calc.doxa:49:1: Cannot call non-function type Nothing
+[Runtime][Error][E1001] Unknown built-in function: shunt
+[Runtime][Error][E1001] Unknown built-in function: shunt
+[CompileTime][Error][E5004] ./test_calc.doxa:25:16: Function has no return type specified but final expression produces value of type Union
+[CompileTime][Error][E1003] ./test_calc.doxa:55:14: Cannot use + operator between String and Unknown
+[CompileTime][Error][E1003] ./test_calc.doxa:55:14: Cannot use + operator between String and Unknown
