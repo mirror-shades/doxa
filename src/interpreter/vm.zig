@@ -2063,10 +2063,11 @@ pub const HIRVM = struct {
                         const last_element = mutable_arr.elements[length - 1];
                         mutable_arr.elements[length - 1] = HIRValue.nothing; // Clear the element
 
-                        // Push the popped element onto the stack
-                        try self.stack.push(HIRFrame.initFromHIRValue(last_element));
+                        // Push the updated array first so it's on top after Swap in codegen
+                        try self.stack.push(HIRFrame.initFromHIRValue(HIRValue{ .array = mutable_arr }));
 
-                        // Note: We don't push the array back since pop consumes it
+                        // Then push the popped element so it remains as the expression result
+                        try self.stack.push(HIRFrame.initFromHIRValue(last_element));
                     },
                     else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot pop from non-array value: {s}", .{@tagName(array.value)}),
                 }
