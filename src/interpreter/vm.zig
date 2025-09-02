@@ -1068,6 +1068,65 @@ pub const HIRVM = struct {
                 const b = try self.stack.pop();
                 const a_val = try self.stack.pop();
 
+                // Handle array arithmetic first
+                if (a.operand_type == .Array) {
+                    if (a.op == .Add) {
+                        // Array concatenation
+                        switch (a_val.value) {
+                            .array => |arr_a| {
+                                switch (b.value) {
+                                    .array => |arr_b| {
+                                        // Calculate lengths
+                                        var len_a: u32 = 0;
+                                        for (arr_a.elements) |elem| {
+                                            if (std.meta.eql(elem, HIRValue.nothing)) break;
+                                            len_a += 1;
+                                        }
+
+                                        var len_b: u32 = 0;
+                                        for (arr_b.elements) |elem| {
+                                            if (std.meta.eql(elem, HIRValue.nothing)) break;
+                                            len_b += 1;
+                                        }
+
+                                        // Create new array with combined elements
+                                        const new_elements = try self.allocator.alloc(HIRValue, len_a + len_b);
+
+                                        // Copy elements from first array
+                                        for (0..len_a) |i| {
+                                            new_elements[i] = arr_a.elements[i];
+                                        }
+
+                                        // Copy elements from second array
+                                        for (0..len_b) |i| {
+                                            new_elements[len_a + i] = arr_b.elements[i];
+                                        }
+
+                                        const result_array = HIRValue{
+                                            .array = .{
+                                                .elements = new_elements,
+                                                .capacity = len_a + len_b,
+                                                .element_type = arr_a.element_type,
+                                            },
+                                        };
+
+                                        try self.stack.push(HIRFrame.initFromHIRValue(result_array));
+                                        return;
+                                    },
+                                    else => {
+                                        return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot concatenate array with {s}", .{@tagName(b.value)});
+                                    },
+                                }
+                            },
+                            else => {
+                                return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot concatenate {s} with array", .{@tagName(a_val.value)});
+                            },
+                        }
+                    } else {
+                        return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform {s} operation on arrays", .{@tagName(a.op)});
+                    }
+                }
+
                 // Check if either operand is a float and needs promotion
                 const a_is_float = a_val.value == .float;
                 const b_is_float = b.value == .float;

@@ -149,6 +149,20 @@ fn compileToNative(memoryManager: *MemoryManager, soxa_path: []const u8, output_
 ///==========================================================================
 fn compileDoxaToSoxaFromAST(memoryManager: *MemoryManager, statements: []ast.Stmt, parser: *Parser, semantic_analyzer: *SemanticAnalyzer, source_path: []const u8, soxa_path: []const u8, reporter: *Reporter) !void {
 
+    // Apply constant folding to statements
+    var constant_folder = ConstantFolder.init(memoryManager.getAllocator());
+    var folded_statements = std.ArrayList(ast.Stmt).init(memoryManager.getAllocator());
+    defer folded_statements.deinit();
+
+    // Create mutable copies of statements for constant folding
+    for (statements) |stmt| {
+        var mutable_stmt = stmt;
+        const folded_stmt = try constant_folder.foldStmt(&mutable_stmt);
+        try folded_statements.append(folded_stmt);
+    }
+
+    reporter.debug(">> Constant folding applied: {} optimizations\n", .{constant_folder.getOptimizationCount()}, @src());
+
     // NEW: Pass custom type information to HIR generator
     var hir_generator = HIRGenerator.init(memoryManager.getAllocator(), reporter, parser.module_namespaces, parser.imported_symbols);
     defer hir_generator.deinit();
@@ -162,7 +176,7 @@ fn compileDoxaToSoxaFromAST(memoryManager: *MemoryManager, statements: []ast.Stm
         try hir_generator.custom_types.put(custom_type.name, converted_type);
     }
 
-    var hir_program = try hir_generator.generateProgram(statements);
+    var hir_program = try hir_generator.generateProgram(folded_statements.items);
     defer hir_program.deinit();
 
     // Apply peephole optimizations to HIR

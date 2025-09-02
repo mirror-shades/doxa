@@ -48,6 +48,47 @@ pub const ConstantFolder = struct {
                         return folded_expr;
                     }
                 }
+
+                // Try to fold array literals for addition
+                if (binary.operator.type == .PLUS and
+                    folded_left.data == .Array and
+                    folded_right.data == .Array)
+                {
+
+                    // Array concatenation - create a new array with combined elements
+                    const left_array = folded_left.data.Array;
+                    const right_array = folded_right.data.Array;
+                    const combined_size = left_array.len + right_array.len;
+
+                    const combined_elements = try self.allocator.alloc(*ast.Expr, combined_size);
+
+                    // Copy elements from left array
+                    for (0..left_array.len) |i| {
+                        combined_elements[i] = left_array[i];
+                    }
+
+                    // Copy elements from right array
+                    for (0..right_array.len) |i| {
+                        combined_elements[left_array.len + i] = right_array[i];
+                    }
+
+                    self.optimizations_made += 1;
+
+                    // Clean up the original expressions
+                    folded_left.deinit(self.allocator);
+                    self.allocator.destroy(folded_left);
+                    folded_right.deinit(self.allocator);
+                    self.allocator.destroy(folded_right);
+
+                    // Create new array expression with combined elements
+                    const folded_expr = try self.allocator.create(ast.Expr);
+                    folded_expr.* = .{
+                        .base = expr.base,
+                        .data = .{ .Array = combined_elements },
+                    };
+                    return folded_expr;
+                }
+
                 return expr;
             },
             .Unary => |*unary| {
@@ -256,7 +297,6 @@ pub const ConstantFolder = struct {
 
     // Arithmetic operations
     fn foldAdd(self: *ConstantFolder, left: TokenLiteral, right: TokenLiteral) ?TokenLiteral {
-        _ = self;
         return switch (left) {
             .int => |l| switch (right) {
                 .int => |r| TokenLiteral{ .int = l + r },
@@ -271,6 +311,25 @@ pub const ConstantFolder = struct {
             .float => |l| switch (right) {
                 .float => |r| TokenLiteral{ .float = l + r },
                 .int => |r| TokenLiteral{ .float = l + @as(f64, @floatFromInt(r)) },
+                else => null,
+            },
+            .array => |l| switch (right) {
+                .array => |r| {
+                    // Array concatenation
+                    const combined_elements = self.allocator.alloc(TokenLiteral, l.len + r.len) catch return null;
+
+                    // Copy elements from left array
+                    for (0..l.len) |i| {
+                        combined_elements[i] = l[i];
+                    }
+
+                    // Copy elements from right array
+                    for (0..r.len) |i| {
+                        combined_elements[l.len + i] = r[i];
+                    }
+
+                    return TokenLiteral{ .array = combined_elements };
+                },
                 else => null,
             },
             else => null,

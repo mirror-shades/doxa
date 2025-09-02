@@ -476,10 +476,7 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
         self.advance();
 
         // Parse regular initializer expression
-        // Try parsing array literal first
-        if (self.peek().type == .LEFT_BRACKET) {
-            initializer = try expression_parser.parseArrayLiteral(self, null, .NONE);
-        } else if (self.peek().type == .INPUT) {
+        if (self.peek().type == .INPUT) {
             // Handle input expression
             initializer = try Parser.input(self, null, .NONE);
         } else if (self.peek().type == .IDENTIFIER) {

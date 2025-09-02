@@ -336,7 +336,7 @@ pub const SoxaTextParser = struct {
             const op_str = tokens.next() orelse return;
             const type_str = tokens.next() orelse return;
             const arith_op = if (std.mem.eql(u8, op_str, "Add")) ArithOp.Add else if (std.mem.eql(u8, op_str, "Sub")) ArithOp.Sub else if (std.mem.eql(u8, op_str, "Mul")) ArithOp.Mul else if (std.mem.eql(u8, op_str, "Div")) ArithOp.Div else if (std.mem.eql(u8, op_str, "Mod")) ArithOp.Mod else if (std.mem.eql(u8, op_str, "Pow")) ArithOp.Pow else unreachable;
-            const operand_type = if (std.mem.eql(u8, type_str, "Int")) HIRType.Int else if (std.mem.eql(u8, type_str, "Float")) HIRType.Float else if (std.mem.eql(u8, type_str, "Byte")) HIRType.Byte else HIRType.Int;
+            const operand_type = if (std.mem.eql(u8, type_str, "Int")) HIRType.Int else if (std.mem.eql(u8, type_str, "Float")) HIRType.Float else if (std.mem.eql(u8, type_str, "Byte")) HIRType.Byte else if (std.mem.eql(u8, type_str, "Array")) HIRType.Array else HIRType.Int;
             try self.instructions.append(HIRInstruction{ .Arith = .{ .op = arith_op, .operand_type = operand_type } });
         } else if (std.mem.eql(u8, op, "Convert")) {
             // Type conversion instruction

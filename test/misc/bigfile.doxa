@@ -253,6 +253,16 @@ arr[3] is 666666
 arr[3]?? // 666666
 @push(arr, 420000) // TODO: all array methods should use the @ syntax
 arr[5]?? // 420000
+@pop(arr)?? //42000
+arr?? //
+
+var arr_part_one is [1, 2, 3]
+var arr_part_two is [4, 5, 6]
+
+(arr_part_one + arr_part_two)??
+
+const bigArr is [1,2,3] + [4,5,6]
+bigArr??
 
 const checkAgainst is 333333
 
