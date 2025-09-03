@@ -43,7 +43,7 @@ pub const HIRInstruction = union(enum) {
     /// LLVM: LLVMConstInt(context, value, signed)
     Const: struct {
         value: HIRValue,
-        constant_id: u32, // For VM constant pool lookup
+        constant_id: u32,
     },
 
     /// Duplicate top stack value
@@ -411,6 +411,16 @@ pub const HIRInstruction = union(enum) {
     /// VM: Complex printValue logic
     /// LLVM: Generate printf calls with format strings
     Print: struct {},
+
+    /// Print with string interpolation
+    /// VM: Format string with interpolated values
+    /// LLVM: Generate printf calls with format strings
+    PrintInterpolated: struct {
+        format_parts: []const []const u8,
+        placeholder_indices: []const u32,
+        argument_count: u32,
+        format_part_ids: []const u32,
+    },
 
     /// Prints a struct
     /// VM: OP_PEEK_STRUCT

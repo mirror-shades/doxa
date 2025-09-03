@@ -800,29 +800,6 @@ pub const HIRVM = struct {
                     }
                 },
 
-                .PrintStruct => |i| {
-                    // Check for Unknown types in field types
-                    for (i.field_types) |field_type| {
-                        if (field_type == .Unknown) {
-                            self.reporter.reportCompileError(
-                                Location{
-                                    .file = "unknown",
-                                    .range = .{
-                                        .start_line = 0,
-                                        .start_col = 0,
-                                        .end_line = 0,
-                                        .end_col = 0,
-                                    },
-                                },
-                                ErrorCode.UNKNOWN_TYPE_FOUND_IN_PEEK_INSTRUCTION,
-                                "FATAL: Unknown type found in PeekStruct instruction at IP {} for field {}. Type inference likely failed during code generation.",
-                                .{ ip, i },
-                            );
-                            return ErrorList.InternalParserError;
-                        }
-                    }
-                },
-
                 .Compare => |c| {
                     if (c.operand_type == .Unknown) {
                         self.reporter.reportCompileError(
@@ -1559,81 +1536,59 @@ pub const HIRVM = struct {
                 try self.stack.push(value);
             },
 
-            .PrintStruct => |i| {
-                const value = try self.stack.pop();
-                self.reporter.debug("PeekStruct called with value: {any}", .{value}, @src());
+            .PrintInterpolated => |interp| {
+                self.reporter.debug("DBG PrintInterpolated: executing PrintInterpolated instruction", .{}, @src());
+                self.reporter.debug("DBG PrintInterpolated: format_parts: {}, placeholder_indices: {}, argument_count: {}", .{ interp.format_parts.len, interp.placeholder_indices.len, interp.argument_count }, @src());
 
-                // Handle both struct instances and field values
-                switch (value.value) {
-                    .struct_instance => |s| {
-                        self.reporter.debug("Processing struct instance of type '{s}' with {d} fields", .{ s.type_name, s.fields.len }, @src());
-                        // Print each field with proper location formatting
-                        for (s.fields) |field| {
-                            self.reporter.debug("Processing field '{s}'", .{field.name}, @src());
+                // Pop the arguments from the stack (they were pushed in reverse order)
+                var args = try self.allocator.alloc(HIRValue, interp.argument_count);
+                defer self.allocator.free(args);
 
-                            // Build the full field path
-                            var field_path: []const u8 = undefined;
-                            if (s.path) |path| {
-                                field_path = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ path, field.name });
-                            } else {
-                                field_path = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ s.type_name, field.name });
-                            }
-                            defer self.allocator.free(field_path);
-
-                            // For nested structs, recursively print their fields
-                            switch (field.value) {
-                                .struct_instance => |nested| {
-                                    // Create a new PeekStruct instruction for the nested struct
-                                    const field_names = try self.allocator.alloc([]const u8, nested.fields.len);
-                                    const field_types = try self.allocator.alloc(HIRType, nested.fields.len);
-                                    for (nested.fields, 0..) |nested_field, field_idx| {
-                                        field_names[field_idx] = nested_field.name;
-                                        field_types[field_idx] = nested_field.field_type;
-                                    }
-                                    const nested_peek = HIRInstruction{
-                                        .PeekStruct = .{
-                                            .location = i.location,
-                                            .field_names = field_names,
-                                            .type_name = nested.type_name,
-                                            .field_count = @intCast(nested.fields.len),
-                                            .field_types = field_types,
-                                            .should_pop_after_peek = i.should_pop_after_peek, // Pass the flag down
-                                        },
-                                    };
-                                    // Push the nested struct onto the stack with updated path
-                                    var nested_with_path = nested;
-                                    nested_with_path.path = field_path;
-                                    try self.stack.push(HIRFrame{ .value = HIRValue{ .struct_instance = nested_with_path } });
-                                    // Recursively peek the nested struct
-                                    try self.executeInstruction(nested_peek);
-                                },
-                                else => {
-                                    try self.formatHIRValueRaw(std.io.getStdOut().writer(), field.value);
-                                },
-                            }
-                        }
-                    },
-                    else => {
-                        self.reporter.debug("Processing non-struct value with {d} field names", .{i.field_names.len}, @src());
-                        // For non-struct values (like field access results), print as a single value with location
-                        if (i.field_names.len > 0) {
-                            if (i.location) |location| {
-                                try std.io.getStdOut().writer().print("[{s}:{d}:{d}] ", .{ location.file, location.range.start_line, location.range.start_col });
-                            }
-
-                            // Show type information for non-struct values
-                            const value_type_string = self.getTypeString(value.value);
-                            try std.io.getStdOut().writer().print(":: {s} is ", .{value_type_string});
-                            try self.formatHIRValue(std.io.getStdOut().writer(), value.value);
-                            try std.io.getStdOut().writer().print("\n", .{});
-                        }
-                    },
+                for (0..interp.argument_count) |i| {
+                    const arg = try self.stack.pop();
+                    args[interp.argument_count - 1 - i] = arg.value; // Reverse to get correct order
+                    self.reporter.debug("DBG PrintInterpolated: popped arg {}: {any}", .{ i, arg.value }, @src());
                 }
 
-                if (!i.should_pop_after_peek) {
-                    // Push the value back onto the stack for potential further use
-                    try self.stack.push(value);
+                // Get the actual format parts from the constants using format_part_ids
+                var actual_format_parts = std.ArrayList([]const u8).init(self.allocator);
+                defer actual_format_parts.deinit();
+
+                for (interp.format_part_ids) |id| {
+                    if (id < self.program.constant_pool.len) {
+                        const constant = self.program.constant_pool[id];
+                        if (constant == .string) {
+                            try actual_format_parts.append(constant.string);
+                        } else {
+                            try actual_format_parts.append(""); // Fallback
+                        }
+                    } else {
+                        try actual_format_parts.append(""); // Fallback
+                    }
                 }
+
+                // Build the final string by interleaving format parts and argument values
+                var result = std.ArrayList(u8).init(self.allocator);
+                defer result.deinit();
+
+                for (actual_format_parts.items, 0..) |part, i| {
+                    self.reporter.debug("DBG PrintInterpolated: adding format part {}: '{s}'", .{ i, part }, @src());
+                    try result.appendSlice(part);
+
+                    // Add argument value if there is one for this part
+                    if (i < interp.placeholder_indices.len) {
+                        const arg_index = interp.placeholder_indices[i];
+                        self.reporter.debug("DBG PrintInterpolated: placeholder {} maps to arg index {}", .{ i, arg_index }, @src());
+                        if (arg_index < args.len) {
+                            self.reporter.debug("DBG PrintInterpolated: adding arg value: {any}", .{args[arg_index]}, @src());
+                            try self.formatHIRValueRaw(result.writer(), args[arg_index]);
+                        }
+                    }
+                }
+
+                self.reporter.debug("DBG PrintInterpolated: final result: '{s}'", .{result.items}, @src());
+                // Print the final interpolated string
+                try std.io.getStdOut().writer().print("{s}", .{result.items});
             },
 
             .EnterScope => {

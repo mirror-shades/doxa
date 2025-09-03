@@ -163,10 +163,7 @@ pub const rules = blk: {
     // Add function declaration support
     r.set(.FUNCTION, .{ .prefix = null }); // Function declarations are handled as statements, not expressions
 
-    // Add rule for the ? operator with lower precedence
     r.set(.PEEK, .{ .infix = peekValue, .precedence = .CALL });
-    // Add rule for the ? operator with lower precedence
-    r.set(.PRINT, .{ .infix = printValue, .precedence = .CALL });
 
     // Add loop support
     r.set(.WHILE, .{ .prefix = whileExpr });
@@ -241,6 +238,7 @@ pub const rules = blk: {
     // I/O
     r.set(.READ, .{ .prefix = methodCallExpr, .precedence = .CALL });
     r.set(.WRITE, .{ .prefix = methodCallExpr, .precedence = .CALL });
+    r.set(.PRINT, .{ .prefix = methodCallExpr, .precedence = .CALL });
     r.set(.EXEC, .{ .prefix = methodCallExpr, .precedence = .CALL });
     r.set(.SPAWN, .{ .prefix = methodCallExpr, .precedence = .CALL });
 
