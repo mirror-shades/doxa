@@ -614,11 +614,17 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
             else => {
                 // For backward compatibility, also check lexemes
                 if (std.mem.eql(u8, type_name, "int")) break :blk ast.BasicType.Integer;
+                if (std.mem.eql(u8, type_name, "Int")) break :blk ast.BasicType.Integer;
                 if (std.mem.eql(u8, type_name, "byte")) break :blk ast.BasicType.Byte;
+                if (std.mem.eql(u8, type_name, "Byte")) break :blk ast.BasicType.Byte;
                 if (std.mem.eql(u8, type_name, "float")) break :blk ast.BasicType.Float;
+                if (std.mem.eql(u8, type_name, "Float")) break :blk ast.BasicType.Float;
                 if (std.mem.eql(u8, type_name, "string")) break :blk ast.BasicType.String;
+                if (std.mem.eql(u8, type_name, "String")) break :blk ast.BasicType.String;
                 if (std.mem.eql(u8, type_name, "tetra")) break :blk ast.BasicType.Tetra;
+                if (std.mem.eql(u8, type_name, "Tetra")) break :blk ast.BasicType.Tetra;
                 if (std.mem.eql(u8, type_name, "nothing")) break :blk ast.BasicType.Nothing;
+                if (std.mem.eql(u8, type_name, "Nothing")) break :blk ast.BasicType.Nothing;
                 break :blk null;
             },
         }
