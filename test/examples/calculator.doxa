@@ -2,6 +2,7 @@ enum Error {
     FailedToEvaluate,
     FailedToShunt,
     MismatchedParentheses,
+    DivisionByZero,
 }
 
 enum TokenType {
@@ -65,7 +66,10 @@ function evaluate(rpn :: Token[]) returns int | Error {
             const lh is @pop(stack) 
             if t.value == "+" then @push(stack, lh + rh)
             if t.value == "-" then @push(stack, lh - rh)
-            if t.value == "/" then @push(stack, @int(lh / rh))
+            if t.value == "/" then {
+                if rh == 0 then return Error.DivisionByZero
+                @push(stack, @int(lh / rh))
+            }
             if t.value == "*" then @push(stack, lh * rh)
         }
     }
@@ -95,21 +99,42 @@ function split(input :: string) returns string[] {
             @push(result, c)
         }
 
-        else if c == "-" and input[i+1] == " " then {
-            if current != "" then {
-                @push(result, current)
-                current is ""
+        else if c == "-"  {
+            var is_unary_minus is false
+            if @length(current) == 0 then {
+                is_unary_minus is true 
+            } else {
+                if i > 0 then {
+                    @print("current: {current}  ")
+                    @print("input[i - 1]: {input[i - 1]}\n")
+                    is_unary_minus is isUnaryMinus(@length(current), input[i - 1])
+                }
             }
-            @push(result, c)
-        } 
-
+            if is_unary_minus then {
+                current is current + c  // Add to current number
+            } else {
+                if current != "" then {
+                    @push(result, current)
+                    current is ""
+                }
+                @push(result, c)  // Binary minus operator
+            }
+        }
         else if c != " " {
             current is current + c
         }
-
     }
-    @push(result, current)
+    if current != "" then @push(result, current)
     return result
+}
+
+function isUnaryMinus(_length :: int, _input :: string) returns tetra {
+    if _input == " " then return true
+    if _input == "(" then return true
+    if _input == "+" then return true
+    if _input == "*" then return true
+    if _input == "/" then return true
+    return false
 }
 
 function verifyParens(input :: string[]) returns tetra {
@@ -209,7 +234,7 @@ function shunt(tokens :: Token[]) returns Token[] | Error {
 
     while @length(operators) > 0 {
         const popped is @pop(operators)
-        if popped.token_type == TokenType.LPAREN or popped.token_type == TokenType.RPAREN then @print("Mismatched parentheses\n")
+        if popped.token_type == TokenType.LPAREN or popped.token_type == TokenType.RPAREN then return Error.MismatchedParentheses
         @push(output, popped)
     }
 
