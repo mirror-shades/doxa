@@ -23,23 +23,21 @@ function precedence(op :: string) returns int {
 }
 
 entry function main() {
-    // Test the full calculator with an expression
-    const input is "5 + 6"
+    const input is @input();
     const splitInput is split(input)
     @assert(verifyParens(splitInput), "parens don't match")
     const possibleTokens is tokenize(splitInput)
 
     possibleTokens as Token[] then {
         const rpn is shunt(possibleTokens)
-        rpn as Token[] then {
-            rpn??
-        } else {
-            "shunting failed\n"?
-            return
-        }
+        rpn??
     } else {
         "tokens failed to parse\n"?
     }
+}
+
+function evaluate() {
+
 }
 
 function split(input :: string) returns string[] {
@@ -124,10 +122,12 @@ function tokenize(input :: string[]) returns Token[] | nothing {
                 value is token,
             })
         } else {
-            @push(tokens, Token {
-                token_type is .NUMBER,
-                value is token,
-            })
+            if token != "" {
+                @push(tokens, Token {
+                    token_type is .NUMBER,
+                    value is token,
+                })
+            }
         }
     }
     return tokens
@@ -136,28 +136,28 @@ function tokenize(input :: string[]) returns Token[] | nothing {
 function shunt(tokens :: Token[]) returns Token[] {
     var output :: Token[]
     var operators :: Token[]
-    
+
     each t in tokens {
         if t.token_type == TokenType.NUMBER then {
             @push(output, t)
         }
         else if t.token_type == TokenType.OPERATOR then {
-            const current_prec is precedence(t.value)
 
-            // handle precedence popping
             while @length(operators) > 0 {
                 const top_op is operators[@length(operators) - 1]
                 if top_op.token_type != TokenType.OPERATOR then break
 
                 const top_prec is precedence(top_op.value)
-                if (top_prec >= current_prec) then {
+                const current_prec is precedence(t.value)
+
+                if top_prec >= current_prec then {
                     const popped is @pop(operators)
                     @push(output, popped)
                 } else {
                     break
                 }
             }
-            
+
             @push(operators, t)
         }
         else if t.token_type == TokenType.LPAREN then {
@@ -168,19 +168,20 @@ function shunt(tokens :: Token[]) returns Token[] {
                 const popped is @pop(operators)
                 @push(output, popped)
             }
-            
+
             if @length(operators) > 0 and operators[@length(operators) - 1].token_type == TokenType.LPAREN then {
-                @pop(operators) // discard LPAREN
-            } 
+                @pop(operators)
+            } else {
+                ("Mismatched parentheses\n")?
+            }
         }
     }
-    
-    // flush any remaining operators
+
     while @length(operators) > 0 {
         const popped is @pop(operators)
+        if popped.token_type == TokenType.LPAREN or popped.token_type == TokenType.RPAREN then ("Mismatched parentheses\n")?
         @push(output, popped)
     }
-    
+
     return output
 }
-
