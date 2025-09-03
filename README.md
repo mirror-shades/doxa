@@ -97,13 +97,14 @@ var loopSpot :: int[]
 var tp :: int is 0
 var ip :: int is 0
 
-fn getInput() -> byte {
+function getInput() returns byte {
+    @print("Input: ")
     var userInput :: string is @input()
     var newByte :: byte is @bytes(userInput)[0]
     return newByte
 }
 
-fn startLoop() {
+function startLoop() {
     if @length(loopSpot) == loops then {
         @push(loopSpot, ip)
     } else {
@@ -112,7 +113,7 @@ fn startLoop() {
     loops += 1
 }
 
-fn endLoop() {
+function endLoop() {
     if loops >= 0 then {
         if tape[tp] == 0 then {
             loops -= 1
@@ -125,7 +126,7 @@ fn endLoop() {
     }
 }
 
-fn checkClosingBracket(scan :: string) -> tetra {
+function checkClosingBracket(scan :: string) returns tetra {
     var pointer :: int is 0
     var openBrackets :: int is 0
     while(pointer < @length(scan)) {
@@ -137,7 +138,7 @@ fn checkClosingBracket(scan :: string) -> tetra {
 }
 
 
-fn interpret(scan :: string) {
+function interpret(scan :: string) {
     const scanLength is @length(scan)
 
     var closedBrackets :: tetra is checkClosingBracket(scan)
@@ -147,17 +148,18 @@ fn interpret(scan :: string) {
         var currentInstruction is scan[ip]
         if(currentInstruction == ">") then tp += 1
         if(currentInstruction == "<") then tp -= 1
-        if(currentInstruction == "+") then tape[tp] += 1
-        if(currentInstruction == "-") then tape[tp] -= 1
-        if(currentInstruction == ".") then tape[tp]?
+        if(currentInstruction == "+") then tape[tp] += 0x01
+        if(currentInstruction == "-") then tape[tp] -= 0x01
+        if(currentInstruction == ".") then {@print("Output: {tape[tp]}\n")}
         if(currentInstruction == ",") then tape[tp] is getInput()
         if(currentInstruction == "[") then startLoop()
         if(currentInstruction == "]") then endLoop()
         ip += 1
     }
+    tape[tp]??
 }
 
-entry fn main() {
+entry function main() {
     interpret(",+.")
 }
 
