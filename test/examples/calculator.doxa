@@ -53,12 +53,22 @@ function evaluate(rpn :: Token[]) returns int | nothing {
     each t in rpn {
         if t.token_type == TokenType.NUMBER then {
             const maybe_int is @int(t.value)
-            const valid_number is maybe_int as int else {"bad num\n";return}
-            valid_number??
+            const valid_number is maybe_int as int else return
+
             @push(stack, valid_number)
         }
-        stack??
+        if t.token_type == TokenType.OPERATOR then {
+            if @length(stack) < 2 then return 
+            const rh is @pop(stack) 
+            const lh is @pop(stack) 
+            if t.value == "+" then @push(stack, lh + rh)
+            if t.value == "-" then @push(stack, lh - rh)
+            if t.value == "/" then @push(stack, @int(lh / rh))
+            if t.value == "*" then @push(stack, lh * rh)
+        }
     }
+    if @length(stack) != 1 then return
+    return stack[0]
 }
 
 function split(input :: string) returns string[] {
@@ -67,11 +77,7 @@ function split(input :: string) returns string[] {
 
     const lin is @length(input)
 
-    // `each` loops iterate through each element
-    // they can work on strings as well as arrays
-    // `at` is optional syntax for a loop index
     each c at i in input {
-        // breaks number if operator is found
         if c == " " then {
             if current != "" then {
                 @push(result, current)
@@ -87,7 +93,6 @@ function split(input :: string) returns string[] {
             @push(result, c)
         }
 
-        // make sure - isn't a negative sign
         else if c == "-" and input[i+1] == " " then {
             if current != "" then {
                 @push(result, current)
