@@ -32,6 +32,30 @@ const expected_brainfuck_results = [_]print_result{
     .{ .value = "Input: Output: 0x67" },
 };
 
+const expected_calculator_results_1 = [_]print_result{
+    .{ .value = "Output: 3" },
+};
+
+const expected_calculator_results_2 = [_]print_result{
+    .{ .value = "Output: -1" },
+};
+
+const expected_calculator_results_3 = [_]print_result{
+    .{ .value = "Output: 212" },
+};
+
+const expected_calculator_results_4 = [_]print_result{
+    .{ .value = "Output: 7" },
+};
+
+const expected_calculator_results_5 = [_]print_result{
+    .{ .value = "Output: 1" },
+};
+
+const expected_calculator_results_6 = [_]print_result{
+    .{ .value = "Output: 4" },
+};
+
 const expected_methods_results = [_]peek_result{
     .{ .type = "string", .value = "\"f\"" },
     .{ .type = "int", .value = "5" },
@@ -446,7 +470,6 @@ test "big file" {
     const result = try runTest(allocator, "big file", "./test/misc/bigfile.doxa", expected_bigfile_results[0..], null, .PEEK);
     total_passed += result.passed;
     total_failed += result.failed;
-    // Remove the error return - just track the results
 }
 
 test "brainfuck" {
@@ -457,7 +480,6 @@ test "brainfuck" {
     const result = try runTest(allocator, "brainfuck", "./test/examples/brainfuck.doxa", expected_brainfuck_results[0..], "f\n", .PRINT);
     total_passed += result.passed;
     total_failed += result.failed;
-    // Remove the error return - just track the results
 }
 
 test "complex print" {
@@ -468,7 +490,6 @@ test "complex print" {
     const result = try runTest(allocator, "complex print", "./test/misc/complex_print.doxa", expected_complex_print_results[0..], null, .PRINT);
     total_passed += result.passed;
     total_failed += result.failed;
-    // Remove the error return - just track the results
 }
 
 test "expressions" {
@@ -479,7 +500,6 @@ test "expressions" {
     const result = try runTest(allocator, "expressions", "./test/misc/expressions.doxa", expected_expressions_results[0..], null, .PEEK);
     total_passed += result.passed;
     total_failed += result.failed;
-    // Remove the error return - just track the results
 }
 
 test "methods" {
@@ -490,7 +510,42 @@ test "methods" {
     const result = try runTest(allocator, "methods", "./test/misc/methods.doxa", expected_methods_results[0..], "f\n", .PEEK);
     total_passed += result.passed;
     total_failed += result.failed;
-    // Remove the error return - just track the results
+}
+
+test "calculator" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const test_cases = [_]struct {
+        name: []const u8, // Add this field
+        input: []const u8,
+        expected: []const print_result,
+    }{
+        .{ .name = "5 + -2", .input = "5 + -2\n", .expected = &expected_calculator_results_1 },
+        .{ .name = "5 + -2 * 3", .input = "5 + -2 * 3\n", .expected = &expected_calculator_results_2 },
+        .{ .name = "1000 / 5 + 6 * 2", .input = "1000 / 5 + 6 * 2\n", .expected = &expected_calculator_results_3 },
+        .{ .name = "2 * (3 + 2) - 6 / 2", .input = "2 * (3 + 2) - 6 / 2\n", .expected = &expected_calculator_results_4 },
+        .{ .name = "10 / 2 / 5", .input = "10 / 2 / 5\n", .expected = &expected_calculator_results_5 },
+        .{ .name = "20-16", .input = "20-16\n", .expected = &expected_calculator_results_6 },
+    };
+
+    std.debug.print("\n=== Running calculator tests ===\n", .{});
+    var passed: usize = 0;
+    var failed: usize = 0;
+
+    for (test_cases) |tc| {
+        std.debug.print("  Testing: {s}\n", .{tc.name}); // Now this will work
+        const result = try runTest(allocator, "", "./test/examples/calculator.doxa", tc.expected, tc.input, .PRINT);
+        passed += result.passed;
+        failed += result.failed;
+    }
+
+    std.debug.print("\nCalculator summary: {d} passed, {d} failed\n", .{ passed, failed });
+    std.debug.print("=== Calculator tests complete ===\n", .{});
+
+    total_passed += passed;
+    total_failed += failed;
 }
 
 test "summary" {
