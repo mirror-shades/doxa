@@ -196,6 +196,18 @@ pub const SemanticAnalyzer = struct {
         return type_info;
     }
 
+    /// Check if a union type contains Nothing as one of its members
+    fn unionContainsNothing(self: *SemanticAnalyzer, union_type_info: ast.TypeInfo) bool {
+        _ = self;
+        if (union_type_info.base != .Union) return false;
+        if (union_type_info.union_type) |union_type| {
+            for (union_type.types) |member_type| {
+                if (member_type.base == .Nothing) return true;
+            }
+        }
+        return false;
+    }
+
     // NEW: Register a custom type during semantic analysis
     fn registerCustomType(self: *SemanticAnalyzer, type_name: []const u8, kind: CustomTypeInfo.CustomTypeKind) !void {
         const custom_type = CustomTypeInfo{
@@ -2123,7 +2135,14 @@ pub const SemanticAnalyzer = struct {
                     type_info.base = .Nothing;
                     return type_info;
                 }
-                type_info.* = .{ .base = .Int };
+                // StringToInt returns int | NumberError union (matches @int() method)
+                const int_t = try self.allocator.create(ast.TypeInfo);
+                int_t.* = .{ .base = .Int };
+                const err_t = try self.allocator.create(ast.TypeInfo);
+                err_t.* = .{ .base = .Custom, .custom_type = "NumberError" };
+                var union_members = [_]*ast.TypeInfo{ int_t, err_t };
+                const u = try self.createUnionType(union_members[0..]);
+                type_info.* = u.*;
             },
             .Map => |map_entries| {
                 if (map_entries.len == 0) {
@@ -4468,7 +4487,10 @@ pub const SemanticAnalyzer = struct {
                         try self.validateReturnTypeCompatibility(&expected_return_type, return_type, .{ .location = getLocationFromBase(stmt.base) });
                     } else {
                         has_return_without_value = true;
-                        if (expected_return_type.base != .Nothing) {
+                        // Allow bare 'return' for Nothing type or Union types containing Nothing
+                        const is_nothing_compatible = expected_return_type.base == .Nothing or
+                            (expected_return_type.base == .Union and self.unionContainsNothing(expected_return_type));
+                        if (!is_nothing_compatible) {
                             self.reporter.reportCompileError(
                                 getLocationFromBase(stmt.base),
                                 ErrorCode.MISSING_RETURN_VALUE,
@@ -4498,7 +4520,10 @@ pub const SemanticAnalyzer = struct {
                             for (expr_return_types.items) |ret_type| {
                                 if (ret_type.base == .Nothing) {
                                     has_return_without_value = true;
-                                    if (expected_return_type.base != .Nothing) {
+                                    // Allow bare 'return' for Nothing type or Union types containing Nothing
+                                    const is_nothing_compatible = expected_return_type.base == .Nothing or
+                                        (expected_return_type.base == .Union and self.unionContainsNothing(expected_return_type));
+                                    if (!is_nothing_compatible) {
                                         self.reporter.reportCompileError(
                                             getLocationFromBase(stmt.base),
                                             ErrorCode.MISSING_RETURN_VALUE,
