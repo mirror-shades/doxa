@@ -358,55 +358,53 @@ pub const HIRGenerator = struct {
                 while (it2.next()) |m_entry| {
                     const module_info2 = m_entry.value_ptr.*;
                     if (module_info2.ast) |module_ast| {
-                        if (module_ast.data == .Block) {
-                            const mod_statements2 = module_ast.data.Block.statements;
-                            var found = false;
-                            var func_return_type: HIRType = .Nothing;
-                            var func_body: []ast.Stmt = &[_]ast.Stmt{};
-                            var func_params: []ast.FunctionParam = &[_]ast.FunctionParam{};
-                            for (mod_statements2) |mod_stmt2| {
-                                switch (mod_stmt2.data) {
-                                    .FunctionDecl => |func2| {
-                                        if (!func2.is_public) continue;
-                                        if (!std.mem.eql(u8, func2.name.lexeme, sym_name)) continue;
-                                        // Found matching function
-                                        found = true;
-                                        func_return_type = self.convertTypeInfo(func2.return_type_info);
-                                        func_body = func2.body;
-                                        func_params = func2.params;
-                                    },
-                                    else => {},
-                                }
-                                if (found) break;
+                        const mod_statements2 = module_ast.data.Block.statements;
+                        var found = false;
+                        var func_return_type: HIRType = .Nothing;
+                        var func_body: []ast.Stmt = &[_]ast.Stmt{};
+                        var func_params: []ast.FunctionParam = &[_]ast.FunctionParam{};
+                        for (mod_statements2) |mod_stmt2| {
+                            switch (mod_stmt2.data) {
+                                .FunctionDecl => |func2| {
+                                    if (!func2.is_public) continue;
+                                    if (!std.mem.eql(u8, func2.name.lexeme, sym_name)) continue;
+                                    // Found matching function
+                                    found = true;
+                                    func_return_type = self.convertTypeInfo(func2.return_type_info);
+                                    func_body = func2.body;
+                                    func_params = func2.params;
+                                },
+                                else => {},
+                            }
+                            if (found) break;
+                        }
+
+                        if (found) {
+                            // Add unqualified function signature using the imported symbol name
+                            const start_label2 = try self.generateLabel(try std.fmt.allocPrint(self.allocator, "func_{s}", .{sym_name}));
+                            const function_info2 = FunctionInfo{
+                                .name = sym_name,
+                                .arity = if (sym.param_count) |pc| pc else @intCast(func_params.len),
+                                .return_type = func_return_type,
+                                .start_label = start_label2,
+                                .local_var_count = 0,
+                                .is_entry = false,
+                            };
+
+                            // Only add if not already present
+                            if (!self.function_signatures.contains(sym_name)) {
+                                try self.function_signatures.put(sym_name, function_info2);
+                                try self.function_bodies.append(FunctionBody{
+                                    .function_info = function_info2,
+                                    .statements = func_body,
+                                    .start_instruction_index = 0,
+                                    .function_name = sym_name,
+                                    .function_params = func_params,
+                                    .return_type_info = (try ast.typeInfoFromHIRType(self.allocator, func_return_type)).*,
+                                });
                             }
 
-                            if (found) {
-                                // Add unqualified function signature using the imported symbol name
-                                const start_label2 = try self.generateLabel(try std.fmt.allocPrint(self.allocator, "func_{s}", .{sym_name}));
-                                const function_info2 = FunctionInfo{
-                                    .name = sym_name,
-                                    .arity = if (sym.param_count) |pc| pc else @intCast(func_params.len),
-                                    .return_type = func_return_type,
-                                    .start_label = start_label2,
-                                    .local_var_count = 0,
-                                    .is_entry = false,
-                                };
-
-                                // Only add if not already present
-                                if (!self.function_signatures.contains(sym_name)) {
-                                    try self.function_signatures.put(sym_name, function_info2);
-                                    try self.function_bodies.append(FunctionBody{
-                                        .function_info = function_info2,
-                                        .statements = func_body,
-                                        .start_instruction_index = 0,
-                                        .function_name = sym_name,
-                                        .function_params = func_params,
-                                        .return_type_info = (try ast.typeInfoFromHIRType(self.allocator, func_return_type)).*,
-                                    });
-                                }
-
-                                break; // Stop scanning modules once found
-                            }
+                            break; // Stop scanning modules once found
                         }
                     }
                 }
@@ -1890,14 +1888,78 @@ pub const HIRGenerator = struct {
             },
 
             .Print => |print| {
-                // Generate the expression to print (leaves value on stack)
-                try self.generateExpression(print.expr, true);
+                std.debug.print("DEBUG: SOXA generator: Print node - expr: {s}, arguments: {}, format_parts: {}\n", .{
+                    if (print.expr) |_| "present" else "null",
+                    if (print.arguments) |args| args.len else 0,
+                    if (print.format_parts) |parts| parts.len else 0,
+                });
 
-                // Generate print instruction
-                try self.instructions.append(.{ .Print = .{} });
+                if (print.expr) |print_expr| {
+                    // Simple printing case
+                    std.debug.print("DEBUG: SOXA generator: Simple print case\n", .{});
+                    try self.generateExpression(print_expr, true);
+                    try self.instructions.append(.{ .Print = .{} });
+                } else if (print.arguments) |args| {
+                    // Interpolated printing case (@print)
+                    std.debug.print("DEBUG: SOXA generator: Interpolated print case with {} arguments\n", .{args.len});
+                    if (args.len == 0) {
+                        // No interpolation - need to push the format string literal
+                        // The format_parts should contain the original string
+                        if (print.format_parts) |parts| {
+                            if (parts.len > 0) {
+                                // Add the string to the constant pool first
+                                const constant_id = try self.addConstant(.{ .string = parts[0] });
+
+                                // Push the constant by ID
+                                try self.instructions.append(.{
+                                    .Const = .{
+                                        .value = .{ .string = parts[0] }, // Use the actual string value
+                                        .constant_id = constant_id,
+                                    },
+                                });
+                            }
+                        }
+                        try self.instructions.append(.{ .Print = .{} });
+                    } else {
+                        // Generate code for each argument
+                        for (args) |arg| {
+                            try self.generateExpression(arg, true);
+                        }
+
+                        std.debug.print("DEBUG: SOXA generator: About to generate PrintInterpolated instruction\n", .{});
+                        std.debug.print("DEBUG: SOXA generator: format_parts: {}, placeholder_indices: {}\n", .{
+                            if (print.format_parts) |parts| parts.len else 0,
+                            if (print.placeholder_indices) |indices| indices.len else 0,
+                        });
+
+                        // Store format parts as constants and get their IDs
+                        const format_parts = print.format_parts orelse return error.MissingFormatParts;
+                        const placeholder_indices = print.placeholder_indices orelse return error.MissingPlaceholderIndices;
+
+                        var format_part_ids = try self.allocator.alloc(u32, format_parts.len);
+                        for (format_parts, 0..) |part, i| {
+                            const constant_id = try self.addConstant(.{ .string = part });
+                            format_part_ids[i] = constant_id;
+                        }
+
+                        // Generate interpolated print instruction
+                        try self.instructions.append(.{ .PrintInterpolated = .{
+                            .format_parts = format_parts,
+                            .placeholder_indices = placeholder_indices,
+                            .argument_count = @intCast(args.len),
+                            .format_part_ids = format_part_ids,
+                        } });
+
+                        std.debug.print("DEBUG: SOXA generator: Successfully generated PrintInterpolated instruction\n", .{});
+                    }
+                } else {
+                    std.debug.print("DEBUG: SOXA generator: No expr and no arguments - InvalidPrintExpression\n", .{});
+                    return error.InvalidPrintExpression;
+                }
 
                 // If the caller does not need the result (statement context), drop it now
-                if (!preserve_result) {
+                // Note: For interpolated printing, PrintInterpolated already consumes its arguments
+                if (!preserve_result and print.expr != null) {
                     try self.instructions.append(.Pop);
                 }
             },
@@ -1979,87 +2041,6 @@ pub const HIRGenerator = struct {
                     .field_names = struct_info.field_names,
                     .field_types = struct_info.field_types,
                     .location = peek.location,
-                    .should_pop_after_peek = !preserve_result,
-                } });
-            },
-
-            .PrintStruct => |print| {
-
-                // Generate the expression to peek
-                try self.generateExpression(print.expr, true);
-
-                // Get struct info from the expression
-                const struct_info: StructPeekInfo = switch (print.expr.data) {
-                    .StructLiteral => |struct_lit| blk: {
-                        const field_count: u32 = @truncate(struct_lit.fields.len);
-                        const field_names = try self.allocator.alloc([]const u8, struct_lit.fields.len);
-                        const field_types = try self.allocator.alloc(HIRType, struct_lit.fields.len);
-                        break :blk StructPeekInfo{
-                            .name = struct_lit.name.lexeme,
-                            .field_count = field_count,
-                            .field_names = field_names,
-                            .field_types = field_types,
-                        };
-                    },
-                    .Variable => |var_token| if (self.getTrackedVariableType(var_token.lexeme)) |var_type| blk: {
-                        if (var_type != .Struct) {
-                            return error.ExpectedStructType;
-                        }
-                        const field_names = try self.allocator.alloc([]const u8, 0);
-                        const field_types = try self.allocator.alloc(HIRType, 0);
-                        break :blk StructPeekInfo{
-                            .name = var_token.lexeme,
-                            .field_count = 0,
-                            .field_names = field_names,
-                            .field_types = field_types,
-                        };
-                    } else {
-                        return error.UnknownVariableType;
-                    },
-                    .FieldAccess => |field| blk: {
-                        // For field access, we need to generate the field access code first
-                        try self.generateExpression(field.object, true);
-                        try self.instructions.append(.{
-                            .StoreFieldName = .{
-                                .field_name = field.field.lexeme,
-                            },
-                        });
-
-                        // Generate GetField instruction to access the field
-                        try self.instructions.append(.{
-                            .GetField = .{
-                                .field_name = field.field.lexeme,
-                                .container_type = .Struct,
-                                .field_index = 0,
-                                .field_for_peek = true,
-                            },
-                        });
-
-                        // Create a single-field struct info
-                        const field_names = try self.allocator.alloc([]const u8, 1);
-                        const field_types = try self.allocator.alloc(HIRType, 1);
-                        field_names[0] = field.field.lexeme;
-                        field_types[0] = self.inferTypeFromExpression(print.expr);
-
-                        break :blk StructPeekInfo{
-                            .name = field.field.lexeme,
-                            .field_count = 1,
-                            .field_names = field_names,
-                            .field_types = field_types,
-                        };
-                    },
-                    else => {
-                        return error.ExpectedStructType;
-                    },
-                };
-
-                // Add the PrintStruct instruction with the gathered info
-                try self.instructions.append(.{ .PrintStruct = .{
-                    .type_name = struct_info.name,
-                    .field_count = struct_info.field_count,
-                    .field_names = struct_info.field_names,
-                    .field_types = struct_info.field_types,
-                    .location = print.location,
                     .should_pop_after_peek = !preserve_result,
                 } });
             },

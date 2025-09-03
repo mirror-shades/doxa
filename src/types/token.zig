@@ -14,10 +14,9 @@ pub const TokenType = enum {
     TILDE, // ~
     PIPE, // |
     SEMICOLON, // ;
+    PEEK, // ?
 
     //one or two character tokens
-    PRINT, // ?
-    PEEK, // ??
     DOT, // .
     DOT_DOT, // ..
     AMPERSAND, // &
@@ -108,6 +107,7 @@ pub const TokenType = enum {
     PANIC, // panic
     CLONE, // clone
     COPY, // copy
+    PRINT, // print
 
     // keywords with alternate tokens
     AND, // and ∧

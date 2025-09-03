@@ -889,22 +889,13 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
             try writer.print("    Print         ; Print value\n", .{});
         },
 
-        .PrintStruct => |i| {
-            try writer.print("    PrintStruct \"{s}\" {} [", .{ i.type_name, i.field_count });
-            for (i.field_names, 0..) |name, idx| {
-                try writer.print("\"{s}\"", .{name});
-                if (idx < i.field_names.len - 1) try writer.writeByte(',');
+        .PrintInterpolated => |i| {
+            try writer.print("    PrintInterpolated {} {} {} [", .{ i.format_parts.len, i.placeholder_indices.len, i.argument_count });
+            for (i.format_part_ids, 0..) |id, idx| {
+                try writer.print("{}", .{id});
+                if (idx < i.format_part_ids.len - 1) try writer.writeByte(',');
             }
-            try writer.writeAll("] [");
-            for (i.field_types, 0..) |type_info, idx| {
-                try writer.print("{s}", .{@tagName(type_info)});
-                if (idx < i.field_types.len - 1) try writer.writeByte(',');
-            }
-            try writer.writeAll("]");
-            if (i.location) |loc| {
-                try writer.print(" @{s}:{d}:{d}", .{ loc.file, loc.range.start_line, loc.range.start_col });
-            }
-            try writer.writeAll("         ; Print struct\n");
+            try writer.print("]        ; Interpolated print\n", .{});
         },
 
         .AssertFail => |a| {

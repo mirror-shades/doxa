@@ -3131,15 +3131,7 @@ pub const SemanticAnalyzer = struct {
                 const expr_type = try self.inferTypeFromExpr(_peek_struct.expr);
                 type_info.* = expr_type.*; // PeekStruct returns the same type as the expression
             },
-            .Print => |print| {
-                const expr_type = try self.inferTypeFromExpr(print.expr);
-                type_info.* = expr_type.*; // Print returns the same type as the expression
-                return type_info;
-            },
-            .PrintStruct => |_print_struct| {
-                const expr_type = try self.inferTypeFromExpr(_print_struct.expr);
-                type_info.* = expr_type.*; // PeekStruct returns the same type as the expression
-            },
+            .Print => {},
             .IndexAssign => |index_assign| {
                 const array_type = try self.inferTypeFromExpr(index_assign.array);
                 const index_type = try self.inferTypeFromExpr(index_assign.index);

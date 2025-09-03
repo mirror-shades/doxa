@@ -364,10 +364,7 @@ fn runTest(allocator: std.mem.Allocator, test_name: []const u8, path: []const u8
     defer std.debug.print("\n=== {s} test complete ===\n", .{test_name});
 
     std.debug.print("Running doxa command with {s}...\n", .{path});
-    const output = if (input) |in|
-        try runDoxaCommandWithInput(allocator, path, in)
-    else
-        try runDoxaCommand(allocator, path);
+    const output = try runDoxaCommand(allocator, path);
     defer allocator.free(output);
 
     std.debug.print("Parsing output...\n", .{});

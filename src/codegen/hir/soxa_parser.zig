@@ -557,67 +557,54 @@ pub const SoxaTextParser = struct {
             }
         } else if (std.mem.eql(u8, op, "Print")) {
             try self.instructions.append(.{ .Print = .{} });
-        } else if (std.mem.eql(u8, op, "PrintStruct")) {
-            // Parse: PrintStruct "Person" 2 ["name", "age"] [String, Int]
-            const struct_name_start = std.mem.indexOf(u8, trimmed, "\"").? + 1;
-            const struct_name_end = std.mem.indexOfPos(u8, trimmed, struct_name_start, "\"").?;
-            const struct_name = try self.allocator.dupe(u8, trimmed[struct_name_start..struct_name_end]);
+        } else if (std.mem.eql(u8, op, "PrintInterpolated")) {
+            const format_parts_str = tokens.next() orelse return;
+            const placeholder_indices_str = tokens.next() orelse return;
+            const argument_count_str = tokens.next() orelse return;
 
-            // Get field count
-            const count_start = struct_name_end + 2;
-            const count_end = std.mem.indexOfAny(u8, trimmed[count_start..], " [").? + count_start;
-            const field_count = try std.fmt.parseInt(u32, trimmed[count_start..count_end], 10);
+            const format_parts_count = std.fmt.parseInt(u32, format_parts_str, 10) catch return;
+            const placeholder_indices_count = std.fmt.parseInt(u32, placeholder_indices_str, 10) catch return;
+            const argument_count = std.fmt.parseInt(u32, argument_count_str, 10) catch return;
 
-            // Initialize new struct context
-            var field_names = std.ArrayList([]const u8).init(self.allocator);
-            var field_types = std.ArrayList(HIRType).init(self.allocator);
+            // Parse format part IDs from the [id1,id2,...] section
+            const format_part_ids_str = tokens.next() orelse return;
+            if (!std.mem.startsWith(u8, format_part_ids_str, "[") or !std.mem.endsWith(u8, format_part_ids_str, "]")) {
+                return error.InvalidFormatPartIds;
+            }
 
-            // Parse field names and types
-            var in_names = true;
-            var current_pos = count_end;
-            while (current_pos < trimmed.len) : (current_pos += 1) {
-                if (trimmed[current_pos] == '[') {
-                    continue;
-                } else if (trimmed[current_pos] == ']') {
-                    if (in_names) {
-                        in_names = false;
-                    } else {
-                        break;
-                    }
-                } else if (trimmed[current_pos] == '"') {
-                    const name_start = current_pos + 1;
-                    const name_end = std.mem.indexOfPos(u8, trimmed, name_start, "\"").?;
-                    const name = try self.allocator.dupe(u8, trimmed[name_start..name_end]);
-                    try field_names.append(name);
-                    current_pos = name_end;
-                } else if (std.mem.indexOfPos(u8, trimmed, current_pos, "String")) |type_pos| {
-                    if (type_pos == current_pos) {
-                        try field_types.append(.String);
-                        current_pos = type_pos + 5;
-                    }
-                } else if (std.mem.indexOfPos(u8, trimmed, current_pos, "Int")) |type_pos| {
-                    if (type_pos == current_pos) {
-                        try field_types.append(.Int);
-                        current_pos = type_pos + 2;
-                    }
+            const ids_content = format_part_ids_str[1 .. format_part_ids_str.len - 1];
+            var format_part_ids = std.ArrayList(u32).init(self.allocator);
+            defer format_part_ids.deinit();
+
+            if (ids_content.len > 0) {
+                var id_tokens = std.mem.splitScalar(u8, ids_content, ',');
+                while (id_tokens.next()) |id_str| {
+                    const id = std.fmt.parseInt(u32, std.mem.trim(u8, id_str, " "), 10) catch return;
+                    try format_part_ids.append(id);
                 }
             }
 
-            // Parse location info if present
-            var location: ?Location = null;
-            const location_marker = std.mem.indexOf(u8, trimmed, "@");
-            if (location_marker) |marker_pos| {
-                const location_str = trimmed[marker_pos..];
-                location = self.parseLocationString(location_str) catch null;
+            // Create arrays for format_parts and placeholder_indices
+            const format_parts = try self.allocator.alloc([]const u8, format_parts_count);
+            const placeholder_indices = try self.allocator.alloc(u32, placeholder_indices_count);
+            const format_part_ids_array = try self.allocator.alloc(u32, format_part_ids.items.len);
+
+            // Initialize with dummy values (will be populated from constants at runtime)
+            for (format_parts) |*part| {
+                part.* = "";
+            }
+            for (placeholder_indices) |*index| {
+                index.* = 0;
+            }
+            for (format_part_ids.items, 0..) |id, i| {
+                format_part_ids_array[i] = id;
             }
 
-            try self.instructions.append(.{ .PrintStruct = .{
-                .type_name = struct_name,
-                .field_count = field_count,
-                .field_names = try field_names.toOwnedSlice(),
-                .field_types = try field_types.toOwnedSlice(),
-                .location = location,
-                .should_pop_after_peek = false,
+            try self.instructions.append(.{ .PrintInterpolated = .{
+                .format_parts = format_parts,
+                .placeholder_indices = placeholder_indices,
+                .argument_count = argument_count,
+                .format_part_ids = format_part_ids_array,
             } });
         } else if (std.mem.eql(u8, op, "ArrayNew")) {
             const type_str = tokens.next() orelse return;
