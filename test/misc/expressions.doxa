@@ -9,75 +9,75 @@ const const_b is 10
 //////
 
 // Basic arithmetic operations
-(5 + 10 * 2)??          // 25 (multiplication before addition)
-((5 + 10) * 2)??        // 30 (parentheses change precedence)
-(20 / 4 + 3 * 2)??      // 11.0 (division and multiplication before addition)
-((20 / 4 + 3) * 2)??    // 16.0 (parentheses first)
-(2 ** 3 * 2)??          // 16 (exponentiation before multiplication)
-(2 ** (3 * 2))??        // 64 (parentheses first)
+(5 + 10 * 2)?          // 25 (multiplication before addition)
+((5 + 10) * 2)?        // 30 (parentheses change precedence)
+(20 / 4 + 3 * 2)?      // 11.0 (division and multiplication before addition)
+((20 / 4 + 3) * 2)?    // 16.0 (parentheses first)
+(2 ** 3 * 2)?          // 16 (exponentiation before multiplication)
+(2 ** (3 * 2))?        // 64 (parentheses first)
 
 // With variables
-(var_a * var_b + var_a / var_b)??           // 50.5 (50 + 0.5)
-((var_a + var_b) * (var_a - var_b))??       // -75 (15 * -5)
+(var_a * var_b + var_a / var_b)?           // 50.5 (50 + 0.5)
+((var_a + var_b) * (var_a - var_b))?       // -75 (15 * -5)
 
 // With consts
-(const_a * const_b + const_a / const_b)??   // 50.5 (50 + 0.5)
-((const_a + const_b) * (const_a - const_b))?? // -75 (15 * -5)
+(const_a * const_b + const_a / const_b)?   // 50.5 (50 + 0.5)
+((const_a + const_b) * (const_a - const_b))? // -75 (15 * -5)
 
 // Mixed variables and consts
-(var_a * const_b + var_a / const_b)??       // 50.5 (50 + 0.5)
-((var_a + const_b) * (var_a - const_b))??   // -75 (15 * -5)
+(var_a * const_b + var_a / const_b)?       // 50.5 (50 + 0.5)
+((var_a + const_b) * (var_a - const_b))?   // -75 (15 * -5)
 
 // Basic arithmetic with different number types
-(10 / 3)??            // 3.333... (float division)
-(10 / 5)??            // 2.0 (preserve float in division)
-(10 % 3)??            // 1 (modulus)
-(-5 + 8)??            // 3 (negative numbers)
-(2.5 * 4)??           // 10.0 (float multiplication)
+(10 / 3)?            // 3.333... (float division)
+(10 / 5)?            // 2.0 (preserve float in division)
+(10 % 3)?            // 1 (modulus)
+(-5 + 8)?            // 3 (negative numbers)
+(2.5 * 4)?           // 10.0 (float multiplication)
 
 // Operator precedence edge cases
-(2 + 3 * 4 ** 2)??    // 50 (exponent before multiplication before addition)
-((2 + 3) * 4 ** 2)??  // 80 (parentheses change order)
-(2 + (3 * 4) ** 2)??  // 146 (inner parentheses first)
-(2 * 3 + 4 * 5)??     // 26 (same precedence, left to right)
+(2 + 3 * 4 ** 2)?    // 50 (exponent before multiplication before addition)
+((2 + 3) * 4 ** 2)?  // 80 (parentheses change order)
+(2 + (3 * 4) ** 2)?  // 146 (inner parentheses first)
+(2 * 3 + 4 * 5)?     // 26 (same precedence, left to right)
 
 // Multiple operations
-(1 + 2 + 3 + 4)??     // 10 (chained addition)
-(2 * 3 * 4)??         // 24 (chained multiplication)
-(10 - 2 - 3)??        // 5 (left associative)
-(2 ** 3 ** 2)??       // 512 (right associative for **)
+(1 + 2 + 3 + 4)?     // 10 (chained addition)
+(2 * 3 * 4)?         // 24 (chained multiplication)
+(10 - 2 - 3)?        // 5 (left associative)
+(2 ** 3 ** 2)?       // 512 (right associative for **)
 
 // Mixed types and type promotion
-(5 + 2.5)??           // 7.5 (int + float promotes to float)
-(10 / 4.0)??          // 2.5 (float division)
-(10.0 / 2)??          // 5.0 (float result from division)
+(5 + 2.5)?           // 7.5 (int + float promotes to float)
+(10 / 4.0)?          // 2.5 (float division)
+(10.0 / 2)?          // 5.0 (float result from division)
 
 // Complex expressions
-((5 + 3) * (10 - 2 ** 3))??   // 16 (8 * 2)
-(100 / (5 * (3 + 2)))??        // 4.0
-(2 + 2 * 2 ** 3 ** 2)??        // 1026 (2 + (2 * (2 ** (3 ** 2))))
-((7 + 4 * 3) % 3)??            // 1 (7 + (4 * 3)) % 3
+((5 + 3) * (10 - 2 ** 3))?   // 16 (8 * 2)
+(100 / (5 * (3 + 2)))?        // 4.0
+(2 + 2 * 2 ** 3 ** 2)?        // 1026 (2 + (2 * (2 ** (3 ** 2))))
+((7 + 4 * 3) % 3)?            // 1 (7 + (4 * 3)) % 3
 
 // Additional edge cases
 // Large numbers
-(1e6 + 1e-6)??       // 1000000.000001
-(2 ** 30)??          // 1073741824
+(1e6 + 1e-6)?       // 1000000.000001
+(2 ** 30)?          // 1073741824
 
 // Identity operations
-(1 * 5 + 0)??        // 5
-((5 + 0) * 1)??      // 5
-(5 ** 1)??           // 5
+(1 * 5 + 0)?        // 5
+((5 + 0) * 1)?      // 5
+(5 ** 1)?           // 5
 
 // Floating point precision
-(0.1 + 0.2)??        // Should be approximately 0.3
-(1.0 / 3.0)??        // 0.333...
+(0.1 + 0.2)?        // Should be approximately 0.3
+(1.0 / 3.0)?        // 0.333...
 
 // Nested expressions
-((((5 + 3) * 2) - 4) / 2)??  // 6
+((((5 + 3) * 2) - 4) / 2)?  // 6
 
 // Multiple operations with same precedence
-(10 / 2 / 5)??       // 1.0 (left associative)
-(10 - 5 - 2)??       // 3 (left associative)
+(10 / 2 / 5)?       // 1.0 (left associative)
+(10 - 5 - 2)?       // 3 (left associative)
 
 
 //////
@@ -153,48 +153,48 @@ var v_expr40 is (((5 + 3) * 2) - 4) / 2  // 6
 var v_expr41 is 10 / 2 / 5      // 1.0 (left associative)
 var v_expr42 is 10 - 5 - 2      // 3 (left associative)
 
-v_expr1??
-v_expr2??
-v_expr3??
-v_expr4??
-v_expr5??
-v_expr6??
-v_expr7??
-v_expr8??
-v_expr9??
-v_expr10??
-v_expr11??
-v_expr12??
-v_expr13??
-v_expr14??
-v_expr15??
-v_expr16??
-v_expr17??
-v_expr18??
-v_expr19??
-v_expr20??
-v_expr21??
-v_expr22??
-v_expr23??
-v_expr24??
-v_expr25??
-v_expr26??
-v_expr27??
-v_expr28??
-v_expr29??
-v_expr30??
-v_expr31??
-v_expr32??
-v_expr33??
-v_expr34??
-v_expr35??
-v_expr36??
-v_expr37?? 
-v_expr38??
-v_expr39??
-v_expr40??
-v_expr41??
-v_expr42??
+v_expr1?
+v_expr2?
+v_expr3?
+v_expr4?
+v_expr5?
+v_expr6?
+v_expr7?
+v_expr8?
+v_expr9?
+v_expr10?
+v_expr11?
+v_expr12?
+v_expr13?
+v_expr14?
+v_expr15?
+v_expr16?
+v_expr17?
+v_expr18?
+v_expr19?
+v_expr20?
+v_expr21?
+v_expr22?
+v_expr23?
+v_expr24?
+v_expr25?
+v_expr26?
+v_expr27?
+v_expr28?
+v_expr29?
+v_expr30?
+v_expr31?
+v_expr32?
+v_expr33?
+v_expr34?
+v_expr35?
+v_expr36?
+v_expr37? 
+v_expr38?
+v_expr39?
+v_expr40?
+v_expr41?
+v_expr42?
 
 
 //////
@@ -270,45 +270,45 @@ const c_expr40 is (((5 + 3) * 2) - 4) / 2  // 6
 const c_expr41 is 10 / 2 / 5      // 1.0 (left associative)
 const c_expr42 is 10 - 5 - 2      // 3 (left associative)
 
-c_expr1??
-c_expr2??
-c_expr3??
-c_expr4??
-c_expr5??
-c_expr6??
-c_expr7??
-c_expr8??
-c_expr9??
-c_expr10??
-c_expr11??
-c_expr12??
-c_expr13??
-c_expr14??
-c_expr15??
-c_expr16??
-c_expr17??
-c_expr18??
-c_expr19??
-c_expr20??
-c_expr21??
-c_expr22??
-c_expr23??
-c_expr24??
-c_expr25??
-c_expr26??
-c_expr27??
-c_expr28??
-c_expr29??
-c_expr30??
-c_expr31??
-c_expr32??
-c_expr33??
-c_expr34??
-c_expr35??
-c_expr36??
-c_expr37?? 
-c_expr38??
-c_expr39??
-c_expr40??
-c_expr41??
-c_expr42??
+c_expr1?
+c_expr2?
+c_expr3?
+c_expr4?
+c_expr5?
+c_expr6?
+c_expr7?
+c_expr8?
+c_expr9?
+c_expr10?
+c_expr11?
+c_expr12?
+c_expr13?
+c_expr14?
+c_expr15?
+c_expr16?
+c_expr17?
+c_expr18?
+c_expr19?
+c_expr20?
+c_expr21?
+c_expr22?
+c_expr23?
+c_expr24?
+c_expr25?
+c_expr26?
+c_expr27?
+c_expr28?
+c_expr29?
+c_expr30?
+c_expr31?
+c_expr32?
+c_expr33?
+c_expr34?
+c_expr35?
+c_expr36?
+c_expr37? 
+c_expr38?
+c_expr39?
+c_expr40?
+c_expr41?
+c_expr42?

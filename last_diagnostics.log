@@ -1,0 +1,147 @@
+[Runtime][Error][E1001] Undefined variable: @string(number)
+[Debug][Hint] main.zig:409:0: Debug: Processing script: './test/misc/complex_print.doxa'
+
+[Debug][Hint] main.zig:429:0: Debug: Absolute path: 'C:\dev\zig\doxa\test\misc\complex_print.doxa'
+
+[Debug][Hint] main.zig:434:0: reporter debug method working
+
+[Debug][Hint] main.zig:164:0: >> Constant folding applied: 0 optimizations
+
+[Debug][Hint] codegen\hir\soxa_generator.zig:538:0: HIR: processing imported module globals: 0
+[Debug][Hint] codegen\hir\soxa_generator.zig:563:0: HIR: processing current module globals
+[Debug][Hint] codegen\hir\soxa_generator.zig:723:0: Variable number has type base: Int
+[Debug][Hint] codegen\hir\soxa_generator.zig:723:0: Variable variable_name has type base: String
+[Debug][Hint] main.zig:191:0: >> Peephole optimizations applied: 1 HIR instruction optimizations
+
+[Debug][Hint] main.zig:213:0: >> Compiled ./test/misc/complex_print.doxa -> out/complex_print.soxa (22 HIR instructions)
+
+[Debug][Hint] main.zig:507:0: >> Executing with HIR VM
+
+[Debug][Hint] main.zig:224:0: >> Loaded SOXA: 22 instructions, 8 constants
+
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 0 at IP 0: Const
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 1 at IP 1: Dup
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 2 at IP 2: StoreVar
+[Debug][Hint] interpreter\vm.zig:985:0: DBG WRITE StoreVar (local create) number: storage_id=2, value=types.types.TokenLiteral{ .int = 10 }
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 3 at IP 3: Pop
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 4 at IP 4: Const
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 5 at IP 5: Dup
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 6 at IP 6: StoreVar
+[Debug][Hint] interpreter\vm.zig:985:0: DBG WRITE StoreVar (local create) variable_name: storage_id=3, value=types.types.TokenLiteral{ .string = { 110, 117, 109, 98, 101, 114 } }
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 7 at IP 7: Pop
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 8 at IP 8: LoadVar
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 9 at IP 9: LoadVar
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 10 at IP 10: StringOp
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 11 at IP 11: PrintInterpolated
+[Debug][Hint] interpreter\vm.zig:1540:0: DBG PrintInterpolated: executing PrintInterpolated instruction
+[Debug][Hint] interpreter\vm.zig:1541:0: DBG PrintInterpolated: format_parts: 3, placeholder_indices: 2, argument_count: 2
+[Debug][Hint] interpreter\vm.zig:1550:0: DBG PrintInterpolated: popped arg 0: codegen.hir.soxa_values.HIRValue{ .string = { 49, 48 } }
+[Debug][Hint] interpreter\vm.zig:1550:0: DBG PrintInterpolated: popped arg 1: codegen.hir.soxa_values.HIRValue{ .string = { 110, 117, 109, 98, 101, 114 } }
+[Debug][Hint] interpreter\vm.zig:1575:0: DBG PrintInterpolated: adding format part 0: 'The variable '
+[Debug][Hint] interpreter\vm.zig:1581:0: DBG PrintInterpolated: placeholder 0 maps to arg index 0
+[Debug][Hint] interpreter\vm.zig:1583:0: DBG PrintInterpolated: adding arg value: codegen.hir.soxa_values.HIRValue{ .string = { 110, 117, 109, 98, 101, 114 } }
+[Debug][Hint] interpreter\vm.zig:1575:0: DBG PrintInterpolated: adding format part 1: ' is equal to '
+[Debug][Hint] interpreter\vm.zig:1581:0: DBG PrintInterpolated: placeholder 1 maps to arg index 0
+[Debug][Hint] interpreter\vm.zig:1583:0: DBG PrintInterpolated: adding arg value: codegen.hir.soxa_values.HIRValue{ .string = { 110, 117, 109, 98, 101, 114 } }
+[Debug][Hint] interpreter\vm.zig:1575:0: DBG PrintInterpolated: adding format part 2: ''
+[Debug][Hint] interpreter\vm.zig:1589:0: DBG PrintInterpolated: final result: 'The variable number is equal to number'
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 12 at IP 12: Peek
+[Debug][Hint] main.zig:409:0: Debug: Processing script: './test/misc/complex_print.doxa'
+
+[Debug][Hint] main.zig:429:0: Debug: Absolute path: 'C:\dev\zig\doxa\test\misc\complex_print.doxa'
+
+[Debug][Hint] main.zig:434:0: reporter debug method working
+
+[Debug][Hint] main.zig:164:0: >> Constant folding applied: 0 optimizations
+
+[Debug][Hint] codegen\hir\soxa_generator.zig:538:0: HIR: processing imported module globals: 0
+[Debug][Hint] codegen\hir\soxa_generator.zig:563:0: HIR: processing current module globals
+[Debug][Hint] codegen\hir\soxa_generator.zig:723:0: Variable number has type base: Int
+[Debug][Hint] codegen\hir\soxa_generator.zig:723:0: Variable variable_name has type base: String
+[Debug][Hint] main.zig:191:0: >> Peephole optimizations applied: 1 HIR instruction optimizations
+
+[Debug][Hint] main.zig:213:0: >> Compiled ./test/misc/complex_print.doxa -> out/complex_print.soxa (22 HIR instructions)
+
+[Debug][Hint] main.zig:507:0: >> Executing with HIR VM
+
+[Debug][Hint] main.zig:224:0: >> Loaded SOXA: 22 instructions, 12 constants
+
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 0 at IP 0: Const
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 1 at IP 1: Dup
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 2 at IP 2: StoreVar
+[Debug][Hint] interpreter\vm.zig:985:0: DBG WRITE StoreVar (local create) number: storage_id=2, value=types.types.TokenLiteral{ .int = 10 }
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 3 at IP 3: Pop
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 4 at IP 4: Const
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 5 at IP 5: Dup
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 6 at IP 6: StoreVar
+[Debug][Hint] interpreter\vm.zig:985:0: DBG WRITE StoreVar (local create) variable_name: storage_id=3, value=types.types.TokenLiteral{ .string = { 110, 117, 109, 98, 101, 114 } }
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 7 at IP 7: Pop
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 8 at IP 8: LoadVar
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 9 at IP 9: LoadVar
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 10 at IP 10: StringOp
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 11 at IP 11: PrintInterpolated
+[Debug][Hint] interpreter\vm.zig:1540:0: DBG PrintInterpolated: executing PrintInterpolated instruction
+[Debug][Hint] interpreter\vm.zig:1541:0: DBG PrintInterpolated: format_parts: 5, placeholder_indices: 2, argument_count: 2
+[Debug][Hint] interpreter\vm.zig:1550:0: DBG PrintInterpolated: popped arg 0: codegen.hir.soxa_values.HIRValue{ .string = { 49, 48 } }
+[Debug][Hint] interpreter\vm.zig:1550:0: DBG PrintInterpolated: popped arg 1: codegen.hir.soxa_values.HIRValue{ .string = { 110, 117, 109, 98, 101, 114 } }
+[Debug][Hint] interpreter\vm.zig:1575:0: DBG PrintInterpolated: adding format part 0: 'The variable '
+[Debug][Hint] interpreter\vm.zig:1581:0: DBG PrintInterpolated: placeholder 0 maps to arg index 0
+[Debug][Hint] interpreter\vm.zig:1583:0: DBG PrintInterpolated: adding arg value: codegen.hir.soxa_values.HIRValue{ .string = { 110, 117, 109, 98, 101, 114 } }
+[Debug][Hint] interpreter\vm.zig:1575:0: DBG PrintInterpolated: adding format part 1: ''
+[Debug][Hint] interpreter\vm.zig:1581:0: DBG PrintInterpolated: placeholder 1 maps to arg index 0
+[Debug][Hint] interpreter\vm.zig:1583:0: DBG PrintInterpolated: adding arg value: codegen.hir.soxa_values.HIRValue{ .string = { 110, 117, 109, 98, 101, 114 } }
+[Debug][Hint] interpreter\vm.zig:1575:0: DBG PrintInterpolated: adding format part 2: ' is equal to '
+[Debug][Hint] interpreter\vm.zig:1575:0: DBG PrintInterpolated: adding format part 3: ''
+[Debug][Hint] interpreter\vm.zig:1575:0: DBG PrintInterpolated: adding format part 4: ''
+[Debug][Hint] interpreter\vm.zig:1589:0: DBG PrintInterpolated: final result: 'The variable numbernumber is equal to '
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 12 at IP 12: Peek
+[Debug][Hint] main.zig:409:0: Debug: Processing script: './test/misc/complex_print.doxa'
+
+[Debug][Hint] main.zig:429:0: Debug: Absolute path: 'C:\dev\zig\doxa\test\misc\complex_print.doxa'
+
+[Debug][Hint] main.zig:434:0: reporter debug method working
+
+[Debug][Hint] main.zig:164:0: >> Constant folding applied: 0 optimizations
+
+[Debug][Hint] codegen\hir\soxa_generator.zig:538:0: HIR: processing imported module globals: 0
+[Debug][Hint] codegen\hir\soxa_generator.zig:563:0: HIR: processing current module globals
+[Debug][Hint] codegen\hir\soxa_generator.zig:723:0: Variable number has type base: Int
+[Debug][Hint] codegen\hir\soxa_generator.zig:723:0: Variable variable_name has type base: String
+[Debug][Hint] main.zig:191:0: >> Peephole optimizations applied: 1 HIR instruction optimizations
+
+[Debug][Hint] main.zig:213:0: >> Compiled ./test/misc/complex_print.doxa -> out/complex_print.soxa (22 HIR instructions)
+
+[Debug][Hint] main.zig:507:0: >> Executing with HIR VM
+
+[Debug][Hint] main.zig:224:0: >> Loaded SOXA: 22 instructions, 8 constants
+
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 0 at IP 0: Const
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 1 at IP 1: Dup
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 2 at IP 2: StoreVar
+[Debug][Hint] interpreter\vm.zig:985:0: DBG WRITE StoreVar (local create) number: storage_id=2, value=types.types.TokenLiteral{ .int = 10 }
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 3 at IP 3: Pop
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 4 at IP 4: Const
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 5 at IP 5: Dup
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 6 at IP 6: StoreVar
+[Debug][Hint] interpreter\vm.zig:985:0: DBG WRITE StoreVar (local create) variable_name: storage_id=3, value=types.types.TokenLiteral{ .string = { 110, 117, 109, 98, 101, 114 } }
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 7 at IP 7: Pop
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 8 at IP 8: LoadVar
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 9 at IP 9: LoadVar
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 10 at IP 10: StringOp
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 11 at IP 11: PrintInterpolated
+[Debug][Hint] interpreter\vm.zig:1540:0: DBG PrintInterpolated: executing PrintInterpolated instruction
+[Debug][Hint] interpreter\vm.zig:1541:0: DBG PrintInterpolated: format_parts: 3, placeholder_indices: 2, argument_count: 2
+[Debug][Hint] interpreter\vm.zig:1550:0: DBG PrintInterpolated: popped arg 0: codegen.hir.soxa_values.HIRValue{ .string = { 49, 48 } }
+[Debug][Hint] interpreter\vm.zig:1550:0: DBG PrintInterpolated: popped arg 1: codegen.hir.soxa_values.HIRValue{ .string = { 110, 117, 109, 98, 101, 114 } }
+[Debug][Hint] interpreter\vm.zig:1575:0: DBG PrintInterpolated: adding format part 0: 'The variable '
+[Debug][Hint] interpreter\vm.zig:1581:0: DBG PrintInterpolated: placeholder 0 maps to arg index 0
+[Debug][Hint] interpreter\vm.zig:1583:0: DBG PrintInterpolated: adding arg value: codegen.hir.soxa_values.HIRValue{ .string = { 110, 117, 109, 98, 101, 114 } }
+[Debug][Hint] interpreter\vm.zig:1575:0: DBG PrintInterpolated: adding format part 1: ' is equal to '
+[Debug][Hint] interpreter\vm.zig:1581:0: DBG PrintInterpolated: placeholder 1 maps to arg index 0
+[Debug][Hint] interpreter\vm.zig:1583:0: DBG PrintInterpolated: adding arg value: codegen.hir.soxa_values.HIRValue{ .string = { 110, 117, 109, 98, 101, 114 } }
+[Debug][Hint] interpreter\vm.zig:1575:0: DBG PrintInterpolated: adding format part 2: ''
+[Debug][Hint] interpreter\vm.zig:1589:0: DBG PrintInterpolated: final result: 'The variable number is equal to number'
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 12 at IP 12: Peek
+[CompileTime][Error][E1003] ./test/misc/bigfile.doxa:392:1: Type mismatch: expected Int, got Union
+[CompileTime][Error][E1003] ./test/misc/bigfile.doxa:392:1: Type mismatch: expected Int, got Union
+[CompileTime][Error][E1003] ./test/misc/bigfile.doxa:392:1: Type mismatch: expected Int, got Union
