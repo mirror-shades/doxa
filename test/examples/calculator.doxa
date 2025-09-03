@@ -23,32 +23,52 @@ function precedence(op :: string) returns int {
 }
 
 entry function main() {
-    // Test the full calculator with an expression
-    "Starting calculator"?
-    const input is "5 + 6"
-    "Input: " + input?
+    const input is @input();
     const splitInput is split(input)
-    "After split"?
     @assert(verifyParens(splitInput), "parens don't match")
-    "After paren check"?
     const possibleTokens is tokenize(splitInput)
-    "After tokenize"?
 
     possibleTokens as Token[] then {
-        "current tokens: " + possibleTokens)?
-        "Got tokens, calling shunt"?
         const rpn is shunt(possibleTokens)
-        "After shunt"?
         rpn as Token[] then {
-            "Got RPN, calling execute"?
-            execute(rpn)
-            "After execute"?
+            const result is evaluate(rpn)
+            result as int then {
+                "Output: "?
+                result?
+                "\n"?
+            }
+            else {
+                "evaluation failed\n"?
+            }
         } else {
-            "shunting failed"?
+            "tokens failed to shunt\n"?
         }
     } else {
-        "tokens failed to parse"?
+        "tokens failed to parse\n"?
     }
+}
+
+function evaluate(rpn :: Token[]) returns int | nothing {
+    var stack :: int[]
+    each t in rpn {
+        if t.token_type == TokenType.NUMBER then {
+            const maybe_int is @int(t.value)
+            const valid_number is maybe_int as int else return
+
+            @push(stack, valid_number)
+        }
+        if t.token_type == TokenType.OPERATOR then {
+            if @length(stack) < 2 then return 
+            const rh is @pop(stack) 
+            const lh is @pop(stack) 
+            if t.value == "+" then @push(stack, lh + rh)
+            if t.value == "-" then @push(stack, lh - rh)
+            if t.value == "/" then @push(stack, @int(lh / rh))
+            if t.value == "*" then @push(stack, lh * rh)
+        }
+    }
+    if @length(stack) != 1 then return
+    return stack[0]
 }
 
 function split(input :: string) returns string[] {
@@ -57,11 +77,7 @@ function split(input :: string) returns string[] {
 
     const lin is @length(input)
 
-    // `each` loops iterate through each element
-    // they can work on strings as well as arrays
-    // `at` is optional syntax for a loop index
     each c at i in input {
-        // breaks number if operator is found
         if c == " " then {
             if current != "" then {
                 @push(result, current)
@@ -77,7 +93,6 @@ function split(input :: string) returns string[] {
             @push(result, c)
         }
 
-        // make sure - isn't a negative sign
         else if c == "-" and input[i+1] == " " then {
             if current != "" then {
                 @push(result, current)
@@ -133,10 +148,12 @@ function tokenize(input :: string[]) returns Token[] | nothing {
                 value is token,
             })
         } else {
-            @push(tokens, Token {
-                token_type is .NUMBER,
-                value is token,
-            })
+            if token != "" {
+                @push(tokens, Token {
+                    token_type is .NUMBER,
+                    value is token,
+                })
+            }
         }
     }
     return tokens
@@ -146,144 +163,53 @@ function shunt(tokens :: Token[]) returns Token[] | nothing {
     var output :: Token[]
     var operators :: Token[]
 
-    each token in tokens {
-        "Processing token in shunt"?
-        token.token_type?
-        if token.token_type == TokenType.NUMBER then {
-            "Pushing number to output"?
-            @push(output, token)
+    each t in tokens {
+        if t.token_type == TokenType.NUMBER then {
+            @push(output, t)
         }
+        else if t.token_type == TokenType.OPERATOR then {
 
-        else if token.token_type == TokenType.OPERATOR then {
-            "Processing operator"?
-            // pop higher or equal precedence ops onto output
             while @length(operators) > 0 {
-                "In operator while loop, operators length: " + @length(operators)?
-                const top is operators[@length(operators) - 1]
-                "Top operator: " + top.value?
-                "Current token: " + token.value?
-                if top.token_type == TokenType.OPERATOR and precedence(top.value) >= precedence(token.value) then {
-                    "Popping operator to output"?
-                    @push(output, top)
-                    @pop(operators)
-                    "After pop, operators length: " + @length(operators)?
+                const top_op is operators[@length(operators) - 1]
+                if top_op.token_type != TokenType.OPERATOR then break
+
+                const top_prec is precedence(top_op.value)
+                const current_prec is precedence(t.value)
+
+                if top_prec == -1 or current_prec == -1 then return
+
+                if top_prec >= current_prec then {
+                    const popped is @pop(operators)
+                    @push(output, popped)
                 } else {
-                    "Breaking from operator loop"?
                     break
-                    
                 }
             }
-            "Pushing current operator to operators stack"?
-            @push(operators, token)
-        }
 
-        else if token.token_type == TokenType.LPAREN then {
-            @push(operators, token)
+            @push(operators, t)
         }
-
-        else if token.token_type == TokenType.RPAREN then {
-            // pop until left paren found
-            var matched is false
-            while @length(operators) > 0 {
-                const top is operators[@length(operators) - 1]
-                if top.token_type == TokenType.LPAREN then {
-                    @pop(operators)
-                    matched is true
-                    break
-                } else {
-                    @push(output, top)
-                    @pop(operators)
-                }
+        else if t.token_type == TokenType.LPAREN then {
+            @push(operators, t)
+        }
+        else if t.token_type == TokenType.RPAREN then {
+            while @length(operators) > 0 and operators[@length(operators) - 1].token_type != TokenType.LPAREN {
+                const popped is @pop(operators)
+                @push(output, popped)
             }
-            if !matched then {
-                "mismatched parentheses"?
-                return nothing
+
+            if @length(operators) > 0 and operators[@length(operators) - 1].token_type == TokenType.LPAREN then {
+                @pop(operators)
+            } else {
+                ("Mismatched parentheses\n")?
             }
         }
     }
 
-    // All tokens have been processed, now drain remaining operators
     while @length(operators) > 0 {
-        const top is operators[@length(operators) - 1]
-        if top.token_type == TokenType.LPAREN or top.token_type == TokenType.RPAREN then {
-            "mismatched parentheses"?
-            return nothing
-        }
-        @push(output, top)
-        @pop(operators)
+        const popped is @pop(operators)
+        if popped.token_type == TokenType.LPAREN or popped.token_type == TokenType.RPAREN then ("Mismatched parentheses\n")?
+        @push(output, popped)
     }
 
-    // All operators drained, return the result
     return output
-}
-
-function execute(tokens :: Token[]) returns int {
-    var stack :: int[]
-
-    each token in tokens {
-        "Processing token in execute:"?
-        token.token_type?
-        token.value?
-        if token.token_type == TokenType.NUMBER then {
-            "Converting number token:"?
-            token.value?
-            var temp_result is @int(token.value)
-            temp_result?
-            const n is temp_result as int else {
-                "invalid number conversion"?
-                return
-            }
-            "Number conversion successful:"?
-            n?
-            "Pushing to stack:"?
-            @push(stack, n)
-        } 
-
-
-        else if token.token_type == TokenType.OPERATOR then {
-            "Processing operator:"?
-            token.value?
-            "Stack length:"?
-            @length(stack)?
-
-            // need two operands
-            if @length(stack) < 2 then {
-                "not enough operands"?
-                return
-            }
-
-            "Popping operands:"?
-            const right is @pop(stack)
-            const left is @pop(stack)
-
-            "Operands:"?
-            left?
-            right?
-
-            var result :: int is 0
-
-            "Calculating result:"?
-            if token.value == "+" then result is left + right
-            else if token.value == "-" then result is left - right
-            else if token.value == "*" then result is left * right
-            else if token.value == "/" then result is @floor(left / right)
-            else {
-                token.value?
-                "invalid operator"?
-                return
-            }
-
-            "Result:"?
-            result?
-            @push(stack, result)
-        }
-    }
-
-    if @length(stack) != 1 then {
-        "invalid expression"? 
-        return
-    }
-
-    stack[0]?
-    return stack[0]
 }

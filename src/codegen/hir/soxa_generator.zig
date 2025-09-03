@@ -829,6 +829,20 @@ pub const HIRGenerator = struct {
                             try self.trackVariableCustomType(decl.name.lexeme, struct_lit.name.lexeme);
                         }
                     }
+
+                    // NEW: If initializer is an array literal, record its element type for downstream inference
+                    if (init_expr.data == .Array) {
+                        const elements = init_expr.data.Array;
+                        if (elements.len > 0) {
+                            const elem_type: HIRType = switch (elements[0].data) {
+                                .Literal => |lit| self.inferTypeFromLiteral(lit),
+                                else => .Unknown,
+                            };
+                            if (elem_type != .Unknown) {
+                                try self.trackArrayElementType(decl.name.lexeme, elem_type);
+                            }
+                        }
+                    }
                 } else {
                     // No initializer - push default value based on type
                     switch (var_type) {
@@ -1493,14 +1507,18 @@ pub const HIRGenerator = struct {
                         try self.instructions.append(.{ .Label = .{ .name = end_if, .vm_address = 0 } });
                         handled_as_loop_control = true;
                     } else if (!then_is_break and !then_is_continue and (else_is_break or else_is_continue)) {
+                        // DISABLED: This optimization can skip important semantics like debugging output
+                        // or proper execution flow. It's safer to use the standard if-then-else codegen.
+                        //
+                        // Original logic:
                         // Only else branch is control: invert condition
-                        try self.generateExpression(if_expr.condition.?, true);
-                        const end_if = try self.generateLabel("end_if");
-                        const target = if (else_is_break) lc.break_label else lc.continue_label;
-                        // If FALSE -> target, TRUE -> fall through
-                        try self.instructions.append(.{ .JumpCond = .{ .label_true = end_if, .label_false = target, .vm_offset = 0, .condition_type = .Tetra } });
-                        try self.instructions.append(.{ .Label = .{ .name = end_if, .vm_address = 0 } });
-                        handled_as_loop_control = true;
+                        // try self.generateExpression(if_expr.condition.?, true);
+                        // const end_if = try self.generateLabel("end_if");
+                        // const target = if (else_is_break) lc.break_label else lc.continue_label;
+                        // // If FALSE -> target, TRUE -> fall through
+                        // try self.instructions.append(.{ .JumpCond = .{ .label_true = end_if, .label_false = target, .vm_offset = 0, .condition_type = .Tetra } });
+                        // try self.instructions.append(.{ .Label = .{ .name = end_if, .vm_address = 0 } });
+                        // handled_as_loop_control = true;
                     }
                 }
 
@@ -1574,8 +1592,16 @@ pub const HIRGenerator = struct {
                 // Loop body label (where TRUE condition jumps to)
                 try self.instructions.append(.{ .Label = .{ .name = loop_body_label, .vm_address = 0 } });
 
+                // Create a fresh scope per-iteration so const bindings inside the loop
+                // are re-created each time and do not leak across iterations
+                const body_scope_id: u32 = self.label_count + 2000;
+                try self.instructions.append(.{ .EnterScope = .{ .scope_id = body_scope_id, .var_count = 0 } });
+
                 // Generate body
                 try self.generateExpression(while_expr.body, false);
+
+                // Exit iteration scope
+                try self.instructions.append(.{ .ExitScope = .{ .scope_id = body_scope_id } });
 
                 // Jump back to start
                 try self.instructions.append(.{ .Jump = .{ .label = loop_start_label, .vm_offset = 0 } });
@@ -2241,6 +2267,32 @@ pub const HIRGenerator = struct {
                 }
             },
 
+            .ArrayPop => |pop| {
+                // Generate array expression (stack: [..., array])
+                try self.generateExpression(pop.array, true);
+
+                // Emit ArrayPop. VM pushes popped element, then updated array
+                try self.instructions.append(.ArrayPop);
+
+                // If the array is a variable, store the updated array back
+                if (pop.array.data == .Variable) {
+                    const var_name = pop.array.data.Variable.lexeme;
+                    const var_idx = try self.getOrCreateVariable(var_name);
+                    const expected_type = self.getTrackedVariableType(var_name) orelse .Unknown;
+
+                    // Stack is [ ..., element, array ] -> swap to store array, leave element as result
+                    try self.instructions.append(.Swap);
+                    try self.instructions.append(.{ .StoreVar = .{
+                        .var_index = var_idx,
+                        .var_name = var_name,
+                        .scope_kind = .Local,
+                        .module_context = null,
+                        .expected_type = expected_type,
+                    } });
+                    // After StoreVar, element remains on stack as the expression result
+                }
+            },
+
             .Grouping => |grouping| {
                 // Grouping is just parentheses - generate the inner expression
                 if (grouping) |inner_expr| {
@@ -2794,7 +2846,7 @@ pub const HIRGenerator = struct {
                             try self.instructions.append(.{ .Compare = .{ .op = .Eq, .operand_type = .Enum } });
                         } else {
                             // Regular string literal pattern
-                            const pattern_value = HIRValue{ .string = case.pattern.lexeme };
+                            const pattern_value = HIRValue{ .string = case.pattern.literal.string };
                             const pattern_idx = try self.addConstant(pattern_value);
                             try self.instructions.append(.{ .Const = .{ .value = pattern_value, .constant_id = pattern_idx } });
 
@@ -3408,11 +3460,17 @@ pub const HIRGenerator = struct {
                 if (elem_type != .Unknown) try self.trackVariableType(item_name, elem_type);
                 try self.instructions.append(.{ .StoreVar = .{ .var_index = item_idx, .var_name = item_name, .scope_kind = .Local, .module_context = null, .expected_type = elem_type } });
 
+                // Create a new scope for each loop iteration to isolate constants
+                const iteration_scope_id: u32 = self.label_count + 2000;
+                try self.instructions.append(.{ .EnterScope = .{ .scope_id = iteration_scope_id, .var_count = 0 } });
+
                 // Generate loop body statements
                 for (foreach_expr.body) |stmt| {
                     try self.generateStatement(stmt);
                 }
-                // No per-iteration scope; body executes in enclosing scope
+
+                // Exit iteration scope
+                try self.instructions.append(.{ .ExitScope = .{ .scope_id = iteration_scope_id } });
 
                 // Next: i = i + 1
                 try self.instructions.append(.{ .Label = .{ .name = fe_next, .vm_address = 0 } });
@@ -3783,6 +3841,56 @@ pub const HIRGenerator = struct {
                 const var_type = self.variable_types.get(var_token.lexeme) orelse .Unknown;
                 return var_type;
             },
+            .FieldAccess => |field| {
+                // Try to infer based on the object type and common field names
+                // Special-case: Enum member access like Color.Blue
+                if (field.object.data == .Variable) {
+                    const obj_name = field.object.data.Variable.lexeme;
+                    if (self.isCustomType(obj_name)) |custom_type| {
+                        if (custom_type.kind == .Enum) {
+                            return .Enum;
+                        }
+                        if (custom_type.kind == .Struct) {
+                            return .Struct;
+                        }
+                    }
+                }
+
+                const obj_type = self.inferTypeFromExpression(field.object);
+                // Heuristic: Many structs expose a 'value' (string) and 'token_type' (enum)
+                if (std.mem.eql(u8, field.field.lexeme, "value")) return .String;
+                if (std.mem.eql(u8, field.field.lexeme, "token_type")) return .Enum;
+                if (obj_type == .Struct) {
+                    return .Unknown; // Unknown specific field, but it's a struct
+                }
+                return .Unknown;
+            },
+            // NEW: Infer element type for ArrayPop
+            .ArrayPop => |pop| {
+                const container_type = self.inferTypeFromExpression(pop.array);
+                if (container_type == .Array) {
+                    // If array is a variable with tracked element type, use it
+                    if (pop.array.data == .Variable) {
+                        const var_name = pop.array.data.Variable.lexeme;
+                        if (self.getTrackedArrayElementType(var_name)) |elem_type| {
+                            return elem_type;
+                        }
+                    }
+                    // If the array expression is a literal, infer from its first element
+                    switch (pop.array.data) {
+                        .Array => |elements| {
+                            if (elements.len > 0) {
+                                switch (elements[0].data) {
+                                    .Literal => |lit| return self.inferTypeFromLiteral(lit),
+                                    else => {},
+                                }
+                            }
+                        },
+                        else => {},
+                    }
+                }
+                return .Unknown;
+            },
             .Binary => |binary| {
                 // Simple type inference for binary operations
                 const left_type = if (binary.left) |left| self.inferTypeFromExpression(left) else .Unknown;
@@ -3870,110 +3978,6 @@ pub const HIRGenerator = struct {
                 }
                 return .Unknown; // Default for unrecognized function calls
             },
-            .If => |if_expr| {
-                // If both branches have the same type, return that
-                if (if_expr.then_branch) |then_branch| {
-                    const then_type = self.inferTypeFromExpression(then_branch);
-                    if (if_expr.else_branch) |else_branch| {
-                        const else_type = self.inferTypeFromExpression(else_branch);
-                        if (then_type == else_type) return then_type;
-                    }
-                    return then_type;
-                }
-                return .Unknown;
-            },
-            .MethodCall => |m| {
-                // Only infer types for compiler methods - DO NOT generate code here
-                const name = m.method.lexeme;
-                if (std.mem.eql(u8, name, "substring")) {
-                    return .String; // substring returns string
-                } else if (std.mem.eql(u8, name, "string")) {
-                    return .String; // @string converts to string
-                } else if (std.mem.eql(u8, name, "length")) {
-                    return .Int; // @length returns int
-                } else if (std.mem.eql(u8, name, "int")) {
-                    return .Int; // @int returns int
-                } else if (std.mem.eql(u8, name, "float")) {
-                    return .Float; // @float returns float
-                } else if (std.mem.eql(u8, name, "byte")) {
-                    return .Byte; // @byte returns byte
-                }
-                return .Unknown; // Unknown method calls
-            },
-            .Match => .String, // Match expressions typically return strings in this codebase
-            .StructLiteral => .Struct,
-            .EnumMember => .Enum,
-            .FieldAccess => |field| {
-                // First check the type of the object being accessed
-                const obj_type = self.inferTypeFromExpression(field.object);
-
-                // Handle string operations
-                if (obj_type == .String) {
-                    if (std.mem.eql(u8, field.field.lexeme, "length")) {
-                        return .Int; // String length returns int
-                    }
-                    if (std.mem.eql(u8, field.field.lexeme, "bytes")) {
-                        return .Array; // String bytes returns array of byte
-                    }
-                    // String indexing returns a single character string
-                    if (std.fmt.parseInt(i32, field.field.lexeme, 10)) |_| {
-                        return .String;
-                    } else |_| {
-                        return .Unknown; // Invalid string operation
-                    }
-                }
-
-                // Handle enum member access
-                if (obj_type == .Enum) {
-                    // For enum member access like Color.Blue, return the enum type
-                    if (field.object.data == .Variable) {
-                        const enum_name = field.object.data.Variable.lexeme;
-                        if (self.isCustomType(enum_name)) |custom_type| {
-                            if (custom_type.kind == .Enum) {
-                                return .Enum; // Return enum type for enum member access
-                            }
-                        }
-                    }
-                    return .Enum; // Generic enum type for other enum member accesses
-                }
-
-                // Handle struct fields
-                if (obj_type == .Struct) {
-                    // Check if this is a nested field access
-                    if (field.object.data == .FieldAccess) {
-                        const parent_field = field.object.data.FieldAccess;
-                        const parent_type = self.inferTypeFromExpression(parent_field.object);
-                        if (parent_type == .Struct) {
-                            // Handle nested struct fields
-                            if (std.mem.eql(u8, parent_field.field.lexeme, "person")) {
-                                // Person struct fields
-                                if (std.mem.eql(u8, field.field.lexeme, "age")) {
-                                    return .Int;
-                                }
-                                if (std.mem.eql(u8, field.field.lexeme, "name")) {
-                                    return .String;
-                                }
-                            }
-                        }
-                    } else {
-                        // Top-level struct fields
-                        if (std.mem.eql(u8, field.field.lexeme, "age") or
-                            std.mem.eql(u8, field.field.lexeme, "salary"))
-                        {
-                            return .Int; // Numeric fields
-                        }
-                        if (std.mem.eql(u8, field.field.lexeme, "name")) {
-                            return .String; // String fields
-                        }
-                        if (std.mem.eql(u8, field.field.lexeme, "person")) {
-                            return .Struct; // Nested struct fields
-                        }
-                    }
-                }
-
-                return .Unknown; // Default for unknown object types
-            },
-            .Exists, .ForAll => .Tetra, // Quantifiers return tetra values
             .Logical => .Tetra, // Logical operations (↔, ⊕, ∧, ∨, ↑, ↓, →) return tetra values
             .Unary => {
                 // Unary operations: negation (¬) returns tetra, others depend on operand

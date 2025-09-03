@@ -1,0 +1,17 @@
+function simple_match(op :: string) returns int {
+    ("Entering simple_match with: " + op)?
+    
+    const result is match op {
+        "*" then 2,
+        "+" then 1,
+        else -1,
+    }
+    
+    ("Match result: " + @string(result))?
+    return result
+}
+
+("Testing simple match...")?
+simple_match("*")??
+simple_match("+")??
+simple_match("unknown")?? 

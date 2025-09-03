@@ -808,7 +808,17 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
         .StoreVar => |v| try writer.print("    StoreVar {} \"{s}\"          ; Store variable\n", .{ v.var_index, v.var_name }),
         .StoreConst => |v| try writer.print("    StoreConst {} \"{s}\"        ; Store constant\n", .{ v.var_index, v.var_name }),
 
-        .Arith => |a| try writer.print("    Arith {s}                ; Integer arithmetic\n", .{@tagName(a.op)}),
+        .Arith => |a| {
+            const op_name = switch (a.op) {
+                .Add => "Add",
+                .Sub => "Sub",
+                .Mul => "Mul",
+                .Div => "Div",
+                .Mod => "Mod",
+                .Pow => "Pow",
+            };
+            try writer.print("    Arith {s} {s}                ; {s} arithmetic\n", .{ op_name, @tagName(a.operand_type), @tagName(a.operand_type) });
+        },
 
         .Convert => |c| try writer.print("    Convert {s} {s}            ; Type conversion\n", .{ @tagName(c.from_type), @tagName(c.to_type) }),
 

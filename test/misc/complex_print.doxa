@@ -1,0 +1,5 @@
+// complex print statement
+var number is 10
+var variable_name is "number"
+("The variable \"" + variable_name + "\" is equal to " + @string(number) + "\n")?
+("The variable name \"" + variable_name + "\" has " + @string(@length(variable_name)) + " letters" + "\n")?

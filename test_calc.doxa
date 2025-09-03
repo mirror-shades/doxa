@@ -18,18 +18,49 @@ function precedence(op :: string) returns int {
         "-" then 1,
         "*" then 2,
         "/" then 2,
+        "^" then 3,
         else -1,
     }
 }
 
 entry function main() {
-    // Test the full calculator with an expression
+
     const input is "5 + 6"
-    ("Input: " + input)?
+    
     const splitInput is split(input)
-    "Split input:"?
-    each s in splitInput {
-        s?
+    
+    const tokens is tokenize(splitInput)
+    tokens as Token[] then {
+        const rpn is shunt(tokens)
+    } else {
+        ("Failed to tokenize\n")?
+        return
+    }
+}
+
+function shunt(tokens :: Token[]) returns Token[] | nothing {
+    var stack :: Token[]
+    var operators :: Token[]
+    each t in tokens {
+        if t.token_type == TokenType.NUMBER then {
+            @push(stack, t)
+        }
+        if t.token_type == TokenType.OPERATOR then {
+            const op_stack_length is @length(operators)
+            const op_prec is precedence(t.value)
+            var prev_prec is -1
+            if op_stack_length > 0 then {
+                const prev_op is operators[op_stack_length - 1].value
+                prev_prec is precedence(prev_op)
+                if(op_prec < prev_prec) then {
+                    
+                } else {
+                    @push(operators, t)
+                }
+            }
+        }
+        if t.token_type == TokenType.RPAREN then "right parentheses found"??
+        if t.token_type == TokenType.LPAREN then "left parentheses found"??
     }
 }
 
@@ -75,4 +106,35 @@ function split(input :: string) returns string[] {
     }
     @push(result, current)
     return result
+}
+
+function tokenize(input :: string[]) returns Token[] | nothing {
+    var tokens :: Token[]
+
+    each token in input {
+        if token == "+" or token == "-" or token == "*" or token == "/" then {
+            @push(tokens, Token {
+                token_type is .OPERATOR,
+                value is token,
+            })
+        }
+        else if token == "(" then {
+            @push(tokens, Token {
+                token_type is .LPAREN,
+                value is token,
+            })
+        }
+        else if token == ")" then {
+            @push(tokens, Token {
+                token_type is .RPAREN,
+                value is token,
+            })
+        } else {
+            @push(tokens, Token {
+                token_type is .NUMBER,
+                value is token,
+            })
+        }
+    }
+    return tokens
 }

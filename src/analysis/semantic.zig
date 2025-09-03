@@ -196,6 +196,18 @@ pub const SemanticAnalyzer = struct {
         return type_info;
     }
 
+    /// Check if a union type contains Nothing as one of its members
+    fn unionContainsNothing(self: *SemanticAnalyzer, union_type_info: ast.TypeInfo) bool {
+        _ = self;
+        if (union_type_info.base != .Union) return false;
+        if (union_type_info.union_type) |union_type| {
+            for (union_type.types) |member_type| {
+                if (member_type.base == .Nothing) return true;
+            }
+        }
+        return false;
+    }
+
     // NEW: Register a custom type during semantic analysis
     fn registerCustomType(self: *SemanticAnalyzer, type_name: []const u8, kind: CustomTypeInfo.CustomTypeKind) !void {
         const custom_type = CustomTypeInfo{
@@ -566,8 +578,21 @@ pub const SemanticAnalyzer = struct {
 
                     // Check if we have an explicit type annotation
                     if (decl.type_info.base != .Nothing) {
-                        // Use explicit type, but resolve custom types
-                        type_info.* = try self.resolveTypeInfo(decl.type_info);
+                        // If parser provided an incomplete array type (no element), prefer inferring from initializer if present
+                        if (decl.type_info.base == .Array and decl.type_info.array_type == null) {
+                            if (decl.initializer) |init_expr| {
+                                const inferred = try self.inferTypeFromExpr(init_expr);
+                                type_info.* = inferred.*;
+                            } else {
+                                // Use explicit type, but resolve custom types
+                                type_info.* = try self.resolveTypeInfo(decl.type_info);
+                            }
+                        } else {
+                            // Use explicit type, but resolve custom types
+                            type_info.* = try self.resolveTypeInfo(decl.type_info);
+                        }
+                        // Preserve mutability from the variable declaration (var vs const)
+                        type_info.is_mutable = decl.type_info.is_mutable;
                     } else if (decl.initializer) |init_expr| {
                         // Infer from initializer
                         const inferred = try self.inferTypeFromExpr(init_expr);
@@ -786,8 +811,21 @@ pub const SemanticAnalyzer = struct {
 
                             // Check if we have an explicit type annotation
                             if (decl.type_info.base != .Nothing) {
-                                // Use explicit type, but resolve custom types
-                                type_info.* = try self.resolveTypeInfo(decl.type_info);
+                                // If parser provided an incomplete array type (no element), prefer inferring from initializer if present
+                                if (decl.type_info.base == .Array and decl.type_info.array_type == null) {
+                                    if (decl.initializer) |init_expr| {
+                                        const inferred = try self.inferTypeFromExpr(init_expr);
+                                        type_info.* = inferred.*;
+                                    } else {
+                                        // Use explicit type, but resolve custom types
+                                        type_info.* = try self.resolveTypeInfo(decl.type_info);
+                                    }
+                                } else {
+                                    // Use explicit type, but resolve custom types
+                                    type_info.* = try self.resolveTypeInfo(decl.type_info);
+                                }
+                                // Preserve mutability from the variable declaration (var vs const)
+                                type_info.is_mutable = decl.type_info.is_mutable;
                             } else if (decl.initializer) |init_expr| {
                                 // Infer from initializer
                                 const inferred = try self.inferTypeFromExpr(init_expr);
@@ -1115,6 +1153,9 @@ pub const SemanticAnalyzer = struct {
         switch (expr.data) {
             .Literal => |lit| {
                 type_info.inferFrom(lit); // TokenLiteral is already the right type
+            },
+            .Break => {
+                type_info.base = .Nothing;
             },
             .Binary => |bin| {
                 const left_type = try self.inferTypeFromExpr(bin.left.?);
@@ -1551,56 +1592,10 @@ pub const SemanticAnalyzer = struct {
             },
             .FieldAccess => |field| {
                 const object_type = try self.inferTypeFromExpr(field.object);
-                if (object_type.base == .Struct) {
-                    if (object_type.struct_fields) |fields| {
-                        for (fields) |struct_field| {
-                            if (std.mem.eql(u8, struct_field.name, field.field.lexeme)) {
 
-                                // Copy the field type info
-                                type_info.* = struct_field.type_info.*;
-
-                                // If this field is a struct type, look up its fields from custom_types
-                                if (type_info.base == .Custom and type_info.custom_type != null) {
-                                    if (self.custom_types.get(type_info.custom_type.?)) |custom_type| {
-                                        if (custom_type.kind == .Struct) {
-                                            // Convert CustomTypeInfo.StructField to ast.StructFieldType
-                                            const struct_fields = try self.allocator.alloc(ast.StructFieldType, custom_type.struct_fields.?.len);
-                                            for (custom_type.struct_fields.?, 0..) |custom_field, i| {
-                                                struct_fields[i] = .{
-                                                    .name = custom_field.name,
-                                                    .type_info = custom_field.field_type_info,
-                                                };
-                                            }
-                                            type_info.* = .{ .base = .Struct, .custom_type = type_info.custom_type, .struct_fields = struct_fields, .is_mutable = false };
-                                        }
-                                    }
-                                }
-                                break;
-                            }
-                        } else {
-                            self.reporter.reportCompileError(
-                                getLocationFromBase(expr.base),
-                                ErrorCode.FIELD_NOT_FOUND,
-                                "Field '{s}' not found in struct",
-                                .{field.field.lexeme},
-                            );
-                            self.fatal_error = true;
-                            type_info.base = .Nothing;
-                            return type_info;
-                        }
-                    } else {
-                        self.reporter.reportCompileError(
-                            getLocationFromBase(expr.base),
-                            ErrorCode.STRUCT_HAS_NO_FIELDS,
-                            "Struct has no fields defined",
-                            .{},
-                        );
-                        self.fatal_error = true;
-                        type_info.base = .Nothing;
-                        return type_info;
-                    }
-                } else if (object_type.base == .Custom) {
-                    // Check if this is a struct type by looking up in custom_types
+                // First check if the object type is Custom and needs to be resolved to a struct
+                var resolved_object_type = object_type;
+                if (object_type.base == .Custom) {
                     if (object_type.custom_type) |custom_type_name| {
                         // First check if this is a module namespace
                         if (self.isModuleNamespace(custom_type_name)) {
@@ -1610,43 +1605,21 @@ pub const SemanticAnalyzer = struct {
 
                         if (self.custom_types.get(custom_type_name)) |custom_type| {
                             if (custom_type.kind == .Struct) {
-                                // This is a struct, handle field access
-                                if (custom_type.struct_fields) |fields| {
-                                    for (fields) |struct_field| {
-                                        if (std.mem.eql(u8, struct_field.name, field.field.lexeme)) {
-                                            if (struct_field.field_type_info.base == .Struct and struct_field.custom_type_name != null) {
-                                                // This is a custom struct field
-                                                type_info.* = .{ .base = .Custom, .custom_type = struct_field.custom_type_name };
-                                            } else {
-                                                type_info.* = struct_field.field_type_info.*;
-                                            }
-                                            break;
-                                        }
-                                    } else {
-                                        self.reporter.reportCompileError(
-                                            getLocationFromBase(expr.base),
-                                            ErrorCode.FIELD_NOT_FOUND,
-                                            "Field '{s}' not found in struct '{s}'",
-                                            .{ field.field.lexeme, custom_type_name },
-                                        );
-                                        self.fatal_error = true;
-                                        type_info.base = .Nothing;
-                                        return type_info;
-                                    }
-                                } else {
-                                    self.reporter.reportCompileError(
-                                        getLocationFromBase(expr.base),
-                                        ErrorCode.STRUCT_HAS_NO_FIELDS,
-                                        "Struct '{s}' has no fields defined",
-                                        .{custom_type_name},
-                                    );
-                                    self.fatal_error = true;
-                                    type_info.base = .Nothing;
-                                    return type_info;
+                                // Convert the Custom type to a Struct type for consistent handling
+                                const struct_fields = try self.allocator.alloc(ast.StructFieldType, custom_type.struct_fields.?.len);
+                                for (custom_type.struct_fields.?, 0..) |custom_field, i| {
+                                    struct_fields[i] = .{
+                                        .name = custom_field.name,
+                                        .type_info = custom_field.field_type_info,
+                                    };
                                 }
+                                const resolved_type_info = try self.allocator.create(ast.TypeInfo);
+                                resolved_type_info.* = ast.TypeInfo{ .base = .Struct, .custom_type = custom_type_name, .struct_fields = struct_fields, .is_mutable = object_type.is_mutable };
+                                resolved_object_type = resolved_type_info;
                             } else {
                                 // Not a struct, treat as enum variant access
                                 type_info.* = .{ .base = .Enum };
+                                return type_info;
                             }
                         } else {
                             self.reporter.reportCompileError(
@@ -1662,8 +1635,60 @@ pub const SemanticAnalyzer = struct {
                     } else {
                         // No custom type name, treat as enum variant access
                         type_info.* = .{ .base = .Enum };
+                        return type_info;
                     }
-                } else if (object_type.base == .Enum) {
+                }
+
+                // Now handle field access on the resolved object type
+                if (resolved_object_type.base == .Struct) {
+                    if (resolved_object_type.struct_fields) |fields| {
+                        for (fields) |struct_field| {
+                            if (std.mem.eql(u8, struct_field.name, field.field.lexeme)) {
+
+                                // Copy the field type info
+                                type_info.* = struct_field.type_info.*;
+
+                                // If this field is a struct type, look up its fields from custom_types
+                                if (type_info.base == .Custom and type_info.custom_type != null) {
+                                    if (self.custom_types.get(type_info.custom_type.?)) |custom_type| {
+                                        if (custom_type.kind == .Struct) {
+                                            // Convert CustomTypeInfo.StructField to ast.StructFieldType
+                                            const struct_fields_inner = try self.allocator.alloc(ast.StructFieldType, custom_type.struct_fields.?.len);
+                                            for (custom_type.struct_fields.?, 0..) |custom_field, i| {
+                                                struct_fields_inner[i] = .{
+                                                    .name = custom_field.name,
+                                                    .type_info = custom_field.field_type_info,
+                                                };
+                                            }
+                                            type_info.* = .{ .base = .Struct, .custom_type = type_info.custom_type, .struct_fields = struct_fields_inner, .is_mutable = false };
+                                        }
+                                    }
+                                }
+                                return type_info;
+                            }
+                        } else {
+                            self.reporter.reportCompileError(
+                                getLocationFromBase(expr.base),
+                                ErrorCode.FIELD_NOT_FOUND,
+                                "Field '{s}' not found in struct{s}",
+                                .{ field.field.lexeme, if (resolved_object_type.custom_type) |name| std.fmt.allocPrint(self.allocator, " '{s}'", .{name}) catch "" else "" },
+                            );
+                            self.fatal_error = true;
+                            type_info.base = .Nothing;
+                            return type_info;
+                        }
+                    } else {
+                        self.reporter.reportCompileError(
+                            getLocationFromBase(expr.base),
+                            ErrorCode.STRUCT_HAS_NO_FIELDS,
+                            "Struct{s} has no fields defined",
+                            .{if (resolved_object_type.custom_type) |name| std.fmt.allocPrint(self.allocator, " '{s}'", .{name}) catch "" else ""},
+                        );
+                        self.fatal_error = true;
+                        type_info.base = .Nothing;
+                        return type_info;
+                    }
+                } else if (resolved_object_type.base == .Enum) {
                     // Allow enum variant access: Color.Red
                     // You may want to check if the variant exists, but for now just return Enum type
                     type_info.* = .{ .base = .Enum };
@@ -1672,7 +1697,7 @@ pub const SemanticAnalyzer = struct {
                         getLocationFromBase(expr.base),
                         ErrorCode.CANNOT_ACCESS_FIELD_ON_TYPE,
                         "Cannot access field on non-struct type {s}",
-                        .{@tagName(object_type.base)},
+                        .{@tagName(resolved_object_type.base)},
                     );
                     self.fatal_error = true;
                     type_info.base = .Nothing;
@@ -1931,37 +1956,45 @@ pub const SemanticAnalyzer = struct {
                         matched_var_name = match_expr.value.data.Variable.lexeme;
                     }
 
-                    // Infer first case with narrowing
-                    const first_case_type = try self.inferMatchCaseTypeWithNarrow(match_expr.cases[0], matched_var_name);
-
-                    // Check if all cases have the same type
-                    var all_same_type = true;
+                    // For match expressions used as statements, analyze case bodies without type narrowing
+                    // This allows assignments in match cases to work properly
                     var union_types = std.ArrayList(*ast.TypeInfo).init(self.allocator);
                     defer union_types.deinit();
 
-                    try union_types.append(first_case_type);
-
-                    for (match_expr.cases[1..]) |case| {
-                        const case_type = try self.inferMatchCaseTypeWithNarrow(case, matched_var_name);
-                        if (case_type.base != first_case_type.base) {
-                            all_same_type = false;
-                        }
+                    // Infer each case body type
+                    for (match_expr.cases) |case| {
+                        const case_type = try self.inferTypeFromExpr(case.body);
                         try union_types.append(case_type);
                     }
 
-                    if (all_same_type) {
-                        type_info.* = first_case_type.*;
-                    } else {
-                        // Create a union type from all case types
-                        const union_type_array = try self.allocator.alloc(*ast.TypeInfo, union_types.items.len);
-                        for (union_types.items, union_type_array) |item, *dest| {
-                            dest.* = item;
+                    // If all cases return the same type, use that type
+                    if (union_types.items.len > 0) {
+                        var all_same_type = true;
+                        const first_type = union_types.items[0];
+
+                        for (union_types.items[1..]) |case_type| {
+                            if (case_type.base != first_type.base) {
+                                all_same_type = false;
+                                break;
+                            }
                         }
 
-                        const union_type = try self.allocator.create(ast.UnionType);
-                        union_type.* = .{ .types = union_type_array };
+                        if (all_same_type) {
+                            type_info.* = first_type.*;
+                        } else {
+                            // Create a union type from all case types
+                            const union_type_array = try self.allocator.alloc(*ast.TypeInfo, union_types.items.len);
+                            for (union_types.items, union_type_array) |item, *dest| {
+                                dest.* = item;
+                            }
 
-                        type_info.* = .{ .base = .Union, .union_type = union_type };
+                            const union_type = try self.allocator.create(ast.UnionType);
+                            union_type.* = .{ .types = union_type_array };
+
+                            type_info.* = .{ .base = .Union, .union_type = union_type };
+                        }
+                    } else {
+                        type_info.* = .{ .base = .Nothing };
                     }
                 } else {
                     type_info.* = .{ .base = .Nothing };
@@ -2102,7 +2135,14 @@ pub const SemanticAnalyzer = struct {
                     type_info.base = .Nothing;
                     return type_info;
                 }
-                type_info.* = .{ .base = .Int };
+                // StringToInt returns int | NumberError union (matches @int() method)
+                const int_t = try self.allocator.create(ast.TypeInfo);
+                int_t.* = .{ .base = .Int };
+                const err_t = try self.allocator.create(ast.TypeInfo);
+                err_t.* = .{ .base = .Custom, .custom_type = "NumberError" };
+                var union_members = [_]*ast.TypeInfo{ int_t, err_t };
+                const u = try self.createUnionType(union_members[0..]);
+                type_info.* = u.*;
             },
             .Map => |map_entries| {
                 if (map_entries.len == 0) {
@@ -2565,6 +2605,148 @@ pub const SemanticAnalyzer = struct {
                                     },
                                 };
                                 type_info.* = .{ .base = .Nothing }; // push returns nothing
+                            },
+                            .POP => {
+                                if (method_call.arguments.len != 0) {
+                                    self.reporter.reportCompileError(
+                                        getLocationFromBase(method_call.receiver.base),
+                                        ErrorCode.INVALID_ARGUMENT_COUNT,
+                                        "@pop requires no arguments",
+                                        .{},
+                                    );
+                                    self.fatal_error = true;
+                                    type_info.* = .{ .base = .Nothing };
+                                    return type_info;
+                                }
+
+                                // Transform to ArrayPop
+                                expr.data = .{
+                                    .ArrayPop = .{
+                                        .array = method_call.receiver,
+                                    },
+                                };
+
+                                // Return type is the array element type
+                                if (receiver_type.array_type) |elem_type| {
+                                    type_info.* = elem_type.*; // pop returns the element type
+                                } else {
+                                    type_info.* = .{ .base = .Nothing };
+                                }
+                            },
+                            .INSERT => {
+                                if (method_call.arguments.len != 2) {
+                                    self.reporter.reportCompileError(
+                                        getLocationFromBase(method_call.receiver.base),
+                                        ErrorCode.INVALID_ARGUMENT_COUNT,
+                                        "@insert requires exactly two arguments (index, element)",
+                                        .{},
+                                    );
+                                    self.fatal_error = true;
+                                    type_info.* = .{ .base = .Nothing };
+                                    return type_info;
+                                }
+
+                                // Check index is integer
+                                const index_type = try self.inferTypeFromExpr(method_call.arguments[0]);
+                                if (index_type.base != .Int) {
+                                    self.reporter.reportCompileError(
+                                        getLocationFromBase(method_call.arguments[0].base),
+                                        ErrorCode.INVALID_ARRAY_INDEX_TYPE,
+                                        "@insert index must be integer, got {s}",
+                                        .{@tagName(index_type.base)},
+                                    );
+                                    self.fatal_error = true;
+                                    type_info.* = .{ .base = .Nothing };
+                                    return type_info;
+                                }
+
+                                // Check element type matches array
+                                const value_type = try self.inferTypeFromExpr(method_call.arguments[1]);
+                                if (receiver_type.array_type) |elem_type| {
+                                    try self.unifyTypes(elem_type, value_type, .{ .location = getLocationFromBase(method_call.arguments[1].base) });
+                                }
+
+                                // Transform to ArrayInsert (if it exists) or keep as method call for now
+                                // For now, we'll keep it as a method call since ArrayInsert might not be implemented yet
+                                type_info.* = .{ .base = .Nothing }; // insert returns nothing
+                            },
+                            .REMOVE => {
+                                if (method_call.arguments.len != 1) {
+                                    self.reporter.reportCompileError(
+                                        getLocationFromBase(method_call.receiver.base),
+                                        ErrorCode.INVALID_ARGUMENT_COUNT,
+                                        "@remove requires exactly one argument (index)",
+                                        .{},
+                                    );
+                                    self.fatal_error = true;
+                                    type_info.* = .{ .base = .Nothing };
+                                    return type_info;
+                                }
+
+                                // Check index is integer
+                                const index_type = try self.inferTypeFromExpr(method_call.arguments[0]);
+                                if (index_type.base != .Int) {
+                                    self.reporter.reportCompileError(
+                                        getLocationFromBase(method_call.arguments[0].base),
+                                        ErrorCode.INVALID_ARRAY_INDEX_TYPE,
+                                        "@remove index must be integer, got {s}",
+                                        .{@tagName(index_type.base)},
+                                    );
+                                    self.fatal_error = true;
+                                    type_info.* = .{ .base = .Nothing };
+                                    return type_info;
+                                }
+
+                                // Return type is the array element type
+                                if (receiver_type.array_type) |elem_type| {
+                                    type_info.* = elem_type.*; // remove returns the removed element
+                                } else {
+                                    type_info.* = .{ .base = .Nothing };
+                                }
+                            },
+                            .CLEAR => {
+                                if (method_call.arguments.len != 0) {
+                                    self.reporter.reportCompileError(
+                                        getLocationFromBase(method_call.receiver.base),
+                                        ErrorCode.INVALID_ARGUMENT_COUNT,
+                                        "@clear requires no arguments",
+                                        .{},
+                                    );
+                                    self.fatal_error = true;
+                                    type_info.* = .{ .base = .Nothing };
+                                    return type_info;
+                                }
+
+                                // Transform to ArrayClear
+                                expr.data = .{
+                                    .ArrayClear = .{
+                                        .array = method_call.receiver,
+                                    },
+                                };
+
+                                type_info.* = .{ .base = .Nothing }; // clear returns nothing
+                            },
+                            .INDEX => {
+                                if (method_call.arguments.len != 1) {
+                                    self.reporter.reportCompileError(
+                                        getLocationFromBase(method_call.receiver.base),
+                                        ErrorCode.INVALID_ARGUMENT_COUNT,
+                                        "@index requires exactly one argument (element)",
+                                        .{},
+                                    );
+                                    self.fatal_error = true;
+                                    type_info.* = .{ .base = .Nothing };
+                                    return type_info;
+                                }
+
+                                // Check element type matches array
+                                const value_type = try self.inferTypeFromExpr(method_call.arguments[0]);
+                                if (receiver_type.array_type) |elem_type| {
+                                    try self.unifyTypes(elem_type, value_type, .{ .location = getLocationFromBase(method_call.arguments[0].base) });
+                                }
+
+                                // Return type is integer (index)
+                                type_info.* = .{ .base = .Int }; // index returns the position
                             },
                             else => {
                                 // For now, other array methods not implemented
@@ -3452,6 +3634,12 @@ pub const SemanticAnalyzer = struct {
                 var else_type: ?*ast.TypeInfo = null;
                 if (cast.else_branch) |else_expr| {
                     else_type = try self.inferTypeFromExpr(else_expr);
+                    // Treat control-flow exits (e.g., return ...) as Nothing for type inference
+                    if (else_expr.data == .ReturnExpr) {
+                        const nothing_type = try self.allocator.create(ast.TypeInfo);
+                        nothing_type.* = .{ .base = .Nothing };
+                        else_type = nothing_type;
+                    }
                 }
 
                 // For an as expression with then/else, first set the type to the target type
@@ -3510,11 +3698,11 @@ pub const SemanticAnalyzer = struct {
             // Build a narrowed TypeInfo from the pattern
             const narrow_info = try self.allocator.create(ast.TypeInfo);
             narrow_info.* = switch (case.pattern.type) {
-                .INT_TYPE => .{ .base = .Int, .is_mutable = false },
-                .FLOAT_TYPE => .{ .base = .Float, .is_mutable = false },
-                .STRING_TYPE => .{ .base = .String, .is_mutable = false },
-                .BYTE_TYPE => .{ .base = .Byte, .is_mutable = false },
-                .TETRA_TYPE => .{ .base = .Tetra, .is_mutable = false },
+                .INT_TYPE, .INT => .{ .base = .Int, .is_mutable = false },
+                .FLOAT_TYPE, .FLOAT => .{ .base = .Float, .is_mutable = false },
+                .STRING_TYPE, .STRING => .{ .base = .String, .is_mutable = false },
+                .BYTE_TYPE, .BYTE => .{ .base = .Byte, .is_mutable = false },
+                .TETRA_TYPE, .TETRA => .{ .base = .Tetra, .is_mutable = false },
                 .NOTHING_TYPE, .NOTHING => .{ .base = .Nothing, .is_mutable = false },
                 .DOT => .{ .base = .Enum, .is_mutable = false }, // enum member pattern implies enum
                 else => blk: {
@@ -4202,8 +4390,21 @@ pub const SemanticAnalyzer = struct {
             .Map => "map",
             .Enum => "enum",
             .Union => "union",
+            .Custom => "custom",
             .Nothing => "nothing",
-            else => "unknown",
+            else => blk: {
+                // Fallback: try evaluating the expression and derive type from its runtime value
+                const val = try self.evaluateExpression(expr);
+                break :blk switch (val) {
+                    .int => "int",
+                    .float => "float",
+                    .byte => "byte",
+                    .string => "string",
+                    .tetra => "tetra",
+                    .nothing => "nothing",
+                    else => "unknown",
+                };
+            },
         };
 
         return TokenLiteral{ .string = type_string };
@@ -4278,7 +4479,10 @@ pub const SemanticAnalyzer = struct {
                         try self.validateReturnTypeCompatibility(&expected_return_type, return_type, .{ .location = getLocationFromBase(stmt.base) });
                     } else {
                         has_return_without_value = true;
-                        if (expected_return_type.base != .Nothing) {
+                        // Allow bare 'return' for Nothing type or Union types containing Nothing
+                        const is_nothing_compatible = expected_return_type.base == .Nothing or
+                            (expected_return_type.base == .Union and self.unionContainsNothing(expected_return_type));
+                        if (!is_nothing_compatible) {
                             self.reporter.reportCompileError(
                                 getLocationFromBase(stmt.base),
                                 ErrorCode.MISSING_RETURN_VALUE,
@@ -4308,7 +4512,10 @@ pub const SemanticAnalyzer = struct {
                             for (expr_return_types.items) |ret_type| {
                                 if (ret_type.base == .Nothing) {
                                     has_return_without_value = true;
-                                    if (expected_return_type.base != .Nothing) {
+                                    // Allow bare 'return' for Nothing type or Union types containing Nothing
+                                    const is_nothing_compatible = expected_return_type.base == .Nothing or
+                                        (expected_return_type.base == .Union and self.unionContainsNothing(expected_return_type));
+                                    if (!is_nothing_compatible) {
                                         self.reporter.reportCompileError(
                                             getLocationFromBase(stmt.base),
                                             ErrorCode.MISSING_RETURN_VALUE,
@@ -4328,6 +4535,9 @@ pub const SemanticAnalyzer = struct {
                             if (if_returns) {
                                 has_return = true;
                             }
+                        } else if (expression.data == .ForEach) {
+                            // ForEach expressions don't return values - they're control flow constructs
+                            // No need to check for return values
                         }
                     }
                 },
@@ -4540,6 +4750,10 @@ pub const SemanticAnalyzer = struct {
                 } else {
                     return block_returns;
                 }
+            },
+            .ForEach => {
+                // ForEach expressions don't return values - they're control flow constructs
+                return false;
             },
             else => {
                 // Other expressions don't return values in the control flow sense

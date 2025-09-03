@@ -34,6 +34,7 @@ const forExpr = expr_parser.forExpr;
 const parseMatchExpr = expr_parser.parseMatchExpr;
 const parseStructOrMatch = expr_parser.parseStructOrMatch;
 const returnExpr = expr_parser.returnExpr;
+const parseBreakExpr = expr_parser.parseBreakExpr;
 
 const arrayType = expr_parser.arrayType;
 const typeofExpr = expr_parser.typeofExpr;
@@ -151,6 +152,7 @@ pub const rules = blk: {
     // Control flow
     r.set(.IF, .{ .prefix = parseIfExpr });
     r.set(.RETURN, .{ .prefix = returnExpr });
+    r.set(.BREAK, .{ .prefix = parseBreakExpr });
 
     // Blocks
     r.set(.LEFT_BRACE, .{
