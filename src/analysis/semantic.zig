@@ -3623,6 +3623,12 @@ pub const SemanticAnalyzer = struct {
                 var else_type: ?*ast.TypeInfo = null;
                 if (cast.else_branch) |else_expr| {
                     else_type = try self.inferTypeFromExpr(else_expr);
+                    // Treat control-flow exits (e.g., return ...) as Nothing for type inference
+                    if (else_expr.data == .ReturnExpr) {
+                        const nothing_type = try self.allocator.create(ast.TypeInfo);
+                        nothing_type.* = .{ .base = .Nothing };
+                        else_type = nothing_type;
+                    }
                 }
 
                 // For an as expression with then/else, first set the type to the target type

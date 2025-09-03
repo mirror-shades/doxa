@@ -30,14 +30,35 @@ entry function main() {
 
     possibleTokens as Token[] then {
         const rpn is shunt(possibleTokens)
-        rpn??
+        rpn as Token[] then {
+            const result is evaluate(rpn)
+            result as int then {
+                "Output: "?
+                result?
+                "\n"?
+            }
+            else {
+                "evaluation failed\n"?
+            }
+        } else {
+            "tokens failed to shunt\n"?
+        }
     } else {
         "tokens failed to parse\n"?
     }
 }
 
-function evaluate() {
-
+function evaluate(rpn :: Token[]) returns int | nothing {
+    var stack :: int[]
+    each t in rpn {
+        if t.token_type == TokenType.NUMBER then {
+            const maybe_int is @int(t.value)
+            const valid_number is maybe_int as int else {"bad num\n";return}
+            valid_number??
+            @push(stack, valid_number)
+        }
+        stack??
+    }
 }
 
 function split(input :: string) returns string[] {
@@ -133,7 +154,7 @@ function tokenize(input :: string[]) returns Token[] | nothing {
     return tokens
 }
 
-function shunt(tokens :: Token[]) returns Token[] {
+function shunt(tokens :: Token[]) returns Token[] | nothing {
     var output :: Token[]
     var operators :: Token[]
 
@@ -149,6 +170,8 @@ function shunt(tokens :: Token[]) returns Token[] {
 
                 const top_prec is precedence(top_op.value)
                 const current_prec is precedence(t.value)
+
+                if top_prec == -1 or current_prec == -1 then return
 
                 if top_prec >= current_prec then {
                     const popped is @pop(operators)

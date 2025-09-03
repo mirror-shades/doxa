@@ -1071,7 +1071,7 @@ pub const HIRVM = struct {
                 }
 
                 // If a binding exists in any active scope, update only if it's uninitialized constant (nothing)
-                if (self.current_scope.name_map.get(v.var_name)) |variable| {
+                if (self.current_scope.lookupVariable(v.var_name)) |variable| {
                     if (self.memory_manager.scope_manager.value_storage.getPtr(variable.storage_id)) |storage| {
                         if (storage.*.constant) {
                             const is_nothing = storage.*.value == .nothing;
