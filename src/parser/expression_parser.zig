@@ -1207,8 +1207,15 @@ pub fn castExpr(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
 
     // Optional else-branch: "else <expr|{...}>"
     var else_branch: ?*ast.Expr = null;
+
+    // Allow newlines between end of then-branch and else keyword
+    while (self.peek().type == .NEWLINE) self.advance();
+
     if (self.peek().type == .ELSE) {
         self.advance(); // consume 'else'
+
+        // Allow newlines before else-branch body
+        while (self.peek().type == .NEWLINE) self.advance();
 
         if (self.peek().type == .LEFT_BRACE) {
             // Block-style else

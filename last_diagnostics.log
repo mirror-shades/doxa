@@ -1300,3 +1300,1078 @@
 [CompileTime][Error][E1003] ./test/examples/calculator.doxa:151:42: Cannot use + operator between String and Unknown
 [CompileTime][Error][E1003] ./test/misc/bigfile.doxa:392:1: Type mismatch: expected Int, got Union
 [CompileTime][Error][E1003] ./test/misc/bigfile.doxa:392:1: Type mismatch: expected Int, got Union
+[CompileTime][Error][E2021] ./test/examples/calculator.doxa:153:57: Expected then
+[CompileTime][Error][E1001] ./test/examples/calculator.doxa:47:1: Undefined variable 'valid_number'
+[CompileTime][Error][E6001] ./test/examples/calculator.doxa:48:19: Cannot call array method 'push' on non-array type Int
+[CompileTime][Error][E1001] ./test/examples/calculator.doxa:47:1: Undefined variable 'valid_number'
+[CompileTime][Error][E1001] ./test/examples/calculator.doxa:48:26: Undefined variable
+[CompileTime][Error][E1003] ./test/examples/calculator.doxa:48:26: Type mismatch: expected Int, got Nothing
+[CompileTime][Error][E1003] ./test/examples/calculator.doxa:48:26: Type mismatch: expected Int, got Union
+[CompileTime][Error][E1003] ./test/examples/calculator.doxa:49:26: Type mismatch: expected Int, got Union
+[CompileTime][Error][E2017] ./test/examples/calculator.doxa:35:16: Unsupported unary operator: types.token.TokenType.BANG
+[CompileTime][Error][E1003] ./test/examples/calculator.doxa:49:26: Type mismatch: expected Int, got Union
+[CompileTime][Error][E1003] ./test/examples/calculator.doxa:49:26: Type mismatch: expected Int, got Union
+[CompileTime][Error][E1003] ./test/examples/calculator.doxa:50:26: Type mismatch: expected Int, got Union
+[Runtime][Error][E1001] Cannot perform NOT on a non-tetra value: nothing
+[CompileTime][Error][E1003] ./test/examples/calculator.doxa:50:26: Type mismatch: expected Int, got Union
+[Debug][Hint] main.zig:409:0: Debug: Processing script: './test/examples/calculator.doxa'
+
+[Debug][Hint] main.zig:429:0: Debug: Absolute path: '/home/user/dev/doxa/test/examples/calculator.doxa'
+
+[Debug][Hint] main.zig:434:0: reporter debug method working
+
+[Debug][Hint] main.zig:409:0: Debug: Processing script: './test/examples/calculator.doxa'
+
+[Debug][Hint] main.zig:429:0: Debug: Absolute path: '/home/user/dev/doxa/test/examples/calculator.doxa'
+
+[Debug][Hint] main.zig:434:0: reporter debug method working
+
+[Debug][Hint] main.zig:164:0: >> Constant folding applied: 0 optimizations
+
+[Debug][Hint] codegen/hir/soxa_generator.zig:540:0: HIR: processing imported module globals: 0
+[Debug][Hint] codegen/hir/soxa_generator.zig:565:0: HIR: processing current module globals
+[Debug][Hint] codegen/hir/soxa_generator.zig:725:0: Variable stack has type base: Array
+[Debug][Hint] codegen/hir/soxa_generator.zig:4094:0: inferBinaryOpResultType: Enum EQUALITY Enum
+[Debug][Hint] codegen/hir/soxa_generator.zig:1245:0: Binary op EQUALITY: left_type=Enum, right_type=Enum, result_type=Tetra
+
+[Debug][Hint] codegen/hir/soxa_generator.zig:1857:0: Checking union members for variable valid_number
+[Debug][Hint] codegen/hir/soxa_generator.zig:1873:0: No union members found for valid_number
+[Debug][Hint] codegen/hir/soxa_generator.zig:725:0: Variable result has type base: Array
+[Debug][Hint] codegen/hir/soxa_generator.zig:725:0: Variable current has type base: String
+[Debug][Hint] codegen/hir/soxa_generator.zig:4094:0: inferBinaryOpResultType: String EQUALITY String
+[Debug][Hint] codegen/hir/soxa_generator.zig:1245:0: Binary op EQUALITY: left_type=String, right_type=String, result_type=Tetra
+
+[Debug][Hint] codegen/hir/soxa_generator.zig:4094:0: inferBinaryOpResultType: String BANG_EQUAL String
+[Debug][Hint] codegen/hir/soxa_generator.zig:1245:0: Binary op BANG_EQUAL: left_type=String, right_type=String, result_type=Tetra
+
+[Debug][Hint] codegen/hir/soxa_generator.zig:4094:0: inferBinaryOpResultType: String EQUALITY String
+[Debug][Hint] codegen/hir/soxa_generator.zig:1245:0: Binary op EQUALITY: left_type=String, right_type=String, result_type=Tetra
+
+[Debug][Hint] codegen/hir/soxa_generator.zig:4094:0: inferBinaryOpResultType: String EQUALITY String
+[Debug][Hint] codegen/hir/soxa_generator.zig:1245:0: Binary op EQUALITY: left_type=String, right_type=String, result_type=Tetra
+
+[Debug][Hint] codegen/hir/soxa_generator.zig:4094:0: inferBinaryOpResultType: String EQUALITY String
+[Debug][Hint] codegen/hir/soxa_generator.zig:1245:0: Binary op EQUALITY: left_type=String, right_type=String, result_type=Tetra
+
+[Debug][Hint] codegen/hir/soxa_generator.zig:4094:0: inferBinaryOpResultType: String EQUALITY String
+[Debug][Hint] codegen/hir/soxa_generator.zig:1245:0: Binary op EQUALITY: left_type=String, right_type=String, result_type=Tetra
+
+[Debug][Hint] codegen/hir/soxa_generator.zig:4094:0: inferBinaryOpResultType: String EQUALITY String
+[Debug][Hint] codegen/hir/soxa_generator.zig:1245:0: Binary op EQUALITY: left_type=String, right_type=String, result_type=Tetra
+
+[Debug][Hint] codegen/hir/soxa_generator.zig:4094:0: inferBinaryOpResultType: String BANG_EQUAL String
+[Debug][Hint] codegen/hir/soxa_generator.zig:1245:0: Binary op BANG_EQUAL: left_type=String, right_type=String, result_type=Tetra
+
+[Debug][Hint] codegen/hir/soxa_generator.zig:4094:0: inferBinaryOpResultType: String EQUALITY String
+[Debug][Hint] codegen/hir/soxa_generator.zig:1245:0: Binary op EQUALITY: left_type=String, right_type=String, result_type=Tetra
+
+[Debug][Hint] codegen/hir/soxa_generator.zig:4094:0: inferBinaryOpResultType: String EQUALITY String
+[Debug][Hint] codegen/hir/soxa_generator.zig:1245:0: Binary op EQUALITY: left_type=String, right_type=String, result_type=Tetra
+
+[Debug][Hint] codegen/hir/soxa_generator.zig:4094:0: inferBinaryOpResultType: Int PLUS Int
+[Debug][Hint] codegen/hir/soxa_generator.zig:1245:0: Binary op PLUS: left_type=Int, right_type=Int, result_type=Int
+
+[Debug][Hint] codegen/hir/soxa_generator.zig:4094:0: inferBinaryOpResultType: String BANG_EQUAL String
+[Debug][Hint] codegen/hir/soxa_generator.zig:1245:0: Binary op BANG_EQUAL: left_type=String, right_type=String, result_type=Tetra
+
+[Debug][Hint] codegen/hir/soxa_generator.zig:4094:0: inferBinaryOpResultType: String BANG_EQUAL String
+[Debug][Hint] codegen/hir/soxa_generator.zig:1245:0: Binary op BANG_EQUAL: left_type=String, right_type=String, result_type=Tetra
+
+[Debug][Hint] codegen/hir/soxa_generator.zig:4094:0: inferBinaryOpResultType: String PLUS String
+[Debug][Hint] codegen/hir/soxa_generator.zig:1245:0: Binary op PLUS: left_type=String, right_type=String, result_type=String
+
+[Debug][Hint] codegen/hir/soxa_generator.zig:725:0: Variable depth has type base: Int
+[Debug][Hint] codegen/hir/soxa_generator.zig:725:0: Variable passed has type base: Tetra
+[Debug][Hint] codegen/hir/soxa_generator.zig:4094:0: inferBinaryOpResultType: Unknown EQUALITY String
+[Debug][Hint] codegen/hir/soxa_generator.zig:1245:0: Binary op EQUALITY: left_type=Unknown, right_type=String, result_type=Tetra
+
+[Debug][Hint] codegen/hir/soxa_generator.zig:4094:0: inferBinaryOpResultType: Unknown EQUALITY String
+[Debug][Hint] codegen/hir/soxa_generator.zig:1245:0: Binary op EQUALITY: left_type=Unknown, right_type=String, result_type=Tetra
+
+[Debug][Hint] codegen/hir/soxa_generator.zig:4094:0: inferBinaryOpResultType: Int LESS Int
+[Debug][Hint] codegen/hir/soxa_generator.zig:1245:0: Binary op LESS: left_type=Int, right_type=Int, result_type=Tetra
+
+[Debug][Hint] codegen/hir/soxa_generator.zig:4094:0: inferBinaryOpResultType: Int GREATER Int
+[Debug][Hint] codegen/hir/soxa_generator.zig:1245:0: Binary op GREATER: left_type=Int, right_type=Int, result_type=Tetra
+
+[Debug][Hint] codegen/hir/soxa_generator.zig:725:0: Variable tokens has type base: Array
+[Debug][Hint] codegen/hir/soxa_generator.zig:4094:0: inferBinaryOpResultType: Unknown EQUALITY String
+[Debug][Hint] codegen/hir/soxa_generator.zig:1245:0: Binary op EQUALITY: left_type=Unknown, right_type=String, result_type=Tetra
+
+[Debug][Hint] codegen/hir/soxa_generator.zig:4094:0: inferBinaryOpResultType: Unknown EQUALITY String
+[Debug][Hint] codegen/hir/soxa_generator.zig:1245:0: Binary op EQUALITY: left_type=Unknown, right_type=String, result_type=Tetra
+
+[Debug][Hint] codegen/hir/soxa_generator.zig:4094:0: inferBinaryOpResultType: Unknown EQUALITY String
+[Debug][Hint] codegen/hir/soxa_generator.zig:1245:0: Binary op EQUALITY: left_type=Unknown, right_type=String, result_type=Tetra
+
+[Debug][Hint] codegen/hir/soxa_generator.zig:4094:0: inferBinaryOpResultType: Unknown EQUALITY String
+[Debug][Hint] codegen/hir/soxa_generator.zig:1245:0: Binary op EQUALITY: left_type=Unknown, right_type=String, result_type=Tetra
+
+[Debug][Hint] codegen/hir/soxa_generator.zig:4094:0: inferBinaryOpResultType: Unknown EQUALITY String
+[Debug][Hint] codegen/hir/soxa_generator.zig:1245:0: Binary op EQUALITY: left_type=Unknown, right_type=String, result_type=Tetra
+
+[Debug][Hint] codegen/hir/soxa_generator.zig:4094:0: inferBinaryOpResultType: Unknown EQUALITY String
+[Debug][Hint] codegen/hir/soxa_generator.zig:1245:0: Binary op EQUALITY: left_type=Unknown, right_type=String, result_type=Tetra
+
+[Debug][Hint] codegen/hir/soxa_generator.zig:4094:0: inferBinaryOpResultType: Unknown BANG_EQUAL String
+[Debug][Hint] codegen/hir/soxa_generator.zig:1245:0: Binary op BANG_EQUAL: left_type=Unknown, right_type=String, result_type=Tetra
+
+[Debug][Hint] codegen/hir/soxa_generator.zig:725:0: Variable output has type base: Array
+[Debug][Hint] codegen/hir/soxa_generator.zig:725:0: Variable operators has type base: Array
+[Debug][Hint] codegen/hir/soxa_generator.zig:4094:0: inferBinaryOpResultType: Enum EQUALITY Enum
+[Debug][Hint] codegen/hir/soxa_generator.zig:1245:0: Binary op EQUALITY: left_type=Enum, right_type=Enum, result_type=Tetra
+
+[Debug][Hint] codegen/hir/soxa_generator.zig:4094:0: inferBinaryOpResultType: Enum EQUALITY Enum
+[Debug][Hint] codegen/hir/soxa_generator.zig:1245:0: Binary op EQUALITY: left_type=Enum, right_type=Enum, result_type=Tetra
+
+[Debug][Hint] codegen/hir/soxa_generator.zig:4094:0: inferBinaryOpResultType: Int GREATER Int
+[Debug][Hint] codegen/hir/soxa_generator.zig:1245:0: Binary op GREATER: left_type=Int, right_type=Int, result_type=Tetra
+
+[Debug][Hint] codegen/hir/soxa_generator.zig:4094:0: inferBinaryOpResultType: Int MINUS Int
+[Debug][Hint] codegen/hir/soxa_generator.zig:1245:0: Binary op MINUS: left_type=Int, right_type=Int, result_type=Int
+
+[Debug][Hint] codegen/hir/soxa_generator.zig:4094:0: inferBinaryOpResultType: Enum BANG_EQUAL Enum
+[Debug][Hint] codegen/hir/soxa_generator.zig:1245:0: Binary op BANG_EQUAL: left_type=Enum, right_type=Enum, result_type=Tetra
+
+[Debug][Hint] codegen/hir/soxa_generator.zig:4094:0: inferBinaryOpResultType: Unknown EQUALITY Int
+[Debug][Hint] codegen/hir/soxa_generator.zig:1245:0: Binary op EQUALITY: left_type=Unknown, right_type=Int, result_type=Tetra
+
+[Debug][Hint] codegen/hir/soxa_generator.zig:4094:0: inferBinaryOpResultType: Unknown EQUALITY Int
+[Debug][Hint] codegen/hir/soxa_generator.zig:1245:0: Binary op EQUALITY: left_type=Unknown, right_type=Int, result_type=Tetra
+
+[Debug][Hint] codegen/hir/soxa_generator.zig:4094:0: inferBinaryOpResultType: Unknown GREATER_EQUAL Unknown
+[Debug][Hint] codegen/hir/soxa_generator.zig:1245:0: Binary op GREATER_EQUAL: left_type=Unknown, right_type=Unknown, result_type=Tetra
+
+[Debug][Hint] codegen/hir/soxa_generator.zig:697:0: HIR: emitting break -> while_end_119
+[Debug][Hint] codegen/hir/soxa_generator.zig:4094:0: inferBinaryOpResultType: Enum EQUALITY Enum
+[Debug][Hint] codegen/hir/soxa_generator.zig:1245:0: Binary op EQUALITY: left_type=Enum, right_type=Enum, result_type=Tetra
+
+[Debug][Hint] codegen/hir/soxa_generator.zig:4094:0: inferBinaryOpResultType: Enum EQUALITY Enum
+[Debug][Hint] codegen/hir/soxa_generator.zig:1245:0: Binary op EQUALITY: left_type=Enum, right_type=Enum, result_type=Tetra
+
+[Debug][Hint] codegen/hir/soxa_generator.zig:4094:0: inferBinaryOpResultType: Int GREATER Int
+[Debug][Hint] codegen/hir/soxa_generator.zig:1245:0: Binary op GREATER: left_type=Int, right_type=Int, result_type=Tetra
+
+[Debug][Hint] codegen/hir/soxa_generator.zig:4094:0: inferBinaryOpResultType: Enum BANG_EQUAL Enum
+[Debug][Hint] codegen/hir/soxa_generator.zig:1245:0: Binary op BANG_EQUAL: left_type=Enum, right_type=Enum, result_type=Tetra
+
+[Debug][Hint] codegen/hir/soxa_generator.zig:4094:0: inferBinaryOpResultType: Int MINUS Int
+[Debug][Hint] codegen/hir/soxa_generator.zig:1245:0: Binary op MINUS: left_type=Int, right_type=Int, result_type=Int
+
+[Debug][Hint] codegen/hir/soxa_generator.zig:4094:0: inferBinaryOpResultType: Int GREATER Int
+[Debug][Hint] codegen/hir/soxa_generator.zig:1245:0: Binary op GREATER: left_type=Int, right_type=Int, result_type=Tetra
+
+[Debug][Hint] codegen/hir/soxa_generator.zig:4094:0: inferBinaryOpResultType: Enum EQUALITY Enum
+[Debug][Hint] codegen/hir/soxa_generator.zig:1245:0: Binary op EQUALITY: left_type=Enum, right_type=Enum, result_type=Tetra
+
+[Debug][Hint] codegen/hir/soxa_generator.zig:4094:0: inferBinaryOpResultType: Int MINUS Int
+[Debug][Hint] codegen/hir/soxa_generator.zig:1245:0: Binary op MINUS: left_type=Int, right_type=Int, result_type=Int
+
+[Debug][Hint] codegen/hir/soxa_generator.zig:4094:0: inferBinaryOpResultType: Int GREATER Int
+[Debug][Hint] codegen/hir/soxa_generator.zig:1245:0: Binary op GREATER: left_type=Int, right_type=Int, result_type=Tetra
+
+[Debug][Hint] codegen/hir/soxa_generator.zig:4094:0: inferBinaryOpResultType: Enum EQUALITY Enum
+[Debug][Hint] codegen/hir/soxa_generator.zig:1245:0: Binary op EQUALITY: left_type=Enum, right_type=Enum, result_type=Tetra
+
+[Debug][Hint] codegen/hir/soxa_generator.zig:4094:0: inferBinaryOpResultType: Enum EQUALITY Enum
+[Debug][Hint] codegen/hir/soxa_generator.zig:1245:0: Binary op EQUALITY: left_type=Enum, right_type=Enum, result_type=Tetra
+
+[Debug][Hint] main.zig:191:0: >> Peephole optimizations applied: 10 HIR instruction optimizations
+
+[Debug][Hint] main.zig:213:0: >> Compiled ./test/examples/calculator.doxa -> out/calculator.soxa (872 HIR instructions)
+
+[Debug][Hint] main.zig:507:0: >> Executing with HIR VM
+
+[Debug][Hint] main.zig:224:0: >> Loaded SOXA: 872 instructions, 125 constants
+
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 0 at IP 0: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 1 at IP 1: StoreConst
+[Debug][Hint] interpreter/vm.zig:1105:0: DBG WRITE StoreConst (create) TokenType: storage_id=46, value=types.types.TokenLiteral{ .string = { 84, 111, 107, 101, 110, 84, 121, 112, 101 } }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 2 at IP 2: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 3 at IP 3: Call
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 72 at IP 72: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 73 at IP 73: EnterScope
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 74 at IP 74: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 75 at IP 75: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 76 at IP 76: Call
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 77 at IP 77: StoreConst
+[Debug][Hint] interpreter/vm.zig:1105:0: DBG WRITE StoreConst (create) input: storage_id=47, value=types.types.TokenLiteral{ .string = { 52, 32, 43, 32, 53 } }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 78 at IP 78: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 79 at IP 79: Call
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 216 at IP 216: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 217 at IP 217: EnterScope
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 218 at IP 218: StoreVar
+[Debug][Hint] interpreter/vm.zig:982:0: DBG WRITE StoreVar (shadow create) input: storage_id=48, value=types.types.TokenLiteral{ .string = { 52, 32, 43, 32, 53 } }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 219 at IP 219: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 220 at IP 220: ArrayNew
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 221 at IP 221: StoreVar
+[Debug][Hint] interpreter/vm.zig:1008:0: DBG WRITE StoreVar (local create) result: storage_id=49, value=types.types.TokenLiteral{ .array = { types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void } } }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 222 at IP 222: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 223 at IP 223: StoreVar
+[Debug][Hint] interpreter/vm.zig:1008:0: DBG WRITE StoreVar (local create) current: storage_id=50, value=types.types.TokenLiteral{ .string = {  } }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 224 at IP 224: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 225 at IP 225: StringOp
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 226 at IP 226: StoreConst
+[Debug][Hint] interpreter/vm.zig:1105:0: DBG WRITE StoreConst (create) lin: storage_id=51, value=types.types.TokenLiteral{ .int = 5 }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 227 at IP 227: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 228 at IP 228: Dup
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 229 at IP 229: StoreVar
+[Debug][Hint] interpreter/vm.zig:1008:0: DBG WRITE StoreVar (local create) __fe_arr_foreach_start_45: storage_id=52, value=types.types.TokenLiteral{ .string = { 52, 32, 43, 32, 53 } }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 230 at IP 230: StringOp
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 231 at IP 231: StoreVar
+[Debug][Hint] interpreter/vm.zig:1008:0: DBG WRITE StoreVar (local create) __fe_len_foreach_start_45: storage_id=53, value=types.types.TokenLiteral{ .int = 5 }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 232 at IP 232: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 233 at IP 233: StoreVar
+[Debug][Hint] interpreter/vm.zig:1008:0: DBG WRITE StoreVar (local create) i: storage_id=54, value=types.types.TokenLiteral{ .int = 0 }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 234 at IP 234: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 235 at IP 235: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 236 at IP 236: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 237 at IP 237: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Lt: a=int (value: codegen.hir.soxa_values.HIRValue{ .int = 0 }), b=int (value: codegen.hir.soxa_values.HIRValue{ .int = 5 }), operand_type=Int
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Lt = true
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 238 at IP 238: JumpCond
+[Debug][Hint] interpreter/vm.zig:1365:0: DBG JumpCond: condition=codegen.hir.soxa_values.HIRValue{ .tetra = 1 }, should_jump=true, target_label=foreach_body_46
+[Debug][Hint] interpreter/vm.zig:1370:0: DBG JumpCond: jumping to IP 239 (label: foreach_body_46)
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 239 at IP 239: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 240 at IP 240: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 241 at IP 241: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 242 at IP 242: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 243 at IP 243: StringOp
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 244 at IP 244: Dup
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 245 at IP 245: StoreVar
+[Debug][Hint] interpreter/vm.zig:1008:0: DBG WRITE StoreVar (local create) c: storage_id=55, value=types.types.TokenLiteral{ .string = { 52 } }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 246 at IP 246: Dup
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 247 at IP 247: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 248 at IP 248: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Eq: a=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 52 } }), b=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 32 } }), operand_type=String
+[Debug][Hint] interpreter/vm.zig:3449:0: DBG compareEqual: comparing strings '4' and ' ', lengths: 1 and 1, result: false
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Eq = false
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 249 at IP 249: JumpCond
+[Debug][Hint] interpreter/vm.zig:1365:0: DBG JumpCond: condition=codegen.hir.soxa_values.HIRValue{ .tetra = 0 }, should_jump=false, target_label=else_49
+[Debug][Hint] interpreter/vm.zig:1370:0: DBG JumpCond: jumping to IP 269 (label: else_49)
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 269 at IP 269: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 270 at IP 270: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 271 at IP 271: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 272 at IP 272: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Eq: a=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 52 } }), b=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 43 } }), operand_type=String
+[Debug][Hint] interpreter/vm.zig:3449:0: DBG compareEqual: comparing strings '4' and '+', lengths: 1 and 1, result: false
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Eq = false
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 273 at IP 273: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 274 at IP 274: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 275 at IP 275: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Eq: a=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 52 } }), b=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 42 } }), operand_type=String
+[Debug][Hint] interpreter/vm.zig:3449:0: DBG compareEqual: comparing strings '4' and '*', lengths: 1 and 1, result: false
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Eq = false
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 276 at IP 276: LogicalOp
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 277 at IP 277: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 278 at IP 278: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 279 at IP 279: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Eq: a=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 52 } }), b=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 47 } }), operand_type=String
+[Debug][Hint] interpreter/vm.zig:3449:0: DBG compareEqual: comparing strings '4' and '/', lengths: 1 and 1, result: false
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Eq = false
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 280 at IP 280: LogicalOp
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 281 at IP 281: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 282 at IP 282: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 283 at IP 283: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Eq: a=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 52 } }), b=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 40 } }), operand_type=String
+[Debug][Hint] interpreter/vm.zig:3449:0: DBG compareEqual: comparing strings '4' and '(', lengths: 1 and 1, result: false
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Eq = false
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 284 at IP 284: LogicalOp
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 285 at IP 285: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 286 at IP 286: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 287 at IP 287: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Eq: a=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 52 } }), b=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 41 } }), operand_type=String
+[Debug][Hint] interpreter/vm.zig:3449:0: DBG compareEqual: comparing strings '4' and ')', lengths: 1 and 1, result: false
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Eq = false
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 288 at IP 288: LogicalOp
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 289 at IP 289: JumpCond
+[Debug][Hint] interpreter/vm.zig:1365:0: DBG JumpCond: condition=codegen.hir.soxa_values.HIRValue{ .tetra = 0 }, should_jump=false, target_label=else_55
+[Debug][Hint] interpreter/vm.zig:1370:0: DBG JumpCond: jumping to IP 315 (label: else_55)
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 315 at IP 315: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 316 at IP 316: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 317 at IP 317: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 318 at IP 318: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Eq: a=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 52 } }), b=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 45 } }), operand_type=String
+[Debug][Hint] interpreter/vm.zig:3449:0: DBG compareEqual: comparing strings '4' and '-', lengths: 1 and 1, result: false
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Eq = false
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 319 at IP 319: Dup
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 320 at IP 320: JumpCond
+[Debug][Hint] interpreter/vm.zig:1365:0: DBG JumpCond: condition=codegen.hir.soxa_values.HIRValue{ .tetra = 0 }, should_jump=false, target_label=and_end_62
+[Debug][Hint] interpreter/vm.zig:1370:0: DBG JumpCond: jumping to IP 330 (label: and_end_62)
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 330 at IP 330: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 331 at IP 331: JumpCond
+[Debug][Hint] interpreter/vm.zig:1365:0: DBG JumpCond: condition=codegen.hir.soxa_values.HIRValue{ .tetra = 0 }, should_jump=false, target_label=else_63
+[Debug][Hint] interpreter/vm.zig:1370:0: DBG JumpCond: jumping to IP 357 (label: else_63)
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 357 at IP 357: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 358 at IP 358: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 359 at IP 359: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 360 at IP 360: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Ne: a=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 52 } }), b=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 32 } }), operand_type=String
+[Debug][Hint] interpreter/vm.zig:3449:0: DBG compareEqual: comparing strings '4' and ' ', lengths: 1 and 1, result: false
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Ne = true
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 361 at IP 361: JumpCond
+[Debug][Hint] interpreter/vm.zig:1365:0: DBG JumpCond: condition=codegen.hir.soxa_values.HIRValue{ .tetra = 1 }, should_jump=true, target_label=then_71
+[Debug][Hint] interpreter/vm.zig:1370:0: DBG JumpCond: jumping to IP 362 (label: then_71)
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 362 at IP 362: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 363 at IP 363: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 364 at IP 364: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 365 at IP 365: Swap
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 366 at IP 366: StringOp
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 367 at IP 367: Dup
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 368 at IP 368: StoreVar
+[Debug][Hint] interpreter/vm.zig:993:0: DBG WRITE StoreVar (local update) current: storage_id=50, value=types.types.TokenLiteral{ .string = { 52 } }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 369 at IP 369: Pop
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 370 at IP 370: Jump
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 373 at IP 373: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 374 at IP 374: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 375 at IP 375: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 376 at IP 376: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 377 at IP 377: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 378 at IP 378: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 379 at IP 379: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 380 at IP 380: Arith
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 381 at IP 381: StoreVar
+[Debug][Hint] interpreter/vm.zig:993:0: DBG WRITE StoreVar (local update) i: storage_id=54, value=types.types.TokenLiteral{ .int = 1 }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 382 at IP 382: Jump
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 234 at IP 234: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 235 at IP 235: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 236 at IP 236: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 237 at IP 237: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Lt: a=int (value: codegen.hir.soxa_values.HIRValue{ .int = 1 }), b=int (value: codegen.hir.soxa_values.HIRValue{ .int = 5 }), operand_type=Int
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Lt = true
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 238 at IP 238: JumpCond
+[Debug][Hint] interpreter/vm.zig:1365:0: DBG JumpCond: condition=codegen.hir.soxa_values.HIRValue{ .tetra = 1 }, should_jump=true, target_label=foreach_body_46
+[Debug][Hint] interpreter/vm.zig:1370:0: DBG JumpCond: jumping to IP 239 (label: foreach_body_46)
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 239 at IP 239: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 240 at IP 240: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 241 at IP 241: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 242 at IP 242: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 243 at IP 243: StringOp
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 244 at IP 244: Dup
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 245 at IP 245: StoreVar
+[Debug][Hint] interpreter/vm.zig:993:0: DBG WRITE StoreVar (local update) c: storage_id=55, value=types.types.TokenLiteral{ .string = { 32 } }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 246 at IP 246: Dup
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 247 at IP 247: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 248 at IP 248: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Eq: a=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 32 } }), b=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 32 } }), operand_type=String
+[Debug][Hint] interpreter/vm.zig:3449:0: DBG compareEqual: comparing strings ' ' and ' ', lengths: 1 and 1, result: true
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Eq = true
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 249 at IP 249: JumpCond
+[Debug][Hint] interpreter/vm.zig:1365:0: DBG JumpCond: condition=codegen.hir.soxa_values.HIRValue{ .tetra = 1 }, should_jump=true, target_label=then_51
+[Debug][Hint] interpreter/vm.zig:1370:0: DBG JumpCond: jumping to IP 250 (label: then_51)
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 250 at IP 250: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 251 at IP 251: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 252 at IP 252: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 253 at IP 253: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Ne: a=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 52 } }), b=string (value: codegen.hir.soxa_values.HIRValue{ .string = {  } }), operand_type=String
+[Debug][Hint] interpreter/vm.zig:3449:0: DBG compareEqual: comparing strings '4' and '', lengths: 1 and 0, result: false
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Ne = true
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 254 at IP 254: JumpCond
+[Debug][Hint] interpreter/vm.zig:1365:0: DBG JumpCond: condition=codegen.hir.soxa_values.HIRValue{ .tetra = 1 }, should_jump=true, target_label=then_54
+[Debug][Hint] interpreter/vm.zig:1370:0: DBG JumpCond: jumping to IP 255 (label: then_54)
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 255 at IP 255: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 256 at IP 256: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 257 at IP 257: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 258 at IP 258: ArrayPush
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 259 at IP 259: StoreVar
+[Debug][Hint] interpreter/vm.zig:993:0: DBG WRITE StoreVar (local update) result: storage_id=49, value=types.types.TokenLiteral{ .array = { types.types.TokenLiteral{ .string = { ... } }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void } } }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 260 at IP 260: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 261 at IP 261: Dup
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 262 at IP 262: StoreVar
+[Debug][Hint] interpreter/vm.zig:993:0: DBG WRITE StoreVar (local update) current: storage_id=50, value=types.types.TokenLiteral{ .string = {  } }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 263 at IP 263: Pop
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 264 at IP 264: Jump
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 267 at IP 267: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 268 at IP 268: Jump
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 376 at IP 376: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 377 at IP 377: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 378 at IP 378: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 379 at IP 379: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 380 at IP 380: Arith
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 381 at IP 381: StoreVar
+[Debug][Hint] interpreter/vm.zig:993:0: DBG WRITE StoreVar (local update) i: storage_id=54, value=types.types.TokenLiteral{ .int = 2 }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 382 at IP 382: Jump
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 234 at IP 234: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 235 at IP 235: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 236 at IP 236: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 237 at IP 237: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Lt: a=int (value: codegen.hir.soxa_values.HIRValue{ .int = 2 }), b=int (value: codegen.hir.soxa_values.HIRValue{ .int = 5 }), operand_type=Int
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Lt = true
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 238 at IP 238: JumpCond
+[Debug][Hint] interpreter/vm.zig:1365:0: DBG JumpCond: condition=codegen.hir.soxa_values.HIRValue{ .tetra = 1 }, should_jump=true, target_label=foreach_body_46
+[Debug][Hint] interpreter/vm.zig:1370:0: DBG JumpCond: jumping to IP 239 (label: foreach_body_46)
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 239 at IP 239: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 240 at IP 240: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 241 at IP 241: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 242 at IP 242: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 243 at IP 243: StringOp
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 244 at IP 244: Dup
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 245 at IP 245: StoreVar
+[Debug][Hint] interpreter/vm.zig:993:0: DBG WRITE StoreVar (local update) c: storage_id=55, value=types.types.TokenLiteral{ .string = { 43 } }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 246 at IP 246: Dup
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 247 at IP 247: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 248 at IP 248: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Eq: a=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 43 } }), b=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 32 } }), operand_type=String
+[Debug][Hint] interpreter/vm.zig:3449:0: DBG compareEqual: comparing strings '+' and ' ', lengths: 1 and 1, result: false
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Eq = false
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 249 at IP 249: JumpCond
+[Debug][Hint] interpreter/vm.zig:1365:0: DBG JumpCond: condition=codegen.hir.soxa_values.HIRValue{ .tetra = 0 }, should_jump=false, target_label=else_49
+[Debug][Hint] interpreter/vm.zig:1370:0: DBG JumpCond: jumping to IP 269 (label: else_49)
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 269 at IP 269: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 270 at IP 270: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 271 at IP 271: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 272 at IP 272: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Eq: a=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 43 } }), b=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 43 } }), operand_type=String
+[Debug][Hint] interpreter/vm.zig:3449:0: DBG compareEqual: comparing strings '+' and '+', lengths: 1 and 1, result: true
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Eq = true
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 273 at IP 273: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 274 at IP 274: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 275 at IP 275: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Eq: a=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 43 } }), b=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 42 } }), operand_type=String
+[Debug][Hint] interpreter/vm.zig:3449:0: DBG compareEqual: comparing strings '+' and '*', lengths: 1 and 1, result: false
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Eq = false
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 276 at IP 276: LogicalOp
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 277 at IP 277: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 278 at IP 278: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 279 at IP 279: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Eq: a=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 43 } }), b=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 47 } }), operand_type=String
+[Debug][Hint] interpreter/vm.zig:3449:0: DBG compareEqual: comparing strings '+' and '/', lengths: 1 and 1, result: false
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Eq = false
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 280 at IP 280: LogicalOp
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 281 at IP 281: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 282 at IP 282: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 283 at IP 283: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Eq: a=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 43 } }), b=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 40 } }), operand_type=String
+[Debug][Hint] interpreter/vm.zig:3449:0: DBG compareEqual: comparing strings '+' and '(', lengths: 1 and 1, result: false
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Eq = false
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 284 at IP 284: LogicalOp
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 285 at IP 285: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 286 at IP 286: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 287 at IP 287: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Eq: a=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 43 } }), b=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 41 } }), operand_type=String
+[Debug][Hint] interpreter/vm.zig:3449:0: DBG compareEqual: comparing strings '+' and ')', lengths: 1 and 1, result: false
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Eq = false
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 288 at IP 288: LogicalOp
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 289 at IP 289: JumpCond
+[Debug][Hint] interpreter/vm.zig:1365:0: DBG JumpCond: condition=codegen.hir.soxa_values.HIRValue{ .tetra = 1 }, should_jump=true, target_label=then_57
+[Debug][Hint] interpreter/vm.zig:1370:0: DBG JumpCond: jumping to IP 290 (label: then_57)
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 290 at IP 290: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 291 at IP 291: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 292 at IP 292: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 293 at IP 293: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Ne: a=string (value: codegen.hir.soxa_values.HIRValue{ .string = {  } }), b=string (value: codegen.hir.soxa_values.HIRValue{ .string = {  } }), operand_type=String
+[Debug][Hint] interpreter/vm.zig:3449:0: DBG compareEqual: comparing strings '' and '', lengths: 0 and 0, result: true
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Ne = false
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 294 at IP 294: JumpCond
+[Debug][Hint] interpreter/vm.zig:1365:0: DBG JumpCond: condition=codegen.hir.soxa_values.HIRValue{ .tetra = 0 }, should_jump=false, target_label=else_58
+[Debug][Hint] interpreter/vm.zig:1370:0: DBG JumpCond: jumping to IP 305 (label: else_58)
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 305 at IP 305: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 306 at IP 306: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 307 at IP 307: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 308 at IP 308: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 309 at IP 309: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 310 at IP 310: ArrayPush
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 311 at IP 311: Dup
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 312 at IP 312: StoreVar
+[Debug][Hint] interpreter/vm.zig:993:0: DBG WRITE StoreVar (local update) result: storage_id=49, value=types.types.TokenLiteral{ .array = { types.types.TokenLiteral{ .string = { ... } }, types.types.TokenLiteral{ .string = { ... } }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void } } }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 313 at IP 313: Pop
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 314 at IP 314: Jump
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 375 at IP 375: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 376 at IP 376: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 377 at IP 377: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 378 at IP 378: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 379 at IP 379: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 380 at IP 380: Arith
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 381 at IP 381: StoreVar
+[Debug][Hint] interpreter/vm.zig:993:0: DBG WRITE StoreVar (local update) i: storage_id=54, value=types.types.TokenLiteral{ .int = 3 }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 382 at IP 382: Jump
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 234 at IP 234: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 235 at IP 235: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 236 at IP 236: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 237 at IP 237: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Lt: a=int (value: codegen.hir.soxa_values.HIRValue{ .int = 3 }), b=int (value: codegen.hir.soxa_values.HIRValue{ .int = 5 }), operand_type=Int
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Lt = true
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 238 at IP 238: JumpCond
+[Debug][Hint] interpreter/vm.zig:1365:0: DBG JumpCond: condition=codegen.hir.soxa_values.HIRValue{ .tetra = 1 }, should_jump=true, target_label=foreach_body_46
+[Debug][Hint] interpreter/vm.zig:1370:0: DBG JumpCond: jumping to IP 239 (label: foreach_body_46)
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 239 at IP 239: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 240 at IP 240: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 241 at IP 241: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 242 at IP 242: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 243 at IP 243: StringOp
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 244 at IP 244: Dup
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 245 at IP 245: StoreVar
+[Debug][Hint] interpreter/vm.zig:993:0: DBG WRITE StoreVar (local update) c: storage_id=55, value=types.types.TokenLiteral{ .string = { 32 } }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 246 at IP 246: Dup
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 247 at IP 247: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 248 at IP 248: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Eq: a=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 32 } }), b=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 32 } }), operand_type=String
+[Debug][Hint] interpreter/vm.zig:3449:0: DBG compareEqual: comparing strings ' ' and ' ', lengths: 1 and 1, result: true
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Eq = true
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 249 at IP 249: JumpCond
+[Debug][Hint] interpreter/vm.zig:1365:0: DBG JumpCond: condition=codegen.hir.soxa_values.HIRValue{ .tetra = 1 }, should_jump=true, target_label=then_51
+[Debug][Hint] interpreter/vm.zig:1370:0: DBG JumpCond: jumping to IP 250 (label: then_51)
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 250 at IP 250: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 251 at IP 251: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 252 at IP 252: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 253 at IP 253: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Ne: a=string (value: codegen.hir.soxa_values.HIRValue{ .string = {  } }), b=string (value: codegen.hir.soxa_values.HIRValue{ .string = {  } }), operand_type=String
+[Debug][Hint] interpreter/vm.zig:3449:0: DBG compareEqual: comparing strings '' and '', lengths: 0 and 0, result: true
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Ne = false
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 254 at IP 254: JumpCond
+[Debug][Hint] interpreter/vm.zig:1365:0: DBG JumpCond: condition=codegen.hir.soxa_values.HIRValue{ .tetra = 0 }, should_jump=false, target_label=else_52
+[Debug][Hint] interpreter/vm.zig:1370:0: DBG JumpCond: jumping to IP 265 (label: else_52)
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 265 at IP 265: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 266 at IP 266: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 267 at IP 267: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 268 at IP 268: Jump
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 376 at IP 376: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 377 at IP 377: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 378 at IP 378: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 379 at IP 379: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 380 at IP 380: Arith
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 381 at IP 381: StoreVar
+[Debug][Hint] interpreter/vm.zig:993:0: DBG WRITE StoreVar (local update) i: storage_id=54, value=types.types.TokenLiteral{ .int = 4 }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 382 at IP 382: Jump
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 234 at IP 234: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 235 at IP 235: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 236 at IP 236: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 237 at IP 237: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Lt: a=int (value: codegen.hir.soxa_values.HIRValue{ .int = 4 }), b=int (value: codegen.hir.soxa_values.HIRValue{ .int = 5 }), operand_type=Int
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Lt = true
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 238 at IP 238: JumpCond
+[Debug][Hint] interpreter/vm.zig:1365:0: DBG JumpCond: condition=codegen.hir.soxa_values.HIRValue{ .tetra = 1 }, should_jump=true, target_label=foreach_body_46
+[Debug][Hint] interpreter/vm.zig:1370:0: DBG JumpCond: jumping to IP 239 (label: foreach_body_46)
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 239 at IP 239: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 240 at IP 240: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 241 at IP 241: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 242 at IP 242: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 243 at IP 243: StringOp
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 244 at IP 244: Dup
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 245 at IP 245: StoreVar
+[Debug][Hint] interpreter/vm.zig:993:0: DBG WRITE StoreVar (local update) c: storage_id=55, value=types.types.TokenLiteral{ .string = { 53 } }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 246 at IP 246: Dup
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 247 at IP 247: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 248 at IP 248: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Eq: a=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 53 } }), b=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 32 } }), operand_type=String
+[Debug][Hint] interpreter/vm.zig:3449:0: DBG compareEqual: comparing strings '5' and ' ', lengths: 1 and 1, result: false
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Eq = false
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 249 at IP 249: JumpCond
+[Debug][Hint] interpreter/vm.zig:1365:0: DBG JumpCond: condition=codegen.hir.soxa_values.HIRValue{ .tetra = 0 }, should_jump=false, target_label=else_49
+[Debug][Hint] interpreter/vm.zig:1370:0: DBG JumpCond: jumping to IP 269 (label: else_49)
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 269 at IP 269: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 270 at IP 270: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 271 at IP 271: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 272 at IP 272: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Eq: a=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 53 } }), b=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 43 } }), operand_type=String
+[Debug][Hint] interpreter/vm.zig:3449:0: DBG compareEqual: comparing strings '5' and '+', lengths: 1 and 1, result: false
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Eq = false
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 273 at IP 273: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 274 at IP 274: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 275 at IP 275: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Eq: a=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 53 } }), b=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 42 } }), operand_type=String
+[Debug][Hint] interpreter/vm.zig:3449:0: DBG compareEqual: comparing strings '5' and '*', lengths: 1 and 1, result: false
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Eq = false
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 276 at IP 276: LogicalOp
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 277 at IP 277: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 278 at IP 278: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 279 at IP 279: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Eq: a=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 53 } }), b=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 47 } }), operand_type=String
+[Debug][Hint] interpreter/vm.zig:3449:0: DBG compareEqual: comparing strings '5' and '/', lengths: 1 and 1, result: false
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Eq = false
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 280 at IP 280: LogicalOp
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 281 at IP 281: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 282 at IP 282: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 283 at IP 283: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Eq: a=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 53 } }), b=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 40 } }), operand_type=String
+[Debug][Hint] interpreter/vm.zig:3449:0: DBG compareEqual: comparing strings '5' and '(', lengths: 1 and 1, result: false
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Eq = false
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 284 at IP 284: LogicalOp
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 285 at IP 285: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 286 at IP 286: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 287 at IP 287: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Eq: a=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 53 } }), b=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 41 } }), operand_type=String
+[Debug][Hint] interpreter/vm.zig:3449:0: DBG compareEqual: comparing strings '5' and ')', lengths: 1 and 1, result: false
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Eq = false
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 288 at IP 288: LogicalOp
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 289 at IP 289: JumpCond
+[Debug][Hint] interpreter/vm.zig:1365:0: DBG JumpCond: condition=codegen.hir.soxa_values.HIRValue{ .tetra = 0 }, should_jump=false, target_label=else_55
+[Debug][Hint] interpreter/vm.zig:1370:0: DBG JumpCond: jumping to IP 315 (label: else_55)
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 315 at IP 315: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 316 at IP 316: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 317 at IP 317: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 318 at IP 318: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Eq: a=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 53 } }), b=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 45 } }), operand_type=String
+[Debug][Hint] interpreter/vm.zig:3449:0: DBG compareEqual: comparing strings '5' and '-', lengths: 1 and 1, result: false
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Eq = false
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 319 at IP 319: Dup
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 320 at IP 320: JumpCond
+[Debug][Hint] interpreter/vm.zig:1365:0: DBG JumpCond: condition=codegen.hir.soxa_values.HIRValue{ .tetra = 0 }, should_jump=false, target_label=and_end_62
+[Debug][Hint] interpreter/vm.zig:1370:0: DBG JumpCond: jumping to IP 330 (label: and_end_62)
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 330 at IP 330: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 331 at IP 331: JumpCond
+[Debug][Hint] interpreter/vm.zig:1365:0: DBG JumpCond: condition=codegen.hir.soxa_values.HIRValue{ .tetra = 0 }, should_jump=false, target_label=else_63
+[Debug][Hint] interpreter/vm.zig:1370:0: DBG JumpCond: jumping to IP 357 (label: else_63)
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 357 at IP 357: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 358 at IP 358: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 359 at IP 359: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 360 at IP 360: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Ne: a=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 53 } }), b=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 32 } }), operand_type=String
+[Debug][Hint] interpreter/vm.zig:3449:0: DBG compareEqual: comparing strings '5' and ' ', lengths: 1 and 1, result: false
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Ne = true
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 361 at IP 361: JumpCond
+[Debug][Hint] interpreter/vm.zig:1365:0: DBG JumpCond: condition=codegen.hir.soxa_values.HIRValue{ .tetra = 1 }, should_jump=true, target_label=then_71
+[Debug][Hint] interpreter/vm.zig:1370:0: DBG JumpCond: jumping to IP 362 (label: then_71)
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 362 at IP 362: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 363 at IP 363: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 364 at IP 364: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 365 at IP 365: Swap
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 366 at IP 366: StringOp
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 367 at IP 367: Dup
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 368 at IP 368: StoreVar
+[Debug][Hint] interpreter/vm.zig:993:0: DBG WRITE StoreVar (local update) current: storage_id=50, value=types.types.TokenLiteral{ .string = { 53 } }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 369 at IP 369: Pop
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 370 at IP 370: Jump
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 373 at IP 373: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 374 at IP 374: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 375 at IP 375: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 376 at IP 376: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 377 at IP 377: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 378 at IP 378: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 379 at IP 379: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 380 at IP 380: Arith
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 381 at IP 381: StoreVar
+[Debug][Hint] interpreter/vm.zig:993:0: DBG WRITE StoreVar (local update) i: storage_id=54, value=types.types.TokenLiteral{ .int = 5 }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 382 at IP 382: Jump
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 234 at IP 234: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 235 at IP 235: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 236 at IP 236: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 237 at IP 237: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Lt: a=int (value: codegen.hir.soxa_values.HIRValue{ .int = 5 }), b=int (value: codegen.hir.soxa_values.HIRValue{ .int = 5 }), operand_type=Int
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Lt = false
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 238 at IP 238: JumpCond
+[Debug][Hint] interpreter/vm.zig:1365:0: DBG JumpCond: condition=codegen.hir.soxa_values.HIRValue{ .tetra = 0 }, should_jump=false, target_label=foreach_end_48
+[Debug][Hint] interpreter/vm.zig:1370:0: DBG JumpCond: jumping to IP 383 (label: foreach_end_48)
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 383 at IP 383: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 384 at IP 384: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 385 at IP 385: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 386 at IP 386: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 387 at IP 387: ArrayPush
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 388 at IP 388: Dup
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 389 at IP 389: StoreVar
+[Debug][Hint] interpreter/vm.zig:993:0: DBG WRITE StoreVar (local update) result: storage_id=49, value=types.types.TokenLiteral{ .array = { types.types.TokenLiteral{ .string = { ... } }, types.types.TokenLiteral{ .string = { ... } }, types.types.TokenLiteral{ .string = { ... } }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void } } }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 390 at IP 390: Dup
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 391 at IP 391: Return
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 80 at IP 80: StoreConst
+[Debug][Hint] interpreter/vm.zig:1105:0: DBG WRITE StoreConst (create) splitInput: storage_id=56, value=types.types.TokenLiteral{ .array = { types.types.TokenLiteral{ .string = { ... } }, types.types.TokenLiteral{ .string = { ... } }, types.types.TokenLiteral{ .string = { ... } }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void } } }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 81 at IP 81: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 82 at IP 82: Call
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 393 at IP 393: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 394 at IP 394: EnterScope
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 395 at IP 395: StoreVar
+[Debug][Hint] interpreter/vm.zig:982:0: DBG WRITE StoreVar (shadow create) input: storage_id=57, value=types.types.TokenLiteral{ .array = { types.types.TokenLiteral{ .string = { ... } }, types.types.TokenLiteral{ .string = { ... } }, types.types.TokenLiteral{ .string = { ... } }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void } } }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 396 at IP 396: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 397 at IP 397: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 398 at IP 398: StoreVar
+[Debug][Hint] interpreter/vm.zig:1008:0: DBG WRITE StoreVar (local create) depth: storage_id=58, value=types.types.TokenLiteral{ .int = 0 }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 399 at IP 399: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 400 at IP 400: StoreVar
+[Debug][Hint] interpreter/vm.zig:1008:0: DBG WRITE StoreVar (local create) passed: storage_id=59, value=types.types.TokenLiteral{ .tetra = types.types.Tetra.true }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 401 at IP 401: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 402 at IP 402: Dup
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 403 at IP 403: StoreVar
+[Debug][Hint] interpreter/vm.zig:1008:0: DBG WRITE StoreVar (local create) __fe_arr_foreach_start_73: storage_id=60, value=types.types.TokenLiteral{ .array = { types.types.TokenLiteral{ .string = { ... } }, types.types.TokenLiteral{ .string = { ... } }, types.types.TokenLiteral{ .string = { ... } }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void } } }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 404 at IP 404: StringOp
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 405 at IP 405: StoreVar
+[Debug][Hint] interpreter/vm.zig:1008:0: DBG WRITE StoreVar (local create) __fe_len_foreach_start_73: storage_id=61, value=types.types.TokenLiteral{ .int = 3 }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 406 at IP 406: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 407 at IP 407: StoreVar
+[Debug][Hint] interpreter/vm.zig:1008:0: DBG WRITE StoreVar (local create) __fe_idx_foreach_start_73: storage_id=62, value=types.types.TokenLiteral{ .int = 0 }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 408 at IP 408: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 409 at IP 409: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 410 at IP 410: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 411 at IP 411: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Lt: a=int (value: codegen.hir.soxa_values.HIRValue{ .int = 0 }), b=int (value: codegen.hir.soxa_values.HIRValue{ .int = 3 }), operand_type=Int
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Lt = true
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 412 at IP 412: JumpCond
+[Debug][Hint] interpreter/vm.zig:1365:0: DBG JumpCond: condition=codegen.hir.soxa_values.HIRValue{ .tetra = 1 }, should_jump=true, target_label=foreach_body_74
+[Debug][Hint] interpreter/vm.zig:1370:0: DBG JumpCond: jumping to IP 413 (label: foreach_body_74)
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 413 at IP 413: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 414 at IP 414: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 415 at IP 415: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 416 at IP 416: ArrayGet
+[Debug][Hint] interpreter/vm.zig:2018:0: ArrayGet: array element_type=String, retrieved element type=string
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 417 at IP 417: Dup
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 418 at IP 418: StoreVar
+[Debug][Hint] interpreter/vm.zig:1008:0: DBG WRITE StoreVar (local create) s: storage_id=63, value=types.types.TokenLiteral{ .string = { 52 } }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 419 at IP 419: Dup
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 420 at IP 420: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 421 at IP 421: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Eq: a=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 52 } }), b=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 40 } }), operand_type=String
+[Debug][Hint] interpreter/vm.zig:3449:0: DBG compareEqual: comparing strings '4' and '(', lengths: 1 and 1, result: false
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Eq = false
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 422 at IP 422: JumpCond
+[Debug][Hint] interpreter/vm.zig:1365:0: DBG JumpCond: condition=codegen.hir.soxa_values.HIRValue{ .tetra = 0 }, should_jump=false, target_label=else_77
+[Debug][Hint] interpreter/vm.zig:1370:0: DBG JumpCond: jumping to IP 429 (label: else_77)
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 429 at IP 429: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 430 at IP 430: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 431 at IP 431: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 432 at IP 432: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 433 at IP 433: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 434 at IP 434: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Eq: a=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 52 } }), b=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 41 } }), operand_type=String
+[Debug][Hint] interpreter/vm.zig:3449:0: DBG compareEqual: comparing strings '4' and ')', lengths: 1 and 1, result: false
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Eq = false
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 435 at IP 435: JumpCond
+[Debug][Hint] interpreter/vm.zig:1365:0: DBG JumpCond: condition=codegen.hir.soxa_values.HIRValue{ .tetra = 0 }, should_jump=false, target_label=else_80
+[Debug][Hint] interpreter/vm.zig:1370:0: DBG JumpCond: jumping to IP 442 (label: else_80)
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 442 at IP 442: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 443 at IP 443: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 444 at IP 444: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 445 at IP 445: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 446 at IP 446: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 447 at IP 447: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Lt: a=int (value: codegen.hir.soxa_values.HIRValue{ .int = 0 }), b=int (value: codegen.hir.soxa_values.HIRValue{ .int = 0 }), operand_type=Int
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Lt = false
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 448 at IP 448: JumpCond
+[Debug][Hint] interpreter/vm.zig:1365:0: DBG JumpCond: condition=codegen.hir.soxa_values.HIRValue{ .tetra = 0 }, should_jump=false, target_label=else_83
+[Debug][Hint] interpreter/vm.zig:1370:0: DBG JumpCond: jumping to IP 455 (label: else_83)
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 455 at IP 455: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 456 at IP 456: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 457 at IP 457: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 458 at IP 458: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 459 at IP 459: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 460 at IP 460: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 461 at IP 461: Arith
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 462 at IP 462: StoreVar
+[Debug][Hint] interpreter/vm.zig:993:0: DBG WRITE StoreVar (local update) __fe_idx_foreach_start_73: storage_id=62, value=types.types.TokenLiteral{ .int = 1 }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 463 at IP 463: Jump
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 408 at IP 408: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 409 at IP 409: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 410 at IP 410: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 411 at IP 411: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Lt: a=int (value: codegen.hir.soxa_values.HIRValue{ .int = 1 }), b=int (value: codegen.hir.soxa_values.HIRValue{ .int = 3 }), operand_type=Int
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Lt = true
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 412 at IP 412: JumpCond
+[Debug][Hint] interpreter/vm.zig:1365:0: DBG JumpCond: condition=codegen.hir.soxa_values.HIRValue{ .tetra = 1 }, should_jump=true, target_label=foreach_body_74
+[Debug][Hint] interpreter/vm.zig:1370:0: DBG JumpCond: jumping to IP 413 (label: foreach_body_74)
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 413 at IP 413: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 414 at IP 414: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 415 at IP 415: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 416 at IP 416: ArrayGet
+[Debug][Hint] interpreter/vm.zig:2018:0: ArrayGet: array element_type=String, retrieved element type=string
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 417 at IP 417: Dup
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 418 at IP 418: StoreVar
+[Debug][Hint] interpreter/vm.zig:993:0: DBG WRITE StoreVar (local update) s: storage_id=63, value=types.types.TokenLiteral{ .string = { 43 } }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 419 at IP 419: Dup
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 420 at IP 420: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 421 at IP 421: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Eq: a=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 43 } }), b=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 40 } }), operand_type=String
+[Debug][Hint] interpreter/vm.zig:3449:0: DBG compareEqual: comparing strings '+' and '(', lengths: 1 and 1, result: false
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Eq = false
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 422 at IP 422: JumpCond
+[Debug][Hint] interpreter/vm.zig:1365:0: DBG JumpCond: condition=codegen.hir.soxa_values.HIRValue{ .tetra = 0 }, should_jump=false, target_label=else_77
+[Debug][Hint] interpreter/vm.zig:1370:0: DBG JumpCond: jumping to IP 429 (label: else_77)
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 429 at IP 429: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 430 at IP 430: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 431 at IP 431: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 432 at IP 432: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 433 at IP 433: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 434 at IP 434: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Eq: a=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 43 } }), b=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 41 } }), operand_type=String
+[Debug][Hint] interpreter/vm.zig:3449:0: DBG compareEqual: comparing strings '+' and ')', lengths: 1 and 1, result: false
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Eq = false
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 435 at IP 435: JumpCond
+[Debug][Hint] interpreter/vm.zig:1365:0: DBG JumpCond: condition=codegen.hir.soxa_values.HIRValue{ .tetra = 0 }, should_jump=false, target_label=else_80
+[Debug][Hint] interpreter/vm.zig:1370:0: DBG JumpCond: jumping to IP 442 (label: else_80)
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 442 at IP 442: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 443 at IP 443: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 444 at IP 444: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 445 at IP 445: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 446 at IP 446: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 447 at IP 447: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Lt: a=int (value: codegen.hir.soxa_values.HIRValue{ .int = 0 }), b=int (value: codegen.hir.soxa_values.HIRValue{ .int = 0 }), operand_type=Int
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Lt = false
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 448 at IP 448: JumpCond
+[Debug][Hint] interpreter/vm.zig:1365:0: DBG JumpCond: condition=codegen.hir.soxa_values.HIRValue{ .tetra = 0 }, should_jump=false, target_label=else_83
+[Debug][Hint] interpreter/vm.zig:1370:0: DBG JumpCond: jumping to IP 455 (label: else_83)
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 455 at IP 455: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 456 at IP 456: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 457 at IP 457: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 458 at IP 458: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 459 at IP 459: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 460 at IP 460: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 461 at IP 461: Arith
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 462 at IP 462: StoreVar
+[Debug][Hint] interpreter/vm.zig:993:0: DBG WRITE StoreVar (local update) __fe_idx_foreach_start_73: storage_id=62, value=types.types.TokenLiteral{ .int = 2 }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 463 at IP 463: Jump
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 408 at IP 408: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 409 at IP 409: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 410 at IP 410: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 411 at IP 411: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Lt: a=int (value: codegen.hir.soxa_values.HIRValue{ .int = 2 }), b=int (value: codegen.hir.soxa_values.HIRValue{ .int = 3 }), operand_type=Int
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Lt = true
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 412 at IP 412: JumpCond
+[Debug][Hint] interpreter/vm.zig:1365:0: DBG JumpCond: condition=codegen.hir.soxa_values.HIRValue{ .tetra = 1 }, should_jump=true, target_label=foreach_body_74
+[Debug][Hint] interpreter/vm.zig:1370:0: DBG JumpCond: jumping to IP 413 (label: foreach_body_74)
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 413 at IP 413: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 414 at IP 414: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 415 at IP 415: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 416 at IP 416: ArrayGet
+[Debug][Hint] interpreter/vm.zig:2018:0: ArrayGet: array element_type=String, retrieved element type=string
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 417 at IP 417: Dup
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 418 at IP 418: StoreVar
+[Debug][Hint] interpreter/vm.zig:993:0: DBG WRITE StoreVar (local update) s: storage_id=63, value=types.types.TokenLiteral{ .string = { 53 } }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 419 at IP 419: Dup
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 420 at IP 420: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 421 at IP 421: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Eq: a=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 53 } }), b=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 40 } }), operand_type=String
+[Debug][Hint] interpreter/vm.zig:3449:0: DBG compareEqual: comparing strings '5' and '(', lengths: 1 and 1, result: false
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Eq = false
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 422 at IP 422: JumpCond
+[Debug][Hint] interpreter/vm.zig:1365:0: DBG JumpCond: condition=codegen.hir.soxa_values.HIRValue{ .tetra = 0 }, should_jump=false, target_label=else_77
+[Debug][Hint] interpreter/vm.zig:1370:0: DBG JumpCond: jumping to IP 429 (label: else_77)
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 429 at IP 429: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 430 at IP 430: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 431 at IP 431: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 432 at IP 432: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 433 at IP 433: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 434 at IP 434: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Eq: a=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 53 } }), b=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 41 } }), operand_type=String
+[Debug][Hint] interpreter/vm.zig:3449:0: DBG compareEqual: comparing strings '5' and ')', lengths: 1 and 1, result: false
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Eq = false
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 435 at IP 435: JumpCond
+[Debug][Hint] interpreter/vm.zig:1365:0: DBG JumpCond: condition=codegen.hir.soxa_values.HIRValue{ .tetra = 0 }, should_jump=false, target_label=else_80
+[Debug][Hint] interpreter/vm.zig:1370:0: DBG JumpCond: jumping to IP 442 (label: else_80)
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 442 at IP 442: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 443 at IP 443: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 444 at IP 444: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 445 at IP 445: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 446 at IP 446: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 447 at IP 447: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Lt: a=int (value: codegen.hir.soxa_values.HIRValue{ .int = 0 }), b=int (value: codegen.hir.soxa_values.HIRValue{ .int = 0 }), operand_type=Int
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Lt = false
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 448 at IP 448: JumpCond
+[Debug][Hint] interpreter/vm.zig:1365:0: DBG JumpCond: condition=codegen.hir.soxa_values.HIRValue{ .tetra = 0 }, should_jump=false, target_label=else_83
+[Debug][Hint] interpreter/vm.zig:1370:0: DBG JumpCond: jumping to IP 455 (label: else_83)
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 455 at IP 455: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 456 at IP 456: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 457 at IP 457: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 458 at IP 458: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 459 at IP 459: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 460 at IP 460: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 461 at IP 461: Arith
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 462 at IP 462: StoreVar
+[Debug][Hint] interpreter/vm.zig:993:0: DBG WRITE StoreVar (local update) __fe_idx_foreach_start_73: storage_id=62, value=types.types.TokenLiteral{ .int = 3 }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 463 at IP 463: Jump
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 408 at IP 408: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 409 at IP 409: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 410 at IP 410: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 411 at IP 411: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Lt: a=int (value: codegen.hir.soxa_values.HIRValue{ .int = 3 }), b=int (value: codegen.hir.soxa_values.HIRValue{ .int = 3 }), operand_type=Int
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Lt = false
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 412 at IP 412: JumpCond
+[Debug][Hint] interpreter/vm.zig:1365:0: DBG JumpCond: condition=codegen.hir.soxa_values.HIRValue{ .tetra = 0 }, should_jump=false, target_label=foreach_end_76
+[Debug][Hint] interpreter/vm.zig:1370:0: DBG JumpCond: jumping to IP 464 (label: foreach_end_76)
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 464 at IP 464: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 465 at IP 465: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 466 at IP 466: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 467 at IP 467: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 468 at IP 468: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Gt: a=int (value: codegen.hir.soxa_values.HIRValue{ .int = 0 }), b=int (value: codegen.hir.soxa_values.HIRValue{ .int = 0 }), operand_type=Int
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Gt = false
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 469 at IP 469: JumpCond
+[Debug][Hint] interpreter/vm.zig:1365:0: DBG JumpCond: condition=codegen.hir.soxa_values.HIRValue{ .tetra = 0 }, should_jump=false, target_label=else_86
+[Debug][Hint] interpreter/vm.zig:1370:0: DBG JumpCond: jumping to IP 476 (label: else_86)
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 476 at IP 476: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 477 at IP 477: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 478 at IP 478: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 479 at IP 479: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 480 at IP 480: Return
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 83 at IP 83: JumpCond
+[Debug][Hint] interpreter/vm.zig:1365:0: DBG JumpCond: condition=codegen.hir.soxa_values.HIRValue{ .tetra = 1 }, should_jump=true, target_label=assert_success_23
+[Debug][Hint] interpreter/vm.zig:1370:0: DBG JumpCond: jumping to IP 87 (label: assert_success_23)
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 87 at IP 87: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 88 at IP 88: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 89 at IP 89: Call
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 482 at IP 482: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 483 at IP 483: EnterScope
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 484 at IP 484: StoreVar
+[Debug][Hint] interpreter/vm.zig:982:0: DBG WRITE StoreVar (shadow create) input: storage_id=64, value=types.types.TokenLiteral{ .array = { types.types.TokenLiteral{ .string = { ... } }, types.types.TokenLiteral{ .string = { ... } }, types.types.TokenLiteral{ .string = { ... } }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void } } }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 485 at IP 485: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 486 at IP 486: ArrayNew
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 487 at IP 487: StoreVar
+[Debug][Hint] interpreter/vm.zig:1008:0: DBG WRITE StoreVar (local create) tokens: storage_id=65, value=types.types.TokenLiteral{ .array = { types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void } } }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 488 at IP 488: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 489 at IP 489: Dup
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 490 at IP 490: StoreVar
+[Debug][Hint] interpreter/vm.zig:1008:0: DBG WRITE StoreVar (local create) __fe_arr_foreach_start_90: storage_id=66, value=types.types.TokenLiteral{ .array = { types.types.TokenLiteral{ .string = { ... } }, types.types.TokenLiteral{ .string = { ... } }, types.types.TokenLiteral{ .string = { ... } }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void } } }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 491 at IP 491: StringOp
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 492 at IP 492: StoreVar
+[Debug][Hint] interpreter/vm.zig:1008:0: DBG WRITE StoreVar (local create) __fe_len_foreach_start_90: storage_id=67, value=types.types.TokenLiteral{ .int = 3 }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 493 at IP 493: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 494 at IP 494: StoreVar
+[Debug][Hint] interpreter/vm.zig:1008:0: DBG WRITE StoreVar (local create) __fe_idx_foreach_start_90: storage_id=68, value=types.types.TokenLiteral{ .int = 0 }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 495 at IP 495: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 496 at IP 496: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 497 at IP 497: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 498 at IP 498: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Lt: a=int (value: codegen.hir.soxa_values.HIRValue{ .int = 0 }), b=int (value: codegen.hir.soxa_values.HIRValue{ .int = 3 }), operand_type=Int
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Lt = true
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 499 at IP 499: JumpCond
+[Debug][Hint] interpreter/vm.zig:1365:0: DBG JumpCond: condition=codegen.hir.soxa_values.HIRValue{ .tetra = 1 }, should_jump=true, target_label=foreach_body_91
+[Debug][Hint] interpreter/vm.zig:1370:0: DBG JumpCond: jumping to IP 500 (label: foreach_body_91)
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 500 at IP 500: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 501 at IP 501: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 502 at IP 502: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 503 at IP 503: ArrayGet
+[Debug][Hint] interpreter/vm.zig:2018:0: ArrayGet: array element_type=String, retrieved element type=string
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 504 at IP 504: Dup
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 505 at IP 505: StoreVar
+[Debug][Hint] interpreter/vm.zig:1008:0: DBG WRITE StoreVar (local create) token: storage_id=69, value=types.types.TokenLiteral{ .string = { 52 } }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 506 at IP 506: Dup
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 507 at IP 507: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 508 at IP 508: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Eq: a=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 52 } }), b=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 43 } }), operand_type=String
+[Debug][Hint] interpreter/vm.zig:3449:0: DBG compareEqual: comparing strings '4' and '+', lengths: 1 and 1, result: false
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Eq = false
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 509 at IP 509: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 510 at IP 510: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 511 at IP 511: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Eq: a=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 52 } }), b=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 45 } }), operand_type=String
+[Debug][Hint] interpreter/vm.zig:3449:0: DBG compareEqual: comparing strings '4' and '-', lengths: 1 and 1, result: false
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Eq = false
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 512 at IP 512: LogicalOp
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 513 at IP 513: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 514 at IP 514: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 515 at IP 515: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Eq: a=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 52 } }), b=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 42 } }), operand_type=String
+[Debug][Hint] interpreter/vm.zig:3449:0: DBG compareEqual: comparing strings '4' and '*', lengths: 1 and 1, result: false
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Eq = false
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 516 at IP 516: LogicalOp
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 517 at IP 517: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 518 at IP 518: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 519 at IP 519: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Eq: a=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 52 } }), b=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 47 } }), operand_type=String
+[Debug][Hint] interpreter/vm.zig:3449:0: DBG compareEqual: comparing strings '4' and '/', lengths: 1 and 1, result: false
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Eq = false
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 520 at IP 520: LogicalOp
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 521 at IP 521: JumpCond
+[Debug][Hint] interpreter/vm.zig:1365:0: DBG JumpCond: condition=codegen.hir.soxa_values.HIRValue{ .tetra = 0 }, should_jump=false, target_label=else_94
+[Debug][Hint] interpreter/vm.zig:1370:0: DBG JumpCond: jumping to IP 534 (label: else_94)
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 534 at IP 534: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 535 at IP 535: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 536 at IP 536: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 537 at IP 537: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Eq: a=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 52 } }), b=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 40 } }), operand_type=String
+[Debug][Hint] interpreter/vm.zig:3449:0: DBG compareEqual: comparing strings '4' and '(', lengths: 1 and 1, result: false
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Eq = false
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 538 at IP 538: JumpCond
+[Debug][Hint] interpreter/vm.zig:1365:0: DBG JumpCond: condition=codegen.hir.soxa_values.HIRValue{ .tetra = 0 }, should_jump=false, target_label=else_97
+[Debug][Hint] interpreter/vm.zig:1370:0: DBG JumpCond: jumping to IP 551 (label: else_97)
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 551 at IP 551: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 552 at IP 552: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 553 at IP 553: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 554 at IP 554: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Eq: a=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 52 } }), b=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 41 } }), operand_type=String
+[Debug][Hint] interpreter/vm.zig:3449:0: DBG compareEqual: comparing strings '4' and ')', lengths: 1 and 1, result: false
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Eq = false
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 555 at IP 555: JumpCond
+[Debug][Hint] interpreter/vm.zig:1365:0: DBG JumpCond: condition=codegen.hir.soxa_values.HIRValue{ .tetra = 0 }, should_jump=false, target_label=else_100
+[Debug][Hint] interpreter/vm.zig:1370:0: DBG JumpCond: jumping to IP 568 (label: else_100)
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 568 at IP 568: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 569 at IP 569: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 570 at IP 570: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 571 at IP 571: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Ne: a=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 52 } }), b=string (value: codegen.hir.soxa_values.HIRValue{ .string = {  } }), operand_type=String
+[Debug][Hint] interpreter/vm.zig:3449:0: DBG compareEqual: comparing strings '4' and '', lengths: 1 and 0, result: false
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Ne = true
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 572 at IP 572: JumpCond
+[Debug][Hint] interpreter/vm.zig:1365:0: DBG JumpCond: condition=codegen.hir.soxa_values.HIRValue{ .tetra = 1 }, should_jump=true, target_label=then_105
+[Debug][Hint] interpreter/vm.zig:1370:0: DBG JumpCond: jumping to IP 573 (label: then_105)
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 573 at IP 573: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 574 at IP 574: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 575 at IP 575: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 576 at IP 576: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 577 at IP 577: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 578 at IP 578: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 579 at IP 579: StructNew
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 580 at IP 580: ArrayPush
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 581 at IP 581: Dup
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 582 at IP 582: StoreVar
+[Debug][Hint] interpreter/vm.zig:993:0: DBG WRITE StoreVar (local update) tokens: storage_id=65, value=types.types.TokenLiteral{ .array = { types.types.TokenLiteral{ .struct_value = types.types.TokenLiteral__struct_24599{ ... } }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void } } }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 583 at IP 583: Pop
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 584 at IP 584: Jump
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 587 at IP 587: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 588 at IP 588: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 589 at IP 589: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 590 at IP 590: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 591 at IP 591: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 592 at IP 592: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 593 at IP 593: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 594 at IP 594: Arith
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 595 at IP 595: StoreVar
+[Debug][Hint] interpreter/vm.zig:993:0: DBG WRITE StoreVar (local update) __fe_idx_foreach_start_90: storage_id=68, value=types.types.TokenLiteral{ .int = 1 }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 596 at IP 596: Jump
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 495 at IP 495: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 496 at IP 496: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 497 at IP 497: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 498 at IP 498: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Lt: a=int (value: codegen.hir.soxa_values.HIRValue{ .int = 1 }), b=int (value: codegen.hir.soxa_values.HIRValue{ .int = 3 }), operand_type=Int
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Lt = true
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 499 at IP 499: JumpCond
+[Debug][Hint] interpreter/vm.zig:1365:0: DBG JumpCond: condition=codegen.hir.soxa_values.HIRValue{ .tetra = 1 }, should_jump=true, target_label=foreach_body_91
+[Debug][Hint] interpreter/vm.zig:1370:0: DBG JumpCond: jumping to IP 500 (label: foreach_body_91)
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 500 at IP 500: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 501 at IP 501: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 502 at IP 502: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 503 at IP 503: ArrayGet
+[Debug][Hint] interpreter/vm.zig:2018:0: ArrayGet: array element_type=String, retrieved element type=string
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 504 at IP 504: Dup
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 505 at IP 505: StoreVar
+[Debug][Hint] interpreter/vm.zig:993:0: DBG WRITE StoreVar (local update) token: storage_id=69, value=types.types.TokenLiteral{ .string = { 43 } }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 506 at IP 506: Dup
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 507 at IP 507: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 508 at IP 508: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Eq: a=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 43 } }), b=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 43 } }), operand_type=String
+[Debug][Hint] interpreter/vm.zig:3449:0: DBG compareEqual: comparing strings '+' and '+', lengths: 1 and 1, result: true
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Eq = true
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 509 at IP 509: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 510 at IP 510: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 511 at IP 511: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Eq: a=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 43 } }), b=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 45 } }), operand_type=String
+[Debug][Hint] interpreter/vm.zig:3449:0: DBG compareEqual: comparing strings '+' and '-', lengths: 1 and 1, result: false
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Eq = false
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 512 at IP 512: LogicalOp
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 513 at IP 513: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 514 at IP 514: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 515 at IP 515: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Eq: a=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 43 } }), b=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 42 } }), operand_type=String
+[Debug][Hint] interpreter/vm.zig:3449:0: DBG compareEqual: comparing strings '+' and '*', lengths: 1 and 1, result: false
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Eq = false
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 516 at IP 516: LogicalOp
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 517 at IP 517: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 518 at IP 518: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 519 at IP 519: Compare
+[Debug][Hint] interpreter/vm.zig:1302:0: DBG Compare Eq: a=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 43 } }), b=string (value: codegen.hir.soxa_values.HIRValue{ .string = { 47 } }), operand_type=String
+[Debug][Hint] interpreter/vm.zig:3449:0: DBG compareEqual: comparing strings '+' and '/', lengths: 1 and 1, result: false
+[Debug][Hint] interpreter/vm.zig:1314:0: DBG Compare result: Eq = false
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 520 at IP 520: LogicalOp
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 521 at IP 521: JumpCond
+[Debug][Hint] interpreter/vm.zig:1365:0: DBG JumpCond: condition=codegen.hir.soxa_values.HIRValue{ .tetra = 1 }, should_jump=true, target_label=then_96
+[Debug][Hint] interpreter/vm.zig:1370:0: DBG JumpCond: jumping to IP 522 (label: then_96)
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 522 at IP 522: Label
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 523 at IP 523: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 524 at IP 524: LoadVar
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 525 at IP 525: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 526 at IP 526: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 527 at IP 527: Const
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 528 at IP 528: StructNew
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 529 at IP 529: ArrayPush
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 530 at IP 530: Dup
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 531 at IP 531: StoreVar
+[Debug][Hint] interpreter/vm.zig:993:0: DBG WRITE StoreVar (local update) tokens: storage_id=65, value=types.types.TokenLiteral{ .array = { types.types.TokenLiteral{ .struct_value = types.types.TokenLiteral__struct_24599{ ... } }, types.types.TokenLiteral{ .struct_value = types.types.TokenLiteral__struct_24599{ ... } }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void }, types.types.TokenLiteral{ .nothing = void } } }
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 532 at IP 532: Pop
+[Debug][Hint] interpreter/vm.zig:738:0: DBG VM: executing instruction 533 at IP 533: Jump
+[CompileTime][Error][E1003] ./test/misc/bigfile.doxa:392:1: Type mismatch: expected Int, got Union
+[CompileTime][Error][E1003] ./test/misc/bigfile.doxa:392:1: Type mismatch: expected Int, got Union

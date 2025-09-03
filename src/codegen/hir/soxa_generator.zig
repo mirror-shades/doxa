@@ -831,6 +831,20 @@ pub const HIRGenerator = struct {
                             try self.trackVariableCustomType(decl.name.lexeme, struct_lit.name.lexeme);
                         }
                     }
+
+                    // NEW: If initializer is an array literal, record its element type for downstream inference
+                    if (init_expr.data == .Array) {
+                        const elements = init_expr.data.Array;
+                        if (elements.len > 0) {
+                            const elem_type: HIRType = switch (elements[0].data) {
+                                .Literal => |lit| self.inferTypeFromLiteral(lit),
+                                else => .Unknown,
+                            };
+                            if (elem_type != .Unknown) {
+                                try self.trackArrayElementType(decl.name.lexeme, elem_type);
+                            }
+                        }
+                    }
                 } else {
                     // No initializer - push default value based on type
                     switch (var_type) {
@@ -3465,11 +3479,17 @@ pub const HIRGenerator = struct {
                 if (elem_type != .Unknown) try self.trackVariableType(item_name, elem_type);
                 try self.instructions.append(.{ .StoreVar = .{ .var_index = item_idx, .var_name = item_name, .scope_kind = .Local, .module_context = null, .expected_type = elem_type } });
 
+                // Create a new scope for each loop iteration to isolate constants
+                const iteration_scope_id: u32 = self.label_count + 2000;
+                try self.instructions.append(.{ .EnterScope = .{ .scope_id = iteration_scope_id, .var_count = 0 } });
+
                 // Generate loop body statements
                 for (foreach_expr.body) |stmt| {
                     try self.generateStatement(stmt);
                 }
-                // No per-iteration scope; body executes in enclosing scope
+
+                // Exit iteration scope
+                try self.instructions.append(.{ .ExitScope = .{ .scope_id = iteration_scope_id } });
 
                 // Next: i = i + 1
                 try self.instructions.append(.{ .Label = .{ .name = fe_next, .vm_address = 0 } });
@@ -3861,6 +3881,32 @@ pub const HIRGenerator = struct {
                 if (std.mem.eql(u8, field.field.lexeme, "token_type")) return .Enum;
                 if (obj_type == .Struct) {
                     return .Unknown; // Unknown specific field, but it's a struct
+                }
+                return .Unknown;
+            },
+            // NEW: Infer element type for ArrayPop
+            .ArrayPop => |pop| {
+                const container_type = self.inferTypeFromExpression(pop.array);
+                if (container_type == .Array) {
+                    // If array is a variable with tracked element type, use it
+                    if (pop.array.data == .Variable) {
+                        const var_name = pop.array.data.Variable.lexeme;
+                        if (self.getTrackedArrayElementType(var_name)) |elem_type| {
+                            return elem_type;
+                        }
+                    }
+                    // If the array expression is a literal, infer from its first element
+                    switch (pop.array.data) {
+                        .Array => |elements| {
+                            if (elements.len > 0) {
+                                switch (elements[0].data) {
+                                    .Literal => |lit| return self.inferTypeFromLiteral(lit),
+                                    else => {},
+                                }
+                            }
+                        },
+                        else => {},
+                    }
                 }
                 return .Unknown;
             },
