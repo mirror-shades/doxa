@@ -878,22 +878,8 @@ pub fn allocExpr(self: *Parser, expr: ast.Expr) ErrorList!*ast.Expr {
 pub fn parseIfExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     self.advance(); // consume 'if'
 
-    // Optional parentheses around condition
-    const has_parens = self.peek().type == .LEFT_PAREN;
-    if (has_parens) {
-        self.advance();
-    }
-
+    // Parse the condition expression without assuming parentheses wrap the whole thing
     const condition = (try parseExpression(self)) orelse return error.ExpectedExpression;
-
-    if (has_parens) {
-        if (self.peek().type != .RIGHT_PAREN) {
-            condition.deinit(self.allocator);
-            self.allocator.destroy(condition);
-            return error.ExpectedRightParen;
-        }
-        self.advance();
-    }
 
     var then_expr: *ast.Expr = undefined;
 
@@ -1015,6 +1001,22 @@ pub fn returnExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.E
         },
     };
     return return_expr;
+}
+
+pub fn parseBreakExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+    self.advance(); // consume 'break'
+
+    const break_expr = try self.allocator.create(ast.Expr);
+    break_expr.* = .{
+        .base = .{
+            .id = ast.generateNodeId(),
+            .span = ast.SourceSpan.fromToken(self.previous()),
+        },
+        .data = .{
+            .Break = {},
+        },
+    };
+    return break_expr;
 }
 
 pub fn functionExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {

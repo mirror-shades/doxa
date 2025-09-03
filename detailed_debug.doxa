@@ -1,0 +1,117 @@
+enum TokenType {
+    NUMBER,
+    OPERATOR,
+}
+
+struct Token {
+    token_type :: TokenType,
+    value :: string,
+}
+
+// Simple test: 5 + 6 * 3
+const simple_eq :: Token[] is [
+    Token { 
+        token_type is TokenType.NUMBER,
+        value is "5",
+     },
+    Token { 
+        token_type is TokenType.OPERATOR,
+        value is "+",
+     },
+    Token { 
+        token_type is TokenType.NUMBER,
+        value is "6",
+     },
+    Token { 
+        token_type is TokenType.OPERATOR,
+        value is "*",
+     },
+    Token { 
+        token_type is TokenType.NUMBER,
+        value is "3",
+     },
+]
+
+("Input tokens: ")?
+simple_eq??
+("\nProcessing...\n")?
+shunt(simple_eq)??
+
+function shunt(tokens :: Token[]) returns Token[] {
+    var output :: Token[]
+    var operators :: Token[]
+    
+    each t in tokens {
+        ("=== PROCESSING TOKEN ===")?
+        ("Token value: '" + t.value + "'")?
+        ("Token type: ")?
+        t.token_type??
+        
+        if t.token_type == TokenType.NUMBER then {
+            ("  -> Adding number to output\n")?
+            @push(output, t)
+        }
+        else if t.token_type == TokenType.OPERATOR then {
+            ("  -> This is an operator token")?
+            ("  -> About to call precedence with: '" + t.value + "'")?
+            
+            const current_prec is precedence(t.value)
+            
+            ("  -> precedence('" + t.value + "') returned: " + @string(current_prec))?
+
+            // handle precedence popping
+            while @length(operators) > 0 {
+                const top_op is operators[@length(operators) - 1]
+                ("  -> Checking top operator: '" + top_op.value + "'")?
+                
+                if top_op.token_type != TokenType.OPERATOR then {
+                    ("  -> Top is not operator, breaking")?
+                    break
+                }
+
+                ("  -> About to call precedence with top_op.value: '" + top_op.value + "'")?
+                const top_prec is precedence(top_op.value)
+                ("  -> precedence('" + top_op.value + "') returned: " + @string(top_prec))?
+                
+                if (top_prec > current_prec) or (top_prec == current_prec and top_op.value != "^") then {
+                    ("  -> Condition met, popping operator")?
+                    const popped is @pop(operators)
+                    @push(output, popped)
+                } else {
+                    ("  -> Condition not met, breaking")?
+                    break
+                }
+            }
+            
+            ("  -> Pushing current operator to stack")?
+            @push(operators, t)
+        }
+        
+        ("Output so far: ")?
+        output??
+        ("Operator stack: ")?
+        operators??
+        ("\n")?
+    }
+    
+    // flush any remaining operators
+    ("Flushing remaining operators...")?
+    while @length(operators) > 0 {
+        const popped is @pop(operators)
+        @push(output, popped)
+    }
+    
+    return output
+}
+
+function precedence(op :: string) returns int {
+    const result is match op {
+        "+" then 1,
+        "-" then 1,
+        "*" then 2,
+        "/" then 2,
+        "^" then 3,
+        else -1,
+    }
+    return result
+} 

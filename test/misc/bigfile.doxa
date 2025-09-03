@@ -84,6 +84,24 @@ function forloop(x :: int) {
 
 forloop(5) //660, 726, 732, 798, 864
 
+function precedence(op :: string[]) returns int {
+    var list is op
+    while @length(list) > 0 {
+        var x is @pop(list)
+        const res is match x {
+            "+" then 1,
+            "-" then 1,
+            "*" then 2,
+            "/" then 2,
+            else -1,
+        }
+        res??
+        x??
+    }
+}
+
+precedence(["*", "+", "-", "=", "/"])
+
 /////
 // CONDITIONALS
 /////

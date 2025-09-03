@@ -639,6 +639,7 @@ pub const Expr = struct {
         ReturnExpr: struct {
             value: ?*Expr,
         },
+        Break: void,
         TypeExpr: *TypeExpr,
     };
 
@@ -1033,6 +1034,7 @@ pub const Expr = struct {
                     allocator.destroy(value);
                 }
             },
+            .Break => {},
             .TypeExpr => |type_expr| {
                 type_expr.deinit(allocator);
                 allocator.destroy(type_expr);
@@ -1494,87 +1496,3 @@ pub fn createFunctionCallRef(name: []const u8, kind: FunctionCallRef.CallKind, t
         .target_module = target_module,
     };
 }
-
-//======================================================================
-// Stack-based HIR Instructions (for reference)
-//======================================================================
-
-/// HIR Instruction set for stack-based virtual machine
-/// This shows how the enhanced AST structures map to HIR instructions
-///
-/// Example HIR generation mapping:
-///
-/// AST: Variable{.token = "x", .resolution_kind = .Local, .scope_depth = 1}
-/// HIR: LoadLocal(stack_offset)
-///
-/// AST: Variable{.token = "math", .resolution_kind = .ImportedModule}
-/// HIR: (namespace marker - resolved during field access)
-///
-/// AST: Call{.callee = FieldAccess{.object = "math", .field = "add"}, .call_context = .ModuleFunction}
-/// HIR: CallModule{.module = "math", .function = "add", .arg_count = 2}
-pub const HIRInstruction = union(enum) {
-    // Stack operations
-    Push: TokenLiteral, // Push literal value
-    Pop, // Pop top value
-
-    // Variable operations
-    LoadLocal: u32, // Load local variable by stack offset
-    StoreLocal: u32, // Store to local variable by stack offset
-    LoadGlobal: []const u8, // Load module global by name
-    StoreGlobal: []const u8, // Store to module global by name
-    LoadModule: struct { // Load from imported module
-        module: []const u8,
-        symbol: []const u8,
-    },
-
-    // Arithmetic operations
-    Add,
-    Sub,
-    Mul,
-    Div,
-    Mod, // Binary arithmetic
-    Neg,
-    Not, // Unary operations
-
-    // Comparison operations
-    Eq,
-    Ne,
-    Lt,
-    Le,
-    Gt,
-    Ge, // Comparisons
-
-    // Control flow
-    Jmp: []const u8, // Unconditional jump to label
-    JmpTrue: []const u8, // Jump if top of stack is true
-    JmpFalse: []const u8, // Jump if top of stack is false
-    Label: []const u8, // Label for jumps
-
-    // Function operations
-    CallLocal: struct { // Call function in current module
-        name: []const u8,
-        arg_count: u32,
-    },
-    CallModule: struct { // Call function in imported module
-        module: []const u8,
-        function: []const u8,
-        arg_count: u32,
-    },
-    CallBuiltin: struct { // Call built-in function
-        name: []const u8,
-        arg_count: u32,
-    },
-    Return, // Return from function
-
-    // Debug operations
-    Peek: ?[]const u8, // Print value with optional name
-
-    // Array operations
-    MakeArray: u32, // Create array from top N stack values
-    IndexLoad, // Load array[index]
-    IndexStore, // Store to array[index]
-
-    // Block operations
-    EnterScope, // Enter new scope
-    ExitScope, // Exit scope
-};
