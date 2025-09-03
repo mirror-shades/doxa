@@ -969,7 +969,6 @@ pub const SemanticAnalyzer = struct {
     }
 
     fn unifyTypes(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual: *ast.TypeInfo, span: ast.SourceSpan) !void {
-
         // Handle union types first - check if actual type is compatible with the expected union
         if (expected.base == .Union) {
             if (expected.union_type) |exp_union| {
@@ -1014,8 +1013,22 @@ pub const SemanticAnalyzer = struct {
                             found_match = true;
                             break;
                         }
+                        // Allow Enum types to be compatible with Custom types when they refer to the same enum
+                        if (member_type.base == .Custom and actual.base == .Enum) {
+                            if (member_type.custom_type) |custom_name| {
+                                // Check if this is the same enum type
+                                if (self.custom_types.get(custom_name)) |custom_type| {
+                                    if (custom_type.kind == .Enum) {
+                                        found_match = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
                     }
-                    if (found_match) return;
+                    if (found_match) {
+                        return;
+                    }
 
                     // Build a list of allowed types for the error message
                     var type_list = std.ArrayList(u8).init(self.allocator);
@@ -5007,6 +5020,17 @@ pub const SemanticAnalyzer = struct {
                                     found_match = true;
                                     break;
                                 }
+                                // Allow enum literal (Enum) to match a Custom enum member in the expected union
+                                if (expected_member.base == .Custom and actual_member.base == .Enum) {
+                                    if (expected_member.custom_type) |custom_name| {
+                                        if (self.custom_types.get(custom_name)) |ct| {
+                                            if (ct.kind == .Enum) {
+                                                found_match = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
                             }
                             if (!found_match) {
                                 self.reporter.reportCompileError(
@@ -5039,6 +5063,17 @@ pub const SemanticAnalyzer = struct {
                             {
                                 found_match = true;
                                 break;
+                            }
+                        }
+                        // Allow enum literal (Enum) to match a Custom enum member in the expected union
+                        if (member_type.base == .Custom and actual.base == .Enum) {
+                            if (member_type.custom_type) |custom_name| {
+                                if (self.custom_types.get(custom_name)) |ct| {
+                                    if (ct.kind == .Enum) {
+                                        found_match = true;
+                                        break;
+                                    }
+                                }
                             }
                         }
                     }

@@ -1,3 +1,9 @@
+enum Error {
+    FailedToEvaluate,
+    FailedToShunt,
+    MismatchedParentheses,
+}
+
 enum TokenType {
     NUMBER,
     OPERATOR,
@@ -26,37 +32,35 @@ entry function main() {
     const input is @input();
     const splitInput is split(input)
     @assert(verifyParens(splitInput), "parens don't match")
-    const possibleTokens is tokenize(splitInput)
+    const tokens is tokenize(splitInput)
+    const rpn is shunt(tokens)
 
-    possibleTokens as Token[] then {
-        const rpn is shunt(possibleTokens)
-        rpn as Token[] then {
-            const result is evaluate(rpn)
-            result as int then {
-                @print("Output: {result}\n")
-            }
-            else {
-                @print("evaluation failed\n")
-            }
-        } else {
-            @print("tokens failed to shunt\n")
+    rpn as Token[] then {
+        const result is evaluate(rpn)
+        result as int then {
+            @print("Output: {result}\n")
+        }
+        else {
+            @print("{result}\n")
+            @print("evaluation failed\n")
         }
     } else {
-        @print("tokens failed to parse\n")
+        @print("{rpn}\n")
+        @print("tokens failed to shunt\n")
     }
 }
 
-function evaluate(rpn :: Token[]) returns int | nothing {
+function evaluate(rpn :: Token[]) returns int | Error {
     var stack :: int[]
     each t in rpn {
         if t.token_type == TokenType.NUMBER then {
             const maybe_int is @int(t.value)
-            const valid_number is maybe_int as int else return
+            const valid_number is maybe_int as int else return Error.FailedToEvaluate
 
             @push(stack, valid_number)
         }
         if t.token_type == TokenType.OPERATOR then {
-            if @length(stack) < 2 then return 
+            if @length(stack) < 2 then return Error.FailedToEvaluate
             const rh is @pop(stack) 
             const lh is @pop(stack) 
             if t.value == "+" then @push(stack, lh + rh)
@@ -65,7 +69,7 @@ function evaluate(rpn :: Token[]) returns int | nothing {
             if t.value == "*" then @push(stack, lh * rh)
         }
     }
-    if @length(stack) != 1 then return
+    if @length(stack) != 1 then return Error.FailedToEvaluate
     return stack[0]
 }
 
@@ -124,7 +128,7 @@ function verifyParens(input :: string[]) returns tetra {
     return passed
 }
 
-function tokenize(input :: string[]) returns Token[] | nothing {
+function tokenize(input :: string[]) returns Token[] {
     var tokens :: Token[]
 
     each token in input {
@@ -157,7 +161,7 @@ function tokenize(input :: string[]) returns Token[] | nothing {
     return tokens
 }
 
-function shunt(tokens :: Token[]) returns Token[] | nothing {
+function shunt(tokens :: Token[]) returns Token[] | Error {
     var output :: Token[]
     var operators :: Token[]
 
@@ -174,7 +178,7 @@ function shunt(tokens :: Token[]) returns Token[] | nothing {
                 const top_prec is precedence(top_op.value)
                 const current_prec is precedence(t.value)
 
-                if top_prec == -1 or current_prec == -1 then return
+                if top_prec == -1 or current_prec == -1 then return Error.FailedToShunt
 
                 if top_prec >= current_prec then {
                     const popped is @pop(operators)
@@ -198,7 +202,7 @@ function shunt(tokens :: Token[]) returns Token[] | nothing {
             if @length(operators) > 0 and operators[@length(operators) - 1].token_type == TokenType.LPAREN then {
                 @pop(operators)
             } else {
-                @print("Mismatched parentheses\n")
+                return Error.MismatchedParentheses
             }
         }
     }

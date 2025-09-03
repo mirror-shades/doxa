@@ -93,8 +93,8 @@ enum ErrorList {
 // Match function to process errors
 function handleError(err :: ErrorList) {
     match err {
-        .Overflow => doSomething(),
-        .Underflow => doSomethingElse(),
+        .Overflow then doSomething(),
+        .Underflow then doSomethingElse(),
     }
 }
 
@@ -115,18 +115,18 @@ const unknownRightResult is addLimit(100, -10)   // 90
 
 // Approach 1: Pattern matching (cleanest)
 match unknownRightResult {
-    int => onlyUsesInts(unknownRightResult),  // unknownRightResult is typed as int here
-    ErrorList => handleError(unknownRightResult),  // unknownRightResult is typed as ErrorList here
+    int then onlyUsesInts(unknownRightResult),  // unknownRightResult is typed as int here
+    ErrorList then handleError(unknownRightResult),  // unknownRightResult is typed as ErrorList here
 }
 
 // Approach 2: Explicit fallback with error handling
-const myInt = unknownRightResult as int else {
+const myInt is unknownRightResult as int else {
     @panic("This should never happen in production!")
 }
 onlyUsesInts(myInt)
 
 // Note type checking in control flow doesn't implicitly cast unlike match case which is exhaustive
-// this can be done by casting bt it is not as ergonomic as match case
+// this can be done by narrowing within the branch but it is not as ergonomic as match case
 if unknownRightResult @istype int then {
     onlyUsesInts(unknownRightResult) as int else{}
 } else if unknownRightResult @istype ErrorList then {
@@ -143,13 +143,13 @@ var value :: int | string
 value is "hello"
 
 // This will execute the else block since value is currently a string
-const number = value as int else {
+const number is value as int else {
     return error.ExpectedInteger
 }
 
 // This will succeed since value is now an int
 value is 42
-const doubled = value as int else {
+const doubled is value as int else {
     return error.ExpectedInteger
 } // doubled is 84
 ```
@@ -172,7 +172,7 @@ asThenUnion as int then {
 **Safe extraction with default:**
 
 ```doxa
-const result = someUnion as int else {
+const result is someUnion as int else {
     return 0 // Default value if not an int
 }
 ```
@@ -180,7 +180,7 @@ const result = someUnion as int else {
 **Error handling:**
 
 ```doxa
-const number = value as int else {
+const number is value as int else {
     @panic("This should never happen in production!")
 }
 ```
@@ -188,7 +188,7 @@ const number = value as int else {
 **Conditional processing:**
 
 ```doxa
-const processed = value as string else {
+const processed is value as string else {
     // Handle non-string case
     return "default"
 }

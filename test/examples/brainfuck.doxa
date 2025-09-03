@@ -48,7 +48,6 @@ function checkClosingBracket(scan :: string) returns tetra {
     return(openBrackets == 0)
 }
 
-
 function interpret(scan :: string) {
     const scanLength is @length(scan)
 

@@ -145,3 +145,36 @@
 [CompileTime][Error][E1003] ./test/misc/bigfile.doxa:392:1: Type mismatch: expected Int, got Union
 [CompileTime][Error][E1003] ./test/misc/bigfile.doxa:392:1: Type mismatch: expected Int, got Union
 [CompileTime][Error][E1003] ./test/misc/bigfile.doxa:392:1: Type mismatch: expected Int, got Union
+[CompileTime][Error][E1001] ./test/examples/calculator.doxa:35:24: Undefined variable
+[CompileTime][Error][E1003] ./test/examples/calculator.doxa:35:1: Type mismatch: expected Array, got Nothing
+[CompileTime][Error][E1001] ./test/examples/calculator.doxa:35:24: Undefined variable
+[CompileTime][Error][E1003] ./test/examples/calculator.doxa:35:1: Type mismatch: expected Array, got Nothing
+[CompileTime][Error][E1001] ./test/examples/calculator.doxa:35:24: Undefined variable
+[CompileTime][Error][E1003] ./test/examples/calculator.doxa:35:1: Type mismatch: expected Array, got Nothing
+[CompileTime][Error][E6015] ./test/examples/calculator.doxa:70:5: Return type Enum is not compatible with function's union return type (Int | Custom)
+[CompileTime][Error][E6015] ./test/examples/calculator.doxa:71:46: Return type Enum is not compatible with function's union return type (Int | Custom)
+[Debug][Hint] main.zig:409:0: Debug: Processing script: './test/examples/calculator.doxa'
+
+[Debug][Hint] main.zig:429:0: Debug: Absolute path: 'C:\dev\zig\doxa\test\examples\calculator.doxa'
+
+[Debug][Hint] main.zig:434:0: reporter debug method working
+
+[CompileTime][Error][E6015] ./test/examples/calculator.doxa:71:5: Return type Enum is not compatible with function's union return type (Int | Custom)
+[CompileTime][Error][E6015] ./test/examples/calculator.doxa:72:46: Return type Enum is not compatible with function's union return type (Int | Custom)
+[CompileTime][Error][E6015] ./test/examples/calculator.doxa:208:5: Return type Enum is not compatible with function's union return type (Array | Custom)
+[CompileTime][Error][E6015] ./test/examples/calculator.doxa:71:5: Return type Enum is not compatible with function's union return type (Int | Custom)
+[CompileTime][Error][E6015] ./test/examples/calculator.doxa:72:46: Return type Enum is not compatible with function's union return type (Int | Custom)
+[CompileTime][Error][E6015] ./test/examples/calculator.doxa:208:5: Return type Enum is not compatible with function's union return type (Array | Custom)
+[CompileTime][Error][E6015] ./test/examples/calculator.doxa:71:5: Return type Enum is not compatible with function's union return type (Int | Custom)
+[CompileTime][Error][E6015] ./test/examples/calculator.doxa:72:46: Return type Enum is not compatible with function's union return type (Int | Custom)
+[CompileTime][Error][E6015] ./test/examples/calculator.doxa:208:5: Return type Enum is not compatible with function's union return type (Array | Custom)
+[CompileTime][Error][E6015] ./test/examples/calculator.doxa:71:5: Return type Enum is not compatible with function's union return type (Int | Custom)
+[CompileTime][Error][E6015] ./test/examples/calculator.doxa:72:46: Return type Enum is not compatible with function's union return type (Int | Custom)
+[CompileTime][Error][E6015] ./test/examples/calculator.doxa:208:5: Return type Enum is not compatible with function's union return type (Array | Custom)
+[CompileTime][Error][E6015] ./test/examples/calculator.doxa:71:5: Return type Enum is not compatible with function's union return type (Int | Custom)
+[CompileTime][Error][E6015] ./test/examples/calculator.doxa:72:46: Return type Enum is not compatible with function's union return type (Int | Custom)
+[CompileTime][Error][E6015] ./test/examples/calculator.doxa:208:5: Return type Enum is not compatible with function's union return type (Array | Custom)
+[CompileTime][Error][E6015] ./test/examples/calculator.doxa:71:5: Return type Enum is not compatible with function's union return type (Int | Custom)
+[CompileTime][Error][E6015] ./test/examples/calculator.doxa:72:46: Return type Enum is not compatible with function's union return type (Int | Custom)
+[CompileTime][Error][E6015] ./test/examples/calculator.doxa:208:5: Return type Enum is not compatible with function's union return type (Array | Custom)
+[CompileTime][Error][E1003] ./test/misc/bigfile.doxa:392:1: Type mismatch: expected Int, got Union
