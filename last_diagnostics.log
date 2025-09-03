@@ -16164,3 +16164,279 @@
 [CompileTime][Error][E1001] ./test/misc/expressions.doxa:283:1: Undefined variable
 [CompileTime][Error][E1001] ./test/misc/expressions.doxa:284:1: Undefined variable
 [CompileTime][Error][E1001] ./test/misc/expressions.doxa:285:1: Undefined variable
+[Debug][Hint] main.zig:395:0: Debug: Processing script: './test.doxa'
+
+[Debug][Hint] main.zig:415:0: Debug: Absolute path: 'C:\dev\zig\doxa\test.doxa'
+
+[Debug][Hint] main.zig:420:0: reporter debug method working
+
+[Debug][Hint] codegen\hir\soxa_generator.zig:540:0: HIR: processing imported module globals: 0
+[Debug][Hint] codegen\hir\soxa_generator.zig:565:0: HIR: processing current module globals
+[Debug][Hint] main.zig:177:0: >> Peephole optimizations applied: 0 HIR instruction optimizations
+
+[Debug][Hint] main.zig:199:0: >> Compiled ./test.doxa -> out/test.soxa (1 HIR instructions)
+
+[Debug][Hint] main.zig:493:0: >> Executing with HIR VM
+
+[Debug][Hint] main.zig:210:0: >> Loaded SOXA: 1 instructions, 0 constants
+
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 0 at IP 0: Halt
+[Debug][Hint] main.zig:395:0: Debug: Processing script: './test.doxa'
+
+[Debug][Hint] main.zig:415:0: Debug: Absolute path: 'C:\dev\zig\doxa\test.doxa'
+
+[Debug][Hint] main.zig:420:0: reporter debug method working
+
+[Debug][Hint] codegen\hir\soxa_generator.zig:540:0: HIR: processing imported module globals: 0
+[Debug][Hint] codegen\hir\soxa_generator.zig:565:0: HIR: processing current module globals
+[Debug][Hint] main.zig:177:0: >> Peephole optimizations applied: 0 HIR instruction optimizations
+
+[Debug][Hint] main.zig:199:0: >> Compiled ./test.doxa -> out/test.soxa (3 HIR instructions)
+
+[Debug][Hint] main.zig:493:0: >> Executing with HIR VM
+
+[Debug][Hint] main.zig:210:0: >> Loaded SOXA: 2 instructions, 0 constants
+
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 0 at IP 0: Pop
+[Debug][Hint] main.zig:395:0: Debug: Processing script: './test.doxa'
+
+[Debug][Hint] main.zig:415:0: Debug: Absolute path: 'C:\dev\zig\doxa\test.doxa'
+
+[Debug][Hint] main.zig:420:0: reporter debug method working
+
+[Debug][Hint] codegen\hir\soxa_generator.zig:540:0: HIR: processing imported module globals: 0
+[Debug][Hint] codegen\hir\soxa_generator.zig:565:0: HIR: processing current module globals
+[Debug][Hint] main.zig:177:0: >> Peephole optimizations applied: 0 HIR instruction optimizations
+
+[Debug][Hint] main.zig:199:0: >> Compiled ./test.doxa -> out/test.soxa (3 HIR instructions)
+
+[Debug][Hint] main.zig:493:0: >> Executing with HIR VM
+
+[Debug][Hint] main.zig:210:0: >> Loaded SOXA: 3 instructions, 0 constants
+
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 0 at IP 0: Print
+[Debug][Hint] interpreter\vm.zig:1422:0: DBG Print: executing Print instruction
+[Debug][Hint] main.zig:395:0: Debug: Processing script: './test.doxa'
+
+[Debug][Hint] main.zig:415:0: Debug: Absolute path: 'C:\dev\zig\doxa\test.doxa'
+
+[Debug][Hint] main.zig:420:0: reporter debug method working
+
+[Debug][Hint] codegen\hir\soxa_generator.zig:540:0: HIR: processing imported module globals: 0
+[Debug][Hint] codegen\hir\soxa_generator.zig:565:0: HIR: processing current module globals
+[Debug][Hint] main.zig:177:0: >> Peephole optimizations applied: 0 HIR instruction optimizations
+
+[Debug][Hint] main.zig:199:0: >> Compiled ./test.doxa -> out/test.soxa (3 HIR instructions)
+
+[Debug][Hint] main.zig:493:0: >> Executing with HIR VM
+
+[Debug][Hint] main.zig:210:0: >> Loaded SOXA: 3 instructions, 0 constants
+
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 0 at IP 0: Print
+[Debug][Hint] interpreter\vm.zig:1422:0: DBG Print: executing Print instruction
+[Debug][Hint] main.zig:395:0: Debug: Processing script: './test.doxa'
+
+[Debug][Hint] main.zig:415:0: Debug: Absolute path: 'C:\dev\zig\doxa\test.doxa'
+
+[Debug][Hint] main.zig:420:0: reporter debug method working
+
+[Debug][Hint] codegen\hir\soxa_generator.zig:538:0: HIR: processing imported module globals: 0
+[Debug][Hint] codegen\hir\soxa_generator.zig:563:0: HIR: processing current module globals
+[Debug][Hint] main.zig:177:0: >> Peephole optimizations applied: 0 HIR instruction optimizations
+
+[Debug][Hint] main.zig:199:0: >> Compiled ./test.doxa -> out/test.soxa (4 HIR instructions)
+
+[Debug][Hint] main.zig:493:0: >> Executing with HIR VM
+
+[Debug][Hint] main.zig:210:0: >> Loaded SOXA: 4 instructions, 0 constants
+
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 0 at IP 0: Const
+[Debug][Hint] main.zig:395:0: Debug: Processing script: './test.doxa'
+
+[Debug][Hint] main.zig:415:0: Debug: Absolute path: 'C:\dev\zig\doxa\test.doxa'
+
+[Debug][Hint] main.zig:420:0: reporter debug method working
+
+[Debug][Hint] codegen\hir\soxa_generator.zig:538:0: HIR: processing imported module globals: 0
+[Debug][Hint] codegen\hir\soxa_generator.zig:563:0: HIR: processing current module globals
+[Debug][Hint] main.zig:177:0: >> Peephole optimizations applied: 0 HIR instruction optimizations
+
+[Debug][Hint] main.zig:199:0: >> Compiled ./test.doxa -> out/test.soxa (4 HIR instructions)
+
+[Debug][Hint] main.zig:493:0: >> Executing with HIR VM
+
+[Debug][Hint] main.zig:210:0: >> Loaded SOXA: 4 instructions, 1 constants
+
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 0 at IP 0: Const
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 1 at IP 1: Print
+[Debug][Hint] interpreter\vm.zig:1422:0: DBG Print: executing Print instruction
+[Debug][Hint] interpreter\vm.zig:1424:0: Print called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 72, 101, 108, 108, 111, 32, 87, 111, 114, 108, 100, 33 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 2 at IP 2: Pop
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 3 at IP 3: Halt
+[Debug][Hint] main.zig:395:0: Debug: Processing script: './test.doxa'
+
+[Debug][Hint] main.zig:415:0: Debug: Absolute path: 'C:\dev\zig\doxa\test.doxa'
+
+[Debug][Hint] main.zig:420:0: reporter debug method working
+
+[Debug][Hint] codegen\hir\soxa_generator.zig:538:0: HIR: processing imported module globals: 0
+[Debug][Hint] codegen\hir\soxa_generator.zig:563:0: HIR: processing current module globals
+[Debug][Hint] codegen\hir\soxa_generator.zig:723:0: Variable hp has type base: Int
+[Debug][Hint] codegen\hir\soxa_generator.zig:723:0: Variable word has type base: String
+[Debug][Hint] main.zig:395:0: Debug: Processing script: './test.doxa'
+
+[Debug][Hint] main.zig:415:0: Debug: Absolute path: 'C:\dev\zig\doxa\test.doxa'
+
+[Debug][Hint] main.zig:420:0: reporter debug method working
+
+[Debug][Hint] codegen\hir\soxa_generator.zig:538:0: HIR: processing imported module globals: 0
+[Debug][Hint] codegen\hir\soxa_generator.zig:563:0: HIR: processing current module globals
+[Debug][Hint] codegen\hir\soxa_generator.zig:723:0: Variable hp has type base: Int
+[Debug][Hint] codegen\hir\soxa_generator.zig:723:0: Variable word has type base: String
+[Debug][Hint] main.zig:395:0: Debug: Processing script: './test.doxa'
+
+[Debug][Hint] main.zig:415:0: Debug: Absolute path: 'C:\dev\zig\doxa\test.doxa'
+
+[Debug][Hint] main.zig:420:0: reporter debug method working
+
+[Debug][Hint] codegen\hir\soxa_generator.zig:538:0: HIR: processing imported module globals: 0
+[Debug][Hint] codegen\hir\soxa_generator.zig:563:0: HIR: processing current module globals
+[Debug][Hint] codegen\hir\soxa_generator.zig:723:0: Variable hp has type base: Int
+[Debug][Hint] codegen\hir\soxa_generator.zig:723:0: Variable word has type base: String
+[Debug][Hint] main.zig:177:0: >> Peephole optimizations applied: 0 HIR instruction optimizations
+
+[Debug][Hint] main.zig:199:0: >> Compiled ./test.doxa -> out/test.soxa (15 HIR instructions)
+
+[Debug][Hint] main.zig:493:0: >> Executing with HIR VM
+
+[Debug][Hint] main.zig:210:0: >> Loaded SOXA: 15 instructions, 4 constants
+
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 0 at IP 0: Const
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 1 at IP 1: Dup
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 2 at IP 2: StoreConst
+[Debug][Hint] interpreter\vm.zig:1038:0: DBG WRITE StoreConst (create) hp: storage_id=2, value=types.types.TokenLiteral{ .int = 10 }
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 3 at IP 3: Pop
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 4 at IP 4: Const
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 5 at IP 5: Dup
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 6 at IP 6: StoreConst
+[Debug][Hint] interpreter\vm.zig:1038:0: DBG WRITE StoreConst (create) word: storage_id=3, value=types.types.TokenLiteral{ .string = { 111, 114, 97, 110, 103, 101 } }
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 7 at IP 7: Pop
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 8 at IP 8: Const
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 9 at IP 9: Print
+[Debug][Hint] interpreter\vm.zig:1422:0: DBG Print: executing Print instruction
+[Debug][Hint] interpreter\vm.zig:1424:0: Print called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 72, 101, 108, 108, 111, 32, 87, 111, 114, 108, 100, 10 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 10 at IP 10: Pop
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 11 at IP 11: Const
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 12 at IP 12: Print
+[Debug][Hint] interpreter\vm.zig:1422:0: DBG Print: executing Print instruction
+[Debug][Hint] interpreter\vm.zig:1424:0: Print called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 84, 104, 101, 32, 112, 108, 97, 121, 101, 114, 32, 104, 97, 115, 32 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 13 at IP 13: Pop
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 14 at IP 14: Halt
+[Debug][Hint] main.zig:395:0: Debug: Processing script: './test.doxa'
+
+[Debug][Hint] main.zig:415:0: Debug: Absolute path: 'C:\dev\zig\doxa\test.doxa'
+
+[Debug][Hint] main.zig:420:0: reporter debug method working
+
+[Debug][Hint] codegen\hir\soxa_generator.zig:538:0: HIR: processing imported module globals: 0
+[Debug][Hint] codegen\hir\soxa_generator.zig:563:0: HIR: processing current module globals
+[Debug][Hint] codegen\hir\soxa_generator.zig:723:0: Variable hp has type base: Int
+[Debug][Hint] codegen\hir\soxa_generator.zig:723:0: Variable word has type base: String
+[Debug][Hint] main.zig:177:0: >> Peephole optimizations applied: 0 HIR instruction optimizations
+
+[Debug][Hint] main.zig:199:0: >> Compiled ./test.doxa -> out/test.soxa (15 HIR instructions)
+
+[Debug][Hint] main.zig:493:0: >> Executing with HIR VM
+
+[Debug][Hint] main.zig:210:0: >> Loaded SOXA: 14 instructions, 3 constants
+
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 0 at IP 0: Const
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 1 at IP 1: Dup
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 2 at IP 2: StoreConst
+[Debug][Hint] interpreter\vm.zig:1038:0: DBG WRITE StoreConst (create) hp: storage_id=2, value=types.types.TokenLiteral{ .int = 10 }
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 3 at IP 3: Pop
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 4 at IP 4: Const
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 5 at IP 5: Dup
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 6 at IP 6: StoreConst
+[Debug][Hint] interpreter\vm.zig:1038:0: DBG WRITE StoreConst (create) word: storage_id=3, value=types.types.TokenLiteral{ .string = { 111, 114, 97, 110, 103, 101 } }
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 7 at IP 7: Pop
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 8 at IP 8: Const
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 9 at IP 9: Print
+[Debug][Hint] interpreter\vm.zig:1422:0: DBG Print: executing Print instruction
+[Debug][Hint] interpreter\vm.zig:1424:0: Print called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 72, 101, 108, 108, 111, 32, 87, 111, 114, 108, 100, 10 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 10 at IP 10: Pop
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 11 at IP 11: LoadVar
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 12 at IP 12: Pop
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 13 at IP 13: Halt
+[Debug][Hint] main.zig:395:0: Debug: Processing script: './test.doxa'
+
+[Debug][Hint] main.zig:415:0: Debug: Absolute path: 'C:\dev\zig\doxa\test.doxa'
+
+[Debug][Hint] main.zig:420:0: reporter debug method working
+
+[Debug][Hint] codegen\hir\soxa_generator.zig:538:0: HIR: processing imported module globals: 0
+[Debug][Hint] codegen\hir\soxa_generator.zig:563:0: HIR: processing current module globals
+[Debug][Hint] codegen\hir\soxa_generator.zig:723:0: Variable hp has type base: Int
+[Debug][Hint] codegen\hir\soxa_generator.zig:723:0: Variable word has type base: String
+[Debug][Hint] main.zig:177:0: >> Peephole optimizations applied: 0 HIR instruction optimizations
+
+[Debug][Hint] main.zig:199:0: >> Compiled ./test.doxa -> out/test.soxa (15 HIR instructions)
+
+[Debug][Hint] main.zig:493:0: >> Executing with HIR VM
+
+[Debug][Hint] main.zig:210:0: >> Loaded SOXA: 14 instructions, 3 constants
+
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 0 at IP 0: Const
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 1 at IP 1: Dup
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 2 at IP 2: StoreConst
+[Debug][Hint] interpreter\vm.zig:1038:0: DBG WRITE StoreConst (create) hp: storage_id=2, value=types.types.TokenLiteral{ .int = 10 }
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 3 at IP 3: Pop
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 4 at IP 4: Const
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 5 at IP 5: Dup
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 6 at IP 6: StoreConst
+[Debug][Hint] interpreter\vm.zig:1038:0: DBG WRITE StoreConst (create) word: storage_id=3, value=types.types.TokenLiteral{ .string = { 111, 114, 97, 110, 103, 101 } }
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 7 at IP 7: Pop
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 8 at IP 8: Const
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 9 at IP 9: Print
+[Debug][Hint] interpreter\vm.zig:1422:0: DBG Print: executing Print instruction
+[Debug][Hint] interpreter\vm.zig:1424:0: Print called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 72, 101, 108, 108, 111, 32, 87, 111, 114, 108, 100, 10 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 10 at IP 10: Pop
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 11 at IP 11: LoadVar
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 12 at IP 12: Pop
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 13 at IP 13: Halt
+[Debug][Hint] main.zig:395:0: Debug: Processing script: './test.doxa'
+
+[Debug][Hint] main.zig:415:0: Debug: Absolute path: 'C:\dev\zig\doxa\test.doxa'
+
+[Debug][Hint] main.zig:420:0: reporter debug method working
+
+[Debug][Hint] codegen\hir\soxa_generator.zig:538:0: HIR: processing imported module globals: 0
+[Debug][Hint] codegen\hir\soxa_generator.zig:563:0: HIR: processing current module globals
+[Debug][Hint] codegen\hir\soxa_generator.zig:723:0: Variable hp has type base: Int
+[Debug][Hint] codegen\hir\soxa_generator.zig:723:0: Variable word has type base: String
+[Debug][Hint] main.zig:177:0: >> Peephole optimizations applied: 0 HIR instruction optimizations
+
+[Debug][Hint] main.zig:199:0: >> Compiled ./test.doxa -> out/test.soxa (15 HIR instructions)
+
+[Debug][Hint] main.zig:493:0: >> Executing with HIR VM
+
+[Debug][Hint] main.zig:210:0: >> Loaded SOXA: 14 instructions, 3 constants
+
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 0 at IP 0: Const
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 1 at IP 1: Dup
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 2 at IP 2: StoreConst
+[Debug][Hint] interpreter\vm.zig:1038:0: DBG WRITE StoreConst (create) hp: storage_id=2, value=types.types.TokenLiteral{ .int = 10 }
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 3 at IP 3: Pop
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 4 at IP 4: Const
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 5 at IP 5: Dup
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 6 at IP 6: StoreConst
+[Debug][Hint] interpreter\vm.zig:1038:0: DBG WRITE StoreConst (create) word: storage_id=3, value=types.types.TokenLiteral{ .string = { 111, 114, 97, 110, 103, 101 } }
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 7 at IP 7: Pop
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 8 at IP 8: Const
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 9 at IP 9: Print
+[Debug][Hint] interpreter\vm.zig:1422:0: DBG Print: executing Print instruction
+[Debug][Hint] interpreter\vm.zig:1424:0: Print called with value: interpreter.vm.HIRFrame{ .value = codegen.hir.soxa_values.HIRValue{ .string = { 72, 101, 108, 108, 111, 32, 87, 111, 114, 108, 100, 10 } }, .field_name = null, .scope_refs = 0 }
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 10 at IP 10: Pop
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 11 at IP 11: LoadVar
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 12 at IP 12: Pop
+[Debug][Hint] interpreter\vm.zig:738:0: DBG VM: executing instruction 13 at IP 13: Halt

@@ -407,13 +407,7 @@ pub const LexicalAnalyzer = struct {
                 }
             },
             '~' => try self.addMinimalToken(.TILDE),
-            '?' => {
-                if (self.match('?')) {
-                    try self.addMinimalToken(.PEEK);
-                } else {
-                    try self.addMinimalToken(.PRINT);
-                }
-            },
+            '?' => try self.addMinimalToken(.PEEK),
         }
     }
 
@@ -795,6 +789,8 @@ pub const LexicalAnalyzer = struct {
             try self.addToken(.READ, .nothing);
         } else if (std.mem.eql(u8, method_name, "write")) {
             try self.addToken(.WRITE, .nothing);
+        } else if (std.mem.eql(u8, method_name, "print")) {
+            try self.addToken(.PRINT, .nothing);
         } else if (std.mem.eql(u8, method_name, "exec")) {
             try self.addToken(.EXEC, .nothing);
         } else if (std.mem.eql(u8, method_name, "spawn")) {
@@ -1255,20 +1251,13 @@ pub const LexicalAnalyzer = struct {
         var line: i32 = 1;
         var last_newline: usize = 0;
 
-        // Debug print
-        std.debug.print("Counting lines from {d} to {d}\n", .{ start, end });
-
         var i: usize = 0;
         while (i < end) : (i += 1) {
             if (self.source[i] == '\n') {
                 line += 1;
                 last_newline = i + 1;
-                // Debug print
-                std.debug.print("Found newline at {d}, line now {d}\n", .{ i, line });
             }
             if (i == start) {
-                // Debug print
-                std.debug.print("Reached start at {d}, line {d}, column {d}\n", .{ i, line, i - last_newline + 1 });
                 break;
             }
         }
@@ -1277,9 +1266,6 @@ pub const LexicalAnalyzer = struct {
             .line = line,
             .column = start - last_newline + 1,
         };
-
-        // Debug print
-        std.debug.print("Final position: line {d}, column {d}\n", .{ result.line, result.column });
 
         return result;
     }

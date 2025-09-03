@@ -333,19 +333,16 @@ fn runDoxaCommandWithInput(allocator: std.mem.Allocator, path: []const u8, input
     return runDoxaCommandEx(allocator, path, input);
 }
 
-fn runTest(allocator: std.mem.Allocator, test_name: []const u8, path: []const u8, expected_results: []const result, input: ?[]const u8) !void {
+fn runPeekTest(allocator: std.mem.Allocator, test_name: []const u8, path: []const u8, expected_results: []const result) !void {
     std.debug.print("\n=== Running {s} test ===\n", .{test_name});
     defer std.debug.print("\n=== {s} test complete ===\n", .{test_name});
 
     std.debug.print("Running doxa command with {s}...\n", .{path});
-    const output = if (input) |in|
-        try runDoxaCommandWithInput(allocator, path, in)
-    else
-        try runDoxaCommand(allocator, path);
+    const output = try runDoxaCommand(allocator, path);
     defer allocator.free(output);
 
     std.debug.print("Parsing output...\n", .{});
-    const outputs = try parseOutput(output, allocator);
+    const outputs = try parsePeekResult(output, allocator);
     defer outputs.deinit();
 
     var i: usize = 0;
@@ -385,7 +382,19 @@ test "expressions" {
     try runTest(allocator, "expressions", "./test/misc/expressions.doxa", expected_expressions_results[0..], null);
 }
 
-fn parseOutput(output: []const u8, allocator: std.mem.Allocator) !std.ArrayList(result) {
+fn parsePrintResult(output: []const u8, allocator: std.mem.Allocator) !std.ArrayList(result) {
+    var outputs = std.ArrayList(result).init(allocator);
+    return outputs;
+    var lines = std.mem.splitScalar(u8, output, '\n');
+    while (lines.next()) |line| {
+        const foundType = grabType(line);
+        const foundValue = grabValue(line);
+        try outputs.append(.{ .type = foundType, .value = foundValue });
+    }
+    return outputs;
+}
+
+fn parsePeekResult(output: []const u8, allocator: std.mem.Allocator) !std.ArrayList(result) {
     var outputs = std.ArrayList(result).init(allocator);
 
     var lines = std.mem.splitScalar(u8, output, '\n');

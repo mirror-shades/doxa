@@ -418,7 +418,41 @@ pub const PeekExpr = struct {
 };
 
 pub const PrintExpr = struct {
-    expr: *Expr,
+    // For simple printing: just expr
+    expr: ?*Expr,
+
+    // For interpolated printing: format parts and arguments
+    format_parts: ?[]const []const u8, // String parts between placeholders
+    arguments: ?[]const *Expr, // Expressions to interpolate
+    placeholder_indices: ?[]const u32, // Maps placeholders to argument indices
+
+    pub fn deinit(self: *PrintExpr, allocator: std.mem.Allocator) void {
+        // Clean up simple expr if present
+        if (self.expr) |expr| {
+            expr.deinit(allocator);
+            allocator.destroy(expr);
+        }
+
+        // Clean up interpolation data if present
+        if (self.format_parts) |parts| {
+            for (parts) |part| {
+                allocator.free(part);
+            }
+            allocator.free(parts);
+        }
+
+        if (self.arguments) |args| {
+            for (args) |arg| {
+                arg.deinit(allocator);
+                allocator.destroy(arg);
+            }
+            allocator.free(args);
+        }
+
+        if (self.placeholder_indices) |indices| {
+            allocator.free(indices);
+        }
+    }
 };
 
 pub const FieldAccess = struct {
@@ -447,11 +481,6 @@ pub const Expr = struct {
         Peek: PeekExpr,
         Print: PrintExpr,
         PeekStruct: struct {
-            expr: *Expr,
-            location: Location,
-            variable_name: ?[]const u8,
-        },
-        PrintStruct: struct {
             expr: *Expr,
             location: Location,
             variable_name: ?[]const u8,
@@ -770,17 +799,12 @@ pub const Expr = struct {
                 i.expr.deinit(allocator);
                 allocator.destroy(i.expr);
             },
-            .Print => |i| {
-                i.expr.deinit(allocator);
-                allocator.destroy(i.expr);
-            },
             .PeekStruct => |peek| {
                 peek.expr.deinit(allocator);
                 allocator.destroy(peek.expr);
             },
-            .PrintStruct => |peek| {
-                peek.expr.deinit(allocator);
-                allocator.destroy(peek.expr);
+            .Print => |*pm| {
+                pm.deinit(allocator);
             },
             .While => |*w| {
                 w.condition.deinit(allocator);

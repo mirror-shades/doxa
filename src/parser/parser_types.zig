@@ -1022,6 +1022,12 @@ pub const Parser = struct {
     /// Expect current token to be the method token (e.g., PUSH, POP, SLICE, ...)
     pub fn methodCallExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
         const method_tok = self.peek();
+
+        // Special handling for @print method with string interpolation
+        if (method_tok.type == .PRINT) {
+            return try self.parsePrintMethod();
+        }
+
         // consume method token
         self.advance();
         // expect '('
@@ -1101,6 +1107,163 @@ pub const Parser = struct {
         };
 
         return method_expr;
+    }
+
+    /// Parse @print method with string interpolation support
+    /// Supports: @print("Hello {name}!", name) with escaped braces \{ \}
+    pub fn parsePrintMethod(self: *Parser) ErrorList!?*ast.Expr {
+        const method_tok = self.peek();
+        self.advance(); // consume PRINT_METHOD token
+
+        // Expect opening parenthesis
+        if (self.peek().type != .LEFT_PAREN) {
+            return error.ExpectedLeftParen;
+        }
+        self.advance();
+
+        // Parse format string
+        const format_expr = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
+
+        // Expect closing parenthesis
+        if (self.peek().type != .RIGHT_PAREN) {
+            return error.ExpectedRightParen;
+        }
+        self.advance();
+
+        // Parse string interpolation to get format parts and placeholder names
+        const interp_info = try self.parseStringInterpolation(format_expr);
+
+        // Create variable expressions for each placeholder
+        var arguments = std.ArrayList(*ast.Expr).init(self.allocator);
+        errdefer {
+            for (arguments.items) |arg| {
+                arg.deinit(self.allocator);
+                self.allocator.destroy(arg);
+            }
+            arguments.deinit();
+        }
+
+        for (interp_info.placeholder_names) |placeholder_name| {
+            // Create a token for the variable name
+            const var_token = token.Token{
+                .type = .IDENTIFIER,
+                .lexeme = placeholder_name,
+                .literal = .{ .nothing = {} },
+                .line = method_tok.line,
+                .column = method_tok.column,
+                .file = method_tok.file,
+            };
+
+            // Create a variable expression
+            const var_expr = try self.allocator.create(ast.Expr);
+            var_expr.* = .{
+                .base = .{
+                    .id = ast.generateNodeId(),
+                    .span = ast.SourceSpan.fromToken(var_token),
+                },
+                .data = .{
+                    .Variable = var_token,
+                },
+            };
+
+            try arguments.append(var_expr);
+        }
+
+        // Create placeholder indices (each placeholder maps to its argument index)
+        const placeholder_indices = try self.allocator.alloc(u32, interp_info.placeholder_names.len);
+        for (0..interp_info.placeholder_names.len) |i| {
+            placeholder_indices[i] = @intCast(i);
+        }
+
+        // Create the print expression
+        const print_expr = try self.allocator.create(ast.Expr);
+        print_expr.* = .{
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(method_tok),
+            },
+            .data = .{
+                .Print = .{
+                    .expr = null, // No simple expr for method calls
+                    .format_parts = interp_info.format_parts,
+                    .arguments = try arguments.toOwnedSlice(),
+                    .placeholder_indices = placeholder_indices,
+                },
+            },
+        };
+
+        return print_expr;
+    }
+
+    /// Parse string interpolation from format string
+    /// Returns format parts and placeholder names (not indices)
+    const InterpolationInfo = struct {
+        format_parts: []const []const u8, // String parts between placeholders
+        placeholder_names: []const []const u8, // Names of variables to interpolate
+    };
+
+    fn parseStringInterpolation(self: *Parser, format_expr: *ast.Expr) ErrorList!InterpolationInfo {
+        // Extract string literal from format expression
+        const format_string = switch (format_expr.data) {
+            .Literal => |lit| switch (lit) {
+                .string => |s| s,
+                else => return error.ExpectedStringLiteral,
+            },
+            else => return error.ExpectedStringLiteral,
+        };
+
+        var format_parts = std.ArrayList([]const u8).init(self.allocator);
+        var placeholder_names = std.ArrayList([]const u8).init(self.allocator);
+        errdefer {
+            format_parts.deinit();
+            placeholder_names.deinit();
+        }
+
+        var i: usize = 0;
+        var current_part_start: usize = 0;
+
+        while (i < format_string.len) {
+            if (format_string[i] == '\\' and i + 1 < format_string.len) {
+                // Handle escaped characters
+                if (format_string[i + 1] == '{' or format_string[i + 1] == '}') {
+                    i += 2; // Skip escaped brace
+                    continue;
+                }
+            } else if (format_string[i] == '{') {
+                // Found start of placeholder
+                // Add the string part before this placeholder
+                const part = format_string[current_part_start..i];
+                try format_parts.append(try self.allocator.dupe(u8, part));
+
+                // Find the end of the placeholder
+                var j = i + 1;
+                while (j < format_string.len and format_string[j] != '}') {
+                    j += 1;
+                }
+
+                if (j >= format_string.len) {
+                    return error.UnmatchedOpenBrace;
+                }
+
+                // Extract placeholder name
+                const placeholder_name = format_string[i + 1 .. j];
+                try placeholder_names.append(try self.allocator.dupe(u8, placeholder_name));
+
+                i = j + 1; // Move past the '}'
+                current_part_start = i;
+            } else {
+                i += 1;
+            }
+        }
+
+        // Add the final string part
+        const final_part = format_string[current_part_start..];
+        try format_parts.append(try self.allocator.dupe(u8, final_part));
+
+        return InterpolationInfo{
+            .format_parts = try format_parts.toOwnedSlice(),
+            .placeholder_names = try placeholder_names.toOwnedSlice(),
+        };
     }
 
     pub fn print(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
@@ -1553,7 +1716,7 @@ pub const Parser = struct {
             err = e;
         }
 
-        // 3. Try in the same directory as the current file with potential existing extension
+        // 3. Try the same directory as the current file with potential existing extension
         if (has_extension) {
             var same_dir_exact_path = std.ArrayList(u8).init(self.allocator);
             defer same_dir_exact_path.deinit();
@@ -1568,7 +1731,7 @@ pub const Parser = struct {
             }
         }
 
-        // 4. Try in the same directory as the current file with .doxa extension
+        // 4. Try the same directory as the current file with .doxa extension
         var same_dir_path = std.ArrayList(u8).init(self.allocator);
         defer same_dir_path.deinit();
         try same_dir_path.appendSlice(current_dir);
@@ -2034,7 +2197,7 @@ pub const Parser = struct {
                             if (specific_symbol == null or std.mem.eql(u8, specific_symbol.?, symbol_name)) {
                                 try self.imported_symbols.?.put(full_name, .{
                                     .kind = .Enum,
-                                    .name = symbol_name,
+                                    .name = enum_decl.name.lexeme,
                                     .original_module = module_path,
                                 });
 

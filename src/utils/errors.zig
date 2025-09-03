@@ -202,6 +202,9 @@ pub const ErrorList = error{
     // Print Statements
     UnsupportedPrintStatement,
     InvalidPrintStatement,
+    MissingFormatParts,
+    InvalidPrintExpression,
+    MissingPlaceholderIndices,
     FileTooBig,
     InputOutput,
     BrokenPipe,
@@ -294,6 +297,11 @@ pub const ErrorList = error{
     DuplicateVariableName,
     NothingTypeMustBeConst,
     ExpectedPattern,
+
+    // String Interpolation
+    UnmatchedOpenBrace,
+    NotEnoughInterpolationArguments,
+    TooManyInterpolationArguments,
 };
 
 pub const ErrorCode = struct {
