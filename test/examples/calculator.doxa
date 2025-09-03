@@ -105,8 +105,6 @@ function split(input :: string) returns string[] {
                 is_unary_minus is true 
             } else {
                 if i > 0 then {
-                    @print("current: {current}  ")
-                    @print("input[i - 1]: {input[i - 1]}\n")
                     is_unary_minus is isUnaryMinus(@length(current), input[i - 1])
                 }
             }
