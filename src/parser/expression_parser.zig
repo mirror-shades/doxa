@@ -1509,6 +1509,15 @@ pub fn inferType(expr: *ast.Expr) !ast.TypeInfo {
         .Map => return .{ .base = .Map, .is_mutable = false },
         .StructLiteral => |struct_lit| return .{ .base = .Custom, .custom_type = struct_lit.name.lexeme, .is_mutable = false },
         .Cast => return .{ .base = .Nothing, .is_mutable = false },
+        .Print => |print| {
+            // Infer types of all interpolation arguments if they exist
+            if (print.arguments) |args| {
+                for (args) |arg| {
+                    _ = try inferType(arg);
+                }
+            }
+            return .{ .base = .Nothing, .is_mutable = false }; // Print returns nothing
+        },
         else => return .{ .base = .Nothing, .is_mutable = false },
     }
 }
