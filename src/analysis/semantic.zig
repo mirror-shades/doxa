@@ -1142,6 +1142,9 @@ pub const SemanticAnalyzer = struct {
             .Literal => |lit| {
                 type_info.inferFrom(lit); // TokenLiteral is already the right type
             },
+            .Break => {
+                type_info.base = .Nothing;
+            },
             .Binary => |bin| {
                 const left_type = try self.inferTypeFromExpr(bin.left.?);
                 const right_type = try self.inferTypeFromExpr(bin.right.?);
@@ -1941,37 +1944,45 @@ pub const SemanticAnalyzer = struct {
                         matched_var_name = match_expr.value.data.Variable.lexeme;
                     }
 
-                    // Infer first case with narrowing
-                    const first_case_type = try self.inferMatchCaseTypeWithNarrow(match_expr.cases[0], matched_var_name);
-
-                    // Check if all cases have the same type
-                    var all_same_type = true;
+                    // For match expressions used as statements, analyze case bodies without type narrowing
+                    // This allows assignments in match cases to work properly
                     var union_types = std.ArrayList(*ast.TypeInfo).init(self.allocator);
                     defer union_types.deinit();
 
-                    try union_types.append(first_case_type);
-
-                    for (match_expr.cases[1..]) |case| {
-                        const case_type = try self.inferMatchCaseTypeWithNarrow(case, matched_var_name);
-                        if (case_type.base != first_case_type.base) {
-                            all_same_type = false;
-                        }
+                    // Infer each case body type
+                    for (match_expr.cases) |case| {
+                        const case_type = try self.inferTypeFromExpr(case.body);
                         try union_types.append(case_type);
                     }
 
-                    if (all_same_type) {
-                        type_info.* = first_case_type.*;
-                    } else {
-                        // Create a union type from all case types
-                        const union_type_array = try self.allocator.alloc(*ast.TypeInfo, union_types.items.len);
-                        for (union_types.items, union_type_array) |item, *dest| {
-                            dest.* = item;
+                    // If all cases return the same type, use that type
+                    if (union_types.items.len > 0) {
+                        var all_same_type = true;
+                        const first_type = union_types.items[0];
+
+                        for (union_types.items[1..]) |case_type| {
+                            if (case_type.base != first_type.base) {
+                                all_same_type = false;
+                                break;
+                            }
                         }
 
-                        const union_type = try self.allocator.create(ast.UnionType);
-                        union_type.* = .{ .types = union_type_array };
+                        if (all_same_type) {
+                            type_info.* = first_type.*;
+                        } else {
+                            // Create a union type from all case types
+                            const union_type_array = try self.allocator.alloc(*ast.TypeInfo, union_types.items.len);
+                            for (union_types.items, union_type_array) |item, *dest| {
+                                dest.* = item;
+                            }
 
-                        type_info.* = .{ .base = .Union, .union_type = union_type };
+                            const union_type = try self.allocator.create(ast.UnionType);
+                            union_type.* = .{ .types = union_type_array };
+
+                            type_info.* = .{ .base = .Union, .union_type = union_type };
+                        }
+                    } else {
+                        type_info.* = .{ .base = .Nothing };
                     }
                 } else {
                     type_info.* = .{ .base = .Nothing };
@@ -3670,11 +3681,11 @@ pub const SemanticAnalyzer = struct {
             // Build a narrowed TypeInfo from the pattern
             const narrow_info = try self.allocator.create(ast.TypeInfo);
             narrow_info.* = switch (case.pattern.type) {
-                .INT_TYPE => .{ .base = .Int, .is_mutable = false },
-                .FLOAT_TYPE => .{ .base = .Float, .is_mutable = false },
-                .STRING_TYPE => .{ .base = .String, .is_mutable = false },
-                .BYTE_TYPE => .{ .base = .Byte, .is_mutable = false },
-                .TETRA_TYPE => .{ .base = .Tetra, .is_mutable = false },
+                .INT_TYPE, .INT => .{ .base = .Int, .is_mutable = false },
+                .FLOAT_TYPE, .FLOAT => .{ .base = .Float, .is_mutable = false },
+                .STRING_TYPE, .STRING => .{ .base = .String, .is_mutable = false },
+                .BYTE_TYPE, .BYTE => .{ .base = .Byte, .is_mutable = false },
+                .TETRA_TYPE, .TETRA => .{ .base = .Tetra, .is_mutable = false },
                 .NOTHING_TYPE, .NOTHING => .{ .base = .Nothing, .is_mutable = false },
                 .DOT => .{ .base = .Enum, .is_mutable = false }, // enum member pattern implies enum
                 else => blk: {

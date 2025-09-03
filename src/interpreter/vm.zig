@@ -962,37 +962,84 @@ pub const HIRVM = struct {
                     }
                 }
 
-                // Function parameters must create NEW storage in each scope, never reuse parent storage
-                if (self.current_scope.name_map.get(v.var_name)) |variable| {
-                    // Variable exists in current scope - update its storage
-                    if (self.memory_manager.scope_manager.value_storage.getPtr(variable.storage_id)) |storage| {
-                        if (storage.*.constant) {
-                            return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot modify constant variable: {s}", .{v.var_name});
+                if (@hasField(@TypeOf(v), "scope_kind") and v.scope_kind == .Local) {
+                    // Local semantics:
+                    // - If a variable exists anywhere in the active scope chain:
+                    //     * If it's constant, shadow by creating a new current-scope binding
+                    //     * Else update that existing storage
+                    // - If not found, create in current scope
+                    if (self.current_scope.lookupVariable(v.var_name)) |nearest_var| {
+                        if (self.memory_manager.scope_manager.value_storage.getPtr(nearest_var.storage_id)) |storage| {
+                            if (storage.*.constant) {
+                                // Shadow constant from ancestor scope with a new local binding
+                                _ = self.current_scope.createValueBinding(v.var_name, token_literal, token_type, type_info, false) catch |err| {
+                                    return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Failed to create variable {s}: {}", .{ v.var_name, err });
+                                };
+                                if (self.current_scope.lookupVariable(v.var_name)) |variable2| {
+                                    self.reporter.debug(
+                                        "DBG WRITE StoreVar (shadow create) {s}: storage_id={}, value={any}",
+                                        .{ v.var_name, variable2.storage_id, token_literal },
+                                        @src(),
+                                    );
+                                }
+                            } else {
+                                // Update nearest existing (non-constant) variable
+                                storage.*.value = token_literal;
+                                storage.*.type = token_type;
+                                storage.*.type_info = type_info;
+                                self.reporter.debug(
+                                    "DBG WRITE StoreVar (local update) {s}: storage_id={}, value={any}",
+                                    .{ v.var_name, nearest_var.storage_id, token_literal },
+                                    @src(),
+                                );
+                            }
+                        } else {
+                            return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Variable storage not found for: {s}", .{v.var_name});
                         }
-
-                        storage.*.value = token_literal;
-                        storage.*.type = token_type;
-                        storage.*.type_info = type_info;
-
-                        // Unconditional debug for any StoreVar write
-                        self.reporter.debug(
-                            "DBG WRITE StoreVar {s}: storage_id={}, value={any}",
-                            .{ v.var_name, variable.storage_id, token_literal },
-                            @src(),
-                        );
                     } else {
-                        return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Variable storage not found for: {s}", .{v.var_name});
+                        // Not found anywhere - create in current scope
+                        _ = self.current_scope.createValueBinding(v.var_name, token_literal, token_type, type_info, false) catch |err| {
+                            return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Failed to create variable {s}: {}", .{ v.var_name, err });
+                        };
+                        if (self.current_scope.lookupVariable(v.var_name)) |variable2| {
+                            self.reporter.debug(
+                                "DBG WRITE StoreVar (local create) {s}: storage_id={}, value={any}",
+                                .{ v.var_name, variable2.storage_id, token_literal },
+                                @src(),
+                            );
+                        }
                     }
                 } else {
-                    _ = self.current_scope.createValueBinding(v.var_name, token_literal, token_type, type_info, false) catch |err| {
-                        return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Failed to create variable {s}: {}", .{ v.var_name, err });
-                    };
-                    if (self.current_scope.lookupVariable(v.var_name)) |variable2| {
-                        self.reporter.debug(
-                            "DBG WRITE StoreVar (create) {s}: storage_id={}, value={any}",
-                            .{ v.var_name, variable2.storage_id, token_literal },
-                            @src(),
-                        );
+                    // Non-local: nearest existing variable across active scopes; otherwise create in current scope
+                    if (self.current_scope.lookupVariable(v.var_name)) |variable| {
+                        if (self.memory_manager.scope_manager.value_storage.getPtr(variable.storage_id)) |storage| {
+                            if (storage.*.constant) {
+                                return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot modify constant variable: {s}", .{v.var_name});
+                            }
+
+                            storage.*.value = token_literal;
+                            storage.*.type = token_type;
+                            storage.*.type_info = type_info;
+
+                            self.reporter.debug(
+                                "DBG WRITE StoreVar {s}: storage_id={}, value={any}",
+                                .{ v.var_name, variable.storage_id, token_literal },
+                                @src(),
+                            );
+                        } else {
+                            return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Variable storage not found for: {s}", .{v.var_name});
+                        }
+                    } else {
+                        _ = self.current_scope.createValueBinding(v.var_name, token_literal, token_type, type_info, false) catch |err| {
+                            return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Failed to create variable {s}: {}", .{ v.var_name, err });
+                        };
+                        if (self.current_scope.lookupVariable(v.var_name)) |variable2| {
+                            self.reporter.debug(
+                                "DBG WRITE StoreVar (create) {s}: storage_id={}, value={any}",
+                                .{ v.var_name, variable2.storage_id, token_literal },
+                                @src(),
+                            );
+                        }
                     }
                 }
             },
@@ -1023,24 +1070,21 @@ pub const HIRVM = struct {
                     }
                 }
 
+                // If a binding exists in any active scope, update only if it's uninitialized constant (nothing)
                 if (self.current_scope.name_map.get(v.var_name)) |variable| {
-                    // If variable already exists in current scope
                     if (self.memory_manager.scope_manager.value_storage.getPtr(variable.storage_id)) |storage| {
                         if (storage.*.constant) {
-                            // Allow initializing a constant that currently holds 'nothing'
                             const is_nothing = storage.*.value == .nothing;
                             if (!is_nothing) {
                                 // Already initialized constant - skip
                                 return;
                             }
                         }
-                        // Initialize or upgrade to constant with the provided value
                         storage.*.value = token_literal;
                         storage.*.type = token_type;
                         storage.*.type_info = type_info;
                         storage.*.constant = true;
 
-                        // Unconditional debug for any StoreConst write (existing)
                         self.reporter.debug(
                             "DBG WRITE StoreConst {s}: storage_id={}, value={any}",
                             .{ v.var_name, variable.storage_id, token_literal },
@@ -1050,8 +1094,8 @@ pub const HIRVM = struct {
                         return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Variable storage not found for: {s}", .{v.var_name});
                     }
                 } else {
-                    // Create constant in the root scope to ensure it survives function scope churn
-                    _ = self.current_scope.createCrossScopeValueBinding(v.var_name, token_literal, token_type, type_info, true) catch |err| {
+                    // Create constant in the CURRENT scope so it does not leak beyond iteration
+                    _ = self.current_scope.createValueBinding(v.var_name, token_literal, token_type, type_info, true) catch |err| {
                         return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Failed to create constant {s}: {}", .{ v.var_name, err });
                     };
                     if (self.current_scope.lookupVariable(v.var_name)) |variable2| {
@@ -3538,7 +3582,12 @@ pub const HIRVM = struct {
                 .Tetra => "tetra[]",
                 .Array => "array[]", // Nested arrays
                 .Struct => "struct[]",
-                else => unreachable,
+                .Nothing => "nothing[]",
+                .Map => "map[]",
+                .Enum => "enum[]",
+                .Function => "function[]",
+                .Union => "union[]",
+                .Unknown => "unknown[]",
             },
             .struct_instance => |s| s.type_name,
             .map => "map",

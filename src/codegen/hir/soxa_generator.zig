@@ -1495,14 +1495,18 @@ pub const HIRGenerator = struct {
                         try self.instructions.append(.{ .Label = .{ .name = end_if, .vm_address = 0 } });
                         handled_as_loop_control = true;
                     } else if (!then_is_break and !then_is_continue and (else_is_break or else_is_continue)) {
+                        // DISABLED: This optimization can skip important semantics like debugging output
+                        // or proper execution flow. It's safer to use the standard if-then-else codegen.
+                        //
+                        // Original logic:
                         // Only else branch is control: invert condition
-                        try self.generateExpression(if_expr.condition.?, true);
-                        const end_if = try self.generateLabel("end_if");
-                        const target = if (else_is_break) lc.break_label else lc.continue_label;
-                        // If FALSE -> target, TRUE -> fall through
-                        try self.instructions.append(.{ .JumpCond = .{ .label_true = end_if, .label_false = target, .vm_offset = 0, .condition_type = .Tetra } });
-                        try self.instructions.append(.{ .Label = .{ .name = end_if, .vm_address = 0 } });
-                        handled_as_loop_control = true;
+                        // try self.generateExpression(if_expr.condition.?, true);
+                        // const end_if = try self.generateLabel("end_if");
+                        // const target = if (else_is_break) lc.break_label else lc.continue_label;
+                        // // If FALSE -> target, TRUE -> fall through
+                        // try self.instructions.append(.{ .JumpCond = .{ .label_true = end_if, .label_false = target, .vm_offset = 0, .condition_type = .Tetra } });
+                        // try self.instructions.append(.{ .Label = .{ .name = end_if, .vm_address = 0 } });
+                        // handled_as_loop_control = true;
                     }
                 }
 
@@ -1576,8 +1580,16 @@ pub const HIRGenerator = struct {
                 // Loop body label (where TRUE condition jumps to)
                 try self.instructions.append(.{ .Label = .{ .name = loop_body_label, .vm_address = 0 } });
 
+                // Create a fresh scope per-iteration so const bindings inside the loop
+                // are re-created each time and do not leak across iterations
+                const body_scope_id: u32 = self.label_count + 2000;
+                try self.instructions.append(.{ .EnterScope = .{ .scope_id = body_scope_id, .var_count = 0 } });
+
                 // Generate body
                 try self.generateExpression(while_expr.body, false);
+
+                // Exit iteration scope
+                try self.instructions.append(.{ .ExitScope = .{ .scope_id = body_scope_id } });
 
                 // Jump back to start
                 try self.instructions.append(.{ .Jump = .{ .label = loop_start_label, .vm_offset = 0 } });
