@@ -878,22 +878,8 @@ pub fn allocExpr(self: *Parser, expr: ast.Expr) ErrorList!*ast.Expr {
 pub fn parseIfExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     self.advance(); // consume 'if'
 
-    // Optional parentheses around condition
-    const has_parens = self.peek().type == .LEFT_PAREN;
-    if (has_parens) {
-        self.advance();
-    }
-
+    // Parse the condition expression without assuming parentheses wrap the whole thing
     const condition = (try parseExpression(self)) orelse return error.ExpectedExpression;
-
-    if (has_parens) {
-        if (self.peek().type != .RIGHT_PAREN) {
-            condition.deinit(self.allocator);
-            self.allocator.destroy(condition);
-            return error.ExpectedRightParen;
-        }
-        self.advance();
-    }
 
     var then_expr: *ast.Expr = undefined;
 
@@ -1015,6 +1001,22 @@ pub fn returnExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.E
         },
     };
     return return_expr;
+}
+
+pub fn parseBreakExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+    self.advance(); // consume 'break'
+
+    const break_expr = try self.allocator.create(ast.Expr);
+    break_expr.* = .{
+        .base = .{
+            .id = ast.generateNodeId(),
+            .span = ast.SourceSpan.fromToken(self.previous()),
+        },
+        .data = .{
+            .Break = {},
+        },
+    };
+    return break_expr;
 }
 
 pub fn functionExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
@@ -1205,8 +1207,15 @@ pub fn castExpr(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
 
     // Optional else-branch: "else <expr|{...}>"
     var else_branch: ?*ast.Expr = null;
+
+    // Allow newlines between end of then-branch and else keyword
+    while (self.peek().type == .NEWLINE) self.advance();
+
     if (self.peek().type == .ELSE) {
         self.advance(); // consume 'else'
+
+        // Allow newlines before else-branch body
+        while (self.peek().type == .NEWLINE) self.advance();
 
         if (self.peek().type == .LEFT_BRACE) {
             // Block-style else
@@ -1419,6 +1428,9 @@ pub fn arrayType(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Ex
 pub fn parseArrayLiteral(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     self.advance(); // consume '['
 
+    // Skip optional newlines after '['
+    while (self.peek().type == .NEWLINE) self.advance();
+
     var elements = std.ArrayList(*ast.Expr).init(self.allocator);
     errdefer {
         for (elements.items) |element| {
@@ -1436,12 +1448,17 @@ pub fn parseArrayLiteral(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!
         // Parse remaining elements without type checking
         while (self.peek().type == .COMMA) {
             self.advance(); // consume comma
+            // Skip optional newlines after comma
+            while (self.peek().type == .NEWLINE) self.advance();
             if (self.peek().type == .RIGHT_BRACKET) break;
 
             const element = try parseExpression(self) orelse return error.ExpectedExpression;
             try elements.append(element);
         }
     }
+
+    // Allow trailing newlines before closing bracket
+    while (self.peek().type == .NEWLINE) self.advance();
 
     if (self.peek().type != .RIGHT_BRACKET) {
         return error.ExpectedRightBracket;
