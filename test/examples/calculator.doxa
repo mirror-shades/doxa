@@ -33,18 +33,16 @@ entry function main() {
         rpn as Token[] then {
             const result is evaluate(rpn)
             result as int then {
-                "Output: "?
-                result?
-                "\n"?
+                @print("Output: {result}\n")
             }
             else {
-                "evaluation failed\n"?
+                @print("evaluation failed\n")
             }
         } else {
-            "tokens failed to shunt\n"?
+            @print("tokens failed to shunt\n")
         }
     } else {
-        "tokens failed to parse\n"?
+        @print("tokens failed to parse\n")
     }
 }
 
@@ -200,14 +198,14 @@ function shunt(tokens :: Token[]) returns Token[] | nothing {
             if @length(operators) > 0 and operators[@length(operators) - 1].token_type == TokenType.LPAREN then {
                 @pop(operators)
             } else {
-                ("Mismatched parentheses\n")?
+                @print("Mismatched parentheses\n")
             }
         }
     }
 
     while @length(operators) > 0 {
         const popped is @pop(operators)
-        if popped.token_type == TokenType.LPAREN or popped.token_type == TokenType.RPAREN then ("Mismatched parentheses\n")?
+        if popped.token_type == TokenType.LPAREN or popped.token_type == TokenType.RPAREN then @print("Mismatched parentheses\n")
         @push(output, popped)
     }
 

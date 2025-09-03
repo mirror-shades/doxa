@@ -1888,22 +1888,11 @@ pub const HIRGenerator = struct {
             },
 
             .Print => |print| {
-                std.debug.print("DEBUG: SOXA generator: Print node - expr: {s}, format_template: {s}, arguments: {}, format_parts: {}\n", .{
-                    if (print.expr) |_| "present" else "null",
-                    if (print.format_template) |_| "present" else "null",
-                    if (print.arguments) |args| args.len else 0,
-                    if (print.format_parts) |parts| parts.len else 0,
-                });
-
                 if (print.expr) |print_expr| {
                     // Simple printing case
-                    std.debug.print("DEBUG: SOXA generator: Simple print case\n", .{});
                     try self.generateExpression(print_expr, true);
                     try self.instructions.append(.{ .Print = .{} });
                 } else if (print.format_template) |template| {
-                    // NEW: Use structured FormatTemplate for interpolated printing
-                    std.debug.print("DEBUG: SOXA generator: Using new FormatTemplate with {} parts\n", .{template.parts.len});
-
                     // Generate code for each template part and build correct placeholder mapping
                     var arg_count: u32 = 0;
                     var format_parts = std.ArrayList([]const u8).init(self.allocator);
@@ -1952,11 +1941,7 @@ pub const HIRGenerator = struct {
                         .argument_count = arg_count,
                         .format_part_ids = format_part_ids,
                     } });
-
-                    std.debug.print("DEBUG: SOXA generator: Generated FormatTemplate PrintInterpolated with {} args\n", .{arg_count});
                 } else if (print.arguments) |args| {
-                    // Interpolated printing case (@print)
-                    std.debug.print("DEBUG: SOXA generator: Interpolated print case with {} arguments\n", .{args.len});
                     if (args.len == 0) {
                         // No interpolation - need to push the format string literal
                         // The format_parts should contain the original string
@@ -1981,12 +1966,6 @@ pub const HIRGenerator = struct {
                             try self.generateExpression(arg, true);
                         }
 
-                        std.debug.print("DEBUG: SOXA generator: About to generate PrintInterpolated instruction\n", .{});
-                        std.debug.print("DEBUG: SOXA generator: format_parts: {}, placeholder_indices: {}\n", .{
-                            if (print.format_parts) |parts| parts.len else 0,
-                            if (print.placeholder_indices) |indices| indices.len else 0,
-                        });
-
                         // Store format parts as constants and get their IDs
                         const format_parts = print.format_parts orelse return error.MissingFormatParts;
                         const placeholder_indices = print.placeholder_indices orelse return error.MissingPlaceholderIndices;
@@ -2004,11 +1983,9 @@ pub const HIRGenerator = struct {
                             .argument_count = @intCast(args.len),
                             .format_part_ids = format_part_ids,
                         } });
-
-                        std.debug.print("DEBUG: SOXA generator: Successfully generated PrintInterpolated instruction\n", .{});
                     }
                 } else {
-                    std.debug.print("DEBUG: SOXA generator: No expr and no arguments - InvalidPrintExpression\n", .{});
+                    self.reporter.reportCompileError(null, ErrorCode.INVALID_PRINT_EXPRESSION, "No expr and no arguments - InvalidPrintExpression", .{});
                     return error.InvalidPrintExpression;
                 }
 
