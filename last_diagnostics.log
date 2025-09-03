@@ -1290,3 +1290,13 @@
 [CompileTime][Error][E1003] ./test/misc/bigfile.doxa:394:1: Type mismatch: expected Int, got Union
 [CompileTime][Error][E1003] ./test/misc/bigfile.doxa:392:1: Type mismatch: expected Int, got Union
 [CompileTime][Error][E1003] ./test/misc/bigfile.doxa:392:1: Type mismatch: expected Int, got Union
+[CompileTime][Error][E1014] ./test/examples/calculator.doxa:39:9: Type casting 'as' can only be used with union types, got Array
+[CompileTime][Error][E2017] ./test/examples/calculator.doxa:157:79: Unsupported unary operator: types.token.TokenType.BANG
+[CompileTime][Error][E1003] ./test/examples/calculator.doxa:151:48: Cannot use + operator between Int and String
+[CompileTime][Error][E1003] ./test/examples/calculator.doxa:151:41: Cannot use + operator between String and Unknown
+[CompileTime][Error][E1003] ./test/examples/calculator.doxa:151:41: Cannot use + operator between String and Unknown
+[CompileTime][Error][E1003] ./test/examples/calculator.doxa:151:49: Cannot use + operator between Int and String
+[CompileTime][Error][E1003] ./test/examples/calculator.doxa:151:42: Cannot use + operator between String and Unknown
+[CompileTime][Error][E1003] ./test/examples/calculator.doxa:151:42: Cannot use + operator between String and Unknown
+[CompileTime][Error][E1003] ./test/misc/bigfile.doxa:392:1: Type mismatch: expected Int, got Union
+[CompileTime][Error][E1003] ./test/misc/bigfile.doxa:392:1: Type mismatch: expected Int, got Union
