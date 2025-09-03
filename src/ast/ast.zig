@@ -417,11 +417,46 @@ pub const PeekExpr = struct {
     field_name: ?[]const u8 = null,
 };
 
+/// Represents a format template for string interpolation
+/// Example: "Hello {name}, you are {@string(age)} years old!"
+/// Parts: ["Hello ", Expression(name), ", you are ", Expression(@string(age)), " years old!"]
+pub const FormatTemplate = struct {
+    parts: []FormatPart, // Array of format parts (strings + expressions)
+
+    pub fn deinit(self: *FormatTemplate, allocator: std.mem.Allocator) void {
+        for (self.parts) |*part| {
+            part.deinit(allocator);
+        }
+        allocator.free(self.parts);
+    }
+};
+
+/// A single part of a format template - either a literal string or an expression
+pub const FormatPart = union(enum) {
+    String: []const u8, // Literal string part (e.g., "Hello ")
+    Expression: *Expr, // Embedded expression (e.g., @length(word) - offset)
+
+    pub fn deinit(self: *FormatPart, allocator: std.mem.Allocator) void {
+        switch (self.*) {
+            .String => |str| {
+                allocator.free(str); // Free the duplicated string
+            },
+            .Expression => |expr| {
+                expr.deinit(allocator);
+                allocator.destroy(expr);
+            },
+        }
+    }
+};
+
 pub const PrintExpr = struct {
-    // For simple printing: just expr
+    // For simple printing: just expr (e.g., print(variable))
     expr: ?*Expr,
 
-    // For interpolated printing: format parts and arguments
+    // For structured interpolated printing: format template (e.g., @print("Hello {name}!"))
+    format_template: ?*FormatTemplate,
+
+    // Legacy support for current implementation - will be phased out
     format_parts: ?[]const []const u8, // String parts between placeholders
     arguments: ?[]const *Expr, // Expressions to interpolate
     placeholder_indices: ?[]const u32, // Maps placeholders to argument indices
@@ -433,7 +468,13 @@ pub const PrintExpr = struct {
             allocator.destroy(expr);
         }
 
-        // Clean up interpolation data if present
+        // Clean up new structured format template
+        if (self.format_template) |template| {
+            template.deinit(allocator);
+            allocator.destroy(template);
+        }
+
+        // Clean up legacy interpolation data if present
         if (self.format_parts) |parts| {
             for (parts) |part| {
                 allocator.free(part);
@@ -1328,6 +1369,26 @@ pub fn createExpr(allocator: std.mem.Allocator, data: Expr.Data, span: SourceSpa
         .data = data,
     };
     return expr;
+}
+
+/// Create a FormatTemplate from a list of FormatParts
+pub fn createFormatTemplate(allocator: std.mem.Allocator, parts: []FormatPart) !*FormatTemplate {
+    const template = try allocator.create(FormatTemplate);
+    template.* = .{
+        .parts = parts,
+    };
+    return template;
+}
+
+/// Create a string FormatPart
+pub fn createStringPart(allocator: std.mem.Allocator, text: []const u8) !FormatPart {
+    const owned_text = try allocator.dupe(u8, text);
+    return FormatPart{ .String = owned_text };
+}
+
+/// Create an expression FormatPart
+pub fn createExpressionPart(expr: *Expr) FormatPart {
+    return FormatPart{ .Expression = expr };
 }
 
 //======================================================================

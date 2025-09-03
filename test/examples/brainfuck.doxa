@@ -9,7 +9,7 @@ var tp :: int is 0
 var ip :: int is 0
 
 function getInput() returns byte {
-    "Input: "?
+    @print("Input: ")
     var userInput :: string is @input()
     var newByte :: byte is @bytes(userInput)[0]
     return newByte
@@ -61,7 +61,7 @@ function interpret(scan :: string) {
         if(currentInstruction == "<") then tp -= 1
         if(currentInstruction == "+") then tape[tp] += 0x01
         if(currentInstruction == "-") then tape[tp] -= 0x01
-        if(currentInstruction == ".") then {"Output: "?;tape[tp]?; "\n"?}
+        if(currentInstruction == ".") then {@print("Output: {tape[tp]}\n")}
         if(currentInstruction == ",") then tape[tp] is getInput()
         if(currentInstruction == "[") then startLoop()
         if(currentInstruction == "]") then endLoop()

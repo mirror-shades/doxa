@@ -1,10 +1,10 @@
 pub function imported_function() {
-    "imported function"??;
+    "imported function"?;
     return;
 }
 
 pub function imported_function_input(x :: int) {
-    x??;
+    x?;
     return;
 }
 

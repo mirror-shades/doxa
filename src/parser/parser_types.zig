@@ -1130,10 +1130,10 @@ pub const Parser = struct {
         }
         self.advance();
 
-        // Parse string interpolation to get format parts and placeholder names
+        // Parse string interpolation to get format template and expressions
         const interp_info = try self.parseStringInterpolation(format_expr);
 
-        // Create variable expressions for each placeholder
+        // Use the placeholder expressions directly as arguments (for legacy compatibility)
         var arguments = std.ArrayList(*ast.Expr).init(self.allocator);
         errdefer {
             for (arguments.items) |arg| {
@@ -1143,39 +1143,18 @@ pub const Parser = struct {
             arguments.deinit();
         }
 
-        for (interp_info.placeholder_names) |placeholder_name| {
-            // Create a token for the variable name
-            const var_token = token.Token{
-                .type = .IDENTIFIER,
-                .lexeme = placeholder_name,
-                .literal = .{ .nothing = {} },
-                .line = method_tok.line,
-                .column = method_tok.column,
-                .file = method_tok.file,
-            };
-
-            // Create a variable expression
-            const var_expr = try self.allocator.create(ast.Expr);
-            var_expr.* = .{
-                .base = .{
-                    .id = ast.generateNodeId(),
-                    .span = ast.SourceSpan.fromToken(var_token),
-                },
-                .data = .{
-                    .Variable = var_token,
-                },
-            };
-
-            try arguments.append(var_expr);
+        for (interp_info.placeholder_expressions) |placeholder_expr| {
+            // Use the placeholder expression directly - it's already parsed as an expression
+            try arguments.append(placeholder_expr);
         }
 
         // Create placeholder indices (each placeholder maps to its argument index)
-        const placeholder_indices = try self.allocator.alloc(u32, interp_info.placeholder_names.len);
-        for (0..interp_info.placeholder_names.len) |i| {
-            placeholder_indices[i] = @intCast(i);
+        const placeholder_indices = try self.allocator.alloc(u32, interp_info.placeholder_expressions.len);
+        for (0..interp_info.placeholder_expressions.len) |idx| {
+            placeholder_indices[idx] = @intCast(idx);
         }
 
-        // Create the print expression
+        // Create the print expression with new FormatTemplate structure
         const print_expr = try self.allocator.create(ast.Expr);
         print_expr.* = .{
             .base = .{
@@ -1185,9 +1164,10 @@ pub const Parser = struct {
             .data = .{
                 .Print = .{
                     .expr = null, // No simple expr for method calls
-                    .format_parts = interp_info.format_parts,
-                    .arguments = try arguments.toOwnedSlice(),
-                    .placeholder_indices = placeholder_indices,
+                    .format_template = interp_info.format_template, // NEW: Use structured format template
+                    .format_parts = interp_info.format_parts, // Legacy compatibility
+                    .arguments = try arguments.toOwnedSlice(), // Legacy compatibility
+                    .placeholder_indices = placeholder_indices, // Legacy compatibility
                 },
             },
         };
@@ -1196,10 +1176,12 @@ pub const Parser = struct {
     }
 
     /// Parse string interpolation from format string
-    /// Returns format parts and placeholder names (not indices)
+    /// Returns a structured FormatTemplate with both strings and expressions
     const InterpolationInfo = struct {
+        format_template: *ast.FormatTemplate, // NEW: Structured format template
+        // Legacy fields for backward compatibility during transition
         format_parts: []const []const u8, // String parts between placeholders
-        placeholder_names: []const []const u8, // Names of variables to interpolate
+        placeholder_expressions: []*ast.Expr, // Expressions to interpolate
     };
 
     fn parseStringInterpolation(self: *Parser, format_expr: *ast.Expr) ErrorList!InterpolationInfo {
@@ -1212,11 +1194,30 @@ pub const Parser = struct {
             else => return error.ExpectedStringLiteral,
         };
 
-        var format_parts = std.ArrayList([]const u8).init(self.allocator);
-        var placeholder_names = std.ArrayList([]const u8).init(self.allocator);
+        // Build both new FormatTemplate structure and legacy compatibility fields
+        var template_parts = std.ArrayList(ast.FormatPart).init(self.allocator);
+        var legacy_format_parts = std.ArrayList([]const u8).init(self.allocator);
+        var placeholder_expressions = std.ArrayList(*ast.Expr).init(self.allocator);
+        
         errdefer {
-            format_parts.deinit();
-            placeholder_names.deinit();
+            // Clean up template parts
+            for (template_parts.items) |*part| {
+                part.deinit(self.allocator);
+            }
+            template_parts.deinit();
+            
+            // Clean up legacy parts
+            for (legacy_format_parts.items) |part| {
+                self.allocator.free(part);
+            }
+            legacy_format_parts.deinit();
+            
+            // Clean up expressions
+            for (placeholder_expressions.items) |expr| {
+                expr.deinit(self.allocator);
+                self.allocator.destroy(expr);
+            }
+            placeholder_expressions.deinit();
         }
 
         var i: usize = 0;
@@ -1233,7 +1234,13 @@ pub const Parser = struct {
                 // Found start of placeholder
                 // Add the string part before this placeholder
                 const part = format_string[current_part_start..i];
-                try format_parts.append(try self.allocator.dupe(u8, part));
+                
+                // Add to new template structure
+                const string_part = try ast.createStringPart(self.allocator, part);
+                try template_parts.append(string_part);
+                
+                // Add to legacy structure for backward compatibility
+                try legacy_format_parts.append(try self.allocator.dupe(u8, part));
 
                 // Find the end of the placeholder
                 var j = i + 1;
@@ -1245,9 +1252,18 @@ pub const Parser = struct {
                     return error.UnmatchedOpenBrace;
                 }
 
-                // Extract placeholder name
-                const placeholder_name = format_string[i + 1 .. j];
-                try placeholder_names.append(try self.allocator.dupe(u8, placeholder_name));
+                // Extract placeholder content and parse it as an expression
+                const placeholder_content = format_string[i + 1 .. j];
+                
+                // Parse the placeholder content as an expression
+                const placeholder_expr = try self.parsePlaceholderExpression(placeholder_content);
+                
+                // Add to new template structure
+                const expr_part = ast.createExpressionPart(placeholder_expr);
+                try template_parts.append(expr_part);
+                
+                // Add to legacy structure for backward compatibility
+                try placeholder_expressions.append(placeholder_expr);
 
                 i = j + 1; // Move past the '}'
                 current_part_start = i;
@@ -1258,11 +1274,21 @@ pub const Parser = struct {
 
         // Add the final string part
         const final_part = format_string[current_part_start..];
-        try format_parts.append(try self.allocator.dupe(u8, final_part));
+        
+        // Add to new template structure
+        const final_string_part = try ast.createStringPart(self.allocator, final_part);
+        try template_parts.append(final_string_part);
+        
+        // Add to legacy structure
+        try legacy_format_parts.append(try self.allocator.dupe(u8, final_part));
+
+        // Create the FormatTemplate
+        const format_template = try ast.createFormatTemplate(self.allocator, try template_parts.toOwnedSlice());
 
         return InterpolationInfo{
-            .format_parts = try format_parts.toOwnedSlice(),
-            .placeholder_names = try placeholder_names.toOwnedSlice(),
+            .format_template = format_template,
+            .format_parts = try legacy_format_parts.toOwnedSlice(),
+            .placeholder_expressions = try placeholder_expressions.toOwnedSlice(),
         };
     }
 
@@ -2716,5 +2742,49 @@ pub const Parser = struct {
             return symbols.get(name);
         }
         return null;
+    }
+
+    /// Parse a placeholder expression from string content
+    /// This handles cases like @string(number), @length(variable_name), etc.
+    fn parsePlaceholderExpression(self: *Parser, content: []const u8) ErrorList!*ast.Expr {
+        // Create a temporary lexer for the placeholder content
+        var temp_lexer = LexicalAnalyzer.init(self.allocator, content, self.current_file, self.reporter);
+        defer temp_lexer.deinit();
+
+        // Initialize keywords and lex the content into tokens
+        try temp_lexer.initKeywords();
+        const tokens = try temp_lexer.lexTokens();
+        defer tokens.deinit();
+
+        // Create a temporary parser for the tokens
+        var temp_parser = Parser.init(self.allocator, tokens.items, self.current_file, self.reporter);
+        defer temp_parser.deinit();
+
+        // Parse the expression
+        const expr = try expression_parser.parseExpression(&temp_parser) orelse {
+            // If parsing fails, fall back to treating it as a variable name
+            const var_token = token.Token{
+                .type = .IDENTIFIER,
+                .lexeme = content,
+                .literal = .{ .nothing = {} },
+                .line = 0,
+                .column = 0,
+                .file = self.current_file,
+            };
+
+            const var_expr = try self.allocator.create(ast.Expr);
+            var_expr.* = .{
+                .base = .{
+                    .id = ast.generateNodeId(),
+                    .span = ast.SourceSpan.fromToken(var_token),
+                },
+                .data = .{
+                    .Variable = var_token,
+                },
+            };
+            return var_expr;
+        };
+
+        return expr;
     }
 };

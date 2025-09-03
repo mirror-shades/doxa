@@ -593,8 +593,9 @@ pub const SoxaTextParser = struct {
             for (format_parts) |*part| {
                 part.* = "";
             }
-            for (placeholder_indices) |*index| {
-                index.* = 0;
+            // Default mapping: placeholder i -> argument i (0..N-1)
+            for (placeholder_indices, 0..) |*index, i| {
+                index.* = @intCast(i);
             }
             for (format_part_ids.items, 0..) |id, i| {
                 format_part_ids_array[i] = id;

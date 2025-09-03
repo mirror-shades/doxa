@@ -52,65 +52,65 @@ var b is 0x0C
 /////
 // INPUT 
 /////
-@input()??
+@input()?
 
 /////
 // LENGTH
 /////
-@length(arr)??          // 5
-@length(text)??         // 11
+@length(arr)?          // 5
+@length(text)?         // 11
 
 /////
 // PUSH
 /////
-arr??                  // [1, 2, 3, 4, 5]
+arr?                  // [1, 2, 3, 4, 5]
 @push(arr, 6)
-arr??                  // [1, 2, 3, 4, 5, 6]
+arr?                  // [1, 2, 3, 4, 5, 6]
 
 /////
 // BYTES 
 /////
-@bytes(text)??                 // [0x68, 0x65, 0x6C, 0x6C, 0x6F, 0x20, 0x77, 0x6F, 0x72, 0x6C, 0x64]
+@bytes(text)?                 // [0x68, 0x65, 0x6C, 0x6C, 0x6F, 0x20, 0x77, 0x6F, 0x72, 0x6C, 0x64]
 
 /////
 // STRING 
 /////
-@string(i)??                // "42"
-@string(f)??                // "8.8"
-@string(b)??                // "0x0C"
-@string(arr)??                // "[1, 2, 3, 4, 5, 6]"
+@string(i)?                // "42"
+@string(f)?                // "8.8"
+@string(b)?                // "0x0C"
+@string(arr)?                // "[1, 2, 3, 4, 5, 6]"
 
 /////
 // INT 
 /////
-@int(f)??                //  8
-@int(b)??                // 12
+@int(f)?                //  8
+@int(b)?                // 12
 
 /////
 // FLOAT
 /////
-@float(i)??                // 42.0
-@float(b)??                // 12.0
+@float(i)?                // 42.0
+@float(b)?                // 12.0
 
 /////
 // BYTE
 /////
-@byte(f)??                // 0x08
-@byte(i)??                // 02A
+@byte(f)?                // 0x08
+@byte(i)?                // 02A
 
 /////
 // TYPE 
 /////
-@type(10)?? // "int"
-@type(0x0A)?? // "byte"
-@type(10.0)?? // "float"
-@type("hello")?? // "string"
-@type(true)?? // "tetra"
-@type([1,2])?? // "array"
+@type(10)? // "int"
+@type(0x0A)? // "byte"
+@type(10.0)? // "float"
+@type("hello")? // "string"
+@type(true)? // "tetra"
+@type([1,2])? // "array"
 
 /////
 // POP
 /////
 // var popped is @pop(arr)
-// popped??
-// arr??
+// popped?
+// arr?

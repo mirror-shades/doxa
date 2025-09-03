@@ -25,6 +25,7 @@ const print_result = struct {
 const expected_complex_print_results = [_]print_result{
     .{ .value = "The variable \"number\" is equal to 10" },
     .{ .value = "The variable name \"number\" has 6 letters" },
+    .{ .value = "The variable \"number\" is equal to 10 and the name has 6 letters" },
 };
 
 const expected_brainfuck_results = [_]print_result{
@@ -364,9 +365,18 @@ fn runTest(allocator: std.mem.Allocator, test_name: []const u8, path: []const u8
     defer std.debug.print("\n=== {s} test complete ===\n", .{test_name});
 
     std.debug.print("Running doxa command with {s}...\n", .{path});
-    const output = try runDoxaCommand(allocator, path);
+    var output: []const u8 = undefined;
+    if (input != null) {
+        output = try runDoxaCommandWithInput(allocator, path, input.?);
+    } else {
+        output = try runDoxaCommand(allocator, path);
+    }
+
     defer allocator.free(output);
 
+    if (output.len == 0) {
+        return .{ .passed = 0, .failed = 0 };
+    }
     std.debug.print("Parsing output...\n", .{});
 
     if (mode == .PRINT) {

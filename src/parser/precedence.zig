@@ -521,6 +521,10 @@ fn printValue(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Ex
             // Use regular Print for non-struct values
             .Print = .{
                 .expr = left.?,
+                .format_template = null,
+                .format_parts = null,
+                .arguments = null,
+                .placeholder_indices = null,
             },
         },
     };

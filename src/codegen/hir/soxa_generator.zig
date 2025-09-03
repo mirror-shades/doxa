@@ -1888,8 +1888,9 @@ pub const HIRGenerator = struct {
             },
 
             .Print => |print| {
-                std.debug.print("DEBUG: SOXA generator: Print node - expr: {s}, arguments: {}, format_parts: {}\n", .{
+                std.debug.print("DEBUG: SOXA generator: Print node - expr: {s}, format_template: {s}, arguments: {}, format_parts: {}\n", .{
                     if (print.expr) |_| "present" else "null",
+                    if (print.format_template) |_| "present" else "null",
                     if (print.arguments) |args| args.len else 0,
                     if (print.format_parts) |parts| parts.len else 0,
                 });
@@ -1899,6 +1900,60 @@ pub const HIRGenerator = struct {
                     std.debug.print("DEBUG: SOXA generator: Simple print case\n", .{});
                     try self.generateExpression(print_expr, true);
                     try self.instructions.append(.{ .Print = .{} });
+                } else if (print.format_template) |template| {
+                    // NEW: Use structured FormatTemplate for interpolated printing
+                    std.debug.print("DEBUG: SOXA generator: Using new FormatTemplate with {} parts\n", .{template.parts.len});
+
+                    // Generate code for each template part and build correct placeholder mapping
+                    var arg_count: u32 = 0;
+                    var format_parts = std.ArrayList([]const u8).init(self.allocator);
+                    // VM expects placeholder_indices to be argument indices (0..N-1) by placeholder order.
+                    // We will later interleave using the format part positions, so here we only record arg order.
+                    var placeholder_indices = std.ArrayList(u32).init(self.allocator);
+                    var expressions = std.ArrayList(*ast.Expr).init(self.allocator);
+                    defer format_parts.deinit();
+                    defer placeholder_indices.deinit();
+                    defer expressions.deinit();
+
+                    // First pass: collect all expressions and build format parts
+                    for (template.parts) |part| {
+                        switch (part) {
+                            .String => |str| {
+                                // Add string literal to format parts
+                                try format_parts.append(str);
+                            },
+                            .Expression => |part_expr| {
+                                // Store expression for later evaluation
+                                try expressions.append(part_expr);
+                                // Map placeholder to its argument index by encounter order
+                                try placeholder_indices.append(arg_count);
+                                arg_count += 1;
+                            },
+                        }
+                    }
+
+                    // Second pass: evaluate expressions in encounter order (left-to-right)
+                    // VM will reverse-pop to restore original order
+                    for (expressions.items) |expr_item| {
+                        try self.generateExpression(expr_item, true);
+                    }
+
+                    // Store format parts as constants and get their IDs
+                    var format_part_ids = try self.allocator.alloc(u32, format_parts.items.len);
+                    for (format_parts.items, 0..) |part, i| {
+                        const constant_id = try self.addConstant(.{ .string = part });
+                        format_part_ids[i] = constant_id;
+                    }
+
+                    // Generate interpolated print instruction
+                    try self.instructions.append(.{ .PrintInterpolated = .{
+                        .format_parts = try format_parts.toOwnedSlice(),
+                        .placeholder_indices = try placeholder_indices.toOwnedSlice(),
+                        .argument_count = arg_count,
+                        .format_part_ids = format_part_ids,
+                    } });
+
+                    std.debug.print("DEBUG: SOXA generator: Generated FormatTemplate PrintInterpolated with {} args\n", .{arg_count});
                 } else if (print.arguments) |args| {
                     // Interpolated printing case (@print)
                     std.debug.print("DEBUG: SOXA generator: Interpolated print case with {} arguments\n", .{args.len});
