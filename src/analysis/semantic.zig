@@ -918,13 +918,7 @@ pub const SemanticAnalyzer = struct {
                 },
                 .Expression => |expr| {
                     if (expr) |expression| {
-                        // Check if this is a ForEach expression that needs special handling
-                        if (expression.data == .ForEach) {
-                            try self.validateForEachExpression(expression.data.ForEach, .{ .location = getLocationFromBase(stmt.base) });
-                        } else {
-                            // Validate the expression, which will trigger type checking for assignments
-                            _ = try self.inferTypeFromExpr(expression);
-                        }
+                        _ = try self.inferTypeFromExpr(expression);
                     }
                 },
                 .Return => |return_stmt| {
@@ -1784,9 +1778,22 @@ pub const SemanticAnalyzer = struct {
                         // This allows different types to be peeked in different branches
                         type_info.* = then_type.*;
                     } else {
-                        // At least one is not a peek expression - unify types as usual
-                        try self.unifyTypes(then_type, else_type, .{ .location = getLocationFromBase(expr.base) });
-                        type_info.* = then_type.*;
+                        // If one branch is effectively "no value" (Nothing) and the other produces a value,
+                        // prefer the non-Nothing type without forcing unification. This covers cases where one
+                        // branch contains control-flow like return/print and the other is a statement.
+                        if (then_type.base == .Nothing and else_type.base != .Nothing) {
+                            type_info.* = else_type.*;
+                        } else if (else_type.base == .Nothing and then_type.base != .Nothing) {
+                            type_info.* = then_type.*;
+                        } else if (then_type.base != else_type.base) {
+                            // As a fallback when branches differ, allow a union of both branch types
+                            var members = [_]*ast.TypeInfo{ then_type, else_type };
+                            const u = try self.createUnionType(members[0..]);
+                            type_info.* = u.*;
+                        } else {
+                            // Types match - propagate
+                            type_info.* = then_type.*;
+                        }
                     }
                 } else {
                     type_info.* = then_type.*;
@@ -1810,154 +1817,7 @@ pub const SemanticAnalyzer = struct {
 
                 type_info.* = .{ .base = .Tetra };
             },
-            .While => |while_expr| {
-                const condition_type = try self.inferTypeFromExpr(while_expr.condition);
-                if (condition_type.base != .Tetra) {
-                    self.reporter.reportCompileError(
-                        getLocationFromBase(expr.base),
-                        ErrorCode.INVALID_CONDITION_TYPE,
-                        "While condition must be tetra, got {s}",
-                        .{@tagName(condition_type.base)},
-                    );
-                    self.fatal_error = true;
-                    type_info.base = .Nothing;
-                    return type_info;
-                }
-
-                _ = try self.inferTypeFromExpr(while_expr.body);
-                type_info.* = .{ .base = .Nothing }; // While expressions have no value
-            },
-            .For => |for_expr| {
-                // Create a scope for the loop variables
-                const loop_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
-                const previous_scope = self.current_scope;
-                self.current_scope = loop_scope;
-                defer {
-                    self.current_scope = previous_scope;
-                    loop_scope.deinit();
-                }
-
-                // Process the initializer if present
-                if (for_expr.initializer) |init_stmt| {
-                    try self.validateStatements(&[_]ast.Stmt{init_stmt.*});
-                }
-
-                // Check the condition
-                if (for_expr.condition) |condition| {
-                    const condition_type = try self.inferTypeFromExpr(condition);
-                    if (condition_type.base != .Tetra) {
-                        self.reporter.reportCompileError(
-                            getLocationFromBase(expr.base),
-                            ErrorCode.INVALID_CONDITION_TYPE,
-                            "For condition must be tetra, got {s}",
-                            .{@tagName(condition_type.base)},
-                        );
-                        self.fatal_error = true;
-                        type_info.base = .Nothing;
-                        return type_info;
-                    }
-                }
-
-                // Process the body
-                _ = try self.inferTypeFromExpr(for_expr.body);
-                type_info.* = .{ .base = .Nothing }; // For expressions have no value
-            },
-            .ForEach => |foreach_expr| {
-                const container_type = try self.inferTypeFromExpr(foreach_expr.array);
-                if (container_type.base != .Array and container_type.base != .String) {
-                    self.reporter.reportCompileError(
-                        getLocationFromBase(expr.base),
-                        ErrorCode.INVALID_ARRAY_TYPE,
-                        "ForEach requires array or string type, got {s}",
-                        .{@tagName(container_type.base)},
-                    );
-                    self.fatal_error = true;
-                    type_info.base = .Nothing;
-                    return type_info;
-                }
-                // ForEach is a statement, it doesn't produce a value
-                type_info.* = .{ .base = .Nothing };
-
-                // Create a scope for the loop variables
-                const loop_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
-
-                // Infer the element type from the container type
-                var element_type = ast.TypeInfo{ .base = .Nothing, .is_mutable = false };
-                if (container_type.base == .Array) {
-                    if (container_type.array_type) |element_type_info| {
-                        element_type = element_type_info.*;
-                    }
-                } else if (container_type.base == .String) {
-                    element_type = .{ .base = .String };
-                }
-
-                // Add the item variable to the loop scope
-                _ = loop_scope.createValueBinding(
-                    foreach_expr.item_name.lexeme,
-                    TokenLiteral{ .nothing = {} }, // Will be set at runtime
-                    self.convertTypeToTokenType(element_type.base),
-                    &element_type,
-                    false, // Loop variables are mutable
-                ) catch |err| {
-                    if (err == error.DuplicateVariableName) {
-                        self.reporter.reportCompileError(
-                            getLocationFromBase(expr.base),
-                            ErrorCode.DUPLICATE_VARIABLE,
-                            "Duplicate loop variable name '{s}'",
-                            .{foreach_expr.item_name.lexeme},
-                        );
-                        self.fatal_error = true;
-                        loop_scope.deinit();
-                        return type_info;
-                    } else {
-                        loop_scope.deinit();
-                        return err;
-                    }
-                };
-
-                // Add the index variable to the loop scope if present
-                if (foreach_expr.index_name) |index_name| {
-                    var index_type_info = ast.TypeInfo{ .base = .Int, .is_mutable = false };
-                    _ = loop_scope.createValueBinding(
-                        index_name.lexeme,
-                        TokenLiteral{ .nothing = {} }, // Will be set at runtime
-                        .INT, // Index is always an integer
-                        &index_type_info,
-                        false, // Loop variables are mutable
-                    ) catch |err| {
-                        if (err == error.DuplicateVariableName) {
-                            self.reporter.reportCompileError(
-                                getLocationFromBase(expr.base),
-                                ErrorCode.DUPLICATE_VARIABLE,
-                                "Duplicate loop variable name '{s}'",
-                                .{index_name.lexeme},
-                            );
-                            self.fatal_error = true;
-                            loop_scope.deinit();
-                            return type_info;
-                        } else {
-                            loop_scope.deinit();
-                            return err;
-                        }
-                    };
-                }
-
-                // Temporarily set current scope to loop scope
-                const prev_scope = self.current_scope;
-                self.current_scope = loop_scope;
-
-                // Analyze the body statements in the loop scope
-                for (foreach_expr.body) |stmt| {
-                    try self.validateStatements(&[_]ast.Stmt{stmt});
-                }
-
-                // Restore previous scope and clean up loop scope
-                self.current_scope = prev_scope;
-                loop_scope.deinit();
-
-                // ForEach is a statement-like expression; it produces no value
-                type_info.* = .{ .base = .Nothing };
-            },
+            // (Loop case handled earlier in this switch)
             .Match => |match_expr| {
                 _ = try self.inferTypeFromExpr(match_expr.value);
 
@@ -3520,8 +3380,14 @@ pub const SemanticAnalyzer = struct {
                 }
 
                 if (self.in_loop_scope) {
-                    // In statement context (like ForEach bodies), a block has no value
-                    type_info.* = .{ .base = .Nothing };
+                    // If we are in a loop scope, the block usually has no value in terms of control flow.
+                    // However, if the block contains an expression that returns a value (e.g., an error),
+                    // we should propagate that type.
+                    if (value_type_ptr) |vt| {
+                        type_info.* = vt.*;
+                    } else {
+                        type_info.* = .{ .base = .Nothing };
+                    }
                 } else if (value_type_ptr) |vt| {
                     type_info.* = vt.*;
                 } else {
@@ -3690,6 +3556,67 @@ pub const SemanticAnalyzer = struct {
                     type_info.* = target_type_info.*;
                 }
             },
+            .Loop => |loop| {
+                // Create outer loop scope (for loop-level variables)
+                const outer_loop_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
+                const prev_scope = self.current_scope;
+                self.current_scope = outer_loop_scope;
+                defer {
+                    self.current_scope = prev_scope;
+                    outer_loop_scope.deinit();
+                }
+
+                const prev_in_loop_scope = self.in_loop_scope;
+                self.in_loop_scope = true;
+                defer self.in_loop_scope = prev_in_loop_scope;
+
+                // Handle optional initializer statement
+                if (loop.var_decl) |vd| {
+                    var single: [1]ast.Stmt = .{vd.*};
+                    try self.validateStatements(single[0..]);
+                }
+
+                // Analyze optional condition
+                if (loop.condition) |cond| {
+                    _ = try self.inferTypeFromExpr(cond);
+                }
+
+                // Create a new scope for EACH ITERATION
+                const iteration_scope = try self.memory.scope_manager.createScope(outer_loop_scope, self.memory);
+                defer iteration_scope.deinit();
+
+                // Rebind loop variable for each iteration
+                if (loop.var_decl) |vd| {
+                    // Save current scope
+                    const saved_scope = self.current_scope;
+                    self.current_scope = iteration_scope;
+
+                    // Re-analyze variable declaration in iteration scope
+                    var single: [1]ast.Stmt = .{vd.*};
+                    try self.validateStatements(single[0..]);
+
+                    // Restore scope
+                    self.current_scope = saved_scope;
+                }
+
+                // Analyze loop body in iteration scope
+                {
+                    const saved_scope = self.current_scope;
+                    self.current_scope = iteration_scope;
+                    defer self.current_scope = saved_scope;
+
+                    _ = try self.inferTypeFromExpr(loop.body);
+                }
+
+                // Analyze optional step
+                if (loop.step) |stp| {
+                    _ = try self.inferTypeFromExpr(stp);
+                }
+
+                // Loops do not yield a value
+                type_info.* = .{ .base = .Nothing };
+            },
+            // No ForEach expression variant; 'each' is desugared to a Loop statement
         }
 
         // Cache the result
@@ -4548,9 +4475,6 @@ pub const SemanticAnalyzer = struct {
                             if (if_returns) {
                                 has_return = true;
                             }
-                        } else if (expression.data == .ForEach) {
-                            // ForEach expressions don't return values - they're control flow constructs
-                            // No need to check for return values
                         }
                     }
                 },
@@ -4641,102 +4565,6 @@ pub const SemanticAnalyzer = struct {
         return self.in_loop_scope;
     }
 
-    fn validateForEachExpression(self: *SemanticAnalyzer, foreach_expr: ast.ForEachExpr, span: ast.SourceSpan) ErrorList!void {
-        const prev_in_loop = self.in_loop_scope;
-        self.in_loop_scope = true;
-        defer self.in_loop_scope = prev_in_loop;
-
-        // Validate the container expression
-        const container_type = try self.inferTypeFromExpr(foreach_expr.array);
-        if (container_type.base != .Array and container_type.base != .String) {
-            self.reporter.reportCompileError(
-                span.location,
-                ErrorCode.INVALID_ARRAY_TYPE,
-                "ForEach requires array or string type, got {s}",
-                .{@tagName(container_type.base)},
-            );
-            self.fatal_error = true;
-            return;
-        }
-
-        // Create a scope for the loop variables but don't try to unify statement expression types
-        const loop_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
-
-        // Infer the element type from the array type
-        var element_type = ast.TypeInfo{ .base = .Nothing, .is_mutable = false };
-        if (container_type.base == .Array) {
-            if (container_type.array_type) |element_type_info| {
-                element_type = element_type_info.*;
-            }
-        } else if (container_type.base == .String) {
-            element_type = .{ .base = .String };
-        }
-
-        // Add the item variable to the loop scope
-        _ = loop_scope.createValueBinding(
-            foreach_expr.item_name.lexeme,
-            TokenLiteral{ .nothing = {} }, // Will be set at runtime
-            self.convertTypeToTokenType(element_type.base),
-            &element_type,
-            false, // Loop variables are mutable
-        ) catch |err| {
-            if (err == error.DuplicateVariableName) {
-                self.reporter.reportCompileError(
-                    span.location,
-                    ErrorCode.DUPLICATE_BOUND_VARIABLE_NAME,
-                    "Duplicate loop variable name '{s}'",
-                    .{foreach_expr.item_name.lexeme},
-                );
-                self.fatal_error = true;
-                loop_scope.deinit();
-                return;
-            } else {
-                loop_scope.deinit();
-                return err;
-            }
-        };
-
-        // Add the index variable to the loop scope if present
-        if (foreach_expr.index_name) |index_name| {
-            var index_type_info = ast.TypeInfo{ .base = .Int, .is_mutable = false };
-            _ = loop_scope.createValueBinding(
-                index_name.lexeme,
-                TokenLiteral{ .nothing = {} }, // Will be set at runtime
-                .INT, // Index is always an integer
-                &index_type_info,
-                false, // Loop variables are mutable
-            ) catch |err| {
-                if (err == error.DuplicateVariableName) {
-                    self.reporter.reportCompileError(
-                        span.location,
-                        ErrorCode.DUPLICATE_BOUND_VARIABLE_NAME,
-                        "Duplicate loop variable name '{s}'",
-                        .{index_name.lexeme},
-                    );
-                    self.fatal_error = true;
-                    loop_scope.deinit();
-                    return error.DuplicateVariableName;
-                } else {
-                    loop_scope.deinit();
-                    return err;
-                }
-            };
-        }
-
-        // Temporarily set current scope to loop scope
-        const prev_scope = self.current_scope;
-        self.current_scope = loop_scope;
-
-        // Analyze the body statements in the loop scope
-        for (foreach_expr.body) |stmt| {
-            try self.validateStatements(&[_]ast.Stmt{stmt});
-        }
-
-        // Restore previous scope and clean up loop scope
-        self.current_scope = prev_scope;
-        loop_scope.deinit();
-    }
-
     // NEW: Validate if an expression returns a value
     fn validateExpressionReturns(self: *SemanticAnalyzer, expr: *ast.Expr, expected_return_type: ast.TypeInfo, func_span: ast.SourceSpan) ErrorList!bool {
         switch (expr.data) {
@@ -4763,10 +4591,6 @@ pub const SemanticAnalyzer = struct {
                 } else {
                     return block_returns;
                 }
-            },
-            .ForEach => {
-                // ForEach expressions don't return values - they're control flow constructs
-                return false;
             },
             else => {
                 // Other expressions don't return values in the control flow sense
@@ -4984,6 +4808,7 @@ pub const SemanticAnalyzer = struct {
             .If => {
                 try self.collectReturnTypesFromIf(expr, return_types);
             },
+            // No ForEach expression variant; 'each' is desugared to a Loop statement
             .Block => |block| {
                 // Check statements in the block for return statements
                 try self.collectReturnTypes(block.statements, return_types);
@@ -4992,10 +4817,6 @@ pub const SemanticAnalyzer = struct {
                 if (block.value) |value| {
                     try self.collectReturnTypesFromExpr(value, return_types);
                 }
-            },
-            .ForEach => |foreach_expr| {
-                // ForEach carries a body of statements; collect returns from it
-                try self.collectReturnTypes(foreach_expr.body, return_types);
             },
             else => {
                 // Other expressions don't return values in the control flow sense

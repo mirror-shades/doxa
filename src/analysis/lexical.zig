@@ -85,6 +85,7 @@ pub const LexicalAnalyzer = struct {
         try self.keywords.put("then", .THEN);
         try self.keywords.put("else", .ELSE);
         try self.keywords.put("while", .WHILE);
+        try self.keywords.put("do", .DO);
         try self.keywords.put("for", .FOR);
         try self.keywords.put("each", .EACH);
         try self.keywords.put("function", .FUNCTION);

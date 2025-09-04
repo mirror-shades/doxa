@@ -343,6 +343,105 @@ pub fn parseMatchExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*a
     return match_expr;
 }
 
+pub fn doExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+    self.advance(); // consume 'do'
+
+    var step_expr: ?*ast.Expr = null;
+    var condition: ?*ast.Expr = null;
+    var body: *ast.Expr = undefined;
+
+    // Case 1: Block immediately after 'do' => could be step block or body block
+    if (self.peek().type == .LEFT_BRACE) {
+        // Parse the block expression first
+        const first_block = try Parser.block(self, null, .NONE) orelse return error.ExpectedLeftBrace;
+
+        // If followed by 'while', the first block is the step block
+        if (self.peek().type == .WHILE) {
+            step_expr = first_block;
+            self.advance(); // consume 'while'
+
+            // Optional parentheses around condition
+            const has_parens = self.peek().type == .LEFT_PAREN;
+            if (has_parens) self.advance();
+
+            condition = try parseExpression(self);
+            if (has_parens) {
+                if (self.peek().type != .RIGHT_PAREN) return error.ExpectedRightParen;
+                self.advance();
+            }
+
+            // Parse loop body
+            if (self.peek().type == .LEFT_BRACE) {
+                body = (try Parser.block(self, null, .NONE)) orelse return error.ExpectedLeftBrace;
+            } else {
+                body = (try parseExpression(self)) orelse return error.ExpectedExpression;
+            }
+        } else {
+            // No while => this first block is the body of an infinite loop
+            body = first_block;
+        }
+    } else if (self.peek().type == .WHILE) {
+        // do while <cond> { body }  (no explicit step)
+        self.advance(); // consume 'while'
+
+        // Optional parentheses around condition
+        const has_parens = self.peek().type == .LEFT_PAREN;
+        if (has_parens) self.advance();
+
+        condition = try parseExpression(self);
+        if (has_parens) {
+            if (self.peek().type != .RIGHT_PAREN) return error.ExpectedRightParen;
+            self.advance();
+        }
+
+        // Body
+        if (self.peek().type == .LEFT_BRACE) {
+            body = (try Parser.block(self, null, .NONE)) orelse return error.ExpectedLeftBrace;
+        } else {
+            body = (try parseExpression(self)) orelse return error.ExpectedExpression;
+        }
+    } else {
+        // Parse a single-step expression, then optional while, then body
+        step_expr = try parseExpression(self) orelse return error.ExpectedExpression;
+
+        if (self.peek().type == .WHILE) {
+            self.advance(); // consume 'while'
+
+            // Optional parentheses around condition
+            const has_parens = self.peek().type == .LEFT_PAREN;
+            if (has_parens) self.advance();
+
+            condition = try parseExpression(self);
+            if (has_parens) {
+                if (self.peek().type != .RIGHT_PAREN) return error.ExpectedRightParen;
+                self.advance();
+            }
+        }
+
+        // Body
+        if (self.peek().type == .LEFT_BRACE) {
+            body = (try Parser.block(self, null, .NONE)) orelse return error.ExpectedLeftBrace;
+        } else {
+            body = (try parseExpression(self)) orelse return error.ExpectedExpression;
+        }
+    }
+
+    const loop_expr = try self.allocator.create(ast.Expr);
+    loop_expr.* = .{
+        .base = .{
+            .id = ast.generateNodeId(),
+            .span = ast.SourceSpan.fromToken(self.previous()),
+        },
+        .data = .{ .Loop = .{
+            .var_decl = null,
+            .condition = condition,
+            .step = step_expr,
+            .body = body,
+        } },
+    };
+    return loop_expr;
+}
+
 pub fn whileExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     self.advance(); // consume 'while'
 
@@ -363,76 +462,233 @@ pub fn whileExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Ex
         self.advance();
     }
 
-    // Parse the loop body as a block statement if we see a left brace
+    var step_expr: ?*ast.Expr = null;
     var body: *ast.Expr = undefined;
-    if (self.peek().type == .LEFT_BRACE) {
-        const block_stmts = try statement_parser.parseBlockStmt(self);
-        const block_expr = try self.allocator.create(ast.Expr);
-        block_expr.* = .{
-            .base = .{
-                .id = ast.generateNodeId(),
-                .span = ast.SourceSpan.fromToken(self.previous()),
-            },
-            .data = .{
-                .Block = .{
-                    .statements = block_stmts,
-                    .value = null, // No final expression value for the block
+
+    // Check if this is a "while condition do step { body }" construct
+    if (self.peek().type == .DO) {
+        self.advance(); // consume 'do'
+
+        // Parse the step block
+        if (self.peek().type == .LEFT_BRACE) {
+            step_expr = (try Parser.block(self, null, .NONE)) orelse return error.ExpectedLeftBrace;
+        } else {
+            step_expr = (try parseExpression(self)) orelse return error.ExpectedExpression;
+        }
+
+        // Parse the loop body
+        if (self.peek().type == .LEFT_BRACE) {
+            const block_stmts = try statement_parser.parseBlockStmt(self);
+            const block_expr = try self.allocator.create(ast.Expr);
+            block_expr.* = .{
+                .base = .{
+                    .id = ast.generateNodeId(),
+                    .span = ast.SourceSpan.fromToken(self.previous()),
                 },
-            },
-        };
-        body = block_expr;
+                .data = .{
+                    .Block = .{
+                        .statements = block_stmts,
+                        .value = null, // No final expression value for the block
+                    },
+                },
+            };
+            body = block_expr;
+        } else {
+            body = (try parseExpression(self)) orelse {
+                condition.deinit(self.allocator);
+                self.allocator.destroy(condition);
+                if (step_expr) |step| {
+                    step.deinit(self.allocator);
+                    self.allocator.destroy(step);
+                }
+                return error.ExpectedExpression;
+            };
+        }
     } else {
-        body = (try parseExpression(self)) orelse {
-            condition.deinit(self.allocator);
-            self.allocator.destroy(condition);
-            return error.ExpectedExpression;
-        };
+        // Regular while loop: "while condition { body }"
+        if (self.peek().type == .LEFT_BRACE) {
+            const block_stmts = try statement_parser.parseBlockStmt(self);
+            const block_expr = try self.allocator.create(ast.Expr);
+            block_expr.* = .{
+                .base = .{
+                    .id = ast.generateNodeId(),
+                    .span = ast.SourceSpan.fromToken(self.previous()),
+                },
+                .data = .{
+                    .Block = .{
+                        .statements = block_stmts,
+                        .value = null, // No final expression value for the block
+                    },
+                },
+            };
+            body = block_expr;
+        } else {
+            body = (try parseExpression(self)) orelse {
+                condition.deinit(self.allocator);
+                self.allocator.destroy(condition);
+                return error.ExpectedExpression;
+            };
+        }
     }
 
-    const while_expr = try self.allocator.create(ast.Expr);
-    while_expr.* = .{
+    const loop_expr = try self.allocator.create(ast.Expr);
+    loop_expr.* = .{
         .base = .{
             .id = ast.generateNodeId(),
             .span = ast.SourceSpan.fromToken(self.previous()),
         },
-        .data = .{
-            .While = .{
-                .condition = condition,
-                .body = body,
-            },
-        },
+        .data = .{ .Loop = .{
+            .var_decl = null,
+            .condition = condition,
+            .step = step_expr,
+            .body = body,
+        } },
     };
-    return while_expr;
+    return loop_expr;
 }
 
 pub fn forExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     self.advance(); // consume 'for'
 
+    var var_decl: ?*ast.Stmt = null;
+    var condition: ?*ast.Expr = null;
+    var step_expr: ?*ast.Expr = null;
+    var body: *ast.Expr = undefined;
+
+    // Check if this is the new syntax without parentheses
     if (self.peek().type != .LEFT_PAREN) {
-        return error.ExpectedLeftParen;
+        // Parse loop variable (required)
+        if (self.peek().type != .IDENTIFIER) {
+            return error.ExpectedIdentifier;
+        }
+        const var_name = self.peek();
+        self.advance();
+
+        // Check for optional initializer: "for x is 10 ..."
+        if (self.peek().type == .ASSIGN) {
+            self.advance(); // consume 'is'
+            const initializer = (try parseExpression(self)) orelse return error.ExpectedExpression;
+
+            // Create variable declaration
+            const var_decl_stmt = try self.allocator.create(ast.Stmt);
+            var_decl_stmt.* = .{
+                .base = .{
+                    .id = ast.generateNodeId(),
+                    .span = ast.SourceSpan.fromToken(var_name),
+                },
+                .data = .{
+                    .VarDecl = .{
+                        .name = var_name,
+                        .type_info = ast.TypeInfo{ .base = .Int, .is_mutable = true },
+                        .initializer = initializer,
+                        .is_public = false,
+                    },
+                },
+            };
+            var_decl = var_decl_stmt;
+        } else {
+            // No initializer, create variable declaration with default value (0)
+            const zero_expr = try self.allocator.create(ast.Expr);
+            zero_expr.* = .{
+                .base = .{
+                    .id = ast.generateNodeId(),
+                    .span = ast.SourceSpan.fromToken(var_name),
+                },
+                .data = .{ .Literal = .{ .int = 0 } },
+            };
+
+            const var_decl_stmt = try self.allocator.create(ast.Stmt);
+            var_decl_stmt.* = .{
+                .base = .{
+                    .id = ast.generateNodeId(),
+                    .span = ast.SourceSpan.fromToken(var_name),
+                },
+                .data = .{
+                    .VarDecl = .{
+                        .name = var_name,
+                        .type_info = ast.TypeInfo{ .base = .Int, .is_mutable = true },
+                        .initializer = zero_expr,
+                        .is_public = false,
+                    },
+                },
+            };
+            var_decl = var_decl_stmt;
+        }
+
+        // Check for optional condition: "for x while condition ..."
+        if (self.peek().type == .WHILE) {
+            self.advance(); // consume 'while'
+            condition = (try parseExpression(self)) orelse return error.ExpectedExpression;
+        }
+
+        // Check for step: "for x do step ..."
+        if (self.peek().type == .DO) {
+            self.advance(); // consume 'do'
+            if (self.peek().type == .LEFT_BRACE) {
+                step_expr = (try Parser.block(self, null, .NONE)) orelse return error.ExpectedLeftBrace;
+            } else {
+                step_expr = (try parseExpression(self)) orelse return error.ExpectedExpression;
+            }
+        }
+
+        // Parse body
+        if (self.peek().type == .LEFT_BRACE) {
+            const block_stmts = try statement_parser.parseBlockStmt(self);
+            const block_expr = try self.allocator.create(ast.Expr);
+            block_expr.* = .{
+                .base = .{
+                    .id = ast.generateNodeId(),
+                    .span = ast.SourceSpan.fromToken(self.previous()),
+                },
+                .data = .{
+                    .Block = .{
+                        .statements = block_stmts,
+                        .value = null,
+                    },
+                },
+            };
+            body = block_expr;
+        } else {
+            body = (try parseExpression(self)) orelse return error.ExpectedExpression;
+        }
+
+        const loop_expr = try self.allocator.create(ast.Expr);
+        loop_expr.* = .{
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(self.previous()),
+            },
+            .data = .{ .Loop = .{
+                .var_decl = var_decl,
+                .condition = condition,
+                .step = step_expr,
+                .body = body,
+            } },
+        };
+        return loop_expr;
     }
+
+    // Original C-style for loop with parentheses
     self.advance();
 
     // Parse initializer
-    var initializer: ?*ast.Stmt = null;
     if (self.peek().type != .NEWLINE) {
         if (self.peek().type == .VAR) {
-            const var_decl = try declaration_parser.parseVarDecl(self);
+            const var_decl_stmt = try declaration_parser.parseVarDecl(self);
             const stmt = try self.allocator.create(ast.Stmt);
-            stmt.* = var_decl;
-            initializer = stmt;
+            stmt.* = var_decl_stmt;
+            var_decl = stmt;
         } else {
             const expr_stmt = try statement_parser.parseExpressionStmt(self);
             const stmt = try self.allocator.create(ast.Stmt);
             stmt.* = expr_stmt;
-            initializer = stmt;
+            var_decl = stmt;
         }
     } else {
         self.advance(); // consume ';'
     }
 
     // Parse condition
-    var condition: ?*ast.Expr = null;
     if (self.peek().type != .NEWLINE) {
         condition = try parseExpression(self);
     }
@@ -550,12 +806,12 @@ pub fn forExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr
     }
     self.advance(); // consume '{'
 
-    var body = std.ArrayList(ast.Stmt).init(self.allocator);
-    errdefer body.deinit();
+    var body_stmts = std.ArrayList(ast.Stmt).init(self.allocator);
+    errdefer body_stmts.deinit();
 
     while (self.peek().type != .RIGHT_BRACE and self.peek().type != .EOF) {
         const stmt = try statement_parser.parseStatement(self);
-        try body.append(stmt);
+        try body_stmts.append(stmt);
     }
 
     if (self.peek().type != .RIGHT_BRACE) {
@@ -571,28 +827,26 @@ pub fn forExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr
             .span = ast.SourceSpan.fromToken(self.previous()),
         },
         .data = .{ .Block = .{
-            .statements = try body.toOwnedSlice(),
+            .statements = try body_stmts.toOwnedSlice(),
             .value = null,
         } },
     };
 
-    const for_expr = try self.allocator.create(ast.Expr);
-    for_expr.* = .{
+    const loop_expr = try self.allocator.create(ast.Expr);
+    loop_expr.* = .{
         .base = .{
             .id = ast.generateNodeId(),
             .span = ast.SourceSpan.fromToken(self.previous()),
         },
-        .data = .{
-            .For = .{
-                .initializer = initializer,
-                .condition = condition,
-                .increment = increment,
-                .body = block_expr,
-            },
-        },
+        .data = .{ .Loop = .{
+            .var_decl = var_decl,
+            .condition = condition,
+            .step = increment,
+            .body = block_expr,
+        } },
     };
 
-    return for_expr;
+    return loop_expr;
 }
 
 pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
@@ -893,11 +1147,36 @@ pub fn parseIfExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
         // Traditional if-then-else expression syntax
         self.advance(); // consume 'then'
 
-        then_expr = (try parseExpression(self)) orelse {
-            condition.deinit(self.allocator);
-            self.allocator.destroy(condition);
-            return error.ExpectedExpression;
-        };
+        // Allow control statements without braces by wrapping them in a block expression
+        if (self.peek().type == .CONTINUE or self.peek().type == .BREAK or self.peek().type == .RETURN) {
+            const stmt: ast.Stmt = switch (self.peek().type) {
+                .CONTINUE => try statement_parser.parseContinueStmt(self),
+                .BREAK => try statement_parser.parseBreakStmt(self),
+                .RETURN => try statement_parser.parseReturnStmt(self),
+                else => unreachable,
+            };
+            var stmts = try self.allocator.alloc(ast.Stmt, 1);
+            stmts[0] = stmt;
+            const block_expr = try self.allocator.create(ast.Expr);
+            block_expr.* = .{
+                .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(self.previous()) },
+                .data = .{ .Block = .{ .statements = stmts, .value = null } },
+            };
+            then_expr = block_expr;
+        } else if (self.peek().type == .LEFT_BRACE) {
+            // Block-style then
+            then_expr = (try braceExpr(self, null, .NONE)) orelse {
+                condition.deinit(self.allocator);
+                self.allocator.destroy(condition);
+                return error.ExpectedExpression;
+            };
+        } else {
+            then_expr = (try parseExpression(self)) orelse {
+                condition.deinit(self.allocator);
+                self.allocator.destroy(condition);
+                return error.ExpectedExpression;
+            };
+        }
     } else if (self.peek().type == .LEFT_BRACE) {
         // Block-style if statement syntax: if condition { statements }
         then_expr = (try braceExpr(self, null, .NONE)) orelse {

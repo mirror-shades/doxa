@@ -225,6 +225,7 @@ function shunt(tokens :: Token[]) returns Token[] | Error {
             if @length(operators) > 0 and operators[@length(operators) - 1].token_type == TokenType.LPAREN then {
                 @pop(operators)
             } else {
+                @print("Error: Mismatched parentheses\n")
                 return Error.MismatchedParentheses
             }
         }

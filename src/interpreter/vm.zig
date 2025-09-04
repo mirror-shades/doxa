@@ -735,7 +735,6 @@ pub const HIRVM = struct {
 
         while (self.running and self.ip < self.program.instructions.len) {
             const instruction = self.program.instructions[self.ip];
-            self.reporter.debug("DBG VM: executing instruction {} at IP {}: {s}", .{ self.ip, self.ip, @tagName(instruction) }, @src());
 
             try self.executeInstruction(instruction);
 
@@ -885,15 +884,6 @@ pub const HIRVM = struct {
                     if (self.memory_manager.scope_manager.value_storage.get(variable.storage_id)) |storage| {
                         const hir_value = self.tokenLiteralToHIRValueWithType(storage.value, storage.type_info);
 
-                        // Targeted debug for suspected variables
-                        if (std.mem.eql(u8, v.var_name, "resint") or std.mem.eql(u8, v.var_name, "resfloat")) {
-                            self.reporter.debug(
-                                "DBG LoadVar {s}: storage_id={}, token_type={s}, type_info={s}, token_literal={any}, hir_tag={s}",
-                                .{ v.var_name, variable.storage_id, @tagName(storage.type), @tagName(storage.type_info.base), storage.value, @tagName(hir_value) },
-                                @src(),
-                            );
-                        }
-
                         try self.stack.push(HIRFrame.initFromHIRValue(hir_value));
                     } else {
                         // Propagate error so VM halts execution immediately
@@ -923,22 +913,6 @@ pub const HIRVM = struct {
                 const type_info = try self.allocator.create(TypeInfo);
                 type_info.* = type_info_value;
 
-                if (std.mem.eql(u8, v.var_name, "resint") or std.mem.eql(u8, v.var_name, "resfloat")) {
-                    if (self.current_scope.lookupVariable(v.var_name)) |variable| {
-                        self.reporter.debug(
-                            "DBG StoreVar {s}: storage_id={}, token_type={s}, type_info={s}, token_literal={any}",
-                            .{ v.var_name, variable.storage_id, @tagName(token_type), @tagName(type_info.base), token_literal },
-                            @src(),
-                        );
-                    } else {
-                        self.reporter.debug(
-                            "DBG StoreVar {s}: storage_id=?, token_type={s}, type_info={s}, token_literal={any}",
-                            .{ v.var_name, @tagName(token_type), @tagName(type_info.base), token_literal },
-                            @src(),
-                        );
-                    }
-                }
-
                 if (@hasField(@TypeOf(v), "scope_kind") and v.scope_kind == .Local) {
                     // Local semantics:
                     // - If a variable exists anywhere in the active scope chain:
@@ -952,23 +926,11 @@ pub const HIRVM = struct {
                                 _ = self.current_scope.createValueBinding(v.var_name, token_literal, token_type, type_info, false) catch |err| {
                                     return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Failed to create variable {s}: {}", .{ v.var_name, err });
                                 };
-                                if (self.current_scope.lookupVariable(v.var_name)) |variable2| {
-                                    self.reporter.debug(
-                                        "DBG WRITE StoreVar (shadow create) {s}: storage_id={}, value={any}",
-                                        .{ v.var_name, variable2.storage_id, token_literal },
-                                        @src(),
-                                    );
-                                }
                             } else {
                                 // Update nearest existing (non-constant) variable
                                 storage.*.value = token_literal;
                                 storage.*.type = token_type;
                                 storage.*.type_info = type_info;
-                                self.reporter.debug(
-                                    "DBG WRITE StoreVar (local update) {s}: storage_id={}, value={any}",
-                                    .{ v.var_name, nearest_var.storage_id, token_literal },
-                                    @src(),
-                                );
                             }
                         } else {
                             return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Variable storage not found for: {s}", .{v.var_name});
@@ -978,13 +940,6 @@ pub const HIRVM = struct {
                         _ = self.current_scope.createValueBinding(v.var_name, token_literal, token_type, type_info, false) catch |err| {
                             return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Failed to create variable {s}: {}", .{ v.var_name, err });
                         };
-                        if (self.current_scope.lookupVariable(v.var_name)) |variable2| {
-                            self.reporter.debug(
-                                "DBG WRITE StoreVar (local create) {s}: storage_id={}, value={any}",
-                                .{ v.var_name, variable2.storage_id, token_literal },
-                                @src(),
-                            );
-                        }
                     }
                 } else {
                     // Non-local: nearest existing variable across active scopes; otherwise create in current scope
@@ -997,12 +952,6 @@ pub const HIRVM = struct {
                             storage.*.value = token_literal;
                             storage.*.type = token_type;
                             storage.*.type_info = type_info;
-
-                            self.reporter.debug(
-                                "DBG WRITE StoreVar {s}: storage_id={}, value={any}",
-                                .{ v.var_name, variable.storage_id, token_literal },
-                                @src(),
-                            );
                         } else {
                             return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Variable storage not found for: {s}", .{v.var_name});
                         }
@@ -1010,13 +959,6 @@ pub const HIRVM = struct {
                         _ = self.current_scope.createValueBinding(v.var_name, token_literal, token_type, type_info, false) catch |err| {
                             return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Failed to create variable {s}: {}", .{ v.var_name, err });
                         };
-                        if (self.current_scope.lookupVariable(v.var_name)) |variable2| {
-                            self.reporter.debug(
-                                "DBG WRITE StoreVar (create) {s}: storage_id={}, value={any}",
-                                .{ v.var_name, variable2.storage_id, token_literal },
-                                @src(),
-                            );
-                        }
                     }
                 }
             },
@@ -1030,22 +972,6 @@ pub const HIRVM = struct {
                 const type_info_value = self.hirValueToTypeInfo(value.value);
                 const type_info = try self.allocator.create(TypeInfo);
                 type_info.* = type_info_value;
-
-                if (std.mem.eql(u8, v.var_name, "resint") or std.mem.eql(u8, v.var_name, "resfloat") or std.mem.eql(u8, v.var_name, "newun")) {
-                    if (self.current_scope.lookupVariable(v.var_name)) |variable| {
-                        self.reporter.debug(
-                            "DBG StoreConst {s}: storage_id={}, token_type={s}, type_info={s}, token_literal={any}",
-                            .{ v.var_name, variable.storage_id, @tagName(token_type), @tagName(type_info.base), token_literal },
-                            @src(),
-                        );
-                    } else {
-                        self.reporter.debug(
-                            "DBG StoreConst {s}: storage_id=?, token_type={s}, type_info={s}, token_literal={any}",
-                            .{ v.var_name, @tagName(token_type), @tagName(type_info.base), token_literal },
-                            @src(),
-                        );
-                    }
-                }
 
                 // If a binding exists in any active scope, update only if it's uninitialized constant (nothing)
                 if (self.current_scope.lookupVariable(v.var_name)) |variable| {
@@ -1061,12 +987,6 @@ pub const HIRVM = struct {
                         storage.*.type = token_type;
                         storage.*.type_info = type_info;
                         storage.*.constant = true;
-
-                        self.reporter.debug(
-                            "DBG WRITE StoreConst {s}: storage_id={}, value={any}",
-                            .{ v.var_name, variable.storage_id, token_literal },
-                            @src(),
-                        );
                     } else {
                         return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Variable storage not found for: {s}", .{v.var_name});
                     }
@@ -1075,13 +995,6 @@ pub const HIRVM = struct {
                     _ = self.current_scope.createValueBinding(v.var_name, token_literal, token_type, type_info, true) catch |err| {
                         return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Failed to create constant {s}: {}", .{ v.var_name, err });
                     };
-                    if (self.current_scope.lookupVariable(v.var_name)) |variable2| {
-                        self.reporter.debug(
-                            "DBG WRITE StoreConst (create) {s}: storage_id={}, value={any}",
-                            .{ v.var_name, variable2.storage_id, token_literal },
-                            @src(),
-                        );
-                    }
                 }
             },
 
@@ -1272,13 +1185,6 @@ pub const HIRVM = struct {
                 const b = try self.stack.pop();
                 const a_val = try self.stack.pop();
 
-                // Enhanced debug: log operand values and types for comparisons
-                self.reporter.debug(
-                    "DBG Compare {s}: a={s} (value: {any}), b={s} (value: {any}), operand_type={s}",
-                    .{ @tagName(c.op), @tagName(a_val.value), a_val.value, @tagName(b.value), b.value, @tagName(c.operand_type) },
-                    @src(),
-                );
-
                 const result = switch (c.op) {
                     .Eq => try self.compareEqual(a_val, b),
                     .Ne => !(try self.compareEqual(a_val, b)),
@@ -1288,7 +1194,6 @@ pub const HIRVM = struct {
                     .Ge => (try self.compareGreater(a_val, b)) or (try self.compareEqual(a_val, b)),
                 };
 
-                self.reporter.debug("DBG Compare result: {s} = {any}", .{ @tagName(c.op), result }, @src());
                 try self.stack.push(HIRFrame.initTetra(if (result) 1 else 0));
             },
 
@@ -1300,12 +1205,6 @@ pub const HIRVM = struct {
 
                 // Compare with target type
                 const type_match = std.mem.eql(u8, runtime_type, tc.target_type);
-
-                self.reporter.debug(
-                    "DBG TypeCheck: checking runtime type '{s}' against target '{s}', result: {}",
-                    .{ runtime_type, tc.target_type, type_match },
-                    @src(),
-                );
 
                 // Push result as tetra (1 for match, 0 for no match)
                 try self.stack.push(HIRFrame.initTetra(if (type_match) 1 else 0));
@@ -1339,12 +1238,10 @@ pub const HIRVM = struct {
                 };
 
                 const target_label = if (should_jump) j.label_true else j.label_false;
-                self.reporter.debug("DBG JumpCond: condition={any}, should_jump={}, target_label={s}", .{ condition.value, should_jump, target_label }, @src());
 
                 if (self.label_map.get(target_label)) |target_ip| {
                     // Always set IP explicitly since JumpCond is marked as a "jump" instruction
                     self.ip = target_ip;
-                    self.reporter.debug("DBG JumpCond: jumping to IP {} (label: {s})", .{ target_ip, target_label }, @src());
                 } else {
                     return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Unknown label: {s}", .{target_label});
                 }
@@ -1374,7 +1271,6 @@ pub const HIRVM = struct {
 
             .Peek => |peek| {
                 const value = try self.stack.pop();
-                self.reporter.debug("Peek called with value: {any}", .{value}, @src());
 
                 if (peek.location) |location| {
                     try std.io.getStdOut().writer().print("[{s}:{d}:{d}] ", .{ location.file, location.range.start_line, location.range.start_col });
@@ -1385,9 +1281,7 @@ pub const HIRVM = struct {
 
                 // If we have union member info, print union with '>' on active member; else fallback to concrete type
                 if (peek.name) |name| {
-                    self.reporter.debug("Peek instruction for variable {s}", .{name}, @src());
                     if (peek.union_members) |members| {
-                        self.reporter.debug("Found union members: {any}", .{members}, @src());
                         if (members.len > 1) {
                             const active = self.getTypeString(value.value);
                             try writer.print("{s} :: ", .{name});
@@ -1437,15 +1331,12 @@ pub const HIRVM = struct {
 
             .PeekStruct => |i| {
                 const value = try self.stack.pop();
-                self.reporter.debug("PeekStruct called with value: {any}", .{value}, @src());
 
                 // Handle both struct instances and field values
                 switch (value.value) {
                     .struct_instance => |s| {
-                        self.reporter.debug("Processing struct instance of type '{s}' with {d} fields", .{ s.type_name, s.fields.len }, @src());
                         // Print each field with proper location formatting
                         for (s.fields) |field| {
-                            self.reporter.debug("Processing field '{s}'", .{field.name}, @src());
 
                             // Format with location information like the regular Peek instruction
                             if (i.location) |location| {
@@ -1499,7 +1390,6 @@ pub const HIRVM = struct {
                         }
                     },
                     else => {
-                        self.reporter.debug("Processing non-struct value with {d} field names", .{i.field_names.len}, @src());
                         // For non-struct values (like field access results), print as a single value with location
                         if (i.field_names.len > 0) {
                             if (i.location) |location| {
@@ -1522,9 +1412,7 @@ pub const HIRVM = struct {
             },
 
             .Print => {
-                self.reporter.debug("DBG Print: executing Print instruction", .{}, @src());
                 const value = try self.stack.pop();
-                self.reporter.debug("Print called with value: {any}", .{value}, @src());
 
                 // Print instruction doesn't include variable name, just the value
                 // Format the value directly without quotes or extra formatting
@@ -1537,9 +1425,6 @@ pub const HIRVM = struct {
             },
 
             .PrintInterpolated => |interp| {
-                self.reporter.debug("DBG PrintInterpolated: executing PrintInterpolated instruction", .{}, @src());
-                self.reporter.debug("DBG PrintInterpolated: format_parts: {}, placeholder_indices: {}, argument_count: {}", .{ interp.format_parts.len, interp.placeholder_indices.len, interp.argument_count }, @src());
-
                 // Pop the arguments from the stack (they were pushed in reverse order)
                 var args = try self.allocator.alloc(HIRValue, interp.argument_count);
                 defer self.allocator.free(args);
@@ -1547,7 +1432,6 @@ pub const HIRVM = struct {
                 for (0..interp.argument_count) |i| {
                     const arg = try self.stack.pop();
                     args[interp.argument_count - 1 - i] = arg.value; // Reverse to get correct order
-                    self.reporter.debug("DBG PrintInterpolated: popped arg {}: {any}", .{ i, arg.value }, @src());
                 }
 
                 // Get the actual format parts from the constants using format_part_ids
@@ -1572,21 +1456,17 @@ pub const HIRVM = struct {
                 defer result.deinit();
 
                 for (actual_format_parts.items, 0..) |part, i| {
-                    self.reporter.debug("DBG PrintInterpolated: adding format part {}: '{s}'", .{ i, part }, @src());
                     try result.appendSlice(part);
 
                     // Add argument value if there is one for this part
                     if (i < interp.placeholder_indices.len) {
                         const arg_index = interp.placeholder_indices[i];
-                        self.reporter.debug("DBG PrintInterpolated: placeholder {} maps to arg index {}", .{ i, arg_index }, @src());
                         if (arg_index < args.len) {
-                            self.reporter.debug("DBG PrintInterpolated: adding arg value: {any}", .{args[arg_index]}, @src());
                             try self.formatHIRValueRaw(result.writer(), args[arg_index]);
                         }
                     }
                 }
 
-                self.reporter.debug("DBG PrintInterpolated: final result: '{s}'", .{result.items}, @src());
                 // Print the final interpolated string
                 try std.io.getStdOut().writer().print("{s}", .{result.items});
             },
@@ -1968,10 +1848,6 @@ pub const HIRVM = struct {
 
                         const element = arr.elements[index_val];
 
-                        // Debug: Show what element type we're retrieving
-                        const elem_tag = @tagName(element);
-                        self.reporter.debug("ArrayGet: array element_type={s}, retrieved element type={s}", .{ @tagName(arr.element_type), elem_tag }, @src());
-
                         try self.stack.push(HIRFrame.initFromHIRValue(element));
                     },
                     .nothing => {
@@ -2039,19 +1915,13 @@ pub const HIRVM = struct {
                             return ErrorList.IndexOutOfBounds;
                         }
 
-                        // Debug: Show what we're trying to assign
-                        const val_tag = @tagName(value.value);
-                        self.reporter.debug("ArraySet: array element_type={s}, trying to assign value type={s}", .{ @tagName(mutable_arr.element_type), val_tag }, @src());
-
                         const element_value = switch (mutable_arr.element_type) {
                             .Byte => switch (value.value) {
                                 .int => |i| blk: {
                                     const byte_val = if (i >= 0 and i <= 255) HIRValue{ .byte = @intCast(i) } else HIRValue{ .byte = 0 };
-                                    self.reporter.debug("ArraySet: converted int {d} to byte {d}", .{ i, byte_val.byte }, @src());
                                     break :blk byte_val;
                                 },
                                 .byte => blk: {
-                                    self.reporter.debug("ArraySet: keeping byte value {d}", .{value.value.byte}, @src());
                                     break :blk value.value; // Already correct type
                                 },
                                 .string => |_| return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot assign string to byte array element", .{}),
@@ -2060,18 +1930,15 @@ pub const HIRVM = struct {
                             .Int => switch (value.value) {
                                 .byte => |b| blk: {
                                     const int_val = HIRValue{ .int = @as(i32, b) };
-                                    self.reporter.debug("ArraySet: converted byte {d} to int {d}", .{ b, int_val.int }, @src());
                                     break :blk int_val; // Convert byte to int
                                 },
                                 .int => blk: {
-                                    self.reporter.debug("ArraySet: keeping int value {d}", .{value.value.int}, @src());
                                     break :blk value.value; // Already correct type
                                 },
                                 .string => |_| return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot assign string to int array element", .{}),
                                 else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot assign {s} to int array element", .{@tagName(value.value)}),
                             },
                             else => blk: {
-                                self.reporter.debug("ArraySet: keeping value as-is for type {s}", .{@tagName(mutable_arr.element_type)}, @src());
                                 break :blk value.value; // For other array types, keep original value
                             },
                         };
@@ -2324,7 +2191,6 @@ pub const HIRVM = struct {
 
                             try self.stack.push(HIRFrame.initInt(result));
                         } else if (std.mem.eql(u8, c.qualified_name, "power") or std.mem.eql(u8, c.qualified_name, "powi")) {
-                            self.reporter.debug("CALL {s}", .{c.qualified_name}, @src());
                             // Power function - expects base and exponent on stack
                             const exponent = try self.stack.pop();
                             const base = try self.stack.pop();
@@ -2856,8 +2722,6 @@ pub const HIRVM = struct {
             .Convert => |c| {
                 // Pop the value to convert, perform conversion, and push result
                 const frame = try self.stack.pop();
-                self.reporter.debug("CONVERT {s}->{s}: in={s}", .{ @tagName(c.from_type), @tagName(c.to_type), @tagName(frame.value) }, @src());
-
                 var out: HIRValue = frame.value;
                 switch (c.to_type) {
                     .Float => {
@@ -2894,30 +2758,11 @@ pub const HIRVM = struct {
                     },
                 }
 
-                self.reporter.debug("CONVERT RESULT -> {s}", .{@tagName(out)}, @src());
                 try self.stack.push(HIRFrame.initFromHIRValue(out));
             },
             else => {
-                std.debug.print("\n!! Unhandled HIR instruction at IP {d}:\n", .{self.ip});
-                std.debug.print("  Type: {s}\n", .{@tagName(instruction)});
-
                 // Print detailed instruction info based on type
-                // Print detailed instruction info based on type
-                switch (instruction) {
-                    .LogicalOp => |op| std.debug.print("  Operation: {s}\n", .{@tagName(op.op)}),
-                    .StringOp => |op| std.debug.print("  Operation: {s}\n", .{@tagName(op.op)}),
-                    .MapGet => |m| std.debug.print("  Key type: {s}\n", .{@tagName(m.key_type)}),
-                    else => std.debug.print("  Raw data: {any}\n", .{instruction}),
-                }
-
-                // Print stack state
-                std.debug.print("  Stack depth: {d}\n", .{self.stack.size()});
-                if (!self.stack.isEmpty()) {
-                    if (self.stack.peek()) |top| {
-                        std.debug.print("  Top of stack: {s}\n", .{@tagName(top.value)});
-                    } else |_| {}
-                }
-
+                std.debug.print("  Raw data: {any}\n", .{instruction});
                 return ErrorList.NotImplemented;
             },
         }
@@ -2943,7 +2788,6 @@ pub const HIRVM = struct {
     fn intAdd(self: *HIRVM, a: i32, b: i32) !i32 {
         _ = self;
         return std.math.add(i32, a, b) catch |err| {
-            std.debug.print("Integer overflow in addition: {} + {}\n", .{ a, b });
             return err;
         };
     }
@@ -3376,6 +3220,7 @@ pub const HIRVM = struct {
 
     /// Enhanced comparison with mixed int/float support from old VM
     fn compareEqual(self: *HIRVM, a: HIRFrame, b: HIRFrame) !bool {
+        _ = self;
         return switch (a.value) {
             .int => |a_val| switch (b.value) {
                 .int => |b_val| a_val == b_val,
@@ -3398,11 +3243,6 @@ pub const HIRVM = struct {
             .string => |a_val| switch (b.value) {
                 .string => |b_val| blk: {
                     const result = std.mem.eql(u8, a_val, b_val);
-                    self.reporter.debug(
-                        "DBG compareEqual: comparing strings '{}' and '{}', lengths: {} and {}, result: {}",
-                        .{ std.zig.fmtEscapes(a_val), std.zig.fmtEscapes(b_val), a_val.len, b_val.len, result },
-                        @src(),
-                    );
                     break :blk result;
                 },
                 else => false,
@@ -3756,16 +3596,10 @@ pub const HIRVM = struct {
                 const frame = try self.stack.peek();
                 if (frame.scope_refs == 0) {
                     scope.deinit();
-                    // self.reporter.debug(">> Exited scope {d} (returned to: {d}) [Call stack: {d}]", .{ scope_id, parent_id, self.call_stack.sp });
-                } else {
-                    self.reporter.debug(">> Skipped exiting scope {d} ({d} refs remain)", .{ scope_id, frame.scope_refs });
                 }
                 return;
             }
             current_scope = scope.parent;
-        }
-        if (scope_id != 0) { // Don't warn about root scope
-            self.reporter.debug(">> Warning: Attempted to exit root scope {d} - ignoring", .{scope_id});
         }
     }
 
@@ -3785,12 +3619,6 @@ pub const HIRVM = struct {
 
             _ = try new_scope.createValueBinding(param_name, self.hirValueToTokenLiteral(arg), self.hirValueToTokenType(arg), self.hirValueToTypeInfo(arg), false);
         }
-
-        self.reporter.debug(">> Entered scope {d} (parent: {d}) [Call stack: {d}]", .{
-            new_scope.id,
-            self.current_scope,
-            self.call_stack.sp,
-        });
 
         // Update current scope
         self.current_scope = new_scope;
