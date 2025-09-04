@@ -165,8 +165,9 @@ pub const rules = blk: {
 
     r.set(.PEEK, .{ .infix = peekValue, .precedence = .CALL });
 
-    // Add loop support
+    // Add loop support (unified Loop is produced by these parsers)
     r.set(.WHILE, .{ .prefix = whileExpr });
+    r.set(.DO, .{ .prefix = expr_parser.doExpr });
     r.set(.FOR, .{ .prefix = forExpr });
 
     // Add struct support

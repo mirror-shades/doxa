@@ -56,6 +56,7 @@ pub const TokenType = enum {
     CONTINUE, // continue
     MATCH, // match
     WHILE, // while
+    DO, // do
     FOR, // for
     EACH, // each
     IN, // in

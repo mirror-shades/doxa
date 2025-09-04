@@ -513,7 +513,7 @@ pub const HIRGenerator = struct {
                     }
 
                     if (last_expr) |e| {
-                        try self.generateExpression(e, true);
+                        try self.generateExpression(e, true, true);
                         try self.instructions.append(.{ .Return = .{ .has_value = true, .return_type = function_body.function_info.return_type } });
                     } else {
                         // No final expression found; emit a no-value return (semantic pass should have validated paths)
@@ -535,15 +535,12 @@ pub const HIRGenerator = struct {
     fn generateMainProgram(self: *HIRGenerator, statements: []ast.Stmt) !void {
         // First process global (non-function) statements from imported modules so their
         // constants and types (e.g., 'limit' in safeMath) are defined before any calls.
-        self.reporter.debug("HIR: processing imported module globals: {d}", .{self.module_namespaces.count()}, @src());
         var it = self.module_namespaces.iterator();
         while (it.next()) |entry| {
-            const alias = entry.key_ptr.*;
             const module_info = entry.value_ptr.*;
             if (module_info.ast) |module_ast| {
                 if (module_ast.data == .Block) {
                     const mod_statements = module_ast.data.Block.statements;
-                    self.reporter.debug("HIR: module '{s}' globals count: {d}", .{ alias, mod_statements.len }, @src());
                     for (mod_statements) |mod_stmt| {
                         switch (mod_stmt.data) {
                             .FunctionDecl => continue, // skip functions here
@@ -559,8 +556,6 @@ pub const HIRGenerator = struct {
             }
         }
 
-        // Then process this module's non-function statements (global variables, etc.)
-        self.reporter.debug("HIR: processing current module globals", .{}, @src());
         for (statements) |stmt| {
             switch (stmt.data) {
                 .FunctionDecl => {
@@ -665,12 +660,11 @@ pub const HIRGenerator = struct {
         switch (stmt.data) {
             .Expression => |expr| {
                 if (expr) |e| {
-                    try self.generateExpression(e, false);
+                    try self.generateExpression(e, false, false);
                 }
             },
             .Continue => {
                 if (self.currentLoopContext()) |lc| {
-                    self.reporter.debug("HIR: emitting continue -> {s}", .{lc.continue_label}, @src());
                     try self.instructions.append(.{ .Jump = .{ .label = lc.continue_label, .vm_offset = 0 } });
                 } else {
                     const location = Location{
@@ -692,7 +686,6 @@ pub const HIRGenerator = struct {
             },
             .Break => {
                 if (self.currentLoopContext()) |lc| {
-                    self.reporter.debug("HIR: emitting break -> {s}", .{lc.break_label}, @src());
                     try self.instructions.append(.{ .Jump = .{ .label = lc.break_label, .vm_offset = 0 } });
                 } else {
                     const location = Location{
@@ -720,7 +713,6 @@ pub const HIRGenerator = struct {
                 // FIXED: Prioritize explicit type annotation over inference
                 var custom_type_name: ?[]const u8 = null;
                 if (decl.type_info.base != .Nothing) {
-                    self.reporter.debug("Variable {s} has type base: {s}", .{ decl.name.lexeme, @tagName(decl.type_info.base) }, @src());
                     // Use explicit type annotation first
                     var_type = switch (decl.type_info.base) {
                         .Int => .Int,
@@ -732,14 +724,11 @@ pub const HIRGenerator = struct {
                         .Union => blk: {
                             // Default unions to the first member's type for initialization
                             if (decl.type_info.union_type) |ut| {
-                                self.reporter.debug("Found union type with {} members", .{ut.types.len}, @src());
                                 if (ut.types.len > 0) {
                                     const first = ut.types[0];
                                     // New: record union member names (lowercase) for this variable (flatten nested unions)
                                     const list = try self.collectUnionMemberNames(ut);
-                                    for (list, 0..) |nm, i| {
-                                        self.reporter.debug("Union member {}: {s}", .{ i, nm }, @src());
-                                    }
+
                                     try self.variable_union_members.put(decl.name.lexeme, list);
                                     var maybe_index: ?u32 = null;
                                     if (self.current_function != null) {
@@ -749,9 +738,6 @@ pub const HIRGenerator = struct {
                                     }
                                     if (maybe_index) |var_index| {
                                         try self.variable_union_members_by_index.put(var_index, list);
-                                        self.reporter.debug("Recorded union members for variable {s} (index {})", .{ decl.name.lexeme, var_index }, @src());
-                                    } else {
-                                        self.reporter.debug("Recorded union members for variable {s}", .{decl.name.lexeme}, @src());
                                     }
 
                                     break :blk switch (first.base) {
@@ -814,7 +800,7 @@ pub const HIRGenerator = struct {
 
                     // Var declaration initializer must leave a value on the stack for StoreVar
                     // Preserve the result so the subsequent store can consume it
-                    try self.generateExpression(init_expr, true);
+                    try self.generateExpression(init_expr, true, true);
 
                     // Restore previous enum context
                     self.current_enum_type = old_enum_context;
@@ -1000,7 +986,7 @@ pub const HIRGenerator = struct {
                         return; // Tail call replaces both Call and Return
                     } else {
                         // Regular return with value
-                        try self.generateExpression(value, true);
+                        try self.generateExpression(value, true, true);
                         // Infer return type from the returned expression to avoid relying on signature inference
                         const inferred_ret_type = self.inferTypeFromExpression(value);
                         try self.instructions.append(.{ .Return = .{ .has_value = true, .return_type = inferred_ret_type } });
@@ -1037,7 +1023,7 @@ pub const HIRGenerator = struct {
             },
             .Assert => |assert_stmt| {
                 // Generate the condition expression
-                try self.generateExpression(assert_stmt.condition, true);
+                try self.generateExpression(assert_stmt.condition, true, true);
 
                 // Create labels for control flow
                 const success_label = try std.fmt.allocPrint(self.allocator, "assert_success_{}", .{self.label_count});
@@ -1060,7 +1046,7 @@ pub const HIRGenerator = struct {
                 // Handle assert message if provided
                 if (assert_stmt.message) |msg| {
                     // Generate message expression (will be on stack for AssertFail to use)
-                    try self.generateExpression(msg, true);
+                    try self.generateExpression(msg, true, true);
                     try self.instructions.append(.{ .AssertFail = .{
                         .location = assert_stmt.location,
                         .has_message = true,
@@ -1161,7 +1147,11 @@ pub const HIRGenerator = struct {
 
     /// THE KEY FUNCTION - converts recursive AST evaluation to linear stack operations
     /// This is where we get the 10-50x speedup!
-    fn generateExpression(self: *HIRGenerator, expr: *ast.Expr, preserve_result: bool) !void {
+    fn generateExpression(self: *HIRGenerator, expr: *ast.Expr, preserve_result: bool, should_pop_after_use: bool) !void {
+        // Type checking is now handled by the semantic analyzer before HIR generation.
+        // No direct `type_info` field on `ast.Expr` anymore.
+        // We will assume expressions passed here have valid type information.
+
         switch (expr.data) {
             .Literal => |lit| {
                 const hir_value = switch (lit) {
@@ -1237,14 +1227,9 @@ pub const HIRGenerator = struct {
                 const left_type = self.inferTypeFromExpression(bin.left.?);
                 const right_type = self.inferTypeFromExpression(bin.right.?);
 
-                // Determine the result type based on the operation and operand types
-                const result_type = self.inferBinaryOpResultType(bin.operator.type, bin.left.?, bin.right.?);
-
-                self.reporter.debug("Binary op {s}: left_type={s}, right_type={s}, result_type={s}\n", .{ @tagName(bin.operator.type), @tagName(left_type), @tagName(right_type), @tagName(result_type) }, @src());
-
                 // Generate expressions for both operands first
-                try self.generateExpression(bin.left.?, true);
-                try self.generateExpression(bin.right.?, true);
+                try self.generateExpression(bin.left.?, true, should_pop_after_use);
+                try self.generateExpression(bin.right.?, true, should_pop_after_use);
 
                 // Centralized type promotion rules:
                 // 1. Float dominance: If either operand is Float or operator is division (/), promote to Float
@@ -1393,7 +1378,7 @@ pub const HIRGenerator = struct {
                 // For AND/OR, we need short-circuit evaluation
                 if (log.operator.type == .AND) {
                     // Generate: left AND right with short-circuit
-                    try self.generateExpression(log.left, true);
+                    try self.generateExpression(log.left, true, should_pop_after_use);
                     try self.instructions.append(.Dup); // Keep left value for potential short-circuit
 
                     const short_circuit_label = try self.generateLabel("and_short_circuit");
@@ -1412,39 +1397,39 @@ pub const HIRGenerator = struct {
                     // Evaluate right side
                     try self.instructions.append(.{ .Label = .{ .name = short_circuit_label, .vm_address = 0 } });
                     try self.instructions.append(.Pop); // Remove the duplicated left value
-                    try self.generateExpression(log.right, true);
+                    try self.generateExpression(log.right, true, should_pop_after_use);
 
                     try self.instructions.append(.{ .Label = .{ .name = end_label, .vm_address = 0 } });
                 } else if (log.operator.type == .OR) {
                     // Similar for OR but with inverted logic
-                    try self.generateExpression(log.left, true);
-                    try self.generateExpression(log.right, true);
+                    try self.generateExpression(log.left, true, should_pop_after_use);
+                    try self.generateExpression(log.right, true, should_pop_after_use);
                     try self.instructions.append(.{ .LogicalOp = .{ .op = .Or } });
                     // Simple OR for now - TODO: add short-circuit optimization
                 } else if (log.operator.type == .IFF) {
                     // IFF (if and only if): A ↔ B - true when A and B have same truth value
-                    try self.generateExpression(log.left, true);
-                    try self.generateExpression(log.right, true);
+                    try self.generateExpression(log.left, true, should_pop_after_use);
+                    try self.generateExpression(log.right, true, should_pop_after_use);
                     try self.instructions.append(.{ .LogicalOp = .{ .op = .Iff } });
                 } else if (log.operator.type == .XOR) {
                     // XOR (exclusive or): A ⊕ B - true when A and B have different truth values
-                    try self.generateExpression(log.left, true);
-                    try self.generateExpression(log.right, true);
+                    try self.generateExpression(log.left, true, should_pop_after_use);
+                    try self.generateExpression(log.right, true, should_pop_after_use);
                     try self.instructions.append(.{ .LogicalOp = .{ .op = .Xor } });
                 } else if (log.operator.type == .NAND) {
                     // NAND: A ↑ B - NOT(A AND B)
-                    try self.generateExpression(log.left, true);
-                    try self.generateExpression(log.right, true);
+                    try self.generateExpression(log.left, true, should_pop_after_use);
+                    try self.generateExpression(log.right, true, should_pop_after_use);
                     try self.instructions.append(.{ .LogicalOp = .{ .op = .Nand } });
                 } else if (log.operator.type == .NOR) {
                     // NOR: A ↓ B - NOT(A OR B)
-                    try self.generateExpression(log.left, true);
-                    try self.generateExpression(log.right, true);
+                    try self.generateExpression(log.left, true, should_pop_after_use);
+                    try self.generateExpression(log.right, true, should_pop_after_use);
                     try self.instructions.append(.{ .LogicalOp = .{ .op = .Nor } });
                 } else if (log.operator.type == .IMPLIES) {
                     // IMPLIES: A → B - NOT A OR B
-                    try self.generateExpression(log.left, true);
-                    try self.generateExpression(log.right, true);
+                    try self.generateExpression(log.left, true, should_pop_after_use);
+                    try self.generateExpression(log.right, true, should_pop_after_use);
                     try self.instructions.append(.{ .LogicalOp = .{ .op = .Implies } });
                 } else {
                     self.reporter.reportCompileError(
@@ -1494,14 +1479,14 @@ pub const HIRGenerator = struct {
 
                     if (then_is_continue and !else_is_break and !else_is_continue and !then_is_break) {
                         // If TRUE -> continue label, else fall-through
-                        try self.generateExpression(if_expr.condition.?, true);
+                        try self.generateExpression(if_expr.condition.?, true, should_pop_after_use);
                         const end_if = try self.generateLabel("end_if");
                         try self.instructions.append(.{ .JumpCond = .{ .label_true = lc.continue_label, .label_false = end_if, .vm_offset = 0, .condition_type = .Tetra } });
                         try self.instructions.append(.{ .Label = .{ .name = end_if, .vm_address = 0 } });
                         handled_as_loop_control = true;
                     } else if (then_is_break and !else_is_break and !else_is_continue and !then_is_continue) {
                         // If TRUE -> break label, else fall-through
-                        try self.generateExpression(if_expr.condition.?, true);
+                        try self.generateExpression(if_expr.condition.?, true, should_pop_after_use);
                         const end_if = try self.generateLabel("end_if");
                         try self.instructions.append(.{ .JumpCond = .{ .label_true = lc.break_label, .label_false = end_if, .vm_offset = 0, .condition_type = .Tetra } });
                         try self.instructions.append(.{ .Label = .{ .name = end_if, .vm_address = 0 } });
@@ -1524,7 +1509,7 @@ pub const HIRGenerator = struct {
 
                 if (!handled_as_loop_control) {
                     // Standard if codegen
-                    try self.generateExpression(if_expr.condition.?, true);
+                    try self.generateExpression(if_expr.condition.?, true, should_pop_after_use);
 
                     const else_label = try self.generateLabel("else");
                     const end_label = try self.generateLabel("end_if");
@@ -1541,10 +1526,10 @@ pub const HIRGenerator = struct {
                     // THEN branch
                     try self.instructions.append(.{ .Label = .{ .name = then_label, .vm_address = 0 } });
                     if (preserve_result) {
-                        try self.generateExpression(if_expr.then_branch.?, true);
+                        try self.generateExpression(if_expr.then_branch.?, true, should_pop_after_use);
                     } else {
                         // Statement context: do not produce a value
-                        try self.generateExpression(if_expr.then_branch.?, false);
+                        try self.generateExpression(if_expr.then_branch.?, false, should_pop_after_use);
                     }
                     try self.instructions.append(.{ .Jump = .{ .label = end_label, .vm_offset = 0 } });
 
@@ -1552,9 +1537,9 @@ pub const HIRGenerator = struct {
                     try self.instructions.append(.{ .Label = .{ .name = else_label, .vm_address = 0 } });
                     if (if_expr.else_branch) |else_branch| {
                         if (preserve_result) {
-                            try self.generateExpression(else_branch, true);
+                            try self.generateExpression(else_branch, true, should_pop_after_use);
                         } else {
-                            try self.generateExpression(else_branch, false);
+                            try self.generateExpression(else_branch, false, should_pop_after_use);
                         }
                     } else if (preserve_result) {
                         // Only push a value when needed
@@ -1563,58 +1548,6 @@ pub const HIRGenerator = struct {
                     }
                     try self.instructions.append(.{ .Label = .{ .name = end_label, .vm_address = 0 } });
                 }
-            },
-
-            .While => |while_expr| {
-                const loop_start_label = try self.generateLabel("while_start");
-                const loop_body_label = try self.generateLabel("while_body");
-                const loop_end_label = try self.generateLabel("while_end");
-
-                // Register loop context: continue -> start, break -> end
-                try self.pushLoopContext(loop_end_label, loop_start_label);
-
-                // Loop start
-                try self.instructions.append(.{ .Label = .{ .name = loop_start_label, .vm_address = 0 } });
-
-                // Generate condition
-                try self.generateExpression(while_expr.condition, true);
-
-                // Jump based on condition: TRUE=continue to body, FALSE=exit loop
-                try self.instructions.append(.{
-                    .JumpCond = .{
-                        .label_true = loop_body_label, // Continue to loop body when TRUE
-                        .label_false = loop_end_label, // Exit loop when FALSE
-                        .vm_offset = 0, // Will be patched
-                        .condition_type = .Tetra,
-                    },
-                });
-
-                // Loop body label (where TRUE condition jumps to)
-                try self.instructions.append(.{ .Label = .{ .name = loop_body_label, .vm_address = 0 } });
-
-                // Create a fresh scope per-iteration so const bindings inside the loop
-                // are re-created each time and do not leak across iterations
-                const body_scope_id: u32 = self.label_count + 2000;
-                try self.instructions.append(.{ .EnterScope = .{ .scope_id = body_scope_id, .var_count = 0 } });
-
-                // Generate body
-                try self.generateExpression(while_expr.body, false);
-
-                // Exit iteration scope
-                try self.instructions.append(.{ .ExitScope = .{ .scope_id = body_scope_id } });
-
-                // Jump back to start
-                try self.instructions.append(.{ .Jump = .{ .label = loop_start_label, .vm_offset = 0 } });
-
-                // Loop end
-                try self.instructions.append(.{ .Label = .{ .name = loop_end_label, .vm_address = 0 } });
-
-                // Unregister loop context
-                self.popLoopContext();
-
-                // Push nothing as while result
-                const nothing_idx = try self.addConstant(HIRValue.nothing);
-                try self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } });
             },
 
             .Call => |call| {
@@ -1652,7 +1585,7 @@ pub const HIRGenerator = struct {
                                 // Don't generate the object expression - skip the LoadVar
                                 // Just generate the arguments
                                 for (call.arguments) |arg| {
-                                    try self.generateExpression(arg, true);
+                                    try self.generateExpression(arg, true, should_pop_after_use);
                                 }
                             } else {
                                 function_name = field_access.field.lexeme;
@@ -1664,11 +1597,11 @@ pub const HIRGenerator = struct {
                                 // So we need stack order: [array, element] (bottom to top)
 
                                 // Generate the object expression (arr) FIRST
-                                try self.generateExpression(field_access.object, true);
+                                try self.generateExpression(field_access.object, true, should_pop_after_use);
 
                                 // Generate arguments (in order) AFTER object - these will be on top for VM
                                 for (call.arguments) |arg| {
-                                    try self.generateExpression(arg, true);
+                                    try self.generateExpression(arg, true, should_pop_after_use);
                                 }
                             }
                         } else {
@@ -1677,11 +1610,11 @@ pub const HIRGenerator = struct {
                             call_kind = .BuiltinFunction;
 
                             // Generate the object expression FIRST
-                            try self.generateExpression(field_access.object, true);
+                            try self.generateExpression(field_access.object, true, should_pop_after_use);
 
                             // Generate arguments (in order) AFTER object
                             for (call.arguments) |arg| {
-                                try self.generateExpression(arg, true);
+                                try self.generateExpression(arg, true, should_pop_after_use);
                             }
                         }
                     },
@@ -1716,7 +1649,7 @@ pub const HIRGenerator = struct {
                     for (call.arguments, 0..) |arg, arg_index| {
                         if (arg.data == .DefaultArgPlaceholder) {
                             if (self.resolveDefaultArgument(function_name, arg_index)) |default_expr| {
-                                try self.generateExpression(default_expr, true);
+                                try self.generateExpression(default_expr, true, false);
                                 arg_emitted_count += 1;
                             } else {
                                 const location = if (expr.base.span) |span| span.location else Location{
@@ -1727,7 +1660,7 @@ pub const HIRGenerator = struct {
                                 // Do not emit a value for missing default
                             }
                         } else {
-                            try self.generateExpression(arg, true);
+                            try self.generateExpression(arg, true, false);
                             arg_emitted_count += 1;
                         }
                     }
@@ -1737,7 +1670,7 @@ pub const HIRGenerator = struct {
                     for (call.arguments, 0..) |arg, arg_index| {
                         if (arg.data == .DefaultArgPlaceholder) {
                             if (self.resolveDefaultArgument(function_name, arg_index)) |default_expr| {
-                                try self.generateExpression(default_expr, true);
+                                try self.generateExpression(default_expr, true, false);
                                 arg_emitted_count += 1;
                             } else {
                                 const location = if (expr.base.span) |span| span.location else Location{
@@ -1747,7 +1680,7 @@ pub const HIRGenerator = struct {
                                 self.reporter.reportCompileError(location, ErrorCode.NO_DEFAULT_VALUE_FOR_PARAMETER, "No default value for parameter {} in function '{s}'", .{ arg_index, function_name });
                             }
                         } else {
-                            try self.generateExpression(arg, true);
+                            try self.generateExpression(arg, true, false);
                             arg_emitted_count += 1;
                         }
                     }
@@ -1804,7 +1737,7 @@ pub const HIRGenerator = struct {
                 defer self.current_peek_expr = null;
 
                 // Generate the expression to peek (leaves value on stack)
-                try self.generateExpression(peek.expr, true);
+                try self.generateExpression(peek.expr, true, false);
 
                 // Build the full path for the peek expression (handles field access)
                 // Special case: Don't show variable name for enum member access like Color.Red
@@ -1852,7 +1785,6 @@ pub const HIRGenerator = struct {
                 }
                 if (peek.expr.data == .Variable) {
                     const var_name = peek.expr.data.Variable.lexeme;
-                    self.reporter.debug("Checking union members for variable {s}", .{var_name}, @src());
                     // Prefer index-based lookup to avoid name collisions; do this for all scopes
                     var maybe_index: ?u32 = null;
                     if (self.current_function != null) {
@@ -1863,12 +1795,7 @@ pub const HIRGenerator = struct {
                     if (maybe_index) |var_index| {
                         if (self.variable_union_members_by_index.get(var_index)) |members2| {
                             union_members = members2;
-                            self.reporter.debug("Found union members for {s} by index: {any}", .{ var_name, members2 }, @src());
                         }
-                    }
-                    // Regression fix: do NOT fallback to name-based lookup; avoid cross-scope collisions
-                    if (union_members == null) {
-                        self.reporter.debug("No union members found for {s}", .{var_name}, @src());
                     }
                 }
 
@@ -1890,7 +1817,7 @@ pub const HIRGenerator = struct {
             .Print => |print| {
                 if (print.expr) |print_expr| {
                     // Simple printing case
-                    try self.generateExpression(print_expr, true);
+                    try self.generateExpression(print_expr, true, false);
                     try self.instructions.append(.{ .Print = .{} });
                 } else if (print.format_template) |template| {
                     // Generate code for each template part and build correct placeholder mapping
@@ -1924,7 +1851,7 @@ pub const HIRGenerator = struct {
                     // Second pass: evaluate expressions in encounter order (left-to-right)
                     // VM will reverse-pop to restore original order
                     for (expressions.items) |expr_item| {
-                        try self.generateExpression(expr_item, true);
+                        try self.generateExpression(expr_item, true, false);
                     }
 
                     // Store format parts as constants and get their IDs
@@ -1963,7 +1890,7 @@ pub const HIRGenerator = struct {
                     } else {
                         // Generate code for each argument
                         for (args) |arg| {
-                            try self.generateExpression(arg, true);
+                            try self.generateExpression(arg, true, false);
                         }
 
                         // Store format parts as constants and get their IDs
@@ -1999,7 +1926,7 @@ pub const HIRGenerator = struct {
             .PeekStruct => |peek| {
 
                 // Generate the expression to peek
-                try self.generateExpression(peek.expr, true);
+                try self.generateExpression(peek.expr, true, false);
 
                 // Get struct info from the expression
                 const struct_info: StructPeekInfo = switch (peek.expr.data) {
@@ -2031,7 +1958,7 @@ pub const HIRGenerator = struct {
                     },
                     .FieldAccess => |field| blk: {
                         // For field access, we need to generate the field access code first
-                        try self.generateExpression(field.object, true);
+                        try self.generateExpression(field.object, true, false);
                         try self.instructions.append(.{
                             .StoreFieldName = .{
                                 .field_name = field.field.lexeme,
@@ -2080,7 +2007,7 @@ pub const HIRGenerator = struct {
             .Assignment => |assign| {
 
                 // Generate the value expression
-                try self.generateExpression(assign.value.?, true);
+                try self.generateExpression(assign.value.?, true, false);
 
                 // NEW: Track the variable's type from the assigned value
                 const assigned_type = self.inferTypeFromExpression(assign.value.?);
@@ -2184,7 +2111,7 @@ pub const HIRGenerator = struct {
                     try self.instructions.append(.{ .Const = .{ .value = index_value, .constant_id = index_const } });
 
                     // Generate the element value
-                    try self.generateExpression(element, true);
+                    try self.generateExpression(element, true, false);
 
                     // Set array element (stack: array, index, value)
                     try self.instructions.append(.{ .ArraySet = .{ .bounds_check = false } }); // No bounds check for initialization
@@ -2194,14 +2121,14 @@ pub const HIRGenerator = struct {
             .Index => |index| {
 
                 // Generate array/map expression
-                try self.generateExpression(index.array, true);
+                try self.generateExpression(index.array, true, false);
 
                 // Determine if we're accessing an array, map
                 const container_type = self.inferTypeFromExpression(index.array);
                 switch (container_type) {
                     .Map => {
                         // Generate index expression
-                        try self.generateExpression(index.index, true);
+                        try self.generateExpression(index.index, true, false);
 
                         // Map access - use MapGet
                         try self.instructions.append(.{
@@ -2212,7 +2139,7 @@ pub const HIRGenerator = struct {
                     },
                     .Array => {
                         // Generate index expression
-                        try self.generateExpression(index.index, true);
+                        try self.generateExpression(index.index, true, false);
 
                         // Array access - use ArrayGet
                         try self.instructions.append(.{ .ArrayGet = .{ .bounds_check = true } });
@@ -2226,23 +2153,27 @@ pub const HIRGenerator = struct {
                     },
                     else => {
                         // Generate index expression
-                        try self.generateExpression(index.index, true);
+                        try self.generateExpression(index.index, true, false);
 
                         // Default to array access for now
                         try self.instructions.append(.{ .ArrayGet = .{ .bounds_check = true } });
                     },
                 }
+                // If result is not preserved AND needs to be popped, do so now
+                if (!preserve_result and should_pop_after_use) {
+                    try self.instructions.append(.Pop);
+                }
             },
 
             .IndexAssign => |assign| {
                 // Generate array expression
-                try self.generateExpression(assign.array, true);
+                try self.generateExpression(assign.array, true, false);
 
                 // Generate index expression
-                try self.generateExpression(assign.index, true);
+                try self.generateExpression(assign.index, true, false);
 
                 // Generate value expression
-                try self.generateExpression(assign.value, true);
+                try self.generateExpression(assign.value, true, false);
 
                 // Generate ArraySet instruction
                 // Stack order expected by VM (top to bottom): value, index, array
@@ -2272,8 +2203,8 @@ pub const HIRGenerator = struct {
 
             .ArrayPush => |push| {
                 // Generate array then element so that stack is: [ ... array, element ]
-                try self.generateExpression(push.array, true);
-                try self.generateExpression(push.element, true);
+                try self.generateExpression(push.array, true, false);
+                try self.generateExpression(push.element, true, false);
 
                 // Emit ArrayPush instruction (uses stack: pops element, then array)
                 try self.instructions.append(.{ .ArrayPush = .{ .resize_behavior = .Double } });
@@ -2301,7 +2232,7 @@ pub const HIRGenerator = struct {
 
             .ArrayPop => |pop| {
                 // Generate array expression (stack: [..., array])
-                try self.generateExpression(pop.array, true);
+                try self.generateExpression(pop.array, true, false);
 
                 // Emit ArrayPop. VM pushes popped element, then updated array
                 try self.instructions.append(.ArrayPop);
@@ -2328,7 +2259,7 @@ pub const HIRGenerator = struct {
             .Grouping => |grouping| {
                 // Grouping is just parentheses - generate the inner expression
                 if (grouping) |inner_expr| {
-                    try self.generateExpression(inner_expr, true);
+                    try self.generateExpression(inner_expr, true, false);
                 } else {
                     // Empty grouping - push nothing
                     const nothing_idx = try self.addConstant(HIRValue.nothing);
@@ -2347,7 +2278,7 @@ pub const HIRGenerator = struct {
                 if (block.value) |value_expr| {
                     // Evaluate the final value expression
                     // Always evaluate, but only preserve on stack when requested
-                    try self.generateExpression(value_expr, true);
+                    try self.generateExpression(value_expr, true, false);
                     if (!preserve_result) {
                         // Discard the produced value in statement context
                         try self.instructions.append(.Pop);
@@ -2373,7 +2304,7 @@ pub const HIRGenerator = struct {
                 });
 
                 // Generate the value expression (e.g., the "1" in "current += 1")
-                try self.generateExpression(compound.value.?, true);
+                try self.generateExpression(compound.value.?, true, false);
 
                 const left_type = self.getTrackedVariableType(compound.name.lexeme) orelse .Unknown;
                 const right_type = self.inferTypeFromExpression(compound.value.?);
@@ -2549,7 +2480,7 @@ pub const HIRGenerator = struct {
                         return; // Tail call replaces both Call and Return
                     } else {
                         // Regular return with value
-                        try self.generateExpression(value, true);
+                        try self.generateExpression(value, true, false);
                     }
                 } else {
                     // No value - push nothing
@@ -2564,7 +2495,7 @@ pub const HIRGenerator = struct {
             .Unary => |unary| {
 
                 // Generate the operand first
-                try self.generateExpression(unary.right.?, true);
+                try self.generateExpression(unary.right.?, true, false);
 
                 // Generate the unary operation
                 switch (unary.operator.type) {
@@ -2619,7 +2550,7 @@ pub const HIRGenerator = struct {
                 // Implementation: iterate through array, return false if any element fails condition
 
                 // Generate array expression
-                try self.generateExpression(forall.array, true);
+                try self.generateExpression(forall.array, true, false);
 
                 // Check if the condition is a simple binary comparison
                 if (forall.condition.data == .Binary) {
@@ -2677,16 +2608,16 @@ pub const HIRGenerator = struct {
                             },
                             else => {
                                 // Complex condition - generate the expression
-                                try self.generateExpression(right, true);
+                                try self.generateExpression(right, true, false);
                             },
                         }
                     } else {
                         // No right operand - generate the condition as-is
-                        try self.generateExpression(forall.condition, true);
+                        try self.generateExpression(forall.condition, true, false);
                     }
                 } else {
                     // Complex condition - generate the expression as-is
-                    try self.generateExpression(forall.condition, true);
+                    try self.generateExpression(forall.condition, true, false);
                 }
 
                 // Use builtin function call with proper predicate
@@ -2708,7 +2639,7 @@ pub const HIRGenerator = struct {
                 // Implementation: iterate through array, return true if any element satisfies condition
 
                 // Generate array expression
-                try self.generateExpression(exists.array, true);
+                try self.generateExpression(exists.array, true, false);
 
                 // Check if the condition is a simple binary comparison
                 if (exists.condition.data == .Binary) {
@@ -2766,16 +2697,16 @@ pub const HIRGenerator = struct {
                             },
                             else => {
                                 // Complex condition - generate the expression
-                                try self.generateExpression(right, true);
+                                try self.generateExpression(right, true, false);
                             },
                         }
                     } else {
                         // No right operand - generate the condition as-is
-                        try self.generateExpression(exists.condition, true);
+                        try self.generateExpression(exists.condition, true, false);
                     }
                 } else {
                     // Complex condition - generate the expression as-is
-                    try self.generateExpression(exists.condition, true);
+                    try self.generateExpression(exists.condition, true, false);
                 }
 
                 // Use builtin function call with proper predicate
@@ -2805,7 +2736,7 @@ pub const HIRGenerator = struct {
                 }
 
                 // Generate the value to match on
-                try self.generateExpression(match_expr.value, true);
+                try self.generateExpression(match_expr.value, true, false);
 
                 // Create labels for each case body and the end
                 const end_label = try self.generateLabel("match_end");
@@ -2909,7 +2840,7 @@ pub const HIRGenerator = struct {
                     // to keep the stack balanced and ensure the case body value is on top.
                     try self.instructions.append(.Pop);
 
-                    try self.generateExpression(case.body, true);
+                    try self.generateExpression(case.body, true, false);
 
                     // Restore previous enum context
                     self.current_enum_type = old_enum_context;
@@ -2988,7 +2919,7 @@ pub const HIRGenerator = struct {
                     }
 
                     // Generate field value with possible enum context
-                    try self.generateExpression(field.value, true);
+                    try self.generateExpression(field.value, true, false);
                     // Restore enum context
                     self.current_enum_type = previous_enum_context;
 
@@ -3029,7 +2960,7 @@ pub const HIRGenerator = struct {
                     // 6. Store the modified person back to mike.person
 
                     // Generate base object (mike)
-                    try self.generateExpression(outer_field.object, true);
+                    try self.generateExpression(outer_field.object, true, false);
 
                     // Get the outer field (person)
                     try self.instructions.append(.{
@@ -3045,7 +2976,7 @@ pub const HIRGenerator = struct {
                     try self.instructions.append(.Dup);
 
                     // Generate value expression (26)
-                    try self.generateExpression(field_assign.value, true);
+                    try self.generateExpression(field_assign.value, true, false);
 
                     // Set the inner field (age) on the duplicate
                     try self.instructions.append(.{
@@ -3058,7 +2989,7 @@ pub const HIRGenerator = struct {
 
                     // Now we need to store the modified nested struct back to the original
                     // Generate base object again (mike)
-                    try self.generateExpression(outer_field.object, true);
+                    try self.generateExpression(outer_field.object, true, false);
 
                     // Swap the modified nested struct to the top of the stack
                     try self.instructions.append(.Swap);
@@ -3089,10 +3020,10 @@ pub const HIRGenerator = struct {
                     }
                 } else {
                     // Regular field assignment - generate object expression
-                    try self.generateExpression(field_assign.object, true);
+                    try self.generateExpression(field_assign.object, true, false);
 
                     // Generate value expression
-                    try self.generateExpression(field_assign.value, true);
+                    try self.generateExpression(field_assign.value, true, false);
 
                     // Generate SetField instruction
                     try self.instructions.append(.{
@@ -3176,7 +3107,7 @@ pub const HIRGenerator = struct {
 
             .Cast => |cast_expr| {
                 // Generate the value to cast
-                try self.generateExpression(cast_expr.value, true);
+                try self.generateExpression(cast_expr.value, true, false);
 
                 // Duplicate it so we can keep original value on success path
                 try self.instructions.append(.Dup);
@@ -3231,7 +3162,7 @@ pub const HIRGenerator = struct {
                 try self.instructions.append(.Pop);
                 if (cast_expr.else_branch) |else_expr| {
                     // Preserve result only if requested by parent
-                    try self.generateExpression(else_expr, preserve_result);
+                    try self.generateExpression(else_expr, preserve_result, false);
                 } else {
                     // No else branch: cast must fail -> halt program
                     try self.instructions.append(.Halt);
@@ -3243,7 +3174,7 @@ pub const HIRGenerator = struct {
                 if (cast_expr.then_branch) |then_expr| {
                     // On success, drop original and evaluate then-branch
                     try self.instructions.append(.Pop);
-                    try self.generateExpression(then_expr, preserve_result);
+                    try self.generateExpression(then_expr, preserve_result, false);
                 } else {
                     // No then branch: keep original value if result is needed, drop if not
                     if (!preserve_result) {
@@ -3257,7 +3188,7 @@ pub const HIRGenerator = struct {
 
             .LengthOf => |expr_to_check| {
                 // Generate the expression whose length we want to get
-                try self.generateExpression(expr_to_check, true);
+                try self.generateExpression(expr_to_check, true, false);
 
                 // Generate StringOp.Length instruction
                 try self.instructions.append(.{
@@ -3269,7 +3200,7 @@ pub const HIRGenerator = struct {
 
             .BytesOf => |expr_to_check| {
                 // Generate the expression whose bytes we want to get
-                try self.generateExpression(expr_to_check, true);
+                try self.generateExpression(expr_to_check, true, false);
 
                 // Generate StringOp.Bytes instruction
                 try self.instructions.append(.{
@@ -3281,7 +3212,7 @@ pub const HIRGenerator = struct {
 
             .StringToInt => |sti| {
                 // Generate the string expression to convert
-                try self.generateExpression(sti.string, true);
+                try self.generateExpression(sti.string, true, false);
 
                 // Generate StringOp.ToInt instruction
                 try self.instructions.append(.{
@@ -3298,8 +3229,8 @@ pub const HIRGenerator = struct {
                     const entry = entries[reverse_i];
 
                     // Generate key first, then value (they'll be popped in reverse order)
-                    try self.generateExpression(entry.key, true);
-                    try self.generateExpression(entry.value, true);
+                    try self.generateExpression(entry.key, true, false);
+                    try self.generateExpression(entry.value, true, false);
                 }
 
                 // Create HIRMapEntry array with the right size (will be populated by VM)
@@ -3331,196 +3262,50 @@ pub const HIRGenerator = struct {
                 try self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } });
             },
 
-            .For => |for_expr| {
-                const loop_start_label = try self.generateLabel("for_start");
-                const loop_body_label = try self.generateLabel("for_body");
-                const loop_increment_label = try self.generateLabel("for_increment");
-                const loop_end_label = try self.generateLabel("for_end");
+            .Loop => |loop| {
+                const loop_start_label = try self.generateLabel("loop_start");
+                const loop_body_label = try self.generateLabel("loop_body");
+                const loop_step_label = try self.generateLabel("loop_step");
+                const loop_end_label = try self.generateLabel("loop_end");
 
-                // Register loop context: continue -> increment, break -> end
-                try self.pushLoopContext(loop_end_label, loop_increment_label);
+                // continue should jump to step if present, otherwise to start
+                const continue_target = if (loop.step != null) loop_step_label else loop_start_label;
+                try self.pushLoopContext(loop_end_label, continue_target);
 
-                // Generate initializer (var i is 0)
-                if (for_expr.initializer) |initializer| {
+                // Initializer (var decl or expression statement)
+                if (loop.var_decl) |initializer| {
                     try self.generateStatement(initializer.*);
                 }
 
                 // Loop start - condition check
                 try self.instructions.append(.{ .Label = .{ .name = loop_start_label, .vm_address = 0 } });
 
-                // Generate condition (i < x)
-                if (for_expr.condition) |condition| {
-                    try self.generateExpression(condition, true);
+                if (loop.condition) |condition| {
+                    try self.generateExpression(condition, true, false);
                 } else {
-                    // No condition means infinite loop - push true
                     const true_idx = try self.addConstant(HIRValue{ .tetra = TETRA_TRUE });
                     try self.instructions.append(.{ .Const = .{ .value = HIRValue{ .tetra = TETRA_TRUE }, .constant_id = true_idx } });
                 }
 
-                // Jump based on condition: TRUE=continue to body, FALSE=exit loop
-                try self.instructions.append(.{
-                    .JumpCond = .{
-                        .label_true = loop_body_label, // Continue to loop body when TRUE
-                        .label_false = loop_end_label, // Exit loop when FALSE
-                        .vm_offset = 0, // Will be patched
-                        .condition_type = .Tetra,
-                    },
-                });
+                try self.instructions.append(.{ .JumpCond = .{ .label_true = loop_body_label, .label_false = loop_end_label, .vm_offset = 0, .condition_type = .Tetra } });
 
-                // Loop body label (where TRUE condition jumps to)
+                // Body
                 try self.instructions.append(.{ .Label = .{ .name = loop_body_label, .vm_address = 0 } });
-
-                // Generate body
-                try self.generateExpression(for_expr.body, false);
-
-                // Increment label and execution
-                try self.instructions.append(.{ .Label = .{ .name = loop_increment_label, .vm_address = 0 } });
-                if (for_expr.increment) |increment| {
-                    try self.generateExpression(increment, false);
-                }
-
-                // Jump back to condition check
-                try self.instructions.append(.{ .Jump = .{ .label = loop_start_label, .vm_offset = 0 } });
-
-                // Loop end
-                try self.instructions.append(.{ .Label = .{ .name = loop_end_label, .vm_address = 0 } });
-
-                // Push nothing as for loop result
-                const nothing_idx = try self.addConstant(HIRValue.nothing);
-                try self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } });
-
-                // Unregister loop context
-                self.popLoopContext();
-            },
-
-            .ForEach => |foreach_expr| {
-                // Create unique label set for this foreach
-                const fe_start = try self.generateLabel("foreach_start");
-                const fe_body = try self.generateLabel("foreach_body");
-                const fe_next = try self.generateLabel("foreach_next");
-                const fe_end = try self.generateLabel("foreach_end");
-
-                // Register loop context: continue -> next, break -> end
-                try self.pushLoopContext(fe_end, fe_next);
-
-                // Synthesize stable temporary variable names for array, length, and index
-                const arr_tmp_name = try std.fmt.allocPrint(self.allocator, "__fe_arr_{s}", .{fe_start});
-                const len_tmp_name = try std.fmt.allocPrint(self.allocator, "__fe_len_{s}", .{fe_start});
-                const idx_tmp_fallback = try std.fmt.allocPrint(self.allocator, "__fe_idx_{s}", .{fe_start});
-
-                // Resolve or create indices for the temporaries
-                const arr_tmp_idx = try self.getOrCreateVariable(arr_tmp_name);
-                const len_tmp_idx = try self.getOrCreateVariable(len_tmp_name);
-                const idx_var_name = if (foreach_expr.index_name) |idx_tok| idx_tok.lexeme else idx_tmp_fallback;
-                const idx_tmp_idx = try self.getOrCreateVariable(idx_var_name);
-
-                // Track basic types for temporaries
-                // Determine container type (array or string)
-                const container_type = self.inferTypeFromExpression(foreach_expr.array);
-                const is_string_container = container_type == .String;
-                try self.trackVariableType(arr_tmp_name, container_type);
-                try self.trackVariableType(len_tmp_name, .Int);
-                try self.trackVariableType(idx_var_name, .Int);
-
-                // Generate and store the array expression into arr_tmp
-                try self.generateExpression(foreach_expr.array, true);
-                try self.instructions.append(.Dup);
-                try self.instructions.append(.{ .StoreVar = .{
-                    .var_index = arr_tmp_idx,
-                    .var_name = arr_tmp_name,
-                    .scope_kind = .Local,
-                    .module_context = null,
-                    .expected_type = .Array,
-                } });
-
-                // Compute container length into len_tmp
-                try self.instructions.append(.{ .StringOp = .{ .op = .Length } });
-                try self.instructions.append(.{ .StoreVar = .{
-                    .var_index = len_tmp_idx,
-                    .var_name = len_tmp_name,
-                    .scope_kind = .Local,
-                    .module_context = null,
-                    .expected_type = .Int,
-                } });
-
-                // Initialize index to 0
-                const zero_idx = try self.addConstant(HIRValue{ .int = 0 });
-                try self.instructions.append(.{ .Const = .{ .value = HIRValue{ .int = 0 }, .constant_id = zero_idx } });
-                try self.instructions.append(.{ .StoreVar = .{
-                    .var_index = idx_tmp_idx,
-                    .var_name = idx_var_name,
-                    .scope_kind = .Local,
-                    .module_context = null,
-                    .expected_type = .Int,
-                } });
-
-                // Loop start: check index < len
-                try self.instructions.append(.{ .Label = .{ .name = fe_start, .vm_address = 0 } });
-                try self.instructions.append(.{ .LoadVar = .{ .var_index = idx_tmp_idx, .var_name = idx_var_name, .scope_kind = .Local, .module_context = null } });
-                try self.instructions.append(.{ .LoadVar = .{ .var_index = len_tmp_idx, .var_name = len_tmp_name, .scope_kind = .Local, .module_context = null } });
-                try self.instructions.append(.{ .Compare = .{ .op = .Lt, .operand_type = .Int } });
-                try self.instructions.append(.{ .JumpCond = .{ .label_true = fe_body, .label_false = fe_end, .vm_offset = 0, .condition_type = .Tetra } });
-
-                // Loop body: load element and bind to item variable
-                try self.instructions.append(.{ .Label = .{ .name = fe_body, .vm_address = 0 } });
-                if (is_string_container) {
-                    // For strings, order must be: start, length, string (so string is on top when StringOp executes)
-                    try self.instructions.append(.{ .LoadVar = .{ .var_index = idx_tmp_idx, .var_name = idx_var_name, .scope_kind = .Local, .module_context = null } });
-                    // For strings, use Substring with length 1 to fetch a single-char string
-                    const one_idx = try self.addConstant(HIRValue{ .int = 1 });
-                    try self.instructions.append(.{ .Const = .{ .value = HIRValue{ .int = 1 }, .constant_id = one_idx } });
-                    try self.instructions.append(.{ .LoadVar = .{ .var_index = arr_tmp_idx, .var_name = arr_tmp_name, .scope_kind = .Local, .module_context = null } });
-                    try self.instructions.append(.{ .StringOp = .{ .op = .Substring } });
-                } else {
-                    try self.instructions.append(.{ .LoadVar = .{ .var_index = arr_tmp_idx, .var_name = arr_tmp_name, .scope_kind = .Local, .module_context = null } });
-                    try self.instructions.append(.{ .LoadVar = .{ .var_index = idx_tmp_idx, .var_name = idx_var_name, .scope_kind = .Local, .module_context = null } });
-                    try self.instructions.append(.{ .ArrayGet = .{ .bounds_check = true } });
-                }
-
-                // Determine/track the element type if possible
-                var elem_type: HIRType = .Unknown;
-                if (!is_string_container and foreach_expr.array.data == .Variable) {
-                    if (self.getTrackedArrayElementType(foreach_expr.array.data.Variable.lexeme)) |tracked_elem| {
-                        elem_type = tracked_elem;
-                    }
-                }
-                if (is_string_container) elem_type = .String;
-
-                // Store to loop item variable
-                const item_name = foreach_expr.item_name.lexeme;
-                const item_idx = try self.getOrCreateVariable(item_name);
-                if (elem_type != .Unknown) try self.trackVariableType(item_name, elem_type);
-                try self.instructions.append(.{ .StoreVar = .{ .var_index = item_idx, .var_name = item_name, .scope_kind = .Local, .module_context = null, .expected_type = elem_type } });
-
-                // Create a new scope for each loop iteration to isolate constants
-                const iteration_scope_id: u32 = self.label_count + 2000;
+                // Enter per-iteration scope to ensure locals/consts do not leak across iterations
+                const iteration_scope_id = self.label_count + 2000;
                 try self.instructions.append(.{ .EnterScope = .{ .scope_id = iteration_scope_id, .var_count = 0 } });
+                try self.generateExpression(loop.body, false, false);
 
-                // Generate loop body statements
-                for (foreach_expr.body) |stmt| {
-                    try self.generateStatement(stmt);
+                // Step
+                try self.instructions.append(.{ .Label = .{ .name = loop_step_label, .vm_address = 0 } });
+                // Exit per-iteration scope before executing the step
+                try self.instructions.append(.{ .ExitScope = .{ .scope_id = iteration_scope_id } });
+                if (loop.step) |step_expr| {
+                    try self.generateExpression(step_expr, false, false);
                 }
 
-                // Exit iteration scope
-                try self.instructions.append(.{ .ExitScope = .{ .scope_id = iteration_scope_id } });
-
-                // Next: i = i + 1
-                try self.instructions.append(.{ .Label = .{ .name = fe_next, .vm_address = 0 } });
-                try self.instructions.append(.{ .LoadVar = .{ .var_index = idx_tmp_idx, .var_name = idx_var_name, .scope_kind = .Local, .module_context = null } });
-                const one_idx = try self.addConstant(HIRValue{ .int = 1 });
-                try self.instructions.append(.{ .Const = .{ .value = HIRValue{ .int = 1 }, .constant_id = one_idx } });
-                try self.instructions.append(.{ .Arith = .{ .op = .Add, .operand_type = .Int } });
-                try self.instructions.append(.{ .StoreVar = .{ .var_index = idx_tmp_idx, .var_name = idx_var_name, .scope_kind = .Local, .module_context = null, .expected_type = .Int } });
-
-                // Jump back to condition
-                try self.instructions.append(.{ .Jump = .{ .label = fe_start, .vm_offset = 0 } });
-
-                // End label and result value
-                try self.instructions.append(.{ .Label = .{ .name = fe_end, .vm_address = 0 } });
-                const nothing2_idx = try self.addConstant(HIRValue.nothing);
-                try self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing2_idx } });
-
-                // Unregister loop context
+                try self.instructions.append(.{ .Jump = .{ .label = loop_start_label, .vm_offset = 0 } });
+                try self.instructions.append(.{ .Label = .{ .name = loop_end_label, .vm_address = 0 } }); // Add end label
                 self.popLoopContext();
             },
 
@@ -3555,7 +3340,7 @@ pub const HIRGenerator = struct {
 
                 if (!handled_as_enum_member) {
                     // Handle enum member access (e.g., Color.Red)
-                    try self.generateExpression(field.object, true);
+                    try self.generateExpression(field.object, true, false);
 
                     // Now, the original logic for FieldAccess (non-enum)
                     try self.instructions.append(.{
@@ -3646,31 +3431,31 @@ pub const HIRGenerator = struct {
                 const name = m.method.lexeme;
                 if (std.mem.eql(u8, name, "substring")) {
                     // Evaluate in VM-expected order: start, length, then receiver on top
-                    try self.generateExpression(m.arguments[0], true);
-                    try self.generateExpression(m.arguments[1], true);
-                    try self.generateExpression(m.receiver, true);
+                    try self.generateExpression(m.arguments[0], true, false);
+                    try self.generateExpression(m.arguments[1], true, false);
+                    try self.generateExpression(m.receiver, true, false);
                     try self.instructions.append(.{ .StringOp = .{ .op = .Substring } });
                 } else if (std.mem.eql(u8, name, "string")) {
                     // Evaluate receiver (the value to convert to string)
-                    try self.generateExpression(m.receiver, true);
+                    try self.generateExpression(m.receiver, true, false);
                     // Generate StringOp.ToString instruction
                     try self.instructions.append(.{ .StringOp = .{ .op = .ToString } });
                 } else if (std.mem.eql(u8, name, "length")) {
                     // Evaluate receiver (the value to get length of)
-                    try self.generateExpression(m.receiver, true);
+                    try self.generateExpression(m.receiver, true, false);
                     // Generate StringOp.Length instruction
                     try self.instructions.append(.{ .StringOp = .{ .op = .Length } });
                 } else if (std.mem.eql(u8, name, "int")) {
                     // Evaluate receiver and convert to int
-                    try self.generateExpression(m.receiver, true);
+                    try self.generateExpression(m.receiver, true, false);
                     try self.instructions.append(.{ .StringOp = .{ .op = .ToInt } });
                 } else if (std.mem.eql(u8, name, "float")) {
                     // Evaluate receiver and convert to float
-                    try self.generateExpression(m.receiver, true);
+                    try self.generateExpression(m.receiver, true, false);
                     try self.instructions.append(.{ .StringOp = .{ .op = .ToFloat } });
                 } else if (std.mem.eql(u8, name, "byte")) {
                     // Evaluate receiver and convert to byte
-                    try self.generateExpression(m.receiver, true);
+                    try self.generateExpression(m.receiver, true, false);
                     try self.instructions.append(.{ .StringOp = .{ .op = .ToByte } });
                 } else {
                     // Unknown method - fallback to nothing
@@ -3678,11 +3463,11 @@ pub const HIRGenerator = struct {
                     try self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } });
                 }
             },
-
             else => {
-                // Push nothing as fallback
-                const nothing_idx = try self.addConstant(HIRValue.nothing);
-                try self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } });
+                // For all other expressions, ensure the stack is clean if result not preserved
+                if (!preserve_result and should_pop_after_use) {
+                    try self.instructions.append(.Pop);
+                }
             },
         }
     }
@@ -3806,7 +3591,7 @@ pub const HIRGenerator = struct {
 
                         // Generate arguments in normal order (same as regular call)
                         for (call.arguments) |arg| {
-                            self.generateExpression(arg, true) catch return false; // Fallback to regular call on error
+                            self.generateExpression(arg, true, true) catch return false; // Fallback to regular call on error
                         }
 
                         // Check if this is a user-defined function
@@ -4110,8 +3895,6 @@ pub const HIRGenerator = struct {
         const left_type = self.inferTypeFromExpression(left_expr);
         const right_type = self.inferTypeFromExpression(right_expr);
 
-        self.reporter.debug("inferBinaryOpResultType: {s} {s} {s}", .{ @tagName(left_type), @tagName(operator_type), @tagName(right_type) }, @src());
-
         // For PLUS operator, handle string/array concatenation and numeric promotion
         if (operator_type == .PLUS) {
             if (left_type == .String and right_type == .String) {
@@ -4159,7 +3942,6 @@ pub const HIRGenerator = struct {
             else => .Int, // Default to int for other operations
         };
 
-        self.reporter.debug("inferBinaryOpResultType: result = {s}\n", .{@tagName(result_type)}, @src());
         return result_type;
     }
 
@@ -4324,12 +4106,6 @@ pub const HIRGenerator = struct {
                 if (if_expr.else_branch) |else_branch| {
                     if (self.analyzeExpressionForParameterType(else_branch, param_name)) |inferred| return inferred;
                 }
-                return null;
-            },
-            .While => |while_expr| {
-                // Check condition and body
-                if (self.analyzeExpressionForParameterType(while_expr.condition, param_name)) |inferred| return inferred;
-                if (self.analyzeExpressionForParameterType(while_expr.body, param_name)) |inferred| return inferred;
                 return null;
             },
             .Block => |block| {

@@ -127,7 +127,7 @@ fn parseForEach(self: *Parser) ErrorList!*ast.Expr {
     if (self.peek().type != .IDENTIFIER) {
         return error.ExpectedIdentifier;
     }
-    const item_name = self.peek();
+    _ = self.peek();
     self.advance();
 
     // Parse 'in' keyword
@@ -137,7 +137,7 @@ fn parseForEach(self: *Parser) ErrorList!*ast.Expr {
     self.advance();
 
     // Parse array expression
-    const array_expr = try expression_parser.parseExpression(self);
+    _ = try expression_parser.parseExpression(self);
 
     if (self.peek().type != .RIGHT_PAREN) {
         return error.ExpectedRightParen;
@@ -148,16 +148,12 @@ fn parseForEach(self: *Parser) ErrorList!*ast.Expr {
     if (self.peek().type != .LEFT_BRACE) {
         return error.ExpectedLeftBrace;
     }
-    const body = try self.parseBlockStmt();
+    _ = try self.parseBlockStmt();
 
-    const foreach = try self.allocator.create(ast.Expr);
-    foreach.* = .{ .ForEach = .{
-        .item_name = item_name,
-        .array = array_expr,
-        .body = body,
-    } };
-
-    return foreach;
+    // Desugar to Loop handled in statement_parser (keep here for compatibility if needed)
+    const foreach_expr = try self.allocator.create(ast.Expr);
+    foreach_expr.* = .{ .DefaultArgPlaceholder = {} };
+    return foreach_expr;
 }
 
 fn parseReturn(self: *Parser) ErrorList!ast.Stmt {

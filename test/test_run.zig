@@ -504,7 +504,7 @@ test "unified runner" {
     std.debug.print("Running doxa command with ./test/examples/calculator.doxa...\n", .{});
     var calc_passed: usize = 0;
     var calc_failed: usize = 0;
-    for (calculator_io_tests) |io| {
+    for (calculator_io_tests, 0..) |io, idx| {
         // Execute case without printing; compare first line only
         const out = try runDoxaCommandWithInput(allocator, "./test/examples/calculator.doxa", io.input);
         defer allocator.free(out);
@@ -514,11 +514,16 @@ test "unified runner" {
             calc_passed += 1;
         } else {
             calc_failed += 1;
+            const found_output = if (lines.items.len > 0) lines.items[0] else "(no output)";
+            const failure_details = try std.fmt.allocPrint(allocator, "Calculator test case {d} failed:\n  Input: \"{s}\"\n  Expected: \"{s}\"\n  Found:    \"{s}\"", .{ idx + 1, std.mem.trim(u8, io.input, " \t\n\r"), io.expected_output, found_output });
+            std.debug.print("{s}\n", .{failure_details});
         }
     }
     std.debug.print("Parsing output...\n", .{});
     if (calc_failed == 0) {
         std.debug.print("✓ All {d} test cases passed\n", .{calculator_io_tests.len});
+    } else {
+        std.debug.print("✗ {d} test case(s) failed\n", .{calc_failed});
     }
     std.debug.print("\n=== calculator test complete ===\n", .{});
     passed += calc_passed;

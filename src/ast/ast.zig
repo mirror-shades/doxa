@@ -381,33 +381,16 @@ pub const Logical = struct {
     right: *Expr,
 };
 
-pub const WhileExpr = struct {
-    condition: *Expr,
+// Unified Loop node for all loop variants.
+// - var_decl: optional initialization/loop variable declaration (commonly i32)
+// - condition: optional boolean/tetra expression (when null, treated as true)
+// - step: optional expression or block executed after each iteration
+// - body: required expression (typically a Block)
+pub const Loop = struct {
+    var_decl: ?*Stmt = null,
+    condition: ?*Expr = null,
+    step: ?*Expr = null,
     body: *Expr,
-};
-
-pub const ForExpr = struct {
-    initializer: ?*Stmt,
-    condition: ?*Expr,
-    increment: ?*Expr,
-    body: *Expr,
-};
-
-pub const ForEachExpr = struct {
-    item_name: Token,
-    index_name: ?Token, // Add this field
-    array: *Expr,
-    body: []Stmt,
-
-    pub fn deinit(self: *ForEachExpr, allocator: std.mem.Allocator) void {
-        self.array.deinit(allocator);
-        allocator.destroy(self.array);
-
-        for (self.body) |*stmt| {
-            stmt.deinit(allocator);
-        }
-        allocator.free(self.body);
-    }
 };
 
 pub const PeekExpr = struct {
@@ -560,9 +543,6 @@ pub const Expr = struct {
             is_public: bool = false,
             defining_module: ?[]const u8 = null,
         },
-        While: WhileExpr,
-        For: ForExpr,
-        ForEach: ForEachExpr,
         FieldAccess: FieldAccess,
         StructDecl: StructDecl,
         StructLiteral: struct {
@@ -711,6 +691,7 @@ pub const Expr = struct {
         },
         Break: void,
         TypeExpr: *TypeExpr,
+        Loop: Loop,
     };
 
     pub fn getBase(self: *Expr) *Base {
@@ -847,36 +828,6 @@ pub const Expr = struct {
             },
             .Print => |*pm| {
                 pm.deinit(allocator);
-            },
-            .While => |*w| {
-                w.condition.deinit(allocator);
-                allocator.destroy(w.condition);
-                w.body.deinit(allocator);
-                allocator.destroy(w.body);
-            },
-            .For => |*f| {
-                if (f.initializer) |init| {
-                    init.deinit(allocator);
-                    allocator.destroy(init);
-                }
-                if (f.condition) |condition| {
-                    condition.deinit(allocator);
-                    allocator.destroy(condition);
-                }
-                if (f.increment) |increment| {
-                    increment.deinit(allocator);
-                    allocator.destroy(increment);
-                }
-                f.body.deinit(allocator);
-                allocator.destroy(f.body);
-            },
-            .ForEach => |*f| {
-                f.array.deinit(allocator);
-                allocator.destroy(f.array);
-                for (f.body) |*stmt| {
-                    stmt.deinit(allocator);
-                }
-                allocator.free(f.body);
             },
             .FieldAccess => |*f| {
                 f.object.deinit(allocator);
@@ -1113,6 +1064,37 @@ pub const Expr = struct {
                     else_expr.deinit(allocator);
                     allocator.destroy(else_expr);
                 }
+            },
+            .Loop => |*l| {
+                if (l.var_decl) |vd| {
+                    // Deinit any initializer expression inside the VarDecl statement
+                    switch (vd.data) {
+                        .VarDecl => |*decl| {
+                            if (decl.initializer) |init| {
+                                init.deinit(allocator);
+                                allocator.destroy(init);
+                            }
+                        },
+                        .Expression => |maybe_expr| {
+                            if (maybe_expr) |e| {
+                                e.deinit(allocator);
+                                allocator.destroy(e);
+                            }
+                        },
+                        else => {},
+                    }
+                    allocator.destroy(vd);
+                }
+                if (l.condition) |cond| {
+                    cond.deinit(allocator);
+                    allocator.destroy(cond);
+                }
+                if (l.step) |step_expr| {
+                    step_expr.deinit(allocator);
+                    allocator.destroy(step_expr);
+                }
+                l.body.deinit(allocator);
+                allocator.destroy(l.body);
             },
         }
     }

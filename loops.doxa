@@ -1,21 +1,87 @@
-// var x is 0
-// do {
-//     x += 1
-//     if x == 2 then continue
-//     x?
-// }
+/////
+// DO
+/////
 
-var y is 0
-do y += 1 {
-    if y == 2 then continue
-    if y == 5 then break
-    y?
+//empty do body
+var i is 0
+do {
+    if i != 2 then i?
+    i += 1
+    if i == 5 then break
 }
 
-var z is 0
-while z < 5 do {
-    z += 1
-    if z == 2 then continue
+// do bodys
+var j is 0
+do j += 1 {
+    if j == 2 then continue
+    if j == 5 then break
+    j?
+}
+
+
+/////
+// WHILE
+/////
+
+// empty while body
+var k is 0
+while k < 5 {
+    if k == 5 then break
+    if k != 2 then k?
+    k += 1
+}
+
+// ///
+// WHILE DO
+// ///
+
+var l is 0
+while l < 5 do {
+    l += 1
 } {
-    z?
+    if l == 5 then break
+    if l != 2 then l?
 }
+
+
+/////
+// FOR DO
+/////
+
+for x do x += 1 {
+    if x == 5 then break
+    if x != 2 then x?
+}
+
+
+/////
+// FOR WHILE DO
+/////
+
+// default loop variable
+for y while y < 5 do y += 1 {
+    if y != 2 then y?
+}
+
+// manually set the loop variable
+for z is 10 while z > 0 do z -= 1 {
+    if z % 2 == 0 then z?
+}
+
+/////
+// EACH
+/////
+
+var arr is [0, 1, 2, 3, 4]
+
+each item in arr {
+    if item == 2 then continue
+    item?
+}
+
+each item at index in arr {
+    if index == 2 then continue
+    index?
+    item?
+}
+
