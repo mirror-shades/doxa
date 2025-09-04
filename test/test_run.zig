@@ -185,6 +185,49 @@ const expected_bigfile_results = [_]peek_result{
     .{ .type = "int", .value = "100" },
     .{ .type = "string", .value = "\"It's blue\"" },
     .{ .type = "string", .value = "\"It's something else\"" },
+
+    .{ .type = "int", .value = "0" },
+    .{ .type = "int", .value = "1" },
+    .{ .type = "int", .value = "3" },
+    .{ .type = "int", .value = "4" },
+    .{ .type = "int", .value = "0" },
+    .{ .type = "int", .value = "1" },
+    .{ .type = "int", .value = "3" },
+    .{ .type = "int", .value = "4" },
+    .{ .type = "int", .value = "0" },
+    .{ .type = "int", .value = "1" },
+    .{ .type = "int", .value = "3" },
+    .{ .type = "int", .value = "4" },
+    .{ .type = "int", .value = "0" },
+    .{ .type = "int", .value = "1" },
+    .{ .type = "int", .value = "3" },
+    .{ .type = "int", .value = "4" },
+    .{ .type = "int", .value = "0" },
+    .{ .type = "int", .value = "1" },
+    .{ .type = "int", .value = "3" },
+    .{ .type = "int", .value = "4" },
+    .{ .type = "int", .value = "0" },
+    .{ .type = "int", .value = "1" },
+    .{ .type = "int", .value = "3" },
+    .{ .type = "int", .value = "4" },
+    .{ .type = "int", .value = "10" },
+    .{ .type = "int", .value = "8" },
+    .{ .type = "int", .value = "6" },
+    .{ .type = "int", .value = "4" },
+    .{ .type = "int", .value = "2" },
+    .{ .type = "int", .value = "0" },
+    .{ .type = "int", .value = "1" },
+    .{ .type = "int", .value = "3" },
+    .{ .type = "int", .value = "4" },
+    .{ .type = "int", .value = "0" },
+    .{ .type = "int", .value = "0" },
+    .{ .type = "int", .value = "1" },
+    .{ .type = "int", .value = "1" },
+    .{ .type = "int", .value = "3" },
+    .{ .type = "int", .value = "3" },
+    .{ .type = "int", .value = "4" },
+    .{ .type = "int", .value = "4" },
+
     .{ .type = "string", .value = "\"buzz\"" },
     .{ .type = "int", .value = "101" },
     .{ .type = "string", .value = "\"fizz\"" },
@@ -417,56 +460,60 @@ fn runTest(allocator: std.mem.Allocator, test_name: []const u8, path: []const u8
     return .{ .passed = 0, .failed = 0 };
 }
 
-fn validatePrintResults(output: []const u8, expected_results: anytype, allocator: std.mem.Allocator) !test_results {
+fn validatePrintResults(output: []const u8, expected_results: []const print_result, allocator: std.mem.Allocator) !test_results {
     const outputs = try parsePrintOutput(output, allocator);
     defer outputs.deinit();
 
     var i: usize = 0;
-    var all_passed = true;
     while (i < outputs.items.len and i < expected_results.len) : (i += 1) {
-        if (std.mem.eql(u8, outputs.items[i], expected_results[i].value)) {
-            continue;
+        if (!std.mem.eql(u8, outputs.items[i], expected_results[i].value)) {
+            const found_output = outputs.items[i];
+            std.debug.print("✗ Print test case {d} failed:\n  Expected: \"{s}\"\n  Found:    \"{s}\"\n", .{ i + 1, expected_results[i].value, found_output });
+            return .{ .passed = i, .failed = 1 };
         }
-        // no printing here; caller handles reporting
-        all_passed = false;
-        break;
     }
-
-    if (all_passed) {
-        return .{ .passed = i, .failed = 0 };
-    } else {
-        return .{ .passed = i, .failed = 1 };
-    }
+    return .{ .passed = i, .failed = 0 };
 }
 
-fn validatePeekResults(output: []const u8, expected_results: anytype, allocator: std.mem.Allocator) !test_results {
+fn validatePeekResults(output: []const u8, expected_results: []const peek_result, allocator: std.mem.Allocator) !test_results {
     const outputs = try parsePeekOutput(output, allocator);
     defer outputs.deinit();
 
     var i: usize = 0;
-    var all_passed = true;
     while (i < outputs.items.len and i < expected_results.len) : (i += 1) {
-        if (std.mem.eql(u8, outputs.items[i].value, expected_results[i].value)) {
-            continue;
+        if (!std.mem.eql(u8, outputs.items[i].value, expected_results[i].value)) {
+            if (i < outputs.items.len) {
+                std.debug.print(
+                    "✗ Peek test case {d} failed:\n  Expected: {s} = \"{s}\"\n  Found:    {s} = \"{s}\"\n",
+                    .{ i + 1, expected_results[i].type, expected_results[i].value, outputs.items[i].type, outputs.items[i].value },
+                );
+            } else {
+                std.debug.print(
+                    "✗ Peek test case {d} failed:\n  Expected: {s} = \"{s}\"\n  Found:    (no output)\n",
+                    .{ i + 1, expected_results[i].type, expected_results[i].value },
+                );
+            }
+            return .{ .passed = i, .failed = 1 };
         }
-        // no printing here; caller handles reporting
-        all_passed = false;
-        break;
     }
-
-    if (all_passed) {
-        return .{ .passed = i, .failed = 0 };
-    } else {
-        return .{ .passed = i, .failed = 1 };
-    }
+    return .{ .passed = i, .failed = 0 };
 }
 
 fn runTestCase(allocator: std.mem.Allocator, tc: TestCase) !test_results {
-    if (tc.mode == .PRINT) {
-        return try runTest(allocator, tc.name, tc.path, tc.expected_print.?, tc.input, .PRINT);
+    var output: []const u8 = undefined;
+    if (tc.input) |inp| {
+        output = try runDoxaCommandWithInput(allocator, tc.path, inp);
     } else {
-        return try runTest(allocator, tc.name, tc.path, tc.expected_peek.?, tc.input, .PEEK);
+        output = try runDoxaCommand(allocator, tc.path);
     }
+    defer allocator.free(output);
+
+    if (output.len == 0) return .{ .passed = 0, .failed = 0 };
+
+    return switch (tc.mode) {
+        .PRINT => try validatePrintResults(output, tc.expected_print.?, allocator),
+        .PEEK => try validatePeekResults(output, tc.expected_peek.?, allocator),
+    };
 }
 
 test "unified runner" {

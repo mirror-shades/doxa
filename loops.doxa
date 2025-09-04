@@ -1,87 +1,65 @@
-/////
 // DO
-/////
-
 //empty do body
-var i is 0
+var do_empty is 0
 do {
-    if i != 2 then i?
-    i += 1
-    if i == 5 then break
+    if do_empty != 2 then do_empty?
+    do_empty += 1
+    if do_empty == 5 then break
 }
 
 // do bodys
-var j is 0
-do j += 1 {
-    if j == 2 then continue
-    if j == 5 then break
-    j?
+var do_body is 0
+do do_body += 1 {
+    if do_body == 2 then continue
+    if do_body == 5 then break
+    do_body?
 }
 
-
-/////
 // WHILE
-/////
-
 // empty while body
-var k is 0
-while k < 5 {
-    if k == 5 then break
-    if k != 2 then k?
-    k += 1
+var _while is 0
+while _while < 5 {
+    if _while == 5 then break
+    if _while != 2 then _while?
+    _while += 1
 }
 
-// ///
 // WHILE DO
-// ///
-
-var l is 0
-while l < 5 do {
-    l += 1
+var while_do is 0
+while while_do < 5 do {
+    while_do += 1
 } {
-    if l == 5 then break
-    if l != 2 then l?
+    if while_do == 5 then break
+    if while_do != 2 then while_do?
 }
 
-
-/////
 // FOR DO
-/////
-
-for x do x += 1 {
-    if x == 5 then break
-    if x != 2 then x?
+for for_do do for_do += 1 {
+    if for_do == 5 then break
+    if for_do != 2 then for_do?
 }
 
-
-/////
 // FOR WHILE DO
-/////
-
 // default loop variable
-for y while y < 5 do y += 1 {
-    if y != 2 then y?
+for for_while_do_empty while for_while_do_empty < 5 do for_while_do_empty += 1 {
+    if for_while_do_empty != 2 then for_while_do_empty?
 }
 
 // manually set the loop variable
-for z is 10 while z > 0 do z -= 1 {
-    if z % 2 == 0 then z?
+for for_while_do is 10 while for_while_do > 0 do for_while_do -= 1 {
+    if for_while_do % 2 == 0 then for_while_do?
 }
 
-/////
 // EACH
-/////
+var collection is [0, 1, 2, 3, 4]
 
-var arr is [0, 1, 2, 3, 4]
-
-each item in arr {
+each item in collection {
     if item == 2 then continue
     item?
 }
 
-each item at index in arr {
+each item at index in collection {
     if index == 2 then continue
     index?
     item?
 }
-
