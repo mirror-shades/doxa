@@ -13,6 +13,20 @@ const Mode = enum {
     PRINT,
 };
 
+const TestCase = struct {
+    name: []const u8,
+    path: []const u8,
+    mode: Mode,
+    input: ?[]const u8,
+    expected_print: ?[]const print_result,
+    expected_peek: ?[]const peek_result,
+};
+
+const IOTest = struct {
+    input: []const u8,
+    expected_output: []const u8,
+};
+
 const peek_result = struct {
     type: []const u8,
     value: []const u8,
@@ -32,28 +46,22 @@ const expected_brainfuck_results = [_]print_result{
     .{ .value = "Input: Output: 0x67" },
 };
 
-const expected_calculator_results_1 = [_]print_result{
+const expected_calculator_results = [_]print_result{
     .{ .value = "Output: 3" },
-};
-
-const expected_calculator_results_2 = [_]print_result{
     .{ .value = "Output: -1" },
-};
-
-const expected_calculator_results_3 = [_]print_result{
     .{ .value = "Output: 212" },
-};
-
-const expected_calculator_results_4 = [_]print_result{
     .{ .value = "Output: 7" },
-};
-
-const expected_calculator_results_5 = [_]print_result{
     .{ .value = "Output: 1" },
+    .{ .value = "Output: 4" },
 };
 
-const expected_calculator_results_6 = [_]print_result{
-    .{ .value = "Output: 4" },
+const calculator_io_tests = [_]IOTest{
+    .{ .input = "5 + -2\n", .expected_output = "Output: 3" },
+    .{ .input = "5 + -2 * 3\n", .expected_output = "Output: -1" },
+    .{ .input = "1000 / 5 + 6 * 2\n", .expected_output = "Output: 212" },
+    .{ .input = "2 * (3 + 2) - 6 / 2\n", .expected_output = "Output: 7" },
+    .{ .input = "10 / 2 / 5\n", .expected_output = "Output: 1" },
+    .{ .input = "20-16\n", .expected_output = "Output: 4" },
 };
 
 const expected_methods_results = [_]peek_result{
@@ -385,10 +393,8 @@ fn runDoxaCommandWithInput(allocator: std.mem.Allocator, path: []const u8, input
 
 // print test is for tests which use the print operator for output
 fn runTest(allocator: std.mem.Allocator, test_name: []const u8, path: []const u8, expected_results: anytype, input: ?[]const u8, mode: Mode) !test_results {
-    std.debug.print("\n=== Running {s} test ===\n", .{test_name});
-    defer std.debug.print("\n=== {s} test complete ===\n", .{test_name});
+    _ = test_name; // printing handled by caller
 
-    std.debug.print("Running doxa command with {s}...\n", .{path});
     var output: []const u8 = undefined;
     if (input != null) {
         output = try runDoxaCommandWithInput(allocator, path, input.?);
@@ -401,7 +407,6 @@ fn runTest(allocator: std.mem.Allocator, test_name: []const u8, path: []const u8
     if (output.len == 0) {
         return .{ .passed = 0, .failed = 0 };
     }
-    std.debug.print("Parsing output...\n", .{});
 
     if (mode == .PRINT) {
         return try validatePrintResults(output, expected_results, allocator);
@@ -422,17 +427,14 @@ fn validatePrintResults(output: []const u8, expected_results: anytype, allocator
         if (std.mem.eql(u8, outputs.items[i], expected_results[i].value)) {
             continue;
         }
-        std.debug.print("Test {d} failed\n", .{i});
-        std.debug.print("Expected: {s} found {s}\n", .{ expected_results[i].value, outputs.items[i] });
+        // no printing here; caller handles reporting
         all_passed = false;
         break;
     }
 
     if (all_passed) {
-        std.debug.print("✓ All {d} test cases passed\n", .{i});
         return .{ .passed = i, .failed = 0 };
     } else {
-        std.debug.print("✗ Test failed at case {d}\n", .{i});
         return .{ .passed = i, .failed = 1 };
     }
 }
@@ -447,103 +449,82 @@ fn validatePeekResults(output: []const u8, expected_results: anytype, allocator:
         if (std.mem.eql(u8, outputs.items[i].value, expected_results[i].value)) {
             continue;
         }
-        std.debug.print("Test {d} failed\n", .{i});
-        std.debug.print("Expected: {s} found {s}\n", .{ expected_results[i].value, outputs.items[i].value });
+        // no printing here; caller handles reporting
         all_passed = false;
         break;
     }
 
     if (all_passed) {
-        std.debug.print("✓ All {d} test cases passed\n", .{i});
         return .{ .passed = i, .failed = 0 };
     } else {
-        std.debug.print("✗ Test failed at case {d}\n", .{i});
         return .{ .passed = i, .failed = 1 };
     }
 }
 
-test "big file" {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
-
-    const result = try runTest(allocator, "big file", "./test/misc/bigfile.doxa", expected_bigfile_results[0..], null, .PEEK);
-    total_passed += result.passed;
-    total_failed += result.failed;
+fn runTestCase(allocator: std.mem.Allocator, tc: TestCase) !test_results {
+    if (tc.mode == .PRINT) {
+        return try runTest(allocator, tc.name, tc.path, tc.expected_print.?, tc.input, .PRINT);
+    } else {
+        return try runTest(allocator, tc.name, tc.path, tc.expected_peek.?, tc.input, .PEEK);
+    }
 }
 
-test "brainfuck" {
+test "unified runner" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const result = try runTest(allocator, "brainfuck", "./test/examples/brainfuck.doxa", expected_brainfuck_results[0..], "f\n", .PRINT);
-    total_passed += result.passed;
-    total_failed += result.failed;
-}
-
-test "complex print" {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
-
-    const result = try runTest(allocator, "complex print", "./test/misc/complex_print.doxa", expected_complex_print_results[0..], null, .PRINT);
-    total_passed += result.passed;
-    total_failed += result.failed;
-}
-
-test "expressions" {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
-
-    const result = try runTest(allocator, "expressions", "./test/misc/expressions.doxa", expected_expressions_results[0..], null, .PEEK);
-    total_passed += result.passed;
-    total_failed += result.failed;
-}
-
-test "methods" {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
-
-    const result = try runTest(allocator, "methods", "./test/misc/methods.doxa", expected_methods_results[0..], "f\n", .PEEK);
-    total_passed += result.passed;
-    total_failed += result.failed;
-}
-
-test "calculator" {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
-
-    const test_cases = [_]struct {
-        name: []const u8, // Add this field
-        input: []const u8,
-        expected: []const print_result,
-    }{
-        .{ .name = "5 + -2", .input = "5 + -2\n", .expected = &expected_calculator_results_1 },
-        .{ .name = "5 + -2 * 3", .input = "5 + -2 * 3\n", .expected = &expected_calculator_results_2 },
-        .{ .name = "1000 / 5 + 6 * 2", .input = "1000 / 5 + 6 * 2\n", .expected = &expected_calculator_results_3 },
-        .{ .name = "2 * (3 + 2) - 6 / 2", .input = "2 * (3 + 2) - 6 / 2\n", .expected = &expected_calculator_results_4 },
-        .{ .name = "10 / 2 / 5", .input = "10 / 2 / 5\n", .expected = &expected_calculator_results_5 },
-        .{ .name = "20-16", .input = "20-16\n", .expected = &expected_calculator_results_6 },
+    const test_cases = [_]TestCase{
+        .{ .name = "big file", .path = "./test/misc/bigfile.doxa", .mode = .PEEK, .input = null, .expected_print = null, .expected_peek = expected_bigfile_results[0..] },
+        .{ .name = "brainfuck", .path = "./test/examples/brainfuck.doxa", .mode = .PRINT, .input = "f\n", .expected_print = expected_brainfuck_results[0..], .expected_peek = null },
+        .{ .name = "complex print", .path = "./test/misc/complex_print.doxa", .mode = .PRINT, .input = null, .expected_print = expected_complex_print_results[0..], .expected_peek = null },
+        .{ .name = "expressions", .path = "./test/misc/expressions.doxa", .mode = .PEEK, .input = null, .expected_print = null, .expected_peek = expected_expressions_results[0..] },
+        .{ .name = "methods", .path = "./test/misc/methods.doxa", .mode = .PEEK, .input = "f\n", .expected_print = null, .expected_peek = expected_methods_results[0..] },
     };
 
-    std.debug.print("\n=== Running calculator tests ===\n", .{});
+    std.debug.print("\n=== Running test suite ===\n", .{});
     var passed: usize = 0;
     var failed: usize = 0;
-
     for (test_cases) |tc| {
-        std.debug.print("  Testing: {s}\n", .{tc.name}); // Now this will work
-        const result = try runTest(allocator, "", "./test/examples/calculator.doxa", tc.expected, tc.input, .PRINT);
+        std.debug.print("  Running: {s}\n", .{tc.name});
+        std.debug.print("\n=== Running {s} test ===\n", .{tc.name});
+        std.debug.print("Running doxa command with {s}...\n", .{tc.path});
+        const result = try runTestCase(allocator, tc);
+        std.debug.print("Parsing output...\n", .{});
+        if (result.failed == 0) {
+            std.debug.print("✓ All {d} test cases passed\n", .{result.passed});
+        }
+        std.debug.print("\n=== {s} test complete ===\n", .{tc.name});
         passed += result.passed;
         failed += result.failed;
     }
 
-    std.debug.print("\nCalculator summary: {d} passed, {d} failed\n", .{ passed, failed });
-    std.debug.print("=== Calculator tests complete ===\n", .{});
+    // Dedicated calculator batch with a single summary
+    std.debug.print("\n=== Running calculator test ===\n", .{});
+    std.debug.print("Running doxa command with ./test/examples/calculator.doxa...\n", .{});
+    var calc_passed: usize = 0;
+    var calc_failed: usize = 0;
+    for (calculator_io_tests) |io| {
+        // Execute case without printing; compare first line only
+        const out = try runDoxaCommandWithInput(allocator, "./test/examples/calculator.doxa", io.input);
+        defer allocator.free(out);
+        const lines = try parsePrintOutput(out, allocator);
+        defer lines.deinit();
+        if (lines.items.len > 0 and std.mem.eql(u8, lines.items[0], io.expected_output)) {
+            calc_passed += 1;
+        } else {
+            calc_failed += 1;
+        }
+    }
+    std.debug.print("Parsing output...\n", .{});
+    if (calc_failed == 0) {
+        std.debug.print("✓ All {d} test cases passed\n", .{calculator_io_tests.len});
+    }
+    std.debug.print("\n=== calculator test complete ===\n", .{});
+    passed += calc_passed;
+    failed += calc_failed;
 
+    std.debug.print("\nSuite summary: {d} passed, {d} failed\n", .{ passed, failed });
     total_passed += passed;
     total_failed += failed;
 }
