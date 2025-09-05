@@ -1,8 +1,34 @@
 # Loops
 
-Doxa provides two core loop constructs: `while` and `do`. The `for` keyword is optional and provides a loop variable that can be used with either loop type. This design allows flexible loop syntax that can simulate C-style `for` loops when needed.
+Doxa takes a unique approach to loops. The best way to think about it is that the loop syntax is fully composible. The structure of the full loop will be similar to anyone familiar to C style loops:
+
+```
+// doxa
+for x while x < 10 do x++ {
+  ...
+}
+// c
+for(int x, x < 10; x++) {
+
+}
+```
+
+Each section of the above the for loop works the same, the key difference being each section is marked by its own keyword. This main advantage this provides is that each section of the for loop becomes decomposable. Doxa allows you to use any combination of loop constructs to add functionality to the loop as needed. Regardless of which construct you use, it will always follow the syntactical precedent of C loops, for -> while -> do.
 
 ## Core Loop Constructs
+
+### For Loops
+
+**Purpose**: Loop which has a scope-level int which persists between loops. The variable is always an int will be defaulted to 0 if not initialized.
+
+```
+for hand {
+  hand += draw_card;
+  if hand > 21 then bust();
+  else if hand > 17 then hold();
+  else hit();
+}
+```
 
 ### While Loops
 
@@ -15,16 +41,10 @@ while <condition> { ... }
 **Examples**:
 
 ```doxa
-// Basic while loop
-while i < 10 {
-  print(i)
-  i += 1
-}
-
 // With early exit
 while has_next() {
   const item is next()
-  if item == target { break }
+  if item == 0 then break
 }
 ```
 
@@ -39,60 +59,30 @@ do <step> { ... }
 **Examples**:
 
 ```doxa
-// Basic do loop with increment
-var i is 0
-do i += 1 {
-  i? // 0, 1, 2...
+// Basic do loop
+const the_time is getTheTime()
+do the_time is getTheTime() {
+  if the_time > expiration_time then break
 }
 
-// Do-while equivalent
-var i is 0
-do i += 1 while i < 10 {
-  i? // 0, 1, 2... 9
-}
-
-// Complex step logic
+// complex do block
 do {
-  i += fibonacci(j)
-  j += 1
-} while i < limit { ... }
-```
+  if getTheTime() > the_time + 100 then {
+    the_time = getTheTime()
+  } else log_too_early()
+} {
 
-## Loop Variables with `for`
-
-The `for` keyword optionally declares a mutable integer variable which is exposed to the loop. `for` can only be used with a corresponding `do`.
-
-```doxa
-for i while <condition> { ... }      // for + while
-for i do <step> { ... }               // for + do
-for i while <condition> do <step> { ... }  // full C-style syntax
-```
-
-**Examples**:
-
-```doxa
-// Simple for loop (simulates for(i=0; i<10; i++))
-for i while i < 10 do i++ {
-  print(i)  // i automatically increments
-}
-
-// Custom step
-for i while i < 20 do i += 2 {
-  print(i)  // i = 0, 2, 4, 6, ...
-}
-
-// complex step
-for i while i < 100 do {
-    if i > 10 then i += 2 else i++
-    if i >= 100 then checkWinCondition()
-    } {
-  print(i)  // i = 0, 10, 20, 30, ...
+  if the_time > expiration_time then {
+    break
+  } else {
+    log_loop()
+  }
 }
 ```
 
 ## Infinite Loops
 
-Use `while true` or just `do` for infinite loops:
+You can use `while true` or just `do` for infinite loops:
 
 ```doxa
 while true { ... }  // Traditional infinite loop
@@ -101,7 +91,57 @@ do { ... }          // Cleaner do-based infinite loop
 
 ## Loop Combinations
 
+### While Do Loop
+
+```doxa
+// Countdown from 10 to 1, then liftoff
+var countdown is 10
+while countdown > 0 do {
+    countdown -= 1
+} {
+    "T-minus " + countdown + " seconds"?
+}
+"Liftoff!"?
+```
+
+### For Do Loop
+
+```doxa
+var sensor_reading is 0
+for reading do reading = get_reading() {
+    if reading > 7 then {
+        @print("Warning: reading is too high!")
+        break
+    }
+}
+```
+
+### For While Do Loop
+
+```doxa
+// Default initialization: process tasks until done
+var tasks = ["Write report", "Submit assignment", "Attend meeting"]
+var index is 0  // we start at index 0
+for index while index < tasks.length do index += 1 {
+    "Task: " + tasks[index]?
+}
+
+// Explicit initialization with complex do block
+for i is 0 while i < tasks.length do {
+    // Update: move to next task and log progress
+    i += 1
+    "Progress: " + i + "/" + tasks.length?
+} {
+    "Now doing: " + tasks[i]?
+}
+```
+
+## Loop Table
+
 Here are all the possible combinations for loops using these constructs. Notice that regardless of which constructs you choose, they will be ordered for -> while -> do.
+
+Loops with an int exposed:
+`for x`
 
 Loops while a given condition met  
 `while y`
@@ -115,7 +155,7 @@ Loops while a given condition met using a given step
 Loops with an index using a given step  
 `for x do z`
 
-Loops with an index while a given condition met using a given step  
+Loops with an int exposed while a given condition met using a given step  
 `for x while y do z`
 
 ## Collection Iteration
