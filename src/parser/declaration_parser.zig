@@ -425,6 +425,51 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
         };
     }
 
+    // Special-case: map type declaration with inline initializer using 'map' keyword
+    if (self.peek().type == .MAP_TYPE) {
+        self.advance(); // consume 'map'
+
+        // Expect identifier for variable name
+        if (self.peek().type != .IDENTIFIER) return error.ExpectedIdentifier;
+        const map_name = self.peek();
+        self.advance();
+
+        // Optional explicit type annotation: ':: KeyType returns ValueType' or 'returns ValueType'
+        if (self.peek().type == .TYPE_SYMBOL) {
+            // For Phase 1 we accept and skip parsing of explicit map types to unblock syntax
+            // Future phases will build full TypeInfo for maps
+            self.advance(); // consume '::'
+            // Consume key type expression (best-effort)
+            _ = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
+            // Optional 'returns' value type
+            if (self.peek().type == .RETURNS) {
+                self.advance();
+                _ = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
+            }
+        } else if (self.peek().type == .RETURNS) {
+            // Handle 'returns ValueType' without key type annotation
+            self.advance(); // consume 'returns'
+            _ = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
+        }
+
+        // Expect initializer block: '{ ... }'
+        if (self.peek().type != .LEFT_BRACE) return error.ExpectedLeftBrace;
+        self.advance(); // consume '{'
+        const map_expr = try self.parseMap() orelse return error.ExpectedExpression;
+
+        // Defer type inference to semantic phase; only set mutability here
+        var inferred: ast.TypeInfo = .{ .base = .Nothing };
+        inferred.is_mutable = !is_const;
+
+        // Optional newline
+        if (self.peek().type == .NEWLINE) self.advance();
+
+        return ast.Stmt{
+            .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(map_name) },
+            .data = .{ .VarDecl = .{ .name = map_name, .type_info = inferred, .initializer = map_expr, .is_public = is_public } },
+        };
+    }
+
     // Original variable declaration parsing logic
     const name = if (self.peek().type != .IDENTIFIER) {
         return error.ExpectedIdentifier;

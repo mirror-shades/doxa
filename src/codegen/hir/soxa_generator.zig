@@ -2130,12 +2130,10 @@ pub const HIRGenerator = struct {
                         // Generate index expression
                         try self.generateExpression(index.index, true, false);
 
-                        // Map access - use MapGet
-                        try self.instructions.append(.{
-                            .MapGet = .{
-                                .key_type = .String, // For now, assume string keys
-                            },
-                        });
+                        // Map access - use MapGet with key type inferred from index
+                        const idx_type = self.inferTypeFromExpression(index.index);
+                        const key_type = if (idx_type == .Int) HIRType.Int else HIRType.String;
+                        try self.instructions.append(.{ .MapGet = .{ .key_type = key_type } });
                     },
                     .Array => {
                         // Generate index expression
@@ -2175,9 +2173,17 @@ pub const HIRGenerator = struct {
                 // Generate value expression
                 try self.generateExpression(assign.value, true, false);
 
-                // Generate ArraySet instruction
-                // Stack order expected by VM (top to bottom): value, index, array
-                try self.instructions.append(.{ .ArraySet = .{ .bounds_check = true } });
+                // If the receiver is a map, emit MapSet; otherwise ArraySet
+                const container_type = self.inferTypeFromExpression(assign.array);
+                if (container_type == .Map) {
+                    const idx_type = self.inferTypeFromExpression(assign.index);
+                    const key_type = if (idx_type == .Int) HIRType.Int else HIRType.String;
+                    try self.instructions.append(.{ .MapSet = .{ .key_type = key_type } });
+                } else {
+                    // Generate ArraySet instruction
+                    // Stack order expected by VM (top to bottom): value, index, array
+                    try self.instructions.append(.{ .ArraySet = .{ .bounds_check = true } });
+                }
 
                 // Store the modified array back to the variable
                 if (assign.array.data == .Variable) {

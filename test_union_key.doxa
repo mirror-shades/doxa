@@ -1,0 +1,7 @@
+var union_value :: int | string is 1
+
+var map BadMap {
+    union_value is "test"
+}
+
+BadMap[union_value]?

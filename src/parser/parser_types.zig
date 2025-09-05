@@ -4,6 +4,7 @@ const declaration_parser = @import("declaration_parser.zig");
 const expression_parser = @import("expression_parser.zig");
 const statement_parser = @import("statement_parser.zig");
 const Precedence = @import("./precedence.zig").Precedence;
+const precedence = @import("./precedence.zig");
 const LexicalAnalyzer = @import("../analysis/lexical.zig").LexicalAnalyzer;
 const import_parser = @import("import_parser.zig");
 
@@ -1198,20 +1199,20 @@ pub const Parser = struct {
         var template_parts = std.ArrayList(ast.FormatPart).init(self.allocator);
         var legacy_format_parts = std.ArrayList([]const u8).init(self.allocator);
         var placeholder_expressions = std.ArrayList(*ast.Expr).init(self.allocator);
-        
+
         errdefer {
             // Clean up template parts
             for (template_parts.items) |*part| {
                 part.deinit(self.allocator);
             }
             template_parts.deinit();
-            
+
             // Clean up legacy parts
             for (legacy_format_parts.items) |part| {
                 self.allocator.free(part);
             }
             legacy_format_parts.deinit();
-            
+
             // Clean up expressions
             for (placeholder_expressions.items) |expr| {
                 expr.deinit(self.allocator);
@@ -1234,11 +1235,11 @@ pub const Parser = struct {
                 // Found start of placeholder
                 // Add the string part before this placeholder
                 const part = format_string[current_part_start..i];
-                
+
                 // Add to new template structure
                 const string_part = try ast.createStringPart(self.allocator, part);
                 try template_parts.append(string_part);
-                
+
                 // Add to legacy structure for backward compatibility
                 try legacy_format_parts.append(try self.allocator.dupe(u8, part));
 
@@ -1254,14 +1255,14 @@ pub const Parser = struct {
 
                 // Extract placeholder content and parse it as an expression
                 const placeholder_content = format_string[i + 1 .. j];
-                
+
                 // Parse the placeholder content as an expression
                 const placeholder_expr = try self.parsePlaceholderExpression(placeholder_content);
-                
+
                 // Add to new template structure
                 const expr_part = ast.createExpressionPart(placeholder_expr);
                 try template_parts.append(expr_part);
-                
+
                 // Add to legacy structure for backward compatibility
                 try placeholder_expressions.append(placeholder_expr);
 
@@ -1274,11 +1275,11 @@ pub const Parser = struct {
 
         // Add the final string part
         const final_part = format_string[current_part_start..];
-        
+
         // Add to new template structure
         const final_string_part = try ast.createStringPart(self.allocator, final_part);
         try template_parts.append(final_string_part);
-        
+
         // Add to legacy structure
         try legacy_format_parts.append(try self.allocator.dupe(u8, final_part));
 
@@ -1396,16 +1397,28 @@ pub const Parser = struct {
         while (self.peek().type != .RIGHT_BRACE and self.peek().type != .EOF) {
             // Allow blank lines between entries
             while (self.peek().type == .NEWLINE) self.advance();
-            // Parse key
-            const key = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
+            // Parse key as a primary expression only (no complex expressions like maps)
+            const key = blk: {
+                const token_type = self.peek().type;
+                switch (token_type) {
+                    .INT, .FLOAT, .STRING, .BYTE, .LOGIC, .IDENTIFIER => {
+                        break :blk try precedence.parsePrecedence(self, Precedence.PRIMARY) orelse return error.ExpectedExpression;
+                    },
+                    .DOT => {
+                        // Handle enum members like .SOME_VALUE
+                        break :blk try precedence.parsePrecedence(self, Precedence.PRIMARY) orelse return error.ExpectedExpression;
+                    },
+                    else => return error.ExpectedMapKey,
+                }
+            };
 
-            // Expect :
-            if (self.peek().type != .WHERE) {
+            // Expect 'is' as separator between key and value
+            if (self.peek().type != .ASSIGN) {
                 key.deinit(self.allocator);
                 self.allocator.destroy(key);
-                return error.ExpectedColon;
+                return error.UseIsForAssignment;
             }
-            self.advance(); // consume :
+            self.advance(); // consume 'is'
 
             // Parse value
             const value = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;

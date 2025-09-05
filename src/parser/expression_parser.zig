@@ -85,13 +85,30 @@ pub fn braceExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Ex
     // Consume the left brace
     self.advance();
 
+    // If this brace follows control keywords like 'then' or 'else', treat as a statement block
+    if (self.current >= 2) {
+        const prev_prev_tok = self.tokens[self.current - 2];
+        const force_block = prev_prev_tok.type == .THEN or prev_prev_tok.type == .ELSE or prev_prev_tok.type == .DO or prev_prev_tok.type == .WHILE or prev_prev_tok.type == .FOR or prev_prev_tok.type == .FUNCTION;
+        if (force_block) {
+            // Rewind one position so block() sees '{'
+            self.current -= 1;
+            return Parser.block(self, null, .NONE);
+        }
+    }
+
     // Look ahead to see if this might be a map
-    // A map must have a key followed by a :
     // Skip any leading newlines after '{' before deciding
     var skipped: usize = 0;
     while (self.peek().type == .NEWLINE) : (skipped += 1) self.advance();
-    const is_map = (self.peek().type != .RIGHT_BRACE and self.peekAhead(1).type == .WHERE) or
-        (self.peekAhead(1).type != .EOF and self.peekAhead(2).type == .WHERE);
+    const first_tok = self.peek().type;
+    const sep1 = self.peekAhead(1).type;
+    // const sep2 = self.peekAhead(2).type; // no longer needed
+    // Avoid false-positives for statement blocks like "var name is ..." inside '{ }'
+    const starts_like_statement = first_tok == .VAR or first_tok == .CONST or first_tok == .FUNCTION or
+        first_tok == .IF or first_tok == .WHILE or first_tok == .FOR or first_tok == .RETURN or
+        first_tok == .BREAK or first_tok == .CONTINUE or first_tok == .IMPORT;
+    const literal_key_start = first_tok == .STRING or first_tok == .INT or first_tok == .FLOAT or first_tok == .BYTE or first_tok == .TETRA or first_tok == .DOT;
+    const is_map = !starts_like_statement and literal_key_start and (first_tok != .RIGHT_BRACE and sep1 == .ASSIGN);
     if (is_map) {
         return self.parseMap();
     }

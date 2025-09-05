@@ -658,6 +658,13 @@ pub const SoxaTextParser = struct {
             try self.instructions.append(HIRInstruction{ .MapGet = .{
                 .key_type = key_type,
             } });
+        } else if (std.mem.eql(u8, op, "MapSet")) {
+            const key_type_str = tokens.next() orelse return;
+            const key_type = if (std.mem.eql(u8, key_type_str, "String")) HIRType.String else if (std.mem.eql(u8, key_type_str, "Int")) HIRType.Int else HIRType.String;
+
+            try self.instructions.append(HIRInstruction{ .MapSet = .{
+                .key_type = key_type,
+            } });
         } else if (std.mem.eql(u8, op, "EnterScope")) {
             const scope_id_str = tokens.next() orelse return;
             const var_count_str = tokens.next() orelse return;

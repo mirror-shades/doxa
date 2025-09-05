@@ -504,14 +504,70 @@ resfloat? // 0
 /////
 // MAPS
 /////
-var Map is {
-    "a": 1.5,
-    "b": 2.5,
-    "c": 3.5,
+var map MyMap {
+    "a" is 1.5,
+    "b" is 2.5,
+    "c" is 3.5,
 }
 
-Map["a"]? // 1.5
-Map["c"]? // 3.5
+MyMap["a"]? // 1.5
+MyMap["c"]? // 3.5
+MyMap["c"] is 4.5 
+MyMap["c"]? // 4.5
+
+
+
+const map MyMap2 {
+    15 is "fifteen",
+    16 is "sixteen",
+    17 is "seventeen",
+}
+
+MyMap2[15]? // fifteen
+MyMap2[17]? // seventeen
+
+var map MyMap_typed0 returns string {
+    1 is "one",
+    2 is "two",
+    3 is "three",
+}
+
+MyMap_typed0[1]? // one
+MyMap_typed0[2]? // two
+
+var map MyMap_typed1 :: int {
+    1 is "one",
+    2 is "two",
+    3 is "three",
+}
+
+MyMap_typed1[1]? // one
+MyMap_typed1[2]? // two
+
+var map MyMap_typed2 :: int returns string {
+    1 is "one",
+    2 is "two",
+    3 is "three",
+}
+
+MyMap_typed2[1]? // one
+MyMap_typed2[2]? // two
+
+var map MyMap_enum :: Color returns string {
+    .Red is "red",
+    .Green is "green",
+    .Blue is "blue",
+}
+
+MyMap_enum[.Red]? // red
+MyMap_enum[.Blue]? // blue
+
+var map MyMap_struct {
+    1 is mike,
+}
+
+MyMap_struct[1].person.name? // Mike
+MyMap_struct[1].salary? // 1000
 
 /////   
 // FORMAL LOGICAL NOTATION
@@ -594,4 +650,4 @@ _string? // ""
 @type(Color)? // enum
 @type(Color.Blue)? // Color
 
-@type(Map)? // map
+@type(MyMap)? // map

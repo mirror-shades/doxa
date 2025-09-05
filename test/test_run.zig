@@ -6,6 +6,7 @@ const fs = std.fs;
 const test_results = struct {
     passed: usize,
     failed: usize,
+    untested: usize,
 };
 
 const Mode = enum {
@@ -357,6 +358,19 @@ const expected_bigfile_results = [_]peek_result{
     .{ .type = "int", .value = "0" },
     .{ .type = "float", .value = "1.5" },
     .{ .type = "float", .value = "3.5" },
+    .{ .type = "float", .value = "4.5" },
+    .{ .type = "string", .value = "\"fifteen\"" },
+    .{ .type = "string", .value = "\"seventeen\"" },
+    .{ .type = "string", .value = "\"one\"" },
+    .{ .type = "string", .value = "\"two\"" },
+    .{ .type = "string", .value = "\"one\"" },
+    .{ .type = "string", .value = "\"two\"" },
+    .{ .type = "string", .value = "\"one\"" },
+    .{ .type = "string", .value = "\"two\"" },
+    .{ .type = "string", .value = "\"red\"" },
+    .{ .type = "string", .value = "\"blue\"" },
+    .{ .type = "string", .value = "\"Mike\"" },
+    .{ .type = "int", .value = "1000" },
     .{ .type = "tetra", .value = "true" },
     .{ .type = "tetra", .value = "false" },
     .{ .type = "tetra", .value = "true" },
@@ -472,23 +486,50 @@ fn validatePrintResults(output: []const u8, expected_results: []const print_resu
     const outputs = try parsePrintOutput(output, allocator);
     defer outputs.deinit();
 
+    var passed: usize = 0;
+    var failed: usize = 0;
+    var untested: usize = 0;
+
+    // Count how many tests we actually got results for
+    const actual_count = outputs.items.len;
+    const expected_count = expected_results.len;
+
+    // Check each result we actually got
     var i: usize = 0;
-    while (i < outputs.items.len and i < expected_results.len) : (i += 1) {
+    while (i < actual_count and i < expected_count) : (i += 1) {
         if (!std.mem.eql(u8, outputs.items[i], expected_results[i].value)) {
             const found_output = outputs.items[i];
             std.debug.print("✗ Print test case {d} failed:\n  Expected: \"{s}\"\n  Found:    \"{s}\"\n", .{ i + 1, expected_results[i].value, found_output });
-            return .{ .passed = i, .failed = 1 };
+            failed += 1;
+        } else {
+            passed += 1;
         }
     }
-    return .{ .passed = i, .failed = 0 };
+
+    // Count any remaining expected results that we didn't get (untested)
+    if (expected_count > actual_count) {
+        untested = expected_count - actual_count;
+        std.debug.print("⚠ {d} test case(s) were not executed (program may have crashed early)\n", .{untested});
+    }
+
+    return .{ .passed = passed, .failed = failed, .untested = untested };
 }
 
 fn validatePeekResults(output: []const u8, expected_results: []const peek_result, allocator: std.mem.Allocator) !test_results {
     const outputs = try parsePeekOutput(output, allocator);
     defer outputs.deinit();
 
+    var passed: usize = 0;
+    var failed: usize = 0;
+    var untested: usize = 0;
+
+    // Count how many tests we actually got results for
+    const actual_count = outputs.items.len;
+    const expected_count = expected_results.len;
+
+    // Check each result we actually got
     var i: usize = 0;
-    while (i < outputs.items.len and i < expected_results.len) : (i += 1) {
+    while (i < actual_count and i < expected_count) : (i += 1) {
         if (!std.mem.eql(u8, outputs.items[i].value, expected_results[i].value)) {
             if (i < outputs.items.len) {
                 std.debug.print(
@@ -501,10 +542,19 @@ fn validatePeekResults(output: []const u8, expected_results: []const peek_result
                     .{ i + 1, expected_results[i].type, expected_results[i].value },
                 );
             }
-            return .{ .passed = i, .failed = 1 };
+            failed += 1;
+        } else {
+            passed += 1;
         }
     }
-    return .{ .passed = i, .failed = 0 };
+
+    // Count any remaining expected results that we didn't get (untested)
+    if (expected_count > actual_count) {
+        untested = expected_count - actual_count;
+        std.debug.print("⚠ {d} test case(s) were not executed (program may have crashed early)\n", .{untested});
+    }
+
+    return .{ .passed = passed, .failed = failed, .untested = untested };
 }
 
 fn runTestCase(allocator: std.mem.Allocator, tc: TestCase) !test_results {
@@ -516,7 +566,7 @@ fn runTestCase(allocator: std.mem.Allocator, tc: TestCase) !test_results {
     }
     defer allocator.free(output);
 
-    if (output.len == 0) return .{ .passed = 0, .failed = 0 };
+    if (output.len == 0) return .{ .passed = 0, .untested = 0, .failed = 0 };
 
     return switch (tc.mode) {
         .PRINT => try validatePrintResults(output, tc.expected_print.?, allocator),
@@ -540,18 +590,22 @@ test "unified runner" {
     std.debug.print("\n=== Running test suite ===\n", .{});
     var passed: usize = 0;
     var failed: usize = 0;
+    var untested: usize = 0;
     for (test_cases) |tc| {
         std.debug.print("  Running: {s}\n", .{tc.name});
         std.debug.print("\n=== Running {s} test ===\n", .{tc.name});
         std.debug.print("Running doxa command with {s}...\n", .{tc.path});
         const result = try runTestCase(allocator, tc);
         std.debug.print("Parsing output...\n", .{});
-        if (result.failed == 0) {
+        if (result.failed == 0 and result.untested == 0) {
             std.debug.print("✓ All {d} test cases passed\n", .{result.passed});
+        } else {
+            std.debug.print("Results: {d} passed, {d} failed, {d} untested\n", .{ result.passed, result.failed, result.untested });
         }
         std.debug.print("\n=== {s} test complete ===\n", .{tc.name});
         passed += result.passed;
         failed += result.failed;
+        untested += result.untested;
     }
 
     // Dedicated calculator batch with a single summary
@@ -584,9 +638,10 @@ test "unified runner" {
     passed += calc_passed;
     failed += calc_failed;
 
-    std.debug.print("\nSuite summary: {d} passed, {d} failed\n", .{ passed, failed });
+    std.debug.print("\nSuite summary: {d} passed, {d} failed, {d} untested\n", .{ passed, failed, untested });
     total_passed += passed;
     total_failed += failed;
+    // Note: We'd need to add total_untested to track this globally if desired
 }
 
 test "summary" {
@@ -595,6 +650,7 @@ test "summary" {
     std.debug.print("\n=============================\n", .{});
     std.debug.print("Total test cases passed: {d}\n", .{total_passed});
     std.debug.print("Total test cases failed: {d}\n", .{total_failed});
+    // Note: total_untested would need to be added as a global variable
 
     if (total_failed == 0) {
         std.debug.print("🎉 ALL TESTS PASSED! 🎉\n", .{});
