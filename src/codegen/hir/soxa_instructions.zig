@@ -455,6 +455,13 @@ pub const HIRInstruction = union(enum) {
         key_type: HIRType,
     },
 
+    /// Set map value by key
+    /// VM: OP_MAP_SET -> map[key] = value
+    /// LLVM: Generate map update
+    MapSet: struct {
+        key_type: HIRType,
+    },
+
     /// Assertion failure with formatted error message
     /// VM: Print formatted "Assertion failed at [location]: [message]" and halt
     /// LLVM: Generate formatted error output and exit

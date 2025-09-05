@@ -1131,6 +1131,8 @@ pub const TypeInfo = struct {
     variants: ?[][]const u8 = null,
     array_size: ?usize = null,
     union_type: ?*UnionType = null,
+    map_key_type: ?*TypeInfo = null,
+    map_value_type: ?*TypeInfo = null,
 
     pub fn deinit(self: *TypeInfo, allocator: std.mem.Allocator) void {
         if (self.array_type) |array_type| {
@@ -1167,6 +1169,14 @@ pub const TypeInfo = struct {
             }
             allocator.free(union_type.types);
             allocator.destroy(union_type);
+        }
+        if (self.map_key_type) |key_type| {
+            key_type.deinit(allocator);
+            allocator.destroy(key_type);
+        }
+        if (self.map_value_type) |value_type| {
+            value_type.deinit(allocator);
+            allocator.destroy(value_type);
         }
     }
 

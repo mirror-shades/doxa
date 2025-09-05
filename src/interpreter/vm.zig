@@ -494,20 +494,28 @@ pub const HIRVM = struct {
                 } };
             },
             .map => |m| blk: {
-                // Convert TokenLiteral map to HIRMap
+                // Convert TokenLiteral map (string-keyed) back to HIRMap.
+                // Heuristic: if a key parses as an integer, treat it as Int; otherwise keep as String.
                 var hir_entries = self.allocator.alloc(HIRMapEntry, m.count()) catch break :blk HIRValue.nothing;
                 var i: usize = 0;
                 var iter = m.iterator();
                 while (iter.next()) |entry| {
+                    const key_str = entry.key_ptr.*;
+                    const maybe_int = std.fmt.parseInt(i32, key_str, 10) catch null;
+                    const key_hir: HIRValue = if (maybe_int) |ival|
+                        HIRValue{ .int = ival }
+                    else
+                        HIRValue{ .string = key_str };
+
                     hir_entries[i] = HIRMapEntry{
-                        .key = HIRValue{ .string = entry.key_ptr.* },
+                        .key = key_hir,
                         .value = self.tokenLiteralToHIRValue(entry.value_ptr.*),
                     };
                     i += 1;
                 }
                 break :blk HIRValue{ .map = .{
                     .entries = hir_entries,
-                    .key_type = .String,
+                    .key_type = .Unknown,
                     .value_type = .Unknown,
                     .path = null,
                 } };
@@ -1206,6 +1214,10 @@ pub const HIRVM = struct {
                 // Compare with target type
                 const type_match = std.mem.eql(u8, runtime_type, tc.target_type);
 
+                if (self.reporter.debug_mode) {
+                    self.reporter.report(.Debug, .Hint, null, null, "TypeCheck: want='{s}' got='{s}' -> {s}", .{ tc.target_type, runtime_type, if (type_match) "match" else "no-match" });
+                }
+
                 // Push result as tetra (1 for match, 0 for no match)
                 try self.stack.push(HIRFrame.initTetra(if (type_match) 1 else 0));
             },
@@ -1558,6 +1570,11 @@ pub const HIRVM = struct {
             .StringOp => |s| {
                 const val = try self.stack.pop();
 
+                if (self.reporter.debug_mode) {
+                    const t = self.getTypeString(val.value);
+                    self.reporter.report(.Debug, .Hint, null, null, "StringOp.{s} in_type='{s}'", .{ @tagName(s.op), t });
+                }
+
                 // Fast-path for Length which is valid for both strings and arrays
                 if (s.op == .Length) {
                     switch (val.value) {
@@ -1607,6 +1624,9 @@ pub const HIRVM = struct {
                                 }
                                 break :blk HIRValue{ .enum_variant = .{ .type_name = "NumberError", .variant_name = "ParseFailed", .variant_index = variant_index } };
                             };
+                            if (self.reporter.debug_mode) {
+                                self.reporter.report(.Debug, .Hint, null, null, "StringOp.ToInt parsed='{d}'", .{parsed});
+                            }
                             break :blk HIRValue{ .int = parsed };
                         },
                         else => HIRValue{ .int = 0 },
@@ -1962,12 +1982,20 @@ pub const HIRVM = struct {
 
             .ArrayPush => |_| {
                 const value = try self.stack.pop();
+                if (self.reporter.debug_mode) {
+                    const t = self.getTypeString(value.value);
+                    self.reporter.report(.Debug, .Hint, null, null, "ArrayPush elem_type='{s}'", .{t});
+                }
                 try self.handleArrayPush(value.value);
             },
 
             .ArrayPop => {
                 // Pop element from end of array
                 const array = try self.stack.pop(); // Array
+                if (self.reporter.debug_mode) {
+                    const t = self.getTypeString(array.value);
+                    self.reporter.report(.Debug, .Hint, null, null, "ArrayPop array_type='{s}'", .{t});
+                }
 
                 switch (array.value) {
                     .array => |arr| {
@@ -2683,6 +2711,12 @@ pub const HIRVM = struct {
                 const key = try self.stack.pop();
                 const map = try self.stack.pop();
 
+                if (self.reporter.debug_mode) {
+                    const kt = self.getTypeString(key.value);
+                    const mt = self.getTypeString(map.value);
+                    self.reporter.report(.Debug, .Hint, null, null, "MapGet key_type='{s}' map_type='{s}'", .{ kt, mt });
+                }
+
                 switch (map.value) {
                     .map => |m| {
 
@@ -2716,6 +2750,67 @@ pub const HIRVM = struct {
                         }
                     },
                     else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot get from non-map value: {s}", .{@tagName(map.value)}),
+                }
+            },
+
+            .MapSet => |m| {
+                // Set map value by key
+                // Stack order (top to bottom): value, key, map
+                const value = try self.stack.pop();
+                const key = try self.stack.pop();
+                const map_frame = try self.stack.pop();
+
+                if (self.reporter.debug_mode) {
+                    const vt = self.getTypeString(value.value);
+                    const kt = self.getTypeString(key.value);
+                    const mt = self.getTypeString(map_frame.value);
+                    self.reporter.report(.Debug, .Hint, null, null, "MapSet value='{s}' key='{s}' map='{s}'", .{ vt, kt, mt });
+                }
+
+                switch (map_frame.value) {
+                    .map => |orig| {
+                        // Create a mutable copy of entries
+                        var entries = try self.allocator.alloc(HIRMapEntry, orig.entries.len);
+                        @memcpy(entries, orig.entries);
+
+                        // Try to find existing key
+                        var updated = false;
+                        for (entries) |*entry| {
+                            const keys_match = switch (entry.key) {
+                                .string => |entry_str| switch (key.value) {
+                                    .string => |key_str| std.mem.eql(u8, entry_str, key_str),
+                                    else => false,
+                                },
+                                .int => |entry_int| switch (key.value) {
+                                    .int => |key_int| entry_int == key_int,
+                                    else => false,
+                                },
+                                else => false,
+                            };
+                            if (keys_match) {
+                                entry.value = value.value;
+                                updated = true;
+                                break;
+                            }
+                        }
+
+                        if (!updated) {
+                            // Append new entry
+                            var new_entries = try self.allocator.alloc(HIRMapEntry, entries.len + 1);
+                            @memcpy(new_entries[0..entries.len], entries);
+                            new_entries[entries.len] = HIRMapEntry{ .key = key.value, .value = value.value };
+                            self.allocator.free(entries);
+                            entries = new_entries;
+                        }
+
+                        const new_map = HIRValue{ .map = HIRMap{
+                            .entries = entries,
+                            .key_type = m.key_type,
+                            .value_type = .Unknown,
+                        } };
+                        try self.stack.push(HIRFrame.initFromHIRValue(new_map));
+                    },
+                    else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot set index on non-map value: {s}", .{@tagName(map_frame.value)}),
                 }
             },
 

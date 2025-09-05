@@ -596,7 +596,22 @@ pub const SemanticAnalyzer = struct {
                     } else if (decl.initializer) |init_expr| {
                         // Infer from initializer
                         const inferred = try self.inferTypeFromExpr(init_expr);
-                        type_info.* = inferred.*;
+                        // Preserve map key/value types if present
+                        if (inferred.base == .Map) {
+                            const key_copy = if (inferred.map_key_type) |k| blk: {
+                                const c = try self.allocator.create(ast.TypeInfo);
+                                c.* = k.*;
+                                break :blk c;
+                            } else null;
+                            const val_copy = if (inferred.map_value_type) |v| blk: {
+                                const c = try self.allocator.create(ast.TypeInfo);
+                                c.* = v.*;
+                                break :blk c;
+                            } else null;
+                            type_info.* = .{ .base = .Map, .map_key_type = key_copy, .map_value_type = val_copy };
+                        } else {
+                            type_info.* = inferred.*;
+                        }
                         // Preserve the mutability from the variable declaration, not from the initializer
                         type_info.is_mutable = decl.type_info.is_mutable;
                     } else {
@@ -1555,21 +1570,42 @@ pub const SemanticAnalyzer = struct {
                         type_info.base = .Nothing;
                     }
                 } else if (array_type.base == .Map) {
-                    // Map indexing
-                    if (index_type.base != .String) {
-                        self.reporter.reportCompileError(
-                            getLocationFromBase(expr.base),
-                            ErrorCode.INVALID_MAP_KEY_TYPE,
-                            "Map key must be string, got {s}",
-                            .{@tagName(index_type.base)},
-                        );
+                    // Map indexing - allow string, int, or enum keys, but not unions
+                    if (index_type.base != .String and index_type.base != .Int and index_type.base != .Enum) {
+                        if (index_type.base == .Union) {
+                            self.reporter.reportCompileError(
+                                getLocationFromBase(expr.base),
+                                ErrorCode.INVALID_MAP_KEY_TYPE,
+                                "Map keys cannot be union types. Keys must be concrete types like int, string, or enum",
+                                .{},
+                            );
+                        } else {
+                            self.reporter.reportCompileError(
+                                getLocationFromBase(expr.base),
+                                ErrorCode.INVALID_MAP_KEY_TYPE,
+                                "Map key must be string, int, or enum, got {s}",
+                                .{@tagName(index_type.base)},
+                            );
+                        }
                         self.fatal_error = true;
                         type_info.base = .Nothing;
                         return type_info;
                     }
 
-                    // For now, assume map values are strings
-                    type_info.* = .{ .base = .String };
+                    // Use the stored map value type; this must be present if inference worked
+                    if (array_type.map_value_type) |value_type| {
+                        type_info.* = value_type.*;
+                    } else {
+                        self.reporter.reportCompileError(
+                            getLocationFromBase(expr.base),
+                            ErrorCode.INVALID_MAP_KEY_TYPE, // reuse for now; dedicated code can be added later
+                            "Map value type not inferred; declare explicit 'returns <Type>' or add a first entry to infer",
+                            .{},
+                        );
+                        self.fatal_error = true;
+                        type_info.base = .Nothing;
+                        return type_info;
+                    }
                 } else if (array_type.base == .String) {
                     // String indexing
                     if (index_type.base != .Int) {
@@ -2025,15 +2061,52 @@ pub const SemanticAnalyzer = struct {
                     const first_key_type = try self.inferTypeFromExpr(map_entries[0].key);
                     const first_value_type = try self.inferTypeFromExpr(map_entries[0].value);
 
+                    // Validate that key type is not a union
+                    if (first_key_type.base == .Union) {
+                        self.reporter.reportCompileError(
+                            getLocationFromBase(map_entries[0].key.base),
+                            ErrorCode.INVALID_MAP_KEY_TYPE,
+                            "Map keys cannot be union types. Keys must be concrete types like int, string, or enum",
+                            .{},
+                        );
+                        self.fatal_error = true;
+                        type_info.base = .Nothing;
+                        return type_info;
+                    }
+
                     // Ensure all keys and values have consistent types
                     for (map_entries[1..]) |entry| {
                         const key_type = try self.inferTypeFromExpr(entry.key);
                         const value_type = try self.inferTypeFromExpr(entry.value);
+
+                        // Validate that each key type is not a union
+                        if (key_type.base == .Union) {
+                            self.reporter.reportCompileError(
+                                getLocationFromBase(entry.key.base),
+                                ErrorCode.INVALID_MAP_KEY_TYPE,
+                                "Map keys cannot be union types. Keys must be concrete types like int, string, or enum",
+                                .{},
+                            );
+                            self.fatal_error = true;
+                            type_info.base = .Nothing;
+                            return type_info;
+                        }
+
                         try self.unifyTypes(first_key_type, key_type, .{ .location = getLocationFromBase(expr.base) });
                         try self.unifyTypes(first_value_type, value_type, .{ .location = getLocationFromBase(expr.base) });
                     }
 
-                    type_info.* = .{ .base = .Map };
+                    // Store the inferred key and value types
+                    const key_type = try self.allocator.create(ast.TypeInfo);
+                    const value_type = try self.allocator.create(ast.TypeInfo);
+                    key_type.* = first_key_type.*;
+                    value_type.* = first_value_type.*;
+
+                    type_info.* = .{
+                        .base = .Map,
+                        .map_key_type = key_type,
+                        .map_value_type = value_type,
+                    };
                 }
             },
             .ArrayPush => |array_push| {
@@ -3010,11 +3083,11 @@ pub const SemanticAnalyzer = struct {
                 const index_type = try self.inferTypeFromExpr(index_assign.index);
                 const value_type = try self.inferTypeFromExpr(index_assign.value);
 
-                if (array_type.base != .Array) {
+                if (array_type.base != .Array and array_type.base != .Map) {
                     self.reporter.reportCompileError(
                         getLocationFromBase(expr.base),
                         ErrorCode.CANNOT_INDEX_TYPE,
-                        "Cannot assign to index of non-array type {s}",
+                        "Cannot assign to index of non-array/non-map type {s}",
                         .{@tagName(array_type.base)},
                     );
                     self.fatal_error = true;
@@ -3022,13 +3095,33 @@ pub const SemanticAnalyzer = struct {
                     return type_info;
                 }
 
-                if (index_type.base != .Int) {
+                // For arrays, index must be Int; for maps, index can be Int or String
+                if (array_type.base == .Array and index_type.base != .Int) {
                     self.reporter.reportCompileError(
                         getLocationFromBase(expr.base),
                         ErrorCode.INVALID_ARRAY_INDEX_TYPE,
                         "Array index must be integer, got {s}",
                         .{@tagName(index_type.base)},
                     );
+                    self.fatal_error = true;
+                    type_info.base = .Nothing;
+                    return type_info;
+                } else if (array_type.base == .Map and index_type.base != .Int and index_type.base != .String and index_type.base != .Enum) {
+                    if (index_type.base == .Union) {
+                        self.reporter.reportCompileError(
+                            getLocationFromBase(expr.base),
+                            ErrorCode.INVALID_MAP_KEY_TYPE,
+                            "Map keys cannot be union types. Keys must be concrete types like int, string, or enum",
+                            .{},
+                        );
+                    } else {
+                        self.reporter.reportCompileError(
+                            getLocationFromBase(expr.base),
+                            ErrorCode.INVALID_MAP_KEY_TYPE,
+                            "Map key must be integer, string, or enum, got {s}",
+                            .{@tagName(index_type.base)},
+                        );
+                    }
                     self.fatal_error = true;
                     type_info.base = .Nothing;
                     return type_info;
