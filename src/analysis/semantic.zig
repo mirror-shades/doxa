@@ -4514,7 +4514,8 @@ pub const SemanticAnalyzer = struct {
             }
         }
         // 2. Function has no explicit return type but has a value-producing final expression
-        else if (expected_return_type.base == .Nothing and last_expr != null) {
+        // Only check this if there are explicit return statements that would conflict
+        else if (expected_return_type.base == .Nothing and last_expr != null and has_return_with_value) {
             const expr_type = try self.inferTypeFromExpr(last_expr.?);
             if (expr_type.base != .Nothing) {
                 self.reporter.reportCompileError(
@@ -4745,8 +4746,7 @@ pub const SemanticAnalyzer = struct {
                 },
                 .Expression => |expr| {
                     if (expr) |expression| {
-
-                        // Check if this is a return expression
+                        // Only collect return types from explicit return expressions
                         if (expression.data == .ReturnExpr) {
                             const return_expr = expression.data.ReturnExpr;
                             if (return_expr.value) |value| {
@@ -4759,17 +4759,8 @@ pub const SemanticAnalyzer = struct {
                                 try return_types.append(nothing_type);
                             }
                         }
-                        // Check if this is an if expression that might return
-                        else if (expression.data == .If) {
-                            try self.collectReturnTypesFromIf(expression, return_types);
-                        }
-                        // Check if this is a block expression
-                        else if (expression.data == .Block) {
-                            const block_expr = expression.data.Block;
-                            if (block_expr.value) |value| {
-                                try self.collectReturnTypesFromExpr(value, return_types);
-                            }
-                        }
+                        // Don't treat other expressions as return values
+                        // Only explicit return statements should contribute to return type inference
                     }
                 },
                 else => {},
