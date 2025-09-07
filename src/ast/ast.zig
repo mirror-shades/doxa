@@ -627,6 +627,16 @@ pub const Expr = struct {
         StringToInt: struct {
             string: *Expr,
         },
+        StringToFloat: struct {
+            string: *Expr,
+        },
+        StringToByte: struct {
+            string: *Expr,
+        },
+
+        // Increment/Decrement operations
+        Increment: *Expr,
+        Decrement: *Expr,
 
         // Math operations
         MathAbs: struct {
@@ -962,6 +972,22 @@ pub const Expr = struct {
             .StringToInt => |*s| {
                 s.string.deinit(allocator);
                 allocator.destroy(s.string);
+            },
+            .StringToFloat => |*s| {
+                s.string.deinit(allocator);
+                allocator.destroy(s.string);
+            },
+            .StringToByte => |*s| {
+                s.string.deinit(allocator);
+                allocator.destroy(s.string);
+            },
+            .Increment => |*inc| {
+                inc.*.deinit(allocator);
+                allocator.destroy(inc);
+            },
+            .Decrement => |*dec| {
+                dec.*.deinit(allocator);
+                allocator.destroy(dec);
             },
             .MathAbs => |*m| {
                 m.value.deinit(allocator);

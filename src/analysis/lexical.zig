@@ -345,7 +345,7 @@ pub const LexicalAnalyzer = struct {
             },
             '+' => {
                 if (self.match('+')) {
-                    try self.addMinimalToken(.PLUS_PLUS);
+                    try self.addMinimalToken(.INCREMENT);
                 } else if (self.match('=')) {
                     try self.addMinimalToken(.PLUS_EQUAL);
                 } else {
@@ -354,7 +354,7 @@ pub const LexicalAnalyzer = struct {
             },
             '-' => {
                 if (self.match('-')) {
-                    try self.addMinimalToken(.MINUS_MINUS);
+                    try self.addMinimalToken(.DECREMENT);
                 } else if (self.match('=')) {
                     try self.addMinimalToken(.MINUS_EQUAL);
                 } else if (isDigit(self.peekAt(0)) or self.peekAt(0) == '.' or

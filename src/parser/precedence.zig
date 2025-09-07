@@ -258,6 +258,15 @@ pub const rules = blk: {
     // Add field access support
     r.set(.FIELD_ACCESS, .{ .prefix = variable, .precedence = .PRIMARY });
 
+    // Add increment/decrement operators
+    r.set(.INCREMENT, .{ .prefix = expr_parser.prefixIncrement, .infix = expr_parser.postfixIncrement, .precedence = .UNARY, .associativity = .RIGHT });
+    r.set(.DECREMENT, .{
+        .prefix = expr_parser.prefixDecrement,
+        .infix = expr_parser.postfixDecrement,
+        .precedence = .UNARY,
+        .associativity = .RIGHT,
+    });
+
     break :blk r;
 };
 

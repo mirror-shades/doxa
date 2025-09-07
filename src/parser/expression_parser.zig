@@ -572,282 +572,100 @@ pub fn forExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr
     var step_expr: ?*ast.Expr = null;
     var body: *ast.Expr = undefined;
 
-    // Check if this is the new syntax without parentheses
-    if (self.peek().type != .LEFT_PAREN) {
-        // Parse loop variable (required)
-        if (self.peek().type != .IDENTIFIER) {
-            return error.ExpectedIdentifier;
-        }
-        const var_name = self.peek();
-        self.advance();
+    // Parse loop variable (required)
+    if (self.peek().type != .IDENTIFIER) {
+        return error.ExpectedIdentifier;
+    }
+    const var_name = self.peek();
+    self.advance();
 
-        // Check for optional initializer: "for x is 10 ..."
-        if (self.peek().type == .ASSIGN) {
-            self.advance(); // consume 'is'
-            const initializer = (try parseExpression(self)) orelse return error.ExpectedExpression;
+    // Check for optional initializer: "for x is 10 ..."
+    if (self.peek().type == .ASSIGN) {
+        self.advance(); // consume 'is'
+        const initializer = (try parseExpression(self)) orelse return error.ExpectedExpression;
 
-            // Create variable declaration
-            const var_decl_stmt = try self.allocator.create(ast.Stmt);
-            var_decl_stmt.* = .{
-                .base = .{
-                    .id = ast.generateNodeId(),
-                    .span = ast.SourceSpan.fromToken(var_name),
+        // Create variable declaration
+        const var_decl_stmt = try self.allocator.create(ast.Stmt);
+        var_decl_stmt.* = .{
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(var_name),
+            },
+            .data = .{
+                .VarDecl = .{
+                    .name = var_name,
+                    .type_info = ast.TypeInfo{ .base = .Int, .is_mutable = true },
+                    .initializer = initializer,
+                    .is_public = false,
                 },
-                .data = .{
-                    .VarDecl = .{
-                        .name = var_name,
-                        .type_info = ast.TypeInfo{ .base = .Int, .is_mutable = true },
-                        .initializer = initializer,
-                        .is_public = false,
-                    },
-                },
-            };
-            var_decl = var_decl_stmt;
-        } else {
-            // No initializer, create variable declaration with default value (0)
-            const zero_expr = try self.allocator.create(ast.Expr);
-            zero_expr.* = .{
-                .base = .{
-                    .id = ast.generateNodeId(),
-                    .span = ast.SourceSpan.fromToken(var_name),
-                },
-                .data = .{ .Literal = .{ .int = 0 } },
-            };
+            },
+        };
+        var_decl = var_decl_stmt;
+    } else {
+        // No initializer, create variable declaration with default value (0)
+        const zero_expr = try self.allocator.create(ast.Expr);
+        zero_expr.* = .{
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(var_name),
+            },
+            .data = .{ .Literal = .{ .int = 0 } },
+        };
 
-            const var_decl_stmt = try self.allocator.create(ast.Stmt);
-            var_decl_stmt.* = .{
-                .base = .{
-                    .id = ast.generateNodeId(),
-                    .span = ast.SourceSpan.fromToken(var_name),
+        const var_decl_stmt = try self.allocator.create(ast.Stmt);
+        var_decl_stmt.* = .{
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(var_name),
+            },
+            .data = .{
+                .VarDecl = .{
+                    .name = var_name,
+                    .type_info = ast.TypeInfo{ .base = .Int, .is_mutable = true },
+                    .initializer = zero_expr,
+                    .is_public = false,
                 },
-                .data = .{
-                    .VarDecl = .{
-                        .name = var_name,
-                        .type_info = ast.TypeInfo{ .base = .Int, .is_mutable = true },
-                        .initializer = zero_expr,
-                        .is_public = false,
-                    },
-                },
-            };
-            var_decl = var_decl_stmt;
-        }
+            },
+        };
+        var_decl = var_decl_stmt;
+    }
 
-        // Check for optional condition: "for x while condition ..."
-        if (self.peek().type == .WHILE) {
-            self.advance(); // consume 'while'
-            condition = (try parseExpression(self)) orelse return error.ExpectedExpression;
-        }
+    // Check for optional condition: "for x while condition ..."
+    if (self.peek().type == .WHILE) {
+        self.advance(); // consume 'while'
+        condition = (try parseExpression(self)) orelse return error.ExpectedExpression;
+    }
 
-        // Check for step: "for x do step ..."
-        if (self.peek().type == .DO) {
-            self.advance(); // consume 'do'
-            if (self.peek().type == .LEFT_BRACE) {
-                step_expr = (try Parser.block(self, null, .NONE)) orelse return error.ExpectedLeftBrace;
-            } else {
-                step_expr = (try parseExpression(self)) orelse return error.ExpectedExpression;
-            }
-        }
-
-        // Parse body
+    // Check for step: "for x do step ..."
+    if (self.peek().type == .DO) {
+        self.advance(); // consume 'do'
         if (self.peek().type == .LEFT_BRACE) {
-            const block_stmts = try statement_parser.parseBlockStmt(self);
-            const block_expr = try self.allocator.create(ast.Expr);
-            block_expr.* = .{
-                .base = .{
-                    .id = ast.generateNodeId(),
-                    .span = ast.SourceSpan.fromToken(self.previous()),
-                },
-                .data = .{
-                    .Block = .{
-                        .statements = block_stmts,
-                        .value = null,
-                    },
-                },
-            };
-            body = block_expr;
+            step_expr = (try Parser.block(self, null, .NONE)) orelse return error.ExpectedLeftBrace;
         } else {
-            body = (try parseExpression(self)) orelse return error.ExpectedExpression;
+            step_expr = (try parseExpression(self)) orelse return error.ExpectedExpression;
         }
+    }
 
-        const loop_expr = try self.allocator.create(ast.Expr);
-        loop_expr.* = .{
+    // Parse body
+    if (self.peek().type == .LEFT_BRACE) {
+        const block_stmts = try statement_parser.parseBlockStmt(self);
+        const block_expr = try self.allocator.create(ast.Expr);
+        block_expr.* = .{
             .base = .{
                 .id = ast.generateNodeId(),
                 .span = ast.SourceSpan.fromToken(self.previous()),
             },
-            .data = .{ .Loop = .{
-                .var_decl = var_decl,
-                .condition = condition,
-                .step = step_expr,
-                .body = body,
-            } },
+            .data = .{
+                .Block = .{
+                    .statements = block_stmts,
+                    .value = null,
+                },
+            },
         };
-        return loop_expr;
-    }
-
-    // Original C-style for loop with parentheses
-    self.advance();
-
-    // Parse initializer
-    if (self.peek().type != .NEWLINE) {
-        if (self.peek().type == .VAR) {
-            const var_decl_stmt = try declaration_parser.parseVarDecl(self);
-            const stmt = try self.allocator.create(ast.Stmt);
-            stmt.* = var_decl_stmt;
-            var_decl = stmt;
-        } else {
-            const expr_stmt = try statement_parser.parseExpressionStmt(self);
-            const stmt = try self.allocator.create(ast.Stmt);
-            stmt.* = expr_stmt;
-            var_decl = stmt;
-        }
+        body = block_expr;
     } else {
-        self.advance(); // consume ';'
+        body = (try parseExpression(self)) orelse return error.ExpectedExpression;
     }
-
-    // Parse condition
-    if (self.peek().type != .NEWLINE) {
-        condition = try parseExpression(self);
-    }
-    if (self.peek().type != .NEWLINE) {
-        return error.ExpectedNewline;
-    }
-    self.advance(); // consume newline
-
-    // Parse increment
-    var increment: ?*ast.Expr = null;
-    if (self.peek().type != .RIGHT_PAREN) {
-        increment = try parseExpression(self);
-        // Handle ++ operator specially
-        if (self.peek().type == .PLUS_PLUS) {
-            if (increment) |var_expr| {
-                self.advance(); // consume '++'
-                // Create assignment expression: i = i + 1
-                const one = try self.allocator.create(ast.Expr);
-                one.* = .{
-                    .base = .{
-                        .id = ast.generateNodeId(),
-                        .span = ast.SourceSpan.fromToken(self.peek()),
-                    },
-                    .data = .{
-                        .Literal = .{ .int = 1 },
-                    },
-                };
-
-                const add = try self.allocator.create(ast.Expr);
-                add.* = .{
-                    .base = .{
-                        .id = ast.generateNodeId(),
-                        .span = ast.SourceSpan.fromToken(self.peek()),
-                    },
-                    .data = .{
-                        .Binary = .{
-                            .left = var_expr,
-                            .operator = token.Token.initWithFile(.PLUS, "+", .{ .nothing = {} }, self.peek().line, self.peek().column, self.current_file),
-                            .right = one,
-                        },
-                    },
-                };
-
-                const new_increment = try self.allocator.create(ast.Expr);
-                new_increment.* = .{
-                    .base = .{
-                        .id = ast.generateNodeId(),
-                        .span = ast.SourceSpan.fromToken(self.peek()),
-                    },
-                    .data = .{
-                        .Assignment = .{
-                            .name = var_expr.data.Variable,
-                            .value = add,
-                        },
-                    },
-                };
-                increment = new_increment;
-            }
-        } else if (self.peek().type == .MINUS_MINUS) {
-            if (increment) |var_expr| {
-                self.advance(); // consume '--'
-                // Create assignment expression: i = i - 1
-                const one = try self.allocator.create(ast.Expr);
-                one.* = .{
-                    .base = .{
-                        .id = ast.generateNodeId(),
-                        .span = ast.SourceSpan.fromToken(self.peek()),
-                    },
-                    .data = .{
-                        .Literal = .{ .int = 1 },
-                    },
-                };
-
-                const sub = try self.allocator.create(ast.Expr);
-                sub.* = .{
-                    .base = .{
-                        .id = ast.generateNodeId(),
-                        .span = ast.SourceSpan.fromToken(self.peek()),
-                    },
-                    .data = .{
-                        .Binary = .{
-                            .left = var_expr,
-                            .operator = token.Token.initWithFile(.MINUS, "-", .{ .nothing = {} }, self.peek().line, self.peek().column, self.current_file),
-                            .right = one,
-                        },
-                    },
-                };
-
-                const new_increment = try self.allocator.create(ast.Expr);
-                new_increment.* = .{
-                    .base = .{
-                        .id = ast.generateNodeId(),
-                        .span = ast.SourceSpan.fromToken(self.peek()),
-                    },
-                    .data = .{
-                        .Assignment = .{
-                            .name = var_expr.data.Variable,
-                            .value = sub,
-                        },
-                    },
-                };
-                increment = new_increment;
-            }
-        }
-    }
-
-    if (self.peek().type != .RIGHT_PAREN) {
-        return error.ExpectedRightParen;
-    }
-    self.advance();
-
-    // Parse body
-    if (self.peek().type != .LEFT_BRACE) {
-        return error.ExpectedLeftBrace;
-    }
-    self.advance(); // consume '{'
-
-    var body_stmts = std.ArrayList(ast.Stmt).init(self.allocator);
-    errdefer body_stmts.deinit();
-
-    while (self.peek().type != .RIGHT_BRACE and self.peek().type != .EOF) {
-        const stmt = try statement_parser.parseStatement(self);
-        try body_stmts.append(stmt);
-    }
-
-    if (self.peek().type != .RIGHT_BRACE) {
-        return error.ExpectedRightBrace;
-    }
-    self.advance(); // consume '}'
-
-    // Create block expression for body
-    const block_expr = try self.allocator.create(ast.Expr);
-    block_expr.* = .{
-        .base = .{
-            .id = ast.generateNodeId(),
-            .span = ast.SourceSpan.fromToken(self.previous()),
-        },
-        .data = .{ .Block = .{
-            .statements = try body_stmts.toOwnedSlice(),
-            .value = null,
-        } },
-    };
 
     const loop_expr = try self.allocator.create(ast.Expr);
     loop_expr.* = .{
@@ -858,12 +676,71 @@ pub fn forExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr
         .data = .{ .Loop = .{
             .var_decl = var_decl,
             .condition = condition,
-            .step = increment,
-            .body = block_expr,
+            .step = step_expr,
+            .body = body,
         } },
     };
-
     return loop_expr;
+}
+
+pub fn prefixIncrement(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+    const operator = self.previous(); // Get the ++ or -- token
+    const is_decrement = (operator.type == .DECREMENT); // or .MINUS_MINUS
+    std.debug.print("DEBUG: prefixIncrement called with token type: {}\n", .{operator.type});
+
+    self.advance();
+    const expr = try parseExpression(self);
+
+    const increment_expr = try self.allocator.create(ast.Expr);
+    increment_expr.* = .{
+        .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(operator) },
+        .data = if (is_decrement)
+            .{ .Decrement = expr.? }
+        else
+            .{ .Increment = expr.? },
+    };
+    return increment_expr;
+}
+
+pub fn postfixIncrement(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+    const operator = self.previous(); // Get the ++ or -- token
+    const is_decrement = (operator.type == .DECREMENT); // or .MINUS_MINUS
+
+    const increment_expr = try self.allocator.create(ast.Expr);
+    increment_expr.* = .{
+        .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(operator) },
+        .data = if (is_decrement)
+            .{ .Decrement = left.? }
+        else
+            .{ .Increment = left.? },
+    };
+    return increment_expr;
+}
+
+pub fn prefixDecrement(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+    const operator = self.previous(); // Get the -- token
+    std.debug.print("DEBUG: prefixDecrement called with token type: {}\n", .{operator.type});
+
+    self.advance();
+    const expr = try parseExpression(self);
+
+    const decrement_expr = try self.allocator.create(ast.Expr);
+    decrement_expr.* = .{
+        .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(operator) },
+        .data = .{ .Decrement = expr.? },
+    };
+    return decrement_expr;
+}
+
+pub fn postfixDecrement(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+    const operator = self.previous(); // Get the -- token
+
+    const decrement_expr = try self.allocator.create(ast.Expr);
+    decrement_expr.* = .{
+        .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(operator) },
+        .data = .{ .Decrement = left.? },
+    };
+    return decrement_expr;
 }
 
 pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
@@ -1713,6 +1590,12 @@ pub fn inferType(expr: *ast.Expr) !ast.TypeInfo {
                 }
             }
             return .{ .base = .Nothing, .is_mutable = false }; // Print returns nothing
+        },
+        .Increment => |operand| {
+            return try inferType(operand);
+        },
+        .Decrement => |operand| {
+            return try inferType(operand);
         },
         else => return .{ .base = .Nothing, .is_mutable = false },
     }
