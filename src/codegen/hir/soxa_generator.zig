@@ -3480,7 +3480,6 @@ pub const HIRGenerator = struct {
 
             .Increment => |operand| {
                 // Generate increment operation: load variable, add 1, store back
-                std.debug.print("DEBUG: Processing Increment operation\n", .{});
                 // First, check if this is a variable reference
                 if (operand.data == .Variable) {
                     const var_name = operand.data.Variable.lexeme;
@@ -3532,7 +3531,6 @@ pub const HIRGenerator = struct {
 
             .Decrement => |operand| {
                 // Generate decrement operation: load variable, subtract 1, store back
-                std.debug.print("DEBUG: Processing Decrement operation\n", .{});
                 // First, check if this is a variable reference
                 if (operand.data == .Variable) {
                     const var_name = operand.data.Variable.lexeme;
