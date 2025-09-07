@@ -203,7 +203,7 @@ function fber(x:: int, limit:: int) {
 fber(1000, 1015) //fizzerbuzzer 1-15
 
 function forloop(x :: int) {
-    for (var i is 0; i < x; i++) {
+    for i is 0 while i < x do i++ {
         ((i+10)*66)?
     }
 }

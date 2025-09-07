@@ -1,33 +1,18 @@
-var inc1 is 10
-var inc2 is 20
+struct Person {
+    name :: string
+    age :: int
+}
 
-function noincrement(param :: int) {
+function incrementAge(^param :: int) {
     param += 1
 }
 
-function increment(^param :: int) {
-    param += 1
+var person is Person {
+    name is "John",
+    age is 20
 }
 
-noincrement(inc1)
-inc1?
+incrementAge(^person.age)
+person.age?
 
-increment(^inc1)
-inc1?
 
-function increment_second(param1 :: int, ^param2 :: int) {
-    param1 += 1
-    param2 += 1
-}
-
-increment_second(inc1, ^inc2)
-inc1?
-inc2?
-
-function increment_function_scope(param1 :: int) {
-    increment(^param1)
-    param1?
-}
-
-increment_function_scope(inc1)
-inc1?
