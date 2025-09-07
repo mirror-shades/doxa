@@ -179,16 +179,17 @@ fn compileDoxaToSoxaFromAST(memoryManager: *MemoryManager, statements: []ast.Stm
     var hir_program = try hir_generator.generateProgram(folded_statements.items);
     defer hir_program.deinit();
 
-    // Apply peephole optimizations to HIR
-    var peephole_optimizer = PeepholeOptimizer.init(memoryManager.getAllocator(), reporter);
-    const optimized_instructions = try peephole_optimizer.optimize(hir_program.instructions);
-    defer memoryManager.getAllocator().free(optimized_instructions);
+    // // Apply peephole optimizations to HIR
+    // // TODO: Re-enable this once we are more stable
+    // var peephole_optimizer = PeepholeOptimizer.init(memoryManager.getAllocator(), reporter);
+    // const optimized_instructions = try peephole_optimizer.optimize(hir_program.instructions);
+    // defer memoryManager.getAllocator().free(optimized_instructions);
 
-    // Replace the instructions in the HIR program
-    memoryManager.getAllocator().free(hir_program.instructions);
-    hir_program.instructions = optimized_instructions;
+    // // Replace the instructions in the HIR program
+    // memoryManager.getAllocator().free(hir_program.instructions);
+    // hir_program.instructions = optimized_instructions;
 
-    reporter.debug(">> Peephole optimizations applied: {} HIR instruction optimizations\n", .{peephole_optimizer.getTotalOptimizations()}, @src());
+    // reporter.debug(">> Peephole optimizations applied: {} HIR instruction optimizations\n", .{peephole_optimizer.getTotalOptimizations()}, @src());
 
     // Delete existing .soxa file if it exists
     std.fs.cwd().deleteFile(soxa_path) catch |err| {
@@ -345,6 +346,7 @@ fn printUsage() void {
     std.debug.print("\nUsage:\n", .{});
     std.debug.print("  doxa run [options] <file.doxa>          # Execute with HIR VM (explicit)\n", .{});
     std.debug.print("\nOptions:\n", .{});
+    std.debug.print("  --debug-lexer                           Print lexer output\n", .{});
     std.debug.print("  --debug                                 Enable debug output\n", .{});
     std.debug.print("  --keep-intermediate                     Keep .soxa files for debugging\n", .{});
     std.debug.print("  --help, -h                             Show this help message\n", .{});

@@ -387,8 +387,10 @@ pub const Scope = struct {
             // Remove from global variable map
             _ = self.manager.variable_map.remove(variable.id);
 
-            // Remove storage from global storage map
-            _ = self.manager.value_storage.remove(variable.storage_id);
+            // Only remove storage if it's not an alias (aliases reference storage from other scopes)
+            if (!variable.is_alias) {
+                _ = self.manager.value_storage.remove(variable.storage_id);
+            }
         }
 
         // Clean up custom type instances from global map
@@ -521,6 +523,30 @@ pub const Scope = struct {
 
         // Store in maps
         try self.manager.variable_map.put(variableId, variable);
+        try self.variables.put(variableId, variable);
+        try self.name_map.put(name, variable);
+
+        return variable;
+    }
+
+    pub fn createAliasFromStorageId(self: *Scope, name: []const u8, storage_id: u32, vtype: TokenType, type_info: *TypeInfo) !*Variable {
+        _ = type_info; // TODO: Use type_info for validation if needed
+        const variableId = self.manager.variable_counter;
+        self.manager.variable_counter += 1;
+
+        // Create alias variable
+        const variable = try self.arena.allocator().create(Variable);
+        variable.* = .{
+            .name = name,
+            .type = vtype,
+            .storage_id = storage_id,
+            .id = variableId,
+            .is_alias = true,
+        };
+
+        // Store in maps
+        try self.manager.variable_map.put(variableId, variable);
+        // Note: storage is NOT created here, it's already existing
         try self.variables.put(variableId, variable);
         try self.name_map.put(name, variable);
 

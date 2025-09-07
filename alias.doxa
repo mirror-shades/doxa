@@ -1,0 +1,33 @@
+var inc1 is 10
+var inc2 is 20
+
+function noincrement(param :: int) {
+    param += 1
+}
+
+function increment(^param :: int) {
+    param += 1
+}
+
+noincrement(inc1)
+inc1?
+
+increment(^inc1)
+inc1?
+
+function increment_second(param1 :: int, ^param2 :: int) {
+    param1 += 1
+    param2 += 1
+}
+
+increment_second(inc1, ^inc2)
+inc1?
+inc2?
+
+function increment_function_scope(param1 :: int) {
+    increment(^param1)
+    param1?
+}
+
+increment_function_scope(inc1)
+inc1?

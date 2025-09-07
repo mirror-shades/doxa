@@ -303,6 +303,10 @@ pub const ErrorList = error{
     UnmatchedOpenBrace,
     NotEnoughInterpolationArguments,
     TooManyInterpolationArguments,
+    INVALID_ALIAS_ARGUMENT, // NEW: Alias argument must be a variable
+    INVALID_ALIAS_PARAMETER, // NEW: Alias parameter must be bound to an existing variable
+    ALIAS_PARAMETER_REQUIRED, // NEW: Function parameter requires an alias argument
+    ALIAS_ARGUMENT_NOT_NEEDED, // NEW: Function parameter does not require an alias argument
 };
 
 pub const ErrorCode = struct {
@@ -331,6 +335,10 @@ pub const ErrorCode = struct {
     pub const EXPECTED_TYPE_ANNOTATION = "E1022";
     pub const SELF_REFERENTIAL_INITIALIZER = "E1023";
     pub const ARITHMETIC_OVERFLOW = "E1024";
+    pub const INVALID_ALIAS_ARGUMENT = "E1025";
+    pub const INVALID_ALIAS_PARAMETER = "E1026";
+    pub const ALIAS_PARAMETER_REQUIRED = "E1027";
+    pub const ALIAS_ARGUMENT_NOT_NEEDED = "E1028";
 
     // 2xxx - Syntax & Parsing
     pub const SYNTAX_ERROR = "E2001";

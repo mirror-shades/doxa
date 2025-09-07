@@ -29,6 +29,8 @@ function precedence(op :: string) returns int {
     }
 }
 
+
+
 entry function main() {
     const input is @input();
     const splitInput is split(input)
@@ -203,7 +205,7 @@ function shunt(tokens :: Token[]) returns Token[] | Error {
 
                 if top_prec == -1 or current_prec == -1 then return Error.FailedToShunt
 
-                if top_prec >= current_prec then {
+                if top_prec > current_prec or (top_prec == current_prec and t.value == top_op.value) then {
                     const popped is @pop(operators)
                     @push(output, popped)
                 } else {

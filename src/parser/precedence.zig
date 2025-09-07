@@ -23,7 +23,6 @@ const fieldAccess = Parser.fieldAccess;
 const print = Parser.print;
 const braceExpr = expr_parser.braceExpr;
 
-const functionExpr = expr_parser.functionExpr;
 const parseStructDecl = decl_parser.parseStructDecl;
 const enumDeclPrefix = decl_parser.enumDeclPrefix;
 const enumMember = Parser.enumMember;
@@ -40,7 +39,7 @@ const arrayType = expr_parser.arrayType;
 const typeofExpr = expr_parser.typeofExpr;
 const lengthofExpr = expr_parser.lengthofExpr;
 const bytesofExpr = expr_parser.bytesofExpr;
-const methodCallExpr = Parser.methodCallExpr;
+const internalCallExpr = Parser.internalCallExpr;
 
 const existentialQuantifier = quantifer_parser.existentialQuantifier;
 const universalQuantifier = quantifer_parser.universalQuantifier;
@@ -90,9 +89,6 @@ pub const ParseRule = struct {
 
 pub const rules = blk: {
     var r = std.EnumArray(token.TokenType, ParseRule).initFill(ParseRule{});
-
-    // Add rule for entry point keyword
-    r.set(.ENTRY, .{ .prefix = functionExpr });
 
     // Binary operators
     r.set(.PLUS, .{ .prefix = unary, .infix = binary, .precedence = .TERM });
@@ -201,54 +197,54 @@ pub const rules = blk: {
     r.set(.MATCH, .{ .prefix = parseMatchExpr });
 
     // Add @methods generic handler
-    r.set(.TYPE, .{ .prefix = methodCallExpr, .precedence = .CALL });
-    r.set(.LENGTH, .{ .prefix = methodCallExpr, .precedence = .CALL });
-    r.set(.BYTES, .{ .prefix = methodCallExpr, .precedence = .CALL });
-    r.set(.SLICE, .{ .prefix = methodCallExpr, .precedence = .CALL });
-    r.set(.SUBSTRING, .{ .prefix = methodCallExpr, .precedence = .CALL });
+    r.set(.TYPE, .{ .prefix = internalCallExpr, .precedence = .CALL });
+    r.set(.LENGTH, .{ .prefix = internalCallExpr, .precedence = .CALL });
+    r.set(.BYTES, .{ .prefix = internalCallExpr, .precedence = .CALL });
+    r.set(.SLICE, .{ .prefix = internalCallExpr, .precedence = .CALL });
+    r.set(.SUBSTRING, .{ .prefix = internalCallExpr, .precedence = .CALL });
 
     // Array ops
-    r.set(.PUSH, .{ .prefix = methodCallExpr, .precedence = .CALL });
-    r.set(.POP, .{ .prefix = methodCallExpr, .precedence = .CALL });
-    r.set(.INSERT, .{ .prefix = methodCallExpr, .precedence = .CALL });
-    r.set(.REMOVE, .{ .prefix = methodCallExpr, .precedence = .CALL });
-    r.set(.CLEAR, .{ .prefix = methodCallExpr, .precedence = .CALL });
-    r.set(.INDEX, .{ .prefix = methodCallExpr, .precedence = .CALL });
+    r.set(.PUSH, .{ .prefix = internalCallExpr, .precedence = .CALL });
+    r.set(.POP, .{ .prefix = internalCallExpr, .precedence = .CALL });
+    r.set(.INSERT, .{ .prefix = internalCallExpr, .precedence = .CALL });
+    r.set(.REMOVE, .{ .prefix = internalCallExpr, .precedence = .CALL });
+    r.set(.CLEAR, .{ .prefix = internalCallExpr, .precedence = .CALL });
+    r.set(.INDEX, .{ .prefix = internalCallExpr, .precedence = .CALL });
 
     // Type conversions
-    r.set(.TOSTRING, .{ .prefix = methodCallExpr, .precedence = .CALL });
-    r.set(.PARSEINT, .{ .prefix = methodCallExpr, .precedence = .CALL });
-    r.set(.PARSEFLOAT, .{ .prefix = methodCallExpr, .precedence = .CALL });
-    r.set(.PARSEBYTE, .{ .prefix = methodCallExpr, .precedence = .CALL });
+    r.set(.TOSTRING, .{ .prefix = internalCallExpr, .precedence = .CALL });
+    r.set(.PARSEINT, .{ .prefix = internalCallExpr, .precedence = .CALL });
+    r.set(.PARSEFLOAT, .{ .prefix = internalCallExpr, .precedence = .CALL });
+    r.set(.PARSEBYTE, .{ .prefix = internalCallExpr, .precedence = .CALL });
 
     // String
-    r.set(.SPLIT, .{ .prefix = methodCallExpr, .precedence = .CALL });
-    r.set(.JOIN, .{ .prefix = methodCallExpr, .precedence = .CALL });
-    r.set(.TRIM, .{ .prefix = methodCallExpr, .precedence = .CALL });
-    r.set(.LOWER, .{ .prefix = methodCallExpr, .precedence = .CALL });
-    r.set(.UPPER, .{ .prefix = methodCallExpr, .precedence = .CALL });
+    r.set(.SPLIT, .{ .prefix = internalCallExpr, .precedence = .CALL });
+    r.set(.JOIN, .{ .prefix = internalCallExpr, .precedence = .CALL });
+    r.set(.TRIM, .{ .prefix = internalCallExpr, .precedence = .CALL });
+    r.set(.LOWER, .{ .prefix = internalCallExpr, .precedence = .CALL });
+    r.set(.UPPER, .{ .prefix = internalCallExpr, .precedence = .CALL });
 
     // Math
-    r.set(.ABS, .{ .prefix = methodCallExpr, .precedence = .CALL });
-    r.set(.MIN, .{ .prefix = methodCallExpr, .precedence = .CALL });
-    r.set(.MAX, .{ .prefix = methodCallExpr, .precedence = .CALL });
-    r.set(.ROUND, .{ .prefix = methodCallExpr, .precedence = .CALL });
-    r.set(.FLOOR, .{ .prefix = methodCallExpr, .precedence = .CALL });
-    r.set(.CEIL, .{ .prefix = methodCallExpr, .precedence = .CALL });
+    r.set(.ABS, .{ .prefix = internalCallExpr, .precedence = .CALL });
+    r.set(.MIN, .{ .prefix = internalCallExpr, .precedence = .CALL });
+    r.set(.MAX, .{ .prefix = internalCallExpr, .precedence = .CALL });
+    r.set(.ROUND, .{ .prefix = internalCallExpr, .precedence = .CALL });
+    r.set(.FLOOR, .{ .prefix = internalCallExpr, .precedence = .CALL });
+    r.set(.CEIL, .{ .prefix = internalCallExpr, .precedence = .CALL });
 
     // I/O
-    r.set(.READ, .{ .prefix = methodCallExpr, .precedence = .CALL });
-    r.set(.WRITE, .{ .prefix = methodCallExpr, .precedence = .CALL });
-    r.set(.PRINT, .{ .prefix = methodCallExpr, .precedence = .CALL });
-    r.set(.EXEC, .{ .prefix = methodCallExpr, .precedence = .CALL });
-    r.set(.SPAWN, .{ .prefix = methodCallExpr, .precedence = .CALL });
+    r.set(.READ, .{ .prefix = internalCallExpr, .precedence = .CALL });
+    r.set(.WRITE, .{ .prefix = internalCallExpr, .precedence = .CALL });
+    r.set(.PRINT, .{ .prefix = internalCallExpr, .precedence = .CALL });
+    r.set(.EXEC, .{ .prefix = internalCallExpr, .precedence = .CALL });
+    r.set(.SPAWN, .{ .prefix = internalCallExpr, .precedence = .CALL });
 
     // Control flow
-    r.set(.PANIC, .{ .prefix = methodCallExpr, .precedence = .CALL });
+    r.set(.PANIC, .{ .prefix = internalCallExpr, .precedence = .CALL });
 
     // Copy/clone
-    r.set(.CLONE, .{ .prefix = methodCallExpr, .precedence = .CALL });
-    r.set(.COPY, .{ .prefix = methodCallExpr, .precedence = .CALL });
+    r.set(.CLONE, .{ .prefix = internalCallExpr, .precedence = .CALL });
+    r.set(.COPY, .{ .prefix = internalCallExpr, .precedence = .CALL });
 
     // Add cast operator support
     r.set(.AS, .{ .infix = expr_parser.castExpr, .precedence = .CALL });

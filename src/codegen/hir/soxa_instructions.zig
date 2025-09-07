@@ -94,6 +94,21 @@ pub const HIRInstruction = union(enum) {
         var_name: []const u8,
     },
 
+    /// NEW: Push a variable's storage ID onto the stack
+    /// This is used for passing alias arguments by reference
+    PushStorageId: struct {
+        var_index: u32,
+        var_name: []const u8,
+        scope_kind: ScopeKind,
+    },
+
+    /// NEW: Store a parameter as an alias to an existing storage ID
+    /// Consumes a storage_id_ref from stack and creates an alias variable
+    StoreParamAlias: struct {
+        param_name: []const u8,
+        param_type: HIRType, // For initial type info of the alias
+    },
+
     //==================================================================
     // ARITHMETIC OPERATIONS (Type-preserving)
     //==================================================================
