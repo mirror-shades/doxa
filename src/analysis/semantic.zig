@@ -506,9 +506,11 @@ pub const SemanticAnalyzer = struct {
                         }
                     }
 
-                    // Build parameter types
+                    // Build parameter types and track aliases
                     var param_types = try self.allocator.alloc(ast.TypeInfo, func.params.len);
+                    var param_aliases = try self.allocator.alloc(bool, func.params.len);
                     for (func.params, 0..) |param, i| {
+                        param_aliases[i] = param.is_alias;
                         if (param.type_expr) |type_expr| {
                             const param_type_ptr = try ast.typeInfoFromExpr(self.allocator, type_expr);
                             defer self.allocator.destroy(param_type_ptr);
@@ -534,6 +536,7 @@ pub const SemanticAnalyzer = struct {
                     func_type.* = .{
                         .params = param_types,
                         .return_type = try self.allocator.create(ast.TypeInfo),
+                        .param_aliases = param_aliases,
                     };
                     func_type.return_type.* = inferred_return_type;
 
@@ -730,7 +733,7 @@ pub const SemanticAnalyzer = struct {
                 .Expression => |maybe_expr| {
                     if (maybe_expr) |expr| {
                         // Ensure expression statements are semantically analyzed so that
-                        // compiler methods like @push are lowered (e.g., MethodCall -> ArrayPush)
+                        // compiler methods like @push are lowered (e.g., InternalCall -> ArrayPush)
                         // even when their values are not used.
                         _ = try self.inferTypeFromExpr(expr);
 
@@ -1377,10 +1380,10 @@ pub const SemanticAnalyzer = struct {
                 // Handle unary operators: -, !, ~, etc.
                 type_info.* = operand_type.*;
             },
-            .Call => |call| {
+            .FunctionCall => |function_call| {
                 // Check if this is a method call (callee is FieldAccess)
-                if (call.callee.data == .FieldAccess) {
-                    const field_access = call.callee.data.FieldAccess;
+                if (function_call.callee.data == .FieldAccess) {
+                    const field_access = function_call.callee.data.FieldAccess;
                     const object_type = try self.inferTypeFromExpr(field_access.object);
                     const method_name = field_access.field.lexeme;
 
@@ -1467,14 +1470,14 @@ pub const SemanticAnalyzer = struct {
                     }
                 } else {
                     // Regular function call
-                    const callee_type = try self.inferTypeFromExpr(call.callee);
+                    const callee_type = try self.inferTypeFromExpr(function_call.callee);
                     if (callee_type.base == .Function) {
                         if (callee_type.function_type) |func_type| {
                             // Validate argument count allowing default placeholders (~)
                             const expected_arg_count: usize = func_type.params.len;
                             var provided_arg_count: usize = 0;
-                            for (call.arguments) |arg_expr_it| {
-                                if (arg_expr_it.data != .DefaultArgPlaceholder) provided_arg_count += 1;
+                            for (function_call.arguments) |arg_expr_it| {
+                                if (arg_expr_it.expr.data != .DefaultArgPlaceholder) provided_arg_count += 1;
                             }
                             if (provided_arg_count > expected_arg_count) {
                                 self.reporter.reportCompileError(
@@ -1490,13 +1493,40 @@ pub const SemanticAnalyzer = struct {
 
                             // Validate each non-placeholder argument type against parameter type
                             var param_index: usize = 0;
-                            for (call.arguments) |arg_expr_it| {
-                                if (arg_expr_it.data == .DefaultArgPlaceholder) {
+                            for (function_call.arguments) |arg_expr_it| {
+                                if (arg_expr_it.expr.data == .DefaultArgPlaceholder) {
                                     if (param_index < expected_arg_count) param_index += 1;
                                     continue;
                                 }
                                 if (param_index >= expected_arg_count) break;
-                                const arg_type = try self.inferTypeFromExpr(arg_expr_it);
+
+                                // Check if parameter requires alias but argument is not marked as alias
+                                if (func_type.param_aliases != null and func_type.param_aliases.?[param_index] and !arg_expr_it.is_alias) {
+                                    self.reporter.reportCompileError(
+                                        getLocationFromBase(arg_expr_it.expr.base),
+                                        ErrorCode.ALIAS_PARAMETER_REQUIRED,
+                                        "Function parameter requires an alias argument (use ^ before the argument)",
+                                        .{},
+                                    );
+                                    self.fatal_error = true;
+                                    type_info.base = .Nothing;
+                                    return type_info;
+                                }
+
+                                // Check if parameter is not alias but argument is marked as alias
+                                if (func_type.param_aliases != null and !func_type.param_aliases.?[param_index] and arg_expr_it.is_alias) {
+                                    self.reporter.reportCompileError(
+                                        getLocationFromBase(arg_expr_it.expr.base),
+                                        ErrorCode.ALIAS_ARGUMENT_NOT_NEEDED,
+                                        "Function parameter does not require an alias argument (remove ^ before the argument)",
+                                        .{},
+                                    );
+                                    self.fatal_error = true;
+                                    type_info.base = .Nothing;
+                                    return type_info;
+                                }
+
+                                const arg_type = try self.inferTypeFromExpr(arg_expr_it.expr);
                                 if (func_type.params[param_index].base != .Nothing) {
                                     try self.unifyTypes(&func_type.params[param_index], arg_type, .{ .location = getLocationFromBase(expr.base) });
                                 }
@@ -2490,7 +2520,7 @@ pub const SemanticAnalyzer = struct {
                 }
                 type_info.* = value_type.*; // Returns same type as input
             },
-            .MethodCall => |method_call| {
+            .InternalCall => |method_call| {
                 var receiver_type = try self.inferTypeFromExpr(method_call.receiver);
                 const method_name = method_call.method.lexeme;
 
@@ -3447,9 +3477,6 @@ pub const SemanticAnalyzer = struct {
             },
             .ArrayType => {
                 type_info.* = .{ .base = .Array };
-            },
-            .FunctionExpr => {
-                type_info.* = .{ .base = .Function };
             },
             .Block => |block| {
                 // Ensure statements inside a block expression are validated so that

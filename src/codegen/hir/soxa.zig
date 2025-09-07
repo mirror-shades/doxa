@@ -68,6 +68,14 @@ pub fn translateToVMBytecode(program: *HIRProgram, allocator: std.mem.Allocator,
                 try bytecode.append(@intFromEnum(instructions.OpCode.OP_SET_CONST));
                 try bytecode.append(@intCast(v.var_index));
             },
+            .PushStorageId => |p| {
+                try bytecode.append(@intFromEnum(instructions.OpCode.OP_CONST)); // Use OP_CONST for now
+                try bytecode.append(@intCast(p.var_index));
+            },
+            .StoreParamAlias => |_| {
+                try bytecode.append(@intFromEnum(instructions.OpCode.OP_SET_VAR)); // Use OP_SET_VAR for now
+                try bytecode.append(0); // Placeholder index
+            },
             .IntArith => |a| {
                 const opcode = switch (a.op) {
                     .Add => instructions.OpCode.OP_IADD,
@@ -464,6 +472,17 @@ fn writeHIRInstruction(writer: anytype, instruction: HIRInstruction, allocator: 
             try writer.writeInt(u32, @as(u32, @intCast(v.var_name.len)), .little);
             try writer.writeAll(v.var_name);
         },
+        .PushStorageId => |p| {
+            try writer.writeByte(24); // Instruction tag (new)
+            try writer.writeInt(u32, p.var_index, .little);
+            try writer.writeInt(u32, @as(u32, @intCast(p.var_name.len)), .little);
+            try writer.writeAll(p.var_name);
+        },
+        .StoreParamAlias => |s| {
+            try writer.writeByte(25); // Instruction tag (new)
+            try writer.writeInt(u32, @as(u32, @intCast(s.param_name.len)), .little);
+            try writer.writeAll(s.param_name);
+        },
         .IntArith => |a| {
             try writer.writeByte(3); // Instruction tag
             try writer.writeByte(@intFromEnum(a.op));
@@ -796,6 +815,7 @@ fn writeHIRValueText(writer: anytype, value: HIRValue) !void {
         .struct_instance => try writer.print("struct", .{}),
         .map => try writer.print("map", .{}),
         .enum_variant => |variant| try writer.print("enum_variant {s}.{s}", .{ variant.type_name, variant.variant_name }),
+        .storage_id_ref => |storage_id| try writer.print("storage_id_ref {}", .{storage_id}),
     }
 }
 
@@ -807,6 +827,8 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
 
         .StoreVar => |v| try writer.print("    StoreVar {} \"{s}\"          ; Store variable\n", .{ v.var_index, v.var_name }),
         .StoreConst => |v| try writer.print("    StoreConst {} \"{s}\"        ; Store constant\n", .{ v.var_index, v.var_name }),
+        .PushStorageId => |p| try writer.print("    PushStorageId {} \"{s}\"     ; Push storage ID for alias\n", .{ p.var_index, p.var_name }),
+        .StoreParamAlias => |s| try writer.print("    StoreParamAlias \"{s}\"      ; Store alias parameter\n", .{s.param_name}),
 
         .Arith => |a| {
             const op_name = switch (a.op) {

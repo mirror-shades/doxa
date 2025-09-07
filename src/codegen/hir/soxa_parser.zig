@@ -217,6 +217,16 @@ pub const SoxaTextParser = struct {
                 .start_label = try self.allocator.dupe(u8, "unknown"), // Will be updated
                 .local_var_count = 0,
                 .is_entry = false,
+                .param_is_alias = blk: {
+                    const arr = try self.allocator.alloc(bool, arity);
+                    for (arr) |*item| item.* = false;
+                    break :blk arr;
+                },
+                .param_types = blk: {
+                    const arr = try self.allocator.alloc(HIRType, arity);
+                    for (arr) |*item| item.* = .Unknown;
+                    break :blk arr;
+                },
             });
         }
     }
@@ -330,6 +340,16 @@ pub const SoxaTextParser = struct {
             const name_quoted = tokens.next() orelse return;
             const var_name = try self.parseQuotedString(name_quoted);
             try self.instructions.append(HIRInstruction{ .StoreConst = .{ .var_index = var_index, .var_name = var_name } });
+        } else if (std.mem.eql(u8, op, "StoreParamAlias")) {
+            const name_quoted = tokens.next() orelse return;
+            const param_name = try self.parseQuotedString(name_quoted);
+            try self.instructions.append(HIRInstruction{ .StoreParamAlias = .{ .param_name = param_name, .param_type = .Unknown } });
+        } else if (std.mem.eql(u8, op, "PushStorageId")) {
+            const idx_str = tokens.next() orelse return;
+            const var_index = std.fmt.parseInt(u32, idx_str, 10) catch return;
+            const name_quoted = tokens.next() orelse return;
+            const var_name = try self.parseQuotedString(name_quoted);
+            try self.instructions.append(HIRInstruction{ .PushStorageId = .{ .var_index = var_index, .var_name = var_name, .scope_kind = .Local } });
         } else if (std.mem.eql(u8, op, "Arith")) {
             // Int arithmetic instruction
 

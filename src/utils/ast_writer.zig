@@ -193,11 +193,11 @@ fn writeExpression(expr: *const ast.Expr, writer: anytype) std.fs.File.WriteErro
                 try writeExpression(field.value, writer);
             }
         },
-        .Call => |call| {
+        .FunctionCall => |call| {
             try writer.print("args_count:{d}\n", .{call.arguments.len});
             try writeExpression(call.callee, writer);
             for (call.arguments) |arg| {
-                try writeExpression(arg, writer);
+                try writeExpression(arg.expr, writer);
             }
         },
         .Map => |entries| {
@@ -208,15 +208,6 @@ fn writeExpression(expr: *const ast.Expr, writer: anytype) std.fs.File.WriteErro
                 try writer.print("map_entry_{d}_value:\n", .{i});
                 try writeExpression(entry.value, writer);
             }
-        },
-        .FunctionExpr => |func| {
-            try writer.print("name:{s}\n", .{func.name.lexeme});
-            try writer.print("is_entry:{}\n", .{func.is_entry});
-            try writer.print("params_count:{d}\n", .{func.params.len});
-            for (func.params) |param| {
-                try writer.print("param_name:{s}\n", .{param.name.lexeme});
-            }
-            try writeStatements(func.body, writer);
         },
         .Cast => |_| {
             try writer.print("cast_expression\n", .{});

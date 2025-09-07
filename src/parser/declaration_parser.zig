@@ -231,7 +231,7 @@ pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
         self.advance(); // consume entry
     }
 
-    // Expect function keyword (both 'fn' and 'function' map to FUNCTION token)
+    // Expect function keyword
     if (self.peek().type != .FUNCTION) {
         return error.ExpectedFunction;
     }
@@ -261,6 +261,11 @@ pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
 
     if (self.peek().type != .RIGHT_PAREN) {
         while (true) {
+            var is_alias = false;
+            if (self.peek().type == .CARET) {
+                self.advance(); // consume '^'
+                is_alias = true;
+            }
             if (self.peek().type != .IDENTIFIER) {
                 return error.ExpectedIdentifier;
             }
@@ -286,6 +291,7 @@ pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
                 .name = param_name,
                 .type_expr = type_expr,
                 .default_value = default_value,
+                .is_alias = is_alias,
             });
 
             if (self.peek().type == .RIGHT_PAREN) break;

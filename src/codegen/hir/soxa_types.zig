@@ -97,6 +97,8 @@ pub const HIRProgram = struct {
         body_label: ?[]const u8 = null, // For tail call optimization - jumps here to skip parameter setup
         local_var_count: u32, // VM: stack frame sizing
         is_entry: bool,
+        param_is_alias: []bool, // NEW: Track which parameters are aliases
+        param_types: []HIRType, // NEW: Track parameter types for VM binding
     };
 
     pub const ModuleInfo = struct {
