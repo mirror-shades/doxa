@@ -430,63 +430,6 @@ pub const Parser = struct {
         return statements.toOwnedSlice();
     }
 
-    pub fn parseParameters(self: *Parser, params: *std.ArrayList(ast.FunctionParam), reporter: *Reporter) ErrorList!void {
-        while (true) {
-            if (self.peek().type != .IDENTIFIER) {
-                reporter.reportCompileError(.{
-                    .file = self.current_file,
-                    .range = .{
-                        .start_line = self.peek().line,
-                        .start_col = self.peek().column,
-                        .end_line = self.peek().line,
-                        .end_col = self.peek().column,
-                    },
-                }, ErrorCode.EXPECTED_IDENTIFIER, "Expected identifier, but found '{s}'", .{@tagName(self.peek().type)});
-                return error.ExpectedIdentifier;
-            }
-
-            const param_name = self.peek();
-            self.advance();
-
-            // Parse type annotation if present
-            var type_expr: ?*ast.TypeExpr = null;
-            if (self.peek().type == .TYPE_SYMBOL) {
-                self.advance(); // consume ::
-                type_expr = try expression_parser.parseTypeExpr(self);
-            }
-
-            // Handle default value
-            var default_value: ?*ast.Expr = null;
-            if (self.peek().type == .ASSIGN) {
-                self.advance(); // consume =
-                const value_expr = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
-                const default_literal = try self.allocator.create(ast.Expr);
-                default_literal.* = .{
-                    .base = .{
-                        .id = ast.generateNodeId(),
-                        .span = ast.SourceSpan.fromToken(self.peek()),
-                    },
-                    .data = .{
-                        .Literal = value_expr.data.Literal,
-                    },
-                };
-                default_value = default_literal;
-            }
-
-            try params.append(.{
-                .name = param_name,
-                .type_expr = type_expr,
-                .default_value = default_value,
-            });
-
-            if (self.peek().type == .COMMA) {
-                self.advance();
-                continue;
-            }
-            break;
-        }
-    }
-
     pub fn hasReturnWithValue(self: *Parser) !bool {
         // Find the opening brace of the function body
         var pos = self.current;
@@ -532,11 +475,11 @@ pub const Parser = struct {
     pub fn call(self: *Parser, callee: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
         self.advance(); // consume (
 
-        var arguments = std.ArrayList(*ast.Expr).init(self.allocator);
+        var arguments = std.ArrayList(ast.CallArgument).init(self.allocator);
         errdefer {
             for (arguments.items) |arg| {
-                arg.deinit(self.allocator);
-                self.allocator.destroy(arg);
+                arg.expr.deinit(self.allocator);
+                self.allocator.destroy(arg.expr);
             }
             arguments.deinit();
         }
@@ -547,7 +490,8 @@ pub const Parser = struct {
         } else {
             // Parse arguments
             while (true) {
-                var arg: *ast.Expr = undefined;
+                var arg_expr: *ast.Expr = undefined;
+                var is_alias = false;
                 if (self.peek().type == .TILDE) {
                     // Handle default argument placeholder
                     self.advance(); // consume ~
@@ -559,11 +503,16 @@ pub const Parser = struct {
                         },
                         .data = .DefaultArgPlaceholder,
                     };
-                    arg = placeholder;
+                    arg_expr = placeholder;
+                } else if (self.peek().type == .CARET) {
+                    self.advance(); // consume ^
+                    // Parse the argument after ^
+                    arg_expr = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
+                    is_alias = true;
                 } else {
-                    arg = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
+                    arg_expr = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
                 }
-                try arguments.append(arg);
+                try arguments.append(.{ .expr = arg_expr, .is_alias = is_alias });
 
                 if (self.peek().type == .RIGHT_PAREN) break;
                 if (self.peek().type != .COMMA) return error.ExpectedComma;
@@ -594,7 +543,7 @@ pub const Parser = struct {
                 .span = ast.SourceSpan.fromToken(self.peek()),
             },
             .data = .{
-                .Call = .{
+                .FunctionCall = .{
                     .callee = callee.?,
                     .arguments = try arguments.toOwnedSlice(),
                 },
@@ -1019,9 +968,9 @@ pub const Parser = struct {
         return field_access;
     }
 
-    /// Parse a generic @method(...) call into a MethodCall expression.
+    /// Parse a generic @method(...) call into a InternalCall expression.
     /// Expect current token to be the method token (e.g., PUSH, POP, SLICE, ...)
-    pub fn methodCallExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+    pub fn internalCallExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
         const method_tok = self.peek();
 
         // Special handling for @print method with string interpolation
@@ -1100,7 +1049,7 @@ pub const Parser = struct {
         const method_expr = try self.allocator.create(ast.Expr);
         method_expr.* = .{
             .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(method_tok) },
-            .data = .{ .MethodCall = .{
+            .data = .{ .InternalCall = .{
                 .receiver = receiver_expr,
                 .method = method_tok,
                 .arguments = try call_args.toOwnedSlice(),

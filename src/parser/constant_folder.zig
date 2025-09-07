@@ -173,11 +173,11 @@ pub const ConstantFolder = struct {
                 }
                 return expr;
             },
-            .Call => |*call| {
+            .FunctionCall => |*call| {
                 // Fold function arguments
                 call.callee = try self.foldExpr(call.callee);
-                for (call.arguments) |arg| {
-                    _ = try self.foldExpr(arg);
+                for (call.arguments) |*arg| {
+                    arg.expr = try self.foldExpr(arg.expr);
                 }
                 return expr;
             },

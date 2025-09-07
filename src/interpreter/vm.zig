@@ -587,11 +587,18 @@ pub const HIRVM = struct {
                 break :blk TokenLiteral{ .map = token_map };
             },
             .enum_variant => |e| TokenLiteral{ .enum_variant = e.variant_name },
+            .storage_id_ref => |storage_id| {
+                // For storage_id_ref, we need to look up the actual value
+                if (self.memory_manager.scope_manager.value_storage.get(storage_id)) |storage| {
+                    return self.hirValueToTokenLiteral(self.tokenLiteralToHIRValue(storage.value));
+                } else {
+                    return TokenLiteral{ .nothing = {} };
+                }
+            },
         };
     }
 
     pub fn hirValueToTokenType(self: *HIRVM, hir_value: HIRValue) TokenType {
-        _ = self;
         return switch (hir_value) {
             .int => .INT,
             .byte => .BYTE,
@@ -604,6 +611,14 @@ pub const HIRVM = struct {
             .struct_instance => .IDENTIFIER, // Structs represented as identifiers
             .map => .ARRAY, // Maps similar to arrays
             .enum_variant => .IDENTIFIER, // Enums represented as identifiers
+            .storage_id_ref => |storage_id| {
+                // For storage_id_ref, we need to look up the actual type
+                if (self.memory_manager.scope_manager.value_storage.get(storage_id)) |storage| {
+                    return storage.type;
+                } else {
+                    return .NOTHING;
+                }
+            },
         };
     }
 
@@ -638,6 +653,14 @@ pub const HIRVM = struct {
             .struct_instance => TypeInfo{ .base = .Struct, .is_mutable = true }, // Struct types need resolution
             .map => TypeInfo{ .base = .Map, .is_mutable = true },
             .enum_variant => |e| TypeInfo{ .base = .Enum, .is_mutable = true, .custom_type = e.type_name }, // Preserve enum type name
+            .storage_id_ref => |storage_id| {
+                // For storage_id_ref, we need to look up the actual type info
+                if (self.memory_manager.scope_manager.value_storage.get(storage_id)) |storage| {
+                    return storage.type_info.*;
+                } else {
+                    return TypeInfo{ .base = .Nothing, .is_mutable = true };
+                }
+            },
         };
     }
 
@@ -728,7 +751,9 @@ pub const HIRVM = struct {
         for (self.program.instructions, 0..) |instruction, i| {
             switch (instruction) {
                 .Label => |label| {
-                    try self.label_map.put(label.name, @intCast(i));
+                    // Labels should point to the next instruction (the one to execute when jumping to the label)
+                    const target_ip = if (i + 1 < self.program.instructions.len) i + 1 else i;
+                    try self.label_map.put(label.name, @intCast(target_ip));
                 },
                 else => {},
             }
@@ -1003,6 +1028,38 @@ pub const HIRVM = struct {
                     _ = self.current_scope.createValueBinding(v.var_name, token_literal, token_type, type_info, true) catch |err| {
                         return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Failed to create constant {s}: {}", .{ v.var_name, err });
                     };
+                }
+            },
+
+            .PushStorageId => |p| {
+                // Push a variable's storage ID onto the stack for alias arguments
+                if (self.current_scope.lookupVariable(p.var_name)) |variable| {
+                    try self.stack.push(HIRFrame.initFromHIRValue(HIRValue{ .storage_id_ref = variable.storage_id }));
+                } else {
+                    return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Variable not found for alias argument: {s}", .{p.var_name});
+                }
+            },
+
+            .StoreParamAlias => |s| {
+                // Store a parameter as an alias to an existing storage ID
+                const storage_id_value = try self.stack.pop();
+                switch (storage_id_value.value) {
+                    .storage_id_ref => |storage_id| {
+                        // Get the original storage to determine type info
+                        if (self.memory_manager.scope_manager.value_storage.get(storage_id)) |original_storage| {
+                            const token_type = original_storage.type;
+                            const type_info = try self.allocator.create(TypeInfo);
+                            type_info.* = original_storage.type_info.*;
+
+                            // Create alias variable in current scope
+                            _ = try self.current_scope.createAliasFromStorageId(s.param_name, storage_id, token_type, type_info);
+                        } else {
+                            return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Storage not found for alias parameter: {s}", .{s.param_name});
+                        }
+                    },
+                    else => {
+                        return self.reporter.reportRuntimeError(null, ErrorCode.INVALID_ALIAS_PARAMETER, "Expected storage ID reference for alias parameter: {s}", .{s.param_name});
+                    },
                 }
             },
 
@@ -2117,6 +2174,18 @@ pub const HIRVM = struct {
 
                         const function = self.program.function_table[c.function_index];
 
+                        // Save SP before popping arguments so Return can restore caller stack correctly
+                        const saved_sp = self.stack.size() - @as(i32, @intCast(c.arg_count));
+
+                        // Pop arguments from stack and store them temporarily
+                        var args = try self.allocator.alloc(HIRFrame, c.arg_count);
+                        defer self.allocator.free(args);
+
+                        // Pop arguments in reverse order (they were pushed in reverse)
+                        for (0..c.arg_count) |i| {
+                            args[c.arg_count - 1 - i] = try self.stack.pop();
+                        }
+
                         // Push call frame for proper return handling
                         const return_ip = self.ip + 1; // Return to instruction after this call
 
@@ -2124,10 +2193,14 @@ pub const HIRVM = struct {
                             .return_ip = return_ip,
                             .function_name = function.name,
                             .arg_count = c.arg_count, // Store arg count to clean up stack later
-                            // Save SP before arguments so Return can restore caller stack correctly
-                            .saved_sp = self.stack.size() - @as(i32, @intCast(c.arg_count)),
+                            .saved_sp = saved_sp,
                         };
                         try self.call_stack.push(call_frame);
+
+                        // Push arguments back onto stack in correct order for function
+                        for (args) |arg| {
+                            try self.stack.push(arg);
+                        }
 
                         // Use pre-resolved label map for O(1) lookup
                         if (self.label_map.get(function.start_label)) |target_ip| {
@@ -2425,14 +2498,6 @@ pub const HIRVM = struct {
                 if (self.call_stack.isEmpty()) {
                     self.running = false;
                 } else {
-                    // Auto-exit current scope before returning to restore caller's scope
-                    if (self.current_scope.parent) |parent_scope| {
-                        const old_scope = self.current_scope;
-                        self.current_scope = parent_scope;
-
-                        old_scope.deinit();
-                    }
-
                     // Returning from function call - pop call frame and return to caller
                     const call_frame = try self.call_stack.pop();
 
@@ -3358,6 +3423,10 @@ pub const HIRVM = struct {
             },
             // Complex types - basic equality for now
             .array, .struct_instance, .map => false, // Complex equality not implemented yet
+            .storage_id_ref => |a_storage_id| switch (b.value) {
+                .storage_id_ref => |b_storage_id| a_storage_id == b_storage_id,
+                else => false,
+            },
         };
     }
 
@@ -3386,7 +3455,7 @@ pub const HIRVM = struct {
                 else => ErrorList.TypeError,
             },
             // Complex types don't support comparison
-            .tetra, .string, .nothing, .array, .struct_instance, .map, .enum_variant => ErrorList.TypeError,
+            .tetra, .string, .nothing, .array, .struct_instance, .map, .enum_variant, .storage_id_ref => ErrorList.TypeError,
         };
     }
 
@@ -3415,7 +3484,7 @@ pub const HIRVM = struct {
                 else => ErrorList.TypeError,
             },
             // Complex types don't support comparison
-            .tetra, .string, .nothing, .array, .struct_instance, .map, .enum_variant => ErrorList.TypeError,
+            .tetra, .string, .nothing, .array, .struct_instance, .map, .enum_variant, .storage_id_ref => ErrorList.TypeError,
         };
     }
 
@@ -3451,6 +3520,7 @@ pub const HIRVM = struct {
             },
             .map => std.debug.print("{{map}}", .{}),
             .enum_variant => |e| std.debug.print(".{s}", .{e.variant_name}),
+            .storage_id_ref => |storage_id| std.debug.print("storage_id_ref({})", .{storage_id}),
         }
     }
 
@@ -3482,6 +3552,7 @@ pub const HIRVM = struct {
             .struct_instance => |s| s.type_name,
             .map => "map",
             .enum_variant => |e| e.type_name,
+            .storage_id_ref => "storage_id_ref",
         };
     }
 
@@ -3539,6 +3610,7 @@ pub const HIRVM = struct {
                 return try result.toOwnedSlice();
             },
             .enum_variant => |e| try std.fmt.allocPrint(self.allocator, ".{s}", .{e.variant_name}),
+            .storage_id_ref => |storage_id| try std.fmt.allocPrint(self.allocator, "storage_id_ref({})", .{storage_id}),
             else => try std.fmt.allocPrint(self.allocator, "{s}", .{@tagName(value)}),
         };
     }
@@ -3588,6 +3660,7 @@ pub const HIRVM = struct {
                 try writer.print(" }}", .{}); // Fix closing bracket
             },
             .enum_variant => |e| try writer.print(".{s}", .{e.variant_name}),
+            .storage_id_ref => |storage_id| try writer.print("storage_id_ref({})", .{storage_id}),
             else => try writer.print("{s}", .{@tagName(value)}),
         }
     }
@@ -3628,6 +3701,7 @@ pub const HIRVM = struct {
                 try writer.print(" }}", .{}); // Fix closing bracket
             },
             .enum_variant => |e| try writer.print(".{s}", .{e.variant_name}),
+            .storage_id_ref => |storage_id| try writer.print("storage_id_ref({})", .{storage_id}),
             else => try writer.print("{s}", .{@tagName(value)}),
         }
     }

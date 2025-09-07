@@ -1,0 +1,9 @@
+var x is 10
+
+function increment(^param :: int) {
+    param += 1
+    @print("Function called with alias parameter")
+}
+
+// This should cause a compile-time error
+increment(x)

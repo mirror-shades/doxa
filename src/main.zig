@@ -345,6 +345,7 @@ fn printUsage() void {
     std.debug.print("\nUsage:\n", .{});
     std.debug.print("  doxa run [options] <file.doxa>          # Execute with HIR VM (explicit)\n", .{});
     std.debug.print("\nOptions:\n", .{});
+    std.debug.print("  --debug-lexer                           Print lexer output\n", .{});
     std.debug.print("  --debug                                 Enable debug output\n", .{});
     std.debug.print("  --keep-intermediate                     Keep .soxa files for debugging\n", .{});
     std.debug.print("  --help, -h                             Show this help message\n", .{});

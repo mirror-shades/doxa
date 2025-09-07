@@ -1,17 +1,17 @@
 const HIRType = @import("soxa_types.zig").HIRType;
 
-pub const HIRValue = union(enum(u8)) {
+pub const HIRValue = union(enum) {
     int: i32,
     byte: u8,
     float: f64,
     string: []const u8,
-    tetra: u8, // Direct u8 storage for tetras, 0 is false, 1 is true, 2 is both, 3 is neither
-    nothing,
-    // Phase 1: Complex data types
+    tetra: u8, // 0=false, 1=true, 2=both, 3=neither
     array: HIRArray,
     struct_instance: HIRStruct,
     map: HIRMap,
     enum_variant: HIREnum,
+    nothing: struct {},
+    storage_id_ref: u32, // NEW: Represents a storage ID for aliases
 };
 
 pub const HIRArray = struct {
