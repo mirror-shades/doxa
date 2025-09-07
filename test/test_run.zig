@@ -237,6 +237,13 @@ const expected_bigfile_results = [_]peek_result{
     .{ .type = "int", .value = "4" },
     .{ .type = "int", .value = "4" },
 
+    .{ .type = "int", .value = "10" },
+    .{ .type = "int", .value = "11" },
+    .{ .type = "int", .value = "11" },
+    .{ .type = "int", .value = "21" },
+    .{ .type = "int", .value = "12" },
+    .{ .type = "int", .value = "11" },
+
     .{ .type = "string", .value = "\"buzz\"" },
     .{ .type = "int", .value = "101" },
     .{ .type = "string", .value = "\"fizz\"" },
