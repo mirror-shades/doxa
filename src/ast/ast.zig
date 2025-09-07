@@ -99,6 +99,7 @@ pub const FunctionParam = struct {
     name: Token,
     type_expr: ?*TypeExpr,
     default_value: ?*Expr = null,
+    is_alias: bool = false,
 
     pub fn deinit(self: *FunctionParam, allocator: std.mem.Allocator) void {
         if (self.type_expr) |te| {
@@ -127,6 +128,7 @@ pub const Parameter = struct {
 pub const FunctionType = struct {
     params: []TypeInfo,
     return_type: *TypeInfo,
+    param_aliases: ?[]bool = null, // Track which parameters are aliases
 };
 
 //======================================================================
@@ -359,6 +361,11 @@ pub const Assignment = struct {
     target_context: ?VariableRef = null,
 };
 
+pub const CallArgument = struct {
+    expr: *Expr,
+    is_alias: bool = false,
+};
+
 pub const CompoundAssignment = struct {
     name: Token,
     operator: Token,
@@ -528,21 +535,12 @@ pub const Expr = struct {
             index: *Expr,
             value: *Expr,
         },
-        Call: struct {
+        FunctionCall: struct {
             callee: *Expr,
-            arguments: []const *Expr,
+            arguments: []CallArgument,
             call_context: ?FunctionCallRef = null,
         },
         Logical: Logical,
-        FunctionExpr: struct {
-            name: Token,
-            params: []FunctionParam,
-            return_type_info: TypeInfo,
-            body: []Stmt,
-            is_entry: bool = false,
-            is_public: bool = false,
-            defining_module: ?[]const u8 = null,
-        },
         FieldAccess: FieldAccess,
         StructDecl: StructDecl,
         StructLiteral: struct {
@@ -580,7 +578,7 @@ pub const Expr = struct {
         LengthOf: *Expr,
         BytesOf: *Expr,
         Map: []MapEntry,
-        MethodCall: struct {
+        InternalCall: struct {
             receiver: *Expr,
             method: Token,
             arguments: []const *Expr,
@@ -714,12 +712,12 @@ pub const Expr = struct {
                     allocator.destroy(right);
                 }
             },
-            .Call => |*c| {
+            .FunctionCall => |*c| {
                 c.callee.deinit(allocator);
                 allocator.destroy(c.callee);
                 for (c.arguments) |arg| {
-                    arg.deinit(allocator);
-                    allocator.destroy(arg);
+                    arg.expr.deinit(allocator);
+                    allocator.destroy(arg.expr);
                 }
                 allocator.free(c.arguments);
             },
@@ -807,16 +805,6 @@ pub const Expr = struct {
                 allocator.destroy(l.left);
                 l.right.deinit(allocator);
                 allocator.destroy(l.right);
-            },
-            .FunctionExpr => |*f| {
-                for (f.params) |*param| {
-                    param.deinit(allocator);
-                }
-                allocator.free(f.params);
-                for (f.body) |*stmt| {
-                    stmt.deinit(allocator);
-                }
-                allocator.free(f.body);
             },
             .Peek => |i| {
                 i.expr.deinit(allocator);
@@ -908,7 +896,7 @@ pub const Expr = struct {
                 }
                 allocator.free(entries);
             },
-            .MethodCall => |*m| {
+            .InternalCall => |*m| {
                 m.receiver.deinit(allocator);
                 allocator.destroy(m.receiver);
                 for (m.arguments) |arg| {
@@ -1538,7 +1526,6 @@ pub const FunctionCallRef = struct {
     pub const CallKind = enum {
         LocalFunction, // Function in current module
         ModuleFunction, // Function in imported module (namespace.func)
-        BuiltinFunction, // Built-in function (print, length, etc.)
         Unresolved, // Not yet resolved
     };
 };

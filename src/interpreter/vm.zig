@@ -587,11 +587,18 @@ pub const HIRVM = struct {
                 break :blk TokenLiteral{ .map = token_map };
             },
             .enum_variant => |e| TokenLiteral{ .enum_variant = e.variant_name },
+            .storage_id_ref => |storage_id| {
+                // For storage_id_ref, we need to look up the actual value
+                if (self.memory_manager.scope_manager.value_storage.get(storage_id)) |storage| {
+                    return self.hirValueToTokenLiteral(self.tokenLiteralToHIRValue(storage.value));
+                } else {
+                    return TokenLiteral{ .nothing = {} };
+                }
+            },
         };
     }
 
     pub fn hirValueToTokenType(self: *HIRVM, hir_value: HIRValue) TokenType {
-        _ = self;
         return switch (hir_value) {
             .int => .INT,
             .byte => .BYTE,
@@ -604,6 +611,14 @@ pub const HIRVM = struct {
             .struct_instance => .IDENTIFIER, // Structs represented as identifiers
             .map => .ARRAY, // Maps similar to arrays
             .enum_variant => .IDENTIFIER, // Enums represented as identifiers
+            .storage_id_ref => |storage_id| {
+                // For storage_id_ref, we need to look up the actual type
+                if (self.memory_manager.scope_manager.value_storage.get(storage_id)) |storage| {
+                    return storage.type;
+                } else {
+                    return .NOTHING;
+                }
+            },
         };
     }
 
@@ -638,6 +653,14 @@ pub const HIRVM = struct {
             .struct_instance => TypeInfo{ .base = .Struct, .is_mutable = true }, // Struct types need resolution
             .map => TypeInfo{ .base = .Map, .is_mutable = true },
             .enum_variant => |e| TypeInfo{ .base = .Enum, .is_mutable = true, .custom_type = e.type_name }, // Preserve enum type name
+            .storage_id_ref => |storage_id| {
+                // For storage_id_ref, we need to look up the actual type info
+                if (self.memory_manager.scope_manager.value_storage.get(storage_id)) |storage| {
+                    return storage.type_info.*;
+                } else {
+                    return TypeInfo{ .base = .Nothing, .is_mutable = true };
+                }
+            },
         };
     }
 
@@ -728,7 +751,9 @@ pub const HIRVM = struct {
         for (self.program.instructions, 0..) |instruction, i| {
             switch (instruction) {
                 .Label => |label| {
-                    try self.label_map.put(label.name, @intCast(i));
+                    // Labels should point to the next instruction (the one to execute when jumping to the label)
+                    const target_ip = if (i + 1 < self.program.instructions.len) i + 1 else i;
+                    try self.label_map.put(label.name, @intCast(target_ip));
                 },
                 else => {},
             }
@@ -1006,17 +1031,53 @@ pub const HIRVM = struct {
                 }
             },
 
+            .PushStorageId => |p| {
+                // Push a variable's storage ID onto the stack for alias arguments
+                if (self.current_scope.lookupVariable(p.var_name)) |variable| {
+                    try self.stack.push(HIRFrame.initFromHIRValue(HIRValue{ .storage_id_ref = variable.storage_id }));
+                } else {
+                    return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Variable not found for alias argument: {s}", .{p.var_name});
+                }
+            },
+
+            .StoreParamAlias => |s| {
+                // Store a parameter as an alias to an existing storage ID
+                const storage_id_value = try self.stack.pop();
+                switch (storage_id_value.value) {
+                    .storage_id_ref => |storage_id| {
+                        // Get the original storage to determine type info
+                        if (self.memory_manager.scope_manager.value_storage.get(storage_id)) |original_storage| {
+                            const token_type = original_storage.type;
+                            const type_info = try self.allocator.create(TypeInfo);
+                            type_info.* = original_storage.type_info.*;
+
+                            // Create alias variable in current scope
+                            _ = try self.current_scope.createAliasFromStorageId(s.param_name, storage_id, token_type, type_info);
+                        } else {
+                            return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Storage not found for alias parameter: {s}", .{s.param_name});
+                        }
+                    },
+                    else => {
+                        return self.reporter.reportRuntimeError(null, ErrorCode.INVALID_ALIAS_PARAMETER, "Expected storage ID reference for alias parameter: {s}", .{s.param_name});
+                    },
+                }
+            },
+
             .Arith => |a| {
-                const b = try self.stack.pop();
-                const a_val = try self.stack.pop();
+                const right = try self.stack.pop();
+                const left = try self.stack.pop();
+
+                if (self.reporter.debug_mode) {
+                    self.reporter.report(.Debug, .Hint, null, null, "Arith: {s} {s} {s}", .{ try self.valueToString(left.value), @tagName(a.op), try self.valueToString(right.value) });
+                }
 
                 // Handle array arithmetic first
                 if (a.operand_type == .Array) {
                     if (a.op == .Add) {
                         // Array concatenation
-                        switch (a_val.value) {
+                        switch (left.value) {
                             .array => |arr_a| {
-                                switch (b.value) {
+                                switch (right.value) {
                                     .array => |arr_b| {
                                         // Calculate lengths
                                         var len_a: u32 = 0;
@@ -1056,12 +1117,12 @@ pub const HIRVM = struct {
                                         return;
                                     },
                                     else => {
-                                        return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot concatenate array with {s}", .{@tagName(b.value)});
+                                        return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot concatenate array with {s}", .{@tagName(right.value)});
                                     },
                                 }
                             },
                             else => {
-                                return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot concatenate {s} with array", .{@tagName(a_val.value)});
+                                return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot concatenate {s} with array", .{@tagName(left.value)});
                             },
                         }
                     } else {
@@ -1070,13 +1131,13 @@ pub const HIRVM = struct {
                 }
 
                 // Check if either operand is a float and needs promotion
-                const a_is_float = a_val.value == .float;
-                const b_is_float = b.value == .float;
+                const a_is_float = left.value == .float;
+                const b_is_float = right.value == .float;
 
                 // All division promotes to float. If either operand is float or op is Div, promote both to float path.
                 if (a_is_float or b_is_float or a.op == .Div) {
                     // Convert both operands to float and perform float arithmetic
-                    const a_float = switch (a_val.value) {
+                    const left_float = switch (left.value) {
                         .int => |i| @as(f64, @floatFromInt(i)),
                         .byte => |u| @as(f64, @floatFromInt(u)),
                         .float => |f| f,
@@ -1087,11 +1148,11 @@ pub const HIRVM = struct {
                             break :blk parsed;
                         },
                         else => {
-                            return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert {s} to float for arithmetic", .{@tagName(a_val.value)});
+                            return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert {s} to float for arithmetic", .{@tagName(left.value)});
                         },
                     };
 
-                    const b_float = switch (b.value) {
+                    const right_float = switch (right.value) {
                         .int => |i| @as(f64, @floatFromInt(i)),
                         .byte => |u| @as(f64, @floatFromInt(u)),
                         .float => |f| f,
@@ -1102,24 +1163,28 @@ pub const HIRVM = struct {
                             break :blk parsed;
                         },
                         else => {
-                            return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert {s} to float for arithmetic", .{@tagName(b.value)});
+                            return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert {s} to float for arithmetic", .{@tagName(right.value)});
                         },
                     };
 
                     var result: f64 = 0.0;
                     switch (a.op) {
-                        .Add => result = a_float + b_float,
-                        .Sub => result = a_float - b_float,
-                        .Mul => result = a_float * b_float,
+                        .Add => result = left_float + right_float,
+                        .Sub => result = left_float - right_float,
+                        .Mul => result = left_float * right_float,
                         .Div => {
-                            if (b_float == 0.0) {
+                            if (right_float == 0.0) {
                                 return ErrorList.DivisionByZero;
-                            } else result = a_float / b_float;
+                            } else result = left_float / right_float;
                         },
-                        .Mod => result = @mod(a_float, b_float),
+                        .Mod => result = @mod(left_float, right_float),
                         .Pow => {
-                            result = std.math.pow(f64, a_float, b_float);
+                            result = std.math.pow(f64, left_float, right_float);
                         },
+                    }
+
+                    if (self.reporter.debug_mode) {
+                        self.reporter.report(.Debug, .Hint, null, null, "Arith result: {d}", .{result});
                     }
 
                     try self.stack.push(HIRFrame.initFloat(result));
@@ -1127,7 +1192,7 @@ pub const HIRVM = struct {
                 }
 
                 // Both operands are integers, perform integer arithmetic
-                const a_int = switch (a_val.value) {
+                const left_int = switch (left.value) {
                     .int => |i| i,
                     .byte => |u| @as(i32, u),
                     .tetra => |t| @as(i32, t),
@@ -1141,11 +1206,11 @@ pub const HIRVM = struct {
                         return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform arithmetic on 'nothing' value", .{});
                     },
                     else => {
-                        return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert {s} to integer for arithmetic", .{@tagName(a_val.value)});
+                        return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert {s} to integer for arithmetic", .{@tagName(left.value)});
                     },
                 };
 
-                const b_int = switch (b.value) {
+                const right_int = switch (right.value) {
                     .int => |i| i,
                     .byte => |u| @as(i32, u),
                     .tetra => |t| @as(i32, t),
@@ -1159,30 +1224,34 @@ pub const HIRVM = struct {
                         return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform arithmetic on 'nothing' value", .{});
                     },
                     else => {
-                        return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert {s} to integer for arithmetic", .{@tagName(b.value)});
+                        return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert {s} to integer for arithmetic", .{@tagName(right.value)});
                     },
                 };
 
                 var int_result: i32 = undefined;
                 switch (a.op) {
-                    .Add => int_result = std.math.add(i32, a_int, b_int) catch {
+                    .Add => int_result = std.math.add(i32, left_int, right_int) catch {
                         return self.reporter.reportRuntimeError(null, ErrorCode.ARITHMETIC_OVERFLOW, "Integer addition overflow", .{});
                     },
-                    .Sub => int_result = std.math.sub(i32, a_int, b_int) catch {
+                    .Sub => int_result = std.math.sub(i32, left_int, right_int) catch {
                         return self.reporter.reportRuntimeError(null, ErrorCode.ARITHMETIC_OVERFLOW, "Integer subtraction overflow", .{});
                     },
-                    .Mul => int_result = std.math.mul(i32, a_int, b_int) catch {
+                    .Mul => int_result = std.math.mul(i32, left_int, right_int) catch {
                         return self.reporter.reportRuntimeError(null, ErrorCode.ARITHMETIC_OVERFLOW, "Integer multiplication overflow", .{});
                     },
                     .Div => unreachable,
-                    .Mod => int_result = try self.fastIntMod(a_int, b_int),
+                    .Mod => int_result = try self.fastIntMod(left_int, right_int),
                     .Pow => {
-                        int_result = std.math.pow(i32, a_int, b_int);
+                        int_result = std.math.pow(i32, left_int, right_int);
                     },
                 }
 
+                if (self.reporter.debug_mode) {
+                    self.reporter.report(.Debug, .Hint, null, null, "Arith result: {d}", .{int_result});
+                }
+
                 // Preserve the original type when possible
-                if (a_val.value == .byte and int_result >= 0 and int_result <= 255) {
+                if (left.value == .byte and int_result >= 0 and int_result <= 255) {
                     try self.stack.push(HIRFrame.initByte(@intCast(int_result)));
                 } else {
                     try self.stack.push(HIRFrame.initInt(int_result));
@@ -1197,14 +1266,13 @@ pub const HIRVM = struct {
                     .Eq => try self.compareEqual(a_val, b),
                     .Ne => !(try self.compareEqual(a_val, b)),
                     .Lt => try self.compareLess(a_val, b),
-                    .Le => (try self.compareLess(a_val, b)) or (try self.compareEqual(a_val, b)),
+                    .Le => !(try self.compareGreater(a_val, b)), // a <= b  ≡  !(a > b)
                     .Gt => try self.compareGreater(a_val, b),
-                    .Ge => (try self.compareGreater(a_val, b)) or (try self.compareEqual(a_val, b)),
+                    .Ge => !(try self.compareLess(a_val, b)), // a >= b  ≡  !(a < b)
                 };
 
                 try self.stack.push(HIRFrame.initTetra(if (result) 1 else 0));
             },
-
             .TypeCheck => |tc| {
                 const value = try self.stack.pop();
 
@@ -2117,6 +2185,18 @@ pub const HIRVM = struct {
 
                         const function = self.program.function_table[c.function_index];
 
+                        // Save SP before popping arguments so Return can restore caller stack correctly
+                        const saved_sp = self.stack.size() - @as(i32, @intCast(c.arg_count));
+
+                        // Pop arguments from stack and store them temporarily
+                        var args = try self.allocator.alloc(HIRFrame, c.arg_count);
+                        defer self.allocator.free(args);
+
+                        // Pop arguments in reverse order (they were pushed in reverse)
+                        for (0..c.arg_count) |i| {
+                            args[c.arg_count - 1 - i] = try self.stack.pop();
+                        }
+
                         // Push call frame for proper return handling
                         const return_ip = self.ip + 1; // Return to instruction after this call
 
@@ -2124,10 +2204,14 @@ pub const HIRVM = struct {
                             .return_ip = return_ip,
                             .function_name = function.name,
                             .arg_count = c.arg_count, // Store arg count to clean up stack later
-                            // Save SP before arguments so Return can restore caller stack correctly
-                            .saved_sp = self.stack.size() - @as(i32, @intCast(c.arg_count)),
+                            .saved_sp = saved_sp,
                         };
                         try self.call_stack.push(call_frame);
+
+                        // Push arguments back onto stack in correct order for function
+                        for (args) |arg| {
+                            try self.stack.push(arg);
+                        }
 
                         // Use pre-resolved label map for O(1) lookup
                         if (self.label_map.get(function.start_label)) |target_ip| {
@@ -2425,14 +2509,6 @@ pub const HIRVM = struct {
                 if (self.call_stack.isEmpty()) {
                     self.running = false;
                 } else {
-                    // Auto-exit current scope before returning to restore caller's scope
-                    if (self.current_scope.parent) |parent_scope| {
-                        const old_scope = self.current_scope;
-                        self.current_scope = parent_scope;
-
-                        old_scope.deinit();
-                    }
-
                     // Returning from function call - pop call frame and return to caller
                     const call_frame = try self.call_stack.pop();
 
@@ -3358,6 +3434,10 @@ pub const HIRVM = struct {
             },
             // Complex types - basic equality for now
             .array, .struct_instance, .map => false, // Complex equality not implemented yet
+            .storage_id_ref => |a_storage_id| switch (b.value) {
+                .storage_id_ref => |b_storage_id| a_storage_id == b_storage_id,
+                else => false,
+            },
         };
     }
 
@@ -3386,7 +3466,7 @@ pub const HIRVM = struct {
                 else => ErrorList.TypeError,
             },
             // Complex types don't support comparison
-            .tetra, .string, .nothing, .array, .struct_instance, .map, .enum_variant => ErrorList.TypeError,
+            .tetra, .string, .nothing, .array, .struct_instance, .map, .enum_variant, .storage_id_ref => ErrorList.TypeError,
         };
     }
 
@@ -3415,7 +3495,7 @@ pub const HIRVM = struct {
                 else => ErrorList.TypeError,
             },
             // Complex types don't support comparison
-            .tetra, .string, .nothing, .array, .struct_instance, .map, .enum_variant => ErrorList.TypeError,
+            .tetra, .string, .nothing, .array, .struct_instance, .map, .enum_variant, .storage_id_ref => ErrorList.TypeError,
         };
     }
 
@@ -3451,6 +3531,7 @@ pub const HIRVM = struct {
             },
             .map => std.debug.print("{{map}}", .{}),
             .enum_variant => |e| std.debug.print(".{s}", .{e.variant_name}),
+            .storage_id_ref => |storage_id| std.debug.print("storage_id_ref({})", .{storage_id}),
         }
     }
 
@@ -3482,6 +3563,7 @@ pub const HIRVM = struct {
             .struct_instance => |s| s.type_name,
             .map => "map",
             .enum_variant => |e| e.type_name,
+            .storage_id_ref => "storage_id_ref",
         };
     }
 
@@ -3539,6 +3621,7 @@ pub const HIRVM = struct {
                 return try result.toOwnedSlice();
             },
             .enum_variant => |e| try std.fmt.allocPrint(self.allocator, ".{s}", .{e.variant_name}),
+            .storage_id_ref => |storage_id| try std.fmt.allocPrint(self.allocator, "storage_id_ref({})", .{storage_id}),
             else => try std.fmt.allocPrint(self.allocator, "{s}", .{@tagName(value)}),
         };
     }
@@ -3588,6 +3671,7 @@ pub const HIRVM = struct {
                 try writer.print(" }}", .{}); // Fix closing bracket
             },
             .enum_variant => |e| try writer.print(".{s}", .{e.variant_name}),
+            .storage_id_ref => |storage_id| try writer.print("storage_id_ref({})", .{storage_id}),
             else => try writer.print("{s}", .{@tagName(value)}),
         }
     }
@@ -3628,6 +3712,7 @@ pub const HIRVM = struct {
                 try writer.print(" }}", .{}); // Fix closing bracket
             },
             .enum_variant => |e| try writer.print(".{s}", .{e.variant_name}),
+            .storage_id_ref => |storage_id| try writer.print("storage_id_ref({})", .{storage_id}),
             else => try writer.print("{s}", .{@tagName(value)}),
         }
     }

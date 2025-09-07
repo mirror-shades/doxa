@@ -15,6 +15,7 @@ pub const TokenType = enum {
     PIPE, // |
     SEMICOLON, // ;
     PEEK, // ?
+    CARET, // ^
 
     //one or two character tokens
     DOT, // .

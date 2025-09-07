@@ -75,6 +75,8 @@ pub const HIRGenerator = struct {
         body_label: ?[]const u8 = null, // For tail call optimization - jumps here to skip parameter setup
         local_var_count: u32,
         is_entry: bool,
+        param_is_alias: []bool, // NEW: Track which parameters are aliases
+        param_types: []HIRType, // NEW: Track parameter types for VM binding
     };
 
     pub const FunctionBody = struct {
@@ -85,6 +87,8 @@ pub const HIRGenerator = struct {
         function_name: []const u8,
         function_params: []ast.FunctionParam,
         return_type_info: ast.TypeInfo,
+        param_is_alias: []bool, // NEW: Duplicated from FunctionInfo for easy access
+        param_types: []HIRType, // NEW: Duplicated from FunctionInfo for easy access
     };
 
     pub const FunctionCallSite = struct {
@@ -272,6 +276,14 @@ pub const HIRGenerator = struct {
                     const return_type = self.convertTypeInfo(func.return_type_info);
                     const start_label = try self.generateLabel(try std.fmt.allocPrint(self.allocator, "func_{s}", .{func.name.lexeme}));
 
+                    // Create an array for param_is_alias
+                    var param_is_alias = try self.allocator.alloc(bool, func.params.len);
+                    var param_types = try self.allocator.alloc(HIRType, func.params.len);
+                    for (func.params, 0..) |param, i| {
+                        param_is_alias[i] = param.is_alias;
+                        param_types[i] = if (param.type_expr) |type_expr| self.convertTypeInfo((try ast.typeInfoFromExpr(self.allocator, type_expr)).*) else .Int; // Default to Int
+                    }
+
                     const function_info = FunctionInfo{
                         .name = func.name.lexeme,
                         .arity = @intCast(func.params.len),
@@ -279,6 +291,8 @@ pub const HIRGenerator = struct {
                         .start_label = start_label,
                         .local_var_count = 0, // Will be calculated during body generation
                         .is_entry = func.is_entry,
+                        .param_is_alias = param_is_alias,
+                        .param_types = param_types,
                     };
 
                     try self.function_signatures.put(func.name.lexeme, function_info);
@@ -292,6 +306,8 @@ pub const HIRGenerator = struct {
                         .function_name = func.name.lexeme,
                         .function_params = func.params,
                         .return_type_info = func.return_type_info,
+                        .param_is_alias = param_is_alias, // Duplicated
+                        .param_types = param_types, // Duplicated
                     });
                 },
                 else => {},
@@ -317,6 +333,14 @@ pub const HIRGenerator = struct {
                                 const return_type = self.convertTypeInfo(func.return_type_info);
                                 const start_label = try self.generateLabel(try std.fmt.allocPrint(self.allocator, "func_{s}", .{qualified_name}));
 
+                                // Create an array for param_is_alias
+                                var param_is_alias_imported = try self.allocator.alloc(bool, func.params.len);
+                                var param_types_imported = try self.allocator.alloc(HIRType, func.params.len);
+                                for (func.params, 0..) |param, i| {
+                                    param_is_alias_imported[i] = param.is_alias;
+                                    param_types_imported[i] = if (param.type_expr) |type_expr| self.convertTypeInfo((try ast.typeInfoFromExpr(self.allocator, type_expr)).*) else .Int; // Default to Int
+                                }
+
                                 const function_info = FunctionInfo{
                                     .name = qualified_name,
                                     .arity = @intCast(func.params.len),
@@ -324,6 +348,8 @@ pub const HIRGenerator = struct {
                                     .start_label = start_label,
                                     .local_var_count = 0,
                                     .is_entry = false, // imported functions are never entry points
+                                    .param_is_alias = param_is_alias_imported,
+                                    .param_types = param_types_imported,
                                 };
 
                                 try self.function_signatures.put(qualified_name, function_info);
@@ -336,6 +362,8 @@ pub const HIRGenerator = struct {
                                     .function_name = qualified_name,
                                     .function_params = func.params,
                                     .return_type_info = func.return_type_info,
+                                    .param_is_alias = param_is_alias_imported,
+                                    .param_types = param_types_imported,
                                 });
                             },
                             else => {},
@@ -389,6 +417,8 @@ pub const HIRGenerator = struct {
                                 .start_label = start_label2,
                                 .local_var_count = 0,
                                 .is_entry = false,
+                                .param_is_alias = try self.allocator.alloc(bool, func_params.len),
+                                .param_types = try self.allocator.alloc(HIRType, func_params.len),
                             };
 
                             // Only add if not already present
@@ -401,6 +431,8 @@ pub const HIRGenerator = struct {
                                     .function_name = sym_name,
                                     .function_params = func_params,
                                     .return_type_info = (try ast.typeInfoFromHIRType(self.allocator, func_return_type)).*,
+                                    .param_is_alias = function_info2.param_is_alias,
+                                    .param_types = function_info2.param_types,
                                 });
                             }
 
@@ -455,15 +487,25 @@ pub const HIRGenerator = struct {
                 // Track the parameter's type
                 try self.trackVariableType(param.name.lexeme, param_type);
 
-                // Create variable for parameter and store the stack value
-                const var_idx = try self.getOrCreateVariable(param.name.lexeme);
-                try self.instructions.append(.{ .StoreVar = .{
-                    .var_index = var_idx,
-                    .var_name = param.name.lexeme,
-                    .scope_kind = .Local,
-                    .module_context = null,
-                    .expected_type = param_type,
-                } });
+                // Check if this parameter is an alias
+                if (function_body.param_is_alias[param_index]) {
+                    // For alias parameters, generate StoreParamAlias
+                    // The stack should contain the storage ID pushed by the caller
+                    try self.instructions.append(.{ .StoreParamAlias = .{
+                        .param_name = param.name.lexeme,
+                        .param_type = param_type,
+                    }});
+                } else {
+                    // For regular parameters, create a local variable and store the stack value
+                    const var_idx = try self.getOrCreateVariable(param.name.lexeme);
+                    try self.instructions.append(.{ .StoreVar = .{
+                        .var_index = var_idx,
+                        .var_name = param.name.lexeme,
+                        .scope_kind = .Local,
+                        .module_context = null,
+                        .expected_type = param_type,
+                    }});
+                }
             }
 
             // TAIL CALL FIX: Add a separate label for tail calls to jump to (after parameter setup)
@@ -614,6 +656,8 @@ pub const HIRGenerator = struct {
                 .body_label = function_info.body_label,
                 .local_var_count = function_info.local_var_count,
                 .is_entry = function_info.is_entry,
+                .param_is_alias = function_body.param_is_alias, // Use from function_body
+                .param_types = function_body.param_types, // Use from function_body
             });
         }
 
@@ -963,8 +1007,8 @@ pub const HIRGenerator = struct {
                         members[0] = "int";
                         members[1] = "NumberError";
                         try self.trackVariableUnionMembersByIndex(var_idx, members);
-                    } else if (init_expr_union.data == .MethodCall) {
-                        const m2 = init_expr_union.data.MethodCall;
+                    } else if (init_expr_union.data == .InternalCall) {
+                        const m2 = init_expr_union.data.InternalCall;
                         if (std.mem.eql(u8, m2.method.lexeme, "substring")) {
                             const members = try self.allocator.alloc([]const u8, 2);
                             members[0] = "string";
@@ -1550,89 +1594,49 @@ pub const HIRGenerator = struct {
                 }
             },
 
-            .Call => |call| {
-
+            .FunctionCall => |function_call| {
                 // Extract function name and determine call type
                 var function_name: []const u8 = "unknown";
                 var call_kind: CallKind = .LocalFunction;
                 var function_index: u32 = 0;
 
-                // Check if this is a method call (callee is FieldAccess) or regular function call
-                var method_target_var: ?[]const u8 = null; // Track if method is called on a variable
-                switch (call.callee.data) {
+                // Distinguish between module function, internal method, and regular function
+                switch (function_call.callee.data) {
                     .FieldAccess => |field_access| {
-                        // Check if this is a module function call (e.g., safeMath.safeAdd)
-                        if (field_access.object.data == .Variable) {
+                        // Module function call: namespace.func(...)
+                        if (field_access.object.data == .Variable and self.isModuleNamespace(field_access.object.data.Variable.lexeme)) {
                             const object_name = field_access.object.data.Variable.lexeme;
+                            function_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ object_name, field_access.field.lexeme });
 
-                            if (self.isModuleNamespace(object_name)) {
-                                // This is a module function call like safeMath.safeAdd
-                                function_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ object_name, field_access.field.lexeme });
+                            if (std.mem.eql(u8, function_name, "safeMath.safeAdd")) {
+                                call_kind = .ModuleFunction;
+                            } else if (self.getFunctionIndex(function_name)) |idx| {
+                                function_index = idx;
+                                call_kind = .LocalFunction;
+                            } else |_| {
+                                call_kind = .ModuleFunction;
+                            }
 
-                                // Hard-wire module semantic functions to ModuleFunction so the VM can
-                                // apply special behavior (e.g., overflow checks in safeMath.safeAdd)
-                                if (std.mem.eql(u8, function_name, "safeMath.safeAdd")) {
-                                    call_kind = .ModuleFunction;
-                                } else if (self.getFunctionIndex(function_name)) |idx| {
-                                    // Regular imported module function - call by local function body
-                                    function_index = idx;
-                                    call_kind = .LocalFunction;
-                                } else |_| {
-                                    // Unknown to function table - let VM handle as module function (error or builtin)
-                                    call_kind = .ModuleFunction;
-                                }
-
-                                // Don't generate the object expression - skip the LoadVar
-                                // Just generate the arguments
-                                for (call.arguments) |arg| {
-                                    try self.generateExpression(arg, true, should_pop_after_use);
-                                }
-                            } else {
-                                function_name = field_access.field.lexeme;
-                                call_kind = .BuiltinFunction;
-                                method_target_var = object_name;
-
-                                // CRITICAL FIX: Generate object FIRST, then arguments for correct stack order
-                                // The VM's push method expects: element (top), array (bottom)
-                                // So we need stack order: [array, element] (bottom to top)
-
-                                // Generate the object expression (arr) FIRST
-                                try self.generateExpression(field_access.object, true, should_pop_after_use);
-
-                                // Generate arguments (in order) AFTER object - these will be on top for VM
-                                for (call.arguments) |arg| {
-                                    try self.generateExpression(arg, true, should_pop_after_use);
-                                }
+                            // Emit only the arguments for module function
+                            for (function_call.arguments) |arg| {
+                                try self.generateExpression(arg.expr, true, should_pop_after_use);
                             }
                         } else {
-                            // Complex object expression (not a simple variable)
-                            function_name = field_access.field.lexeme;
-                            call_kind = .BuiltinFunction;
-
-                            // Generate the object expression FIRST
-                            try self.generateExpression(field_access.object, true, should_pop_after_use);
-
-                            // Generate arguments (in order) AFTER object
-                            for (call.arguments) |arg| {
-                                try self.generateExpression(arg, true, should_pop_after_use);
-                            }
+                            // Built-in/internal method on a receiver: delegate and return early
+                            try self.generateInternalMethodCall(field_access.field, field_access.object, function_call.arguments, should_pop_after_use);
+                            return;
                         }
                     },
                     .Variable => |var_token| {
-                        // This is a regular function call like fizzbuzz(1)
                         function_name = var_token.lexeme;
-
-                        // Try to resolve as user-defined function
                         if (self.getFunctionIndex(function_name)) |index| {
                             function_index = index;
                             call_kind = .LocalFunction;
                         } else |_| {
-                            // Fall back to built-in
                             call_kind = .BuiltinFunction;
                         }
                     },
                     else => {
-                        // Complex callee - for now, treat as unknown
                         self.reporter.reportCompileError(
                             expr.base.location(),
                             ErrorCode.UNSUPPORTED_FUNCTION_CALL_TYPE,
@@ -1643,53 +1647,66 @@ pub const HIRGenerator = struct {
                     },
                 }
 
-                // Generate arguments and count only those actually emitted (handles default placeholders)
+                // Generate arguments (default placeholders resolved)
                 var arg_emitted_count: u32 = 0;
-                if (call.callee.data != .FieldAccess) {
-                    for (call.arguments, 0..) |arg, arg_index| {
-                        if (arg.data == .DefaultArgPlaceholder) {
-                            if (self.resolveDefaultArgument(function_name, arg_index)) |default_expr| {
-                                try self.generateExpression(default_expr, true, false);
-                                arg_emitted_count += 1;
-                            } else {
-                                const location = if (expr.base.span) |span| span.location else Location{
-                                    .file = "",
-                                    .range = .{ .start_line = 0, .start_col = 0, .end_line = 0, .end_col = 0 },
-                                };
-                                self.reporter.reportCompileError(location, ErrorCode.NO_DEFAULT_VALUE_FOR_PARAMETER, "No default value for parameter {} in function '{s}'", .{ arg_index, function_name });
-                                // Do not emit a value for missing default
-                            }
-                        } else {
-                            try self.generateExpression(arg, true, false);
+                for (function_call.arguments, 0..) |arg, arg_index| {
+                    if (arg.expr.data == .DefaultArgPlaceholder) {
+                        if (self.resolveDefaultArgument(function_name, arg_index)) |default_expr| {
+                            try self.generateExpression(default_expr, true, false);
                             arg_emitted_count += 1;
+                        } else {
+                            const location = if (expr.base.span) |span| span.location else Location{
+                                .file = "",
+                                .range = .{ .start_line = 0, .start_col = 0, .end_line = 0, .end_col = 0 },
+                            };
+                            self.reporter.reportCompileError(location, ErrorCode.NO_DEFAULT_VALUE_FOR_PARAMETER, "No default value for parameter {} in function '{s}'", .{ arg_index, function_name });
                         }
-                    }
-                } else {
-                    // Field access (methods/module functions): emit object, then args with default handling
-                    // Note: object was already emitted above for FieldAccess
-                    for (call.arguments, 0..) |arg, arg_index| {
-                        if (arg.data == .DefaultArgPlaceholder) {
-                            if (self.resolveDefaultArgument(function_name, arg_index)) |default_expr| {
-                                try self.generateExpression(default_expr, true, false);
-                                arg_emitted_count += 1;
+                    } else {
+                        if (arg.is_alias) {
+                            // For alias arguments, we need to push the storage ID of the variable
+                            if (arg.expr.data == .Variable) {
+                                const var_token = arg.expr.data.Variable;
+                                // Find the existing variable to get its storage ID
+                                var maybe_idx: ?u32 = null;
+                                if (self.current_function != null) {
+                                    maybe_idx = self.local_variables.get(var_token.lexeme);
+                                } else {
+                                    maybe_idx = self.variables.get(var_token.lexeme);
+                                }
+                                if (maybe_idx) |var_idx| {
+                                    try self.instructions.append(.{ .PushStorageId = .{
+                                        .var_index = var_idx,
+                                        .var_name = var_token.lexeme,
+                                        .scope_kind = .Local, // This will be resolved at runtime
+                                    } });
+                                    arg_emitted_count += 1;
+                                } else {
+                                    self.reporter.reportCompileError(
+                                        arg.expr.base.location(),
+                                        ErrorCode.UNDEFINED_VARIABLE,
+                                        "Undefined variable used as alias argument: {s}",
+                                        .{var_token.lexeme},
+                                    );
+                                    return ErrorList.UndefinedVariable;
+                                }
                             } else {
-                                const location = if (expr.base.span) |span| span.location else Location{
-                                    .file = "",
-                                    .range = .{ .start_line = 0, .start_col = 0, .end_line = 0, .end_col = 0 },
-                                };
-                                self.reporter.reportCompileError(location, ErrorCode.NO_DEFAULT_VALUE_FOR_PARAMETER, "No default value for parameter {} in function '{s}'", .{ arg_index, function_name });
+                                // Alias argument must be a variable
+                                self.reporter.reportCompileError(
+                                    arg.expr.base.location(),
+                                    ErrorCode.INVALID_ALIAS_ARGUMENT,
+                                    "Alias argument must be a variable (e.g., ^myVar)",
+                                    .{},
+                                );
+                                return ErrorList.INVALID_ALIAS_ARGUMENT;
                             }
                         } else {
-                            try self.generateExpression(arg, true, false);
+                            try self.generateExpression(arg.expr, true, false);
                             arg_emitted_count += 1;
                         }
                     }
                 }
 
-                // Infer return type for the call
                 const return_type = self.inferCallReturnType(function_name, call_kind) catch .String;
-
-                // Generate function call
                 try self.instructions.append(.{
                     .Call = .{
                         .function_index = function_index,
@@ -1700,34 +1717,6 @@ pub const HIRGenerator = struct {
                         .return_type = return_type,
                     },
                 });
-
-                // CRITICAL FIX: For mutating method calls on variables, store result back to variable
-                if (call.callee.data == .FieldAccess and method_target_var != null) {
-                    const target_var = method_target_var.?;
-
-                    // Check if this is a mutating method that should update the original variable
-                    const is_mutating_method = std.mem.eql(u8, function_name, "push") or
-                        std.mem.eql(u8, function_name, "pop") or
-                        std.mem.eql(u8, function_name, "insert") or
-                        std.mem.eql(u8, function_name, "remove");
-
-                    if (is_mutating_method) {
-
-                        // Duplicate the result to leave it on stack as the expression result
-                        try self.instructions.append(.Dup);
-
-                        // Store the result back to the original variable
-                        const var_idx = try self.getOrCreateVariable(target_var);
-                        const expected_type = self.getTrackedVariableType(target_var) orelse .Unknown;
-                        try self.instructions.append(.{ .StoreVar = .{
-                            .var_index = var_idx,
-                            .var_name = target_var,
-                            .scope_kind = .Local,
-                            .module_context = null,
-                            .expected_type = expected_type,
-                        } });
-                    }
-                }
             },
 
             .Peek => |peek| {
@@ -1774,8 +1763,8 @@ pub const HIRGenerator = struct {
                     union_members = members;
                 }
                 // If peeking a direct @substring expression, attach union members inline
-                if (peek.expr.data == .MethodCall) {
-                    const m = peek.expr.data.MethodCall;
+                if (peek.expr.data == .InternalCall) {
+                    const m = peek.expr.data.InternalCall;
                     if (std.mem.eql(u8, m.method.lexeme, "substring")) {
                         const members = try self.allocator.alloc([]const u8, 2);
                         members[0] = "string";
@@ -2044,8 +2033,8 @@ pub const HIRGenerator = struct {
                     } else |_| {}
                 }
                 // If assigning result of @substring, track union members: ["string", "IndexError"]
-                if (assign.value.?.data == .MethodCall) {
-                    const m = assign.value.?.data.MethodCall;
+                if (assign.value.?.data == .InternalCall) {
+                    const m = assign.value.?.data.InternalCall;
                     if (std.mem.eql(u8, m.method.lexeme, "substring")) {
                         if (self.getOrCreateVariable(assign.name.lexeme)) |var_idx| {
                             const members = try self.allocator.alloc([]const u8, 2);
@@ -3432,7 +3421,7 @@ pub const HIRGenerator = struct {
                 }
             },
 
-            .MethodCall => |m| {
+            .InternalCall => |m| {
                 // Generate HIR for compiler methods like @string, @length, @substring
                 const name = m.method.lexeme;
                 if (std.mem.eql(u8, name, "substring")) {
@@ -3585,11 +3574,101 @@ pub const HIRGenerator = struct {
         }
     }
 
+    /// Centralized generation for internal/built-in method calls.
+    /// Handles both direct InternalCall AST nodes and method-sugar (obj.method(...)).
+    fn generateInternalMethodCall(self: *HIRGenerator, method: @import("../../types/token.zig").Token, receiver: *ast.Expr, args: []ast.CallArgument, should_pop_after_use: bool) (std.mem.Allocator.Error || ErrorList)!void {
+        const name = method.lexeme;
+
+        // String-related built-ins use dedicated HIR instructions
+        if (std.mem.eql(u8, name, "substring")) {
+            // Expect 2 args: start, length. Order: start, length, then receiver
+            if (args.len >= 2) {
+                try self.generateExpression(args[0].expr, true, false);
+                try self.generateExpression(args[1].expr, true, false);
+                try self.generateExpression(receiver, true, false);
+                try self.instructions.append(.{ .StringOp = .{ .op = .Substring } });
+                return;
+            }
+        } else if (std.mem.eql(u8, name, "string")) {
+            try self.generateExpression(receiver, true, false);
+            try self.instructions.append(.{ .StringOp = .{ .op = .ToString } });
+            return;
+        } else if (std.mem.eql(u8, name, "length")) {
+            try self.generateExpression(receiver, true, false);
+            try self.instructions.append(.{ .StringOp = .{ .op = .Length } });
+            return;
+        } else if (std.mem.eql(u8, name, "int")) {
+            try self.generateExpression(receiver, true, false);
+            try self.instructions.append(.{ .StringOp = .{ .op = .ToInt } });
+            return;
+        } else if (std.mem.eql(u8, name, "float")) {
+            try self.generateExpression(receiver, true, false);
+            try self.instructions.append(.{ .StringOp = .{ .op = .ToFloat } });
+            return;
+        } else if (std.mem.eql(u8, name, "byte")) {
+            try self.generateExpression(receiver, true, false);
+            try self.instructions.append(.{ .StringOp = .{ .op = .ToByte } });
+            return;
+        }
+
+        // Generic built-in method: emit as BuiltinFunction call
+        // Generate receiver first (on stack), then arguments
+        try self.generateExpression(receiver, true, should_pop_after_use);
+
+        var arg_emitted_count: u32 = 0;
+        for (args, 0..) |arg, arg_index| {
+            if (arg.expr.data == .DefaultArgPlaceholder) {
+                if (self.resolveDefaultArgument(name, arg_index)) |default_expr| {
+                    try self.generateExpression(default_expr, true, false);
+                    arg_emitted_count += 1;
+                } else {
+                    const location = receiver.base.location();
+                    self.reporter.reportCompileError(location, ErrorCode.NO_DEFAULT_VALUE_FOR_PARAMETER, "No default value for parameter {} in function '{s}'", .{ arg_index, name });
+                }
+            } else {
+                try self.generateExpression(arg.expr, true, should_pop_after_use);
+                arg_emitted_count += 1;
+            }
+        }
+
+        const return_type = self.inferCallReturnType(name, .BuiltinFunction) catch .String;
+        try self.instructions.append(.{ .Call = .{
+            .function_index = 0,
+            .qualified_name = name,
+            .arg_count = arg_emitted_count,
+            .call_kind = .BuiltinFunction,
+            .target_module = null,
+            .return_type = return_type,
+        } });
+
+        // If the receiver is a variable and the method is mutating, write back
+        if (receiver.data == .Variable) {
+            const is_mutating = std.mem.eql(u8, name, "push") or
+                std.mem.eql(u8, name, "pop") or
+                std.mem.eql(u8, name, "insert") or
+                std.mem.eql(u8, name, "remove") or
+                std.mem.eql(u8, name, "clear");
+            if (is_mutating) {
+                try self.instructions.append(.Dup);
+                const target_var = receiver.data.Variable.lexeme;
+                const var_idx = try self.getOrCreateVariable(target_var);
+                const expected_type = self.getTrackedVariableType(target_var) orelse .Unknown;
+                try self.instructions.append(.{ .StoreVar = .{
+                    .var_index = var_idx,
+                    .var_name = target_var,
+                    .scope_kind = .Local,
+                    .module_context = null,
+                    .expected_type = expected_type,
+                } });
+            }
+        }
+    }
+
     /// Try to generate a tail call if the expression is a direct function call
     /// Returns true if tail call was generated, false if normal expression should be used
     fn tryGenerateTailCall(self: *HIRGenerator, expr: *ast.Expr) bool {
         switch (expr.data) {
-            .Call => |call| {
+            .FunctionCall => |call| {
                 // Check if the callee is a simple variable (function name)
                 switch (call.callee.data) {
                     .Variable => |var_token| {
@@ -3597,7 +3676,7 @@ pub const HIRGenerator = struct {
 
                         // Generate arguments in normal order (same as regular call)
                         for (call.arguments) |arg| {
-                            self.generateExpression(arg, true, true) catch return false; // Fallback to regular call on error
+                            self.generateExpression(arg.expr, true, true) catch return false; // Fallback to regular call on error
                         }
 
                         // Check if this is a user-defined function
@@ -3763,10 +3842,10 @@ pub const HIRGenerator = struct {
                     else => .String, // Default to String for most index operations
                 };
             },
-            .Call => |call| {
+            .FunctionCall => |call| {
                 // Handle different types of function calls
                 switch (call.callee.data) {
-                    .MethodCall => |method| {
+                    .InternalCall => |method| {
                         if (std.mem.eql(u8, method.method.lexeme, "substring")) return .String;
                         if (std.mem.eql(u8, method.method.lexeme, "length")) return .Int;
                         if (std.mem.eql(u8, method.method.lexeme, "bytes")) return .Array;
@@ -4091,10 +4170,10 @@ pub const HIRGenerator = struct {
                 }
                 return null;
             },
-            .Call => |call| {
+            .FunctionCall => |call| {
                 // Check if parameter is passed to function calls
                 for (call.arguments) |arg| {
-                    if (self.expressionUsesParameter(arg, param_name)) {
+                    if (self.expressionUsesParameter(arg.expr, param_name)) {
                         // Parameter is passed as argument - could infer from expected parameter type
                         return .Int; // Conservative guess
                     }
@@ -4136,10 +4215,10 @@ pub const HIRGenerator = struct {
                 const right_uses = if (binary.right) |right| self.expressionUsesParameter(right, param_name) else false;
                 return left_uses or right_uses;
             },
-            .Call => |call| {
+            .FunctionCall => |call| {
                 // Check arguments
                 for (call.arguments) |arg| {
-                    if (self.expressionUsesParameter(arg, param_name)) return true;
+                    if (self.expressionUsesParameter(arg.expr, param_name)) return true;
                 }
                 return false;
             },

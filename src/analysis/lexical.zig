@@ -289,8 +289,8 @@ pub const LexicalAnalyzer = struct {
             },
             '%' => try self.addMinimalToken(.MODULO),
             '#' => try self.addMinimalToken(.HASH),
-
             '&' => try self.addMinimalToken(.AMPERSAND),
+            '^' => try self.addMinimalToken(.CARET),
             '*' => {
                 if (self.match('*')) {
                     if (self.match('=')) {
@@ -511,7 +511,7 @@ pub const LexicalAnalyzer = struct {
     }
 
     fn isOperator(c: u8) bool {
-        return c == '+' or c == '-' or c == '*' or c == '/' or c == '%' or c == '^' or c == '&' or c == '|' or c == '!' or c == '=' or c == '<' or c == '>';
+        return c == '+' or c == '-' or c == '*' or c == '/' or c == '%' or c == '!' or c == '=' or c == '<' or c == '>';
     }
 
     fn isWhitespace(c: u8) bool {
