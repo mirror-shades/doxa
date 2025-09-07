@@ -257,6 +257,15 @@ pub const PeepholeOptimizer = struct {
             const store_instr = instructions[i].StoreVar;
             const load_instr = instructions[i + 1].LoadVar;
 
+            // NEW: Do not apply across recent array-mutation sequences
+            if (i > 0) {
+                const prev_tag = std.meta.activeTag(instructions[i - 1]);
+                if (prev_tag == .Swap or prev_tag == .ArrayPop or prev_tag == .ArrayPush or prev_tag == .ArraySet) {
+                    // Skip optimization to preserve ordering semantics
+                    return null;
+                }
+            }
+
             // Check if same variable
             if (store_instr.var_index == load_instr.var_index and
                 std.mem.eql(u8, store_instr.var_name, load_instr.var_name))
