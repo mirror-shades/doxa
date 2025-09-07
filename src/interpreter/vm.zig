@@ -1064,16 +1064,20 @@ pub const HIRVM = struct {
             },
 
             .Arith => |a| {
-                const b = try self.stack.pop();
-                const a_val = try self.stack.pop();
+                const right = try self.stack.pop();
+                const left = try self.stack.pop();
+
+                if (self.reporter.debug_mode) {
+                    self.reporter.report(.Debug, .Hint, null, null, "Arith: {s} {s} {s}", .{ try self.valueToString(left.value), @tagName(a.op), try self.valueToString(right.value) });
+                }
 
                 // Handle array arithmetic first
                 if (a.operand_type == .Array) {
                     if (a.op == .Add) {
                         // Array concatenation
-                        switch (a_val.value) {
+                        switch (left.value) {
                             .array => |arr_a| {
-                                switch (b.value) {
+                                switch (right.value) {
                                     .array => |arr_b| {
                                         // Calculate lengths
                                         var len_a: u32 = 0;
@@ -1113,12 +1117,12 @@ pub const HIRVM = struct {
                                         return;
                                     },
                                     else => {
-                                        return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot concatenate array with {s}", .{@tagName(b.value)});
+                                        return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot concatenate array with {s}", .{@tagName(right.value)});
                                     },
                                 }
                             },
                             else => {
-                                return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot concatenate {s} with array", .{@tagName(a_val.value)});
+                                return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot concatenate {s} with array", .{@tagName(left.value)});
                             },
                         }
                     } else {
@@ -1127,13 +1131,13 @@ pub const HIRVM = struct {
                 }
 
                 // Check if either operand is a float and needs promotion
-                const a_is_float = a_val.value == .float;
-                const b_is_float = b.value == .float;
+                const a_is_float = left.value == .float;
+                const b_is_float = right.value == .float;
 
                 // All division promotes to float. If either operand is float or op is Div, promote both to float path.
                 if (a_is_float or b_is_float or a.op == .Div) {
                     // Convert both operands to float and perform float arithmetic
-                    const a_float = switch (a_val.value) {
+                    const left_float = switch (left.value) {
                         .int => |i| @as(f64, @floatFromInt(i)),
                         .byte => |u| @as(f64, @floatFromInt(u)),
                         .float => |f| f,
@@ -1144,11 +1148,11 @@ pub const HIRVM = struct {
                             break :blk parsed;
                         },
                         else => {
-                            return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert {s} to float for arithmetic", .{@tagName(a_val.value)});
+                            return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert {s} to float for arithmetic", .{@tagName(left.value)});
                         },
                     };
 
-                    const b_float = switch (b.value) {
+                    const right_float = switch (right.value) {
                         .int => |i| @as(f64, @floatFromInt(i)),
                         .byte => |u| @as(f64, @floatFromInt(u)),
                         .float => |f| f,
@@ -1159,24 +1163,28 @@ pub const HIRVM = struct {
                             break :blk parsed;
                         },
                         else => {
-                            return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert {s} to float for arithmetic", .{@tagName(b.value)});
+                            return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert {s} to float for arithmetic", .{@tagName(right.value)});
                         },
                     };
 
                     var result: f64 = 0.0;
                     switch (a.op) {
-                        .Add => result = a_float + b_float,
-                        .Sub => result = a_float - b_float,
-                        .Mul => result = a_float * b_float,
+                        .Add => result = left_float + right_float,
+                        .Sub => result = left_float - right_float,
+                        .Mul => result = left_float * right_float,
                         .Div => {
-                            if (b_float == 0.0) {
+                            if (right_float == 0.0) {
                                 return ErrorList.DivisionByZero;
-                            } else result = a_float / b_float;
+                            } else result = left_float / right_float;
                         },
-                        .Mod => result = @mod(a_float, b_float),
+                        .Mod => result = @mod(left_float, right_float),
                         .Pow => {
-                            result = std.math.pow(f64, a_float, b_float);
+                            result = std.math.pow(f64, left_float, right_float);
                         },
+                    }
+
+                    if (self.reporter.debug_mode) {
+                        self.reporter.report(.Debug, .Hint, null, null, "Arith result: {d}", .{result});
                     }
 
                     try self.stack.push(HIRFrame.initFloat(result));
@@ -1184,7 +1192,7 @@ pub const HIRVM = struct {
                 }
 
                 // Both operands are integers, perform integer arithmetic
-                const a_int = switch (a_val.value) {
+                const left_int = switch (left.value) {
                     .int => |i| i,
                     .byte => |u| @as(i32, u),
                     .tetra => |t| @as(i32, t),
@@ -1198,11 +1206,11 @@ pub const HIRVM = struct {
                         return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform arithmetic on 'nothing' value", .{});
                     },
                     else => {
-                        return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert {s} to integer for arithmetic", .{@tagName(a_val.value)});
+                        return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert {s} to integer for arithmetic", .{@tagName(left.value)});
                     },
                 };
 
-                const b_int = switch (b.value) {
+                const right_int = switch (right.value) {
                     .int => |i| i,
                     .byte => |u| @as(i32, u),
                     .tetra => |t| @as(i32, t),
@@ -1216,30 +1224,34 @@ pub const HIRVM = struct {
                         return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform arithmetic on 'nothing' value", .{});
                     },
                     else => {
-                        return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert {s} to integer for arithmetic", .{@tagName(b.value)});
+                        return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert {s} to integer for arithmetic", .{@tagName(right.value)});
                     },
                 };
 
                 var int_result: i32 = undefined;
                 switch (a.op) {
-                    .Add => int_result = std.math.add(i32, a_int, b_int) catch {
+                    .Add => int_result = std.math.add(i32, left_int, right_int) catch {
                         return self.reporter.reportRuntimeError(null, ErrorCode.ARITHMETIC_OVERFLOW, "Integer addition overflow", .{});
                     },
-                    .Sub => int_result = std.math.sub(i32, a_int, b_int) catch {
+                    .Sub => int_result = std.math.sub(i32, left_int, right_int) catch {
                         return self.reporter.reportRuntimeError(null, ErrorCode.ARITHMETIC_OVERFLOW, "Integer subtraction overflow", .{});
                     },
-                    .Mul => int_result = std.math.mul(i32, a_int, b_int) catch {
+                    .Mul => int_result = std.math.mul(i32, left_int, right_int) catch {
                         return self.reporter.reportRuntimeError(null, ErrorCode.ARITHMETIC_OVERFLOW, "Integer multiplication overflow", .{});
                     },
                     .Div => unreachable,
-                    .Mod => int_result = try self.fastIntMod(a_int, b_int),
+                    .Mod => int_result = try self.fastIntMod(left_int, right_int),
                     .Pow => {
-                        int_result = std.math.pow(i32, a_int, b_int);
+                        int_result = std.math.pow(i32, left_int, right_int);
                     },
                 }
 
+                if (self.reporter.debug_mode) {
+                    self.reporter.report(.Debug, .Hint, null, null, "Arith result: {d}", .{int_result});
+                }
+
                 // Preserve the original type when possible
-                if (a_val.value == .byte and int_result >= 0 and int_result <= 255) {
+                if (left.value == .byte and int_result >= 0 and int_result <= 255) {
                     try self.stack.push(HIRFrame.initByte(@intCast(int_result)));
                 } else {
                     try self.stack.push(HIRFrame.initInt(int_result));
@@ -1254,14 +1266,13 @@ pub const HIRVM = struct {
                     .Eq => try self.compareEqual(a_val, b),
                     .Ne => !(try self.compareEqual(a_val, b)),
                     .Lt => try self.compareLess(a_val, b),
-                    .Le => (try self.compareLess(a_val, b)) or (try self.compareEqual(a_val, b)),
+                    .Le => !(try self.compareGreater(a_val, b)), // a <= b  ≡  !(a > b)
                     .Gt => try self.compareGreater(a_val, b),
-                    .Ge => (try self.compareGreater(a_val, b)) or (try self.compareEqual(a_val, b)),
+                    .Ge => !(try self.compareLess(a_val, b)), // a >= b  ≡  !(a < b)
                 };
 
                 try self.stack.push(HIRFrame.initTetra(if (result) 1 else 0));
             },
-
             .TypeCheck => |tc| {
                 const value = try self.stack.pop();
 
