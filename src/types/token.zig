@@ -28,12 +28,11 @@ pub const TokenType = enum {
     POWER, // **
     POWER_EQUAL, // **=
     PLUS, // +
-    PLUS_PLUS, // ++
+    INCREMENT, // ++
     PLUS_EQUAL, // +=
     MINUS, // -
-    MINUS_MINUS, // --
+    DECREMENT, // --
     MINUS_EQUAL, // -=
-    RETURNS, // returns
     BANG, // !
     BANG_EQUAL, // !=
     GREATER, // >
@@ -74,6 +73,7 @@ pub const TokenType = enum {
     AWAIT, // await
     ENTRY, // entry
     RANGE, // to
+    RETURNS, // returns
 
     // compiler level methods (@methods)
     TYPE, // typeof / type

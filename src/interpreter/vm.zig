@@ -50,7 +50,7 @@ pub const HIRFrame = struct {
     scope_refs: u32 = 0, // Add reference counter for scopes
 
     // Helper constructors
-    pub fn initInt(x: i32) HIRFrame {
+    pub fn initInt(x: i64) HIRFrame {
         return HIRFrame{ .value = HIRValue{ .int = x } };
     }
 
@@ -81,7 +81,7 @@ pub const HIRFrame = struct {
         };
     }
 
-    pub fn asInt(self: HIRFrame) !i32 {
+    pub fn asInt(self: HIRFrame) !i64 {
         return switch (self.value) {
             .int => |i| i,
             else => ErrorList.TypeError,
@@ -174,7 +174,7 @@ pub fn hirValueToTokenLiteral(self: *HIRVM, hir_value: HIRValue) TokenLiteral {
 /// HIR-based Stack - uses heap allocation to avoid system stack overflow
 const HIRStack = struct {
     data: []HIRFrame,
-    sp: i32 = 0,
+    sp: i64 = 0,
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) !HIRStack {
@@ -235,7 +235,7 @@ const HIRStack = struct {
         return self.data[@intCast(self.sp - 1)];
     }
 
-    pub fn size(self: HIRStack) i32 {
+    pub fn size(self: HIRStack) i64 {
         return self.sp;
     }
 
@@ -249,7 +249,7 @@ const CallFrame = struct {
     return_ip: u32, // IP to return to after function call
     function_name: []const u8, // For debugging
     arg_count: u32 = 0, // Number of arguments to clean up from stack
-    saved_sp: i32, // Operand stack pointer before the call
+    saved_sp: i64, // Operand stack pointer before the call
 };
 
 /// Call stack for proper function return handling
@@ -501,7 +501,7 @@ pub const HIRVM = struct {
                 var iter = m.iterator();
                 while (iter.next()) |entry| {
                     const key_str = entry.key_ptr.*;
-                    const maybe_int = std.fmt.parseInt(i32, key_str, 10) catch null;
+                    const maybe_int = std.fmt.parseInt(i64, key_str, 10) catch null;
                     const key_hir: HIRValue = if (maybe_int) |ival|
                         HIRValue{ .int = ival }
                     else
@@ -1194,10 +1194,10 @@ pub const HIRVM = struct {
                 // Both operands are integers, perform integer arithmetic
                 const left_int = switch (left.value) {
                     .int => |i| i,
-                    .byte => |u| @as(i32, u),
-                    .tetra => |t| @as(i32, t),
+                    .byte => |u| @as(i64, u),
+                    .tetra => |t| @as(i64, t),
                     .string => |s| blk: {
-                        const parsed = std.fmt.parseInt(i32, s, 10) catch {
+                        const parsed = std.fmt.parseInt(i64, s, 10) catch {
                             return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert string to integer for arithmetic", .{});
                         };
                         break :blk parsed;
@@ -1212,10 +1212,10 @@ pub const HIRVM = struct {
 
                 const right_int = switch (right.value) {
                     .int => |i| i,
-                    .byte => |u| @as(i32, u),
-                    .tetra => |t| @as(i32, t),
+                    .byte => |u| @as(i64, u),
+                    .tetra => |t| @as(i64, t),
                     .string => |s| blk: {
-                        const parsed = std.fmt.parseInt(i32, s, 10) catch {
+                        const parsed = std.fmt.parseInt(i64, s, 10) catch {
                             return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert string to integer for arithmetic", .{});
                         };
                         break :blk parsed;
@@ -1228,21 +1228,21 @@ pub const HIRVM = struct {
                     },
                 };
 
-                var int_result: i32 = undefined;
+                var int_result: i64 = undefined;
                 switch (a.op) {
-                    .Add => int_result = std.math.add(i32, left_int, right_int) catch {
+                    .Add => int_result = std.math.add(i64, left_int, right_int) catch {
                         return self.reporter.reportRuntimeError(null, ErrorCode.ARITHMETIC_OVERFLOW, "Integer addition overflow", .{});
                     },
-                    .Sub => int_result = std.math.sub(i32, left_int, right_int) catch {
+                    .Sub => int_result = std.math.sub(i64, left_int, right_int) catch {
                         return self.reporter.reportRuntimeError(null, ErrorCode.ARITHMETIC_OVERFLOW, "Integer subtraction overflow", .{});
                     },
-                    .Mul => int_result = std.math.mul(i32, left_int, right_int) catch {
+                    .Mul => int_result = std.math.mul(i64, left_int, right_int) catch {
                         return self.reporter.reportRuntimeError(null, ErrorCode.ARITHMETIC_OVERFLOW, "Integer multiplication overflow", .{});
                     },
                     .Div => unreachable,
                     .Mod => int_result = try self.fastIntMod(left_int, right_int),
                     .Pow => {
-                        int_result = std.math.pow(i32, left_int, right_int);
+                        int_result = std.math.pow(i64, left_int, right_int);
                     },
                 }
 
@@ -1647,7 +1647,7 @@ pub const HIRVM = struct {
                 if (s.op == .Length) {
                     switch (val.value) {
                         .string => |sv| {
-                            const len = @as(i32, @intCast(sv.len));
+                            const len = @as(i64, @intCast(sv.len));
                             try self.stack.push(HIRFrame.initInt(len));
                         },
                         .array => |arr| {
@@ -1674,10 +1674,10 @@ pub const HIRVM = struct {
                 if (s.op == .ToInt) {
                     const out: HIRValue = switch (val.value) {
                         .int => val.value,
-                        .byte => |u| HIRValue{ .int = @as(i32, u) },
-                        .float => |f| HIRValue{ .int = @as(i32, @intFromFloat(f)) },
+                        .byte => |u| HIRValue{ .int = @as(i64, u) },
+                        .float => |f| HIRValue{ .int = @as(i64, @intFromFloat(f)) },
                         .string => |s_val| blk: {
-                            const parsed = std.fmt.parseInt(i32, s_val, 10) catch {
+                            const parsed = std.fmt.parseInt(i64, s_val, 10) catch {
                                 // On failure, mirror existing behavior: return NumberError.ParseFailed if available; else 0
                                 var variant_index: u32 = 0;
                                 if (self.custom_type_registry.get("NumberError")) |ct| {
@@ -1721,11 +1721,11 @@ pub const HIRVM = struct {
                         .byte => val.value,
                         .int => |i| HIRValue{ .byte = if (i >= 0 and i <= 255) @intCast(i) else 0 },
                         .float => |f| blk: {
-                            const i: i32 = @as(i32, @intFromFloat(f));
+                            const i: i64 = @as(i64, @intFromFloat(f));
                             break :blk HIRValue{ .byte = if (i >= 0 and i <= 255) @intCast(i) else 0 };
                         },
                         .string => |s_val| blk: {
-                            const parsed = std.fmt.parseInt(i32, s_val, 10) catch 0;
+                            const parsed = std.fmt.parseInt(i64, s_val, 10) catch 0;
                             break :blk HIRValue{ .byte = if (parsed >= 0 and parsed <= 255) @intCast(parsed) else 0 };
                         },
                         else => HIRValue{ .byte = 0 },
@@ -1749,8 +1749,8 @@ pub const HIRVM = struct {
                                 }
 
                                 // Normalize and validate parameters (including negatives)
-                                const start_i: i32 = start.value.int;
-                                const len_i: i32 = length.value.int;
+                                const start_i: i64 = start.value.int;
+                                const len_i: i64 = length.value.int;
                                 if (start_i < 0 or len_i < 0) {
                                     var variant_index: u32 = 0;
                                     if (self.custom_type_registry.get("IndexError")) |ct| {
@@ -1827,7 +1827,7 @@ pub const HIRVM = struct {
                                 try self.stack.push(HIRFrame.initFromHIRValue(array));
                             },
                             .ToInt => {
-                                const parsed_int = std.fmt.parseInt(i32, s_val, 10) catch {
+                                const parsed_int = std.fmt.parseInt(i64, s_val, 10) catch {
                                     // Return enum variant NumberError.ParseFailed
                                     var variant_index: u32 = 0;
                                     if (self.custom_type_registry.get("NumberError")) |ct| {
@@ -1899,7 +1899,7 @@ pub const HIRVM = struct {
                     .tetra => |t| @as(u32, t), // Allow tetra values as indices
                     .string => |s| blk: {
                         // GRACEFUL: Try to parse string as integer
-                        const parsed = std.fmt.parseInt(i32, s, 10) catch {
+                        const parsed = std.fmt.parseInt(i64, s, 10) catch {
                             try self.stack.push(HIRFrame.initFromHIRValue(HIRValue.nothing));
                             return;
                         };
@@ -1974,7 +1974,7 @@ pub const HIRVM = struct {
                     .tetra => |t| @as(u32, t), // Allow tetra values as indices
                     .string => |s| blk: {
                         // GRACEFUL: Try to parse string as integer
-                        const parsed = std.fmt.parseInt(i32, s, 10) catch {
+                        const parsed = std.fmt.parseInt(i64, s, 10) catch {
                             try self.stack.push(array_frame); // Push original array back
                             return;
                         };
@@ -2017,7 +2017,7 @@ pub const HIRVM = struct {
                             },
                             .Int => switch (value.value) {
                                 .byte => |b| blk: {
-                                    const int_val = HIRValue{ .int = @as(i32, b) };
+                                    const int_val = HIRValue{ .int = @as(i64, b) };
                                     break :blk int_val; // Convert byte to int
                                 },
                                 .int => blk: {
@@ -2186,7 +2186,7 @@ pub const HIRVM = struct {
                         const function = self.program.function_table[c.function_index];
 
                         // Save SP before popping arguments so Return can restore caller stack correctly
-                        const saved_sp = self.stack.size() - @as(i32, @intCast(c.arg_count));
+                        const saved_sp = self.stack.size() - @as(i64, @intCast(c.arg_count));
 
                         // Pop arguments from stack and store them temporarily
                         var args = try self.allocator.alloc(HIRFrame, c.arg_count);
@@ -2234,7 +2234,7 @@ pub const HIRVM = struct {
                                         if (std.meta.eql(elem, HIRValue.nothing)) break;
                                         length += 1;
                                     }
-                                    try self.stack.push(HIRFrame.initInt(@as(i32, @intCast(length))));
+                                    try self.stack.push(HIRFrame.initInt(@as(i64, @intCast(length))));
                                 },
                                 else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot get length of non-array value: {s}", .{@tagName(array.value)}),
                             }
@@ -2285,17 +2285,17 @@ pub const HIRVM = struct {
 
                             const a_int = switch (a.value) {
                                 .int => |i| i,
-                                .byte => |u| @as(i32, u),
+                                .byte => |u| @as(i64, u),
                                 else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "safeAdd: first argument must be integer", .{}),
                             };
 
                             const b_int = switch (b.value) {
                                 .int => |i| i,
-                                .byte => |u| @as(i32, u),
+                                .byte => |u| @as(i64, u),
                                 else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "safeAdd: second argument must be integer", .{}),
                             };
 
-                            const result = std.math.add(i32, a_int, b_int) catch {
+                            const result = std.math.add(i64, a_int, b_int) catch {
                                 // On overflow, return nothing instead of crashing
                                 try self.stack.push(HIRFrame.initFromHIRValue(HIRValue.nothing));
                                 return;
@@ -2311,15 +2311,15 @@ pub const HIRVM = struct {
                                 // Integer power: both operands must be Int
                                 const base_int = switch (base.value) {
                                     .int => |i| i,
-                                    .byte => |b| @as(i32, b),
+                                    .byte => |b| @as(i64, b),
                                     else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "powi: base must be integer", .{}),
                                 };
                                 const exp_int = switch (exponent.value) {
                                     .int => |i| i,
-                                    .byte => |b| @as(i32, b),
+                                    .byte => |b| @as(i64, b),
                                     else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "powi: exponent must be integer", .{}),
                                 };
-                                const result = std.math.pow(i32, base_int, @intCast(exp_int));
+                                const result = std.math.pow(i64, base_int, @intCast(exp_int));
                                 try self.stack.push(HIRFrame.initInt(result));
                                 return;
                             }
@@ -2456,13 +2456,13 @@ pub const HIRVM = struct {
 
                             const a_int = switch (a.value) {
                                 .int => |i| i,
-                                .byte => |u| @as(i32, u),
+                                .byte => |u| @as(i64, u),
                                 else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "safeAdd: first argument must be integer", .{}),
                             };
 
                             const b_int = switch (b.value) {
                                 .int => |i| i,
-                                .byte => |u| @as(i32, u),
+                                .byte => |u| @as(i64, u),
                                 else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "safeAdd: second argument must be integer", .{}),
                             };
 
@@ -2489,7 +2489,7 @@ pub const HIRVM = struct {
                             }
 
                             // Safe to add - call math.add logic
-                            const result = std.math.add(i32, a_int, b_int) catch {
+                            const result = std.math.add(i64, a_int, b_int) catch {
                                 // Integer overflow in addition - return -1
                                 try self.stack.push(HIRFrame.initInt(-1));
                                 return;
@@ -2673,7 +2673,7 @@ pub const HIRVM = struct {
                             return;
                         } else {
                             // Try to parse field name as index for string indexing
-                            if (std.fmt.parseInt(i32, get_field.field_name, 10)) |index| {
+                            if (std.fmt.parseInt(i64, get_field.field_name, 10)) |index| {
                                 // Create frames for substring operation
                                 const start_frame = HIRFrame.initInt(index);
                                 const len_frame = HIRFrame.initInt(1);
@@ -2907,8 +2907,8 @@ pub const HIRVM = struct {
                     .Int => {
                         out = switch (frame.value) {
                             .int => frame.value,
-                            .byte => |u| HIRValue{ .int = @as(i32, u) },
-                            .float => |f| HIRValue{ .int = @as(i32, @intFromFloat(f)) },
+                            .byte => |u| HIRValue{ .int = @as(i64, u) },
+                            .float => |f| HIRValue{ .int = @as(i64, @intFromFloat(f)) },
                             else => frame.value,
                         };
                     },
@@ -2917,7 +2917,7 @@ pub const HIRVM = struct {
                             .byte => frame.value,
                             .int => |i| HIRValue{ .byte = if (i >= 0 and i <= 255) @intCast(i) else 0 },
                             .float => |f| blk: {
-                                const i: i32 = @as(i32, @intFromFloat(f));
+                                const i: i64 = @as(i64, @intFromFloat(f));
                                 break :blk HIRValue{ .byte = if (i >= 0 and i <= 255) @intCast(i) else 0 };
                             },
                             else => frame.value,
@@ -2956,30 +2956,30 @@ pub const HIRVM = struct {
     // ===============================================================================
 
     /// Integer arithmetic with overflow checking
-    fn intAdd(self: *HIRVM, a: i32, b: i32) !i32 {
+    fn intAdd(self: *HIRVM, a: i64, b: i64) !i64 {
         _ = self;
-        return std.math.add(i32, a, b) catch |err| {
+        return std.math.add(i64, a, b) catch |err| {
             return err;
         };
     }
 
-    fn intSub(self: *HIRVM, a: i32, b: i32) !i32 {
+    fn intSub(self: *HIRVM, a: i64, b: i64) !i64 {
         _ = self;
-        return std.math.sub(i32, a, b) catch |err| {
+        return std.math.sub(i64, a, b) catch |err| {
             std.debug.print("Integer overflow in subtraction: {} - {}\n", .{ a, b });
             return err;
         };
     }
 
-    fn intMul(self: *HIRVM, a: i32, b: i32) !i32 {
+    fn intMul(self: *HIRVM, a: i64, b: i64) !i64 {
         _ = self;
-        return std.math.mul(i32, a, b) catch |err| {
+        return std.math.mul(i64, a, b) catch |err| {
             std.debug.print("Integer overflow in multiplication: {} * {}\n", .{ a, b });
             return err;
         };
     }
 
-    fn intDiv(self: *HIRVM, a: i32, b: i32) !i32 {
+    fn intDiv(self: *HIRVM, a: i64, b: i64) !i64 {
         _ = self;
         if (b == 0) {
             std.debug.print("Division by zero: {} / {}\n", .{ a, b });
@@ -2988,7 +2988,7 @@ pub const HIRVM = struct {
         return @divTrunc(a, b);
     }
 
-    fn fastIntMod(self: *HIRVM, a: i32, b: i32) !i32 {
+    fn fastIntMod(self: *HIRVM, a: i64, b: i64) !i64 {
         _ = self;
         if (b == 0) {
             std.debug.print("Modulo by zero: {} % {}\n", .{ a, b });
@@ -3006,7 +3006,7 @@ pub const HIRVM = struct {
     }
 
     // Ultra-fast modulo implementations for FizzBuzz
-    inline fn fastMod3(n: i32) i32 {
+    inline fn fastMod3(n: i64) i64 {
         // n % 3 using bit tricks: faster than division
         var x = n;
         if (x < 0) x = -x;
@@ -3017,12 +3017,12 @@ pub const HIRVM = struct {
         return if (n < 0 and x != 0) 3 - x else x;
     }
 
-    inline fn fastMod5(n: i32) i32 {
+    inline fn fastMod5(n: i64) i64 {
         // Fixed: Use correct modulo operation
         return @mod(n, 5);
     }
 
-    inline fn fastMod15(n: i32) i32 {
+    inline fn fastMod15(n: i64) i64 {
         // n % 15 = n % (3*5), use Chinese Remainder Theorem concept
         const mod3 = fastMod3(n);
         const mod5 = fastMod5(n);
@@ -3332,7 +3332,7 @@ pub const HIRVM = struct {
             else => return ErrorList.TypeError,
         };
 
-        return HIRFrame.initInt(@as(i32, @intCast(str.len)));
+        return HIRFrame.initInt(@as(i64, @intCast(str.len)));
     }
 
     /// String bytes operation - converts string to array of bytes
@@ -3728,7 +3728,7 @@ pub const HIRVM = struct {
         // Dump stack contents
         if (self.stack.size() > 0) {
             std.debug.print("Stack contents (top to bottom):\n", .{});
-            var i: i32 = self.stack.sp - 1;
+            var i: i64 = self.stack.sp - 1;
             while (i >= 0) : (i -= 1) {
                 const frame = self.stack.data[@intCast(i)];
                 std.debug.print("  [{}]: ", .{i});

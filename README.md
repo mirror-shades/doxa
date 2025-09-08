@@ -55,15 +55,22 @@ zig build test
 
 ## Development Status
 
-- ✅ **AST Interpreter**: Fully functional, supports all language features, will be deprecated for VM
-- ✅ **Soxa VM**: currently implementing stack based HIR and VM
-- ❌ **LLVM IR**: Minimal prototyping, many features missing, future
+VM pipeline is currently working as expected with almost all core features implemented. Expanding testing is a key concern, particularly edge cases and negative tests.
+
+TODO:
+
+- finish implementing methods listed in documentation
+- add flex numbers
+
+Second Pipeline:
+
+- SOXA to LLVMIR code gen
 
 ## Native Types
 
 ### Atomic
 
-- int (32-bit integer)
+- int (64-bit integer)
 - float (64-bit float)
 - byte (8-bit uint hex literal)
 - string

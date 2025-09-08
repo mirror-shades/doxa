@@ -20,53 +20,49 @@ struct Token {
 }
 
 fn addToken (tokens :: auto, token :: string) {
-    tokens.push(token);
+    tokens.push(token)
 }
 
 fn tokenize (source :: string) returns(string[]) {
-    var tokens :: string[] is [];
-    var current_index :: int is 0;
-    var current_token :: string is "";
-    var current_char :: string is "";
-    const source_len :: int is source.length;
+    var tokens :: string[] is []
+    var current_index :: int is 0
+    const source_len :: int is @length(source)
 
-    while (current_index < source_len) {
-        current_char is source[current_index];
+    for i while current_index < source_len do i++ {
+        current_char is source[current_index]
         
         if(current_char == "") then {
-            nothing;
+            nothing
         }
         else if (current_char == "(") then {
-                tokens.push(current_token);
-                current_token is "";
+                tokens.push(current_token)
+                current_token is ""
             
-            tokens.push(current_char);
+            tokens.push(current_char)
         } else if (current_char == ")") then {
-                tokens.push(current_token);
-                current_token is "";
+                tokens.push(current_token)
+                current_token is ""
             
-            tokens.push(current_char);
+            tokens.push(current_char)
         } else if (current_char == " ") then {
-                tokens.push(current_token);
-                current_token is "";
+                tokens.push(current_token)
+                current_token is ""
             
         } else {
-            current_token is current_token + current_char;
+            current_token is current_token + current_char
         }
-        
-        current_index += 1;        
     }
     
     if (current_token != "") then {
-        tokens.push(current_token);
+        tokens.push(current_token)
     }
-    tokens?;
-    return tokens;
+    tokens?
+    return tokens
 }
 
 entry fn main () {
-    const source :: string is "(begin (define r 10) (* pi (* r r)))";
-    source?;
-    const tokens :: string[] is tokenize(source);
-    tokens?;
+    const source :: string is "(begin (define r 10) (* pi (* r r)))"
+    source?
+    const tokens :: string[] is tokenize(source)
+    tokens?
 }
