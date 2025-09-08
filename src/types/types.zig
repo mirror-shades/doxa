@@ -176,7 +176,7 @@ pub const Tetra = enum {
 };
 
 pub const TokenLiteral = union(enum) {
-    int: i32,
+    int: i64,
     byte: u8,
     float: f64,
     string: []const u8,

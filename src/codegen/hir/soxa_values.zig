@@ -1,7 +1,7 @@
 const HIRType = @import("soxa_types.zig").HIRType;
 
 pub const HIRValue = union(enum) {
-    int: i32,
+    int: i64,
     byte: u8,
     float: f64,
     string: []const u8,

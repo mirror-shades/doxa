@@ -684,11 +684,10 @@ pub fn forExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr
 }
 
 pub fn prefixIncrement(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-    const operator = self.previous(); // Get the ++ or -- token
-    const is_decrement = (operator.type == .DECREMENT); // or .MINUS_MINUS
-    std.debug.print("DEBUG: prefixIncrement called with token type: {}\n", .{operator.type});
+    const operator = self.peek(); // Get the current token as operator
+    const is_decrement = (operator.type == .DECREMENT);
 
-    self.advance();
+    self.advance(); // Move past the operator
     const expr = try parseExpression(self);
 
     const increment_expr = try self.allocator.create(ast.Expr);
@@ -718,10 +717,10 @@ pub fn postfixIncrement(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorLis
 }
 
 pub fn prefixDecrement(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-    const operator = self.previous(); // Get the -- token
+    const operator = self.peek(); // Get the current token as operator
     std.debug.print("DEBUG: prefixDecrement called with token type: {}\n", .{operator.type});
 
-    self.advance();
+    self.advance(); // Move past the operator
     const expr = try parseExpression(self);
 
     const decrement_expr = try self.allocator.create(ast.Expr);
