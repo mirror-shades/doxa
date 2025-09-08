@@ -4405,7 +4405,7 @@ pub const SemanticAnalyzer = struct {
                     .int => |r| blk: {
                         // If both operands are integers and the exponent is non-negative, return an integer
                         if (r >= 0) {
-                            break :blk TokenLiteral{ .int = std.math.pow(i32, l, @as(i32, @intCast(r))) };
+                            break :blk TokenLiteral{ .int = std.math.pow(i64, l, @as(i64, @intCast(r))) };
                         }
                         // Fall back to float for negative exponents
                         break :blk TokenLiteral{ .float = std.math.pow(f64, @as(f64, @floatFromInt(l)), @as(f64, @floatFromInt(r))) };

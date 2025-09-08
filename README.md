@@ -70,7 +70,7 @@ Second Pipeline:
 
 ### Atomic
 
-- int (32-bit integer)
+- int (64-bit integer)
 - float (64-bit float)
 - byte (8-bit uint hex literal)
 - string

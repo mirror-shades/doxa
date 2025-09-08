@@ -3479,8 +3479,6 @@ pub const HIRGenerator = struct {
             },
 
             .Increment => |operand| {
-                // Generate increment operation: load variable, add 1, store back
-                // First, check if this is a variable reference
                 if (operand.data == .Variable) {
                     const var_name = operand.data.Variable.lexeme;
                     const var_idx = try self.getOrCreateVariable(var_name);
@@ -3503,6 +3501,9 @@ pub const HIRGenerator = struct {
                     // Add the values
                     const operand_type = self.getTrackedVariableType(var_name) orelse .Int;
                     try self.instructions.append(.{ .Arith = .{ .op = .Add, .operand_type = operand_type } });
+
+                    // Duplicate result so we can both return it and store it
+                    try self.instructions.append(.Dup);
 
                     // Store back to variable
                     try self.instructions.append(.{
@@ -3554,6 +3555,9 @@ pub const HIRGenerator = struct {
                     // Subtract the values
                     const operand_type = self.getTrackedVariableType(var_name) orelse .Int;
                     try self.instructions.append(.{ .Arith = .{ .op = .Sub, .operand_type = operand_type } });
+
+                    // Duplicate result so we can both return it and store it
+                    try self.instructions.append(.Dup);
 
                     // Store back to variable
                     try self.instructions.append(.{
