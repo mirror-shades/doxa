@@ -494,7 +494,7 @@ pub const HIRGenerator = struct {
                     try self.instructions.append(.{ .StoreParamAlias = .{
                         .param_name = param.name.lexeme,
                         .param_type = param_type,
-                    }});
+                    } });
                 } else {
                     // For regular parameters, create a local variable and store the stack value
                     const var_idx = try self.getOrCreateVariable(param.name.lexeme);
@@ -504,7 +504,7 @@ pub const HIRGenerator = struct {
                         .scope_kind = .Local,
                         .module_context = null,
                         .expected_type = param_type,
-                    }});
+                    } });
                 }
             }
 
@@ -1674,11 +1674,13 @@ pub const HIRGenerator = struct {
                                     maybe_idx = self.variables.get(var_token.lexeme);
                                 }
                                 if (maybe_idx) |var_idx| {
-                                    try self.instructions.append(.{ .PushStorageId = .{
-                                        .var_index = var_idx,
-                                        .var_name = var_token.lexeme,
-                                        .scope_kind = .Local, // This will be resolved at runtime
-                                    } });
+                                    try self.instructions.append(.{
+                                        .PushStorageId = .{
+                                            .var_index = var_idx,
+                                            .var_name = var_token.lexeme,
+                                            .scope_kind = .Local, // This will be resolved at runtime
+                                        },
+                                    });
                                     arg_emitted_count += 1;
                                 } else {
                                     self.reporter.reportCompileError(
@@ -3214,7 +3216,24 @@ pub const HIRGenerator = struct {
                     .StringOp = .{ .op = .ToInt },
                 });
             },
+            .StringToFloat => |stf| {
+                // Generate the string expression to convert
+                try self.generateExpression(stf.string, true, false);
 
+                // Generate StringOp.ToFloat instruction
+                try self.instructions.append(.{
+                    .StringOp = .{ .op = .ToFloat },
+                });
+            },
+            .StringToByte => |stb| {
+                // Generate the string expression to convert
+                try self.generateExpression(stb.string, true, false);
+
+                // Generate StringOp.ToByte instruction
+                try self.instructions.append(.{
+                    .StringOp = .{ .op = .ToByte },
+                });
+            },
             .Map => |entries| {
 
                 // Generate each key-value pair in reverse order (for stack-based construction)
@@ -3456,6 +3475,112 @@ pub const HIRGenerator = struct {
                     // Unknown method - fallback to nothing
                     const nothing_idx = try self.addConstant(HIRValue.nothing);
                     try self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } });
+                }
+            },
+
+            .Increment => |operand| {
+                if (operand.data == .Variable) {
+                    const var_name = operand.data.Variable.lexeme;
+                    const var_idx = try self.getOrCreateVariable(var_name);
+
+                    // Load current value
+                    try self.instructions.append(.{
+                        .LoadVar = .{
+                            .var_index = var_idx,
+                            .var_name = var_name,
+                            .scope_kind = .Local,
+                            .module_context = null,
+                        },
+                    });
+
+                    // Add 1 (create constant 1)
+                    const one_value = HIRValue{ .int = 1 };
+                    const one_idx = try self.addConstant(one_value);
+                    try self.instructions.append(.{ .Const = .{ .value = one_value, .constant_id = one_idx } });
+
+                    // Add the values
+                    const operand_type = self.getTrackedVariableType(var_name) orelse .Int;
+                    try self.instructions.append(.{ .Arith = .{ .op = .Add, .operand_type = operand_type } });
+
+                    // Duplicate result so we can both return it and store it
+                    try self.instructions.append(.Dup);
+
+                    // Store back to variable
+                    try self.instructions.append(.{
+                        .StoreVar = .{
+                            .var_index = var_idx,
+                            .var_name = var_name,
+                            .scope_kind = .Local,
+                            .module_context = null,
+                            .expected_type = operand_type,
+                        },
+                    });
+                } else {
+                    // For non-variable expressions, generate the expression and add 1
+                    try self.generateExpression(operand, true, false);
+
+                    // Add 1
+                    const one_value = HIRValue{ .int = 1 };
+                    const one_idx = try self.addConstant(one_value);
+                    try self.instructions.append(.{ .Const = .{ .value = one_value, .constant_id = one_idx } });
+
+                    // Add the values
+                    const operand_type = self.inferTypeFromExpression(operand);
+                    try self.instructions.append(.{ .Arith = .{ .op = .Add, .operand_type = operand_type } });
+                }
+            },
+
+            .Decrement => |operand| {
+                // Generate decrement operation: load variable, subtract 1, store back
+                // First, check if this is a variable reference
+                if (operand.data == .Variable) {
+                    const var_name = operand.data.Variable.lexeme;
+                    const var_idx = try self.getOrCreateVariable(var_name);
+
+                    // Load current value
+                    try self.instructions.append(.{
+                        .LoadVar = .{
+                            .var_index = var_idx,
+                            .var_name = var_name,
+                            .scope_kind = .Local,
+                            .module_context = null,
+                        },
+                    });
+
+                    // Add 1 (create constant 1)
+                    const one_value = HIRValue{ .int = 1 };
+                    const one_idx = try self.addConstant(one_value);
+                    try self.instructions.append(.{ .Const = .{ .value = one_value, .constant_id = one_idx } });
+
+                    // Subtract the values
+                    const operand_type = self.getTrackedVariableType(var_name) orelse .Int;
+                    try self.instructions.append(.{ .Arith = .{ .op = .Sub, .operand_type = operand_type } });
+
+                    // Duplicate result so we can both return it and store it
+                    try self.instructions.append(.Dup);
+
+                    // Store back to variable
+                    try self.instructions.append(.{
+                        .StoreVar = .{
+                            .var_index = var_idx,
+                            .var_name = var_name,
+                            .scope_kind = .Local,
+                            .module_context = null,
+                            .expected_type = operand_type,
+                        },
+                    });
+                } else {
+                    // For non-variable expressions, generate the expression and subtract 1
+                    try self.generateExpression(operand, true, false);
+
+                    // Add 1
+                    const one_value = HIRValue{ .int = 1 };
+                    const one_idx = try self.addConstant(one_value);
+                    try self.instructions.append(.{ .Const = .{ .value = one_value, .constant_id = one_idx } });
+
+                    // Subtract the values
+                    const operand_type = self.inferTypeFromExpression(operand);
+                    try self.instructions.append(.{ .Arith = .{ .op = .Sub, .operand_type = operand_type } });
                 }
             },
             else => {

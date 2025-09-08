@@ -10,7 +10,7 @@ Types in Doxa are grouped in three ways, atomic, molecular, and meta. All togeth
 
 Atomic types are the most basic units of data. Currently Doxa has 3 default number types, with plans for optional dynamic number sizing in the future.
 
-int - i32
+int - i64
 float - f64
 byte - u8 hex literal
 string

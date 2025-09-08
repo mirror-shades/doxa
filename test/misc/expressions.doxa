@@ -79,6 +79,12 @@ const const_b is 10
 (10 / 2 / 5)?       // 1.0 (left associative)
 (10 - 5 - 2)?       // 3 (left associative)
 
+// Increment/Decrement operations
+(5++)?       // 6
+(5--)?       // 4
+(++5)?       // 6
+(--5)?       // 4
+
 
 //////
 // VAR EXPRESSIONS
@@ -153,6 +159,11 @@ var v_expr40 is (((5 + 3) * 2) - 4) / 2  // 6
 var v_expr41 is 10 / 2 / 5      // 1.0 (left associative)
 var v_expr42 is 10 - 5 - 2      // 3 (left associative)
 
+var v_expr43 is 5++       // 6
+var v_expr44 is 5--       // 4
+var v_expr45 is ++5       // 6
+var v_expr46 is --5       // 4
+
 v_expr1?
 v_expr2?
 v_expr3?
@@ -195,6 +206,10 @@ v_expr39?
 v_expr40?
 v_expr41?
 v_expr42?
+v_expr43?
+v_expr44?
+v_expr45?
+v_expr46?
 
 
 //////
@@ -270,6 +285,12 @@ const c_expr40 is (((5 + 3) * 2) - 4) / 2  // 6
 const c_expr41 is 10 / 2 / 5      // 1.0 (left associative)
 const c_expr42 is 10 - 5 - 2      // 3 (left associative)
 
+// Increment/Decrement operations
+const c_expr43 is 5++       // 6
+const c_expr44 is 5--       // 4
+const c_expr45 is ++5       // 6
+const c_expr46 is --5       // 4
+
 c_expr1?
 c_expr2?
 c_expr3?
@@ -312,3 +333,7 @@ c_expr39?
 c_expr40?
 c_expr41?
 c_expr42?
+c_expr43?
+c_expr44?
+c_expr45?
+c_expr46?

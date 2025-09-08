@@ -2083,6 +2083,68 @@ pub const SemanticAnalyzer = struct {
                 const u = try self.createUnionType(union_members[0..]);
                 type_info.* = u.*;
             },
+            .StringToFloat => |string_expr| {
+                const s_type = try self.inferTypeFromExpr(string_expr.string);
+                if (s_type.base != .String) {
+                    self.reporter.reportCompileError(
+                        getLocationFromBase(expr.base),
+                        ErrorCode.INVALID_STRING_TYPE,
+                        "StringToFloat requires string type, got {s}",
+                        .{@tagName(s_type.base)},
+                    );
+                    self.fatal_error = true;
+                    type_info.base = .Nothing;
+                    return type_info;
+                }
+                // StringToFloat returns float (no typed error union in current VM path)
+                type_info.* = .{ .base = .Float };
+            },
+            .StringToByte => |string_expr| {
+                const s_type = try self.inferTypeFromExpr(string_expr.string);
+                if (s_type.base != .String) {
+                    self.reporter.reportCompileError(
+                        getLocationFromBase(expr.base),
+                        ErrorCode.INVALID_STRING_TYPE,
+                        "StringToByte requires string type, got {s}",
+                        .{@tagName(s_type.base)},
+                    );
+                    self.fatal_error = true;
+                    type_info.base = .Nothing;
+                    return type_info;
+                }
+                // StringToByte returns byte (no typed error union in current VM path)
+                type_info.* = .{ .base = .Byte };
+            },
+            .Increment => |inc_expr| {
+                const expr_type = try self.inferTypeFromExpr(inc_expr);
+                if (expr_type.base != .Int and expr_type.base != .Float and expr_type.base != .Byte) {
+                    self.reporter.reportCompileError(
+                        getLocationFromBase(expr.base),
+                        ErrorCode.INVALID_OPERAND_TYPE,
+                        "Increment requires numeric type, got {s}",
+                        .{@tagName(expr_type.base)},
+                    );
+                    self.fatal_error = true;
+                    type_info.base = .Nothing;
+                    return type_info;
+                }
+                type_info.* = expr_type.*; // Increment returns the same type as the operand
+            },
+            .Decrement => |dec_expr| {
+                const expr_type = try self.inferTypeFromExpr(dec_expr);
+                if (expr_type.base != .Int and expr_type.base != .Float and expr_type.base != .Byte) {
+                    self.reporter.reportCompileError(
+                        getLocationFromBase(expr.base),
+                        ErrorCode.INVALID_OPERAND_TYPE,
+                        "Decrement requires numeric type, got {s}",
+                        .{@tagName(expr_type.base)},
+                    );
+                    self.fatal_error = true;
+                    type_info.base = .Nothing;
+                    return type_info;
+                }
+                type_info.* = expr_type.*; // Decrement returns the same type as the operand
+            },
             .Map => |map_entries| {
                 if (map_entries.len == 0) {
                     type_info.* = .{ .base = .Map };
@@ -4343,7 +4405,7 @@ pub const SemanticAnalyzer = struct {
                     .int => |r| blk: {
                         // If both operands are integers and the exponent is non-negative, return an integer
                         if (r >= 0) {
-                            break :blk TokenLiteral{ .int = std.math.pow(i32, l, @as(i32, @intCast(r))) };
+                            break :blk TokenLiteral{ .int = std.math.pow(i64, l, @as(i64, @intCast(r))) };
                         }
                         // Fall back to float for negative exponents
                         break :blk TokenLiteral{ .float = std.math.pow(f64, @as(f64, @floatFromInt(l)), @as(f64, @floatFromInt(r))) };
