@@ -955,6 +955,13 @@ pub const SemanticAnalyzer = struct {
                         try self.validateFunctionBody(func, .{ .location = getLocationFromBase(stmt.base) }, func.return_type_info);
                     }
                 },
+                .MapLiteral => |map_entries| {
+                    // Validate map literal entries
+                    for (map_entries) |entry| {
+                        _ = try self.inferTypeFromExpr(entry.key);
+                        _ = try self.inferTypeFromExpr(entry.value);
+                    }
+                },
                 // TODO: Handle other statements...
                 else => {},
             }
@@ -1165,6 +1172,12 @@ pub const SemanticAnalyzer = struct {
         return copied;
     }
 
+    fn deepCopyTypeInfoPtr(self: *SemanticAnalyzer, src: *ast.TypeInfo) !*ast.TypeInfo {
+        const copied = try self.allocator.create(ast.TypeInfo);
+        copied.* = try self.deepCopyTypeInfo(src.*);
+        return copied;
+    }
+
     fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInfo {
 
         // Check cache first
@@ -1176,6 +1189,17 @@ pub const SemanticAnalyzer = struct {
         errdefer self.allocator.destroy(type_info);
 
         switch (expr.data) {
+            .Map => |entries| {
+                // Minimal inference for map literals: infer key/value from first entry if present.
+                type_info.* = .{ .base = .Map };
+                if (entries.len > 0) {
+                    const first_key_type = try self.inferTypeFromExpr(entries[0].key);
+                    const first_val_type = try self.inferTypeFromExpr(entries[0].value);
+                    // Reuse inferred pointers to avoid unnecessary deep copies and allocations.
+                    type_info.map_key_type = first_key_type;
+                    type_info.map_value_type = first_val_type;
+                }
+            },
             .Literal => |lit| {
                 type_info.inferFrom(lit); // TokenLiteral is already the right type
             },
@@ -2145,62 +2169,7 @@ pub const SemanticAnalyzer = struct {
                 }
                 type_info.* = expr_type.*; // Decrement returns the same type as the operand
             },
-            .Map => |map_entries| {
-                if (map_entries.len == 0) {
-                    type_info.* = .{ .base = .Map };
-                } else {
-                    // Analyze key and value types from first entry
-                    const first_key_type = try self.inferTypeFromExpr(map_entries[0].key);
-                    const first_value_type = try self.inferTypeFromExpr(map_entries[0].value);
-
-                    // Validate that key type is not a union
-                    if (first_key_type.base == .Union) {
-                        self.reporter.reportCompileError(
-                            getLocationFromBase(map_entries[0].key.base),
-                            ErrorCode.INVALID_MAP_KEY_TYPE,
-                            "Map keys cannot be union types. Keys must be concrete types like int, string, or enum",
-                            .{},
-                        );
-                        self.fatal_error = true;
-                        type_info.base = .Nothing;
-                        return type_info;
-                    }
-
-                    // Ensure all keys and values have consistent types
-                    for (map_entries[1..]) |entry| {
-                        const key_type = try self.inferTypeFromExpr(entry.key);
-                        const value_type = try self.inferTypeFromExpr(entry.value);
-
-                        // Validate that each key type is not a union
-                        if (key_type.base == .Union) {
-                            self.reporter.reportCompileError(
-                                getLocationFromBase(entry.key.base),
-                                ErrorCode.INVALID_MAP_KEY_TYPE,
-                                "Map keys cannot be union types. Keys must be concrete types like int, string, or enum",
-                                .{},
-                            );
-                            self.fatal_error = true;
-                            type_info.base = .Nothing;
-                            return type_info;
-                        }
-
-                        try self.unifyTypes(first_key_type, key_type, .{ .location = getLocationFromBase(expr.base) });
-                        try self.unifyTypes(first_value_type, value_type, .{ .location = getLocationFromBase(expr.base) });
-                    }
-
-                    // Store the inferred key and value types
-                    const key_type = try self.allocator.create(ast.TypeInfo);
-                    const value_type = try self.allocator.create(ast.TypeInfo);
-                    key_type.* = first_key_type.*;
-                    value_type.* = first_value_type.*;
-
-                    type_info.* = .{
-                        .base = .Map,
-                        .map_key_type = key_type,
-                        .map_value_type = value_type,
-                    };
-                }
-            },
+            // Map literals are now statements, not expressions
             .ArrayPush => |array_push| {
                 const array_type = try self.inferTypeFromExpr(array_push.array);
                 const element_type = try self.inferTypeFromExpr(array_push.element);

@@ -140,6 +140,15 @@ fn writeStatement(stmt: ast.Stmt, writer: anytype) std.fs.File.WriteError!void {
                 try writer.print("variant:{s}\n", .{variant.lexeme});
             }
         },
+        .MapLiteral => |entries| {
+            try writer.print("map_entries_count:{d}\n", .{entries.len});
+            for (entries, 0..) |entry, i| {
+                try writer.print("map_entry_{d}_key:\n", .{i});
+                try writeExpression(entry.key, writer);
+                try writer.print("map_entry_{d}_value:\n", .{i});
+                try writeExpression(entry.value, writer);
+            }
+        },
         else => {
             // For other statement types, just write their tag name
             // Add more specific serialization as needed
@@ -200,6 +209,10 @@ fn writeExpression(expr: *const ast.Expr, writer: anytype) std.fs.File.WriteErro
                 try writeExpression(arg.expr, writer);
             }
         },
+        .Cast => |_| {
+            try writer.print("cast_expression\n", .{});
+            // Optionally, print more details about the cast
+        },
         .Map => |entries| {
             try writer.print("map_entries_count:{d}\n", .{entries.len});
             for (entries, 0..) |entry, i| {
@@ -208,10 +221,6 @@ fn writeExpression(expr: *const ast.Expr, writer: anytype) std.fs.File.WriteErro
                 try writer.print("map_entry_{d}_value:\n", .{i});
                 try writeExpression(entry.value, writer);
             }
-        },
-        .Cast => |_| {
-            try writer.print("cast_expression\n", .{});
-            // Optionally, print more details about the cast
         },
         else => {
             // For other expression types, just write their tag name

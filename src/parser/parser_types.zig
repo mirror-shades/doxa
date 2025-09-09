@@ -1391,8 +1391,9 @@ pub const Parser = struct {
         }
         self.advance();
 
-        const map_expr = try self.allocator.create(ast.Expr);
-        map_expr.* = .{
+        // Build Expr.Map for use as an initializer only
+        const expr = try self.allocator.create(ast.Expr);
+        expr.* = .{
             .base = .{
                 .id = ast.generateNodeId(),
                 .span = ast.SourceSpan.fromToken(self.peek()),
@@ -1401,7 +1402,7 @@ pub const Parser = struct {
                 .Map = try entries.toOwnedSlice(),
             },
         };
-        return map_expr;
+        return expr;
     }
 
     pub fn parseBlock(self: *Parser) ErrorList!?*ast.Expr {

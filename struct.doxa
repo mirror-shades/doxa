@@ -1,0 +1,42 @@
+struct Person {
+    name :: string,
+    age :: int,
+}
+
+var person is Person {
+    name is "John",
+    age is 30,
+}
+
+person.name? // John
+person.age? // 30
+
+
+
+
+struct Person {
+    name :: string,
+    age :: int,
+
+    pub id :: int,
+
+    pub function new(name :: string, age :: int) {
+        return Person {
+            name is name,
+            age is age,
+        }
+    }
+
+    pub function get_name() {
+        return this.name;
+    }
+
+    pub function get_age() {
+        return this.age;
+    }
+}
+
+var person is Person.new("John", 30)
+
+person.name? // John
+person.age? // 30
