@@ -21,6 +21,9 @@ const Errors = @import("../../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
 const ErrorCode = Errors.ErrorCode;
 
+const SemanticAnalyzer = @import("../../analysis/semantic.zig");
+const StructMethodInfo = SemanticAnalyzer.StructMethodInfo;
+
 pub const HIRGenerator = struct {
     allocator: std.mem.Allocator,
     instructions: std.ArrayList(HIRInstruction),
@@ -40,6 +43,7 @@ pub const HIRGenerator = struct {
     variable_custom_types: std.StringHashMap([]const u8), // Track custom type names for variables
 
     custom_types: std.StringHashMap(CustomTypeInfo), // Track struct/enum type definitions
+    struct_methods: std.StringHashMap(std.StringHashMap(StructMethodInfo)), // Track struct methods
 
     function_signatures: std.StringHashMap(FunctionInfo),
     function_bodies: std.ArrayList(FunctionBody),
@@ -193,6 +197,7 @@ pub const HIRGenerator = struct {
             .variable_types = std.StringHashMap(HIRType).init(allocator),
             .variable_custom_types = std.StringHashMap([]const u8).init(allocator),
             .custom_types = std.StringHashMap(CustomTypeInfo).init(allocator),
+            .struct_methods = std.StringHashMap(std.StringHashMap(StructMethodInfo)).init(allocator),
             .function_signatures = std.StringHashMap(FunctionInfo).init(allocator),
             .function_bodies = std.ArrayList(FunctionBody).init(allocator),
             .current_function = null,
@@ -218,6 +223,9 @@ pub const HIRGenerator = struct {
         self.variable_types.deinit();
         self.variable_custom_types.deinit();
         self.custom_types.deinit();
+        var methods_it = self.struct_methods.valueIterator();
+        while (methods_it.next()) |tbl| tbl.*.deinit();
+        self.struct_methods.deinit();
         self.function_signatures.deinit();
         self.function_bodies.deinit();
         self.function_calls.deinit();
@@ -314,10 +322,8 @@ pub const HIRGenerator = struct {
                     if (maybe_expr) |expr| {
                         if (expr.data == .StructDecl) {
                             const s = expr.data.StructDecl;
-                            // Register static struct methods as functions: StructName.MethodName
+                            // Register struct methods (static and instance) as functions: StructName.MethodName
                             for (s.methods) |method| {
-                                if (!method.is_static) continue;
-
                                 const qualified = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ s.name.lexeme, method.name.lexeme });
                                 const return_type = self.convertTypeInfo(method.return_type_info);
                                 const start_label = try self.generateLabel(try std.fmt.allocPrint(self.allocator, "func_{s}", .{qualified}));
@@ -329,9 +335,13 @@ pub const HIRGenerator = struct {
                                     param_types[i] = if (param.type_expr) |type_expr| self.convertTypeInfo((try ast.typeInfoFromExpr(self.allocator, type_expr)).*) else .Int;
                                 }
 
+                                // Compute arity at runtime
+                                var arity: u32 = @intCast(method.params.len);
+                                if (!method.is_static) arity += 1;
+
                                 const function_info = FunctionInfo{
                                     .name = qualified,
-                                    .arity = @intCast(method.params.len),
+                                    .arity = arity,
                                     .return_type = return_type,
                                     .start_label = start_label,
                                     .local_var_count = 0,
@@ -554,6 +564,17 @@ pub const HIRGenerator = struct {
                         .expected_type = param_type,
                     } });
                 }
+            }
+
+            // Special handling: if this is a struct instance method, ensure the implicit 'this' is stored
+            // Convention: instance methods declare first param named 'this' (parser supplies it)
+            if (params.len > 0 and std.mem.eql(u8, params[0].name.lexeme, "this")) {
+                const this_type = self.getTrackedVariableType("this") orelse .Struct;
+                const this_idx = try self.getOrCreateVariable("this");
+                // If not already stored by loop above (depends on parser), ensure we have a var
+                // No-op if already present
+                _ = this_type;
+                _ = this_idx;
             }
 
             // TAIL CALL FIX: Add a separate label for tail calls to jump to (after parameter setup)
@@ -1742,6 +1763,16 @@ pub const HIRGenerator = struct {
                                         for (function_call.arguments) |arg| {
                                             try self.generateExpression(arg.expr, true, should_pop_after_use);
                                         }
+                                        // Emit the call now
+                                        const return_type = self.inferCallReturnType(function_name, .LocalFunction) catch .Nothing;
+                                        try self.instructions.append(.{ .Call = .{
+                                            .function_index = function_index,
+                                            .qualified_name = function_name,
+                                            .arg_count = @intCast(function_call.arguments.len),
+                                            .call_kind = call_kind,
+                                            .target_module = null,
+                                            .return_type = return_type,
+                                        } });
                                         return;
                                     }
                                 }
@@ -3895,6 +3926,63 @@ pub const HIRGenerator = struct {
     /// Handles both direct InternalCall AST nodes and method-sugar (obj.method(...)).
     fn generateInternalMethodCall(self: *HIRGenerator, method: @import("../../types/token.zig").Token, receiver: *ast.Expr, args: []ast.CallArgument, should_pop_after_use: bool) (std.mem.Allocator.Error || ErrorList)!void {
         const name = method.lexeme;
+
+        // Check if this is a struct method call
+        const receiver_type = self.inferTypeFromExpression(receiver);
+        if (receiver_type == .Struct) {
+            // Try to find the struct type and method
+            if (receiver.data == .Variable) {
+                // Resolve the receiver's struct type name (variable instance -> type name)
+                const recv_var_name = receiver.data.Variable.lexeme;
+                const struct_name = blk: {
+                    if (self.variable_custom_types.get(recv_var_name)) |ctype| break :blk ctype;
+                    // Fallback: if the variable name itself is a type name
+                    break :blk recv_var_name;
+                };
+                if (self.struct_methods.get(struct_name)) |method_table| {
+                    if (method_table.get(name)) |mi| {
+                        // This is a struct method call - generate as a function call
+                        const qualified_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ struct_name, name });
+                        defer self.allocator.free(qualified_name);
+
+                        // Generate arguments: push receiver first for instance methods
+                        if (!mi.is_static) {
+                            try self.generateExpression(receiver, true, false);
+                        }
+                        // Then generate explicit arguments
+                        for (args) |arg| {
+                            try self.generateExpression(arg.expr, true, false);
+                        }
+
+                        // Determine return type from semantic info
+                        const ret_type: HIRType = self.convertTypeInfo(mi.return_type.*);
+
+                        // Resolve function index if already registered
+                        const fn_index: u32 = blk: {
+                            if (self.getFunctionIndex(qualified_name)) |idx| break :blk idx;
+                            break :blk 0;
+                        };
+
+                        // Compute argument count at runtime
+                        var arg_count: u32 = @intCast(args.len);
+                        if (!mi.is_static) arg_count += 1;
+
+                        // Generate function call
+                        try self.instructions.append(.{
+                            .Call = .{
+                                .function_index = fn_index, // May be resolved later if 0
+                                .qualified_name = qualified_name,
+                                .arg_count = arg_count,
+                                .call_kind = .LocalFunction,
+                                .target_module = null,
+                                .return_type = ret_type,
+                            },
+                        });
+                        return;
+                    }
+                }
+            }
+        }
 
         // If this is not a known compiler/builtin method, treat it as a no-op on the receiver.
         // This avoids emitting a BuiltinFunction call like "get".
