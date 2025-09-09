@@ -102,8 +102,8 @@ pub fn parseEnumDecl(self: *Parser) ErrorList!ast.Stmt {
 }
 
 pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-    // Check for public keyword
     var is_public = false;
+    var is_static = false;
     if (self.peek().type == .PUBLIC) {
         is_public = true;
         self.advance(); // consume 'public'
@@ -129,49 +129,210 @@ pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*
     }
     self.advance();
 
-    // Parse fields
+    // Parse fields and methods
     var fields = std.ArrayList(*ast.StructField).init(self.allocator);
+    var methods = std.ArrayList(*ast.StructMethod).init(self.allocator);
     errdefer {
         for (fields.items) |field| {
             field.deinit(self.allocator);
             self.allocator.destroy(field);
         }
         fields.deinit();
+        for (methods.items) |method| {
+            method.deinit(self.allocator);
+            self.allocator.destroy(method);
+        }
+        methods.deinit();
     }
 
     while (self.peek().type != .RIGHT_BRACE) {
-        // Allow blank lines between fields
+        // Allow blank lines between members
         while (self.peek().type == .NEWLINE) self.advance();
-        // Parse field name
-        if (self.peek().type != .IDENTIFIER) {
-            return error.ExpectedIdentifier;
+
+        // Check for public keyword
+        var is_public_method = false;
+        if (self.peek().type == .PUBLIC) {
+            is_public_method = true;
+            self.advance(); // consume 'pub'
         }
-        const field_name = self.peek();
-        self.advance();
 
-        // Expect :
-        if (self.peek().type != .TYPE_SYMBOL) {
-            return error.ExpectedTypeAnnotation;
+        // Check if this is a function (method) or a field
+        if (self.peek().type == .FUNCTION) {
+            const location = Reporting.Location{
+                .file = self.current_file,
+                .range = .{
+                    .start_line = self.peek().line,
+                    .start_col = self.peek().column,
+                    .end_line = self.peek().line,
+                    .end_col = self.peek().column,
+                },
+            };
+            self.reporter.reportCompileError(location, ErrorCode.EXPECTED_METHOD, "Expected method, got function", .{});
+            return error.ExpectedMethod;
         }
-        self.advance();
 
-        // Parse field type
-        const type_expr = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
+        if (self.peek().type == .METHOD) {
+            // Parse method
+            self.advance(); // consume 'method'
 
-        // Create field
-        const field = try self.allocator.create(ast.StructField);
-        field.* = .{
-            .name = field_name,
-            .type_expr = type_expr,
-        };
-        try fields.append(field);
+            // Parse method name
+            if (self.peek().type != .IDENTIFIER) {
+                return error.ExpectedIdentifier;
+            }
+            const method_name = self.peek();
+            self.advance();
 
-        // Handle field separators: comma and/or newline(s)
+            // Parse parameters
+            var params = std.ArrayList(ast.FunctionParam).init(self.allocator);
+            errdefer {
+                for (params.items) |*param| {
+                    param.deinit(self.allocator);
+                }
+                params.deinit();
+            }
+
+            if (self.peek().type == .LEFT_PAREN) {
+                self.advance(); // consume '('
+
+                if (self.peek().type == .THIS) {
+                    is_static = false;
+                    self.advance(); // consume 'this'
+                    if (self.peek().type == .TYPE_SYMBOL) {
+                        self.advance(); // consume '::'
+                        is_static = true;
+                        //if type is not the same as the struct it is within, return error
+                        if (self.peek().type != .IDENTIFIER) {
+                            return error.ExpectedIdentifier;
+                        }
+                        const param_type = self.peek();
+                        self.advance();
+                        if (!std.mem.eql(u8, param_type.lexeme, name.lexeme)) {
+                            const location = Reporting.Location{
+                                .file = self.current_file,
+                                .range = .{
+                                    .start_line = param_type.line,
+                                    .start_col = param_type.column,
+                                    .end_line = param_type.line,
+                                    .end_col = param_type.column + param_type.lexeme.len,
+                                },
+                            };
+                            self.reporter.reportCompileError(location, ErrorCode.THIS_TYPE_MISMATCH, "This must be the same type as the struct it is within", .{});
+                            return error.ThisTypeMismatch;
+                        }
+                    }
+                }
+
+                while (self.peek().type != .RIGHT_PAREN) {
+                    // Allow blank lines between parameters
+                    while (self.peek().type == .NEWLINE) self.advance();
+
+                    // Parse parameter name
+                    if (self.peek().type != .IDENTIFIER) {
+                        return error.ExpectedIdentifier;
+                    }
+                    const param_name = self.peek();
+                    self.advance();
+
+                    // Parse parameter type
+                    var param_type: ?*ast.TypeExpr = null;
+                    if (self.peek().type == .TYPE_SYMBOL) {
+                        self.advance(); // consume '::'
+                        param_type = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
+                    }
+
+                    const param = ast.FunctionParam{
+                        .name = param_name,
+                        .type_expr = param_type,
+                        .default_value = null,
+                        .is_alias = false,
+                    };
+                    try params.append(param);
+
+                    // Handle parameter separators
+                    if (self.peek().type == .COMMA) {
+                        self.advance();
+                    }
+                    while (self.peek().type == .NEWLINE) self.advance();
+                }
+                self.advance(); // consume ')'
+            }
+
+            // Parse return type (optional)
+            var return_type_info = ast.TypeInfo{ .base = .Nothing };
+            if (self.peek().type == .RETURNS) {
+                self.advance(); // consume 'returns'
+                const return_type_expr = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
+                const return_type_ptr = try ast.typeInfoFromExpr(self.allocator, return_type_expr);
+                return_type_info = return_type_ptr.*;
+                self.allocator.destroy(return_type_ptr);
+            }
+
+            while (self.peek().type == .NEWLINE) self.advance();
+
+            // Parse method body
+            if (self.peek().type != .LEFT_BRACE) {
+                return error.ExpectedLeftBrace;
+            }
+            self.advance(); // consume '{'
+
+            var body = std.ArrayList(ast.Stmt).init(self.allocator);
+            errdefer {
+                for (body.items) |*stmt| {
+                    stmt.deinit(self.allocator);
+                }
+                body.deinit();
+            }
+
+            while (self.peek().type != .RIGHT_BRACE) {
+                while (self.peek().type == .NEWLINE) self.advance();
+                const stmt = try statement_parser.parseStatement(self);
+                try body.append(stmt);
+            }
+            self.advance(); // consume '}'
+
+            // Create method
+            const method = try self.allocator.create(ast.StructMethod);
+            method.* = .{
+                .name = method_name,
+                .params = try params.toOwnedSlice(),
+                .return_type_info = return_type_info,
+                .body = try body.toOwnedSlice(),
+                .is_public = is_public_method,
+                .is_static = is_static,
+            };
+            try methods.append(method);
+        } else {
+            // Parse field
+            if (self.peek().type != .IDENTIFIER) {
+                return error.ExpectedIdentifier;
+            }
+            const field_name = self.peek();
+            self.advance();
+
+            // Expect ::
+            if (self.peek().type != .TYPE_SYMBOL) {
+                return error.ExpectedTypeAnnotation;
+            }
+            self.advance();
+
+            // Parse field type
+            const type_expr = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
+
+            // Create field
+            const field = try self.allocator.create(ast.StructField);
+            field.* = .{
+                .name = field_name,
+                .type_expr = type_expr,
+                .is_public = is_public_method,
+            };
+            try fields.append(field);
+        }
+
+        // Handle separators: comma and/or newline(s)
         if (self.peek().type == .COMMA) {
             self.advance();
         }
         while (self.peek().type == .NEWLINE) self.advance();
-        // If next is right brace, finish; otherwise, next loop expects identifier
     }
 
     self.advance(); // consume right brace
@@ -199,6 +360,7 @@ pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*
             .StructDecl = ast.StructDecl{
                 .name = name,
                 .fields = try fields.toOwnedSlice(),
+                .methods = try methods.toOwnedSlice(),
                 .is_public = is_public,
             },
         },

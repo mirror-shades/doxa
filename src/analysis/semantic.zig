@@ -253,6 +253,10 @@ pub const SemanticAnalyzer = struct {
 
     // NEW: Register struct with fields
     fn registerStructType(self: *SemanticAnalyzer, struct_name: []const u8, fields: []const ast.StructFieldType) !void {
+        // If a richer struct definition already exists (e.g., from a StructDecl with visibility),
+        // do not overwrite it in the semantic registry. Still register to runtime memory manager below.
+        const already_registered = self.custom_types.contains(struct_name);
+
         var struct_fields = try self.allocator.alloc(CustomTypeInfo.StructField, fields.len);
         for (fields, 0..) |field, index| {
             // Convert ast.Type to HIRType
@@ -268,15 +272,18 @@ pub const SemanticAnalyzer = struct {
                 .field_type_info = full_type_info,
                 .custom_type_name = custom_type_name,
                 .index = @intCast(index),
+                .is_public = false,
             };
         }
 
-        const custom_type = CustomTypeInfo{
-            .name = try self.allocator.dupe(u8, struct_name),
-            .kind = .Struct,
-            .struct_fields = struct_fields,
-        };
-        try self.custom_types.put(struct_name, custom_type);
+        if (!already_registered) {
+            const custom_type = CustomTypeInfo{
+                .name = try self.allocator.dupe(u8, struct_name),
+                .kind = .Struct,
+                .struct_fields = struct_fields,
+            };
+            try self.custom_types.put(struct_name, custom_type);
+        }
 
         // Also register into runtime memory manager for VM access
         var mem_fields = try self.allocator.alloc(Memory.CustomTypeInfo.StructField, fields.len);
@@ -349,6 +356,7 @@ pub const SemanticAnalyzer = struct {
             field_type_info: *ast.TypeInfo,
             custom_type_name: ?[]const u8 = null, // For custom types like Person
             index: u32,
+            is_public: bool = false,
         };
     };
 
@@ -599,22 +607,8 @@ pub const SemanticAnalyzer = struct {
                     } else if (decl.initializer) |init_expr| {
                         // Infer from initializer
                         const inferred = try self.inferTypeFromExpr(init_expr);
-                        // Preserve map key/value types if present
-                        if (inferred.base == .Map) {
-                            const key_copy = if (inferred.map_key_type) |k| blk: {
-                                const c = try self.allocator.create(ast.TypeInfo);
-                                c.* = k.*;
-                                break :blk c;
-                            } else null;
-                            const val_copy = if (inferred.map_value_type) |v| blk: {
-                                const c = try self.allocator.create(ast.TypeInfo);
-                                c.* = v.*;
-                                break :blk c;
-                            } else null;
-                            type_info.* = .{ .base = .Map, .map_key_type = key_copy, .map_value_type = val_copy };
-                        } else {
-                            type_info.* = inferred.*;
-                        }
+                        // Deep copy the inferred type to avoid dangling internal pointers
+                        type_info.* = try self.deepCopyTypeInfo(inferred.*);
                         // Preserve the mutability from the variable declaration, not from the initializer
                         type_info.is_mutable = decl.type_info.is_mutable;
                     } else {
@@ -749,6 +743,8 @@ pub const SemanticAnalyzer = struct {
                                     .name = field.name.lexeme,
                                     .type_info = field_type_info,
                                 };
+                                // Propagate field visibility for later checks
+                                _ = field.is_public; // captured via struct_decl when building CustomTypeInfo below
                             }
 
                             // Register the struct type in the current scope
@@ -781,6 +777,25 @@ pub const SemanticAnalyzer = struct {
 
                             // NEW: Register struct type for HIR generation
                             try self.registerStructType(struct_decl.name.lexeme, struct_fields);
+
+                            // Override visibility flags in the registered struct with those declared
+                            if (self.custom_types.get(struct_decl.name.lexeme)) |*ct| {
+                                if (ct.kind == .Struct and ct.struct_fields != null) {
+                                    const sf = ct.struct_fields.?;
+                                    var field_index_map = std.StringHashMap(usize).init(self.allocator);
+                                    defer field_index_map.deinit();
+                                    for (struct_decl.fields, 0..) |fptr, i| {
+                                        _ = try field_index_map.put(fptr.name.lexeme, i);
+                                    }
+                                    for (sf) |*sfld| {
+                                        if (field_index_map.get(sfld.name)) |i| {
+                                            // Use parser flag is_public from AST field list
+                                            const declared_public = struct_decl.fields[i].is_public;
+                                            sfld.is_public = declared_public;
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 },
@@ -1155,18 +1170,77 @@ pub const SemanticAnalyzer = struct {
     fn deepCopyTypeInfo(self: *SemanticAnalyzer, type_info: ast.TypeInfo) !ast.TypeInfo {
         var copied = type_info;
 
-        // Deep copy struct fields if present
-        if (type_info.struct_fields) |fields| {
-            const new_fields = try self.allocator.alloc(ast.StructFieldType, fields.len);
-            for (fields, new_fields) |field, *new_field| {
-                // For struct fields, we don't need to create new TypeInfo objects
-                // since the field types are already properly allocated
-                new_field.* = .{
-                    .name = field.name,
-                    .type_info = field.type_info, // Just copy the pointer
-                };
-            }
-            copied.struct_fields = new_fields;
+        // Clear pointer fields; we'll rebuild them freshly as needed
+        copied.array_type = null;
+        copied.struct_fields = null;
+        copied.function_type = null;
+        copied.variants = null;
+        copied.union_type = null;
+        copied.map_key_type = null;
+        copied.map_value_type = null;
+
+        switch (type_info.base) {
+            .Array => {
+                if (type_info.array_type) |elem| {
+                    const elem_copy = try self.allocator.create(ast.TypeInfo);
+                    elem_copy.* = try self.deepCopyTypeInfo(elem.*);
+                    copied.array_type = elem_copy;
+                }
+            },
+            .Struct, .Custom => {
+                if (type_info.struct_fields) |fields| {
+                    const new_fields = try self.allocator.alloc(ast.StructFieldType, fields.len);
+                    for (fields, 0..) |field, i| {
+                        const ti_copy = try self.allocator.create(ast.TypeInfo);
+                        ti_copy.* = try self.deepCopyTypeInfo(field.type_info.*);
+                        new_fields[i] = .{ .name = field.name, .type_info = ti_copy };
+                    }
+                    copied.struct_fields = new_fields;
+                }
+            },
+            .Function => {
+                if (type_info.function_type) |fn_type| {
+                    const params_copy = try self.allocator.alloc(ast.TypeInfo, fn_type.params.len);
+                    for (fn_type.params, 0..) |p, i| {
+                        params_copy[i] = try self.deepCopyTypeInfo(p);
+                    }
+                    const ret_copy = try self.allocator.create(ast.TypeInfo);
+                    ret_copy.* = try self.deepCopyTypeInfo(fn_type.return_type.*);
+                    const fn_copy = try self.allocator.create(ast.FunctionType);
+                    fn_copy.* = .{
+                        .params = params_copy,
+                        .return_type = ret_copy,
+                        .param_aliases = if (fn_type.param_aliases) |pa| try self.allocator.dupe(bool, pa) else null,
+                    };
+                    copied.function_type = fn_copy;
+                }
+            },
+            .Union => {
+                if (type_info.union_type) |u| {
+                    const new_types = try self.allocator.alloc(*ast.TypeInfo, u.types.len);
+                    for (u.types, 0..) |member, i| {
+                        const m_copy = try self.allocator.create(ast.TypeInfo);
+                        m_copy.* = try self.deepCopyTypeInfo(member.*);
+                        new_types[i] = m_copy;
+                    }
+                    const u_copy = try self.allocator.create(ast.UnionType);
+                    u_copy.* = .{ .types = new_types, .current_type_index = u.current_type_index };
+                    copied.union_type = u_copy;
+                }
+            },
+            .Enum => {
+                if (type_info.variants) |v| {
+                    // Duplicate outer slice only; inner strings are not owned here
+                    copied.variants = try self.allocator.dupe([]const u8, v);
+                }
+            },
+            .Map => {
+                // Shallow copy key/value type pointers to avoid dereferencing
+                // potentially invalid pointers from inference.
+                copied.map_key_type = type_info.map_key_type;
+                copied.map_value_type = type_info.map_value_type;
+            },
+            else => {},
         }
 
         return copied;
@@ -1481,6 +1555,16 @@ pub const SemanticAnalyzer = struct {
                                 type_info.base = .Nothing;
                             }
                         },
+                        .Struct => {
+                            if (object_type.struct_fields) |fields| {
+                                for (fields) |field| {
+                                    if (std.mem.eql(u8, field.name, method_name)) {
+                                        type_info.* = field.type_info.*;
+                                        return type_info;
+                                    }
+                                }
+                            }
+                        },
                         else => {
                             self.reporter.reportCompileError(
                                 getLocationFromBase(expr.base),
@@ -1758,6 +1842,39 @@ pub const SemanticAnalyzer = struct {
                                                 };
                                             }
                                             type_info.* = .{ .base = .Struct, .custom_type = type_info.custom_type, .struct_fields = struct_fields_inner, .is_mutable = false };
+                                        }
+                                    }
+                                }
+
+                                // Enforce private field access: if this struct originates from a named custom type
+                                // and the field is marked private, disallow access from outside that type context.
+                                if (resolved_object_type.custom_type) |owner_name| {
+                                    if (self.custom_types.get(owner_name)) |owner_ct| {
+                                        if (owner_ct.kind == .Struct and owner_ct.struct_fields != null) {
+                                            const owner_fields = owner_ct.struct_fields.?;
+                                            // Find visibility for this field by name
+                                            var is_public_field = false; // private by default unless marked public
+                                            for (owner_fields) |ofld| {
+                                                if (std.mem.eql(u8, ofld.name, struct_field.name)) {
+                                                    is_public_field = ofld.is_public;
+                                                    break;
+                                                }
+                                            }
+                                            if (!is_public_field) {
+                                                // Basic rule: only allow private access via 'this' receiver in methods of the same struct
+                                                const accessed_via_this = (field.object.data == .This);
+                                                if (!accessed_via_this) {
+                                                    self.reporter.reportCompileError(
+                                                        getLocationFromBase(expr.base),
+                                                        ErrorCode.PRIVATE_FIELD_ACCESS,
+                                                        "Cannot access private field '{s}' of struct '{s}'",
+                                                        .{ struct_field.name, owner_name },
+                                                    );
+                                                    self.fatal_error = true;
+                                                    type_info.base = .Nothing;
+                                                    return type_info;
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -3766,6 +3883,12 @@ pub const SemanticAnalyzer = struct {
 
                 // Loops do not yield a value
                 type_info.* = .{ .base = .Nothing };
+            },
+            .This => {
+                // 'this' refers to the current struct instance in method context
+                // For now, return a generic struct type - this will be resolved during code generation
+                // TODO: Implement proper 'this' type resolution based on the current method context
+                type_info.* = .{ .base = .Struct };
             },
             // No ForEach expression variant; 'each' is desugared to a Loop statement
         }

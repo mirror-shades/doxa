@@ -13,8 +13,8 @@ enum TokenType {
 }
 
 struct Token {
-    token_type :: TokenType,
-    value :: string,
+    pub token_type :: TokenType,
+    pub value :: string,
 }
 
 function precedence(op :: string) returns int {

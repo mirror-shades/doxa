@@ -325,13 +325,13 @@ implicit_return_test()? // implicit
 // STRUCTS AND BYTES
 /////
 struct Person {
-    name :: string,
-    age :: int,
+    pub name :: string,
+    pub age :: int,
 }
 
 struct Employee {
-    person ::  Person,
-    salary :: int,
+    pub person ::  Person,
+    pub salary :: int,
 }
 
 var mike is Employee {
@@ -457,8 +457,8 @@ enum Species {
 }
 
 struct Animal {
-    animal_type :: Species,
-    name :: string,
+    pub animal_type :: Species,
+    pub name :: string,
 }
 
 const zoo :: Animal[] is [
@@ -511,7 +511,7 @@ function process_number_union_string(value :: int | float) returns string {
 process_number_union_string(un1)? // integer
 process_number_union_string(un2)? // float
 
-function process_number_union_narrow(value :: int | float) returns int {
+function process_number_union_narrow(value :: int | float) returns int | float {
     return match value {
         int then value,
         float then 0,

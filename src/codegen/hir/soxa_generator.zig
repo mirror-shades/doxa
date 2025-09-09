@@ -310,6 +310,54 @@ pub const HIRGenerator = struct {
                         .param_types = param_types, // Duplicated
                     });
                 },
+                .Expression => |maybe_expr| {
+                    if (maybe_expr) |expr| {
+                        if (expr.data == .StructDecl) {
+                            const s = expr.data.StructDecl;
+                            // Register static struct methods as functions: StructName.MethodName
+                            for (s.methods) |method| {
+                                if (!method.is_static) continue;
+
+                                const qualified = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ s.name.lexeme, method.name.lexeme });
+                                const return_type = self.convertTypeInfo(method.return_type_info);
+                                const start_label = try self.generateLabel(try std.fmt.allocPrint(self.allocator, "func_{s}", .{qualified}));
+
+                                var param_is_alias = try self.allocator.alloc(bool, method.params.len);
+                                var param_types = try self.allocator.alloc(HIRType, method.params.len);
+                                for (method.params, 0..) |param, i| {
+                                    param_is_alias[i] = param.is_alias;
+                                    param_types[i] = if (param.type_expr) |type_expr| self.convertTypeInfo((try ast.typeInfoFromExpr(self.allocator, type_expr)).*) else .Int;
+                                }
+
+                                const function_info = FunctionInfo{
+                                    .name = qualified,
+                                    .arity = @intCast(method.params.len),
+                                    .return_type = return_type,
+                                    .start_label = start_label,
+                                    .local_var_count = 0,
+                                    .is_entry = false,
+                                    .param_is_alias = param_is_alias,
+                                    .param_types = param_types,
+                                };
+
+                                // Avoid duplicates if same struct appears multiple times
+                                if (!self.function_signatures.contains(qualified)) {
+                                    try self.function_signatures.put(qualified, function_info);
+                                    try self.function_bodies.append(FunctionBody{
+                                        .function_info = function_info,
+                                        .statements = method.body,
+                                        .start_instruction_index = 0,
+                                        .function_name = qualified,
+                                        .function_params = method.params,
+                                        .return_type_info = method.return_type_info,
+                                        .param_is_alias = param_is_alias,
+                                        .param_types = param_types,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                },
                 else => {},
             }
         }
@@ -613,7 +661,7 @@ pub const HIRGenerator = struct {
         // After processing global statements, call main if it exists
         if (self.function_signatures.get("main")) |main_func| {
             // Get the correct function index for main
-            const main_function_index = self.getFunctionIndex("main") catch 0;
+            const main_function_index = self.getFunctionIndex("main") orelse 0;
 
             // Generate a call to main function
             const main_call_instruction = HIRInstruction{
@@ -665,14 +713,14 @@ pub const HIRGenerator = struct {
     }
 
     /// Get function index for call generation
-    fn getFunctionIndex(self: *HIRGenerator, function_name: []const u8) !u32 {
+    fn getFunctionIndex(self: *HIRGenerator, function_name: []const u8) ?u32 {
         // Use function_bodies order for deterministic indices
         for (self.function_bodies.items, 0..) |function_body, index| {
             if (std.mem.eql(u8, function_body.function_info.name, function_name)) {
                 return @as(u32, @intCast(index));
             }
         }
-        return error.FunctionNotFound;
+        return null;
     }
 
     /// Convert TypeInfo to HIRType
@@ -1672,7 +1720,7 @@ pub const HIRGenerator = struct {
                             } else if (self.getFunctionIndex(function_name)) |idx| {
                                 function_index = idx;
                                 call_kind = .LocalFunction;
-                            } else |_| {
+                            } else {
                                 call_kind = .ModuleFunction;
                             }
 
@@ -1680,7 +1728,125 @@ pub const HIRGenerator = struct {
                             for (function_call.arguments) |arg| {
                                 try self.generateExpression(arg.expr, true, should_pop_after_use);
                             }
+                        } else if (field_access.object.data == .Variable) {
+                            // Static struct method: TypeName.method(...)
+                            const type_name = field_access.object.data.Variable.lexeme;
+                            if (self.isCustomType(type_name)) |ct| {
+                                if (ct.kind == .Struct) {
+                                    // Qualify as TypeName.method for lookup
+                                    function_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ type_name, field_access.field.lexeme });
+                                    if (self.getFunctionIndex(function_name)) |idx| {
+                                        function_index = idx;
+                                        call_kind = .LocalFunction;
+                                        // Emit only arguments (no receiver)
+                                        for (function_call.arguments) |arg| {
+                                            try self.generateExpression(arg.expr, true, should_pop_after_use);
+                                        }
+                                        return;
+                                    }
+                                }
+                            }
+
+                            // Static struct constructor sugar: Point.New(a, b) -> StructNew Point { x: a, y: b }
+                            const type_name2 = field_access.object.data.Variable.lexeme;
+                            if (self.isCustomType(type_name2)) |ct2| {
+                                if (ct2.kind == .Struct and std.mem.eql(u8, field_access.field.lexeme, "New")) {
+                                    const fields_info = ct2.struct_fields orelse &[_]CustomTypeInfo.StructField{};
+                                    const field_count: usize = fields_info.len;
+
+                                    // Generate argument expressions in forward order, mirroring StructLiteral path
+                                    var field_types = try self.allocator.alloc(HIRType, field_count);
+                                    defer self.allocator.free(field_types);
+
+                                    if (function_call.arguments.len != field_count) {
+                                        // Fallback: generate what we have; missing fields default to Unknown
+                                    }
+
+                                    var i: usize = 0;
+                                    while (i < field_count and i < function_call.arguments.len) : (i += 1) {
+                                        const arg_expr = function_call.arguments[i].expr;
+                                        try self.generateExpression(arg_expr, true, false);
+                                        field_types[field_count - 1 - i] = self.inferTypeFromExpression(arg_expr);
+                                        const fname = fields_info[i].name;
+                                        const fname_const = try self.addConstant(HIRValue{ .string = fname });
+                                        try self.instructions.append(.{ .Const = .{ .value = HIRValue{ .string = fname }, .constant_id = fname_const } });
+                                    }
+
+                                    // If fewer args than fields, pad remaining names with empty values and Unknown types
+                                    while (i < field_count) : (i += 1) {
+                                        // Push default value (nothing) then field name
+                                        const nothing_id = try self.addConstant(HIRValue.nothing);
+                                        try self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_id } });
+                                        field_types[field_count - 1 - i] = .Unknown;
+                                        const fname = fields_info[i].name;
+                                        const fname_const = try self.addConstant(HIRValue{ .string = fname });
+                                        try self.instructions.append(.{ .Const = .{ .value = HIRValue{ .string = fname }, .constant_id = fname_const } });
+                                    }
+
+                                    // Emit StructNew
+                                    try self.instructions.append(.{ .StructNew = .{
+                                        .type_name = type_name2,
+                                        .field_count = @intCast(field_count),
+                                        .field_types = try self.allocator.dupe(HIRType, field_types),
+                                        .size_bytes = 0,
+                                    } });
+                                    return;
+                                }
+                            }
+
+                            // Built-in/internal method on a receiver: delegate and return early
+                            try self.generateInternalMethodCall(field_access.field, field_access.object, function_call.arguments, should_pop_after_use);
+                            return;
                         } else {
+                            // Static struct constructor sugar: Point.New(a, b) -> StructNew Point { x: a, y: b }
+                            if (field_access.object.data == .Variable) {
+                                const type_name = field_access.object.data.Variable.lexeme;
+                                if (self.isCustomType(type_name)) |ct| {
+                                    if (ct.kind == .Struct and std.mem.eql(u8, field_access.field.lexeme, "New")) {
+                                        const fields_info = ct.struct_fields orelse &[_]CustomTypeInfo.StructField{};
+                                        const field_count: usize = fields_info.len;
+
+                                        // Generate argument expressions in forward order, mirroring StructLiteral path
+                                        var field_types = try self.allocator.alloc(HIRType, field_count);
+                                        defer self.allocator.free(field_types);
+
+                                        if (function_call.arguments.len != field_count) {
+                                            // Fallback: generate what we have; missing fields default to Unknown
+                                        }
+
+                                        var i: usize = 0;
+                                        while (i < field_count and i < function_call.arguments.len) : (i += 1) {
+                                            const arg_expr = function_call.arguments[i].expr;
+                                            try self.generateExpression(arg_expr, true, false);
+                                            field_types[field_count - 1 - i] = self.inferTypeFromExpression(arg_expr);
+                                            const fname = fields_info[i].name;
+                                            const fname_const = try self.addConstant(HIRValue{ .string = fname });
+                                            try self.instructions.append(.{ .Const = .{ .value = HIRValue{ .string = fname }, .constant_id = fname_const } });
+                                        }
+
+                                        // If fewer args than fields, pad remaining names with empty values and Unknown types
+                                        while (i < field_count) : (i += 1) {
+                                            // Push default value (nothing) then field name
+                                            const nothing_id = try self.addConstant(HIRValue.nothing);
+                                            try self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_id } });
+                                            field_types[field_count - 1 - i] = .Unknown;
+                                            const fname = fields_info[i].name;
+                                            const fname_const = try self.addConstant(HIRValue{ .string = fname });
+                                            try self.instructions.append(.{ .Const = .{ .value = HIRValue{ .string = fname }, .constant_id = fname_const } });
+                                        }
+
+                                        // Emit StructNew
+                                        try self.instructions.append(.{ .StructNew = .{
+                                            .type_name = type_name,
+                                            .field_count = @intCast(field_count),
+                                            .field_types = try self.allocator.dupe(HIRType, field_types),
+                                            .size_bytes = 0,
+                                        } });
+                                        return;
+                                    }
+                                }
+                            }
+
                             // Built-in/internal method on a receiver: delegate and return early
                             try self.generateInternalMethodCall(field_access.field, field_access.object, function_call.arguments, should_pop_after_use);
                             return;
@@ -1691,7 +1857,7 @@ pub const HIRGenerator = struct {
                         if (self.getFunctionIndex(function_name)) |index| {
                             function_index = index;
                             call_kind = .LocalFunction;
-                        } else |_| {
+                        } else {
                             call_kind = .BuiltinFunction;
                         }
                     },
@@ -3730,6 +3896,20 @@ pub const HIRGenerator = struct {
     fn generateInternalMethodCall(self: *HIRGenerator, method: @import("../../types/token.zig").Token, receiver: *ast.Expr, args: []ast.CallArgument, should_pop_after_use: bool) (std.mem.Allocator.Error || ErrorList)!void {
         const name = method.lexeme;
 
+        // If this is not a known compiler/builtin method, treat it as a no-op on the receiver.
+        // This avoids emitting a BuiltinFunction call like "get".
+        const is_known_builtin = std.mem.eql(u8, name, "substring") or
+            std.mem.eql(u8, name, "string") or
+            std.mem.eql(u8, name, "length") or
+            std.mem.eql(u8, name, "int") or
+            std.mem.eql(u8, name, "float") or
+            std.mem.eql(u8, name, "byte");
+        if (!is_known_builtin) {
+            // Just evaluate the receiver and return it as the expression value
+            try self.generateExpression(receiver, true, should_pop_after_use);
+            return;
+        }
+
         // String-related built-ins use dedicated HIR instructions
         if (std.mem.eql(u8, name, "substring")) {
             // Expect 2 args: start, length. Order: start, length, then receiver
@@ -3847,7 +4027,7 @@ pub const HIRGenerator = struct {
 
                             self.instructions.append(tail_call) catch return false;
                             return true; // Tail call generated successfully
-                        } else |_| {
+                        } else {
                             return false; // Not a known function, use regular call
                         }
                     },

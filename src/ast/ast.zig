@@ -58,6 +58,7 @@ pub const SourceSpan = struct {
 pub const StructField = struct {
     name: Token,
     type_expr: *TypeExpr,
+    is_public: bool = false, // Fields are private by default
 
     pub fn deinit(self: *StructField, allocator: std.mem.Allocator) void {
         self.type_expr.deinit(allocator);
@@ -107,10 +108,42 @@ pub const MapEntry = struct {
     }
 };
 
+pub const StructMethod = struct {
+    name: Token,
+    params: []FunctionParam,
+    return_type_info: TypeInfo,
+    body: []Stmt,
+    is_public: bool = false,
+    is_static: bool = false, // Static methods don't have 'this' context
+
+    pub fn deinit(self: *StructMethod, allocator: std.mem.Allocator) void {
+        allocator.free(self.params);
+        for (self.body) |*stmt| {
+            stmt.deinit(allocator);
+        }
+        allocator.free(self.body);
+    }
+};
+
 pub const StructDecl = struct {
     name: Token,
     fields: []*StructField,
+    methods: []*StructMethod = &[_]*StructMethod{}, // Methods are optional
     is_public: bool = false,
+
+    pub fn deinit(self: *StructDecl, allocator: std.mem.Allocator) void {
+        for (self.fields) |field| {
+            field.deinit(allocator);
+            allocator.destroy(field);
+        }
+        allocator.free(self.fields);
+
+        for (self.methods) |method| {
+            method.deinit(allocator);
+            allocator.destroy(method);
+        }
+        allocator.free(self.methods);
+    }
 };
 
 //======================================================================
@@ -728,6 +761,7 @@ pub const Expr = struct {
         Break: void,
         TypeExpr: *TypeExpr,
         Loop: Loop,
+        This: void, // 'this' keyword for method context
     };
 
     pub fn getBase(self: *Expr) *Base {
@@ -865,6 +899,12 @@ pub const Expr = struct {
                     allocator.destroy(field);
                 }
                 allocator.free(s.fields);
+
+                for (s.methods) |method| {
+                    method.deinit(allocator);
+                    allocator.destroy(method);
+                }
+                allocator.free(s.methods);
             },
             .StructLiteral => |*s| {
                 for (s.fields) |field| {
@@ -1139,6 +1179,7 @@ pub const Expr = struct {
                 l.body.deinit(allocator);
                 allocator.destroy(l.body);
             },
+            .This => {}, // 'this' doesn't own any memory
         }
     }
 };

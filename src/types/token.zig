@@ -53,6 +53,8 @@ pub const TokenType = enum {
     ASSERT, // assert
     RETURN, // return
     BREAK, // break
+    FUNCTION, // function
+    METHOD, // method
     CONTINUE, // continue
     MATCH, // match
     WHILE, // while
@@ -74,6 +76,7 @@ pub const TokenType = enum {
     ENTRY, // entry
     RANGE, // to
     RETURNS, // returns
+    THIS, // this
 
     // compiler level methods (@methods)
     TYPE, // typeof / type
@@ -144,7 +147,6 @@ pub const TokenType = enum {
     FLOAT_TYPE, // float type declaration
     STRING_TYPE, // string type declaration
     TETRA_TYPE, // tetra type declaration
-    ALIAS_TYPE, // alias type declaration
     NOTHING_TYPE, // nothing type declaration
 
     // molecular types
@@ -153,15 +155,11 @@ pub const TokenType = enum {
     MAP, // map
     UNION, // union
     ARRAY, // array
-    FUNCTION, // function
-    INTRINSIC, // intrinsic
     ARRAY_TYPE, // array type declaration
     STRUCT_TYPE, // struct type declaration
     ENUM_TYPE, // enum type declaration
     MAP_TYPE, // map type declaration
     UNION_TYPE, // union type declaration
-    FUNCTION_TYPE, // function type declaration
-    INTRINSIC_TYPE, // intrinsic type declaration
 
     // type helpers
     FIELD_ACCESS, // field access
