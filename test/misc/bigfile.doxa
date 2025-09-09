@@ -322,7 +322,7 @@ function implicit_return_test() returns string {
 implicit_return_test()? // implicit
 
 /////
-// STRUCTS AND BYTES
+// STRUCTS
 /////
 struct Person {
     pub name :: string,
@@ -354,6 +354,47 @@ mike.person.name[0]? // M
 @bytes(mike.person.name)[0]? // 77
 
 mike.salary? // 1000
+
+
+struct Point {
+    x :: int,
+    y :: int,
+
+    pub method New(x :: int, y :: int) returns Point {
+        return Point {
+            x is x,
+            y is y,
+        }
+    }
+
+    pub method getX(this) { // when `this` is included, it becomes an instance method. `this` will be infered this as Point
+        return this.x
+    }
+
+    pub method getY(this) {
+        return this.y
+    }
+
+    method safeSub(a :: int, b :: int) returns int { // functions without the "this" parameter are static
+        const result is a - b
+        if result > 255 or result < 0 then return -1
+        return result
+    }
+
+    pub method getDelta(this :: Point) returns int {
+        return Point.safeSub(this.x, this.y)
+    }
+}
+
+var point is Point.New(5, 2)
+point?
+point.getX()?
+point.getY()?
+Point.safeSub(10, 2)?
+Point.safeSub(2, 10)?
+point.getDelta()?
+
+
 
 /////
 // TETRAS AND CONTRADICTIONS
