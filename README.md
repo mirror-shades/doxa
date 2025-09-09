@@ -60,10 +60,6 @@ VM pipeline is currently working as expected with almost all core features imple
 TODO:
 
 - finish implementing methods listed in documentation
-- add flex numbers
-
-Second Pipeline:
-
 - SOXA to LLVMIR code gen
 
 ## Native Types
