@@ -233,7 +233,7 @@ fn map(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     }
     self.advance();
 
-    const map_expr = try self.allocator.create(ast.Expr);
-    map_expr.* = .{ .Map = try entries.toOwnedSlice() };
-    return map_expr;
+    // Map literals are now statements, not expressions
+    // This function should not be called for map literals anymore
+    return error.MapLiteralsMustBeStatements;
 }

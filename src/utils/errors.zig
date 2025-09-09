@@ -61,6 +61,7 @@ pub const ErrorList = error{
     byteUnderflow,
     CannotModifyConstant,
     TypeMismatch,
+    InvalidAliasArgument,
 
     // Function & Frame Management
     InvalidFunction,
@@ -82,6 +83,8 @@ pub const ErrorList = error{
     MissingEntryPointFunction,
     FunctionNotFound,
     UnsupportedFunctionCallType,
+    MapLiteralsMustBeStatements,
+    ExpectedMapKeyword,
 
     // Collections & Indexing
     IndexOutOfBounds,
@@ -303,10 +306,6 @@ pub const ErrorList = error{
     UnmatchedOpenBrace,
     NotEnoughInterpolationArguments,
     TooManyInterpolationArguments,
-    INVALID_ALIAS_ARGUMENT, // NEW: Alias argument must be a variable
-    INVALID_ALIAS_PARAMETER, // NEW: Alias parameter must be bound to an existing variable
-    ALIAS_PARAMETER_REQUIRED, // NEW: Function parameter requires an alias argument
-    ALIAS_ARGUMENT_NOT_NEEDED, // NEW: Function parameter does not require an alias argument
 };
 
 pub const ErrorCode = struct {

@@ -85,6 +85,28 @@ pub const StructInstanceField = struct {
     }
 };
 
+pub const MapField = struct {
+    name: Token,
+    type_expr: *TypeExpr,
+
+    pub fn deinit(self: *MapField, allocator: std.mem.Allocator) void {
+        self.type_expr.deinit(allocator);
+        allocator.destroy(self.type_expr);
+    }
+};
+
+pub const MapEntry = struct {
+    key: *Expr,
+    value: *Expr,
+
+    pub fn deinit(self: *MapEntry, allocator: std.mem.Allocator) void {
+        self.key.deinit(allocator);
+        allocator.destroy(self.key);
+        self.value.deinit(allocator);
+        allocator.destroy(self.value);
+    }
+};
+
 pub const StructDecl = struct {
     name: Token,
     fields: []*StructField,
@@ -212,12 +234,17 @@ pub const Stmt = struct {
             is_public: bool = false,
             defining_module: ?[]const u8 = null,
         },
+        MapDecl: struct {
+            name: Token,
+            fields: []*MapField,
+            is_public: bool = false,
+        },
         Return: struct {
             value: ?*Expr,
             type_info: TypeInfo,
         },
         EnumDecl: EnumDecl,
-        Map: []MapEntry,
+        MapLiteral: []*MapEntry,
         Try: TryStmt,
         Module: struct {
             name: Token,
@@ -284,12 +311,17 @@ pub const Stmt = struct {
             .EnumDecl => |decl| {
                 allocator.free(decl.variants);
             },
-            .Map => |entries| {
+            .MapDecl => |*m| {
+                for (m.fields) |field| {
+                    field.deinit(allocator);
+                    allocator.destroy(field);
+                }
+                allocator.free(m.fields);
+            },
+            .MapLiteral => |entries| {
                 for (entries) |entry| {
-                    entry.key.deinit(allocator);
-                    allocator.destroy(entry.key);
-                    entry.value.deinit(allocator);
-                    allocator.destroy(entry.value);
+                    entry.deinit(allocator);
+                    allocator.destroy(entry);
                 }
                 allocator.free(entries);
             },
@@ -370,11 +402,6 @@ pub const CompoundAssignment = struct {
     name: Token,
     operator: Token,
     value: ?*Expr,
-};
-
-pub const MapEntry = struct {
-    key: *Expr,
-    value: *Expr,
 };
 
 pub const Index = struct {
@@ -577,6 +604,7 @@ pub const Expr = struct {
         TypeOf: *Expr,
         LengthOf: *Expr,
         BytesOf: *Expr,
+        // Map literal expression (only allowed in declaration initializers)
         Map: []MapEntry,
         InternalCall: struct {
             receiver: *Expr,
@@ -899,6 +927,7 @@ pub const Expr = struct {
             },
             .Map => |entries| {
                 for (entries) |entry| {
+                    // Each MapEntry owns its key and value Expr
                     entry.key.deinit(allocator);
                     allocator.destroy(entry.key);
                     entry.value.deinit(allocator);

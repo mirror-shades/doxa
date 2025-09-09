@@ -685,6 +685,7 @@ pub const HIRGenerator = struct {
             .Tetra => .Tetra,
             .Byte => .Byte,
             .Array => .Array,
+            .Map => .Map,
             .Union => .Union,
             else => .Nothing,
         };
@@ -1106,6 +1107,39 @@ pub const HIRGenerator = struct {
                 // Success label - continue execution
                 try self.instructions.append(.{ .Label = .{ .name = success_label, .vm_address = 0 } });
             },
+            .MapLiteral => |entries| {
+                // Generate each key-value pair in reverse order (for stack-based construction)
+                var reverse_i = entries.len;
+                while (reverse_i > 0) {
+                    reverse_i -= 1;
+                    const entry = entries[reverse_i];
+
+                    // Generate key first, then value (they'll be popped in reverse order)
+                    try self.generateExpression(entry.key, true, false);
+                    try self.generateExpression(entry.value, true, false);
+                }
+
+                // Create HIRMapEntry array with the right size (will be populated by VM)
+                const dummy_entries = try self.allocator.alloc(HIRMapEntry, entries.len);
+                // Initialize with dummy values (VM will replace with actual values from stack)
+                for (dummy_entries) |*entry| {
+                    entry.* = HIRMapEntry{
+                        .key = HIRValue.nothing,
+                        .value = HIRValue.nothing,
+                    };
+                }
+
+                const map_instruction = HIRInstruction{
+                    .Map = .{
+                        .entries = dummy_entries,
+                        .key_type = .String, // Assume string keys for now
+                        .value_type = .Unknown, // Will be inferred from values
+                    },
+                };
+
+                // Generate HIR Map instruction
+                try self.instructions.append(map_instruction);
+            },
             else => {
                 self.reporter.reportCompileError(
                     stmt.base.location(),
@@ -1197,6 +1231,31 @@ pub const HIRGenerator = struct {
         // We will assume expressions passed here have valid type information.
 
         switch (expr.data) {
+            .Map => |entries| {
+                // Generate key-value pairs in reverse order so the VM pops in source order
+                var reverse_i: usize = entries.len;
+                while (reverse_i > 0) {
+                    reverse_i -= 1;
+                    const entry = entries[reverse_i];
+                    try self.generateExpression(entry.key, true, false);
+                    try self.generateExpression(entry.value, true, false);
+                }
+
+                // Prepare dummy HIRMapEntry slice; VM will read actual values from stack
+                const dummy_entries = try self.allocator.alloc(HIRMapEntry, entries.len);
+                for (dummy_entries) |*e| {
+                    e.* = HIRMapEntry{ .key = HIRValue.nothing, .value = HIRValue.nothing };
+                }
+
+                const map_instruction = HIRInstruction{
+                    .Map = .{
+                        .entries = dummy_entries,
+                        .key_type = .String, // default; VM works with runtime values
+                        .value_type = .Unknown,
+                    },
+                };
+                try self.instructions.append(map_instruction);
+            },
             .Literal => |lit| {
                 const hir_value = switch (lit) {
                     .int => |i| HIRValue{ .int = i },
@@ -1699,7 +1758,7 @@ pub const HIRGenerator = struct {
                                     "Alias argument must be a variable (e.g., ^myVar)",
                                     .{},
                                 );
-                                return ErrorList.INVALID_ALIAS_ARGUMENT;
+                                return ErrorList.InvalidAliasArgument;
                             }
                         } else {
                             try self.generateExpression(arg.expr, true, false);
@@ -2126,11 +2185,11 @@ pub const HIRGenerator = struct {
                         const key_type = if (idx_type == .Int) HIRType.Int else HIRType.String;
                         try self.instructions.append(.{ .MapGet = .{ .key_type = key_type } });
                     },
-                    .Array => {
+                    .Array, .String => {
                         // Generate index expression
                         try self.generateExpression(index.index, true, false);
 
-                        // Array access - use ArrayGet
+                        // Array or string access - use ArrayGet
                         try self.instructions.append(.{ .ArrayGet = .{ .bounds_check = true } });
 
                         // Record element type for index expressions into variables
@@ -2144,7 +2203,7 @@ pub const HIRGenerator = struct {
                         // Generate index expression
                         try self.generateExpression(index.index, true, false);
 
-                        // Default to array access for now
+                        // Default unknown container to ArrayGet (covers strings/arrays); Map is detected explicitly above
                         try self.instructions.append(.{ .ArrayGet = .{ .bounds_check = true } });
                     },
                 }
@@ -3234,40 +3293,7 @@ pub const HIRGenerator = struct {
                     .StringOp = .{ .op = .ToByte },
                 });
             },
-            .Map => |entries| {
-
-                // Generate each key-value pair in reverse order (for stack-based construction)
-                var reverse_i = entries.len;
-                while (reverse_i > 0) {
-                    reverse_i -= 1;
-                    const entry = entries[reverse_i];
-
-                    // Generate key first, then value (they'll be popped in reverse order)
-                    try self.generateExpression(entry.key, true, false);
-                    try self.generateExpression(entry.value, true, false);
-                }
-
-                // Create HIRMapEntry array with the right size (will be populated by VM)
-                const dummy_entries = try self.allocator.alloc(HIRMapEntry, entries.len);
-                // Initialize with dummy values (VM will replace with actual values from stack)
-                for (dummy_entries) |*entry| {
-                    entry.* = HIRMapEntry{
-                        .key = HIRValue.nothing,
-                        .value = HIRValue.nothing,
-                    };
-                }
-
-                const map_instruction = HIRInstruction{
-                    .Map = .{
-                        .entries = dummy_entries,
-                        .key_type = .String, // Assume string keys for now
-                        .value_type = .Unknown, // Will be inferred from values
-                    },
-                };
-
-                // Generate HIR Map instruction
-                try self.instructions.append(map_instruction);
-            },
+            // Map literals are now statements, not expressions
 
             .DefaultArgPlaceholder => {
 
@@ -3855,6 +3881,7 @@ pub const HIRGenerator = struct {
     fn inferTypeFromExpression(self: *HIRGenerator, expr: *ast.Expr) HIRType {
         return switch (expr.data) {
             .Literal => |lit| self.inferTypeFromLiteral(lit),
+            .Map => .Map,
             .Variable => |var_token| {
                 // First check if this is a custom type name
                 if (self.isCustomType(var_token.lexeme)) |custom_type| {
@@ -4011,7 +4038,6 @@ pub const HIRGenerator = struct {
                 // For logical negation, always return tetra regardless of operand type
                 return .Tetra; // Negation of any logical expression returns tetra
             },
-            .Map => .Map,
             .Grouping => |grouping| {
                 // Grouping (parentheses) - infer from the inner expression
                 if (grouping) |inner_expr| {
