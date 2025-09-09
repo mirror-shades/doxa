@@ -142,6 +142,7 @@ pub const rules = blk: {
     r.set(.VAR, .{ .prefix = variable });
     r.set(.CONST, .{ .prefix = variable });
     r.set(.IDENTIFIER, .{ .prefix = variable });
+    r.set(.THIS, .{ .prefix = variable });
     r.set(.ASSIGN, .{ .infix = assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
     r.set(.ARRAY_TYPE, .{ .prefix = variable, .infix = fieldAccess });
 

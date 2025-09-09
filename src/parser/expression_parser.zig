@@ -1360,6 +1360,19 @@ pub fn variable(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Exp
     const name = self.peek();
     self.advance();
 
+    // Handle 'this' keyword
+    if (name.type == .THIS) {
+        const this_expr = try self.allocator.create(ast.Expr);
+        this_expr.* = .{
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(name),
+            },
+            .data = .{ .This = {} },
+        };
+        return this_expr;
+    }
+
     // Check if this is an imported symbol with namespace prefix
     if (self.peek().type == .DOT) {
         // This could be a namespace access (module.symbol)

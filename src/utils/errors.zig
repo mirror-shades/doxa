@@ -85,6 +85,7 @@ pub const ErrorList = error{
     UnsupportedFunctionCallType,
     MapLiteralsMustBeStatements,
     ExpectedMapKeyword,
+    ExpectedMethod,
 
     // Collections & Indexing
     IndexOutOfBounds,
@@ -109,6 +110,7 @@ pub const ErrorList = error{
     UndefinedType,
     UndefinedProperty,
     MethodNotImplemented,
+    ThisTypeMismatch,
 
     // Error Handling
     NoTryBlock,
@@ -388,6 +390,8 @@ pub const ErrorCode = struct {
     pub const INVALID_FUNCTION_TYPE = "E5010";
     pub const MISSING_RETURN_VALUE = "E5011";
     pub const UNSUPPORTED_FUNCTION_CALL_TYPE = "E5012";
+    pub const EXPECTED_METHOD = "E5013";
+    pub const THIS_TYPE_MISMATCH = "E5014";
 
     // 6xxx - Collections & Data Structures
     pub const INVALID_ARRAY_TYPE = "E6001";
@@ -405,6 +409,7 @@ pub const ErrorCode = struct {
     pub const INVALID_STRING_TYPE = "E6013";
     pub const INVALID_STRING_INDEX_TYPE = "E6014";
     pub const INVALID_RETURN_TYPE_FOR_UNION = "E6015";
+    pub const PRIVATE_FIELD_ACCESS = "E6016";
 
     // 7xxx - Modules & Imports
     pub const MODULE_NOT_FOUND = "E7001";
