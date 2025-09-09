@@ -176,6 +176,24 @@ fn compileDoxaToSoxaFromAST(memoryManager: *MemoryManager, statements: []ast.Stm
         try hir_generator.custom_types.put(custom_type.name, converted_type);
     }
 
+    // NEW: Import struct methods from semantic analysis (deep copy tables to avoid double-free)
+    const struct_methods = semantic_analyzer.getStructMethods();
+    var struct_methods_iter = struct_methods.iterator();
+    while (struct_methods_iter.next()) |entry| {
+        const struct_name = entry.key_ptr.*;
+        const method_table_src = entry.value_ptr.*;
+
+        var method_table_dst = std.StringHashMap(@import("analysis/semantic.zig").StructMethodInfo).init(memoryManager.getAllocator());
+        var mi_it = method_table_src.iterator();
+        while (mi_it.next()) |mi_entry| {
+            const mname = mi_entry.key_ptr.*;
+            const mi = mi_entry.value_ptr.*;
+            try method_table_dst.put(mname, mi);
+        }
+
+        try hir_generator.struct_methods.put(struct_name, method_table_dst);
+    }
+
     var hir_program = try hir_generator.generateProgram(folded_statements.items);
     defer hir_program.deinit();
 

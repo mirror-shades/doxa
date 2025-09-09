@@ -199,8 +199,7 @@ pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*
                     self.advance(); // consume 'this'
                     if (self.peek().type == .TYPE_SYMBOL) {
                         self.advance(); // consume '::'
-                        is_static = true;
-                        //if type is not the same as the struct it is within, return error
+                        // Validate that the annotated type matches the enclosing struct name
                         if (self.peek().type != .IDENTIFIER) {
                             return error.ExpectedIdentifier;
                         }

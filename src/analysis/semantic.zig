@@ -55,6 +55,7 @@ pub const SemanticAnalyzer = struct {
     current_scope: ?*Scope,
     type_cache: std.AutoHashMap(NodeId, *ast.TypeInfo),
     custom_types: std.StringHashMap(CustomTypeInfo),
+    struct_methods: std.StringHashMap(std.StringHashMap(@This().StructMethodInfo)),
     function_return_types: std.AutoHashMap(NodeId, *ast.TypeInfo),
     current_function_returns: std.ArrayList(*ast.TypeInfo),
     current_initializing_var: ?[]const u8 = null,
@@ -69,6 +70,7 @@ pub const SemanticAnalyzer = struct {
             .current_scope = null,
             .type_cache = std.AutoHashMap(NodeId, *ast.TypeInfo).init(allocator),
             .custom_types = std.StringHashMap(CustomTypeInfo).init(allocator),
+            .struct_methods = std.StringHashMap(std.StringHashMap(@This().StructMethodInfo)).init(allocator),
             .function_return_types = std.AutoHashMap(NodeId, *ast.TypeInfo).init(allocator),
             .current_function_returns = std.ArrayList(*ast.TypeInfo).init(allocator),
             .parser = parser,
@@ -78,13 +80,28 @@ pub const SemanticAnalyzer = struct {
     pub fn deinit(self: *SemanticAnalyzer) void {
         self.type_cache.deinit();
         self.custom_types.deinit();
+        var methods_it = self.struct_methods.valueIterator();
+        while (methods_it.next()) |tbl| tbl.*.deinit();
+        self.struct_methods.deinit();
         self.function_return_types.deinit();
         self.current_function_returns.deinit();
     }
 
+    pub const StructMethodInfo = struct {
+        name: []const u8,
+        is_public: bool,
+        is_static: bool,
+        return_type: *ast.TypeInfo,
+    };
+
     // NEW: Export custom type information for HIR generation
     pub fn getCustomTypes(self: *SemanticAnalyzer) std.StringHashMap(CustomTypeInfo) {
         return self.custom_types;
+    }
+
+    // NEW: Export struct methods for HIR generation
+    pub fn getStructMethods(self: *SemanticAnalyzer) std.StringHashMap(std.StringHashMap(@This().StructMethodInfo)) {
+        return self.struct_methods;
     }
 
     // NEW: Flatten union types to ensure no nested unions
@@ -796,6 +813,48 @@ pub const SemanticAnalyzer = struct {
                                     }
                                 }
                             }
+
+                            // Register struct methods (static and instance)
+                            var method_table = std.StringHashMap(@This().StructMethodInfo).init(self.allocator);
+                            defer {
+                                // If we inserted the table into struct_methods we must not deinit here
+                                // Deinit only if not stored due to error
+                            }
+                            for (struct_decl.methods) |m| {
+                                // Determine return type: use declared, or default for instance methods to the struct type when missing
+                                var ret_type_ptr: *ast.TypeInfo = undefined;
+                                if (m.return_type_info.base != .Nothing) {
+                                    const rtp = try self.allocator.create(ast.TypeInfo);
+                                    rtp.* = try self.resolveTypeInfo(m.return_type_info);
+                                    ret_type_ptr = rtp;
+                                } else {
+                                    // Heuristic: if instance method without explicit return, default to this struct type
+                                    const rtp = try self.allocator.create(ast.TypeInfo);
+                                    rtp.* = .{ .base = .Struct, .custom_type = struct_decl.name.lexeme, .struct_fields = struct_fields, .is_mutable = false };
+                                    ret_type_ptr = rtp;
+                                }
+
+                                const mi = @This().StructMethodInfo{
+                                    .name = m.name.lexeme,
+                                    .is_public = m.is_public,
+                                    .is_static = m.is_static,
+                                    .return_type = ret_type_ptr,
+                                };
+                                // Last one wins if duplicate
+                                _ = try method_table.put(m.name.lexeme, mi);
+                            }
+                            // Store/merge into analyzer's method registry
+                            if (self.struct_methods.getPtr(struct_decl.name.lexeme)) |existing| {
+                                var it = method_table.iterator();
+                                while (it.next()) |entry| {
+                                    _ = try existing.put(entry.key_ptr.*, entry.value_ptr.*);
+                                }
+                                // method_table will be deinit'd by defer but entries are copied
+                            } else {
+                                try self.struct_methods.put(struct_decl.name.lexeme, method_table);
+                                // Prevent defer cleanup for stored table
+                                // Note: intentionally not calling method_table.deinit()
+                            }
                         }
                     }
                 },
@@ -1494,6 +1553,20 @@ pub const SemanticAnalyzer = struct {
                             type_info.* = .{ .base = .Int }; // Assume module functions return int for now
                             return type_info;
                         }
+
+                        // Check if this is a static method call on a struct type (e.g., Point.New)
+                        if (self.custom_types.get(object_name)) |custom_type| {
+                            if (custom_type.kind == .Struct) {
+                                if (self.struct_methods.get(object_name)) |method_table| {
+                                    if (method_table.get(method_name)) |method_info| {
+                                        if (method_info.is_static) {
+                                            type_info.* = method_info.return_type.*;
+                                            return type_info;
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     // Handle method calls based on object type
@@ -1539,31 +1612,59 @@ pub const SemanticAnalyzer = struct {
                             }
                         },
                         .Map => {
-                            // Handle map methods
-                            if (std.mem.eql(u8, method_name, "get")) {
-                                type_info.* = .{ .base = .Nothing }; // TODO: Return actual value type
-                            } else if (std.mem.eql(u8, method_name, "set")) {
-                                type_info.* = .{ .base = .Nothing };
-                            } else {
-                                self.reporter.reportCompileError(
-                                    getLocationFromBase(expr.base),
-                                    ErrorCode.UNKNOWN_METHOD,
-                                    "Unknown map method '{s}'",
-                                    .{method_name},
-                                );
-                                self.fatal_error = true;
-                                type_info.base = .Nothing;
-                            }
+                            // Disallow dot-methods on maps; use bracket indexing instead
+                            self.reporter.reportCompileError(
+                                getLocationFromBase(expr.base),
+                                ErrorCode.UNKNOWN_METHOD,
+                                "Maps do not have methods; use indexing (map[key]) or assignment (map[key] is value)",
+                                .{},
+                            );
+                            self.fatal_error = true;
+                            type_info.base = .Nothing;
                         },
-                        .Struct => {
+                        .Struct, .Custom => {
+                            // Handle both Struct and Custom types for method resolution
+                            var struct_name: ?[]const u8 = null;
+                            if (object_type.base == .Custom) {
+                                if (object_type.custom_type) |ct_name| {
+                                    struct_name = ct_name;
+                                }
+                            } else if (object_type.base == .Struct) {
+                                if (object_type.custom_type) |ct_name| {
+                                    struct_name = ct_name;
+                                }
+                            }
+
+                            // Prefer registered methods over fields when resolving a call
+                            if (struct_name) |name| {
+                                if (self.struct_methods.get(name)) |tbl| {
+                                    if (tbl.get(method_name)) |mi| {
+                                        type_info.* = mi.return_type.*;
+                                        return type_info;
+                                    }
+                                }
+                            }
+
+                            // Fallback: allow calling function-typed fields as methods (if any)
                             if (object_type.struct_fields) |fields| {
                                 for (fields) |field| {
-                                    if (std.mem.eql(u8, field.name, method_name)) {
+                                    if (std.mem.eql(u8, field.name, method_name) and field.type_info.base == .Function) {
                                         type_info.* = field.type_info.*;
                                         return type_info;
                                     }
                                 }
                             }
+
+                            // If we reach here, no method matched
+                            const display_name = struct_name orelse @as([]const u8, "<struct>");
+                            self.reporter.reportCompileError(
+                                getLocationFromBase(expr.base),
+                                ErrorCode.UNKNOWN_METHOD,
+                                "Unknown method '{s}' on struct '{s}'",
+                                .{ method_name, display_name },
+                            );
+                            self.fatal_error = true;
+                            type_info.base = .Nothing;
                         },
                         else => {
                             self.reporter.reportCompileError(
@@ -5191,3 +5292,6 @@ pub const SemanticAnalyzer = struct {
         }
     }
 };
+
+// Expose StructMethodInfo at module scope for codegen imports
+pub const StructMethodInfo = SemanticAnalyzer.StructMethodInfo;
