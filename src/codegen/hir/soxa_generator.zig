@@ -566,6 +566,32 @@ pub const HIRGenerator = struct {
                 }
             }
 
+            // Handle implicit receiver for instance methods: store 'this'
+            // Only for struct instance methods (not static and not free functions)
+            if (std.mem.indexOfScalar(u8, function_body.function_info.name, '.')) |dot_idx| {
+                const struct_name = function_body.function_info.name[0..dot_idx];
+                const method_name = function_body.function_info.name[dot_idx + 1 ..];
+                if (self.struct_methods.get(struct_name)) |method_table| {
+                    if (method_table.get(method_name)) |mi| {
+                        if (!mi.is_static) {
+                            const this_idx2 = try self.getOrCreateVariable("this");
+                            // Track type for 'this' to be a struct by default
+                            try self.trackVariableType("this", .Struct);
+                            try self.instructions.append(.{ .StoreVar = .{
+                                .var_index = this_idx2,
+                                .var_name = "this",
+                                .scope_kind = .Local,
+                                .module_context = null,
+                                .expected_type = .Struct,
+                            } });
+                        } else {
+                            // Ensure no accidental 'this' store in static methods
+                            // (No-op; we simply don't emit any StoreVar here.)
+                        }
+                    }
+                }
+            }
+
             // Special handling: if this is a struct instance method, ensure the implicit 'this' is stored
             // Convention: instance methods declare first param named 'this' (parser supplies it)
             if (params.len > 0 and std.mem.eql(u8, params[0].name.lexeme, "this")) {
@@ -927,6 +953,25 @@ pub const HIRGenerator = struct {
                         if (var_type == .Struct and init_expr.data == .StructLiteral) {
                             const struct_lit = init_expr.data.StructLiteral;
                             try self.trackVariableCustomType(decl.name.lexeme, struct_lit.name.lexeme);
+                        }
+
+                        // NEW: Detect struct constructor sugar calls like TypeName.New(...)
+                        // and record the variable's struct type so instance methods resolve.
+                        if (init_expr.data == .FunctionCall) {
+                            const call = init_expr.data.FunctionCall;
+                            if (call.callee.data == .FieldAccess) {
+                                const callee_field = call.callee.data.FieldAccess;
+                                if (callee_field.object.data == .Variable and std.mem.eql(u8, callee_field.field.lexeme, "New")) {
+                                    const type_name = callee_field.object.data.Variable.lexeme;
+                                    if (self.isCustomType(type_name)) |ct_new| {
+                                        if (ct_new.kind == .Struct) {
+                                            // Track custom type name (e.g., point -> Point) and set var type
+                                            try self.trackVariableCustomType(decl.name.lexeme, type_name);
+                                            var_type = .Struct;
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
 
@@ -1300,6 +1345,16 @@ pub const HIRGenerator = struct {
         // We will assume expressions passed here have valid type information.
 
         switch (expr.data) {
+            .This => {
+                // Load implicit receiver 'this' from local variable
+                const this_idx = try self.getOrCreateVariable("this");
+                try self.instructions.append(.{ .LoadVar = .{
+                    .var_index = this_idx,
+                    .var_name = "this",
+                    .scope_kind = .Local,
+                    .module_context = null,
+                } });
+            },
             .Map => |entries| {
                 // Generate key-value pairs in reverse order so the VM pops in source order
                 var reverse_i: usize = entries.len;

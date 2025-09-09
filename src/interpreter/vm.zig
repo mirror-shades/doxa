@@ -1012,7 +1012,10 @@ pub const HIRVM = struct {
                         if (storage.*.constant) {
                             const is_nothing = storage.*.value == .nothing;
                             if (!is_nothing) {
-                                // Already initialized constant - skip
+                                // Shadow initialized constant with a new local constant in the current scope
+                                _ = self.current_scope.createValueBinding(v.var_name, token_literal, token_type, type_info, true) catch |err| {
+                                    return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Failed to create constant {s}: {}", .{ v.var_name, err });
+                                };
                                 return;
                             }
                         }

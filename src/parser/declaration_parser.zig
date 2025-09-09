@@ -103,7 +103,6 @@ pub fn parseEnumDecl(self: *Parser) ErrorList!ast.Stmt {
 
 pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     var is_public = false;
-    var is_static = false;
     if (self.peek().type == .PUBLIC) {
         is_public = true;
         self.advance(); // consume 'public'
@@ -182,6 +181,9 @@ pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*
             const method_name = self.peek();
             self.advance();
 
+            // Default: methods are static unless they include 'this'
+            var method_is_static: bool = true;
+
             // Parse parameters
             var params = std.ArrayList(ast.FunctionParam).init(self.allocator);
             errdefer {
@@ -195,7 +197,7 @@ pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*
                 self.advance(); // consume '('
 
                 if (self.peek().type == .THIS) {
-                    is_static = false;
+                    method_is_static = false;
                     self.advance(); // consume 'this'
                     if (self.peek().type == .TYPE_SYMBOL) {
                         self.advance(); // consume '::'
@@ -297,7 +299,7 @@ pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*
                 .return_type_info = return_type_info,
                 .body = try body.toOwnedSlice(),
                 .is_public = is_public_method,
-                .is_static = is_static,
+                .is_static = method_is_static,
             };
             try methods.append(method);
         } else {
