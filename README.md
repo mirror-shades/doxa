@@ -59,7 +59,8 @@ VM pipeline is currently working as expected with almost all core features imple
 
 TODO:
 
-- finish implementing methods listed in documentation
+- standard lib
+- `to` spread op
 - SOXA to LLVMIR code gen
 
 ## Native Types

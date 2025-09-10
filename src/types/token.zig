@@ -77,28 +77,31 @@ pub const TokenType = enum {
     THIS, // this
 
     // compiler level methods (@methods)
-    TYPE, // typeof / type
-    INPUT, // input
-    LENGTH, // length
-    SLICE, // slice
-    PUSH, // push
-    POP, // pop
-    INSERT, // insert
-    ASSERT, // assert
-    REMOVE, // remove
-    CLEAR, // clear
-    FIND, // find
-    TOSTRING, // parseString / string
-    TOINT, // parseInt / int
-    TOFLOAT, // parseFloat / float
-    TOBYTE, // parseByte / byte
-    READ, // read
-    WRITE, // write
-    PANIC, // panic
-    SHALLOW, // shallow copy
-    PRINT, // print
-    SYSCALL, // syscall
+    TYPE, // @type        - get type name as string
+    INPUT, // @input       - read from stdin
+    LENGTH, // @length      - get length of string/array
+    SLICE, // @slice       - get substring/subarray
+    PUSH, // @push        - add to end of array
+    POP, // @pop         - remove from end of array
+    INSERT, // @insert      - insert into array at index
+    REMOVE, // @remove      - remove from array at index
+    CLEAR, // @clear       - clear array
+    FIND, // @find        - find index of value
+    ASSERT, // @assert      - assert condition with message
+    PANIC, // @panic       - panic with message
+    PRINT, // @print       - print to stdout
+    SYSCALL, // @syscall     - raw system call
+    SHALLOW, // @shallow     - shallow copy
+    READ, // @read        - read file
+    WRITE, // @write       - write file
+    TOSTRING, // @string      - convert to string
+    TOINT, // @int         - convert to int (returns int | ParseError)
+    TOFLOAT, // @float       - convert to float (returns float | ParseError)
+    TOBYTE, // @bytes       - get bytes of string/array
     BYTES, // bytes we should move this to STD library when it is implemented
+    TIME, // @time       - get current time
+    RANDOM, // @random       - get random number
+
     // SPLIT, // split
     // JOIN, // join
     // SUBSTRING, // substring
