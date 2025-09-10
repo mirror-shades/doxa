@@ -455,8 +455,6 @@ const expected_bigfile_results = [_]peek_result{
     .{ .type = "string", .value = "\"I am dead\"" },
     .{ .type = "string", .value = "\"I am alive\"" },
     .{ .type = "string", .value = "\"I am dead\"" },
-    .{ .type = ">string | IndexError", .value = "\"hello\"" },
-    .{ .type = ">string | IndexError", .value = "\"world\"" },
     .{ .type = "int", .value = "0" },
     .{ .type = "float", .value = "0.0" },
     .{ .type = "byte", .value = "0x00" },

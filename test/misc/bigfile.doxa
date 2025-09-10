@@ -685,13 +685,6 @@ brokenLine?
 // explicit line breaks with semicolon
 living(Bob); living(Shakespere); living(zombie); living(angel); 
 
-/////
-// STRING METHODS
-/////
-
-var s is "hello world"
-@substring(s, 0, 5)?   // "hello"
-@substring(s, 6, 5)?   // "world"
 
 /////
 // @type AND INFERENCE

@@ -738,8 +738,6 @@ pub const LexicalAnalyzer = struct {
             try self.addToken(.BYTES, .nothing);
         } else if (std.mem.eql(u8, method_name, "slice")) {
             try self.addToken(.SLICE, .nothing);
-        } else if (std.mem.eql(u8, method_name, "substring")) {
-            try self.addToken(.SUBSTRING, .nothing);
         } else if (std.mem.eql(u8, method_name, "push")) {
             try self.addToken(.PUSH, .nothing);
         } else if (std.mem.eql(u8, method_name, "pop")) {
@@ -750,42 +748,16 @@ pub const LexicalAnalyzer = struct {
             try self.addToken(.REMOVE, .nothing);
         } else if (std.mem.eql(u8, method_name, "clear")) {
             try self.addToken(.CLEAR, .nothing);
-        } else if (std.mem.eql(u8, method_name, "index")) {
-            try self.addToken(.INDEX, .nothing);
+        } else if (std.mem.eql(u8, method_name, "find")) {
+            try self.addToken(.FIND, .nothing);
         } else if (std.mem.eql(u8, method_name, "string")) {
             try self.addToken(.TOSTRING, .nothing);
         } else if (std.mem.eql(u8, method_name, "int")) {
-            try self.addToken(.PARSEINT, .nothing);
+            try self.addToken(.TOINT, .nothing);
         } else if (std.mem.eql(u8, method_name, "float")) {
-            try self.addToken(.PARSEFLOAT, .nothing);
+            try self.addToken(.TOFLOAT, .nothing);
         } else if (std.mem.eql(u8, method_name, "byte")) {
-            try self.addToken(.PARSEBYTE, .nothing);
-
-            // String methods
-        } else if (std.mem.eql(u8, method_name, "split")) {
-            try self.addToken(.SPLIT, .nothing);
-        } else if (std.mem.eql(u8, method_name, "join")) {
-            try self.addToken(.JOIN, .nothing);
-        } else if (std.mem.eql(u8, method_name, "trim")) {
-            try self.addToken(.TRIM, .nothing);
-        } else if (std.mem.eql(u8, method_name, "lower")) {
-            try self.addToken(.LOWER, .nothing);
-        } else if (std.mem.eql(u8, method_name, "upper")) {
-            try self.addToken(.UPPER, .nothing);
-
-            // Math methods
-        } else if (std.mem.eql(u8, method_name, "abs")) {
-            try self.addToken(.ABS, .nothing);
-        } else if (std.mem.eql(u8, method_name, "min")) {
-            try self.addToken(.MIN, .nothing);
-        } else if (std.mem.eql(u8, method_name, "max")) {
-            try self.addToken(.MAX, .nothing);
-        } else if (std.mem.eql(u8, method_name, "round")) {
-            try self.addToken(.ROUND, .nothing);
-        } else if (std.mem.eql(u8, method_name, "floor")) {
-            try self.addToken(.FLOOR, .nothing);
-        } else if (std.mem.eql(u8, method_name, "ceil")) {
-            try self.addToken(.CEIL, .nothing);
+            try self.addToken(.TOBYTE, .nothing);
 
             // I/O methods
         } else if (std.mem.eql(u8, method_name, "read")) {
@@ -794,10 +766,6 @@ pub const LexicalAnalyzer = struct {
             try self.addToken(.WRITE, .nothing);
         } else if (std.mem.eql(u8, method_name, "print")) {
             try self.addToken(.PRINT, .nothing);
-        } else if (std.mem.eql(u8, method_name, "exec")) {
-            try self.addToken(.EXEC, .nothing);
-        } else if (std.mem.eql(u8, method_name, "spawn")) {
-            try self.addToken(.SPAWN, .nothing);
 
             // Control flow
         } else if (std.mem.eql(u8, method_name, "assert")) {
@@ -808,10 +776,8 @@ pub const LexicalAnalyzer = struct {
             try self.addToken(.INPUT, .nothing);
 
             // Copy/clone
-        } else if (std.mem.eql(u8, method_name, "clone")) {
-            try self.addToken(.CLONE, .nothing);
-        } else if (std.mem.eql(u8, method_name, "copy")) {
-            try self.addToken(.COPY, .nothing);
+        } else if (std.mem.eql(u8, method_name, "shallow")) {
+            try self.addToken(.SHALLOW, .nothing);
         } else {
             return error.InvalidInternalMethod;
         }

@@ -49,8 +49,6 @@ pub const TokenType = enum {
     IMPORT, // import
     MODULE, // module
     PUBLIC, // public
-    INPUT, // input
-    ASSERT, // assert
     RETURN, // return
     BREAK, // break
     FUNCTION, // function
@@ -80,39 +78,41 @@ pub const TokenType = enum {
 
     // compiler level methods (@methods)
     TYPE, // typeof / type
+    INPUT, // input
     LENGTH, // length
-    BYTES, // bytes
     SLICE, // slice
-    SUBSTRING, // substring
     PUSH, // push
     POP, // pop
     INSERT, // insert
+    ASSERT, // assert
     REMOVE, // remove
     CLEAR, // clear
-    INDEX, // indexOf / index
-    TOSTRING, // toString / string
-    PARSEINT, // parseInt / int
-    PARSEFLOAT, // parseFloat / float
-    PARSEBYTE, // parseByte (legacy)
-    SPLIT, // split
-    JOIN, // join
-    TRIM, // trim
-    LOWER, // lower
-    UPPER, // upper
-    ABS, // abs
-    MIN, // min
-    MAX, // max
-    ROUND, // round
-    FLOOR, // floor
-    CEIL, // ceil
+    FIND, // find
+    TOSTRING, // parseString / string
+    TOINT, // parseInt / int
+    TOFLOAT, // parseFloat / float
+    TOBYTE, // parseByte / byte
     READ, // read
     WRITE, // write
-    EXEC, // exec
-    SPAWN, // spawn
     PANIC, // panic
-    CLONE, // clone
-    COPY, // copy
+    SHALLOW, // shallow copy
     PRINT, // print
+    SYSCALL, // syscall
+    BYTES, // bytes we should move this to STD library when it is implemented
+    // SPLIT, // split
+    // JOIN, // join
+    // SUBSTRING, // substring
+    // TRIM, // trim
+    // LOWER, // lower
+    // UPPER, // upper
+    // ABS, // abs
+    // MIN, // min
+    // MAX, // max
+    // ROUND, // round
+    // FLOOR, // floor
+    // CEIL, // ceil
+    // EXEC, // exec
+    // SPAWN, // spawn
 
     // keywords with alternate tokens
     AND, // and ∧
