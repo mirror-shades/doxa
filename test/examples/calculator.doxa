@@ -107,7 +107,7 @@ function split(input :: string) returns string[] {
                 is_unary_minus is true 
             } else {
                 if i > 0 then {
-                    is_unary_minus is isUnaryMinus(@length(current), input[i - 1])
+                    is_unary_minus is isUnaryMinus(input[i - 1])
                 }
             }
             if is_unary_minus then {
@@ -128,7 +128,7 @@ function split(input :: string) returns string[] {
     return result
 }
 
-function isUnaryMinus(_length :: int, _input :: string) returns tetra {
+function isUnaryMinus(_input :: string) returns tetra {
     if _input == " " then return true
     if _input == "(" then return true
     if _input == "+" then return true
