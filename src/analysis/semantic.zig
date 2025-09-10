@@ -2776,7 +2776,7 @@ pub const SemanticAnalyzer = struct {
                 // Validate receiver type based on method
                 switch (method_call.method.type) {
                     // Array methods
-                    .PUSH, .POP, .INSERT, .REMOVE, .CLEAR, .INDEX => {
+                    .PUSH, .POP, .INSERT, .REMOVE, .CLEAR, .FIND => {
                         // If inference yielded Nothing but the receiver is a known variable,
                         // fall back to its declared type. This helps for statement-level method calls
                         // where the receiver was initialized to a default (e.g., empty array) and
@@ -2951,7 +2951,7 @@ pub const SemanticAnalyzer = struct {
 
                                 type_info.* = .{ .base = .Nothing }; // clear returns nothing
                             },
-                            .INDEX => {
+                            .FIND => {
                                 if (method_call.arguments.len != 1) {
                                     self.reporter.reportCompileError(
                                         getLocationFromBase(method_call.receiver.base),
@@ -3034,69 +3034,20 @@ pub const SemanticAnalyzer = struct {
                     },
 
                     // String methods
-                    .TOSTRING, .PARSEINT, .PARSEFLOAT, .PARSEBYTE, .SPLIT, .JOIN, .TRIM, .LOWER, .UPPER, .SUBSTRING => {
+                    .TOSTRING, .TOINT, .TOFLOAT, .TOBYTE => {
                         switch (method_call.method.type) {
-                            .SUBSTRING => {
-                                // Expect receiver string and two int args (start, length)
-                                if (receiver_type.base != .String) {
-                                    self.reporter.reportCompileError(
-                                        getLocationFromBase(method_call.receiver.base),
-                                        ErrorCode.INVALID_STRING_TYPE,
-                                        "Cannot call substring on non-string type {s}",
-                                        .{@tagName(receiver_type.base)},
-                                    );
-                                    self.fatal_error = true;
-                                    type_info.* = .{ .base = .Nothing };
-                                    return type_info;
-                                }
-                                if (method_call.arguments.len != 2) {
-                                    self.reporter.reportCompileError(
-                                        getLocationFromBase(method_call.receiver.base),
-                                        ErrorCode.NOT_IMPLEMENTED,
-                                        "@substring requires 2 arguments (start, length)",
-                                        .{},
-                                    );
-                                    self.fatal_error = true;
-                                    type_info.* = .{ .base = .Nothing };
-                                    return type_info;
-                                }
-                                // Type-check args are ints
-                                const a0 = try self.inferTypeFromExpr(method_call.arguments[0]);
-                                const a1 = try self.inferTypeFromExpr(method_call.arguments[1]);
-                                if (a0.base != .Int or a1.base != .Int) {
-                                    self.reporter.reportCompileError(
-                                        getLocationFromBase(method_call.arguments[0].base),
-                                        ErrorCode.INVALID_STRING_INDEX_TYPE,
-                                        "@substring arguments must be integers",
-                                        .{},
-                                    );
-                                    self.fatal_error = true;
-                                    type_info.* = .{ .base = .Nothing };
-                                    return type_info;
-                                }
-                                // Lower to StringOp.Substring HIR via a small desugaring: push len, start, string
-                                // We keep it simple by generating a call-like sequence: we'll emit in HIR generator using StringOp.Substring
-                                // Always return union: string | IndexError
-                                const str_t = try self.allocator.create(TypeInfo);
-                                str_t.* = .{ .base = .String };
-                                const err_t = try self.allocator.create(TypeInfo);
-                                err_t.* = .{ .base = .Custom, .custom_type = "IndexError" };
-                                var members = [_]*TypeInfo{ str_t, err_t };
-                                const u = try self.createUnionType(members[0..]);
-                                type_info.* = u.*;
-                            },
                             .TOSTRING => {
                                 // Any type can be converted to string
                                 type_info.* = .{ .base = .String };
                             },
-                            .PARSEINT, .PARSEFLOAT, .PARSEBYTE => {
+                            .TOINT, .TOFLOAT, .TOBYTE => {
                                 // Check receiver is string
                                 if (receiver_type.base != .String) {
                                     // Non-string receivers are allowed for numeric conversions; set return type directly
                                     switch (method_call.method.type) {
-                                        .PARSEINT => type_info.* = .{ .base = .Int },
-                                        .PARSEFLOAT => type_info.* = .{ .base = .Float },
-                                        .PARSEBYTE => type_info.* = .{ .base = .Byte },
+                                        .TOINT => type_info.* = .{ .base = .Int },
+                                        .TOFLOAT => type_info.* = .{ .base = .Float },
+                                        .TOBYTE => type_info.* = .{ .base = .Byte },
                                         else => unreachable,
                                     }
                                     return type_info;
@@ -3104,7 +3055,7 @@ pub const SemanticAnalyzer = struct {
 
                                 // For string receivers, handle parse semantics and unions where applicable
                                 // For now, do not fold literals; lower all @int to runtime StringToInt to preserve union type
-                                if (method_call.method.type == .PARSEINT and method_call.receiver.data == .Literal) {
+                                if (method_call.method.type == .TOINT and method_call.receiver.data == .Literal) {
                                     expr.data = .{ .StringToInt = .{ .string = method_call.receiver } };
                                     const int_t = try self.allocator.create(ast.TypeInfo);
                                     int_t.* = .{ .base = .Int };
@@ -3117,7 +3068,7 @@ pub const SemanticAnalyzer = struct {
                                 }
 
                                 // Lower to runtime string->int conversion when receiver is not literal
-                                if (method_call.method.type == .PARSEINT) {
+                                if (method_call.method.type == .TOINT) {
                                     // Return type: int | NumberError
                                     const int_t = try self.allocator.create(ast.TypeInfo);
                                     int_t.* = .{ .base = .Int };
@@ -3129,98 +3080,23 @@ pub const SemanticAnalyzer = struct {
                                     type_info.* = u.*;
                                     return type_info;
                                 }
-                                if (method_call.method.type == .PARSEFLOAT) {
+                                if (method_call.method.type == .TOFLOAT) {
                                     // Return type: float (no typed error union in current VM path)
                                     type_info.* = .{ .base = .Float };
                                     return type_info;
                                 }
-                                if (method_call.method.type == .PARSEBYTE) {
+                                if (method_call.method.type == .TOBYTE) {
                                     // Return type: byte (no typed error union in current VM path)
                                     type_info.* = .{ .base = .Byte };
                                     return type_info;
                                 }
                             },
-                            .SPLIT => {
-                                // Check receiver is string for split
-                                if (receiver_type.base != .String) {
-                                    self.reporter.reportCompileError(
-                                        getLocationFromBase(method_call.receiver.base),
-                                        ErrorCode.INVALID_STRING_TYPE,
-                                        "Cannot call split on non-string type {s}",
-                                        .{@tagName(receiver_type.base)},
-                                    );
-                                    self.fatal_error = true;
-                                    type_info.* = .{ .base = .Nothing };
-                                    return type_info;
-                                }
-                                // Create array type with string element type
-                                const elem_type = try self.allocator.create(TypeInfo);
-                                elem_type.* = .{ .base = .String };
-                                type_info.* = .{ .base = .Array, .array_type = elem_type };
-                            },
-                            .JOIN => {
-                                // Check receiver is array for join
-                                if (receiver_type.base != .Array) {
-                                    self.reporter.reportCompileError(
-                                        getLocationFromBase(method_call.receiver.base),
-                                        ErrorCode.INVALID_ARRAY_TYPE,
-                                        "Cannot call join on non-array type {s}",
-                                        .{@tagName(receiver_type.base)},
-                                    );
-                                    self.fatal_error = true;
-                                    type_info.* = .{ .base = .Nothing };
-                                    return type_info;
-                                }
-                                type_info.* = .{ .base = .String };
-                            },
-                            .TRIM, .LOWER, .UPPER => {
-                                // Check receiver is string
-                                if (receiver_type.base != .String) {
-                                    self.reporter.reportCompileError(
-                                        getLocationFromBase(method_call.receiver.base),
-                                        ErrorCode.INVALID_STRING_TYPE,
-                                        "Cannot call string method '{s}' on non-string type {s}",
-                                        .{ method_name, @tagName(receiver_type.base) },
-                                    );
-                                    self.fatal_error = true;
-                                    type_info.* = .{ .base = .Nothing };
-                                    return type_info;
-                                }
-                                type_info.* = .{ .base = .String };
-                            },
                             else => unreachable,
                         }
                     },
 
-                    // Math methods
-                    .ABS, .MIN, .MAX, .ROUND, .FLOOR, .CEIL => {
-                        // Check receiver is numeric
-                        if (receiver_type.base != .Int and receiver_type.base != .Float) {
-                            self.reporter.reportCompileError(
-                                getLocationFromBase(method_call.receiver.base),
-                                ErrorCode.INVALID_OPERAND_TYPE,
-                                "Cannot call math method '{s}' on non-numeric type {s}",
-                                .{ method_name, @tagName(receiver_type.base) },
-                            );
-                            self.fatal_error = true;
-                            type_info.* = .{ .base = .Nothing };
-                            return type_info;
-                        }
-
-                        switch (method_call.method.type) {
-                            .ROUND, .FLOOR, .CEIL => {
-                                // These return int
-                                type_info.* = .{ .base = .Int };
-                            },
-                            else => {
-                                // Others preserve input type
-                                type_info.* = receiver_type.*;
-                            },
-                        }
-                    },
-
                     // I/O methods
-                    .READ, .WRITE, .EXEC, .SPAWN => {
+                    .READ, .WRITE, .SYSCALL => {
                         switch (method_call.method.type) {
                             .READ => {
                                 // Check path argument is string
@@ -3277,7 +3153,7 @@ pub const SemanticAnalyzer = struct {
                                 }
                                 type_info.* = .{ .base = .Tetra }; // Returns success/failure
                             },
-                            .EXEC, .SPAWN => {
+                            .SYSCALL => {
                                 // Check command argument is string
                                 if (method_call.arguments.len != 1) {
                                     self.reporter.reportCompileError(
@@ -3294,7 +3170,7 @@ pub const SemanticAnalyzer = struct {
                                 if (cmd_type.base != .String) {
                                     self.reporter.reportCompileError(
                                         getLocationFromBase(method_call.arguments[0].base),
-                                        ErrorCode.INVALID_FILE_PATH_TYPE,
+                                        ErrorCode.INVALID_COMMAND_TYPE,
                                         "@{s} command must be string, got {s}",
                                         .{ method_name, @tagName(cmd_type.base) },
                                     );
@@ -3302,14 +3178,14 @@ pub const SemanticAnalyzer = struct {
                                     type_info.* = .{ .base = .Nothing };
                                     return type_info;
                                 }
-                                type_info.* = .{ .base = if (method_call.method.type == .EXEC) .String else .Tetra };
+                                type_info.* = .{ .base = if (method_call.method.type == .SYSCALL) .String else .Tetra };
                             },
                             else => unreachable,
                         }
                     },
 
                     // Copy/clone methods
-                    .CLONE, .COPY => {
+                    .SHALLOW => {
                         // Check receiver is array, string or map
                         if (receiver_type.base != .Array and receiver_type.base != .String and receiver_type.base != .Map) {
                             self.reporter.reportCompileError(

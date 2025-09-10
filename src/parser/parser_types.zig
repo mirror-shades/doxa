@@ -557,9 +557,7 @@ pub const Parser = struct {
         // Core and array
         if (std.mem.eql(u8, name, "type")) return .TYPE;
         if (std.mem.eql(u8, name, "length")) return .LENGTH;
-        if (std.mem.eql(u8, name, "bytes")) return .BYTES;
         if (std.mem.eql(u8, name, "slice")) return .SLICE;
-        if (std.mem.eql(u8, name, "substring")) return .SUBSTRING;
         if (std.mem.eql(u8, name, "push")) return .PUSH;
         if (std.mem.eql(u8, name, "pop")) return .POP;
         if (std.mem.eql(u8, name, "insert")) return .INSERT;
@@ -567,42 +565,28 @@ pub const Parser = struct {
         if (std.mem.eql(u8, name, "clear")) return .CLEAR;
 
         // Search/index
-        if (std.mem.eql(u8, name, "index")) return .INDEX;
+        if (std.mem.eql(u8, name, "find")) return .FIND;
 
         // Type conversions
         if (std.mem.eql(u8, name, "string")) return .TOSTRING;
-        if (std.mem.eql(u8, name, "int")) return .PARSEINT;
-        if (std.mem.eql(u8, name, "float")) return .PARSEFLOAT;
-        if (std.mem.eql(u8, name, "byte")) return .PARSEBYTE;
-
-        // String
-        if (std.mem.eql(u8, name, "split")) return .SPLIT;
-        if (std.mem.eql(u8, name, "join")) return .JOIN;
-        if (std.mem.eql(u8, name, "trim")) return .TRIM;
-        if (std.mem.eql(u8, name, "lower")) return .LOWER;
-        if (std.mem.eql(u8, name, "upper")) return .UPPER;
-
-        // Math
-        if (std.mem.eql(u8, name, "abs")) return .ABS;
-        if (std.mem.eql(u8, name, "min")) return .MIN;
-        if (std.mem.eql(u8, name, "max")) return .MAX;
-        if (std.mem.eql(u8, name, "round")) return .ROUND;
-        if (std.mem.eql(u8, name, "floor")) return .FLOOR;
-        if (std.mem.eql(u8, name, "ceil")) return .CEIL;
+        if (std.mem.eql(u8, name, "int")) return .TOINT;
+        if (std.mem.eql(u8, name, "float")) return .TOFLOAT;
+        if (std.mem.eql(u8, name, "byte")) return .TOBYTE;
 
         // I/O
         if (std.mem.eql(u8, name, "read")) return .READ;
         if (std.mem.eql(u8, name, "write")) return .WRITE;
-        if (std.mem.eql(u8, name, "exec")) return .EXEC;
-        if (std.mem.eql(u8, name, "spawn")) return .SPAWN;
+        if (std.mem.eql(u8, name, "syscall")) return .SYSCALL;
 
         // Control flow
         if (std.mem.eql(u8, name, "panic")) return .PANIC;
         if (std.mem.eql(u8, name, "assert")) return .ASSERT;
 
         // Copy/clone
-        if (std.mem.eql(u8, name, "clone")) return .CLONE;
-        if (std.mem.eql(u8, name, "copy")) return .COPY;
+        if (std.mem.eql(u8, name, "shallow")) return .SHALLOW;
+
+        // TODO: REMOVE LATER, STD LIBRARY
+        if (std.mem.eql(u8, name, "bytes")) return .BYTES;
 
         return null;
     }
