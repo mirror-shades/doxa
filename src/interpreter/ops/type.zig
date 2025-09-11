@@ -5,6 +5,7 @@ const Core = @import("../core.zig");
 const HIRFrame = Core.HIRFrame;
 const Errors = @import("../../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
+const debug_print = @import("../calls/print.zig");
 
 /// Execute type operations (TypeCheck, Convert, TypeOf)
 pub const TypeOps = struct {
@@ -13,7 +14,7 @@ pub const TypeOps = struct {
         const value = try vm.stack.pop();
 
         // Get the runtime type of the value
-        const runtime_type = vm.getTypeString(value.value);
+        const runtime_type = debug_print.getTypeString(vm, value.value);
 
         // Compare with target type
         const type_match = std.mem.eql(u8, runtime_type, tc.target_type);
