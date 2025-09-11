@@ -1339,6 +1339,12 @@ pub const SemanticAnalyzer = struct {
             .Break => {
                 type_info.base = .Nothing;
             },
+            .Increment => {
+                type_info.base = .Int;
+            },
+            .Decrement => {
+                type_info.base = .Int;
+            },
             .Binary => |bin| {
                 const left_type = try self.inferTypeFromExpr(bin.left.?);
                 const right_type = try self.inferTypeFromExpr(bin.right.?);
@@ -2265,509 +2271,205 @@ pub const SemanticAnalyzer = struct {
                     type_info.* = .{ .base = .Nothing };
                 }
             },
-            .TypeOf => |type_of_expr| {
-                _ = try self.inferTypeFromExpr(type_of_expr);
-                type_info.* = .{ .base = .String }; // typeof returns a string representation
-            },
-            .LengthOf => |length_of_expr| {
-                const array_type = try self.inferTypeFromExpr(length_of_expr);
-                if (array_type.base != .Array and array_type.base != .String) {
-                    self.reporter.reportCompileError(
-                        getLocationFromBase(expr.base),
-                        ErrorCode.INVALID_OPERAND_TYPE,
-                        "LengthOf requires array or string type, got {s}",
-                        .{@tagName(array_type.base)},
-                    );
-                    self.fatal_error = true;
-                    type_info.base = .Nothing;
-                    return type_info;
-                }
-                type_info.* = .{ .base = .Int }; // LengthOf returns an integer
-            },
-            .BytesOf => |bytes_of_expr| {
-                const value_type = try self.inferTypeFromExpr(bytes_of_expr);
-                if (value_type.base != .String) {
-                    self.reporter.reportCompileError(
-                        getLocationFromBase(expr.base),
-                        ErrorCode.INVALID_STRING_TYPE,
-                        "BytesOf requires string type, got {s}",
-                        .{@tagName(value_type.base)},
-                    );
-                    self.fatal_error = true;
-                    type_info.base = .Nothing;
-                    return type_info;
-                }
-                // BytesOf returns an array of bytes. Arrays in the semantic type system
-                // carry their element type via `array_type` (a TypeInfo pointer).
-                const byte_type = try self.allocator.create(ast.TypeInfo);
-                byte_type.* = .{ .base = .Byte };
-                type_info.* = .{ .base = .Array, .array_type = byte_type };
-            },
-            .StringToInt => |string_expr| {
-                const s_type = try self.inferTypeFromExpr(string_expr.string);
-                if (s_type.base != .String) {
-                    self.reporter.reportCompileError(
-                        getLocationFromBase(expr.base),
-                        ErrorCode.INVALID_STRING_TYPE,
-                        "StringToInt requires string type, got {s}",
-                        .{@tagName(s_type.base)},
-                    );
-                    self.fatal_error = true;
-                    type_info.base = .Nothing;
-                    return type_info;
-                }
-                // StringToInt returns int | NumberError union (matches @int() method)
-                const int_t = try self.allocator.create(ast.TypeInfo);
-                int_t.* = .{ .base = .Int };
-                const err_t = try self.allocator.create(ast.TypeInfo);
-                err_t.* = .{ .base = .Custom, .custom_type = "NumberError" };
-                var union_members = [_]*ast.TypeInfo{ int_t, err_t };
-                const u = try self.createUnionType(union_members[0..]);
-                type_info.* = u.*;
-            },
-            .StringToFloat => |string_expr| {
-                const s_type = try self.inferTypeFromExpr(string_expr.string);
-                if (s_type.base != .String) {
-                    self.reporter.reportCompileError(
-                        getLocationFromBase(expr.base),
-                        ErrorCode.INVALID_STRING_TYPE,
-                        "StringToFloat requires string type, got {s}",
-                        .{@tagName(s_type.base)},
-                    );
-                    self.fatal_error = true;
-                    type_info.base = .Nothing;
-                    return type_info;
-                }
-                // StringToFloat returns float (no typed error union in current VM path)
-                type_info.* = .{ .base = .Float };
-            },
-            .StringToByte => |string_expr| {
-                const s_type = try self.inferTypeFromExpr(string_expr.string);
-                if (s_type.base != .String) {
-                    self.reporter.reportCompileError(
-                        getLocationFromBase(expr.base),
-                        ErrorCode.INVALID_STRING_TYPE,
-                        "StringToByte requires string type, got {s}",
-                        .{@tagName(s_type.base)},
-                    );
-                    self.fatal_error = true;
-                    type_info.base = .Nothing;
-                    return type_info;
-                }
-                // StringToByte returns byte (no typed error union in current VM path)
-                type_info.* = .{ .base = .Byte };
-            },
-            .Increment => |inc_expr| {
-                const expr_type = try self.inferTypeFromExpr(inc_expr);
-                if (expr_type.base != .Int and expr_type.base != .Float and expr_type.base != .Byte) {
-                    self.reporter.reportCompileError(
-                        getLocationFromBase(expr.base),
-                        ErrorCode.INVALID_OPERAND_TYPE,
-                        "Increment requires numeric type, got {s}",
-                        .{@tagName(expr_type.base)},
-                    );
-                    self.fatal_error = true;
-                    type_info.base = .Nothing;
-                    return type_info;
-                }
-                type_info.* = expr_type.*; // Increment returns the same type as the operand
-            },
-            .Decrement => |dec_expr| {
-                const expr_type = try self.inferTypeFromExpr(dec_expr);
-                if (expr_type.base != .Int and expr_type.base != .Float and expr_type.base != .Byte) {
-                    self.reporter.reportCompileError(
-                        getLocationFromBase(expr.base),
-                        ErrorCode.INVALID_OPERAND_TYPE,
-                        "Decrement requires numeric type, got {s}",
-                        .{@tagName(expr_type.base)},
-                    );
-                    self.fatal_error = true;
-                    type_info.base = .Nothing;
-                    return type_info;
-                }
-                type_info.* = expr_type.*; // Decrement returns the same type as the operand
-            },
-            // Map literals are now statements, not expressions
-            .ArrayPush => |array_push| {
-                const array_type = try self.inferTypeFromExpr(array_push.array);
-                const element_type = try self.inferTypeFromExpr(array_push.element);
+            .BuiltinCall => |bc| {
+                const fname = bc.function.lexeme;
 
-                if (array_type.base != .Array) {
-                    self.reporter.reportCompileError(
-                        getLocationFromBase(expr.base),
-                        ErrorCode.INVALID_ARRAY_TYPE,
-                        "ArrayPush requires array type, got {s}",
-                        .{@tagName(array_type.base)},
-                    );
-                    self.fatal_error = true;
-                    type_info.base = .Nothing;
-                    return type_info;
-                }
+                // Default result on error
+                type_info.* = .{ .base = .Nothing };
 
-                if (array_type.array_type) |expected_elem_type| {
-                    try self.unifyTypes(expected_elem_type, element_type, .{ .location = getLocationFromBase(expr.base) });
-                }
-
-                type_info.* = .{ .base = .Nothing }; // ArrayPush has no return value
-            },
-            .ArrayLength => |array_length| {
-                const array_type = try self.inferTypeFromExpr(array_length.array);
-                if (array_type.base != .Array) {
-                    self.reporter.reportCompileError(
-                        getLocationFromBase(expr.base),
-                        ErrorCode.INVALID_ARRAY_TYPE,
-                        "ArrayLength requires array type, got {s}",
-                        .{@tagName(array_type.base)},
-                    );
-                    self.fatal_error = true;
-                    type_info.base = .Nothing;
-                    return type_info;
-                }
-                type_info.* = .{ .base = .Int }; // ArrayLength returns an integer
-            },
-            .ArrayPop => |array_pop| {
-                const array_type = try self.inferTypeFromExpr(array_pop.array);
-                if (array_type.base != .Array) {
-                    self.reporter.reportCompileError(
-                        getLocationFromBase(expr.base),
-                        ErrorCode.INVALID_ARRAY_TYPE,
-                        "ArrayPop requires array type, got {s}",
-                        .{@tagName(array_type.base)},
-                    );
-                    self.fatal_error = true;
-                    type_info.base = .Nothing;
-                    return type_info;
-                }
-
-                if (array_type.array_type) |elem_type| {
-                    type_info.* = elem_type.*; // ArrayPop returns the element type
-                } else {
-                    type_info.* = .{ .base = .Nothing };
-                }
-            },
-            .ArrayConcat => |array_concat| {
-                const array1_type = try self.inferTypeFromExpr(array_concat.array);
-                const array2_type = try self.inferTypeFromExpr(array_concat.array2);
-
-                if (array1_type.base != .Array or array2_type.base != .Array) {
-                    self.reporter.reportCompileError(
-                        getLocationFromBase(expr.base),
-                        ErrorCode.INVALID_ARRAY_TYPE,
-                        "ArrayConcat requires array types",
-                        .{},
-                    );
-                    self.fatal_error = true;
-                    type_info.base = .Nothing;
-                    return type_info;
-                }
-
-                // Ensure both arrays have compatible element types
-                if (array1_type.array_type) |elem1| {
-                    if (array2_type.array_type) |elem2| {
-                        try self.unifyTypes(elem1, elem2, .{ .location = getLocationFromBase(expr.base) });
-                        type_info.* = array1_type.*; // Return type of first array
-                    } else {
-                        type_info.* = array1_type.*;
+                // Helper to assert arity
+                const requireArity = struct {
+                    fn check(sem: *SemanticAnalyzer, e: *ast.Expr, got: usize, expect: usize, name: []const u8) void {
+                        if (got != expect) {
+                            sem.reporter.reportCompileError(
+                                getLocationFromBase(e.base),
+                                ErrorCode.INVALID_ARGUMENT_COUNT,
+                                "@{s} requires exactly {d} argument(s)",
+                                .{ name, expect },
+                            );
+                            sem.fatal_error = true;
+                        }
                     }
-                } else {
-                    type_info.* = array2_type.*;
-                }
-            },
-            .ArrayIndex => |array_index| {
-                const array_type = try self.inferTypeFromExpr(array_index.array);
-                const index_type = try self.inferTypeFromExpr(array_index.index);
-
-                if (array_type.base != .Array) {
-                    self.reporter.reportCompileError(
-                        getLocationFromBase(expr.base),
-                        ErrorCode.INVALID_ARRAY_TYPE,
-                        "Cannot index non-array type {s}",
-                        .{@tagName(array_type.base)},
-                    );
-                    self.fatal_error = true;
-                    type_info.base = .Nothing;
-                    return type_info;
-                }
-
-                if (index_type.base != .Int) {
-                    self.reporter.reportCompileError(
-                        getLocationFromBase(expr.base),
-                        ErrorCode.INVALID_ARRAY_INDEX_TYPE,
-                        "Array index must be integer, got {s}",
-                        .{@tagName(index_type.base)},
-                    );
-                    self.fatal_error = true;
-                    type_info.base = .Nothing;
-                    return type_info;
-                }
-
-                if (array_type.array_type) |elem_type| {
-                    type_info.* = elem_type.*;
-                } else {
-                    type_info.* = .{ .base = .Nothing };
-                }
-            },
-            .ArrayClear => |array_clear| {
-                const array_type = try self.inferTypeFromExpr(array_clear.array);
-                if (array_type.base != .Array) {
-                    self.reporter.reportCompileError(
-                        getLocationFromBase(expr.base),
-                        ErrorCode.INVALID_ARRAY_TYPE,
-                        "Cannot clear non-array type {s}",
-                        .{@tagName(array_type.base)},
-                    );
-                    self.fatal_error = true;
-                    type_info.base = .Nothing;
-                    return type_info;
-                }
-                type_info.* = .{ .base = .Nothing }; // clear returns nothing
-            },
-            .StringSplit => |s| {
-                const str_type = try self.inferTypeFromExpr(s.string);
-                if (str_type.base != .String) {
-                    self.reporter.reportCompileError(
-                        getLocationFromBase(expr.base),
-                        ErrorCode.INVALID_STRING_TYPE,
-                        "Split requires string type, got {s}",
-                        .{@tagName(str_type.base)},
-                    );
-                    self.fatal_error = true;
-                    type_info.base = .Nothing;
-                    return type_info;
-                }
-                const delim_type = try self.inferTypeFromExpr(s.delimiter);
-                if (delim_type.base != .String) {
-                    self.reporter.reportCompileError(
-                        getLocationFromBase(expr.base),
-                        ErrorCode.INVALID_STRING_TYPE,
-                        "Split delimiter must be string, got {s}",
-                        .{@tagName(delim_type.base)},
-                    );
-                    self.fatal_error = true;
-                    type_info.base = .Nothing;
-                    return type_info;
-                }
-                // Create array type with string element type
-                const elem_type = try self.allocator.create(TypeInfo);
-                elem_type.* = .{ .base = .String };
-                type_info.* = .{ .base = .Array, .array_type = elem_type };
-            },
-            .StringJoin => |s| {
-                const array_type = try self.inferTypeFromExpr(s.array);
-                if (array_type.base != .Array) {
-                    self.reporter.reportCompileError(
-                        getLocationFromBase(expr.base),
-                        ErrorCode.INVALID_ARRAY_TYPE,
-                        "Join requires array type, got {s}",
-                        .{@tagName(array_type.base)},
-                    );
-                    self.fatal_error = true;
-                    type_info.base = .Nothing;
-                    return type_info;
-                }
-                const delim_type = try self.inferTypeFromExpr(s.delimiter);
-                if (delim_type.base != .String) {
-                    self.reporter.reportCompileError(
-                        getLocationFromBase(expr.base),
-                        ErrorCode.INVALID_STRING_TYPE,
-                        "Join delimiter must be string, got {s}",
-                        .{@tagName(delim_type.base)},
-                    );
-                    self.fatal_error = true;
-                    type_info.base = .Nothing;
-                    return type_info;
-                }
-                type_info.* = .{ .base = .String };
-            },
-            .StringTrim => |s| {
-                const str_type = try self.inferTypeFromExpr(s.string);
-                if (str_type.base != .String) {
-                    self.reporter.reportCompileError(
-                        getLocationFromBase(expr.base),
-                        ErrorCode.INVALID_STRING_TYPE,
-                        "Trim requires string type, got {s}",
-                        .{@tagName(str_type.base)},
-                    );
-                    self.fatal_error = true;
-                    type_info.base = .Nothing;
-                    return type_info;
-                }
-                type_info.* = .{ .base = .String };
-            },
-            .StringLower => |s| {
-                const str_type = try self.inferTypeFromExpr(s.string);
-                if (str_type.base != .String) {
-                    self.reporter.reportCompileError(
-                        getLocationFromBase(expr.base),
-                        ErrorCode.INVALID_STRING_TYPE,
-                        "Lower requires string type, got {s}",
-                        .{@tagName(str_type.base)},
-                    );
-                    self.fatal_error = true;
-                    type_info.base = .Nothing;
-                    return type_info;
-                }
-                type_info.* = .{ .base = .String };
-            },
-            .StringUpper => |s| {
-                const str_type = try self.inferTypeFromExpr(s.string);
-                if (str_type.base != .String) {
-                    self.reporter.reportCompileError(
-                        getLocationFromBase(expr.base),
-                        ErrorCode.INVALID_STRING_TYPE,
-                        "Upper requires string type, got {s}",
-                        .{@tagName(str_type.base)},
-                    );
-                    self.fatal_error = true;
-                    type_info.base = .Nothing;
-                    return type_info;
-                }
-                type_info.* = .{ .base = .String };
-            },
-            .MathAbs, .MathRound, .MathFloor, .MathCeil => {
-                const value_type = switch (expr.data) {
-                    .MathAbs => |m| try self.inferTypeFromExpr(m.value),
-                    .MathRound => |m| try self.inferTypeFromExpr(m.value),
-                    .MathFloor => |m| try self.inferTypeFromExpr(m.value),
-                    .MathCeil => |m| try self.inferTypeFromExpr(m.value),
-                    else => unreachable,
                 };
 
-                if (value_type.base != .Int and value_type.base != .Float) {
-                    self.reporter.reportCompileError(
-                        getLocationFromBase(expr.base),
-                        ErrorCode.INVALID_OPERAND_TYPE,
-                        "Math operation requires numeric type, got {s}",
-                        .{@tagName(value_type.base)},
-                    );
-                    self.fatal_error = true;
-                    type_info.base = .Nothing;
+                if (std.mem.eql(u8, fname, "length")) {
+                    requireArity.check(self, expr, bc.arguments.len, 1, fname);
+                    if (bc.arguments.len != 1) return type_info;
+                    const t0 = try self.inferTypeFromExpr(bc.arguments[0]);
+                    if (t0.base != .Array and t0.base != .String) {
+                        self.reporter.reportCompileError(
+                            getLocationFromBase(bc.arguments[0].base),
+                            ErrorCode.INVALID_ARRAY_TYPE,
+                            "@length requires array or string, got {s}",
+                            .{@tagName(t0.base)},
+                        );
+                        self.fatal_error = true;
+                        return type_info;
+                    }
+                    type_info.* = .{ .base = .Int };
                     return type_info;
-                }
-
-                // Round/floor/ceil always return int, abs preserves type
-                type_info.* = switch (expr.data) {
-                    .MathAbs => value_type.*,
-                    .MathRound, .MathFloor, .MathCeil => .{ .base = .Int },
-                    else => unreachable,
-                };
-            },
-            .MathMin, .MathMax => {
-                const a_type = switch (expr.data) {
-                    .MathMin => |m| try self.inferTypeFromExpr(m.a),
-                    .MathMax => |m| try self.inferTypeFromExpr(m.a),
-                    else => unreachable,
-                };
-                const b_type = switch (expr.data) {
-                    .MathMin => |m| try self.inferTypeFromExpr(m.b),
-                    .MathMax => |m| try self.inferTypeFromExpr(m.b),
-                    else => unreachable,
-                };
-
-                if ((a_type.base != .Int and a_type.base != .Float) or
-                    (b_type.base != .Int and b_type.base != .Float))
-                {
-                    self.reporter.reportCompileError(
-                        getLocationFromBase(expr.base),
-                        ErrorCode.INVALID_OPERAND_TYPE,
-                        "Math operation requires numeric types, got {s} and {s}",
-                        .{ @tagName(a_type.base), @tagName(b_type.base) },
-                    );
+                } else if (std.mem.eql(u8, fname, "push")) {
+                    requireArity.check(self, expr, bc.arguments.len, 2, fname);
+                    if (bc.arguments.len != 2) return type_info;
+                    const coll_t = try self.inferTypeFromExpr(bc.arguments[0]);
+                    const val_t = try self.inferTypeFromExpr(bc.arguments[1]);
+                    if (coll_t.base == .Array) {
+                        if (coll_t.array_type) |elem| try self.unifyTypes(elem, val_t, .{ .location = getLocationFromBase(bc.arguments[1].base) });
+                    } else if (coll_t.base != .String) {
+                        self.reporter.reportCompileError(getLocationFromBase(bc.arguments[0].base), ErrorCode.INVALID_ARRAY_TYPE, "@push requires array or string, got {s}", .{@tagName(coll_t.base)});
+                        self.fatal_error = true;
+                    }
+                    return type_info;
+                } else if (std.mem.eql(u8, fname, "pop")) {
+                    requireArity.check(self, expr, bc.arguments.len, 1, fname);
+                    if (bc.arguments.len != 1) return type_info;
+                    const coll_t = try self.inferTypeFromExpr(bc.arguments[0]);
+                    if (coll_t.base == .Array) {
+                        if (coll_t.array_type) |elem| type_info.* = elem.*;
+                        return type_info;
+                    } else if (coll_t.base == .String) {
+                        type_info.* = .{ .base = .String };
+                        return type_info;
+                    } else {
+                        self.reporter.reportCompileError(getLocationFromBase(bc.arguments[0].base), ErrorCode.INVALID_ARRAY_TYPE, "@pop requires array or string, got {s}", .{@tagName(coll_t.base)});
+                        self.fatal_error = true;
+                        return type_info;
+                    }
+                } else if (std.mem.eql(u8, fname, "insert")) {
+                    requireArity.check(self, expr, bc.arguments.len, 3, fname);
+                    if (bc.arguments.len != 3) return type_info;
+                    const coll_t = try self.inferTypeFromExpr(bc.arguments[0]);
+                    const idx_t = try self.inferTypeFromExpr(bc.arguments[1]);
+                    if (idx_t.base != .Int) {
+                        self.reporter.reportCompileError(getLocationFromBase(bc.arguments[1].base), ErrorCode.INVALID_ARRAY_INDEX_TYPE, "@insert index must be int, got {s}", .{@tagName(idx_t.base)});
+                        self.fatal_error = true;
+                        return type_info;
+                    }
+                    if (coll_t.base == .Array) {
+                        const val_t = try self.inferTypeFromExpr(bc.arguments[2]);
+                        if (coll_t.array_type) |elem| try self.unifyTypes(elem, val_t, .{ .location = getLocationFromBase(bc.arguments[2].base) });
+                    } else if (coll_t.base != .String) {
+                        self.reporter.reportCompileError(getLocationFromBase(bc.arguments[0].base), ErrorCode.INVALID_ARRAY_TYPE, "@insert requires array or string, got {s}", .{@tagName(coll_t.base)});
+                        self.fatal_error = true;
+                        return type_info;
+                    }
+                    return type_info;
+                } else if (std.mem.eql(u8, fname, "remove")) {
+                    requireArity.check(self, expr, bc.arguments.len, 2, fname);
+                    if (bc.arguments.len != 2) return type_info;
+                    const coll_t = try self.inferTypeFromExpr(bc.arguments[0]);
+                    const idx_t = try self.inferTypeFromExpr(bc.arguments[1]);
+                    if (idx_t.base != .Int) {
+                        self.reporter.reportCompileError(getLocationFromBase(bc.arguments[1].base), ErrorCode.INVALID_ARRAY_INDEX_TYPE, "@remove index must be int, got {s}", .{@tagName(idx_t.base)});
+                        self.fatal_error = true;
+                        return type_info;
+                    }
+                    if (coll_t.base == .Array) {
+                        if (coll_t.array_type) |elem| {
+                            type_info.* = elem.*;
+                        } else {
+                            type_info.* = .{ .base = .Nothing };
+                        }
+                        return type_info;
+                    } else if (coll_t.base == .String) {
+                        type_info.* = .{ .base = .Byte };
+                        return type_info;
+                    }
+                    self.reporter.reportCompileError(getLocationFromBase(bc.arguments[0].base), ErrorCode.INVALID_ARRAY_TYPE, "@remove requires array or string, got {s}", .{@tagName(coll_t.base)});
                     self.fatal_error = true;
-                    type_info.base = .Nothing;
+                    return type_info;
+                } else if (std.mem.eql(u8, fname, "clear")) {
+                    requireArity.check(self, expr, bc.arguments.len, 1, fname);
+                    if (bc.arguments.len != 1) return type_info;
+                    const coll_t = try self.inferTypeFromExpr(bc.arguments[0]);
+                    if (coll_t.base != .Array and coll_t.base != .String) {
+                        self.reporter.reportCompileError(getLocationFromBase(bc.arguments[0].base), ErrorCode.INVALID_ARRAY_TYPE, "@clear requires array or string, got {s}", .{@tagName(coll_t.base)});
+                        self.fatal_error = true;
+                    }
+                    return type_info;
+                } else if (std.mem.eql(u8, fname, "find")) {
+                    requireArity.check(self, expr, bc.arguments.len, 2, fname);
+                    if (bc.arguments.len != 2) return type_info;
+                    type_info.* = .{ .base = .Int };
+                    return type_info;
+                } else if (std.mem.eql(u8, fname, "slice")) {
+                    requireArity.check(self, expr, bc.arguments.len, 3, fname);
+                    if (bc.arguments.len != 3) return type_info;
+                    const coll_t = try self.inferTypeFromExpr(bc.arguments[0]);
+                    const start_t = try self.inferTypeFromExpr(bc.arguments[1]);
+                    const len_t = try self.inferTypeFromExpr(bc.arguments[2]);
+                    if (start_t.base != .Int or len_t.base != .Int) {
+                        self.reporter.reportCompileError(getLocationFromBase(bc.arguments[1].base), ErrorCode.INVALID_ARGUMENT_TYPE, "@slice start/length must be ints", .{});
+                        self.fatal_error = true;
+                        return type_info;
+                    }
+                    if (coll_t.base == .String) {
+                        type_info.* = .{ .base = .String };
+                    } else if (coll_t.base == .Array) {
+                        if (coll_t.array_type) |elem| {
+                            const new_elem = try self.allocator.create(ast.TypeInfo);
+                            new_elem.* = elem.*;
+                            type_info.* = .{ .base = .Array, .array_type = new_elem };
+                        } else {
+                            type_info.* = .{ .base = .Array };
+                        }
+                    } else {
+                        self.reporter.reportCompileError(getLocationFromBase(bc.arguments[0].base), ErrorCode.INVALID_ARGUMENT_TYPE, "@slice requires array or string, got {s}", .{@tagName(coll_t.base)});
+                        self.fatal_error = true;
+                    }
+                    return type_info;
+                } else if (std.mem.eql(u8, fname, "copy")) {
+                    requireArity.check(self, expr, bc.arguments.len, 1, fname);
+                    if (bc.arguments.len != 1) return type_info;
+                    const v_t = try self.inferTypeFromExpr(bc.arguments[0]);
+                    type_info.* = v_t.*;
+                    return type_info;
+                } else if (std.mem.eql(u8, fname, "string")) {
+                    requireArity.check(self, expr, bc.arguments.len, 1, fname);
+                    if (bc.arguments.len != 1) return type_info;
+                    type_info.* = .{ .base = .String };
+                    return type_info;
+                } else if (std.mem.eql(u8, fname, "int")) {
+                    requireArity.check(self, expr, bc.arguments.len, 1, fname);
+                    if (bc.arguments.len != 1) return type_info;
+                    type_info.* = .{ .base = .Int };
+                    return type_info;
+                } else if (std.mem.eql(u8, fname, "float")) {
+                    requireArity.check(self, expr, bc.arguments.len, 1, fname);
+                    if (bc.arguments.len != 1) return type_info;
+                    type_info.* = .{ .base = .Float };
+                    return type_info;
+                } else if (std.mem.eql(u8, fname, "byte")) {
+                    requireArity.check(self, expr, bc.arguments.len, 1, fname);
+                    if (bc.arguments.len != 1) return type_info;
+                    const a0_t = try self.inferTypeFromExpr(bc.arguments[0]);
+                    if (a0_t.base == .String) {
+                        const elem = try self.allocator.create(ast.TypeInfo);
+                        elem.* = .{ .base = .Byte };
+                        type_info.* = .{ .base = .Array, .array_type = elem };
+                    } else {
+                        type_info.* = .{ .base = .Byte };
+                    }
+                    return type_info;
+                } else if (std.mem.eql(u8, fname, "type")) {
+                    requireArity.check(self, expr, bc.arguments.len, 1, fname);
+                    if (bc.arguments.len != 1) return type_info;
+                    type_info.* = .{ .base = .String };
+                    return type_info;
+                } else if (std.mem.eql(u8, fname, "input")) {
+                    requireArity.check(self, expr, bc.arguments.len, 0, fname);
+                    if (bc.arguments.len != 0) return type_info;
+                    type_info.* = .{ .base = .String };
+                    return type_info;
+                } else if (std.mem.eql(u8, fname, "syscall")) {
+                    // Not fully specified; return opaque
+                    type_info.* = .{ .base = .Tetra };
                     return type_info;
                 }
 
-                // Result type is float if either input is float
-                type_info.* = if (a_type.base == .Float or b_type.base == .Float)
-                    .{ .base = .Float }
-                else
-                    .{ .base = .Int };
-            },
-            .IORead => |io| {
-                const path_type = try self.inferTypeFromExpr(io.path);
-                if (path_type.base != .String) {
-                    self.reporter.reportCompileError(
-                        getLocationFromBase(expr.base),
-                        ErrorCode.INVALID_FILE_PATH_TYPE,
-                        "File path must be string, got {s}",
-                        .{@tagName(path_type.base)},
-                    );
-                    self.fatal_error = true;
-                    type_info.base = .Nothing;
-                    return type_info;
-                }
-                type_info.* = .{ .base = .String };
-            },
-            .IOWrite => |io| {
-                const path_type = try self.inferTypeFromExpr(io.path);
-                const content_type = try self.inferTypeFromExpr(io.content);
-                if (path_type.base != .String) {
-                    self.reporter.reportCompileError(
-                        getLocationFromBase(expr.base),
-                        ErrorCode.INVALID_FILE_PATH_TYPE,
-                        "File path must be string, got {s}",
-                        .{@tagName(path_type.base)},
-                    );
-                    self.fatal_error = true;
-                    type_info.base = .Nothing;
-                    return type_info;
-                }
-                if (content_type.base != .String) {
-                    self.reporter.reportCompileError(
-                        getLocationFromBase(expr.base),
-                        ErrorCode.INVALID_FILE_CONTENT_TYPE,
-                        "File content must be string, got {s}",
-                        .{@tagName(content_type.base)},
-                    );
-                    self.fatal_error = true;
-                    type_info.base = .Nothing;
-                    return type_info;
-                }
-                type_info.* = .{ .base = .Tetra }; // Returns success/failure
-            },
-            .IOExec, .IOSpawn => {
-                const command_type = switch (expr.data) {
-                    .IOExec => |io| try self.inferTypeFromExpr(io.command),
-                    .IOSpawn => |io| try self.inferTypeFromExpr(io.command),
-                    else => unreachable,
-                };
-                if (command_type.base != .String) {
-                    self.reporter.reportCompileError(
-                        getLocationFromBase(expr.base),
-                        ErrorCode.INVALID_COMMAND_TYPE,
-                        "Command must be string, got {s}",
-                        .{@tagName(command_type.base)},
-                    );
-                    self.fatal_error = true;
-                    type_info.base = .Nothing;
-                    return type_info;
-                }
-                // exec returns output string, spawn returns success/failure
-                type_info.* = switch (expr.data) {
-                    .IOExec => .{ .base = .String },
-                    .IOSpawn => .{ .base = .Tetra },
-                    else => unreachable,
-                };
-            },
-            .Clone, .Copy => {
-                const value_type = switch (expr.data) {
-                    .Clone => |c| try self.inferTypeFromExpr(c.value),
-                    .Copy => |c| try self.inferTypeFromExpr(c.value),
-                    else => unreachable,
-                };
-                if (value_type.base != .Array and value_type.base != .String and value_type.base != .Map) {
-                    self.reporter.reportCompileError(
-                        getLocationFromBase(expr.base),
-                        ErrorCode.INVALID_OPERAND_TYPE,
-                        "Can only clone/copy arrays, strings, and maps, got {s}",
-                        .{@tagName(value_type.base)},
-                    );
-                    self.fatal_error = true;
-                    type_info.base = .Nothing;
-                    return type_info;
-                }
-                type_info.* = value_type.*; // Returns same type as input
+                self.reporter.reportCompileError(getLocationFromBase(expr.base), ErrorCode.NOT_IMPLEMENTED, "Unknown builtin '@{s}'", .{fname});
+                self.fatal_error = true;
+                return type_info;
             },
             .InternalCall => |method_call| {
                 var receiver_type = try self.inferTypeFromExpr(method_call.receiver);
@@ -2789,7 +2491,8 @@ pub const SemanticAnalyzer = struct {
                                 }
                             }
                         }
-                        if (receiver_type.base != .Array) {
+                        const allow_string_for_method = receiver_type.base == .String and (method_call.method.type == .PUSH or method_call.method.type == .POP or method_call.method.type == .INSERT or method_call.method.type == .REMOVE or method_call.method.type == .CLEAR or method_call.method.type == .FIND);
+                        if (receiver_type.base != .Array and !allow_string_for_method) {
                             self.reporter.reportCompileError(
                                 getLocationFromBase(method_call.receiver.base),
                                 ErrorCode.INVALID_ARRAY_TYPE,
@@ -2816,20 +2519,33 @@ pub const SemanticAnalyzer = struct {
                                     return type_info;
                                 }
 
-                                // Check element type matches array
                                 const value_type = try self.inferTypeFromExpr(method_call.arguments[0]);
-                                if (receiver_type.array_type) |elem_type| {
-                                    try self.unifyTypes(elem_type, value_type, .{ .location = getLocationFromBase(method_call.arguments[0].base) });
+                                if (receiver_type.base == .Array) {
+                                    // Check element type matches array
+                                    if (receiver_type.array_type) |elem_type| {
+                                        try self.unifyTypes(elem_type, value_type, .{ .location = getLocationFromBase(method_call.arguments[0].base) });
+                                    }
+                                } else if (receiver_type.base == .String) {
+                                    // String concatenation: require value to be String
+                                    if (value_type.base != .String) {
+                                        self.reporter.reportCompileError(
+                                            getLocationFromBase(method_call.arguments[0].base),
+                                            ErrorCode.TYPE_MISMATCH,
+                                            "@push on string requires string value, got {s}",
+                                            .{@tagName(value_type.base)},
+                                        );
+                                        self.fatal_error = true;
+                                        type_info.* = .{ .base = .Nothing };
+                                        return type_info;
+                                    }
                                 }
 
-                                // Transform to ArrayPush
-                                expr.data = .{
-                                    .ArrayPush = .{
-                                        .array = method_call.receiver,
-                                        .element = method_call.arguments[0],
-                                    },
-                                };
-                                type_info.* = .{ .base = .Nothing }; // push returns nothing
+                                // Lower to BuiltinCall: @push(array, element)
+                                var args = try self.allocator.alloc(*ast.Expr, 2);
+                                args[0] = method_call.receiver;
+                                args[1] = method_call.arguments[0];
+                                expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = args } };
+                                return try self.inferTypeFromExpr(expr);
                             },
                             .POP => {
                                 if (method_call.arguments.len != 0) {
@@ -2844,19 +2560,11 @@ pub const SemanticAnalyzer = struct {
                                     return type_info;
                                 }
 
-                                // Transform to ArrayPop
-                                expr.data = .{
-                                    .ArrayPop = .{
-                                        .array = method_call.receiver,
-                                    },
-                                };
-
-                                // Return type is the array element type
-                                if (receiver_type.array_type) |elem_type| {
-                                    type_info.* = elem_type.*; // pop returns the element type
-                                } else {
-                                    type_info.* = .{ .base = .Nothing };
-                                }
+                                // Lower to BuiltinCall: @pop(array)
+                                var args = try self.allocator.alloc(*ast.Expr, 1);
+                                args[0] = method_call.receiver;
+                                expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = args } };
+                                return try self.inferTypeFromExpr(expr);
                             },
                             .INSERT => {
                                 if (method_call.arguments.len != 2) {
@@ -2891,9 +2599,13 @@ pub const SemanticAnalyzer = struct {
                                     try self.unifyTypes(elem_type, value_type, .{ .location = getLocationFromBase(method_call.arguments[1].base) });
                                 }
 
-                                // Transform to ArrayInsert (if it exists) or keep as method call for now
-                                // For now, we'll keep it as a method call since ArrayInsert might not be implemented yet
-                                type_info.* = .{ .base = .Nothing }; // insert returns nothing
+                                // Lower to BuiltinCall: @insert(array, index, element)
+                                var args = try self.allocator.alloc(*ast.Expr, 3);
+                                args[0] = method_call.receiver;
+                                args[1] = method_call.arguments[0];
+                                args[2] = method_call.arguments[1];
+                                expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = args } };
+                                return try self.inferTypeFromExpr(expr);
                             },
                             .REMOVE => {
                                 if (method_call.arguments.len != 1) {
@@ -2922,12 +2634,12 @@ pub const SemanticAnalyzer = struct {
                                     return type_info;
                                 }
 
-                                // Return type is the array element type
-                                if (receiver_type.array_type) |elem_type| {
-                                    type_info.* = elem_type.*; // remove returns the removed element
-                                } else {
-                                    type_info.* = .{ .base = .Nothing };
-                                }
+                                // Lower to BuiltinCall: @remove(array, index)
+                                var args = try self.allocator.alloc(*ast.Expr, 2);
+                                args[0] = method_call.receiver;
+                                args[1] = method_call.arguments[0];
+                                expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = args } };
+                                return try self.inferTypeFromExpr(expr);
                             },
                             .CLEAR => {
                                 if (method_call.arguments.len != 0) {
@@ -2942,14 +2654,11 @@ pub const SemanticAnalyzer = struct {
                                     return type_info;
                                 }
 
-                                // Transform to ArrayClear
-                                expr.data = .{
-                                    .ArrayClear = .{
-                                        .array = method_call.receiver,
-                                    },
-                                };
-
-                                type_info.* = .{ .base = .Nothing }; // clear returns nothing
+                                // Lower to BuiltinCall: @clear(array)
+                                var args = try self.allocator.alloc(*ast.Expr, 1);
+                                args[0] = method_call.receiver;
+                                expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = args } };
+                                return try self.inferTypeFromExpr(expr);
                             },
                             .FIND => {
                                 if (method_call.arguments.len != 1) {
@@ -2970,8 +2679,12 @@ pub const SemanticAnalyzer = struct {
                                     try self.unifyTypes(elem_type, value_type, .{ .location = getLocationFromBase(method_call.arguments[0].base) });
                                 }
 
-                                // Return type is integer (index)
-                                type_info.* = .{ .base = .Int }; // index returns the position
+                                // Lower to BuiltinCall: @find(array, element)
+                                var args = try self.allocator.alloc(*ast.Expr, 2);
+                                args[0] = method_call.receiver;
+                                args[1] = method_call.arguments[0];
+                                expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = args } };
+                                return try self.inferTypeFromExpr(expr);
                             },
                             else => {
                                 // For now, other array methods not implemented
@@ -2987,50 +2700,26 @@ pub const SemanticAnalyzer = struct {
                         }
                     },
 
-                    // Type methods
+                    // Type method (legacy) — convert to BuiltinCall("type", receiver)
                     .TYPE => {
-                        // Any type can be queried for its type
-                        // Lower to dedicated AST node for codegen
-                        expr.data = .{ .TypeOf = method_call.receiver };
-                        type_info.* = .{ .base = .String };
+                        var args = try self.allocator.alloc(*ast.Expr, 1);
+                        args[0] = method_call.receiver;
+                        expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = args } };
+                        return try self.inferTypeFromExpr(expr);
                     },
 
-                    // Built-in simple methods
+                    // Built-in simple methods (legacy) — map to BuiltinCall
                     .LENGTH => {
-                        // length works on arrays and strings
-                        if (receiver_type.base != .Array and receiver_type.base != .String) {
-                            self.reporter.reportCompileError(
-                                getLocationFromBase(method_call.receiver.base),
-                                ErrorCode.INVALID_ARRAY_TYPE,
-                                "Cannot call length on non-array/string type {s}",
-                                .{@tagName(receiver_type.base)},
-                            );
-                            self.fatal_error = true;
-                            type_info.* = .{ .base = .Nothing };
-                            return type_info;
-                        }
-                        // Lower to dedicated AST node for codegen
-                        expr.data = .{ .LengthOf = method_call.receiver };
-                        type_info.* = .{ .base = .Int };
+                        var args = try self.allocator.alloc(*ast.Expr, 1);
+                        args[0] = method_call.receiver;
+                        expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = args } };
+                        return try self.inferTypeFromExpr(expr);
                     },
                     .BYTES => {
-                        // bytes works on strings only
-                        if (receiver_type.base != .String) {
-                            self.reporter.reportCompileError(
-                                getLocationFromBase(method_call.receiver.base),
-                                ErrorCode.INVALID_STRING_TYPE,
-                                "Cannot call bytes on non-string type {s}",
-                                .{@tagName(receiver_type.base)},
-                            );
-                            self.fatal_error = true;
-                            type_info.* = .{ .base = .Nothing };
-                            return type_info;
-                        }
-                        // Lower to dedicated AST node for codegen and set return type: array of Byte
-                        expr.data = .{ .BytesOf = method_call.receiver };
-                        const elem_type = try self.allocator.create(TypeInfo);
-                        elem_type.* = .{ .base = .Byte };
-                        type_info.* = .{ .base = .Array, .array_type = elem_type };
+                        var args = try self.allocator.alloc(*ast.Expr, 1);
+                        args[0] = method_call.receiver;
+                        expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = args } };
+                        return try self.inferTypeFromExpr(expr);
                     },
 
                     // String methods
@@ -3054,9 +2743,11 @@ pub const SemanticAnalyzer = struct {
                                 }
 
                                 // For string receivers, handle parse semantics and unions where applicable
-                                // For now, do not fold literals; lower all @int to runtime StringToInt to preserve union type
+                                // For now, do not fold literals; keep as builtin for uniformity
                                 if (method_call.method.type == .TOINT and method_call.receiver.data == .Literal) {
-                                    expr.data = .{ .StringToInt = .{ .string = method_call.receiver } };
+                                    var args = try self.allocator.alloc(*ast.Expr, 1);
+                                    args[0] = method_call.receiver;
+                                    expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = args } };
                                     const int_t = try self.allocator.create(ast.TypeInfo);
                                     int_t.* = .{ .base = .Int };
                                     const err_t = try self.allocator.create(ast.TypeInfo);
@@ -3067,7 +2758,7 @@ pub const SemanticAnalyzer = struct {
                                     return type_info;
                                 }
 
-                                // Lower to runtime string->int conversion when receiver is not literal
+                                // Lower to builtin for runtime string->int conversion when receiver is not literal
                                 if (method_call.method.type == .TOINT) {
                                     // Return type: int | NumberError
                                     const int_t = try self.allocator.create(ast.TypeInfo);
@@ -3076,7 +2767,9 @@ pub const SemanticAnalyzer = struct {
                                     err_t.* = .{ .base = .Custom, .custom_type = "NumberError" };
                                     var union_members = [_]*ast.TypeInfo{ int_t, err_t };
                                     const u = try self.createUnionType(union_members[0..]);
-                                    expr.data = .{ .StringToInt = .{ .string = method_call.receiver } };
+                                    var args = try self.allocator.alloc(*ast.Expr, 1);
+                                    args[0] = method_call.receiver;
+                                    expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = args } };
                                     type_info.* = u.*;
                                     return type_info;
                                 }
@@ -3086,8 +2779,15 @@ pub const SemanticAnalyzer = struct {
                                     return type_info;
                                 }
                                 if (method_call.method.type == .TOBYTE) {
-                                    // Return type: byte (no typed error union in current VM path)
-                                    type_info.* = .{ .base = .Byte };
+                                    // If receiver is string, @byte(string) -> byte[]
+                                    if (receiver_type.base == .String) {
+                                        const elem = try self.allocator.create(ast.TypeInfo);
+                                        elem.* = .{ .base = .Byte };
+                                        type_info.* = .{ .base = .Array, .array_type = elem };
+                                    } else {
+                                        // numeric -> byte
+                                        type_info.* = .{ .base = .Byte };
+                                    }
                                     return type_info;
                                 }
                             },

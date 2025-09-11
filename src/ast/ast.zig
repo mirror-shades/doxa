@@ -634,115 +634,30 @@ pub const Expr = struct {
         },
         EnumMember: Token,
         DefaultArgPlaceholder: void,
-        TypeOf: *Expr,
-        LengthOf: *Expr,
-        BytesOf: *Expr,
-        // Map literal expression (only allowed in declaration initializers)
+
+        // Unified built-in methods (from docs/methods.md):
+        // @length, @push, @pop, @insert, @remove, @clear, @find, @slice, @copy
+        // @string, @int, @float, @byte, @type
+        // @input, @syscall
+        BuiltinCall: struct {
+            function: Token, // name token for the builtin (lexeme without '@')
+            arguments: []const *Expr, // expression arguments
+        },
+
+        // Map literal (only in decl initializers)
         Map: []MapEntry,
+
+        // Instance-style internal calls: obj.method(args...)
         InternalCall: struct {
             receiver: *Expr,
             method: Token,
             arguments: []const *Expr,
         },
-        // Array operations
-        ArrayPush: struct {
-            array: *Expr,
-            element: *Expr,
-        },
-        ArrayLength: struct {
-            array: *Expr,
-        },
-        ArrayPop: struct {
-            array: *Expr,
-        },
-        ArrayConcat: struct {
-            array: *Expr,
-            array2: *Expr,
-        },
-        ArrayIndex: struct {
-            array: *Expr,
-            index: *Expr,
-        },
-        ArrayClear: struct {
-            array: *Expr,
-        },
 
-        // String operations
-        StringSplit: struct {
-            string: *Expr,
-            delimiter: *Expr,
-        },
-        StringJoin: struct {
-            array: *Expr,
-            delimiter: *Expr,
-        },
-        StringTrim: struct {
-            string: *Expr,
-        },
-        StringLower: struct {
-            string: *Expr,
-        },
-        StringUpper: struct {
-            string: *Expr,
-        },
-        StringToInt: struct {
-            string: *Expr,
-        },
-        StringToFloat: struct {
-            string: *Expr,
-        },
-        StringToByte: struct {
-            string: *Expr,
-        },
-
-        // Increment/Decrement operations
+        // Increment/Decrement
         Increment: *Expr,
         Decrement: *Expr,
 
-        // Math operations
-        MathAbs: struct {
-            value: *Expr,
-        },
-        MathMin: struct {
-            a: *Expr,
-            b: *Expr,
-        },
-        MathMax: struct {
-            a: *Expr,
-            b: *Expr,
-        },
-        MathRound: struct {
-            value: *Expr,
-        },
-        MathFloor: struct {
-            value: *Expr,
-        },
-        MathCeil: struct {
-            value: *Expr,
-        },
-
-        // I/O operations
-        IORead: struct {
-            path: *Expr,
-        },
-        IOWrite: struct {
-            path: *Expr,
-            content: *Expr,
-        },
-        IOExec: struct {
-            command: *Expr,
-        },
-        IOSpawn: struct {
-            command: *Expr,
-        },
-
-        // Copy/clone operations
-        Clone: struct {
-            value: *Expr,
-        },
-        Copy: struct {
-            value: *Expr,
-        },
         CompoundAssign: CompoundAssignment,
         Assert: struct {
             condition: *Expr,
@@ -755,13 +670,11 @@ pub const Expr = struct {
             then_branch: ?*Expr = null,
             else_branch: ?*Expr,
         },
-        ReturnExpr: struct {
-            value: ?*Expr,
-        },
+        ReturnExpr: struct { value: ?*Expr },
         Break: void,
         TypeExpr: *TypeExpr,
         Loop: Loop,
-        This: void, // 'this' keyword for method context
+        This: void,
     };
 
     pub fn getBase(self: *Expr) *Base {
@@ -864,12 +777,12 @@ pub const Expr = struct {
                     allocator.destroy(value);
                 }
             },
-            .Variable => {}, // This doesn't own any memory
+            .Variable => {},
             .Literal => |lit| {
                 switch (lit) {
                     .string => |str| allocator.free(str),
-                    .byte => {}, // No cleanup needed for byte
-                    else => {}, // Other literals don't own memory
+                    .byte => {},
+                    else => {},
                 }
             },
             .Logical => |*l| {
@@ -877,6 +790,14 @@ pub const Expr = struct {
                 allocator.destroy(l.left);
                 l.right.deinit(allocator);
                 allocator.destroy(l.right);
+            },
+            .Increment => |*i| {
+                i.*.deinit(allocator);
+                allocator.destroy(i);
+            },
+            .Decrement => |*i| {
+                i.*.deinit(allocator);
+                allocator.destroy(i);
             },
             .Peek => |i| {
                 i.expr.deinit(allocator);
@@ -899,7 +820,6 @@ pub const Expr = struct {
                     allocator.destroy(field);
                 }
                 allocator.free(s.fields);
-
                 for (s.methods) |method| {
                     method.deinit(allocator);
                     allocator.destroy(method);
@@ -932,8 +852,6 @@ pub const Expr = struct {
             .ArrayType => |*array| {
                 array.element_type.deinit(allocator);
                 allocator.destroy(array.element_type);
-
-                // Also clean up the size expression if it exists
                 if (array.size) |size| {
                     size.deinit(allocator);
                     allocator.destroy(size);
@@ -951,23 +869,21 @@ pub const Expr = struct {
             .EnumDecl => |*e| {
                 allocator.free(e.variants);
             },
-            .EnumMember => {}, // No allocation to free
-            .DefaultArgPlaceholder => {}, // Nothing to deallocate
-            .TypeOf => |expr| {
-                expr.deinit(allocator);
-                allocator.destroy(expr);
+            .EnumMember => {},
+            .DefaultArgPlaceholder => {},
+            // .TypeOf removed: use BuiltinCall("type", ...)
+
+            // New unified built-in
+            .BuiltinCall => |*bc| {
+                for (bc.arguments) |arg| {
+                    arg.deinit(allocator);
+                    allocator.destroy(arg);
+                }
+                allocator.free(bc.arguments);
             },
-            .LengthOf => |expr| {
-                expr.deinit(allocator);
-                allocator.destroy(expr);
-            },
-            .BytesOf => |expr| {
-                expr.deinit(allocator);
-                allocator.destroy(expr);
-            },
+
             .Map => |entries| {
                 for (entries) |entry| {
-                    // Each MapEntry owns its key and value Expr
                     entry.key.deinit(allocator);
                     allocator.destroy(entry.key);
                     entry.value.deinit(allocator);
@@ -984,134 +900,15 @@ pub const Expr = struct {
                 }
                 allocator.free(m.arguments);
             },
-            .ArrayPush => |*ap| {
-                ap.array.deinit(allocator);
-                allocator.destroy(ap.array);
-                ap.element.deinit(allocator);
-                allocator.destroy(ap.element);
-            },
-            .ArrayLength => |*a| {
-                a.array.deinit(allocator);
-                allocator.destroy(a.array);
-            },
-            .ArrayPop => |*a| {
-                a.array.deinit(allocator);
-                allocator.destroy(a.array);
-            },
-            .ArrayConcat => |*a| {
-                a.array.deinit(allocator);
-                allocator.destroy(a.array);
-                a.array2.deinit(allocator);
-                allocator.destroy(a.array2);
-            },
-            .ArrayIndex => |*a| {
-                a.array.deinit(allocator);
-                allocator.destroy(a.array);
-                a.index.deinit(allocator);
-                allocator.destroy(a.index);
-            },
-            .ArrayClear => |*a| {
-                a.array.deinit(allocator);
-                allocator.destroy(a.array);
-            },
-            .StringSplit => |*s| {
-                s.string.deinit(allocator);
-                allocator.destroy(s.string);
-                s.delimiter.deinit(allocator);
-                allocator.destroy(s.delimiter);
-            },
-            .StringJoin => |*s| {
-                s.array.deinit(allocator);
-                allocator.destroy(s.array);
-                s.delimiter.deinit(allocator);
-                allocator.destroy(s.delimiter);
-            },
-            .StringTrim => |*s| {
-                s.string.deinit(allocator);
-                allocator.destroy(s.string);
-            },
-            .StringLower => |*s| {
-                s.string.deinit(allocator);
-                allocator.destroy(s.string);
-            },
-            .StringUpper => |*s| {
-                s.string.deinit(allocator);
-                allocator.destroy(s.string);
-            },
-            .StringToInt => |*s| {
-                s.string.deinit(allocator);
-                allocator.destroy(s.string);
-            },
-            .StringToFloat => |*s| {
-                s.string.deinit(allocator);
-                allocator.destroy(s.string);
-            },
-            .StringToByte => |*s| {
-                s.string.deinit(allocator);
-                allocator.destroy(s.string);
-            },
-            .Increment => |*inc| {
-                inc.*.deinit(allocator);
-                allocator.destroy(inc);
-            },
-            .Decrement => |*dec| {
-                dec.*.deinit(allocator);
-                allocator.destroy(dec);
-            },
-            .MathAbs => |*m| {
-                m.value.deinit(allocator);
-                allocator.destroy(m.value);
-            },
-            .MathMin => |*m| {
-                m.a.deinit(allocator);
-                allocator.destroy(m.a);
-                m.b.deinit(allocator);
-                allocator.destroy(m.b);
-            },
-            .MathMax => |*m| {
-                m.a.deinit(allocator);
-                allocator.destroy(m.a);
-                m.b.deinit(allocator);
-                allocator.destroy(m.b);
-            },
-            .MathRound => |*m| {
-                m.value.deinit(allocator);
-                allocator.destroy(m.value);
-            },
-            .MathFloor => |*m| {
-                m.value.deinit(allocator);
-                allocator.destroy(m.value);
-            },
-            .MathCeil => |*m| {
-                m.value.deinit(allocator);
-                allocator.destroy(m.value);
-            },
-            .IORead => |*io| {
-                io.path.deinit(allocator);
-                allocator.destroy(io.path);
-            },
-            .IOWrite => |*io| {
-                io.path.deinit(allocator);
-                allocator.destroy(io.path);
-                io.content.deinit(allocator);
-                allocator.destroy(io.content);
-            },
-            .IOExec => |*io| {
-                io.command.deinit(allocator);
-                allocator.destroy(io.command);
-            },
-            .IOSpawn => |*io| {
-                io.command.deinit(allocator);
-                allocator.destroy(io.command);
-            },
-            .Clone => |*c| {
-                c.value.deinit(allocator);
-                allocator.destroy(c.value);
-            },
-            .Copy => |*c| {
-                c.value.deinit(allocator);
-                allocator.destroy(c.value);
-            },
+
+            // Removed array/string-specific nodes, so their deinit cases are gone.
+
+            // Math nodes removed or migrated; handled elsewhere if present
+
+            // IO nodes removed or migrated; use BuiltinCall where applicable
+
+            // .Clone removed or migrated
+
             .CompoundAssign => |*ca| {
                 if (ca.value) |value| {
                     value.deinit(allocator);
@@ -1150,7 +947,6 @@ pub const Expr = struct {
             },
             .Loop => |*l| {
                 if (l.var_decl) |vd| {
-                    // Deinit any initializer expression inside the VarDecl statement
                     switch (vd.data) {
                         .VarDecl => |*decl| {
                             if (decl.initializer) |init| {
@@ -1179,7 +975,7 @@ pub const Expr = struct {
                 l.body.deinit(allocator);
                 allocator.destroy(l.body);
             },
-            .This => {}, // 'this' doesn't own any memory
+            .This => {},
         }
     }
 };

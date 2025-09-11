@@ -346,12 +346,12 @@ mike.person.age is 26
 mike.person.age? // 26
 //testing length method
 @length(mike.person.name)?
-//testing bytes method
-@bytes(mike.person.name)?
+//testing byte method with string
+@byte(mike.person.name)?
 // testing index method
 mike.person.name[0]? // M
-// testing bytes print and bytes index
-@bytes(mike.person.name)[0]? // 77
+// testing byte print and byte index
+@byte(mike.person.name)[0]? // 77
 
 mike.salary? // 1000
 
@@ -552,7 +552,7 @@ function process_number_union_string(value :: int | float) returns string {
 process_number_union_string(un1)? // integer
 process_number_union_string(un2)? // float
 
-function process_number_union_narrow(value :: int | float) returns int | float {
+function process_number_union_narrow(value :: int | float) returns int {
     return match value {
         int then value,
         float then 0,

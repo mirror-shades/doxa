@@ -959,6 +959,7 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
                 .ToFloat => "ToFloat",
                 .ToByte => "ToByte",
                 .ToString => "ToString",
+                .Pop => "Pop",
             };
             try writer.print("    StringOp {s}                 ; String operation\n", .{op_name});
         },

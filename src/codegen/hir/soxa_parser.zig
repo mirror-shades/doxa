@@ -766,6 +766,8 @@ pub const SoxaTextParser = struct {
                 StringOpType.ToByte
             else if (std.mem.eql(u8, op_str, "ToString"))
                 StringOpType.ToString
+            else if (std.mem.eql(u8, op_str, "Pop"))
+                StringOpType.Pop
             else
                 StringOpType.Length; // Default fallback
 
