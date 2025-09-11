@@ -5,7 +5,6 @@ const HIRFrame = Core.HIRFrame;
 const Errors = @import("../../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
 const ErrorCode = Errors.ErrorCode;
-const helpers = @import("../helpers.zig");
 
 // Execute the Arith instruction. Accepts the VM as `anytype` to avoid import cycles.
 pub fn exec(vm: anytype, a: anytype) !void {
