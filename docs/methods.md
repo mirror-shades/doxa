@@ -12,31 +12,31 @@ Doxa provides built-in methods prefixed with `@` for core operations.
 
 ### @push
 
-- **Input**: `array`, `value`
+- **Input**: `array | string`, `value`
 - **Output**: `void` - adds value to end of array
 - **Example**: `@push(arr, 3)` // adds 3 to arr
 
 ### @pop
 
-- **Input**: `array`
+- **Input**: `array | string`
 - **Output**: `any` - removes and returns last element
 - **Example**: `var last = @pop(arr)`
 
 ### @insert
 
-- **Input**: `array`, `index`, `value`
+- **Input**: `array | string`, `index`, `value`
 - **Output**: `void` - inserts value at index
 - **Example**: `@insert(arr, 1, 5)` // inserts 5 at index 1
 
 ### @remove
 
-- **Input**: `array`, `index`
+- **Input**: `array | string`, `index`
 - **Output**: `any` - removes and returns element at index
 - **Example**: `var removed = @remove(arr, 1)`
 
 ### @clear
 
-- **Input**: `array`
+- **Input**: `array | string`
 - **Output**: `void` - removes all elements
 - **Example**: `@clear(arr)` // arr becomes []
 

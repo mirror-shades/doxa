@@ -1741,6 +1741,18 @@ pub const HIRVM = struct {
                 switch (val.value) {
                     .string => |s_val| {
                         switch (s.op) {
+                            .Pop => {
+                                // Pop last character: return the last character as string and update original string
+                                if (s_val.len == 0) {
+                                    return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot pop from empty string", .{});
+                                }
+                                const last_index = s_val.len - 1;
+                                const last_char = s_val[last_index..s_val.len];
+                                const remaining = s_val[0..last_index];
+                                // Push updated string first, then popped char to mirror ArrayPop order
+                                try self.stack.push(HIRFrame.initString(remaining));
+                                try self.stack.push(HIRFrame.initString(last_char));
+                            },
                             .Substring => {
                                 // Get substring parameters
                                 const length = try self.stack.pop();
@@ -2933,6 +2945,24 @@ pub const HIRVM = struct {
                 }
 
                 try self.stack.push(HIRFrame.initFromHIRValue(out));
+            },
+            .ArrayLen => {
+                // Get length of array or string and push as int
+                const value = try self.stack.pop();
+                switch (value.value) {
+                    .array => |arr| {
+                        var length: u32 = 0;
+                        for (arr.elements) |elem| {
+                            if (std.meta.eql(elem, HIRValue.nothing)) break;
+                            length += 1;
+                        }
+                        try self.stack.push(HIRFrame.initInt(@as(i64, @intCast(length))));
+                    },
+                    .string => |s| {
+                        try self.stack.push(HIRFrame.initInt(@as(i64, @intCast(s.len))));
+                    },
+                    else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot get length of non-array value: {s}", .{@tagName(value.value)}),
+                }
             },
             else => {
                 // Print detailed instruction info based on type

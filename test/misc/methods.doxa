@@ -2,7 +2,7 @@
 
 // @length - Getting arr and string lengths
 // @push - Adding elements to arrs
-// @bytes - Converting strings to byte arrs
+// @byte - Converting strings to byte arrs
 // @string - Converting values to strings
 // @int - Parsing strings to integers with error handling
 // @float - Parsing strings to floats
@@ -68,9 +68,9 @@ arr?                  // [1, 2, 3, 4, 5]
 arr?                  // [1, 2, 3, 4, 5, 6]
 
 /////
-// BYTES 
+// byte 
 /////
-@bytes(text)?                 // [0x68, 0x65, 0x6C, 0x6C, 0x6F, 0x20, 0x77, 0x6F, 0x72, 0x6C, 0x64]
+@byte(text)?                 // [0x68, 0x65, 0x6C, 0x6C, 0x6F, 0x20, 0x77, 0x6F, 0x72, 0x6C, 0x64]
 
 /////
 // STRING 
