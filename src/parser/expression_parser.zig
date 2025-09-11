@@ -1002,7 +1002,7 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
         // Parse additional types separated by pipes
         while (self.peek().type == .PIPE) {
             self.advance(); // consume |
-            const next_type = try parseTypeExpr(self) orelse return error.ExpectedType;
+            const next_type = try parseNonUnionTypeExpr(self) orelse return error.ExpectedType;
             try types.append(next_type);
         }
 
@@ -1544,6 +1544,118 @@ pub fn parseArrayLiteral(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!
         },
     };
     return array_expr;
+}
+
+fn parseNonUnionTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
+    const type_token = self.peek();
+    const type_name = type_token.lexeme;
+
+    var base_type_expr: ?*ast.TypeExpr = null;
+    var consumed_token = false;
+
+    // 1. Check for Basic Types
+    const maybe_basic_type: ?ast.BasicType = blk: {
+        switch (type_token.type) {
+            .INT_TYPE => break :blk ast.BasicType.Integer,
+            .BYTE_TYPE => break :blk ast.BasicType.Byte,
+            .FLOAT_TYPE => break :blk ast.BasicType.Float,
+            .STRING_TYPE => break :blk ast.BasicType.String,
+            .TETRA_TYPE => break :blk ast.BasicType.Tetra,
+            .NOTHING_TYPE => break :blk ast.BasicType.Nothing,
+            else => {
+                // For backward compatibility, also check lexemes
+                if (std.mem.eql(u8, type_name, "int")) break :blk ast.BasicType.Integer;
+                if (std.mem.eql(u8, type_name, "Int")) break :blk ast.BasicType.Integer;
+                if (std.mem.eql(u8, type_name, "byte")) break :blk ast.BasicType.Byte;
+                if (std.mem.eql(u8, type_name, "Byte")) break :blk ast.BasicType.Byte;
+                if (std.mem.eql(u8, type_name, "float")) break :blk ast.BasicType.Float;
+                if (std.mem.eql(u8, type_name, "Float")) break :blk ast.BasicType.Float;
+                if (std.mem.eql(u8, type_name, "string")) break :blk ast.BasicType.String;
+                if (std.mem.eql(u8, type_name, "String")) break :blk ast.BasicType.String;
+                if (std.mem.eql(u8, type_name, "tetra")) break :blk ast.BasicType.Tetra;
+                if (std.mem.eql(u8, type_name, "Tetra")) break :blk ast.BasicType.Tetra;
+                if (std.mem.eql(u8, type_name, "nothing")) break :blk ast.BasicType.Nothing;
+                if (std.mem.eql(u8, type_name, "Nothing")) break :blk ast.BasicType.Nothing;
+                break :blk null;
+            },
+        }
+    };
+
+    if (maybe_basic_type) |basic_type| {
+        self.advance(); // consume type token
+        consumed_token = true;
+
+        const type_expr = try self.allocator.create(ast.TypeExpr);
+        type_expr.* = .{
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(type_token),
+            },
+            .data = .{
+                .Basic = basic_type,
+            },
+        };
+        base_type_expr = type_expr;
+    } else {
+        // 2. Check for Custom Types (identifiers that aren't basic types)
+        if (type_token.type == .IDENTIFIER) {
+            self.advance(); // consume identifier
+            consumed_token = true;
+
+            const type_expr = try self.allocator.create(ast.TypeExpr);
+            type_expr.* = .{
+                .base = .{
+                    .id = ast.generateNodeId(),
+                    .span = ast.SourceSpan.fromToken(type_token),
+                },
+                .data = .{
+                    .Custom = type_token,
+                },
+            };
+            base_type_expr = type_expr;
+        }
+    }
+
+    if (base_type_expr == null) {
+        return null;
+    }
+
+    // 3. Check for Array Type
+    if (self.peek().type == .LEFT_BRACKET) {
+        self.advance(); // consume [
+        consumed_token = true;
+
+        // Check for array size
+        var array_size: ?*ast.Expr = null;
+        if (self.peek().type != .RIGHT_BRACKET) {
+            array_size = try parseExpression(self) orelse return error.ExpectedExpression;
+        }
+
+        if (self.peek().type != .RIGHT_BRACKET) {
+            return error.ExpectedRightBracket;
+        }
+        self.advance(); // consume ]
+
+        const element_type = try parseNonUnionTypeExpr(self) orelse return error.ExpectedType;
+
+        const array_type_expr = try self.allocator.create(ast.TypeExpr);
+        array_type_expr.* = .{
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(type_token),
+            },
+            .data = .{
+                .Array = ast.ArrayType{
+                    .element_type = element_type,
+                    .size = array_size,
+                },
+            },
+        };
+        base_type_expr = array_type_expr;
+    }
+
+    // If no array brackets, return the base type expression
+    return base_type_expr;
 }
 
 fn parseBasicType(self: *Parser) ErrorList!?*ast.TypeExpr {

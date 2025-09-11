@@ -4,7 +4,9 @@ const Reporting = @import("../../utils/reporting.zig");
 const Location = Reporting.Location;
 const Reporter = Reporting.Reporter;
 const TokenLiteral = @import("../../types/types.zig").TokenLiteral;
-const TokenType = @import("../../types/token.zig").TokenType;
+const TokenImport = @import("../../types/token.zig");
+const TokenType = TokenImport.TokenType;
+const Token = TokenImport.Token;
 const SoxaInstructions = @import("soxa_instructions.zig");
 const SoxaStatements = @import("soxa_statements.zig");
 pub const HIRInstruction = SoxaInstructions.HIRInstruction;
@@ -29,8 +31,18 @@ const Errors = @import("../../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
 const ErrorCode = Errors.ErrorCode;
 
-const SemanticAnalyzer = @import("../../analysis/semantic.zig");
+const SemanticAnalyzer = @import("../../analysis/semantic/semantic.zig");
 const StructMethodInfo = SemanticAnalyzer.StructMethodInfo;
+
+// Expression handler imports
+const BasicHandler = @import("expressions/basic.zig").BasicExpressionHandler;
+const BinaryHandler = @import("expressions/binary.zig").BinaryExpressionHandler;
+const ControlFlowHandler = @import("expressions/control_flow.zig").ControlFlowHandler;
+const CollectionsHandler = @import("expressions/collections.zig").CollectionsHandler;
+const CallsHandler = @import("expressions/calls.zig").CallsHandler;
+const StructsHandler = @import("expressions/structs.zig").StructsHandler;
+const AssignmentsHandler = @import("expressions/assignments.zig").AssignmentsHandler;
+const IOHandler = @import("expressions/io.zig").IOHandler;
 
 // Tetra constants for fast operations
 pub const TETRA_FALSE: u8 = 0; // 00
@@ -723,7 +735,6 @@ pub const HIRGenerator = struct {
         return null;
     }
 
-
     // Fast lookup tables for tetra operations
     pub const TETRA_AND_LUT: [4][4]u8 = [4][4]u8{
         [4]u8{ 0, 0, 0, 0 }, // FALSE AND x = FALSE
@@ -794,16 +805,6 @@ pub const HIRGenerator = struct {
         // Type checking is now handled by the semantic analyzer before HIR generation.
         // No direct `type_info` field on `ast.Expr` anymore.
         // We will assume expressions passed here have valid type information.
-
-        // Import specialized expression handlers
-        const BasicHandler = @import("expressions/basic.zig").BasicExpressionHandler;
-        const BinaryHandler = @import("expressions/binary.zig").BinaryExpressionHandler;
-        const ControlFlowHandler = @import("expressions/control_flow.zig").ControlFlowHandler;
-        const CollectionsHandler = @import("expressions/collections.zig").CollectionsHandler;
-        const CallsHandler = @import("expressions/calls.zig").CallsHandler;
-        const StructsHandler = @import("expressions/structs.zig").StructsHandler;
-        const AssignmentsHandler = @import("expressions/assignments.zig").AssignmentsHandler;
-        const IOHandler = @import("expressions/io.zig").IOHandler;
 
         // Initialize handlers
         var basic_handler = BasicHandler.init(self);
@@ -965,7 +966,7 @@ pub const HIRGenerator = struct {
 
     /// Centralized generation for internal/built-in method calls.
     /// Handles both direct InternalCall AST nodes and method-sugar (obj.method(...)).
-    pub fn generateInternalMethodCall(self: *HIRGenerator, method: @import("../../types/token.zig").Token, receiver: *ast.Expr, args: []ast.CallArgument, should_pop_after_use: bool) (std.mem.Allocator.Error || ErrorList)!void {
+    pub fn generateInternalMethodCall(self: *HIRGenerator, method: Token, receiver: *ast.Expr, args: []ast.CallArgument, should_pop_after_use: bool) (std.mem.Allocator.Error || ErrorList)!void {
         const name = method.lexeme;
 
         // Check if this is a struct method call
