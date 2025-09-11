@@ -61,7 +61,7 @@ TODO:
 
 - standard lib
 - `to` spread op
-- refactor soxa_generator, semantic, parser_types, expression parser
+- refactor semantic, parser_types, expression parser
 - SOXA to LLVMIR code gen
 
 ## Native Types

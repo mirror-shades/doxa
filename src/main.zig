@@ -1,6 +1,6 @@
 const std = @import("std");
 const LexicalAnalyzer = @import("./analysis/lexical.zig").LexicalAnalyzer;
-const SemanticAnalyzer = @import("./analysis/semantic.zig").SemanticAnalyzer;
+const SemanticAnalyzer = @import("./analysis/semantic/semantic.zig").SemanticAnalyzer;
 const Parser = @import("./parser/parser_types.zig").Parser;
 const Reporting = @import("./utils/reporting.zig");
 const Reporter = Reporting.Reporter;
@@ -183,7 +183,7 @@ fn compileDoxaToSoxaFromAST(memoryManager: *MemoryManager, statements: []ast.Stm
         const struct_name = entry.key_ptr.*;
         const method_table_src = entry.value_ptr.*;
 
-        var method_table_dst = std.StringHashMap(@import("analysis/semantic.zig").StructMethodInfo).init(memoryManager.getAllocator());
+        var method_table_dst = std.StringHashMap(@import("analysis/semantic/semantic.zig").StructMethodInfo).init(memoryManager.getAllocator());
         var mi_it = method_table_src.iterator();
         while (mi_it.next()) |mi_entry| {
             const mname = mi_entry.key_ptr.*;
