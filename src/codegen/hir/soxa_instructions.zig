@@ -2,7 +2,7 @@ const HIRValue = @import("soxa_values.zig").HIRValue;
 const HIRType = @import("soxa_types.zig").HIRType;
 const HIRMapEntry = @import("soxa_values.zig").HIRMapEntry;
 const ScopeKind = @import("soxa_types.zig").ScopeKind;
-const CallKind = @import("soxa_types.zig").CallKind;
+pub const CallKind = @import("soxa_types.zig").CallKind;
 const Reporting = @import("../../utils/reporting.zig");
 const Expr = @import("../../ast/ast.zig").Expr;
 

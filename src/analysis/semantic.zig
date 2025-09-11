@@ -417,9 +417,9 @@ pub const SemanticAnalyzer = struct {
         };
     }
 
-    // Helper function to convert SemanticAnalyzer.CustomTypeInfo to HIRGenerator.CustomTypeInfo
-    pub fn convertCustomTypeInfo(semantic_type: CustomTypeInfo, allocator: std.mem.Allocator) !@import("../codegen/hir/soxa_generator.zig").HIRGenerator.CustomTypeInfo {
-        var hir_type = @import("../codegen/hir/soxa_generator.zig").HIRGenerator.CustomTypeInfo{
+    // Helper function to convert SemanticAnalyzer.CustomTypeInfo to TypeSystem.CustomTypeInfo
+    pub fn convertCustomTypeInfo(semantic_type: CustomTypeInfo, allocator: std.mem.Allocator) !@import("../codegen/hir/type_system.zig").TypeSystem.CustomTypeInfo {
+        var hir_type = @import("../codegen/hir/type_system.zig").TypeSystem.CustomTypeInfo{
             .name = semantic_type.name,
             .kind = switch (semantic_type.kind) {
                 .Struct => .Struct,
@@ -431,7 +431,7 @@ pub const SemanticAnalyzer = struct {
 
         // Convert enum variants if present
         if (semantic_type.enum_variants) |variants| {
-            const converted_variants = try allocator.alloc(@import("../codegen/hir/soxa_generator.zig").HIRGenerator.CustomTypeInfo.EnumVariant, variants.len);
+            const converted_variants = try allocator.alloc(@import("../codegen/hir/type_system.zig").TypeSystem.CustomTypeInfo.EnumVariant, variants.len);
             for (variants, 0..) |variant, i| {
                 converted_variants[i] = .{
                     .name = variant.name,
@@ -443,7 +443,7 @@ pub const SemanticAnalyzer = struct {
 
         // Convert struct fields if present
         if (semantic_type.struct_fields) |fields| {
-            const converted_fields = try allocator.alloc(@import("../codegen/hir/soxa_generator.zig").HIRGenerator.CustomTypeInfo.StructField, fields.len);
+            const converted_fields = try allocator.alloc(@import("../codegen/hir/type_system.zig").TypeSystem.CustomTypeInfo.StructField, fields.len);
             for (fields, 0..) |field, i| {
                 // Map to coarse HIRType here without relying on self
                 const mapped_hir_type: HIRType = switch (field.field_type_info.base) {

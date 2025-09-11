@@ -173,7 +173,7 @@ fn compileDoxaToSoxaFromAST(memoryManager: *MemoryManager, statements: []ast.Stm
     while (custom_types_iter.next()) |entry| {
         const custom_type = entry.value_ptr.*;
         const converted_type = try SemanticAnalyzer.convertCustomTypeInfo(custom_type, memoryManager.getAllocator());
-        try hir_generator.custom_types.put(custom_type.name, converted_type);
+        try hir_generator.type_system.custom_types.put(custom_type.name, converted_type);
     }
 
     // NEW: Import struct methods from semantic analysis (deep copy tables to avoid double-free)
