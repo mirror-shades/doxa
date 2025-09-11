@@ -1,6 +1,6 @@
 const std = @import("std");
-const Token = @import("../types/token.zig").Token;
-const TokenLiteral = @import("../types/types.zig").TokenLiteral;
+pub const Token = @import("../types/token.zig").Token;
+pub const TokenLiteral = @import("../types/types.zig").TokenLiteral;
 const Reporting = @import("../utils/reporting.zig");
 const Location = @import("../utils/reporting.zig").Location;
 const Reporter = @import("../utils/reporting.zig").Reporter;
