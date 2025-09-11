@@ -38,6 +38,7 @@ const CallStack = core.CallStack;
 const HotVar = core.HotVar;
 const HIRFrame = core.HIRFrame;
 const CallFrame = core.CallFrame;
+const helpers = @import("helpers.zig");
 
 const STACK_SIZE: u32 = 1024 * 1024;
 
@@ -812,198 +813,8 @@ pub const HIRVM = struct {
             },
 
             .Arith => |a| {
-                const right = try self.stack.pop();
-                const left = try self.stack.pop();
-
-                if (self.reporter.debug_mode) {
-                    self.reporter.report(.Debug, .Hint, null, null, "Arith: {s} {s} {s}", .{ try self.valueToString(left.value), @tagName(a.op), try self.valueToString(right.value) });
-                }
-
-                // Handle array arithmetic first
-                if (a.operand_type == .Array) {
-                    if (a.op == .Add) {
-                        // Array concatenation
-                        switch (left.value) {
-                            .array => |arr_a| {
-                                switch (right.value) {
-                                    .array => |arr_b| {
-                                        // Calculate lengths
-                                        var len_a: u32 = 0;
-                                        for (arr_a.elements) |elem| {
-                                            if (std.meta.eql(elem, HIRValue.nothing)) break;
-                                            len_a += 1;
-                                        }
-
-                                        var len_b: u32 = 0;
-                                        for (arr_b.elements) |elem| {
-                                            if (std.meta.eql(elem, HIRValue.nothing)) break;
-                                            len_b += 1;
-                                        }
-
-                                        // Create new array with combined elements
-                                        const new_elements = try self.allocator.alloc(HIRValue, len_a + len_b);
-
-                                        // Copy elements from first array
-                                        for (0..len_a) |i| {
-                                            new_elements[i] = arr_a.elements[i];
-                                        }
-
-                                        // Copy elements from second array
-                                        for (0..len_b) |i| {
-                                            new_elements[len_a + i] = arr_b.elements[i];
-                                        }
-
-                                        const result_array = HIRValue{
-                                            .array = .{
-                                                .elements = new_elements,
-                                                .capacity = len_a + len_b,
-                                                .element_type = arr_a.element_type,
-                                            },
-                                        };
-
-                                        try self.stack.push(HIRFrame.initFromHIRValue(result_array));
-                                        return;
-                                    },
-                                    else => {
-                                        return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot concatenate array with {s}", .{@tagName(right.value)});
-                                    },
-                                }
-                            },
-                            else => {
-                                return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot concatenate {s} with array", .{@tagName(left.value)});
-                            },
-                        }
-                    } else {
-                        return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform {s} operation on arrays", .{@tagName(a.op)});
-                    }
-                }
-
-                // Check if either operand is a float and needs promotion
-                const a_is_float = left.value == .float;
-                const b_is_float = right.value == .float;
-
-                // All division promotes to float. If either operand is float or op is Div, promote both to float path.
-                if (a_is_float or b_is_float or a.op == .Div) {
-                    // Convert both operands to float and perform float arithmetic
-                    const left_float = switch (left.value) {
-                        .int => |i| @as(f64, @floatFromInt(i)),
-                        .byte => |u| @as(f64, @floatFromInt(u)),
-                        .float => |f| f,
-                        .string => |s| blk: {
-                            const parsed = std.fmt.parseFloat(f64, s) catch {
-                                return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert string '{s}' to float for arithmetic", .{s});
-                            };
-                            break :blk parsed;
-                        },
-                        else => {
-                            return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert {s} to float for arithmetic", .{@tagName(left.value)});
-                        },
-                    };
-
-                    const right_float = switch (right.value) {
-                        .int => |i| @as(f64, @floatFromInt(i)),
-                        .byte => |u| @as(f64, @floatFromInt(u)),
-                        .float => |f| f,
-                        .string => |s| blk: {
-                            const parsed = std.fmt.parseFloat(f64, s) catch {
-                                return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert string '{s}' to float for arithmetic", .{s});
-                            };
-                            break :blk parsed;
-                        },
-                        else => {
-                            return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert {s} to float for arithmetic", .{@tagName(right.value)});
-                        },
-                    };
-
-                    var result: f64 = 0.0;
-                    switch (a.op) {
-                        .Add => result = left_float + right_float,
-                        .Sub => result = left_float - right_float,
-                        .Mul => result = left_float * right_float,
-                        .Div => {
-                            if (right_float == 0.0) {
-                                return ErrorList.DivisionByZero;
-                            } else result = left_float / right_float;
-                        },
-                        .Mod => result = @mod(left_float, right_float),
-                        .Pow => {
-                            result = std.math.pow(f64, left_float, right_float);
-                        },
-                    }
-
-                    if (self.reporter.debug_mode) {
-                        self.reporter.report(.Debug, .Hint, null, null, "Arith result: {d}", .{result});
-                    }
-
-                    try self.stack.push(HIRFrame.initFloat(result));
-                    return;
-                }
-
-                // Both operands are integers, perform integer arithmetic
-                const left_int = switch (left.value) {
-                    .int => |i| i,
-                    .byte => |u| @as(i64, u),
-                    .tetra => |t| @as(i64, t),
-                    .string => |s| blk: {
-                        const parsed = std.fmt.parseInt(i64, s, 10) catch {
-                            return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert string to integer for arithmetic", .{});
-                        };
-                        break :blk parsed;
-                    },
-                    .nothing => {
-                        return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform arithmetic on 'nothing' value", .{});
-                    },
-                    else => {
-                        return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert {s} to integer for arithmetic", .{@tagName(left.value)});
-                    },
-                };
-
-                const right_int = switch (right.value) {
-                    .int => |i| i,
-                    .byte => |u| @as(i64, u),
-                    .tetra => |t| @as(i64, t),
-                    .string => |s| blk: {
-                        const parsed = std.fmt.parseInt(i64, s, 10) catch {
-                            return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert string to integer for arithmetic", .{});
-                        };
-                        break :blk parsed;
-                    },
-                    .nothing => {
-                        return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform arithmetic on 'nothing' value", .{});
-                    },
-                    else => {
-                        return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert {s} to integer for arithmetic", .{@tagName(right.value)});
-                    },
-                };
-
-                var int_result: i64 = undefined;
-                switch (a.op) {
-                    .Add => int_result = std.math.add(i64, left_int, right_int) catch {
-                        return self.reporter.reportRuntimeError(null, ErrorCode.ARITHMETIC_OVERFLOW, "Integer addition overflow", .{});
-                    },
-                    .Sub => int_result = std.math.sub(i64, left_int, right_int) catch {
-                        return self.reporter.reportRuntimeError(null, ErrorCode.ARITHMETIC_OVERFLOW, "Integer subtraction overflow", .{});
-                    },
-                    .Mul => int_result = std.math.mul(i64, left_int, right_int) catch {
-                        return self.reporter.reportRuntimeError(null, ErrorCode.ARITHMETIC_OVERFLOW, "Integer multiplication overflow", .{});
-                    },
-                    .Div => unreachable,
-                    .Mod => int_result = try self.fastIntMod(left_int, right_int),
-                    .Pow => {
-                        int_result = std.math.pow(i64, left_int, right_int);
-                    },
-                }
-
-                if (self.reporter.debug_mode) {
-                    self.reporter.report(.Debug, .Hint, null, null, "Arith result: {d}", .{int_result});
-                }
-
-                // Preserve the original type when possible
-                if (left.value == .byte and int_result >= 0 and int_result <= 255) {
-                    try self.stack.push(HIRFrame.initByte(@intCast(int_result)));
-                } else {
-                    try self.stack.push(HIRFrame.initInt(int_result));
-                }
+                const ops_arith = @import("ops/arith.zig");
+                try ops_arith.exec(self, a);
             },
 
             .Compare => |c| {
@@ -1021,6 +832,7 @@ pub const HIRVM = struct {
 
                 try self.stack.push(HIRFrame.initTetra(if (result) 1 else 0));
             },
+
             .TypeCheck => |tc| {
                 const value = try self.stack.pop();
 
@@ -1384,238 +1196,8 @@ pub const HIRVM = struct {
             },
 
             .StringOp => |s| {
-                const val = try self.stack.pop();
-
-                if (self.reporter.debug_mode) {
-                    const t = self.getTypeString(val.value);
-                    self.reporter.report(.Debug, .Hint, null, null, "StringOp.{s} in_type='{s}'", .{ @tagName(s.op), t });
-                }
-
-                // Fast-path for Length which is valid for both strings and arrays
-                if (s.op == .Length) {
-                    switch (val.value) {
-                        .string => |sv| {
-                            const len = @as(i64, @intCast(sv.len));
-                            try self.stack.push(HIRFrame.initInt(len));
-                        },
-                        .array => |arr| {
-                            // Use logical length: count elements until first 'nothing'
-                            var logical_len: usize = 0;
-                            while (logical_len < arr.elements.len) : (logical_len += 1) {
-                                if (std.meta.eql(arr.elements[logical_len], HIRValue.nothing)) break;
-                            }
-                            try self.stack.push(HIRFrame.initInt(@intCast(logical_len)));
-                        },
-                        else => return ErrorList.TypeError,
-                    }
-                    return; // done handling Length
-                }
-
-                // Fast-path for ToString which is valid for any type
-                if (s.op == .ToString) {
-                    const result = try self.valueToString(val.value);
-                    try self.stack.push(HIRFrame.initString(result));
-                    return; // done handling ToString
-                }
-
-                // Numeric conversions: accept string, int, float, byte
-                if (s.op == .ToInt) {
-                    const out: HIRValue = switch (val.value) {
-                        .int => val.value,
-                        .byte => |u| HIRValue{ .int = @as(i64, u) },
-                        .float => |f| HIRValue{ .int = @as(i64, @intFromFloat(f)) },
-                        .string => |s_val| blk: {
-                            const parsed = std.fmt.parseInt(i64, s_val, 10) catch {
-                                // On failure, mirror existing behavior: return NumberError.ParseFailed if available; else 0
-                                var variant_index: u32 = 0;
-                                if (self.custom_type_registry.get("NumberError")) |ct| {
-                                    if (ct.enum_variants) |variants| {
-                                        for (variants, 0..) |v, i| {
-                                            if (std.mem.eql(u8, v.name, "ParseFailed")) {
-                                                variant_index = @intCast(i);
-                                                break;
-                                            }
-                                        }
-                                    }
-                                }
-                                break :blk HIRValue{ .enum_variant = .{ .type_name = "NumberError", .variant_name = "ParseFailed", .variant_index = variant_index } };
-                            };
-                            if (self.reporter.debug_mode) {
-                                self.reporter.report(.Debug, .Hint, null, null, "StringOp.ToInt parsed='{d}'", .{parsed});
-                            }
-                            break :blk HIRValue{ .int = parsed };
-                        },
-                        else => HIRValue{ .int = 0 },
-                    };
-                    try self.stack.push(HIRFrame.initFromHIRValue(out));
-                    return;
-                }
-                if (s.op == .ToFloat) {
-                    const out: HIRValue = switch (val.value) {
-                        .float => val.value,
-                        .int => |i| HIRValue{ .float = @as(f64, @floatFromInt(i)) },
-                        .byte => |u| HIRValue{ .float = @as(f64, @floatFromInt(u)) },
-                        .string => |s_val| blk: {
-                            const parsed = std.fmt.parseFloat(f64, s_val) catch 0.0;
-                            break :blk HIRValue{ .float = parsed };
-                        },
-                        else => HIRValue{ .float = 0.0 },
-                    };
-                    try self.stack.push(HIRFrame.initFromHIRValue(out));
-                    return;
-                }
-                if (s.op == .ToByte) {
-                    const out: HIRValue = switch (val.value) {
-                        .byte => val.value,
-                        .int => |i| HIRValue{ .byte = if (i >= 0 and i <= 255) @intCast(i) else 0 },
-                        .float => |f| blk: {
-                            const i: i64 = @as(i64, @intFromFloat(f));
-                            break :blk HIRValue{ .byte = if (i >= 0 and i <= 255) @intCast(i) else 0 };
-                        },
-                        .string => |s_val| blk: {
-                            const parsed = std.fmt.parseInt(i64, s_val, 10) catch 0;
-                            break :blk HIRValue{ .byte = if (parsed >= 0 and parsed <= 255) @intCast(parsed) else 0 };
-                        },
-                        else => HIRValue{ .byte = 0 },
-                    };
-                    try self.stack.push(HIRFrame.initFromHIRValue(out));
-                    return;
-                }
-
-                // For the remaining ops we expect a string value
-                switch (val.value) {
-                    .string => |s_val| {
-                        switch (s.op) {
-                            .Pop => {
-                                // Pop last character: return the last character as string and update original string
-                                if (s_val.len == 0) {
-                                    return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot pop from empty string", .{});
-                                }
-                                const last_index = s_val.len - 1;
-                                const last_char = s_val[last_index..s_val.len];
-                                const remaining = s_val[0..last_index];
-                                // Push updated string first, then popped char to mirror ArrayPop order
-                                try self.stack.push(HIRFrame.initString(remaining));
-                                try self.stack.push(HIRFrame.initString(last_char));
-                            },
-                            .Substring => {
-                                // Get substring parameters
-                                const length = try self.stack.pop();
-                                const start = try self.stack.pop();
-
-                                // Validate parameters
-                                if (start.value != .int or length.value != .int) {
-                                    return ErrorList.TypeError;
-                                }
-
-                                // Normalize and validate parameters (including negatives)
-                                const start_i: i64 = start.value.int;
-                                const len_i: i64 = length.value.int;
-                                if (start_i < 0 or len_i < 0) {
-                                    var variant_index: u32 = 0;
-                                    if (self.custom_type_registry.get("IndexError")) |ct| {
-                                        if (ct.enum_variants) |variants| {
-                                            for (variants, 0..) |v, i| {
-                                                if (std.mem.eql(u8, v.name, "OutOfBounds")) {
-                                                    variant_index = @intCast(i);
-                                                    break;
-                                                }
-                                            }
-                                        }
-                                    }
-                                    const err_val = HIRValue{ .enum_variant = .{
-                                        .type_name = "IndexError",
-                                        .variant_name = "OutOfBounds",
-                                        .variant_index = variant_index,
-                                    } };
-                                    try self.stack.push(HIRFrame.initFromHIRValue(err_val));
-                                    return;
-                                }
-
-                                const start_idx = @as(usize, @intCast(start_i));
-                                const len = @as(usize, @intCast(len_i));
-
-                                // Bounds check -> return union error variant IndexError.OutOfBounds
-                                if (start_idx >= s_val.len or start_idx + len > s_val.len) {
-                                    var variant_index: u32 = 0;
-                                    if (self.custom_type_registry.get("IndexError")) |ct| {
-                                        if (ct.enum_variants) |variants| {
-                                            for (variants, 0..) |v, i| {
-                                                if (std.mem.eql(u8, v.name, "OutOfBounds")) {
-                                                    variant_index = @intCast(i);
-                                                    break;
-                                                }
-                                            }
-                                        }
-                                    }
-                                    const err_val = HIRValue{ .enum_variant = .{
-                                        .type_name = "IndexError",
-                                        .variant_name = "OutOfBounds",
-                                        .variant_index = variant_index,
-                                    } };
-                                    try self.stack.push(HIRFrame.initFromHIRValue(err_val));
-                                    return;
-                                }
-                                const end_idx = start_idx + len;
-
-                                // Create substring
-                                const substring = s_val[start_idx..end_idx];
-                                try self.stack.push(HIRFrame.initString(substring));
-                            },
-                            .Concat => {
-                                // Get second string
-                                const str2 = try self.stack.pop();
-                                if (str2.value != .string) {
-                                    return ErrorList.TypeError;
-                                }
-
-                                // Concatenate strings
-                                const result = try std.fmt.allocPrint(self.allocator, "{s}{s}", .{ s_val, str2.value.string });
-                                try self.stack.push(HIRFrame.initString(result));
-                            },
-                            .Bytes => {
-                                const elements = try self.allocator.alloc(HIRValue, s_val.len);
-                                for (s_val, 0..) |byte, i| {
-                                    elements[i] = HIRValue{ .byte = byte };
-                                }
-                                const array = HIRValue{ .array = HIRArray{
-                                    .elements = elements,
-                                    .element_type = .Byte,
-                                    .capacity = @intCast(s_val.len),
-                                } };
-
-                                try self.stack.push(HIRFrame.initFromHIRValue(array));
-                            },
-                            .ToInt => {
-                                const parsed_int = std.fmt.parseInt(i64, s_val, 10) catch {
-                                    // Return enum variant NumberError.ParseFailed
-                                    var variant_index: u32 = 0;
-                                    if (self.custom_type_registry.get("NumberError")) |ct| {
-                                        if (ct.enum_variants) |variants| {
-                                            for (variants, 0..) |v, i| {
-                                                if (std.mem.eql(u8, v.name, "ParseFailed")) {
-                                                    variant_index = @intCast(i);
-                                                    break;
-                                                }
-                                            }
-                                        }
-                                    }
-                                    const hir = HIRValue{ .enum_variant = .{ .type_name = "NumberError", .variant_name = "ParseFailed", .variant_index = variant_index } };
-                                    try self.stack.push(HIRFrame.initFromHIRValue(hir));
-                                    return; // handled failure path
-                                };
-                                try self.stack.push(HIRFrame.initInt(parsed_int));
-                            },
-                            .ToString => {
-                                // This should never happen since ToString operates on any type, not just strings
-                                // But if it does, just return the string as-is
-                                try self.stack.push(HIRFrame.initString(s_val));
-                            },
-                            else => return ErrorList.TypeError,
-                        }
-                    },
-                    else => return ErrorList.TypeError,
-                }
+                const ops_strings = @import("ops/strings.zig");
+                try ops_strings.exec(self, s);
             },
 
             // Array operations (Phase 1: Core Data Types)
@@ -2423,12 +2005,14 @@ pub const HIRVM = struct {
                         // Handle special string operations
                         if (std.mem.eql(u8, get_field.field_name, "length")) {
                             // String length operation
-                            const result = try self.stringLength(frame);
+                            const ops_strings = @import("ops/strings.zig");
+                            const result = try ops_strings.stringLength(self, frame);
                             try self.stack.push(result);
                             return;
                         } else if (std.mem.eql(u8, get_field.field_name, "bytes")) {
                             // String bytes operation
-                            const result = try self.stringBytes(frame);
+                            const ops_strings = @import("ops/strings.zig");
+                            const result = try ops_strings.stringBytes(self, frame);
                             try self.stack.push(result);
                             return;
                         } else {
@@ -2437,7 +2021,8 @@ pub const HIRVM = struct {
                                 // Create frames for substring operation
                                 const start_frame = HIRFrame.initInt(index);
                                 const len_frame = HIRFrame.initInt(1);
-                                const result = try self.stringSubstring(frame, start_frame, len_frame);
+                                const ops_strings = @import("ops/strings.zig");
+                                const result = try ops_strings.stringSubstring(self, frame, start_frame, len_frame);
                                 try self.stack.push(result);
                                 return;
                             } else |_| {
@@ -3076,94 +2661,6 @@ pub const HIRVM = struct {
     }
 
     // ===============================================================================
-    // STRING OPERATIONS (From old VM - proven implementations)
-    // ===============================================================================
-
-    /// String concatenation - creates new string from two input strings
-    fn stringConcat(self: *HIRVM, a: HIRFrame, b: HIRFrame) !HIRFrame {
-        const a_str = switch (a.value) {
-            .string => |s| s,
-            else => return ErrorList.TypeError,
-        };
-
-        const b_str = switch (b.value) {
-            .string => |s| s,
-            else => return ErrorList.TypeError,
-        };
-
-        // Allocate new string buffer
-        const new_string = try self.allocator.alloc(u8, a_str.len + b_str.len);
-        // Note: This creates a memory leak - in production we'd use string interning
-        // TODO: Integrate with memory manager's string interning when available
-
-        @memcpy(new_string[0..a_str.len], a_str);
-        @memcpy(new_string[a_str.len..], b_str);
-
-        return HIRFrame.initString(new_string);
-    }
-
-    /// String length operation
-    fn stringLength(self: *HIRVM, a: HIRFrame) !HIRFrame {
-        _ = self;
-        const str = switch (a.value) {
-            .string => |s| s,
-            else => return ErrorList.TypeError,
-        };
-
-        return HIRFrame.initInt(@as(i64, @intCast(str.len)));
-    }
-
-    /// String bytes operation - converts string to array of bytes
-    fn stringBytes(self: *HIRVM, a: HIRFrame) !HIRFrame {
-        const str = switch (a.value) {
-            .string => |s| s,
-            else => return ErrorList.TypeError,
-        };
-
-        // Convert string to array of bytes
-        const elements = try self.allocator.alloc(HIRValue, str.len);
-        for (str, 0..) |byte, i| {
-            elements[i] = HIRValue{ .byte = byte };
-        }
-        const array = HIRValue{ .array = HIRArray{
-            .elements = elements,
-            .element_type = .Byte,
-            .capacity = @intCast(str.len),
-        } };
-        return HIRFrame.initFromHIRValue(array);
-    }
-
-    /// String substring operation - from old VM implementation
-    fn stringSubstring(self: *HIRVM, str_frame: HIRFrame, start_frame: HIRFrame, len_frame: HIRFrame) !HIRFrame {
-        const str = switch (str_frame.value) {
-            .string => |s| s,
-            else => return ErrorList.TypeError,
-        };
-
-        const start = switch (start_frame.value) {
-            .int => |i| i,
-            else => return ErrorList.TypeError,
-        };
-
-        const length = switch (len_frame.value) {
-            .int => |i| i,
-            else => return ErrorList.TypeError,
-        };
-
-        if (start < 0 or length < 0 or start >= str.len or start + length > str.len) {
-            return ErrorList.IndexOutOfBounds;
-        }
-
-        const start_idx = @as(usize, @intCast(start));
-        const len_val = @as(usize, @intCast(length));
-        const slice = str[start_idx .. start_idx + len_val];
-
-        // TODO: Use string interning when available
-        const new_string = try self.allocator.dupe(u8, slice);
-        return HIRFrame.initString(new_string);
-    }
-
-    // ===============================================================================
     // COMPARISON OPERATIONS (Enhanced with mixed-type support from old VM)
     // ===============================================================================
 
@@ -3313,40 +2810,8 @@ pub const HIRVM = struct {
         }
     }
 
-    /// Get a readable type string from HIRValue for debug output
-    pub fn getTypeString(self: *HIRVM, value: HIRValue) []const u8 {
-        _ = self;
-        return switch (value) {
-            .int => "int",
-            .byte => "byte",
-            .float => "float",
-            .string => "string",
-            .tetra => "tetra",
-            .nothing => "nothing",
-            .array => |arr| switch (arr.element_type) {
-                .Int => "int[]",
-                .Byte => "byte[]",
-                .Float => "float[]",
-                .String => "string[]",
-                .Tetra => "tetra[]",
-                .Array => "array[]", // Nested arrays
-                .Struct => "struct[]",
-                .Nothing => "nothing[]",
-                .Map => "map[]",
-                .Enum => "enum[]",
-                .Function => "function[]",
-                .Union => "union[]",
-                .Unknown => "unknown[]",
-            },
-            .struct_instance => |s| s.type_name,
-            .map => "map",
-            .enum_variant => |e| e.type_name,
-            .storage_id_ref => "storage_id_ref",
-        };
-    }
-
     /// Convert HIR value to string representation
-    fn valueToString(self: *HIRVM, value: HIRValue) ![]const u8 {
+    pub fn valueToString(self: *HIRVM, value: HIRValue) ![]const u8 {
         return switch (value) {
             .int => |i| try std.fmt.allocPrint(self.allocator, "{}", .{i}),
             .byte => |u| try std.fmt.allocPrint(self.allocator, "0x{X:0>2}", .{u}),
@@ -3401,6 +2866,38 @@ pub const HIRVM = struct {
             .enum_variant => |e| try std.fmt.allocPrint(self.allocator, ".{s}", .{e.variant_name}),
             .storage_id_ref => |storage_id| try std.fmt.allocPrint(self.allocator, "storage_id_ref({})", .{storage_id}),
             else => try std.fmt.allocPrint(self.allocator, "{s}", .{@tagName(value)}),
+        };
+    }
+
+    /// Get a readable type string from HIRValue for debug output
+    pub fn getTypeString(self: *HIRVM, value: HIRValue) []const u8 {
+        _ = self;
+        return switch (value) {
+            .int => "int",
+            .byte => "byte",
+            .float => "float",
+            .string => "string",
+            .tetra => "tetra",
+            .nothing => "nothing",
+            .array => |arr| switch (arr.element_type) {
+                .Int => "int[]",
+                .Byte => "byte[]",
+                .Float => "float[]",
+                .String => "string[]",
+                .Tetra => "tetra[]",
+                .Array => "array[]", // Nested arrays
+                .Struct => "struct[]",
+                .Nothing => "nothing[]",
+                .Map => "map[]",
+                .Enum => "enum[]",
+                .Function => "function[]",
+                .Union => "union[]",
+                .Unknown => "unknown[]",
+            },
+            .struct_instance => |s| s.type_name,
+            .map => "map",
+            .enum_variant => |e| e.type_name,
+            .storage_id_ref => "storage_id_ref",
         };
     }
 
