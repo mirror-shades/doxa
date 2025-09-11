@@ -38,7 +38,15 @@ const CallStack = core.CallStack;
 const HotVar = core.HotVar;
 const HIRFrame = core.HIRFrame;
 const CallFrame = core.CallFrame;
-const helpers = @import("helpers.zig");
+const ops_logical = @import("ops/logical.zig");
+const ops_strings = @import("ops/strings.zig");
+const ops_array = @import("ops/array.zig");
+const ops_functions = @import("calls/functions.zig");
+const ops_arith = @import("ops/arith.zig");
+const ops_compare = @import("ops/compare.zig");
+const ops_control = @import("ops/control.zig");
+const ops_stack = @import("ops/stack.zig");
+const ops_type = @import("ops/type.zig");
 
 const STACK_SIZE: u32 = 1024 * 1024;
 
@@ -813,100 +821,39 @@ pub const HIRVM = struct {
             },
 
             .Arith => |a| {
-                const ops_arith = @import("ops/arith.zig");
                 try ops_arith.exec(self, a);
             },
 
             .Compare => |c| {
-                const b = try self.stack.pop();
-                const a_val = try self.stack.pop();
-
-                const result = switch (c.op) {
-                    .Eq => try self.compareEqual(a_val, b),
-                    .Ne => !(try self.compareEqual(a_val, b)),
-                    .Lt => try self.compareLess(a_val, b),
-                    .Le => !(try self.compareGreater(a_val, b)), // a <= b  ≡  !(a > b)
-                    .Gt => try self.compareGreater(a_val, b),
-                    .Ge => !(try self.compareLess(a_val, b)), // a >= b  ≡  !(a < b)
-                };
-
-                try self.stack.push(HIRFrame.initTetra(if (result) 1 else 0));
+                try ops_compare.exec(self, c);
             },
 
             .TypeCheck => |tc| {
-                const value = try self.stack.pop();
-
-                // Get the runtime type of the value
-                const runtime_type = self.getTypeString(value.value);
-
-                // Compare with target type
-                const type_match = std.mem.eql(u8, runtime_type, tc.target_type);
-
-                if (self.reporter.debug_mode) {
-                    self.reporter.report(.Debug, .Hint, null, null, "TypeCheck: want='{s}' got='{s}' -> {s}", .{ tc.target_type, runtime_type, if (type_match) "match" else "no-match" });
-                }
-
-                // Push result as tetra (1 for match, 0 for no match)
-                try self.stack.push(HIRFrame.initTetra(if (type_match) 1 else 0));
+                try ops_type.TypeOps.execTypeCheck(self, tc);
             },
 
             .Jump => |j| {
-                // Unconditional jump to label
-                if (self.label_map.get(j.label)) |target_ip| {
-                    self.ip = target_ip;
-                } else {
-                    return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Unknown label: {s}", .{j.label});
-                }
+                try ops_control.ControlFlowOps.execJump(self, j);
             },
 
             .JumpCond => |j| {
-                // OPTIMIZED: Conditional jump with reduced overhead
-                const condition = try self.stack.pop();
-
-                const should_jump = switch (condition.value) {
-                    .tetra => |t| switch (t) {
-                        0 => false, // false -> don't jump
-                        1 => true, // true -> jump
-                        2 => true, // both -> jump (contains true)
-                        3 => false, // neither -> don't jump (contains no truth)
-                        else => false,
-                    },
-                    .int => |i| i != 0,
-                    .float => |f| f != 0.0,
-                    .nothing => false,
-                    else => true,
-                };
-
-                const target_label = if (should_jump) j.label_true else j.label_false;
-
-                if (self.label_map.get(target_label)) |target_ip| {
-                    // Always set IP explicitly since JumpCond is marked as a "jump" instruction
-                    self.ip = target_ip;
-                } else {
-                    return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Unknown label: {s}", .{target_label});
-                }
+                try ops_control.ControlFlowOps.execJumpCond(self, j);
             },
 
             .Label => {
-                // Labels are no-ops during execution (already resolved)
+                ops_control.ControlFlowOps.execLabel(self);
             },
 
             .Dup => {
-                const value = try self.stack.peek();
-                try self.stack.push(HIRFrame.initFromHIRValue(value.value));
+                try ops_stack.StackOps.execDup(self);
             },
 
             .Pop => {
-                const value = try self.stack.pop();
-                // HIRFrame doesn't need cleanup - it's just a simple wrapper
-                _ = value;
+                try ops_stack.StackOps.execPop(self);
             },
 
             .Swap => {
-                const top = try self.stack.pop();
-                const second = try self.stack.pop();
-                try self.stack.push(top);
-                try self.stack.push(second);
+                try ops_stack.StackOps.execSwap(self);
             },
 
             .Peek => |peek| {
@@ -1168,429 +1115,48 @@ pub const HIRVM = struct {
 
             // ULTRA-FAST Logical operations using lookup tables!
             .LogicalOp => |op| {
-                const ops_logical = @import("ops/logical.zig");
                 try ops_logical.exec(self, op);
             },
 
             .StringOp => |s| {
-                const ops_strings = @import("ops/strings.zig");
                 try ops_strings.exec(self, s);
             },
 
             // Array operations (Phase 1: Core Data Types)
             .ArrayNew => |a| {
-                const ops_array = @import("ops/array.zig");
                 try ops_array.exec(self, .{ .ArrayNew = a });
             },
 
             .ArrayGet => |a| {
-                const ops_array = @import("ops/array.zig");
                 try ops_array.exec(self, .{ .ArrayGet = a });
             },
 
             .ArraySet => |a| {
-                const ops_array = @import("ops/array.zig");
                 try ops_array.exec(self, .{ .ArraySet = a });
             },
 
             .ArrayPush => |_| {
-                const ops_array = @import("ops/array.zig");
                 try ops_array.exec(self, .{ .ArrayPush = {} });
             },
 
             .ArrayPop => {
-                const ops_array = @import("ops/array.zig");
                 try ops_array.exec(self, .{ .ArrayPop = {} });
             },
 
             .ArrayConcat => {
-                const ops_array = @import("ops/array.zig");
                 try ops_array.exec(self, .{ .ArrayConcat = {} });
             },
 
             .TailCall => |c| {
-                // TAIL CALL OPTIMIZATION: Reuse current stack frame instead of creating new one
-
-                switch (c.call_kind) {
-                    .LocalFunction => {
-                        // Tail call optimization for user-defined functions
-                        if (c.function_index >= self.program.function_table.len) {
-                            return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid function index: {} (max: {})", .{ c.function_index, self.program.function_table.len });
-                        }
-
-                        const function = self.program.function_table[c.function_index];
-                        const target_label = function.start_label;
-
-                        self.skip_next_enter_scope = true; // Skip scope creation when we jump to function start
-
-                        // Jump to function start (including parameter setup) without call stack modification
-                        if (self.label_map.get(target_label)) |target_ip| {
-                            self.ip = target_ip;
-                            return; // Jump to function body
-                        } else {
-                            return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Function label not found: {s}", .{target_label});
-                        }
-                    },
-                    else => {
-                        return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Tail call not supported for call kind: {s}", .{@tagName(c.call_kind)});
-                    },
-                }
+                try ops_functions.FunctionOps.execTailCall(self, c);
             },
 
             .Call => |c| {
-                switch (c.call_kind) {
-                    .LocalFunction => {
-                        // User-defined function call with proper stack management
-                        if (c.function_index >= self.program.function_table.len) {
-                            return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid function index: {} (max: {})", .{ c.function_index, self.program.function_table.len });
-                        }
-
-                        const function = self.program.function_table[c.function_index];
-
-                        // Save SP before popping arguments so Return can restore caller stack correctly
-                        const saved_sp = self.stack.size() - @as(i64, @intCast(c.arg_count));
-
-                        // Pop arguments from stack and store them temporarily
-                        var args = try self.allocator.alloc(HIRFrame, c.arg_count);
-                        defer self.allocator.free(args);
-
-                        // Pop arguments in reverse order (they were pushed in reverse)
-                        for (0..c.arg_count) |i| {
-                            args[c.arg_count - 1 - i] = try self.stack.pop();
-                        }
-
-                        // Push call frame for proper return handling
-                        const return_ip = self.ip + 1; // Return to instruction after this call
-
-                        const call_frame = CallFrame{
-                            .return_ip = return_ip,
-                            .function_name = function.name,
-                            .arg_count = c.arg_count, // Store arg count to clean up stack later
-                            .saved_sp = saved_sp,
-                        };
-                        try self.call_stack.push(call_frame);
-
-                        // Push arguments back onto stack in correct order for function
-                        for (args) |arg| {
-                            try self.stack.push(arg);
-                        }
-
-                        // Use pre-resolved label map for O(1) lookup
-                        if (self.label_map.get(function.start_label)) |target_ip| {
-                            self.ip = target_ip;
-                            return; // Jump to function start
-                        } else {
-                            return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Function label not found: {s}", .{function.start_label});
-                        }
-                    },
-                    .BuiltinFunction => {
-                        // Built-in function/method call
-                        if (std.mem.eql(u8, c.qualified_name, "length")) {
-                            // Array length method - expects array on stack
-                            const array = try self.stack.pop();
-                            switch (array.value) {
-                                .array => |arr| {
-                                    // Find the actual length by counting non-nothing elements
-                                    var length: u32 = 0;
-                                    for (arr.elements) |elem| {
-                                        if (std.meta.eql(elem, HIRValue.nothing)) break;
-                                        length += 1;
-                                    }
-                                    try self.stack.push(HIRFrame.initInt(@as(i64, @intCast(length))));
-                                },
-                                else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot get length of non-array value: {s}", .{@tagName(array.value)}),
-                            }
-                        } else if (std.mem.eql(u8, c.qualified_name, "push")) {
-                            // Array push method - expects element and array on stack
-                            const element = try self.stack.pop(); // Element to push
-                            const array = try self.stack.pop(); // Array
-
-                            switch (array.value) {
-                                .array => |arr| {
-                                    // Create a mutable copy of the array
-                                    var mutable_arr = arr;
-
-                                    // Find the current length
-                                    var length: u32 = 0;
-                                    for (mutable_arr.elements) |elem| {
-                                        if (std.meta.eql(elem, HIRValue.nothing)) break;
-                                        length += 1;
-                                    }
-
-                                    // Check if we need to resize
-                                    if (length >= mutable_arr.capacity) {
-                                        // CRITICAL FIX: Resize the array by doubling capacity
-                                        const new_capacity = mutable_arr.capacity * 2;
-                                        const new_elements = try self.allocator.realloc(mutable_arr.elements, new_capacity);
-                                        mutable_arr.elements = new_elements;
-                                        mutable_arr.capacity = new_capacity;
-
-                                        // Initialize new elements to nothing
-                                        for (length..new_capacity) |i| {
-                                            mutable_arr.elements[i] = HIRValue.nothing;
-                                        }
-                                    }
-
-                                    // Add element to end (capacity is guaranteed to be > length)
-                                    mutable_arr.elements[length] = element.value;
-
-                                    // Push the modified array back onto the stack
-                                    const modified_array_value = HIRValue{ .array = mutable_arr };
-                                    try self.stack.push(HIRFrame.initFromHIRValue(modified_array_value));
-                                },
-                                else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot push to non-array value: {s}", .{@tagName(array.value)}),
-                            }
-                        } else if (std.mem.eql(u8, c.qualified_name, "safeAdd")) {
-                            // Safe addition with overflow protection
-                            const b = try self.stack.pop();
-                            const a = try self.stack.pop();
-
-                            const a_int = switch (a.value) {
-                                .int => |i| i,
-                                .byte => |u| @as(i64, u),
-                                else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "safeAdd: first argument must be integer", .{}),
-                            };
-
-                            const b_int = switch (b.value) {
-                                .int => |i| i,
-                                .byte => |u| @as(i64, u),
-                                else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "safeAdd: second argument must be integer", .{}),
-                            };
-
-                            const result = std.math.add(i64, a_int, b_int) catch {
-                                // On overflow, return nothing instead of crashing
-                                try self.stack.push(HIRFrame.initFromHIRValue(HIRValue.nothing));
-                                return;
-                            };
-
-                            try self.stack.push(HIRFrame.initInt(result));
-                        } else if (std.mem.eql(u8, c.qualified_name, "power") or std.mem.eql(u8, c.qualified_name, "powi")) {
-                            // Power function - expects base and exponent on stack
-                            const exponent = try self.stack.pop();
-                            const base = try self.stack.pop();
-
-                            if (std.mem.eql(u8, c.qualified_name, "powi")) {
-                                // Integer power: both operands must be Int
-                                const base_int = switch (base.value) {
-                                    .int => |i| i,
-                                    .byte => |b| @as(i64, b),
-                                    else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "powi: base must be integer", .{}),
-                                };
-                                const exp_int = switch (exponent.value) {
-                                    .int => |i| i,
-                                    .byte => |b| @as(i64, b),
-                                    else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "powi: exponent must be integer", .{}),
-                                };
-                                const result = std.math.pow(i64, base_int, @intCast(exp_int));
-                                try self.stack.push(HIRFrame.initInt(result));
-                                return;
-                            }
-                            // Convert both operands to float for power calculation
-                            const base_float = switch (base.value) {
-                                .int => |i| @as(f64, @floatFromInt(i)),
-                                .float => |f| f,
-                                .byte => |b| @as(f64, @floatFromInt(b)),
-                                else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "power: base must be numeric", .{}),
-                            };
-
-                            const exponent_float = switch (exponent.value) {
-                                .int => |i| @as(f64, @floatFromInt(i)),
-                                .float => |f| f,
-                                .byte => |b| @as(f64, @floatFromInt(b)),
-                                else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "power: exponent must be numeric", .{}),
-                            };
-
-                            const result = std.math.pow(f64, base_float, exponent_float);
-                            try self.stack.push(HIRFrame.initFloat(result));
-                        } else if (std.mem.eql(u8, c.qualified_name, "exists_quantifier_gt")) {
-                            // Existential quantifier with greater-than condition
-                            const comparison_value = try self.stack.pop();
-                            const array = try self.stack.pop();
-
-                            switch (array.value) {
-                                .array => |arr| {
-                                    // Check if any element is greater than comparison_value
-                                    var found = false;
-                                    for (arr.elements) |elem| {
-                                        if (std.meta.eql(elem, HIRValue.nothing)) {
-                                            break; // End of array
-                                        }
-                                        // Check if element > comparison_value
-                                        const satisfies_condition = switch (elem) {
-                                            .int => |elem_int| switch (comparison_value.value) {
-                                                .int => |comp_int| elem_int > comp_int,
-                                                else => false,
-                                            },
-                                            .float => |elem_float| switch (comparison_value.value) {
-                                                .float => |comp_float| elem_float > comp_float,
-                                                .int => |comp_int| elem_float > @as(f64, @floatFromInt(comp_int)),
-                                                else => false,
-                                            },
-                                            else => false,
-                                        };
-                                        if (satisfies_condition) {
-                                            found = true;
-                                            break;
-                                        }
-                                    }
-                                    try self.stack.push(HIRFrame.initTetra(if (found) 1 else 0));
-                                },
-                                else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "exists_quantifier_gt: argument must be array", .{}),
-                            }
-                        } else if (std.mem.eql(u8, c.qualified_name, "forall_quantifier_gt")) {
-                            // Universal quantifier with greater-than condition
-                            const comparison_value = try self.stack.pop();
-                            const array = try self.stack.pop();
-
-                            switch (array.value) {
-                                .array => |arr| {
-                                    // Check if all elements are greater than comparison_value
-                                    var all_satisfy = true;
-                                    var has_elements = false;
-                                    for (arr.elements) |elem| {
-                                        if (std.meta.eql(elem, HIRValue.nothing)) {
-                                            break; // End of array
-                                        }
-                                        has_elements = true;
-                                        // Check if element > comparison_value
-                                        const satisfies_condition = switch (elem) {
-                                            .int => |elem_int| switch (comparison_value.value) {
-                                                .int => |comp_int| blk: {
-                                                    const result = elem_int > comp_int;
-                                                    break :blk result;
-                                                },
-                                                else => false,
-                                            },
-                                            .float => |elem_float| switch (comparison_value.value) {
-                                                .float => |comp_float| elem_float > comp_float,
-                                                .int => |comp_int| elem_float > @as(f64, @floatFromInt(comp_int)),
-                                                else => false,
-                                            },
-                                            else => false,
-                                        };
-                                        if (!satisfies_condition) {
-                                            all_satisfy = false;
-
-                                            break;
-                                        }
-                                    }
-                                    // For empty arrays, forall returns true (vacuous truth)
-                                    try self.stack.push(HIRFrame.initTetra(if ((!has_elements) or all_satisfy) 1 else 0));
-                                },
-                                else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "forall_quantifier_gt: argument must be array", .{}),
-                            }
-                        } else if (std.mem.eql(u8, c.qualified_name, "input")) {
-                            // Simple approach: use readUntilDelimiterAlloc which is more reliable
-                            const stdin = std.io.getStdIn().reader();
-
-                            // Use the standard library's readUntilDelimiterAlloc for better platform compatibility
-                            const input_line = stdin.readUntilDelimiterAlloc(self.allocator, '\n', 4096) catch |err| switch (err) {
-                                error.StreamTooLong => blk: {
-                                    // Handle long lines by reading what we can
-                                    var buffer: [4096]u8 = undefined;
-                                    const line = stdin.readUntilDelimiterOrEof(buffer[0..], '\n') catch "";
-                                    break :blk try self.allocator.dupe(u8, line orelse "");
-                                },
-                                error.EndOfStream => try self.allocator.dupe(u8, ""),
-                                else => return err,
-                            };
-                            defer self.allocator.free(input_line);
-
-                            // Remove trailing carriage return if present (Windows compatibility)
-                            var line = input_line;
-                            if (line.len > 0 and line[line.len - 1] == '\r') {
-                                line = line[0 .. line.len - 1];
-                            }
-
-                            // Create a copy of the input string in VM memory
-                            const input_string = try self.allocator.dupe(u8, line);
-                            try self.stack.push(HIRFrame.initString(input_string));
-                        } else {
-                            return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Unknown built-in function: {s}", .{c.qualified_name});
-                        }
-                    },
-                    .ModuleFunction => {
-                        // Module function call - handle known module functions for now
-                        if (std.mem.eql(u8, c.qualified_name, "safeMath.safeAdd")) {
-                            // Safe addition with overflow/underflow checking (from safeMath.doxa)
-                            const b = try self.stack.pop();
-                            const a = try self.stack.pop();
-
-                            const a_int = switch (a.value) {
-                                .int => |i| i,
-                                .byte => |u| @as(i64, u),
-                                else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "safeAdd: first argument must be integer", .{}),
-                            };
-
-                            const b_int = switch (b.value) {
-                                .int => |i| i,
-                                .byte => |u| @as(i64, u),
-                                else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "safeAdd: second argument must be integer", .{}),
-                            };
-
-                            // Apply safeMath.doxa logic: limit = 255
-                            const limit = 255;
-                            if (a_int > limit or b_int > limit) {
-                                // Overflow detected - print "Overflow" with proper peek format per safeMath.doxa
-                                const overflow_value = HIRValue{ .string = "Overflow" };
-                                try std.io.getStdOut().writer().print("[test/misc/safeMath.doxa:7:9] :: string is ", .{});
-                                try self.formatHIRValue(std.io.getStdOut().writer(), overflow_value);
-                                try std.io.getStdOut().writer().print("\n", .{});
-                                try self.stack.push(HIRFrame.initInt(-1));
-                                return;
-                            }
-
-                            if (a_int < 0 or b_int < 0) {
-                                // Underflow detected - print "Underflow" with proper peek format per safeMath.doxa
-                                const underflow_value = HIRValue{ .string = "Underflow" };
-                                try std.io.getStdOut().writer().print("[test/misc/safeMath.doxa:12:9] :: string is ", .{});
-                                try self.formatHIRValue(std.io.getStdOut().writer(), underflow_value);
-                                try std.io.getStdOut().writer().print("\n", .{});
-                                try self.stack.push(HIRFrame.initInt(-1));
-                                return;
-                            }
-
-                            // Safe to add - call math.add logic
-                            const result = std.math.add(i64, a_int, b_int) catch {
-                                // Integer overflow in addition - return -1
-                                try self.stack.push(HIRFrame.initInt(-1));
-                                return;
-                            };
-
-                            try self.stack.push(HIRFrame.initInt(result));
-                        } else {
-                            return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Unknown module function: {s}", .{c.qualified_name});
-                        }
-                    },
-                }
+                try ops_functions.FunctionOps.execCall(self, c);
             },
 
-            .Return => |_| {
-
-                // Check if we're returning from main program or a function call
-                if (self.call_stack.isEmpty()) {
-                    self.running = false;
-                } else {
-                    // Returning from function call - pop call frame and return to caller
-                    const call_frame = try self.call_stack.pop();
-
-                    // Restore operand stack to the saved position, preserving the top return value
-                    const current_sp = self.stack.size();
-                    if (current_sp > call_frame.saved_sp) {
-                        // There is at least one value to return on the stack; keep the topmost
-                        const ret_val = self.stack.pop() catch HIRFrame.initNothing();
-                        self.stack.sp = call_frame.saved_sp;
-                        try self.stack.push(ret_val);
-                    } else {
-                        // No value returned; just restore SP
-                        self.stack.sp = call_frame.saved_sp;
-                    }
-
-                    // Return to caller
-                    self.ip = call_frame.return_ip;
-
-                    return; // Don't auto-increment IP since we just set it
-                }
+            .Return => |r| {
+                try ops_functions.FunctionOps.execReturn(self, r);
             },
 
             .TryBegin => |t| {
@@ -1725,13 +1291,11 @@ pub const HIRVM = struct {
                         // Handle special string operations
                         if (std.mem.eql(u8, get_field.field_name, "length")) {
                             // String length operation
-                            const ops_strings = @import("ops/strings.zig");
                             const result = try ops_strings.stringLength(self, frame);
                             try self.stack.push(result);
                             return;
                         } else if (std.mem.eql(u8, get_field.field_name, "bytes")) {
                             // String bytes operation
-                            const ops_strings = @import("ops/strings.zig");
                             const result = try ops_strings.stringBytes(self, frame);
                             try self.stack.push(result);
                             return;
@@ -1741,7 +1305,6 @@ pub const HIRVM = struct {
                                 // Create frames for substring operation
                                 const start_frame = HIRFrame.initInt(index);
                                 const len_frame = HIRFrame.initInt(1);
-                                const ops_strings = @import("ops/strings.zig");
                                 const result = try ops_strings.stringSubstring(self, frame, start_frame, len_frame);
                                 try self.stack.push(result);
                                 return;
@@ -1956,48 +1519,9 @@ pub const HIRVM = struct {
             },
 
             .Convert => |c| {
-                // Pop the value to convert, perform conversion, and push result
-                const frame = try self.stack.pop();
-                var out: HIRValue = frame.value;
-                switch (c.to_type) {
-                    .Float => {
-                        // Convert ints/bytes to float; leave float as-is
-                        out = switch (frame.value) {
-                            .int => |i| HIRValue{ .float = @as(f64, @floatFromInt(i)) },
-                            .byte => |u| HIRValue{ .float = @as(f64, @floatFromInt(u)) },
-                            .float => frame.value,
-                            else => frame.value,
-                        };
-                    },
-                    .Int => {
-                        out = switch (frame.value) {
-                            .int => frame.value,
-                            .byte => |u| HIRValue{ .int = @as(i64, u) },
-                            .float => |f| HIRValue{ .int = @as(i64, @intFromFloat(f)) },
-                            else => frame.value,
-                        };
-                    },
-                    .Byte => {
-                        out = switch (frame.value) {
-                            .byte => frame.value,
-                            .int => |i| HIRValue{ .byte = if (i >= 0 and i <= 255) @intCast(i) else 0 },
-                            .float => |f| blk: {
-                                const i: i64 = @as(i64, @intFromFloat(f));
-                                break :blk HIRValue{ .byte = if (i >= 0 and i <= 255) @intCast(i) else 0 };
-                            },
-                            else => frame.value,
-                        };
-                    },
-                    else => {
-                        // Other conversions not needed for current arithmetic paths
-                        out = frame.value;
-                    },
-                }
-
-                try self.stack.push(HIRFrame.initFromHIRValue(out));
+                try ops_type.TypeOps.execConvert(self, c);
             },
             .ArrayLen => {
-                const ops_array = @import("ops/array.zig");
                 try ops_array.exec(self, .{ .ArrayLen = {} });
             },
             else => {
@@ -2017,228 +1541,6 @@ pub const HIRVM = struct {
             .TailCall => true, // Tail calls always jump to function start
             .Return => true, // ALL Return instructions set IP manually, never auto-increment
             else => false,
-        };
-    }
-
-    // ===============================================================================
-    // ARITHMETIC OPERATIONS (Enhanced with mixed-type support from old VM)
-    // ===============================================================================
-
-    /// Integer arithmetic with overflow checking
-    fn intAdd(self: *HIRVM, a: i64, b: i64) !i64 {
-        _ = self;
-        return std.math.add(i64, a, b) catch |err| {
-            return err;
-        };
-    }
-
-    fn intSub(self: *HIRVM, a: i64, b: i64) !i64 {
-        _ = self;
-        return std.math.sub(i64, a, b) catch |err| {
-            std.debug.print("Integer overflow in subtraction: {} - {}\n", .{ a, b });
-            return err;
-        };
-    }
-
-    fn intMul(self: *HIRVM, a: i64, b: i64) !i64 {
-        _ = self;
-        return std.math.mul(i64, a, b) catch |err| {
-            std.debug.print("Integer overflow in multiplication: {} * {}\n", .{ a, b });
-            return err;
-        };
-    }
-
-    fn intDiv(self: *HIRVM, a: i64, b: i64) !i64 {
-        _ = self;
-        if (b == 0) {
-            std.debug.print("Division by zero: {} / {}\n", .{ a, b });
-            return ErrorList.DivisionByZero;
-        }
-        return @divTrunc(a, b);
-    }
-
-    fn fastIntMod(self: *HIRVM, a: i64, b: i64) !i64 {
-        _ = self;
-        if (b == 0) {
-            std.debug.print("Modulo by zero: {} % {}\n", .{ a, b });
-            return ErrorList.DivisionByZero;
-        }
-
-        // FIZZBUZZ OPTIMIZATION: Fast modulo for common divisors
-        // Avoid expensive division for the most common cases in benchmarks
-        return switch (b) {
-            3 => fastMod3(a),
-            5 => fastMod5(a),
-            15 => fastMod15(a),
-            else => @mod(a, b),
-        };
-    }
-
-    // Ultra-fast modulo implementations for FizzBuzz
-    inline fn fastMod3(n: i64) i64 {
-        // n % 3 using bit tricks: faster than division
-        var x = n;
-        if (x < 0) x = -x;
-        while (x >= 3) {
-            x = (x >> 2) + (x & 3);
-            if (x >= 3) x -= 3;
-        }
-        return if (n < 0 and x != 0) 3 - x else x;
-    }
-
-    inline fn fastMod5(n: i64) i64 {
-        // Fixed: Use correct modulo operation
-        return @mod(n, 5);
-    }
-
-    inline fn fastMod15(n: i64) i64 {
-        // n % 15 = n % (3*5), use Chinese Remainder Theorem concept
-        const mod3 = fastMod3(n);
-        const mod5 = fastMod5(n);
-        // Reconstruct n % 15 from mod 3 and mod 5
-        return @mod(mod3 + 3 * @mod(mod5 * 2, 5), 15); // 2 is inverse of 3 mod 5
-    }
-
-    /// Float arithmetic operations
-    fn floatAdd(self: *HIRVM, a: f64, b: f64) !f64 {
-        _ = self;
-        return a + b;
-    }
-
-    fn floatSub(self: *HIRVM, a: f64, b: f64) !f64 {
-        _ = self;
-        return a - b;
-    }
-
-    fn floatMul(self: *HIRVM, a: f64, b: f64) !f64 {
-        _ = self;
-        return a * b;
-    }
-
-    fn floatDiv(self: *HIRVM, a: f64, b: f64) !f64 {
-        _ = self;
-        if (b == 0.0) {
-            std.debug.print("Float division by zero: {} / {}\n", .{ a, b });
-            return ErrorList.DivisionByZero;
-        }
-        return a / b;
-    }
-
-    // ===============================================================================
-    // LOGICAL OPERATIONS (From old VM - proven implementations)
-    // ===============================================================================
-
-    // ===============================================================================
-    // COMPARISON OPERATIONS (Enhanced with mixed-type support from old VM)
-    // ===============================================================================
-
-    /// Enhanced comparison with mixed int/float support from old VM
-    fn compareEqual(self: *HIRVM, a: HIRFrame, b: HIRFrame) !bool {
-        _ = self;
-        return switch (a.value) {
-            .int => |a_val| switch (b.value) {
-                .int => |b_val| a_val == b_val,
-                .byte => |b_val| a_val == b_val,
-                // Mixed int/float comparison (from old VM)
-                .float => |b_val| @as(f64, @floatFromInt(a_val)) == b_val,
-                else => false,
-            },
-            .float => |a_val| switch (b.value) {
-                .float => |b_val| a_val == b_val,
-                .byte => |b_val| a_val == @as(f64, @floatFromInt(b_val)),
-                // Mixed float/int comparison (from old VM)
-                .int => |b_val| a_val == @as(f64, @floatFromInt(b_val)),
-                else => false,
-            },
-            .tetra => |a_val| switch (b.value) {
-                .tetra => |b_val| a_val == b_val,
-                else => false,
-            },
-            .string => |a_val| switch (b.value) {
-                .string => |b_val| blk: {
-                    const result = std.mem.eql(u8, a_val, b_val);
-                    break :blk result;
-                },
-                else => false,
-            },
-            .nothing => switch (b.value) {
-                .nothing => true,
-                else => false,
-            },
-            .byte => |a_val| switch (b.value) {
-                .byte => |b_val| a_val == b_val,
-                .int => |b_val| a_val == b_val,
-                .float => |b_val| @as(f64, @floatFromInt(a_val)) == b_val,
-                else => false,
-            },
-            .enum_variant => |a_val| switch (b.value) {
-                .enum_variant => |b_val| std.mem.eql(u8, a_val.variant_name, b_val.variant_name) and std.mem.eql(u8, a_val.type_name, b_val.type_name),
-                else => false,
-            },
-            // Complex types - basic equality for now
-            .array, .struct_instance, .map => false, // Complex equality not implemented yet
-            .storage_id_ref => |a_storage_id| switch (b.value) {
-                .storage_id_ref => |b_storage_id| a_storage_id == b_storage_id,
-                else => false,
-            },
-        };
-    }
-
-    /// Enhanced less-than with mixed int/float support from old VM
-    fn compareLess(self: *HIRVM, a: HIRFrame, b: HIRFrame) !bool {
-        _ = self;
-        return switch (a.value) {
-            .int => |a_val| switch (b.value) {
-                .int => |b_val| a_val < b_val,
-                .byte => |b_val| a_val < b_val,
-                // Mixed int/float comparison (from old VM)
-                .float => |b_val| @as(f64, @floatFromInt(a_val)) < b_val,
-                else => ErrorList.TypeError,
-            },
-            .float => |a_val| switch (b.value) {
-                .float => |b_val| a_val < b_val,
-                .byte => |b_val| a_val < @as(f64, @floatFromInt(b_val)),
-                // Mixed float/int comparison (from old VM)
-                .int => |b_val| a_val < @as(f64, @floatFromInt(b_val)),
-                else => ErrorList.TypeError,
-            },
-            .byte => |a_val| switch (b.value) {
-                .byte => |b_val| a_val < b_val,
-                .int => |b_val| a_val < b_val,
-                .float => |b_val| @as(f64, @floatFromInt(a_val)) < b_val,
-                else => ErrorList.TypeError,
-            },
-            // Complex types don't support comparison
-            .tetra, .string, .nothing, .array, .struct_instance, .map, .enum_variant, .storage_id_ref => ErrorList.TypeError,
-        };
-    }
-
-    /// Enhanced greater-than with mixed int/float support from old VM
-    fn compareGreater(self: *HIRVM, a: HIRFrame, b: HIRFrame) !bool {
-        _ = self;
-        return switch (a.value) {
-            .int => |a_val| switch (b.value) {
-                .int => |b_val| a_val > b_val,
-                .byte => |b_val| a_val > b_val,
-                // Mixed int/float comparison (from old VM)
-                .float => |b_val| @as(f64, @floatFromInt(a_val)) > b_val,
-                else => ErrorList.TypeError,
-            },
-            .float => |a_val| switch (b.value) {
-                .float => |b_val| a_val > b_val,
-                .byte => |b_val| a_val > @as(f64, @floatFromInt(b_val)),
-                // Mixed float/int comparison (from old VM)
-                .int => |b_val| a_val > @as(f64, @floatFromInt(b_val)),
-                else => ErrorList.TypeError,
-            },
-            .byte => |a_val| switch (b.value) {
-                .byte => |b_val| a_val > b_val,
-                .int => |b_val| a_val > b_val,
-                .float => |b_val| @as(f64, @floatFromInt(a_val)) > b_val,
-                else => ErrorList.TypeError,
-            },
-            // Complex types don't support comparison
-            .tetra, .string, .nothing, .array, .struct_instance, .map, .enum_variant, .storage_id_ref => ErrorList.TypeError,
         };
     }
 
@@ -2482,33 +1784,6 @@ pub const HIRVM = struct {
             std.debug.print("Stack is empty\n", .{});
         }
         std.debug.print("=========================\n\n", .{});
-    }
-
-    // Add debug logging for exists/forall quantifiers
-    pub fn exists_quantifier(self: *HIRVM, array: HIRFrame, _: HIRValue.Function) !void {
-        std.debug.print("exists_quantifier: array value type = {s}\n", .{@tagName(array.value)});
-        switch (array.value) {
-            .array => {
-                // ... existing code ...
-            },
-            else => {
-                std.debug.print("exists_quantifier failed: argument is of type {s}\n", .{@tagName(array.value)});
-                return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "exists_quantifier: argument must be array", .{});
-            },
-        }
-    }
-
-    pub fn forall_quantifier(self: *HIRVM, array: HIRFrame, _: HIRValue.Function) !void {
-        std.debug.print("forall_quantifier: array value type = {s}\n", .{@tagName(array.value)});
-        switch (array.value) {
-            .array => {
-                // ... existing code ...
-            },
-            else => {
-                std.debug.print("forall_quantifier failed: argument is of type {s}\n", .{@tagName(array.value)});
-                return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "forall_quantifier: argument must be array", .{});
-            },
-        }
     }
 
     pub fn exitScope(self: *HIRVM, scope_id: u32) !void {
