@@ -6,6 +6,7 @@ const CallFrame = Core.CallFrame;
 const Errors = @import("../../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
 const ErrorCode = Errors.ErrorCode;
+const debug_print = @import("../calls/print.zig");
 
 pub const FunctionOps = struct {
     // Execute TailCall instruction
@@ -180,7 +181,7 @@ pub const FunctionOps = struct {
                 // Overflow detected - print "Overflow" with proper peek format per safeMath.doxa
                 const overflow_value = HIRValue{ .string = "Overflow" };
                 try std.io.getStdOut().writer().print("[test/misc/safeMath.doxa:7:9] :: string is ", .{});
-                try vm.formatHIRValue(std.io.getStdOut().writer(), overflow_value);
+                try debug_print.formatHIRValue(vm, std.io.getStdOut().writer(), overflow_value);
                 try std.io.getStdOut().writer().print("\n", .{});
                 try vm.stack.push(HIRFrame.initInt(-1));
                 return;
@@ -190,7 +191,7 @@ pub const FunctionOps = struct {
                 // Underflow detected - print "Underflow" with proper peek format per safeMath.doxa
                 const underflow_value = HIRValue{ .string = "Underflow" };
                 try std.io.getStdOut().writer().print("[test/misc/safeMath.doxa:12:9] :: string is ", .{});
-                try vm.formatHIRValue(std.io.getStdOut().writer(), underflow_value);
+                try debug_print.formatHIRValue(vm, std.io.getStdOut().writer(), underflow_value);
                 try std.io.getStdOut().writer().print("\n", .{});
                 try vm.stack.push(HIRFrame.initInt(-1));
                 return;

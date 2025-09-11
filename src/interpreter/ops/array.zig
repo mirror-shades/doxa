@@ -8,6 +8,7 @@ const HIRFrame = Core.HIRFrame;
 const Errors = @import("../../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
 const ErrorCode = Errors.ErrorCode;
+const debug_print = @import("../calls/print.zig");
 
 // Execute array operations. Accepts the VM as `anytype` to avoid import cycles.
 pub fn exec(vm: anytype, instruction: anytype) !void {
@@ -207,7 +208,7 @@ fn arraySet(vm: anytype, a: anytype) !void {
 fn arrayPush(vm: anytype) !void {
     const value = try vm.stack.pop();
     if (vm.reporter.debug_mode) {
-        const t = vm.getTypeString(value.value);
+        const t = debug_print.getTypeString(vm, value.value);
         vm.reporter.report(.Debug, .Hint, null, null, "ArrayPush elem_type='{s}'", .{t});
     }
     try handleArrayPush(vm, value.value);
@@ -218,7 +219,7 @@ fn arrayPop(vm: anytype) !void {
     // Pop element from end of array
     const array = try vm.stack.pop(); // Array
     if (vm.reporter.debug_mode) {
-        const t = vm.getTypeString(array.value);
+        const t = debug_print.getTypeString(vm, array.value);
         vm.reporter.report(.Debug, .Hint, null, null, "ArrayPop array_type='{s}'", .{t});
     }
 
