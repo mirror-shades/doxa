@@ -651,6 +651,10 @@ pub const SoxaTextParser = struct {
             try self.instructions.append(HIRInstruction.ArrayLen);
         } else if (std.mem.eql(u8, op, "ArrayConcat")) {
             try self.instructions.append(HIRInstruction.ArrayConcat);
+        } else if (std.mem.eql(u8, op, "Range")) {
+            const type_str = tokens.next() orelse return;
+            const element_type = if (std.mem.eql(u8, type_str, "Int")) HIRType.Int else if (std.mem.eql(u8, type_str, "Byte")) HIRType.Byte else if (std.mem.eql(u8, type_str, "Float")) HIRType.Float else HIRType.Int;
+            try self.instructions.append(HIRInstruction{ .Range = .{ .element_type = element_type } });
         } else if (std.mem.eql(u8, op, "Map")) {
             const count_str = tokens.next() orelse return;
             const key_type_str = tokens.next() orelse return;

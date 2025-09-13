@@ -675,6 +675,10 @@ pub const Expr = struct {
         TypeExpr: *TypeExpr,
         Loop: Loop,
         This: void,
+        Range: struct {
+            start: *Expr,
+            end: *Expr,
+        },
     };
 
     pub fn getBase(self: *Expr) *Base {
@@ -976,6 +980,12 @@ pub const Expr = struct {
                 allocator.destroy(l.body);
             },
             .This => {},
+            .Range => |*r| {
+                r.start.deinit(allocator);
+                allocator.destroy(r.start);
+                r.end.deinit(allocator);
+                allocator.destroy(r.end);
+            },
         }
     }
 };

@@ -847,6 +847,7 @@ pub const HIRGenerator = struct {
             .Exists => try collections_handler.generateExists(expr.data),
             .Increment => |operand| try collections_handler.generateIncrement(operand),
             .Decrement => |operand| try collections_handler.generateDecrement(operand),
+            .Range => |range| try collections_handler.generateRange(.{ .start = range.start, .end = range.end }, preserve_result),
 
             // Function and method calls
             .FunctionCall => try calls_handler.generateFunctionCall(expr.data, should_pop_after_use),
