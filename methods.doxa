@@ -1,5 +1,0 @@
-var string_1 is "hello"
-var array_1 is [1, 2, 3]
-
-@length(string_1)? // 5
-@length(array_1)? // 3
