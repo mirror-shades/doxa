@@ -1,12 +1,9 @@
-// Test range implementation
-var range1 is 1 to 6
-range1?
-
-var range2 is 0 to 3
-range2?
-
-var range3 is 5 to 2
-range3?
-
-var range4 is 10 to 10
-range4?
+match 1 to 6 {
+    1 then "one"?
+    2 then "two"?
+    3 then "three"?
+    4 then "four"?
+    5 then "five"?
+    6 then "six"?
+    else "unknown"?
+}
