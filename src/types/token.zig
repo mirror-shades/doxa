@@ -65,8 +65,9 @@ pub const TokenType = enum {
     NOT_PARADOXICAL, // ⊖
     EXISTS, // exists ∃
     FORALL, // forall ∀
-    FROM, // from
-    AS, // as
+    FROM, // from import
+    AS, // as narrow
+    TO, // to spread
     NOT, // not ¬
     IMPLIES, // →
     ASYNC, // async

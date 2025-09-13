@@ -188,6 +188,9 @@ pub const rules = blk: {
     // Add 'in' keyword support for quantifiers
     r.set(.IN, .{ .infix = inOperator, .precedence = .TERM });
 
+    // Add range operator support
+    r.set(.RANGE, .{ .infix = rangeExpr, .precedence = .TERM });
+
     // Add enum declaration support using the wrapper
     r.set(.ENUM_TYPE, .{ .prefix = enumDeclPrefix });
 
@@ -521,4 +524,27 @@ fn printValue(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Ex
     };
 
     return print_expr;
+}
+
+fn rangeExpr(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+    if (left == null) return error.ExpectedLeftOperand;
+
+    const operator = self.tokens[self.current - 1]; // Get the 'to' token
+    const right = try parsePrecedence(self, .TERM) orelse return error.ExpectedRightOperand;
+
+    const range_expr = try self.allocator.create(ast.Expr);
+    range_expr.* = .{
+        .base = .{
+            .id = ast.generateNodeId(),
+            .span = ast.SourceSpan.fromToken(operator),
+        },
+        .data = .{
+            .Range = .{
+                .start = left.?,
+                .end = right,
+            },
+        },
+    };
+
+    return range_expr;
 }

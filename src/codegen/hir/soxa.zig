@@ -980,6 +980,8 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
 
         .TypeCheck => |tc| try writer.print("    TypeCheck \"{s}\"              ; Type check\n", .{tc.target_type}),
 
+        .Range => |r| try writer.print("    Range {s}                    ; Create array from range\n", .{@tagName(r.element_type)}),
+
         else => try writer.print("    ; TODO: {s}\n", .{@tagName(instruction)}),
     }
 }

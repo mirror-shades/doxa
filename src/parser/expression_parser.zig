@@ -63,6 +63,7 @@ pub fn binary(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Ex
     const right = try precedence.parsePrecedence(self, precedence_level) orelse
         return error.ExpectedRightOperand;
 
+
     const binary_expr = try self.allocator.create(ast.Expr);
     binary_expr.* = .{
         .base = .{

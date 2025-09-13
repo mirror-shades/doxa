@@ -814,6 +814,10 @@ pub const HIRVM = struct {
                 try ops_array.exec(self, .{ .ArrayConcat = {} });
             },
 
+            .Range => |r| {
+                try ops_array.exec(self, .{ .Range = r });
+            },
+
             .TailCall => |c| {
                 try ops_functions.FunctionOps.execTailCall(self, c);
             },

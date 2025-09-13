@@ -26,6 +26,8 @@ pub fn exec(vm: anytype, instruction: anytype) !void {
         try arrayLen(vm);
     } else if (@hasField(@TypeOf(instruction), "ArrayConcat")) {
         try arrayConcat(vm);
+    } else if (@hasField(@TypeOf(instruction), "Range")) {
+        try arrayRange(vm, instruction.Range);
     } else {
         unreachable;
     }
@@ -406,6 +408,54 @@ fn handleArrayPush(vm: anytype, element_value: HIRValue) !void {
             return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot push to non-array value: {s}", .{@tagName(array_frame.value)});
         },
     }
+}
+
+/// Create array from range (start to end inclusive)
+fn arrayRange(vm: anytype, r: anytype) !void {
+    const end_frame = try vm.stack.pop(); // End value
+    const start_frame = try vm.stack.pop(); // Start value
+
+    // Extract integer values from start and end
+    const start_val = switch (start_frame.value) {
+        .int => |i| i,
+        .byte => |b| @as(i32, @intCast(b)),
+        .float => |f| @as(i32, @intCast(@as(i64, @intFromFloat(f)))),
+        else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Range start must be numeric, got {s}", .{@tagName(start_frame.value)}),
+    };
+
+    const end_val = switch (end_frame.value) {
+        .int => |i| i,
+        .byte => |b| @as(i32, @intCast(b)),
+        .float => |f| @as(i32, @intCast(@as(i64, @intFromFloat(f)))),
+        else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Range end must be numeric, got {s}", .{@tagName(end_frame.value)}),
+    };
+
+    // Calculate array size
+    const size = if (end_val >= start_val)
+        @as(u32, @intCast(end_val - start_val + 1))
+    else
+        0;
+
+    // Allocate array
+    const elements = try vm.allocator.alloc(HIRValue, size);
+
+    // Fill array with range values
+    var i: u32 = 0;
+    var current = start_val;
+    while (i < size) : (i += 1) {
+        elements[i] = HIRValue{ .int = current };
+        current += 1;
+    }
+
+    const range_array = HIRValue{
+        .array = .{
+            .elements = elements,
+            .capacity = size,
+            .element_type = r.element_type,
+        },
+    };
+
+    try vm.stack.push(HIRFrame.initFromHIRValue(range_array));
 }
 
 /// Get default value for a given type

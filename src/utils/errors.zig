@@ -340,6 +340,7 @@ pub const ErrorCode = struct {
     pub const INVALID_ALIAS_PARAMETER = "E1026";
     pub const ALIAS_PARAMETER_REQUIRED = "E1027";
     pub const ALIAS_ARGUMENT_NOT_NEEDED = "E1028";
+    pub const RANGE_REQUIRES_NUMERIC_OPERANDS = "E1029";
 
     // 2xxx - Syntax & Parsing
     pub const SYNTAX_ERROR = "E2001";

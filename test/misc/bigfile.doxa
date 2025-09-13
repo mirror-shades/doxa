@@ -649,6 +649,23 @@ var map MyMap_struct {
 MyMap_struct[1].person.name? // Mike
 MyMap_struct[1].salary? // 1000
 
+
+/////
+// RANGE
+/////
+var range1 is 1 to 6
+range1?
+
+var range2 is 0 to 3
+range2?
+
+var range3 is 5 to 2
+range3?
+
+var range4 is 10 to 10
+range4?
+
+
 /////   
 // FORMAL LOGICAL NOTATION
 /////

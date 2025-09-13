@@ -63,6 +63,24 @@ pub const CollectionsHandler = struct {
         }
     }
 
+    /// Generate HIR for range expressions (e.g., 1 to 6)
+    pub fn generateRange(self: *CollectionsHandler, range: struct { start: *ast.Expr, end: *ast.Expr }, preserve_result: bool) !void {
+        _ = preserve_result; // Unused parameter
+
+        // Generate the start value
+        try self.generator.generateExpression(range.start, true, false);
+
+        // Generate the end value
+        try self.generator.generateExpression(range.end, true, false);
+
+        // Generate Range instruction that creates an array from start to end
+        try self.generator.instructions.append(.{
+            .Range = .{
+                .element_type = .Int, // Ranges always produce integer arrays
+            },
+        });
+    }
+
     /// Generate HIR for map literals
     pub fn generateMap(self: *CollectionsHandler, entries: []ast.MapEntry) !void {
         // Generate key-value pairs in reverse order so the VM pops in source order

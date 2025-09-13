@@ -355,6 +355,13 @@ pub const HIRInstruction = union(enum) {
     /// LLVM: Complex allocation + memcpy
     ArrayConcat,
 
+    /// Create array from range (start to end)
+    /// VM: Create array with integers from start to end (inclusive)
+    /// LLVM: Generate loop to populate array
+    Range: struct {
+        element_type: HIRType,
+    },
+
     /// Exists quantifier operation
     /// VM: Check if any element satisfies predicate
     /// LLVM: Generate loop with early exit

@@ -531,6 +531,41 @@ pub fn inferTypeFromExpr(ctx: *TypeAnalysisContext, expr: *ast.Expr) !*ast.TypeI
                 return type_info;
             }
         },
+        .Range => |range| {
+            // Analyze the start and end expressions
+            const start_type = try inferTypeFromExpr(ctx, range.start);
+            const end_type = try inferTypeFromExpr(ctx, range.end);
+
+            // Both start and end should be numeric types
+            if (start_type.base != .Int and start_type.base != .Float and start_type.base != .Byte) {
+                ctx.reporter.reportCompileError(
+                    getLocationFromBase(expr.base),
+                    ErrorCode.RANGE_REQUIRES_NUMERIC_OPERANDS,
+                    "Range start value must be numeric, got {s}",
+                    .{@tagName(start_type.base)},
+                );
+                ctx.fatal_error.* = true;
+                type_info.base = .Nothing;
+                return type_info;
+            }
+
+            if (end_type.base != .Int and end_type.base != .Float and end_type.base != .Byte) {
+                ctx.reporter.reportCompileError(
+                    getLocationFromBase(expr.base),
+                    ErrorCode.RANGE_REQUIRES_NUMERIC_OPERANDS,
+                    "Range end value must be numeric, got {s}",
+                    .{@tagName(end_type.base)},
+                );
+                ctx.fatal_error.* = true;
+                type_info.base = .Nothing;
+                return type_info;
+            }
+
+            // Range expressions always produce arrays of integers
+            const element_type = try ctx.allocator.create(ast.TypeInfo);
+            element_type.* = .{ .base = .Int };
+            type_info.* = .{ .base = .Array, .array_type = element_type };
+        },
         else => {
             ctx.reporter.reportCompileError(
                 getLocationFromBase(expr.base),
