@@ -304,8 +304,16 @@ pub const CallsHandler = struct {
                 const var_name = builtin_data.arguments[0].data.Variable.lexeme;
                 const var_idx = try self.generator.getOrCreateVariable(var_name);
                 const expected_type = self.generator.getTrackedVariableType(var_name) orelse .Unknown;
-                if (preserve_result) try self.generator.instructions.append(.Dup);
+                // Store the modified array back to the variable
                 try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = var_idx, .var_name = var_name, .scope_kind = .Local, .module_context = null, .expected_type = expected_type } });
+            }
+            // Push nothing as the return value
+            const nothing_const_idx = try self.generator.addConstant(HIRValue.nothing);
+            try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_const_idx } });
+            
+            // If the caller doesn't need the result, pop it
+            if (!preserve_result) {
+                try self.generator.instructions.append(.Pop);
             }
         } else if (std.mem.eql(u8, name, "pop")) {
             if (builtin_data.arguments.len != 1) return error.InvalidArgumentCount;

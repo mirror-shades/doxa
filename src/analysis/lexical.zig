@@ -134,6 +134,7 @@ pub const LexicalAnalyzer = struct {
         try self.keywords.put("at", .AT);
         try self.keywords.put("to", .RANGE);
         try self.keywords.put("∃", .EXISTS);
+
         try self.keywords.put("∀", .FORALL);
         try self.keywords.put("∈", .IN);
         try self.keywords.put("¬", .NOT);
@@ -178,6 +179,21 @@ pub const LexicalAnalyzer = struct {
 
         // Check for UTF-8 sequence
         if (c >= 0x80) {
+            // Check if it's a Unicode operator/keyword
+            const sequence_length = try std.unicode.utf8ByteSequenceLength(c);
+            if (sequence_length <= self.source[self.current..].len) {
+                const symbol = self.source[self.current..self.current + sequence_length];
+                if (self.keywords.get(symbol)) |keyword_type| {
+                    // Advance past the symbol
+                    var i: usize = 0;
+                    while (i < sequence_length) : (i += 1) {
+                        self.advance();
+                    }
+                    try self.addMinimalToken(keyword_type);
+                    return;
+                }
+            }
+            // If not a recognized Unicode operator, try as identifier
             try self.identifier();
             return;
         }
@@ -505,8 +521,7 @@ pub const LexicalAnalyzer = struct {
     fn isAlpha(c: u8) bool {
         return (c >= 'a' and c <= 'z') or
             (c >= 'A' and c <= 'Z') or
-            c == '_' or
-            c > 127; // Accept all Unicode characters above ASCII
+            c == '_';
     }
 
     fn isDigit(c: u8) bool {
@@ -543,41 +558,11 @@ pub const LexicalAnalyzer = struct {
         while (!self.isAtEnd()) {
             const remaining = self.source[self.current..];
 
-            // Handle UTF-8 sequences
+            // Handle UTF-8 sequences - reject them for identifiers
             if (remaining[0] >= 0x80) {
-                const sequence_length = try std.unicode.utf8ByteSequenceLength(remaining[0]);
-                if (sequence_length > remaining.len) break;
-
-                // Validate the sequence
-                _ = std.unicode.utf8Decode(remaining[0..sequence_length]) catch break;
-
-                // Check if this is a quantifier or logical symbol at the start
-                // these are actually two characters under the hood
-                // the lexer cannot handle this, so we need have a little hack here
-                // TODO: we should probably just change the characters we have chosen
-                if (self.current == self.start) {
-                    const symbol = remaining[0..sequence_length];
-                    if (std.mem.eql(u8, symbol, "∃") or std.mem.eql(u8, symbol, "∀") or std.mem.eql(u8, symbol, "¬") or std.mem.eql(u8, symbol, "⊟")) {
-                        // Advance past the symbol
-                        var i: usize = 0;
-                        while (i < sequence_length) : (i += 1) {
-                            self.advance();
-                        }
-                        // Add the token
-                        const text = self.source[self.start..self.current];
-                        if (self.keywords.get(text)) |keyword_type| {
-                            try self.addMinimalToken(keyword_type);
-                            return;
-                        }
-                    }
-                }
-
-                // Advance past the whole sequence
-                var i: usize = 0;
-                while (i < sequence_length) : (i += 1) {
-                    self.advance();
-                }
-                continue;
+                // Unicode characters are not allowed in identifiers
+                std.debug.print("Unexpected character in identifier: {c}\n", .{remaining[0]});
+                return error.UnexpectedCharacter;
             }
 
             // Handle ASCII

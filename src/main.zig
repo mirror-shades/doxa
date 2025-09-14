@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const LexicalAnalyzer = @import("./analysis/lexical.zig").LexicalAnalyzer;
 const SemanticAnalyzer = @import("./analysis/semantic/semantic.zig").SemanticAnalyzer;
 const Parser = @import("./parser/parser_types.zig").Parser;
@@ -399,6 +400,12 @@ pub fn main() !void {
     defer {
         const leaked = gpa.deinit();
         if (leaked == .leak) std.debug.print("Warning: Memory leak detected!\n", .{});
+    }
+
+    if (builtin.os.tag == .windows) {
+        // Set the console output code page to UTF-8 to enable Unicode support
+        // I think this is only needed for Windows
+        _ = std.os.windows.kernel32.SetConsoleOutputCP(65001);
     }
 
     // Parse args first

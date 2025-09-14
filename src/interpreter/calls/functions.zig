@@ -245,7 +245,9 @@ pub const FunctionOps = struct {
                 // Add element to end (capacity is guaranteed to be > length)
                 mutable_arr.elements[length] = element.value;
 
-                // Push the modified array back onto the stack
+                // Store the modified array back to the variable (if it's a variable)
+                // This is handled by the code generation, but we need to ensure the modified array is available
+                // Push the modified array temporarily, then the code generation will handle storing it
                 const modified_array_value = HIRValue{ .array = mutable_arr };
                 try vm.stack.push(HIRFrame.initFromHIRValue(modified_array_value));
             },

@@ -1,116 +1,61 @@
-// implemented and tested
-
-// @length - Getting arr and string lengths
-// @push - Adding elements to arrs
-// @byte - Converting strings to byte arrs
-// @string - Converting values to strings
-// @int - Parsing strings to integers with error handling
-// @float - Parsing strings to floats
-// @type - Getting type information
-// @input - grab user input
-
-// implemented but might be better tested elsewhere
-
-// @assert - Assertion checking
-
-
-// not yet implemented
-
-// @pop - Removing and returning last elements
-// @insert - Inserting elements at specific positions
-// @remove - Removing elements at specific positions
-// @clear - Clearing all elements
-// @index - Finding first occurrences
-// @clone - Deep copying (nested structures independent)
-// @copy - Shallow copying (nested structures shared)
-// @split - Splitting strings by delimiters
-// @join - Joining arrs with delimiters
-// @slice - Extracting substrings/subarrs
-// @trim - Removing whitespace
-// @lower - Converting to lowercase
-// @upper - Converting to uppercase
-// @abs - Absolute values
-// @min - Find min value
-// @max - Find max value
-// @round - Rounding to nearest integer
-// @floor - Floor function
-// @ceil - Ceiling function
-// @read - Read file
-// @write - Write file
-// @panic - Program termination (commented out for safety)
-
-// ========================================
-// Array Methods Examples
-// ========================================
-
+var hello is "hello"
 var arr is [1, 2, 3, 4, 5]
-var text is "hello world"
-var i is 42
-var f is 8.8
-var b is 0x0C
+var emptyArr is []
+var emptyStr is ""
+var unicode_str is "café"
 
-/////
-// INPUT 
-/////
-@input()?
 
 /////
 // LENGTH
 /////
-@length(arr)?          // 5
-@length(text)?         // 11
+
+@length("hello")?
+@length(hello)?
+@length([1, 2, 3, 4, 5])?
+@length(arr)?
+@length("")?
+@length([])?
+@length([42])?
+
 
 /////
 // PUSH
 /////
-arr?                  // [1, 2, 3, 4, 5]
-@push(arr, 6)
-arr?                  // [1, 2, 3, 4, 5, 6]
 
-/////
-// byte 
-/////
-@byte(text)?                 // [0x68, 0x65, 0x6C, 0x6C, 0x6F, 0x20, 0x77, 0x6F, 0x72, 0x6C, 0x64]
+@push(arr, 6)?
+@push(hello, "!")?
 
-/////
-// STRING 
-/////
-@string(i)?                // "42"
-@string(f)?                // "8.8"
-@string(b)?                // "0x0C"
-@string(arr)?                // "[1, 2, 3, 4, 5, 6]"
+@push([1, 2, 3, 4], 5)?
+@push("hello", "!")?
 
-/////
-// INT 
-/////
-@int(f)?                //  8
-@int(b)?                // 12
+hello?
+arr?
 
-/////
-// FLOAT
-/////
-@float(i)?                // 42.0
-@float(b)?                // 12.0
+@push(hello, "")?
+@push(emptyArr, 1)?
+@push(emptyStr, "!")?
 
-/////
-// BYTE
-/////
-@byte(f)?                // 0x08
-@byte(i)?                // 02A
+hello?
+emptyArr?
+emptyStr?
 
-/////
-// TYPE 
-/////
-@type(10)? // "int"
-@type(0x0A)? // "byte"
-@type(10.0)? // "float"
-@type("hello")? // "string"
-@type(true)? // "tetra"
-@type([1,2])? // "array"
 
 /////
 // POP
 /////
-// var popped is @pop(arr)
-// popped?
-// arr?
+
+@pop(arr)?
+@pop(hello)?
+
+arr?
+hello?
+
+@pop(emptyArr)?
+@pop(emptyStr)?
+
+emptyArr?
+emptyStr?
+
+@pop(unicode_str)?
+
+"end"?

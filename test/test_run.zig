@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const testing = std.testing;
 const process = std.process;
 const fs = std.fs;
@@ -37,12 +38,7 @@ const print_result = struct {
     value: []const u8,
 };
 
-const expected_complex_print_results = [_]print_result{
-    .{ .value = "The variable \"number\" is equal to 10" },
-    .{ .value = "The variable name \"number\" has 6 letters" },
-    .{ .value = "The variable \"number\" is equal to 10 and the name has 6 letters" },
-};
-
+// integration tests
 const expected_brainfuck_results = [_]print_result{
     .{ .value = "Input: Output: 0x67" },
 };
@@ -56,6 +52,14 @@ const expected_calculator_results = [_]print_result{
     .{ .value = "Output: 4" },
 };
 
+// syntax tests
+const expected_complex_print_results = [_]print_result{
+    .{ .value = "The variable \"number\" is equal to 10" },
+    .{ .value = "The variable name \"number\" has 6 letters" },
+    .{ .value = "The variable \"number\" is equal to 10 and the name has 6 letters" },
+    .{ .value = "end" },
+};
+
 const calculator_io_tests = [_]IOTest{
     .{ .input = "5 + -2\n", .expected_output = "Output: 3" },
     .{ .input = "5 + -2 * 3\n", .expected_output = "Output: -1" },
@@ -63,31 +67,6 @@ const calculator_io_tests = [_]IOTest{
     .{ .input = "2 * (3 + 2) - 6 / 2\n", .expected_output = "Output: 7" },
     .{ .input = "10 / 2 / 5\n", .expected_output = "Output: 1" },
     .{ .input = "20-16\n", .expected_output = "Output: 4" },
-};
-
-const expected_methods_results = [_]peek_result{
-    .{ .type = "string", .value = "\"f\"" },
-    .{ .type = "int", .value = "5" },
-    .{ .type = "int", .value = "11" },
-    .{ .type = "int[]", .value = "[1, 2, 3, 4, 5]" },
-    .{ .type = "int[]", .value = "[1, 2, 3, 4, 5, 6]" },
-    .{ .type = "byte[]", .value = "[0x68, 0x65, 0x6C, 0x6C, 0x6F, 0x20, 0x77, 0x6F, 0x72, 0x6C, 0x64]" },
-    .{ .type = "string", .value = "\"42\"" },
-    .{ .type = "string", .value = "\"8.8\"" },
-    .{ .type = "string", .value = "\"0x0C\"" },
-    .{ .type = "string", .value = "\"[1, 2, 3, 4, 5, 6]\"" },
-    .{ .type = "int", .value = "8" },
-    .{ .type = "int", .value = "12" },
-    .{ .type = "float", .value = "42.0" },
-    .{ .type = "float", .value = "12.0" },
-    .{ .type = "byte", .value = "0x08" },
-    .{ .type = "byte", .value = "0x2A" },
-    .{ .type = "string", .value = "\"int\"" },
-    .{ .type = "string", .value = "\"byte\"" },
-    .{ .type = "string", .value = "\"float\"" },
-    .{ .type = "string", .value = "\"string\"" },
-    .{ .type = "string", .value = "\"tetra\"" },
-    .{ .type = "string", .value = "\"array\"" },
 };
 
 const expected_expressions_results = [_]peek_result{
@@ -229,6 +208,39 @@ const expected_expressions_results = [_]peek_result{
     .{ .type = "int", .value = "4" },
     .{ .type = "int", .value = "6" },
     .{ .type = "int", .value = "4" },
+    .{ .type = "string", .value = "\"end\"" },
+};
+
+const expected_methods_results = [_]peek_result{
+    .{ .type = "int", .value = "5" },
+    .{ .type = "int", .value = "5" },
+    .{ .type = "int", .value = "5" },
+    .{ .type = "int", .value = "5" },
+    .{ .type = "int", .value = "0" },
+    .{ .type = "int", .value = "0" },
+    .{ .type = "int", .value = "1" },
+    .{ .type = "nothing", .value = "nothing" },
+    .{ .type = "nothing", .value = "nothing" },
+    .{ .type = "nothing", .value = "nothing" },
+    .{ .type = "nothing", .value = "nothing" },
+    .{ .type = "string", .value = "\"hello!\"" },
+    .{ .type = "int[]", .value = "[1, 2, 3, 4, 5, 6]" },
+    .{ .type = "nothing", .value = "nothing" },
+    .{ .type = "nothing", .value = "nothing" },
+    .{ .type = "nothing", .value = "nothing" },
+    .{ .type = "string", .value = "\"hello!\"" },
+    .{ .type = "int[]", .value = "[1]" },
+    .{ .type = "string", .value = "\"!\"" },
+    .{ .type = "int", .value = "6" },
+    .{ .type = "int", .value = "\"!\"" },
+    .{ .type = "int[]", .value = "[1, 2, 3, 4, 5]" },
+    .{ .type = "string", .value = "\"hello\"" },
+    .{ .type = "int", .value = "1" },
+    .{ .type = "string", .value = "\"!\"" },
+    .{ .type = "int[]", .value = "[]" },
+    .{ .type = "string", .value = "\"\"" },
+    .{ .type = "string", .value = "\"é\"" },
+    .{ .type = "string", .value = "\"end\"" },
 };
 
 const expected_bigfile_results = [_]peek_result{
@@ -475,6 +487,8 @@ const expected_bigfile_results = [_]peek_result{
     .{ .type = "string", .value = "\"enum\"" },
     .{ .type = "string", .value = "\"Color\"" },
     .{ .type = "string", .value = "\"map\"" },
+
+    .{ .type = "string", .value = "\"end\"" },
 };
 
 var total_passed: usize = 0;
@@ -647,6 +661,12 @@ test "unified runner" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
+
+    if (builtin.os.tag == .windows) {
+        // Set the console output code page to UTF-8 to enable Unicode support
+        // I think this is only needed for Windows
+        _ = std.os.windows.kernel32.SetConsoleOutputCP(65001);
+    }
 
     const test_cases = [_]TestCase{
         .{ .name = "big file", .path = "./test/misc/bigfile.doxa", .mode = .PEEK, .input = null, .expected_print = null, .expected_peek = expected_bigfile_results[0..] },
