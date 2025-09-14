@@ -1,9 +1,0 @@
-match 1 to 6 {
-    1 then "one"?
-    2 then "two"?
-    3 then "three"?
-    4 then "four"?
-    5 then "five"?
-    6 then "six"?
-    else "unknown"?
-}

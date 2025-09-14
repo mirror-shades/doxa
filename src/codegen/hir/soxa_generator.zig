@@ -1413,11 +1413,15 @@ pub const HIRGenerator = struct {
                     return .Int;
                 }
                 if (std.mem.eql(u8, function_name, "push") or
-                    std.mem.eql(u8, function_name, "pop") or
                     std.mem.eql(u8, function_name, "insert") or
+                    std.mem.eql(u8, function_name, "clear"))
+                {
+                    return .Nothing; // Mutating methods return nothing
+                }
+                if (std.mem.eql(u8, function_name, "pop") or
                     std.mem.eql(u8, function_name, "remove"))
                 {
-                    return .Array; // Array methods return the modified array
+                    return .Array; // Pop/remove methods return the removed element
                 }
                 if (std.mem.eql(u8, function_name, "print") or
                     std.mem.eql(u8, function_name, "println"))

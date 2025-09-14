@@ -13,8 +13,8 @@ Doxa provides built-in methods prefixed with `@` for core operations.
 ### @push
 
 - **Input**: `array | string`, `value`
-- **Output**: `void` - adds value to end of array
-- **Example**: `@push(arr, 3)` // adds 3 to arr
+- **Output**: `nothing` - modifies array/string in place by adding value to end
+- **Example**: `@push(arr, 3)` // adds 3 to arr, returns nothing
 
 ### @pop
 

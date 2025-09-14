@@ -117,9 +117,29 @@ pub fn exec(vm: anytype, s: anytype) !void {
                     if (s_val.len == 0) {
                         return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot pop from empty string", .{});
                     }
-                    const last_index = s_val.len - 1;
-                    const last_char = s_val[last_index..s_val.len];
-                    const remaining = s_val[0..last_index];
+
+                    // Find the start of the last UTF-8 character
+                    var last_char_start: usize = s_val.len;
+                    var i: usize = s_val.len;
+                    while (i > 0) {
+                        i -= 1;
+                        const byte = s_val[i];
+                        // Check if this is the start of a UTF-8 sequence
+                        if ((byte & 0x80) == 0) {
+                            // ASCII character
+                            last_char_start = i;
+                            break;
+                        } else if ((byte & 0xC0) == 0xC0) {
+                            // Start of a multi-byte sequence
+                            last_char_start = i;
+                            break;
+                        }
+                        // Otherwise, this is a continuation byte, keep going
+                    }
+
+                    const last_char = s_val[last_char_start..s_val.len];
+                    const remaining = s_val[0..last_char_start];
+
                     // Push updated string first, then popped char to mirror ArrayPop order
                     try vm.stack.push(HIRFrame.initString(remaining));
                     try vm.stack.push(HIRFrame.initString(last_char));
