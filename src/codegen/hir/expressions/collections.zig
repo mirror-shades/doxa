@@ -20,12 +20,20 @@ pub const CollectionsHandler = struct {
 
     /// Generate HIR for array literals
     pub fn generateArray(self: *CollectionsHandler, elements: []const *ast.Expr, preserve_result: bool) !void {
+        return self.generateArrayInternal(elements, preserve_result);
+    }
+
+    /// Internal array generation with nesting control
+    fn generateArrayInternal(self: *CollectionsHandler, elements: []const *ast.Expr, preserve_result: bool) !void {
         _ = preserve_result; // Unused parameter
         // Determine array element type from first element (for now)
-        const element_type: HIRType = if (elements.len > 0) blk: {
+        var element_type: HIRType = .Unknown;
+        var nested_element_type: ?HIRType = null;
+
+        if (elements.len > 0) {
             // Try to infer type from first element
             switch (elements[0].data) {
-                .Literal => |lit| break :blk switch (lit) {
+                .Literal => |lit| element_type = switch (lit) {
                     .int => .Int,
                     .float => .Float,
                     .string => .String,
@@ -33,32 +41,51 @@ pub const CollectionsHandler = struct {
                     .byte => .Byte,
                     else => .Unknown,
                 },
-                else => break :blk .Unknown,
+                .Array => |nested_elements| {
+                    element_type = .Array;
+                    // For nested arrays, determine the nested element type
+                    if (nested_elements.len > 0) {
+                        nested_element_type = switch (nested_elements[0].data) {
+                            .Literal => |lit| switch (lit) {
+                                .int => .Int,
+                                .float => .Float,
+                                .string => .String,
+                                .tetra => .Tetra,
+                                .byte => .Byte,
+                                else => .Unknown,
+                            },
+                            .Array => .Array, // Could be deeper nesting
+                            else => .Unknown,
+                        };
+                    }
+                },
+                else => element_type = .Unknown,
             }
-        } else .Unknown;
+        }
 
-        // Generate ArrayNew instruction
+        // Generate ArrayNew instruction with nested type info
         try self.generator.instructions.append(.{ .ArrayNew = .{
             .element_type = element_type,
             .size = @intCast(elements.len),
+            .nested_element_type = nested_element_type,
         } });
-
-        // Note: We cannot track the target variable here without broader context
 
         // Generate each element and ArraySet
         for (elements, 0..) |element, i| {
-            // Duplicate array reference (needed for ArraySet)
-            try self.generator.instructions.append(.Dup);
-
-            // Push index first
+            // Push index first so when we push value next the stack is: value, index, array
             const index_value = HIRValue{ .int = @intCast(i) };
             const index_const = try self.generator.addConstant(index_value);
             try self.generator.instructions.append(.{ .Const = .{ .value = index_value, .constant_id = index_const } });
 
             // Generate the element value
-            try self.generator.generateExpression(element, true, false);
+            if (element.data == .Array) {
+                // For nested arrays, generate them recursively
+                try self.generateArrayInternal(element.data.Array, true);
+            } else {
+                try self.generator.generateExpression(element, true, false);
+            }
 
-            // Set array element (stack: array, index, value)
+            // ArraySet pops: value, index, array; and pushes updated array back
             try self.generator.instructions.append(.{ .ArraySet = .{ .bounds_check = false } }); // No bounds check for initialization
         }
     }

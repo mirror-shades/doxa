@@ -232,7 +232,7 @@ const expected_methods_results = [_]peek_result{
     .{ .type = "int[]", .value = "[1]" },
     .{ .type = "string", .value = "\"!\"" },
     .{ .type = "int", .value = "6" },
-    .{ .type = "int", .value = "\"!\"" },
+    .{ .type = "string", .value = "\"!\"" },
     .{ .type = "int[]", .value = "[1, 2, 3, 4, 5]" },
     .{ .type = "string", .value = "\"hello\"" },
     .{ .type = "int", .value = "1" },
@@ -240,6 +240,9 @@ const expected_methods_results = [_]peek_result{
     .{ .type = "int[]", .value = "[]" },
     .{ .type = "string", .value = "\"\"" },
     .{ .type = "string", .value = "\"é\"" },
+    .{ .type = "string", .value = "\"caf\"" },
+    .{ .type = "int[]", .value = "[5, 6]" },
+    .{ .type = "int[][]", .value = "[[1, 2], [3, 4]]" },
     .{ .type = "string", .value = "\"end\"" },
 };
 
@@ -420,11 +423,11 @@ const expected_bigfile_results = [_]peek_result{
     .{ .type = "string", .value = "\"\"" },
     .{ .type = "string", .value = "\"\"" },
     .{ .type = "string", .value = "\"Fluffy\"" },
-    .{ .type = "string", .value = ".LION" },
+    .{ .type = "Species", .value = ".LION" },
     .{ .type = "string", .value = "\"Sam\"" },
-    .{ .type = "string", .value = ".PENGUIN" },
+    .{ .type = "Species", .value = ".PENGUIN" },
     .{ .type = "string", .value = "\"Nemo\"" },
-    .{ .type = "string", .value = ".WHALE" },
+    .{ .type = "Species", .value = ".WHALE" },
     .{ .type = "int", .value = "779" },
     .{ .type = "int", .value = "782" },
     .{ .type = "string", .value = "\"integer\"" },
@@ -613,7 +616,9 @@ fn validatePeekResults(output: []const u8, expected_results: []const peek_result
     // Check each result we actually got
     var i: usize = 0;
     while (i < actual_count and i < expected_count) : (i += 1) {
-        if (!std.mem.eql(u8, outputs.items[i].value, expected_results[i].value)) {
+        if (!std.mem.eql(u8, outputs.items[i].type, expected_results[i].type) or
+            !std.mem.eql(u8, outputs.items[i].value, expected_results[i].value))
+        {
             if (i < outputs.items.len) {
                 std.debug.print(
                     "✗ Peek test case {d} failed:\n  Expected: {s} = \"{s}\"\n  Found:    {s} = \"{s}\"\n",

@@ -26,6 +26,7 @@ pub const HIRType = enum {
 pub const ArrayTypeInfo = struct {
     element_type: HIRType,
     size: ?u32, // null = dynamic array
+    nested_element_type: ?*ArrayTypeInfo = null, // For nested arrays like int[][]
 };
 
 pub const StructTypeInfo = struct {

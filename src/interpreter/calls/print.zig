@@ -254,6 +254,96 @@ pub const PrintOps = struct {
         }
     }
 
+    // Internal, reused buffer for building nested array type strings.
+    // This is intentionally a single shared buffer used synchronously by printing.
+    var type_buf: [128]u8 = undefined;
+
+    fn mapBaseTypeNameFromHIRType(t: @import("../../codegen/hir/soxa_types.zig").HIRType) []const u8 {
+        return switch (t) {
+            .Int => "int",
+            .Byte => "byte",
+            .Float => "float",
+            .String => "string",
+            .Tetra => "tetra",
+            .Nothing => "nothing",
+            .Struct => "struct",
+            .Map => "map",
+            .Enum => "enum",
+            .Function => "function",
+            .Union => "union",
+            else => "unknown",
+        };
+    }
+
+    fn mapBaseTypeNameFromValue(v: HIRValue) []const u8 {
+        return switch (v) {
+            .int => "int",
+            .byte => "byte",
+            .float => "float",
+            .string => "string",
+            .tetra => "tetra",
+            .nothing => "nothing",
+            .struct_instance => "struct",
+            .map => "map",
+            .enum_variant => "enum",
+            else => "unknown",
+        };
+    }
+
+    fn firstNonNothingElement(elems: []HIRValue) ?HIRValue {
+        for (elems) |e| {
+            if (!@import("std").meta.eql(e, HIRValue.nothing)) return e;
+        }
+        return null;
+    }
+
+    fn buildArrayTypeStringFromValue(value: HIRValue) []const u8 {
+        // Determine base type and depth by inspecting nested array values.
+        var depth: usize = 0;
+        var cursor: HIRValue = value;
+
+        while (true) {
+            switch (cursor) {
+                .array => |arr| {
+                    depth += 1;
+                    if (arr.element_type != .Array) {
+                        // We know the leaf element type.
+                        const base = mapBaseTypeNameFromHIRType(arr.element_type);
+                        return writeTypeWithBrackets(base, depth);
+                    }
+                    // Need to look into first non-nothing element to go deeper.
+                    if (firstNonNothingElement(arr.elements)) |next| {
+                        cursor = next;
+                        continue;
+                    } else {
+                        // Empty or unknown nested array
+                        return writeTypeWithBrackets("array", depth);
+                    }
+                },
+                else => {
+                    // Non-array encountered; use its base type name with current depth.
+                    const base2 = mapBaseTypeNameFromValue(cursor);
+                    return writeTypeWithBrackets(base2, depth);
+                },
+            }
+        }
+    }
+
+    fn writeTypeWithBrackets(base: []const u8, depth: usize) []const u8 {
+        var i: usize = 0;
+        // Copy base
+        while (i < base.len and i < type_buf.len) : (i += 1) type_buf[i] = base[i];
+        var written: usize = i;
+        // Append [] depth times
+        var d: usize = 0;
+        while (d < depth and written + 2 <= type_buf.len) : (d += 1) {
+            type_buf[written] = '[';
+            type_buf[written + 1] = ']';
+            written += 2;
+        }
+        return type_buf[0..written];
+    }
+
     // Get a readable type string from HIRValue for debug output
     pub fn getTypeString(vm: anytype, value: HIRValue) []const u8 {
         _ = vm;
@@ -264,21 +354,7 @@ pub const PrintOps = struct {
             .string => "string",
             .tetra => "tetra",
             .nothing => "nothing",
-            .array => |arr| switch (arr.element_type) {
-                .Int => "int[]",
-                .Byte => "byte[]",
-                .Float => "float[]",
-                .String => "string[]",
-                .Tetra => "tetra[]",
-                .Array => "array[]", // Nested arrays
-                .Struct => "struct[]",
-                .Nothing => "nothing[]",
-                .Map => "map[]",
-                .Enum => "enum[]",
-                .Function => "function[]",
-                .Union => "union[]",
-                .Unknown => "unknown[]",
-            },
+            .array => buildArrayTypeStringFromValue(value),
             .struct_instance => |s| s.type_name,
             .map => "map",
             .enum_variant => |e| e.type_name,

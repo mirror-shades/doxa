@@ -317,6 +317,7 @@ pub const HIRInstruction = union(enum) {
     ArrayNew: struct {
         element_type: HIRType,
         size: u32, // 0 = dynamic array
+        nested_element_type: ?HIRType = null, // For nested arrays like int[][]
     },
 
     /// Get array element by index
