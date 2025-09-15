@@ -35,6 +35,7 @@ pub fn exec(vm: anytype, instruction: anytype) !void {
 
 /// Create new array with specified size
 fn arrayNew(vm: anytype, a: anytype) !void {
+
     // CRITICAL FIX: For empty arrays (size=0), allocate minimum capacity for growth
     const initial_capacity = if (a.size == 0) 8 else a.size; // Start with capacity 8 for empty arrays
     const elements = try vm.allocator.alloc(HIRValue, initial_capacity);
@@ -54,6 +55,7 @@ fn arrayNew(vm: anytype, a: anytype) !void {
             .elements = elements,
             .capacity = @intCast(initial_capacity),
             .element_type = a.element_type,
+            .nested_element_type = a.nested_element_type,
         },
     };
 
@@ -82,6 +84,25 @@ fn arrayGet(vm: anytype, a: anytype) !void {
                 return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index cannot be negative: {}", .{parsed});
             }
             break :blk @as(u32, @intCast(parsed));
+        },
+        .array => |arr| blk: {
+            // Handle array as index - use first element if it's an integer
+            if (arr.elements.len > 0) {
+                break :blk switch (arr.elements[0]) {
+                    .int => |i| if (i < 0) {
+                        return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index cannot be negative: {}", .{i});
+                    } else @as(u32, @intCast(i)),
+                    .byte => |u| @as(u32, u),
+                    .tetra => |t| @as(u32, t),
+                    else => {
+                        try vm.stack.push(array); // Push original array back
+                        return;
+                    },
+                };
+            } else {
+                try vm.stack.push(array); // Push original array back
+                return;
+            }
         },
         .nothing => {
             try vm.stack.push(array); // Push original array back
@@ -131,10 +152,13 @@ fn arrayGet(vm: anytype, a: anytype) !void {
 
 /// Set array element by index
 fn arraySet(vm: anytype, a: anytype) !void {
+    _ = a;
     // Stack order (top to bottom): value, index, array
     const value = try vm.stack.pop(); // Value to set
     const index = try vm.stack.pop(); // Index
     const array_frame = try vm.stack.pop(); // Array
+
+    // Removed noisy debug prints that leaked indices to stdout during array initialization
 
     // IMPROVED: Handle different index types more gracefully
     const index_val = switch (index.value) {
@@ -155,28 +179,15 @@ fn arraySet(vm: anytype, a: anytype) !void {
             break :blk @as(u32, @intCast(parsed));
         },
         .nothing => {
-            try vm.stack.push(array_frame); // Push original array back
-            return;
+            return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index cannot be nothing", .{});
         },
         else => {
-            try vm.stack.push(array_frame); // Push original array back
-            return;
+            return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid array index type: {s}", .{@tagName(index.value)});
         },
     };
 
     switch (array_frame.value) {
         .array => |arr| {
-            // Calculate actual length (stop at first nothing element)
-            var actual_length: u32 = 0;
-            for (arr.elements) |elem| {
-                if (std.meta.eql(elem, HIRValue.nothing)) break;
-                actual_length += 1;
-            }
-
-            if (a.bounds_check and index_val >= actual_length) {
-                return ErrorList.IndexOutOfBounds;
-            }
-
             // Create a mutable copy of the array
             var mutable_arr = arr;
 

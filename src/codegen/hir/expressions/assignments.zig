@@ -39,6 +39,7 @@ pub const AssignmentsHandler = struct {
                         .byte => .Byte,
                         else => .Unknown,
                     },
+                    .Array => .Array, // Handle nested arrays
                     else => .Unknown,
                 };
                 if (element_type != .Unknown) {

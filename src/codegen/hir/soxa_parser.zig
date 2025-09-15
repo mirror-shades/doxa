@@ -630,7 +630,7 @@ pub const SoxaTextParser = struct {
         } else if (std.mem.eql(u8, op, "ArrayNew")) {
             const type_str = tokens.next() orelse return;
             const size_str = tokens.next() orelse return;
-            const element_type = if (std.mem.eql(u8, type_str, "Int")) HIRType.Int else if (std.mem.eql(u8, type_str, "Float")) HIRType.Float else if (std.mem.eql(u8, type_str, "String")) HIRType.String else if (std.mem.eql(u8, type_str, "Byte")) HIRType.Byte else if (std.mem.eql(u8, type_str, "Tetra")) HIRType.Tetra else HIRType.Unknown;
+            const element_type = if (std.mem.eql(u8, type_str, "Int")) HIRType.Int else if (std.mem.eql(u8, type_str, "Float")) HIRType.Float else if (std.mem.eql(u8, type_str, "String")) HIRType.String else if (std.mem.eql(u8, type_str, "Byte")) HIRType.Byte else if (std.mem.eql(u8, type_str, "Tetra")) HIRType.Tetra else if (std.mem.eql(u8, type_str, "Array")) HIRType.Array else HIRType.Unknown;
             const size = std.fmt.parseInt(u32, size_str, 10) catch return;
             try self.instructions.append(HIRInstruction{ .ArrayNew = .{ .element_type = element_type, .size = size } });
         } else if (std.mem.eql(u8, op, "ArrayGet")) {

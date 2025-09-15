@@ -182,7 +182,7 @@ pub const LexicalAnalyzer = struct {
             // Check if it's a Unicode operator/keyword
             const sequence_length = try std.unicode.utf8ByteSequenceLength(c);
             if (sequence_length <= self.source[self.current..].len) {
-                const symbol = self.source[self.current..self.current + sequence_length];
+                const symbol = self.source[self.current .. self.current + sequence_length];
                 if (self.keywords.get(symbol)) |keyword_type| {
                     // Advance past the symbol
                     var i: usize = 0;

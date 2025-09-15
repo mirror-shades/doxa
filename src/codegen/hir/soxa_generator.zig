@@ -83,6 +83,9 @@ pub const HIRGenerator = struct {
 
     // Loop context stack to support break/continue codegen
     loop_context_stack: std.ArrayList(LoopContext),
+    
+    // Track when we're generating nested array elements to avoid stack interference
+    is_generating_nested_array: bool = false,
 
     pub const FunctionInfo = struct {
         name: []const u8,
