@@ -56,7 +56,7 @@ pub const AssignmentsHandler = struct {
                     if (self.generator.getOrCreateVariable(assign.name.lexeme)) |var_idx| {
                         const members = try self.generator.allocator.alloc([]const u8, 2);
                         members[0] = "int";
-                        members[1] = "NumberError";
+                        members[1] = "ValueError";
                         try self.generator.trackVariableUnionMembersByIndex(var_idx, members);
                     } else |_| {}
                 } else if (std.mem.eql(u8, bc.function.lexeme, "slice")) {

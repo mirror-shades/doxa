@@ -344,7 +344,7 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                     if (std.mem.eql(u8, bc.function.lexeme, "int")) {
                         const members = try self.allocator.alloc([]const u8, 2);
                         members[0] = "int";
-                        members[1] = "NumberError";
+                        members[1] = "ValueError";
                         try self.trackVariableUnionMembersByIndex(var_idx, members);
                     } else if (std.mem.eql(u8, bc.function.lexeme, "slice")) {
                         const members = try self.allocator.alloc([]const u8, 2);

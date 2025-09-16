@@ -169,19 +169,48 @@ pub const IOHandler = struct {
 
         // New: include union member list for variables declared as unions
         var union_members: ?[][]const u8 = null;
-        // Attach inline union info for selected builtins
+        // Attach inline union info for selected builtins/internal calls
         if (peek.expr.data == .BuiltinCall) {
             const bc = peek.expr.data.BuiltinCall;
             if (std.mem.eql(u8, bc.function.lexeme, "int")) {
                 const members = try self.generator.allocator.alloc([]const u8, 2);
                 members[0] = "int";
-                members[1] = "NumberError";
+                members[1] = "ValueError";
+                union_members = members;
+            } else if (std.mem.eql(u8, bc.function.lexeme, "float")) {
+                const members = try self.generator.allocator.alloc([]const u8, 2);
+                members[0] = "float";
+                members[1] = "ValueError";
+                union_members = members;
+            } else if (std.mem.eql(u8, bc.function.lexeme, "byte")) {
+                // @byte now returns byte | ValueError for all inputs (strings, numerics)
+                const members = try self.generator.allocator.alloc([]const u8, 2);
+                members[0] = "byte";
+                members[1] = "ValueError";
                 union_members = members;
             } else if (std.mem.eql(u8, bc.function.lexeme, "slice")) {
                 const members = try self.generator.allocator.alloc([]const u8, 2);
                 // Heuristically pick result container name from first arg type
                 const base_t = if (bc.arguments.len > 0) self.generator.inferTypeFromExpression(bc.arguments[0]) else .Unknown;
                 members[0] = if (base_t == .String) "string" else "array";
+                members[1] = "ValueError";
+                union_members = members;
+            }
+        } else if (peek.expr.data == .InternalCall) {
+            const ic = peek.expr.data.InternalCall;
+            if (std.mem.eql(u8, ic.method.lexeme, "int")) {
+                const members = try self.generator.allocator.alloc([]const u8, 2);
+                members[0] = "int";
+                members[1] = "ValueError";
+                union_members = members;
+            } else if (std.mem.eql(u8, ic.method.lexeme, "float")) {
+                const members = try self.generator.allocator.alloc([]const u8, 2);
+                members[0] = "float";
+                members[1] = "ValueError";
+                union_members = members;
+            } else if (std.mem.eql(u8, ic.method.lexeme, "byte")) {
+                const members = try self.generator.allocator.alloc([]const u8, 2);
+                members[0] = "byte";
                 members[1] = "ValueError";
                 union_members = members;
             }

@@ -1129,24 +1129,40 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
             } else if (std.mem.eql(u8, fname, "int")) {
                 requireArity.check(self, expr, bc.arguments.len, 1, fname);
                 if (bc.arguments.len != 1) return type_info;
-                type_info.* = .{ .base = .Int };
+                // Always return union: int | ValueError
+                const int_t = try self.allocator.create(ast.TypeInfo);
+                int_t.* = .{ .base = .Int };
+                const err_t = try self.allocator.create(ast.TypeInfo);
+                err_t.* = .{ .base = .Custom, .custom_type = "ValueError" };
+                var union_members = [_]*ast.TypeInfo{ int_t, err_t };
+                const u = try helpers.createUnionType(self, union_members[0..]);
+                type_info.* = u.*;
                 return type_info;
             } else if (std.mem.eql(u8, fname, "float")) {
                 requireArity.check(self, expr, bc.arguments.len, 1, fname);
                 if (bc.arguments.len != 1) return type_info;
-                type_info.* = .{ .base = .Float };
+                // Always return union: float | ValueError
+                const float_t = try self.allocator.create(ast.TypeInfo);
+                float_t.* = .{ .base = .Float };
+                const err_t = try self.allocator.create(ast.TypeInfo);
+                err_t.* = .{ .base = .Custom, .custom_type = "ValueError" };
+                var union_members = [_]*ast.TypeInfo{ float_t, err_t };
+                const u = try helpers.createUnionType(self, union_members[0..]);
+                type_info.* = u.*;
                 return type_info;
             } else if (std.mem.eql(u8, fname, "byte")) {
                 requireArity.check(self, expr, bc.arguments.len, 1, fname);
                 if (bc.arguments.len != 1) return type_info;
                 const a0_t = try infer_type.inferTypeFromExpr(self, bc.arguments[0]);
-                if (a0_t.base == .String) {
-                    const elem = try self.allocator.create(ast.TypeInfo);
-                    elem.* = .{ .base = .Byte };
-                    type_info.* = .{ .base = .Array, .array_type = elem };
-                } else {
-                    type_info.* = .{ .base = .Byte };
-                }
+                // String or numeric -> byte | ValueError
+                _ = a0_t; // All supported inputs converge to same union type
+                const byte_t = try self.allocator.create(ast.TypeInfo);
+                byte_t.* = .{ .base = .Byte };
+                const err_t = try self.allocator.create(ast.TypeInfo);
+                err_t.* = .{ .base = .Custom, .custom_type = "ValueError" };
+                var union_members = [_]*ast.TypeInfo{ byte_t, err_t };
+                const u = try helpers.createUnionType(self, union_members[0..]);
+                type_info.* = u.*;
                 return type_info;
             } else if (std.mem.eql(u8, fname, "type")) {
                 requireArity.check(self, expr, bc.arguments.len, 1, fname);
@@ -1430,10 +1446,42 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                             // Check receiver is string
                             if (receiver_type.base != .String) {
                                 // Non-string receivers are allowed for numeric conversions; set return type directly
+                                // Numeric conversions can overflow/underflow: always produce union types
                                 switch (method_call.method.type) {
-                                    .TOINT => type_info.* = .{ .base = .Int },
-                                    .TOFLOAT => type_info.* = .{ .base = .Float },
-                                    .TOBYTE => type_info.* = .{ .base = .Byte },
+                                    .TOINT => {
+                                        const a = try self.allocator.create(ast.TypeInfo);
+                                        a.* = .{ .base = .Int };
+                                        const b = try self.allocator.create(ast.TypeInfo);
+                                        b.* = .{ .base = .Custom, .custom_type = "ValueError" };
+                                        var members = [_]*ast.TypeInfo{ a, b };
+                                        const u = try helpers.createUnionType(self, members[0..]);
+                                        type_info.* = u.*;
+                                    },
+                                    .TOFLOAT => {
+                                        const a = try self.allocator.create(ast.TypeInfo);
+                                        a.* = .{ .base = .Float };
+                                        const b = try self.allocator.create(ast.TypeInfo);
+                                        b.* = .{ .base = .Custom, .custom_type = "ValueError" };
+                                        var members = [_]*ast.TypeInfo{ a, b };
+                                        const u = try helpers.createUnionType(self, members[0..]);
+                                        type_info.* = u.*;
+                                    },
+                                    .TOBYTE => {
+                                        // If receiver is string, result is byte[] with possible parse/out-of-bounds error is not represented; keep array type
+                                        if (receiver_type.base == .String) {
+                                            const elem = try self.allocator.create(ast.TypeInfo);
+                                            elem.* = .{ .base = .Byte };
+                                            type_info.* = .{ .base = .Array, .array_type = elem };
+                                        } else {
+                                            const a = try self.allocator.create(ast.TypeInfo);
+                                            a.* = .{ .base = .Byte };
+                                            const b = try self.allocator.create(ast.TypeInfo);
+                                            b.* = .{ .base = .Custom, .custom_type = "ValueError" };
+                                            var members = [_]*ast.TypeInfo{ a, b };
+                                            const u = try helpers.createUnionType(self, members[0..]);
+                                            type_info.* = u.*;
+                                        }
+                                    },
                                     else => unreachable,
                                 }
                                 return type_info;
@@ -1448,7 +1496,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                                 const int_t = try self.allocator.create(ast.TypeInfo);
                                 int_t.* = .{ .base = .Int };
                                 const err_t = try self.allocator.create(ast.TypeInfo);
-                                err_t.* = .{ .base = .Custom, .custom_type = "NumberError" };
+                                err_t.* = .{ .base = .Custom, .custom_type = "ValueError" };
                                 var union_members = [_]*ast.TypeInfo{ int_t, err_t };
                                 const u = try helpers.createUnionType(self, union_members[0..]);
                                 type_info.* = u.*;
@@ -1457,11 +1505,11 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
 
                             // Lower to builtin for runtime string->int conversion when receiver is not literal
                             if (method_call.method.type == .TOINT) {
-                                // Return type: int | NumberError
+                                // Return type: int | ValueError
                                 const int_t = try self.allocator.create(ast.TypeInfo);
                                 int_t.* = .{ .base = .Int };
                                 const err_t = try self.allocator.create(ast.TypeInfo);
-                                err_t.* = .{ .base = .Custom, .custom_type = "NumberError" };
+                                err_t.* = .{ .base = .Custom, .custom_type = "ValueError" };
                                 var union_members = [_]*ast.TypeInfo{ int_t, err_t };
                                 const u = try helpers.createUnionType(self, union_members[0..]);
                                 var args = try self.allocator.alloc(*ast.Expr, 1);
@@ -1471,19 +1519,28 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                                 return type_info;
                             }
                             if (method_call.method.type == .TOFLOAT) {
-                                // Return type: float (no typed error union in current VM path)
-                                type_info.* = .{ .base = .Float };
+                                const a = try self.allocator.create(ast.TypeInfo);
+                                a.* = .{ .base = .Float };
+                                const b = try self.allocator.create(ast.TypeInfo);
+                                b.* = .{ .base = .Custom, .custom_type = "ValueError" };
+                                var members = [_]*ast.TypeInfo{ a, b };
+                                const u = try helpers.createUnionType(self, members[0..]);
+                                type_info.* = u.*;
                                 return type_info;
                             }
                             if (method_call.method.type == .TOBYTE) {
-                                // If receiver is string, @byte(string) -> byte[]
                                 if (receiver_type.base == .String) {
                                     const elem = try self.allocator.create(ast.TypeInfo);
                                     elem.* = .{ .base = .Byte };
                                     type_info.* = .{ .base = .Array, .array_type = elem };
                                 } else {
-                                    // numeric -> byte
-                                    type_info.* = .{ .base = .Byte };
+                                    const a = try self.allocator.create(ast.TypeInfo);
+                                    a.* = .{ .base = .Byte };
+                                    const b = try self.allocator.create(ast.TypeInfo);
+                                    b.* = .{ .base = .Custom, .custom_type = "ValueError" };
+                                    var members = [_]*ast.TypeInfo{ a, b };
+                                    const u = try helpers.createUnionType(self, members[0..]);
+                                    type_info.* = u.*;
                                 }
                                 return type_info;
                             }
@@ -2269,7 +2326,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
             // Analyze the start and end expressions
             const start_type = try inferTypeFromExpr(self, range.start);
             const end_type = try inferTypeFromExpr(self, range.end);
-            
+
             // Both start and end should be numeric types
             if (start_type.base != .Int and start_type.base != .Float and start_type.base != .Byte) {
                 self.reporter.reportCompileError(
@@ -2282,7 +2339,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 type_info.base = .Nothing;
                 return type_info;
             }
-            
+
             if (end_type.base != .Int and end_type.base != .Float and end_type.base != .Byte) {
                 self.reporter.reportCompileError(
                     getLocationFromBase(expr.base),
@@ -2294,14 +2351,11 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 type_info.base = .Nothing;
                 return type_info;
             }
-            
+
             // Range expressions always produce arrays of integers
             const element_type = try self.allocator.create(ast.TypeInfo);
             element_type.* = .{ .base = .Int };
-            type_info.* = .{ 
-                .base = .Array, 
-                .array_type = element_type 
-            };
+            type_info.* = .{ .base = .Array, .array_type = element_type };
         },
         // No ForEach expression variant; 'each' is desugared to a Loop statement
     }
