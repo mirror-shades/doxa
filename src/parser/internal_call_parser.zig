@@ -30,6 +30,16 @@ pub fn internalCallExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?
         return try parseExitMethod(self);
     }
 
+    // Special handling for @sleep method - treat as built-in call
+    if (method_tok.type == .SLEEP) {
+        return try parseSleepMethod(self);
+    }
+
+    // Special handling for @time method - treat as built-in call
+    if (method_tok.type == .TIME) {
+        return try parseTimeMethod(self);
+    }
+
     // consume method token
     self.advance();
     // expect '('
@@ -373,4 +383,71 @@ pub fn parseExitMethod(self: *Parser) ErrorList!?*ast.Expr {
     };
 
     return exit_expr;
+}
+
+/// Parse @sleep method - creates a BuiltinCall expression
+pub fn parseSleepMethod(self: *Parser) ErrorList!?*ast.Expr {
+    const method_tok = self.peek();
+    self.advance(); // consume SLEEP token
+
+    // Expect opening parenthesis
+    if (self.peek().type != .LEFT_PAREN) {
+        return error.ExpectedLeftParen;
+    }
+    self.advance();
+
+    // Parse the sleep duration argument (in milliseconds)
+    const duration_expr = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
+
+    // Expect closing parenthesis
+    if (self.peek().type != .RIGHT_PAREN) {
+        return error.ExpectedRightParen;
+    }
+    self.advance();
+
+    // Create arguments array
+    const arguments = try self.allocator.alloc(*ast.Expr, 1);
+    arguments[0] = duration_expr;
+
+    // Create BuiltinCall expression
+    const sleep_expr = try self.allocator.create(ast.Expr);
+    sleep_expr.* = .{
+        .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(method_tok) },
+        .data = .{ .BuiltinCall = .{
+            .function = method_tok,
+            .arguments = arguments,
+        } },
+    };
+
+    return sleep_expr;
+}
+
+/// Parse @time method - creates a BuiltinCall expression
+pub fn parseTimeMethod(self: *Parser) ErrorList!?*ast.Expr {
+    const method_tok = self.peek();
+    self.advance(); // consume TIME token
+
+    // Expect opening parenthesis
+    if (self.peek().type != .LEFT_PAREN) {
+        return error.ExpectedLeftParen;
+    }
+    self.advance();
+
+    // Expect closing parenthesis (no arguments for @time)
+    if (self.peek().type != .RIGHT_PAREN) {
+        return error.ExpectedRightParen;
+    }
+    self.advance();
+
+    // Create BuiltinCall expression with no arguments
+    const time_expr = try self.allocator.create(ast.Expr);
+    time_expr.* = .{
+        .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(method_tok) },
+        .data = .{ .BuiltinCall = .{
+            .function = method_tok,
+            .arguments = &[_]*ast.Expr{},
+        } },
+    };
+
+    return time_expr;
 }

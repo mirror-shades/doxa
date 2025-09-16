@@ -159,6 +159,8 @@ pub const FunctionOps = struct {
             try execBuiltinTime(vm);
         } else if (std.mem.eql(u8, c.qualified_name, "exit")) {
             try execBuiltinExit(vm);
+        } else if (std.mem.eql(u8, c.qualified_name, "sleep")) {
+            try execBuiltinSleep(vm);
         } else {
             return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Unknown built-in function: {s}", .{c.qualified_name});
         }
@@ -562,11 +564,29 @@ pub const FunctionOps = struct {
                 return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "@exit: argument must be an integer", .{});
             },
         };
-        
+
         // Set the VM to stop running
         vm.running = false;
-        
+
         // Note: In a real implementation, you might want to call std.process.exit(exit_code)
         // but for the VM, just stopping execution is sufficient
+    }
+
+    // Built-in SLEEP function - sleep for specified milliseconds
+    fn execBuiltinSleep(vm: anytype) !void {
+        // Pop the duration from the stack
+        const duration_frame = try vm.stack.pop();
+        const duration_ms = switch (duration_frame.value) {
+            .int => |i| @as(u64, @intCast(i)),
+            .byte => |b| @as(u64, b),
+            else => {
+                return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "@sleep: argument must be an integer", .{});
+            },
+        };
+
+        // Sleep for the specified duration
+        std.time.sleep(duration_ms * std.time.ns_per_ms);
+
+        // @sleep returns nothing, so we don't push anything to the stack
     }
 };
