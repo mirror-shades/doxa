@@ -266,6 +266,7 @@ const expected_methods_results = [_]peek_result{
     .{ .type = ">byte | ValueError", .value = "0x0A" },
     .{ .type = ">byte | ValueError", .value = "0x00" },
     .{ .type = "string", .value = "\"123\"" },
+    .{ .type = "string", .value = "\"123.4\"" },
     .{ .type = "string", .value = "\"0\"" },
     .{ .type = "string", .value = "\"0x0A\"" },
     .{ .type = "string", .value = "\"hello\"" },
