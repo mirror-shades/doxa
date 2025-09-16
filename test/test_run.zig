@@ -265,6 +265,17 @@ const expected_methods_results = [_]peek_result{
     .{ .type = ">byte | ValueError", .value = "0x7B" },
     .{ .type = ">byte | ValueError", .value = "0x0A" },
     .{ .type = ">byte | ValueError", .value = "0x00" },
+    .{ .type = "string", .value = "\"123\"" },
+    .{ .type = "string", .value = "\"0\"" },
+    .{ .type = "string", .value = "\"0x0A\"" },
+    .{ .type = "string", .value = "\"hello\"" },
+    .{ .type = "string", .value = "\"\"" },
+    .{ .type = "string", .value = "\"true\"" },
+    .{ .type = "string", .value = "\"both\"" },
+    .{ .type = "string", .value = "\"nothing\"" },
+    .{ .type = "string", .value = "\"{ species: .DOG, name: \"Spot\" }\"" },
+    .{ .type = "string", .value = "\"Spot\"" },
+    .{ .type = "string", .value = "\".DOG\"" },
 
     .{ .type = "string", .value = "\"end\"" },
 };

@@ -5,6 +5,22 @@ var emptyArr is []
 var emptyStr is ""
 var unicode_str is "café"
 
+enum Species {
+    DOG,
+    CAT,
+    FISH,
+}
+
+struct Animal {
+    pub name :: string
+    pub species :: Species
+}
+
+var dog is Animal {
+    name is "Spot",
+    species is Species.DOG,
+}
+
 
 /////
 // LENGTH
@@ -92,7 +108,18 @@ nested?
 @byte(0x0A)?
 @byte(0)?
 
-
+@string(123)?
+@string(123.4)
+@string(0)?
+@string(0x0A)?
+@string("hello")?
+@string("")?
+@string(true)?
+@string(both)?
+@string(nothing)?
+@string(dog)?
+@string(dog.name)?
+@string(dog.species)?
 
 
 
