@@ -35,6 +35,11 @@ pub fn internalCallExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?
         return try parseSleepMethod(self);
     }
 
+    // Special handling for @random method - treat as built-in call
+    if (method_tok.type == .RANDOM) {
+        return try parseRandomMethod(self);
+    }
+
     // Special handling for @time method - treat as built-in call
     if (method_tok.type == .TIME) {
         return try parseTimeMethod(self);
@@ -420,6 +425,36 @@ pub fn parseSleepMethod(self: *Parser) ErrorList!?*ast.Expr {
     };
 
     return sleep_expr;
+}
+
+/// Parse @random method - creates a BuiltinCall expression
+pub fn parseRandomMethod(self: *Parser) ErrorList!?*ast.Expr {
+    const method_tok = self.peek();
+    self.advance(); // consume RANDOM token
+
+    // Expect opening parenthesis
+    if (self.peek().type != .LEFT_PAREN) {
+        return error.ExpectedLeftParen;
+    }
+    self.advance();
+
+    // Expect closing parenthesis (no arguments)
+    if (self.peek().type != .RIGHT_PAREN) {
+        return error.ExpectedRightParen;
+    }
+    self.advance();
+
+    // Create BuiltinCall expression with no arguments
+    const random_expr = try self.allocator.create(ast.Expr);
+    random_expr.* = .{
+        .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(method_tok) },
+        .data = .{ .BuiltinCall = .{
+            .function = method_tok,
+            .arguments = &[_]*ast.Expr{},
+        } },
+    };
+
+    return random_expr;
 }
 
 /// Parse @time method - creates a BuiltinCall expression

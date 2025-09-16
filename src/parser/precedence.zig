@@ -225,6 +225,7 @@ pub const rules = blk: {
     r.set(.PANIC, .{ .prefix = internalCallExpr, .precedence = .CALL });
     r.set(.EXIT, .{ .prefix = internalCallExpr, .precedence = .CALL });
     r.set(.SLEEP, .{ .prefix = internalCallExpr, .precedence = .CALL });
+    r.set(.RANDOM, .{ .prefix = internalCallExpr, .precedence = .CALL });
 
     // Add input support
     r.set(.INPUT, .{ .prefix = Parser.input, .precedence = .PRIMARY });
