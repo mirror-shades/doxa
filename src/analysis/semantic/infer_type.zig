@@ -1154,6 +1154,21 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 if (bc.arguments.len != 0) return type_info;
                 type_info.* = .{ .base = .String };
                 return type_info;
+            } else if (std.mem.eql(u8, fname, "os")) {
+                requireArity.check(self, expr, bc.arguments.len, 0, fname);
+                if (bc.arguments.len != 0) return type_info;
+                type_info.* = .{ .base = .String };
+                return type_info;
+            } else if (std.mem.eql(u8, fname, "arch")) {
+                requireArity.check(self, expr, bc.arguments.len, 0, fname);
+                if (bc.arguments.len != 0) return type_info;
+                type_info.* = .{ .base = .String };
+                return type_info;
+            } else if (std.mem.eql(u8, fname, "time")) {
+                requireArity.check(self, expr, bc.arguments.len, 0, fname);
+                if (bc.arguments.len != 0) return type_info;
+                type_info.* = .{ .base = .Int };
+                return type_info;
             }
 
             self.reporter.reportCompileError(getLocationFromBase(expr.base), ErrorCode.NOT_IMPLEMENTED, "Unknown builtin '@{s}'", .{fname});
@@ -1611,6 +1626,14 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
 
                         else => unreachable,
                     }
+                },
+
+                // System information methods (no receiver required)
+                .OS, .ARCH, .TIME => {
+                    // These methods don't require a receiver, they're called as @os(), @arch(), @time()
+                    // Transform into BuiltinCall with no arguments
+                    expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = &[_]*ast.Expr{} } };
+                    return try infer_type.inferTypeFromExpr(self, expr);
                 },
 
                 // Other methods

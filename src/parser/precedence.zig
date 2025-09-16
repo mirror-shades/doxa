@@ -227,6 +227,11 @@ pub const rules = blk: {
     // Add input support
     r.set(.INPUT, .{ .prefix = Parser.input, .precedence = .PRIMARY });
 
+    // System information
+    r.set(.OS, .{ .prefix = internalCallExpr, .precedence = .CALL });
+    r.set(.ARCH, .{ .prefix = internalCallExpr, .precedence = .CALL });
+    r.set(.TIME, .{ .prefix = internalCallExpr, .precedence = .CALL });
+
     // Add cast operator support
     r.set(.AS, .{ .infix = expr_parser.castExpr, .precedence = .CALL });
 

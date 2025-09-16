@@ -91,12 +91,12 @@ pub const TokenType = enum {
     INSERT, // @insert      - insert into string/array at index
     REMOVE, // @remove      - remove from string/array at index
     SLICE, // @slice       - get substring/subarray
-    // NOT IMPLEMENTED/TESTED
+    // IMPLEMENTED AND TESTED
     OS, // @os     - get operating system
     ARCH, // @arch     - get architecture
     TIME, // @time       - get current time
     RANDOM, // @random       - get random number
-    SPAWN, // @spawn     - spawn process
+    SPAWN, // @spawn     - spawn OS process
     KILL, // @kill     - kill process
     WAIT, // @wait     - wait for process to finish
     ALIVE, // @alive     - see if process is active

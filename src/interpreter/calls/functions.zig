@@ -151,6 +151,12 @@ pub const FunctionOps = struct {
             try execBuiltinForallQuantifierGt(vm);
         } else if (std.mem.eql(u8, c.qualified_name, "input")) {
             try execBuiltinInput(vm);
+        } else if (std.mem.eql(u8, c.qualified_name, "os")) {
+            try execBuiltinOS(vm);
+        } else if (std.mem.eql(u8, c.qualified_name, "arch")) {
+            try execBuiltinArch(vm);
+        } else if (std.mem.eql(u8, c.qualified_name, "time")) {
+            try execBuiltinTime(vm);
         } else {
             return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Unknown built-in function: {s}", .{c.qualified_name});
         }
@@ -433,5 +439,113 @@ pub const FunctionOps = struct {
         // Create a copy of the input string in VM memory
         const input_string = try vm.allocator.dupe(u8, line);
         try vm.stack.push(HIRFrame.initString(input_string));
+    }
+
+    // Built-in OS function - get operating system name
+    fn execBuiltinOS(vm: anytype) !void {
+        const builtin = @import("builtin");
+        const os_name = switch (builtin.os.tag) {
+            .windows => "windows",
+            .macos => "macos",
+            .linux => "linux",
+            .freebsd => "freebsd",
+            .netbsd => "netbsd",
+            .dragonfly => "dragonfly",
+            .openbsd => "openbsd",
+            .wasi => "wasi",
+            .emscripten => "emscripten",
+            .plan9 => "plan9",
+            .haiku => "haiku",
+            .solaris => "solaris",
+            .fuchsia => "fuchsia",
+            .ios => "ios",
+            .tvos => "tvos",
+            .watchos => "watchos",
+            .visionos => "visionos",
+            .driverkit => "driverkit",
+            .aix => "aix",
+            .hurd => "hurd",
+            .rtems => "rtems",
+            .serenity => "serenity",
+            .zos => "zos",
+            .illumos => "illumos",
+            .uefi => "uefi",
+            .ps3 => "ps3",
+            .ps4 => "ps4",
+            .ps5 => "ps5",
+            .amdhsa => "amdhsa",
+            .amdpal => "amdpal",
+            .cuda => "cuda",
+            .mesa3d => "mesa3d",
+            .nvcl => "nvcl",
+            .opencl => "opencl",
+            .opengl => "opengl",
+            .vulkan => "vulkan",
+            .contiki => "contiki",
+            .elfiamcu => "elfiamcu",
+            .hermit => "hermit",
+            .freestanding => "freestanding",
+            .other => "other",
+        };
+        try vm.stack.push(HIRFrame.initString(try vm.allocator.dupe(u8, os_name)));
+    }
+
+    // Built-in ARCH function - get architecture name
+    fn execBuiltinArch(vm: anytype) !void {
+        const builtin = @import("builtin");
+        const arch_name = switch (builtin.cpu.arch) {
+            .amdgcn => "amdgcn",
+            .arc => "arc",
+            .arm => "arm",
+            .armeb => "armeb",
+            .thumb => "thumb",
+            .thumbeb => "thumbeb",
+            .aarch64 => "aarch64",
+            .aarch64_be => "aarch64_be",
+            .avr => "avr",
+            .bpfel => "bpfel",
+            .bpfeb => "bpfeb",
+            .csky => "csky",
+            .hexagon => "hexagon",
+            .kalimba => "kalimba",
+            .lanai => "lanai",
+            .loongarch32 => "loongarch32",
+            .loongarch64 => "loongarch64",
+            .m68k => "m68k",
+            .mips => "mips",
+            .mipsel => "mipsel",
+            .mips64 => "mips64",
+            .mips64el => "mips64el",
+            .msp430 => "msp430",
+            .nvptx => "nvptx",
+            .nvptx64 => "nvptx64",
+            .powerpc => "powerpc",
+            .powerpcle => "powerpcle",
+            .powerpc64 => "powerpc64",
+            .powerpc64le => "powerpc64le",
+            .propeller => "propeller",
+            .riscv32 => "riscv32",
+            .riscv64 => "riscv64",
+            .s390x => "s390x",
+            .sparc => "sparc",
+            .sparc64 => "sparc64",
+            .spirv => "spirv",
+            .spirv32 => "spirv32",
+            .spirv64 => "spirv64",
+            .ve => "ve",
+            .wasm32 => "wasm32",
+            .wasm64 => "wasm64",
+            .x86 => "x86",
+            .x86_64 => "x86_64",
+            .xcore => "xcore",
+            .xtensa => "xtensa",
+        };
+        try vm.stack.push(HIRFrame.initString(try vm.allocator.dupe(u8, arch_name)));
+    }
+
+    // Built-in TIME function - get current Unix timestamp
+    fn execBuiltinTime(vm: anytype) !void {
+        const timestamp = std.time.timestamp();
+        try vm.stack.push(HIRFrame.initInt(timestamp));
     }
 };
