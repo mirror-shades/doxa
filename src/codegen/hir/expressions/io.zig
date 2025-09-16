@@ -188,13 +188,6 @@ pub const IOHandler = struct {
                 members[0] = "byte";
                 members[1] = "ValueError";
                 union_members = members;
-            } else if (std.mem.eql(u8, bc.function.lexeme, "slice")) {
-                const members = try self.generator.allocator.alloc([]const u8, 2);
-                // Heuristically pick result container name from first arg type
-                const base_t = if (bc.arguments.len > 0) self.generator.inferTypeFromExpression(bc.arguments[0]) else .Unknown;
-                members[0] = if (base_t == .String) "string" else "array";
-                members[1] = "ValueError";
-                union_members = members;
             }
         } else if (peek.expr.data == .InternalCall) {
             const ic = peek.expr.data.InternalCall;

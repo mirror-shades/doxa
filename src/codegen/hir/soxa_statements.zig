@@ -154,6 +154,55 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                 // Restore previous enum context
                 self.current_enum_type = old_enum_context;
 
+                // If initializer is an empty array literal and we have explicit array annotation,
+                // rebuild a typed empty array matching the annotation so type displays as int[]/float[]/... not nothing[]
+                if (init_expr.data == .Array and decl.type_info.base == .Array) {
+                    const elements_for_type_fix = init_expr.data.Array;
+                    if (elements_for_type_fix.len == 0) {
+                        if (decl.type_info.array_type) |annot_elem| {
+                            var element_type_fix: HIRType = .Unknown;
+                            var nested_element_type_fix: ?HIRType = null;
+                            if (annot_elem.base == .Array) {
+                                element_type_fix = .Array;
+                                if (annot_elem.array_type) |inner| {
+                                    nested_element_type_fix = switch (inner.base) {
+                                        .Int => .Int,
+                                        .Float => .Float,
+                                        .String => .String,
+                                        .Byte => .Byte,
+                                        .Tetra => .Tetra,
+                                        .Array => .Array,
+                                        else => .Unknown,
+                                    };
+                                }
+                            } else {
+                                element_type_fix = switch (annot_elem.base) {
+                                    .Int => .Int,
+                                    .Float => .Float,
+                                    .String => .String,
+                                    .Byte => .Byte,
+                                    .Tetra => .Tetra,
+                                    else => .Unknown,
+                                };
+                            }
+
+                            if (element_type_fix != .Unknown and element_type_fix != .Nothing) {
+                                // Replace the untyped empty array with a typed empty array
+                                try self.instructions.append(.Pop);
+                                try self.instructions.append(.{ .ArrayNew = .{
+                                    .element_type = element_type_fix,
+                                    .size = 0,
+                                    .nested_element_type = nested_element_type_fix,
+                                } });
+                                // Track element type for subsequent indexing
+                                try self.trackArrayElementType(decl.name.lexeme, element_type_fix);
+                                // Ensure var_type reflects array for downstream StoreVar expected_type
+                                var_type = .Array;
+                            }
+                        }
+                    }
+                }
+
                 // Only infer type if no explicit annotation was provided
                 if (var_type == .Nothing) {
                     var_type = self.inferTypeFromExpression(init_expr);
@@ -344,12 +393,6 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                     if (std.mem.eql(u8, bc.function.lexeme, "int")) {
                         const members = try self.allocator.alloc([]const u8, 2);
                         members[0] = "int";
-                        members[1] = "ValueError";
-                        try self.trackVariableUnionMembersByIndex(var_idx, members);
-                    } else if (std.mem.eql(u8, bc.function.lexeme, "slice")) {
-                        const members = try self.allocator.alloc([]const u8, 2);
-                        const base_t = if (bc.arguments.len > 0) self.inferTypeFromExpression(bc.arguments[0]) else .Unknown;
-                        members[0] = if (base_t == .String) "string" else "array";
                         members[1] = "ValueError";
                         try self.trackVariableUnionMembersByIndex(var_idx, members);
                     }

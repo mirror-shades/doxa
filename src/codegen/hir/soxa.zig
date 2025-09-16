@@ -934,6 +934,7 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
         .ArrayPop => try writer.print("    ArrayPop                    ; Pop from array\n", .{}),
         .ArrayInsert => try writer.print("    ArrayInsert                 ; Insert into array\n", .{}),
         .ArrayRemove => try writer.print("    ArrayRemove                 ; Remove from array\n", .{}),
+        .ArraySlice => try writer.print("    ArraySlice                  ; Slice array/string\n", .{}),
         .ArrayLen => try writer.print("    ArrayLen                    ; Get array length\n", .{}),
         .ArrayConcat => try writer.print("    ArrayConcat                 ; Concatenate arrays\n", .{}),
 

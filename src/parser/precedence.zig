@@ -209,8 +209,6 @@ pub const rules = blk: {
     r.set(.POP, .{ .prefix = internalCallExpr, .precedence = .CALL });
     r.set(.INSERT, .{ .prefix = internalCallExpr, .precedence = .CALL });
     r.set(.REMOVE, .{ .prefix = internalCallExpr, .precedence = .CALL });
-    r.set(.CLEAR, .{ .prefix = internalCallExpr, .precedence = .CALL });
-    r.set(.FIND, .{ .prefix = internalCallExpr, .precedence = .CALL });
 
     // Type conversions
     r.set(.TOSTRING, .{ .prefix = internalCallExpr, .precedence = .CALL });
@@ -222,13 +220,9 @@ pub const rules = blk: {
     r.set(.READ, .{ .prefix = internalCallExpr, .precedence = .CALL });
     r.set(.WRITE, .{ .prefix = internalCallExpr, .precedence = .CALL });
     r.set(.PRINT, .{ .prefix = internalCallExpr, .precedence = .CALL });
-    r.set(.SYSCALL, .{ .prefix = internalCallExpr, .precedence = .CALL });
 
     // Control flow
     r.set(.PANIC, .{ .prefix = internalCallExpr, .precedence = .CALL });
-
-    // Copy/clone
-    r.set(.SHALLOW, .{ .prefix = internalCallExpr, .precedence = .CALL });
 
     // Add input support
     r.set(.INPUT, .{ .prefix = Parser.input, .precedence = .PRIMARY });

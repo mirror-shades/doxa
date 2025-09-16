@@ -1,0 +1,23 @@
+/////
+// SLICE TESTS
+/////
+
+// Array slicing
+var arr is [1, 2, 3, 4, 5]
+arr?
+
+@slice(arr, 1, 3)?
+
+// String slicing  
+var str is "hello world"
+str?
+
+@slice(str, 6, 5)?
+
+// Edge cases
+@slice(arr, 0, 5)?  // Full array
+@slice(str, 0, 11)? // Full string
+
+// Error cases (should fail with runtime errors)
+// @slice(arr, 10, 1)?  // Out of bounds
+// @slice(str, 5, 10)?  // Out of bounds

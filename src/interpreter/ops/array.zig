@@ -26,6 +26,8 @@ pub fn exec(vm: anytype, instruction: anytype) !void {
         try arrayInsert(vm);
     } else if (@hasField(@TypeOf(instruction), "ArrayRemove")) {
         try arrayRemove(vm);
+    } else if (@hasField(@TypeOf(instruction), "ArraySlice")) {
+        try arraySlice(vm);
     } else if (@hasField(@TypeOf(instruction), "ArrayLen")) {
         try arrayLen(vm);
     } else if (@hasField(@TypeOf(instruction), "ArrayConcat")) {
@@ -495,6 +497,108 @@ fn arrayRemove(vm: anytype) !void {
         },
         else => {
             return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot remove from non-array value: {s}", .{@tagName(container.value)});
+        },
+    }
+}
+
+/// Slice array or string
+fn arraySlice(vm: anytype) !void {
+    const length_frame = try vm.stack.pop();
+    const start_frame = try vm.stack.pop();
+    const container = try vm.stack.pop();
+
+    // Coerce/validate start index - use same pattern as arrayGet/arraySet
+    const start_val = switch (start_frame.value) {
+        .int => |i| if (i < 0) {
+            return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array start index cannot be negative: {}", .{i});
+        } else @as(u32, @intCast(i)),
+        .byte => |u| @as(u32, u),
+        .tetra => |t| @as(u32, t),
+        .string => |s| blk: {
+            const parsed = std.fmt.parseInt(i64, s, 10) catch {
+                return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid array start index: {s}", .{s});
+            };
+            if (parsed < 0) {
+                return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array start index cannot be negative: {}", .{parsed});
+            }
+            break :blk @as(u32, @intCast(parsed));
+        },
+        .nothing => {
+            return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array start index cannot be nothing", .{});
+        },
+        else => {
+            return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid array start index type: {s}", .{@tagName(start_frame.value)});
+        },
+    };
+
+    // Coerce/validate length
+    const length_val = switch (length_frame.value) {
+        .int => |i| if (i < 0) {
+            return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array length cannot be negative: {}", .{i});
+        } else @as(u32, @intCast(i)),
+        .byte => |u| @as(u32, u),
+        .tetra => |t| @as(u32, t),
+        .string => |s| blk: {
+            const parsed = std.fmt.parseInt(i64, s, 10) catch {
+                return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid array length: {s}", .{s});
+            };
+            if (parsed < 0) {
+                return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array length cannot be negative: {}", .{parsed});
+            }
+            break :blk @as(u32, @intCast(parsed));
+        },
+        .nothing => {
+            return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array length cannot be nothing", .{});
+        },
+        else => {
+            return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid array length type: {s}", .{@tagName(length_frame.value)});
+        },
+    };
+
+    switch (container.value) {
+        .array => |arr| {
+            // Determine logical length
+            var logical_len: u32 = 0;
+            for (arr.elements) |elem| {
+                if (std.meta.eql(elem, HIRValue.nothing)) break;
+                logical_len += 1;
+            }
+
+            if (start_val > logical_len) {
+                return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array start index out of bounds: {} (length: {})", .{ start_val, logical_len });
+            }
+            if (start_val + length_val > logical_len) {
+                return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array slice out of bounds: start={}, length={} (max length: {})", .{ start_val, length_val, logical_len - start_val });
+            }
+
+            // Create sliced array
+            const sliced_elements = try vm.allocator.alloc(HIRValue, length_val);
+            for (0..length_val) |i| {
+                sliced_elements[i] = arr.elements[start_val + i];
+            }
+
+            const sliced_arr = HIRValue{ .array = .{
+                .elements = sliced_elements,
+                .capacity = length_val,
+                .element_type = arr.element_type,
+            } };
+
+            try vm.stack.push(HIRFrame.initFromHIRValue(sliced_arr));
+        },
+        .string => |s| {
+            if (start_val > s.len) {
+                return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "String start index out of bounds: {} (length: {})", .{ start_val, s.len });
+            }
+            if (start_val + length_val > s.len) {
+                return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "String slice out of bounds: start={}, length={} (max length: {})", .{ start_val, length_val, s.len - start_val });
+            }
+
+            // Create sliced string
+            const sliced_str = s[start_val .. start_val + length_val];
+            try vm.stack.push(HIRFrame.initString(sliced_str));
+        },
+        else => {
+            return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot slice non-array/non-string value: {s}", .{@tagName(container.value)});
         },
     }
 }

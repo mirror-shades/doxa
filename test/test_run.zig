@@ -305,6 +305,18 @@ const expected_methods_results = [_]peek_result{
     .{ .type = "string", .value = "\"\"" },
     .{ .type = "string", .value = "\"!\"" },
     .{ .type = "string", .value = "\"hello\"" },
+    .{ .type = "int[]", .value = "[2, 99, 4]" },
+    .{ .type = "int[]", .value = "[1, 2, 99, 4, 5]" },
+    .{ .type = "int[]", .value = "[]" },
+    .{ .type = "int[]", .value = "[]" },
+    .{ .type = "string", .value = "\"ll\"" },
+    .{ .type = "string", .value = "\"hello\"" },
+    .{ .type = "string", .value = "\"\"" },
+    .{ .type = "string", .value = "\"\"" },
+    .{ .type = "int[]", .value = "[1, 2, 99, 4, 5]" },
+    .{ .type = "int[]", .value = "[1, 2, 99, 4, 5]" },
+    .{ .type = "string", .value = "\"hello\"" },
+    .{ .type = "string", .value = "\"hello\"" },
 
     .{ .type = "string", .value = "\"end\"" },
 };

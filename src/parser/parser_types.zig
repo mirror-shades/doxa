@@ -563,10 +563,6 @@ pub const Parser = struct {
         if (std.mem.eql(u8, name, "pop")) return .POP;
         if (std.mem.eql(u8, name, "insert")) return .INSERT;
         if (std.mem.eql(u8, name, "remove")) return .REMOVE;
-        if (std.mem.eql(u8, name, "clear")) return .CLEAR;
-
-        // Search/index
-        if (std.mem.eql(u8, name, "find")) return .FIND;
 
         // Type conversions
         if (std.mem.eql(u8, name, "string")) return .TOSTRING;
@@ -577,14 +573,10 @@ pub const Parser = struct {
         // I/O
         if (std.mem.eql(u8, name, "read")) return .READ;
         if (std.mem.eql(u8, name, "write")) return .WRITE;
-        if (std.mem.eql(u8, name, "syscall")) return .SYSCALL;
 
         // Control flow
         if (std.mem.eql(u8, name, "panic")) return .PANIC;
         if (std.mem.eql(u8, name, "assert")) return .ASSERT;
-
-        // Copy/clone
-        if (std.mem.eql(u8, name, "shallow")) return .SHALLOW;
 
         return null;
     }
