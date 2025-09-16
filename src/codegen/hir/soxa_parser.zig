@@ -756,8 +756,6 @@ pub const SoxaTextParser = struct {
             const op_str = tokens.next() orelse return;
             const string_op = if (std.mem.eql(u8, op_str, "Length"))
                 StringOpType.Length
-            else if (std.mem.eql(u8, op_str, "Bytes"))
-                StringOpType.Bytes
             else if (std.mem.eql(u8, op_str, "Substring"))
                 StringOpType.Substring
             else if (std.mem.eql(u8, op_str, "Concat"))

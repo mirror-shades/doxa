@@ -1428,12 +1428,6 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                     expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = args } };
                     return try infer_type.inferTypeFromExpr(self, expr);
                 },
-                .BYTES => {
-                    var args = try self.allocator.alloc(*ast.Expr, 1);
-                    args[0] = method_call.receiver;
-                    expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = args } };
-                    return try infer_type.inferTypeFromExpr(self, expr);
-                },
 
                 // String methods
                 .TOSTRING, .TOINT, .TOFLOAT, .TOBYTE => {

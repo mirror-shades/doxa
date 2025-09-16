@@ -38,7 +38,6 @@ const parseBreakExpr = expr_parser.parseBreakExpr;
 const arrayType = expr_parser.arrayType;
 const typeofExpr = expr_parser.typeofExpr;
 const lengthofExpr = expr_parser.lengthofExpr;
-const bytesofExpr = expr_parser.bytesofExpr;
 const internalCallExpr = Parser.internalCallExpr;
 
 const existentialQuantifier = quantifer_parser.existentialQuantifier;
@@ -233,9 +232,6 @@ pub const rules = blk: {
 
     // Add input support
     r.set(.INPUT, .{ .prefix = Parser.input, .precedence = .PRIMARY });
-
-    // TODO: REMOVE LATER, STD LIBRARY
-    r.set(.BYTES, .{ .prefix = internalCallExpr, .precedence = .CALL });
 
     // Add cast operator support
     r.set(.AS, .{ .infix = expr_parser.castExpr, .precedence = .CALL });

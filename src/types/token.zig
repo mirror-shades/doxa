@@ -77,31 +77,32 @@ pub const TokenType = enum {
     RETURNS, // returns
     THIS, // this
 
-    // compiler level methods (@methods)
+    // built-in methods (@methods)
     TYPE, // @type        - get type name as string
-    INPUT, // @input       - read from stdin
     LENGTH, // @length      - get length of string/array
-    SLICE, // @slice       - get substring/subarray
     PUSH, // @push        - add to end of array
     POP, // @pop         - remove from end of array
+    PRINT, // @print       - print to stdout
+    TOSTRING, // @string      - convert to string
+    TOINT, // @int         - convert to int (returns int | ValueError)
+    TOFLOAT, // @float       - convert to float (returns float | ValueError)
+    TOBYTE, // @byte       - convert to byte (returns byte | ValueError)
+
+    SLICE, // @slice       - get substring/subarray
     INSERT, // @insert      - insert into array at index
     REMOVE, // @remove      - remove from array at index
     CLEAR, // @clear       - clear array
     FIND, // @find        - find index of value
-    ASSERT, // @assert      - assert condition with message
-    PANIC, // @panic       - panic with message
-    PRINT, // @print       - print to stdout
     SYSCALL, // @syscall     - raw system call
     SHALLOW, // @shallow     - shallow copy
     READ, // @read        - read file
     WRITE, // @write       - write file
-    TOSTRING, // @string      - convert to string
-    TOINT, // @int         - convert to int (returns int | ParseError)
-    TOFLOAT, // @float       - convert to float (returns float | ParseError)
-    TOBYTE, // @bytes       - get bytes of string/array
-    BYTES, // bytes we should move this to STD library when it is implemented
     TIME, // @time       - get current time
     RANDOM, // @random       - get random number
+
+    ASSERT, // @assert      - assert condition with message
+    PANIC, // @panic       - panic with message
+    INPUT, // @input       - read from stdin
 
     // SPLIT, // split
     // JOIN, // join
