@@ -1191,6 +1191,11 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 }
                 type_info.* = .{ .base = .Nothing };
                 return type_info;
+            } else if (std.mem.eql(u8, fname, "random")) {
+                requireArity.check(self, expr, bc.arguments.len, 0, fname);
+                if (bc.arguments.len != 0) return type_info;
+                type_info.* = .{ .base = .Float };
+                return type_info;
             }
 
             self.reporter.reportCompileError(getLocationFromBase(expr.base), ErrorCode.NOT_IMPLEMENTED, "Unknown builtin '@{s}'", .{fname});

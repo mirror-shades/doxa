@@ -161,6 +161,8 @@ pub const FunctionOps = struct {
             try execBuiltinExit(vm);
         } else if (std.mem.eql(u8, c.qualified_name, "sleep")) {
             try execBuiltinSleep(vm);
+        } else if (std.mem.eql(u8, c.qualified_name, "random")) {
+            try execBuiltinRandom(vm);
         } else {
             return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Unknown built-in function: {s}", .{c.qualified_name});
         }
@@ -588,5 +590,14 @@ pub const FunctionOps = struct {
         std.time.sleep(duration_ms * std.time.ns_per_ms);
 
         // @sleep returns nothing, so we don't push anything to the stack
+    }
+
+    // Built-in RANDOM function - generate random float from 0.0 to 1.0
+    fn execBuiltinRandom(vm: anytype) !void {
+        // Generate random float from 0.0 to 1.0
+        const random_value = std.crypto.random.float(f64);
+
+        // Push the random value onto the stack
+        try vm.stack.push(HIRFrame.initFloat(random_value));
     }
 };

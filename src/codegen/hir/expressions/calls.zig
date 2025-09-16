@@ -460,6 +460,10 @@ pub const CallsHandler = struct {
             // Evaluate the duration argument
             try self.generator.generateExpression(builtin_data.arguments[0], true, false);
             try self.generator.instructions.append(.{ .Call = .{ .function_index = 0, .qualified_name = "sleep", .arg_count = 1, .call_kind = .BuiltinFunction, .target_module = null, .return_type = .Nothing } });
+        } else if (std.mem.eql(u8, name, "random")) {
+            // @random() -> returns random float from 0.0 to 1.0
+            if (builtin_data.arguments.len != 0) return error.InvalidArgumentCount;
+            try self.generator.instructions.append(.{ .Call = .{ .function_index = 0, .qualified_name = "random", .arg_count = 0, .call_kind = .BuiltinFunction, .target_module = null, .return_type = .Float } });
         } else {
             // Fallback: no-op or error until implemented
             return error.NotImplemented;
