@@ -385,6 +385,48 @@ pub const CallsHandler = struct {
                 try self.generator.instructions.append(.Swap);
                 try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = var_idx, .var_name = var_name, .scope_kind = .Local, .module_context = null, .expected_type = expected_type } });
             }
+        } else if (std.mem.eql(u8, name, "insert")) {
+            // @insert(container, index, value) -> returns nothing; stores updated container
+            if (builtin_data.arguments.len != 3) return error.InvalidArgumentCount;
+            // Evaluate receiver, index, value (stack: container, index, value)
+            try self.generator.generateExpression(builtin_data.arguments[0], true, false);
+            try self.generator.generateExpression(builtin_data.arguments[1], true, false);
+            try self.generator.generateExpression(builtin_data.arguments[2], true, false);
+            try self.generator.instructions.append(.ArrayInsert);
+            if (builtin_data.arguments[0].data == .Variable) {
+                const var_name = builtin_data.arguments[0].data.Variable.lexeme;
+                const var_idx = try self.generator.getOrCreateVariable(var_name);
+                const expected_type = self.generator.getTrackedVariableType(var_name) orelse .Unknown;
+                // Store updated container back to the variable
+                try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = var_idx, .var_name = var_name, .scope_kind = .Local, .module_context = null, .expected_type = expected_type } });
+            } else {
+                // Not a variable: just discard updated container
+                try self.generator.instructions.append(.Pop);
+            }
+            // Insert returns nothing
+            const nothing_const_idx2 = try self.generator.addConstant(HIRValue.nothing);
+            try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_const_idx2 } });
+            if (!preserve_result) try self.generator.instructions.append(.Pop);
+        } else if (std.mem.eql(u8, name, "remove")) {
+            // @remove(container, index) -> returns removed element or error union; stores updated container
+            if (builtin_data.arguments.len != 2) return error.InvalidArgumentCount;
+            // Evaluate receiver, index (stack: container, index)
+            try self.generator.generateExpression(builtin_data.arguments[0], true, false);
+            try self.generator.generateExpression(builtin_data.arguments[1], true, false);
+            try self.generator.instructions.append(.ArrayRemove);
+            if (builtin_data.arguments[0].data == .Variable) {
+                const var_name = builtin_data.arguments[0].data.Variable.lexeme;
+                const var_idx = try self.generator.getOrCreateVariable(var_name);
+                const expected_type = self.generator.getTrackedVariableType(var_name) orelse .Unknown;
+                // After ArrayRemove: stack [updated_container, removed_value]
+                // Swap so container is on top, store it, leaving removed_value as result
+                try self.generator.instructions.append(.Swap);
+                try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = var_idx, .var_name = var_name, .scope_kind = .Local, .module_context = null, .expected_type = expected_type } });
+            } else {
+                // Not a variable: discard updated container, leave removed as result
+                try self.generator.instructions.append(.Swap);
+                try self.generator.instructions.append(.Pop);
+            }
         } else {
             // Fallback: no-op or error until implemented
             return error.NotImplemented;

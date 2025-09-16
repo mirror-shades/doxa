@@ -346,6 +346,16 @@ pub const HIRInstruction = union(enum) {
     /// LLVM: Load + resize
     ArrayPop,
 
+    /// Insert element at index
+    /// VM: Shift elements right, insert, potentially resize
+    /// LLVM: Realloc/memmove as needed
+    ArrayInsert,
+
+    /// Remove element at index
+    /// VM: Return element, shift elements left
+    /// LLVM: memmove
+    ArrayRemove,
+
     /// Get array length
     /// VM: Return stored length
     /// LLVM: Load from array header

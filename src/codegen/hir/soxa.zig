@@ -932,6 +932,8 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
         .ArraySet => |a| try writer.print("    ArraySet {}                 ; Set array element\n", .{a.bounds_check}),
         .ArrayPush => |a| try writer.print("    ArrayPush {s}               ; Push to array\n", .{@tagName(a.resize_behavior)}),
         .ArrayPop => try writer.print("    ArrayPop                    ; Pop from array\n", .{}),
+        .ArrayInsert => try writer.print("    ArrayInsert                 ; Insert into array\n", .{}),
+        .ArrayRemove => try writer.print("    ArrayRemove                 ; Remove from array\n", .{}),
         .ArrayLen => try writer.print("    ArrayLen                    ; Get array length\n", .{}),
         .ArrayConcat => try writer.print("    ArrayConcat                 ; Concatenate arrays\n", .{}),
 
