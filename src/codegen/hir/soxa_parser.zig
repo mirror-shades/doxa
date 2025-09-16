@@ -651,6 +651,8 @@ pub const SoxaTextParser = struct {
             try self.instructions.append(HIRInstruction.ArrayInsert);
         } else if (std.mem.eql(u8, op, "ArrayRemove")) {
             try self.instructions.append(HIRInstruction.ArrayRemove);
+        } else if (std.mem.eql(u8, op, "ArraySlice")) {
+            try self.instructions.append(HIRInstruction.ArraySlice);
         } else if (std.mem.eql(u8, op, "ArrayLen")) {
             try self.instructions.append(HIRInstruction.ArrayLen);
         } else if (std.mem.eql(u8, op, "ArrayConcat")) {

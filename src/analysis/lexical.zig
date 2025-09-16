@@ -730,10 +730,6 @@ pub const LexicalAnalyzer = struct {
             try self.addToken(.INSERT, .nothing);
         } else if (std.mem.eql(u8, method_name, "remove")) {
             try self.addToken(.REMOVE, .nothing);
-        } else if (std.mem.eql(u8, method_name, "clear")) {
-            try self.addToken(.CLEAR, .nothing);
-        } else if (std.mem.eql(u8, method_name, "find")) {
-            try self.addToken(.FIND, .nothing);
         } else if (std.mem.eql(u8, method_name, "string")) {
             try self.addToken(.TOSTRING, .nothing);
         } else if (std.mem.eql(u8, method_name, "int")) {
@@ -758,10 +754,6 @@ pub const LexicalAnalyzer = struct {
             try self.addToken(.PANIC, .nothing);
         } else if (std.mem.eql(u8, method_name, "input")) {
             try self.addToken(.INPUT, .nothing);
-
-            // Copy/clone
-        } else if (std.mem.eql(u8, method_name, "shallow")) {
-            try self.addToken(.SHALLOW, .nothing);
         } else {
             return error.InvalidInternalMethod;
         }

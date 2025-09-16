@@ -60,8 +60,7 @@ VM pipeline is currently working as expected with almost all core features imple
 TODO:
 
 - standard lib
-- `to` spread op
-- refactor semantic, parser_types, expression parser
+- add key access via each loops over maps using `at`
 - SOXA to LLVMIR code gen
 
 ## Native Types

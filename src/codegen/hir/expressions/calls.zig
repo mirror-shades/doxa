@@ -427,6 +427,15 @@ pub const CallsHandler = struct {
                 try self.generator.instructions.append(.Swap);
                 try self.generator.instructions.append(.Pop);
             }
+        } else if (std.mem.eql(u8, name, "slice")) {
+            // @slice(container, start, length) -> returns sliced container
+            if (builtin_data.arguments.len != 3) return error.InvalidArgumentCount;
+            // Evaluate receiver, start, length (stack: container, start, length)
+            try self.generator.generateExpression(builtin_data.arguments[0], true, false);
+            try self.generator.generateExpression(builtin_data.arguments[1], true, false);
+            try self.generator.generateExpression(builtin_data.arguments[2], true, false);
+            try self.generator.instructions.append(.ArraySlice);
+            // Result is the sliced container
         } else {
             // Fallback: no-op or error until implemented
             return error.NotImplemented;

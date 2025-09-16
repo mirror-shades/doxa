@@ -78,46 +78,37 @@ pub const TokenType = enum {
     THIS, // this
 
     // built-in methods (@methods)
+    // IMPLEMENTED AND TESTED
     TYPE, // @type        - get type name as string
     LENGTH, // @length      - get length of string/array
-    PUSH, // @push        - add to end of array
-    POP, // @pop         - remove from end of array
+    PUSH, // @push        - add to end of string/array
+    POP, // @pop         - remove from end of string/array
     PRINT, // @print       - print to stdout
     TOSTRING, // @string      - convert to string
     TOINT, // @int         - convert to int (returns int | ValueError)
     TOFLOAT, // @float       - convert to float (returns float | ValueError)
     TOBYTE, // @byte       - convert to byte (returns byte | ValueError)
-
+    INSERT, // @insert      - insert into string/array at index
+    REMOVE, // @remove      - remove from string/array at index
     SLICE, // @slice       - get substring/subarray
-    INSERT, // @insert      - insert into array at index
-    REMOVE, // @remove      - remove from array at index
-    CLEAR, // @clear       - clear array
-    FIND, // @find        - find index of value
-    SYSCALL, // @syscall     - raw system call
-    SHALLOW, // @shallow     - shallow copy
-    READ, // @read        - read file
-    WRITE, // @write       - write file
+    // NOT IMPLEMENTED/TESTED
+    OS, // @os     - get operating system
+    ARCH, // @arch     - get architecture
     TIME, // @time       - get current time
     RANDOM, // @random       - get random number
-
+    SPAWN, // @spawn     - spawn process
+    KILL, // @kill     - kill process
+    WAIT, // @wait     - wait for process to finish
+    ALIVE, // @alive     - see if process is active
+    READ, // @read        - read file
+    WRITE, // @write       - write file
+    SLEEP, // @sleep       - sleep for a given number of milliseconds
+    // NOT IMPLEMENTED AND MUST BE TESTED SEPERATELY
+    EXIT, // @exit     - exit program
+    // IMPLEMENTED AND MUST BE TESTED SEPERATELY
     ASSERT, // @assert      - assert condition with message
     PANIC, // @panic       - panic with message
     INPUT, // @input       - read from stdin
-
-    // SPLIT, // split
-    // JOIN, // join
-    // SUBSTRING, // substring
-    // TRIM, // trim
-    // LOWER, // lower
-    // UPPER, // upper
-    // ABS, // abs
-    // MIN, // min
-    // MAX, // max
-    // ROUND, // round
-    // FLOOR, // floor
-    // CEIL, // ceil
-    // EXEC, // exec
-    // SPAWN, // spawn
 
     // keywords with alternate tokens
     AND, // and ∧

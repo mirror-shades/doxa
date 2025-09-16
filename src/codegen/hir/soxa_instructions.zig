@@ -356,6 +356,11 @@ pub const HIRInstruction = union(enum) {
     /// LLVM: memmove
     ArrayRemove,
 
+    /// Slice array or string
+    /// VM: Return substring/subarray with start+length
+    /// LLVM: memcpy or vector slice operations
+    ArraySlice,
+
     /// Get array length
     /// VM: Return stored length
     /// LLVM: Load from array header
