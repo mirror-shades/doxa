@@ -98,7 +98,9 @@ pub const TokenType = enum {
     OS, // @os     - get operating system
     ARCH, // @arch     - get architecture
     TIME, // @time       - get current time
-    // NOT IMPLEMENTED AND MUST BE TESTED SEPERATELY
+    EXIT, // @exit     - exit program
+    SLEEP, // @sleep       - sleep for a given number of milliseconds
+    // NOT IMPLEMENTED
     SPAWN, // @spawn     - spawn OS process
     KILL, // @kill     - kill process
     WAIT, // @wait     - wait for process to finish
@@ -107,8 +109,6 @@ pub const TokenType = enum {
     READ, // @read        - read file
     WRITE, // @write       - write file
 
-    SLEEP, // @sleep       - sleep for a given number of milliseconds
-    EXIT, // @exit     - exit program
     RANDOM, // @random       - get random number
 
     // keywords with alternate tokens
@@ -137,7 +137,6 @@ pub const TokenType = enum {
     FLOAT, // float
     STRING, // string
     TETRA, // tetra
-    ALIAS, // alias
     NOTHING, // nothing
     INT_TYPE, // int type declaration
     BYTE_TYPE, // 8-bit unsigned integer type declaration
