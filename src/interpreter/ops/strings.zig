@@ -459,19 +459,6 @@ pub fn exec(vm: anytype, s: anytype) !void {
                     const result = try std.fmt.allocPrint(vm.allocator, "{s}{s}", .{ s_val, str2.value.string });
                     try vm.stack.push(HIRFrame.initString(result));
                 },
-                .Bytes => {
-                    const elements = try vm.allocator.alloc(HIRValue, s_val.len);
-                    for (s_val, 0..) |byte, i| {
-                        elements[i] = HIRValue{ .byte = byte };
-                    }
-                    const array = HIRValue{ .array = HIRArray{
-                        .elements = elements,
-                        .element_type = .Byte,
-                        .capacity = @intCast(s_val.len),
-                    } };
-
-                    try vm.stack.push(HIRFrame.initFromHIRValue(array));
-                },
                 .ToInt => {
                     const parsed_int = std.fmt.parseInt(i64, s_val, 10) catch {
                         // Return enum variant ValueError.ParseFailed

@@ -192,42 +192,6 @@ pub fn lengthofExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast
     return lengthof_expr;
 }
 
-pub fn bytesofExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-
-    // We're already at 'bytesof', advance to the next token
-    self.advance();
-
-    // Allow optional parentheses around the target expression
-    const has_parens = self.peek().type == .LEFT_PAREN;
-    if (has_parens) {
-        self.advance(); // consume '('
-    }
-
-    // Parse the expression whose bytes we want to get
-    const expr = try precedence.parsePrecedence(self, .UNARY) orelse return error.ExpectedExpression;
-
-    if (has_parens) {
-        if (self.peek().type != .RIGHT_PAREN) {
-            expr.deinit(self.allocator);
-            self.allocator.destroy(expr);
-            return error.ExpectedRightParen;
-        }
-        self.advance(); // consume ')'
-    }
-
-    const bytesof_expr = try self.allocator.create(ast.Expr);
-    bytesof_expr.* = .{
-        .base = .{
-            .id = ast.generateNodeId(),
-            .span = ast.SourceSpan.fromToken(self.peek()),
-        },
-        .data = .{
-            .BytesOf = expr,
-        },
-    };
-    return bytesof_expr;
-}
-
 pub fn parseMatchExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     self.advance(); // consume 'match' keyword
 

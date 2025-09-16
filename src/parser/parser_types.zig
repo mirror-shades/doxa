@@ -586,9 +586,6 @@ pub const Parser = struct {
         // Copy/clone
         if (std.mem.eql(u8, name, "shallow")) return .SHALLOW;
 
-        // TODO: REMOVE LATER, STD LIBRARY
-        if (std.mem.eql(u8, name, "bytes")) return .BYTES;
-
         return null;
     }
 

@@ -952,7 +952,6 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
         .StringOp => |s| {
             const op_name = switch (s.op) {
                 .Length => "Length",
-                .Bytes => "Bytes",
                 .Substring => "Substring",
                 .Concat => "Concat",
                 .ToInt => "ToInt",
