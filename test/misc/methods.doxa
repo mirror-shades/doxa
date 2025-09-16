@@ -114,7 +114,7 @@ nested?
 @byte(0)?
 
 @string(123)?
-@string(123.4)
+@string(123.4)?
 @string(0)?
 @string(0x0A)?
 @string("hello")?
