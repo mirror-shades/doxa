@@ -91,24 +91,25 @@ pub const TokenType = enum {
     INSERT, // @insert      - insert into string/array at index
     REMOVE, // @remove      - remove from string/array at index
     SLICE, // @slice       - get substring/subarray
-    // IMPLEMENTED AND TESTED
-    OS, // @os     - get operating system
-    ARCH, // @arch     - get architecture
-    TIME, // @time       - get current time
-    RANDOM, // @random       - get random number
-    SPAWN, // @spawn     - spawn OS process
-    KILL, // @kill     - kill process
-    WAIT, // @wait     - wait for process to finish
-    ALIVE, // @alive     - see if process is active
-    READ, // @read        - read file
-    WRITE, // @write       - write file
-    SLEEP, // @sleep       - sleep for a given number of milliseconds
-    // NOT IMPLEMENTED AND MUST BE TESTED SEPERATELY
-    EXIT, // @exit     - exit program
     // IMPLEMENTED AND MUST BE TESTED SEPERATELY
     ASSERT, // @assert      - assert condition with message
     PANIC, // @panic       - panic with message
     INPUT, // @input       - read from stdin
+    OS, // @os     - get operating system
+    ARCH, // @arch     - get architecture
+    TIME, // @time       - get current time
+    // NOT IMPLEMENTED AND MUST BE TESTED SEPERATELY
+    SPAWN, // @spawn     - spawn OS process
+    KILL, // @kill     - kill process
+    WAIT, // @wait     - wait for process to finish
+    ALIVE, // @alive     - see if process is active
+
+    READ, // @read        - read file
+    WRITE, // @write       - write file
+
+    SLEEP, // @sleep       - sleep for a given number of milliseconds
+    EXIT, // @exit     - exit program
+    RANDOM, // @random       - get random number
 
     // keywords with alternate tokens
     AND, // and ∧

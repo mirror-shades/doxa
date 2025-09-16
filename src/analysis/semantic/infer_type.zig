@@ -1169,6 +1169,17 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 if (bc.arguments.len != 0) return type_info;
                 type_info.* = .{ .base = .Int };
                 return type_info;
+            } else if (std.mem.eql(u8, fname, "exit")) {
+                requireArity.check(self, expr, bc.arguments.len, 1, fname);
+                if (bc.arguments.len != 1) return type_info;
+                // Validate that the argument is an integer
+                const arg_type = try infer_type.inferTypeFromExpr(self, bc.arguments[0]);
+                if (arg_type.base != .Int and arg_type.base != .Byte) {
+                    self.reporter.reportCompileError(getLocationFromBase(bc.arguments[0].base), ErrorCode.TYPE_MISMATCH, "@exit: argument must be an integer", .{});
+                    self.fatal_error = true;
+                }
+                type_info.* = .{ .base = .Nothing };
+                return type_info;
             }
 
             self.reporter.reportCompileError(getLocationFromBase(expr.base), ErrorCode.NOT_IMPLEMENTED, "Unknown builtin '@{s}'", .{fname});
