@@ -1263,7 +1263,15 @@ pub const HIRVM = struct {
                     try result.appendSlice(": ");
                     const field_str = try self.valueToString(field.value);
                     defer self.allocator.free(field_str);
-                    try result.appendSlice(field_str);
+                    // Quote embedded string fields for clearer struct representation
+                    switch (field.value) {
+                        .string => {
+                            try result.append('"');
+                            try result.appendSlice(field_str);
+                            try result.append('"');
+                        },
+                        else => try result.appendSlice(field_str),
+                    }
                 }
                 try result.appendSlice(" }");
                 return try result.toOwnedSlice();
