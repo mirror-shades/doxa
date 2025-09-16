@@ -436,6 +436,18 @@ pub const CallsHandler = struct {
             try self.generator.generateExpression(builtin_data.arguments[2], true, false);
             try self.generator.instructions.append(.ArraySlice);
             // Result is the sliced container
+        } else if (std.mem.eql(u8, name, "os")) {
+            // @os() -> returns OS name as string
+            if (builtin_data.arguments.len != 0) return error.InvalidArgumentCount;
+            try self.generator.instructions.append(.{ .Call = .{ .function_index = 0, .qualified_name = "os", .arg_count = 0, .call_kind = .BuiltinFunction, .target_module = null, .return_type = .String } });
+        } else if (std.mem.eql(u8, name, "arch")) {
+            // @arch() -> returns architecture name as string
+            if (builtin_data.arguments.len != 0) return error.InvalidArgumentCount;
+            try self.generator.instructions.append(.{ .Call = .{ .function_index = 0, .qualified_name = "arch", .arg_count = 0, .call_kind = .BuiltinFunction, .target_module = null, .return_type = .String } });
+        } else if (std.mem.eql(u8, name, "time")) {
+            // @time() -> returns Unix timestamp as int
+            if (builtin_data.arguments.len != 0) return error.InvalidArgumentCount;
+            try self.generator.instructions.append(.{ .Call = .{ .function_index = 0, .qualified_name = "time", .arg_count = 0, .call_kind = .BuiltinFunction, .target_module = null, .return_type = .Int } });
         } else {
             // Fallback: no-op or error until implemented
             return error.NotImplemented;
