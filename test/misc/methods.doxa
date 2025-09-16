@@ -63,24 +63,38 @@ unicode_str?
 @pop(nested)?
 nested?
 
-"end"?
-
 /////
 // CASTING
 /////
 
 @int("123")?
 @int("123.4")?
+@int("0x0A")?
+@int("hello")?
 @int(123.4)?
 @int(0x0A)?
+@int(0)?
 
 @float("123")?
 @float("123.4")?
+@float("0x0A")?
+@float("hello")?
 @float(123)?
 @float(0x0A)?
+@float(0)?
 
 @byte("123")?
 @byte("123.4")?
 @byte("0x0A")?
+@byte("hello")?
+@byte("a")?
 @byte(123.4)?
 @byte(0x0A)?
+@byte(0)?
+
+
+
+
+
+
+"end"?

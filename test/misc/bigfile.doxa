@@ -346,12 +346,10 @@ mike.person.age is 26
 mike.person.age? // 26
 //testing length method
 @length(mike.person.name)?
-//testing byte method with string
-@byte(mike.person.name)?
 // testing index method
 mike.person.name[0]? // M
 // testing byte print and byte index
-@byte(mike.person.name)[0]? // 77
+@byte(mike.person.name[0])? // 77
 
 mike.salary? // 1000
 
