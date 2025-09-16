@@ -647,6 +647,10 @@ pub const SoxaTextParser = struct {
             try self.instructions.append(HIRInstruction{ .ArrayPush = .{ .resize_behavior = resize_behavior } });
         } else if (std.mem.eql(u8, op, "ArrayPop")) {
             try self.instructions.append(HIRInstruction.ArrayPop);
+        } else if (std.mem.eql(u8, op, "ArrayInsert")) {
+            try self.instructions.append(HIRInstruction.ArrayInsert);
+        } else if (std.mem.eql(u8, op, "ArrayRemove")) {
+            try self.instructions.append(HIRInstruction.ArrayRemove);
         } else if (std.mem.eql(u8, op, "ArrayLen")) {
             try self.instructions.append(HIRInstruction.ArrayLen);
         } else if (std.mem.eql(u8, op, "ArrayConcat")) {

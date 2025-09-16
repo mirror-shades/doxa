@@ -810,6 +810,14 @@ pub const HIRVM = struct {
                 try ops_array.exec(self, .{ .ArrayPop = {} });
             },
 
+            .ArrayInsert => {
+                try ops_array.exec(self, .{ .ArrayInsert = {} });
+            },
+
+            .ArrayRemove => {
+                try ops_array.exec(self, .{ .ArrayRemove = {} });
+            },
+
             .ArrayConcat => {
                 try ops_array.exec(self, .{ .ArrayConcat = {} });
             },

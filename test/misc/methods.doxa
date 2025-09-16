@@ -144,5 +144,37 @@ nested?
 @type(Species.DOG)? // Species
 @type(mapping)? // map
 
+/////
+// INSERT
+/////
+
+@insert(arr, 3, 99)?
+arr?
+
+@insert(emptyArr, 0, 1)?
+emptyArr?
+
+@insert(emptyStr, 0, "!")?
+emptyStr?
+
+@insert(hello, 3, "!")?
+hello?
+
+/////
+// REMOVE  
+/////
+
+@remove(arr, 2)?
+arr?
+
+@remove(emptyArr, 0)?
+emptyArr?
+
+@remove(emptyStr, 0)?
+emptyStr?
+
+@remove(hello, 3)?
+hello?
+
 
 "end"?

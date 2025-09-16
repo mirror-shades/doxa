@@ -22,6 +22,10 @@ pub fn exec(vm: anytype, instruction: anytype) !void {
         try arrayPush(vm);
     } else if (@hasField(@TypeOf(instruction), "ArrayPop")) {
         try arrayPop(vm);
+    } else if (@hasField(@TypeOf(instruction), "ArrayInsert")) {
+        try arrayInsert(vm);
+    } else if (@hasField(@TypeOf(instruction), "ArrayRemove")) {
+        try arrayRemove(vm);
     } else if (@hasField(@TypeOf(instruction), "ArrayLen")) {
         try arrayLen(vm);
     } else if (@hasField(@TypeOf(instruction), "ArrayConcat")) {
@@ -304,9 +308,198 @@ fn arrayPop(vm: anytype) !void {
     }
 }
 
-/// Get length of array
+fn makeValueError(vm: anytype, comptime variant_name: []const u8) HIRValue {
+    var variant_index: u32 = 0;
+    if (vm.custom_type_registry.get("ValueError")) |ct| {
+        if (ct.enum_variants) |variants| {
+            for (variants, 0..) |v, i| {
+                if (std.mem.eql(u8, v.name, variant_name)) {
+                    variant_index = @intCast(i);
+                    break;
+                }
+            }
+        }
+    }
+    return HIRValue{ .enum_variant = .{ .type_name = "ValueError", .variant_name = variant_name, .variant_index = variant_index } };
+}
+
+fn arrayInsert(vm: anytype) !void {
+    const value = try vm.stack.pop();
+    const index_frame = try vm.stack.pop();
+    const container = try vm.stack.pop();
+
+    // Coerce/validate index - use same pattern as arrayGet/arraySet
+    const index_val = switch (index_frame.value) {
+        .int => |i| if (i < 0) {
+            return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index cannot be negative: {}", .{i});
+        } else @as(u32, @intCast(i)),
+        .byte => |u| @as(u32, u),
+        .tetra => |t| @as(u32, t),
+        .string => |s| blk: {
+            const parsed = std.fmt.parseInt(i64, s, 10) catch {
+                return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid array index: {s}", .{s});
+            };
+            if (parsed < 0) {
+                return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index cannot be negative: {}", .{parsed});
+            }
+            break :blk @as(u32, @intCast(parsed));
+        },
+        .nothing => {
+            return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index cannot be nothing", .{});
+        },
+        else => {
+            return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid array index type: {s}", .{@tagName(index_frame.value)});
+        },
+    };
+
+    switch (container.value) {
+        .array => |arr| {
+            // Determine logical length
+            var logical_len: u32 = 0;
+            for (arr.elements) |elem| {
+                if (std.meta.eql(elem, HIRValue.nothing)) break;
+                logical_len += 1;
+            }
+
+            if (index_val > logical_len) {
+                return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index out of bounds: {} (length: {})", .{ index_val, logical_len });
+            }
+
+            var mutable_arr = arr;
+
+            // Infer element type if unknown
+            if (mutable_arr.element_type == .Unknown or mutable_arr.element_type == .Nothing) {
+                mutable_arr.element_type = switch (value.value) {
+                    .int => .Int,
+                    .byte => .Byte,
+                    .float => .Float,
+                    .string => .String,
+                    .tetra => .Tetra,
+                    .array => .Array,
+                    .struct_instance => .Struct,
+                    else => mutable_arr.element_type,
+                };
+            }
+
+            // Ensure capacity for one more element
+            if (logical_len >= mutable_arr.capacity) {
+                const new_capacity = @max(mutable_arr.capacity * 2, logical_len + 1);
+                const new_elements = try vm.allocator.realloc(mutable_arr.elements, new_capacity);
+                // Initialize new tail with nothing
+                for (new_elements[mutable_arr.capacity..new_capacity]) |*e| e.* = HIRValue.nothing;
+                mutable_arr.elements = new_elements;
+                mutable_arr.capacity = new_capacity;
+            }
+
+            // Shift right from end to index
+            var i: i32 = @as(i32, @intCast(logical_len));
+            while (i >= @as(i32, @intCast(index_val))) : (i -= 1) {
+                const from_idx: usize = @intCast(i);
+                const to_idx: usize = from_idx + 1;
+                mutable_arr.elements[to_idx] = if (from_idx < mutable_arr.capacity) mutable_arr.elements[from_idx] else HIRValue.nothing;
+            }
+
+            // Insert value
+            mutable_arr.elements[index_val] = value.value;
+
+            // Push updated container
+            try vm.stack.push(HIRFrame.initFromHIRValue(HIRValue{ .array = mutable_arr }));
+        },
+        .string => |s| {
+            if (index_val > s.len) {
+                return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "String index out of bounds: {} (length: {})", .{ index_val, s.len });
+            }
+            const insert_str = switch (value.value) {
+                .string => |sv| sv,
+                else => {
+                    return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot insert non-string value into string: {s}", .{@tagName(value.value)});
+                },
+            };
+            const idx: usize = index_val;
+            const new_len = s.len + insert_str.len;
+            const new_buf = try vm.allocator.alloc(u8, new_len);
+            @memcpy(new_buf[0..idx], s[0..idx]);
+            @memcpy(new_buf[idx .. idx + insert_str.len], insert_str);
+            @memcpy(new_buf[idx + insert_str.len ..], s[idx..]);
+            try vm.stack.push(HIRFrame.initString(new_buf));
+        },
+        else => {
+            return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot insert into non-array value: {s}", .{@tagName(container.value)});
+        },
+    }
+}
+
+fn arrayRemove(vm: anytype) !void {
+    const index_frame = try vm.stack.pop();
+    const container = try vm.stack.pop();
+
+    // Coerce/validate index - use same pattern as arrayGet/arraySet
+    const index_val = switch (index_frame.value) {
+        .int => |i| if (i < 0) {
+            return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index cannot be negative: {}", .{i});
+        } else @as(u32, @intCast(i)),
+        .byte => |u| @as(u32, u),
+        .tetra => |t| @as(u32, t),
+        .string => |s| blk: {
+            const parsed = std.fmt.parseInt(i64, s, 10) catch {
+                return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid array index: {s}", .{s});
+            };
+            if (parsed < 0) {
+                return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index cannot be negative: {}", .{parsed});
+            }
+            break :blk @as(u32, @intCast(parsed));
+        },
+        .nothing => {
+            return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index cannot be nothing", .{});
+        },
+        else => {
+            return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid array index type: {s}", .{@tagName(index_frame.value)});
+        },
+    };
+
+    switch (container.value) {
+        .array => |arr| {
+            var logical_len: u32 = 0;
+            for (arr.elements) |elem| {
+                if (std.meta.eql(elem, HIRValue.nothing)) break;
+                logical_len += 1;
+            }
+            if (index_val >= logical_len) {
+                return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index out of bounds: {} (length: {})", .{ index_val, logical_len });
+            }
+            var mutable_arr = arr;
+            const removed_elem = mutable_arr.elements[index_val];
+            // Shift left from index+1 to end
+            var i: u32 = index_val;
+            while (i + 1 < mutable_arr.capacity and i + 1 < logical_len) : (i += 1) {
+                mutable_arr.elements[i] = mutable_arr.elements[i + 1];
+            }
+            // Set new last occupied to nothing
+            mutable_arr.elements[logical_len - 1] = HIRValue.nothing;
+
+            try vm.stack.push(HIRFrame.initFromHIRValue(HIRValue{ .array = mutable_arr }));
+            try vm.stack.push(HIRFrame.initFromHIRValue(removed_elem));
+        },
+        .string => |s| {
+            if (index_val >= s.len) {
+                return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "String index out of bounds: {} (length: {})", .{ index_val, s.len });
+            }
+            const idx: usize = index_val;
+            const removed_slice = s[idx .. idx + 1];
+            const new_len = s.len - 1;
+            const new_buf = try vm.allocator.alloc(u8, new_len);
+            @memcpy(new_buf[0..idx], s[0..idx]);
+            @memcpy(new_buf[idx..], s[idx + 1 ..]);
+            try vm.stack.push(HIRFrame.initString(new_buf));
+            try vm.stack.push(HIRFrame.initString(removed_slice));
+        },
+        else => {
+            return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot remove from non-array value: {s}", .{@tagName(container.value)});
+        },
+    }
+}
+
 fn arrayLen(vm: anytype) !void {
-    // Get length of array or string and push as int
     const value = try vm.stack.pop();
     switch (value.value) {
         .array => |arr| {
