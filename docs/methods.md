@@ -2,6 +2,48 @@
 
 Doxa provides built-in methods prefixed with `@` for core operations.
 
+### Methods That Should Panic or Halt on Failure
+
+| Method | Return  | Panics On                        |
+| ------ | ------- | -------------------------------- |
+| PUSH   | nothing | Array/string corruption if fails |
+| POP    | any     | Underflow if empty               |
+| INSERT | nothing | Array/string corruption if fails |
+| REMOVE | any     | Out of bounds index              |
+| ASSERT | nothing | False condition                  |
+| PANIC  | never   | Always halts                     |
+| EXIT   | never   | Always terminates                |
+
+### Methods That Should Return Error Unions
+
+| Method  | Return                                                            |
+| ------- | ----------------------------------------------------------------- |
+| READ    | string \| IOError - file contents or error                        |
+| WRITE   | nothing \| IOError - writes to file or error                      |
+| INPUT   | string \| IOError - line from stdin or EOF error                  |
+| TOINT   | int \| ParseError - parsed integer or parse error                 |
+| TOFLOAT | float \| ParseError - parsed float or parse error                 |
+| TOBYTE  | byte \| ParseError - byte representation or conversion error      |
+| SLICE   | array \| IndexError or string \| IndexError - based on input type |
+| SLEEP   | nothing \| SysError - sleeps or interruption error                |
+| PRINT   | nothing \| IOError - prints to stdout or I/O error                |
+| SPAWN   | int \| SysError - PID of spawned process or error                 |
+| KILL    | nothing \| SysError - kills process or error                      |
+| WAIT    | int \| Nothing \| SysError - exit code or error                   |
+
+### No Failure
+
+| Method   | Return |
+| -------- | ------ |
+| TOSTRING | string |
+| TYPE     | int    |
+| LENGTH   | int    |
+| OS       | string |
+| ARCH     | string |
+| TIME     | int    |
+| RANDOM   | float  |
+| ALIVE    | tetra  |
+
 ## Array Methods
 
 ### @length
@@ -25,7 +67,7 @@ Doxa provides built-in methods prefixed with `@` for core operations.
 ### @insert
 
 - **Input**: `array | string`, `index`, `value`
-- **Output**: `void` - inserts value at index
+- **Output**: `nothing` - inserts value at index
 - **Example**: `@insert(arr, 1, 5)` // inserts 5 at index 1
 
 ### @remove
@@ -37,7 +79,7 @@ Doxa provides built-in methods prefixed with `@` for core operations.
 ### @clear
 
 - **Input**: `array | string`
-- **Output**: `void` - removes all elements
+- **Output**: `nothing` - removes all elements
 - **Example**: `@clear(arr)` // arr becomes []
 
 ### @find
@@ -90,85 +132,68 @@ Doxa provides built-in methods prefixed with `@` for core operations.
 - **Output**: `string` - type name
 - **Example**: `@type([1,2])` → `"array"`
 
-## I/O Methods
-
-### @input
+### @time
 
 - **Input**: `none`
-- **Output**: `string | IOError` - line from stdin, IOError.EOF on EOF
-- **Example**: `var line = @input()`
+- **Output**: `int` - current timestamp, -1 sentinel on rare runtime error
+- **Example**: `var now = @time()`
 
-### @syscall
+### @random
 
-- **Input**: `string, string[]` (command)
-- **Output**: `int | string | nothing | SysError` – result of the system call or error
-- **Example**:
-  var output = @syscall("exec", ["ls", "-l"])
-  var pid = @syscall("spawn", ["my_program", "arg1"])
+- **Input**: `none`
+- **Output**: `int` - random number, compile-time error if not supported
+- **Example**: `var num = @random()`
 
-## Control Flow Methods
+## Process Methods
 
-### @assert
+### @spawn
 
-- **Input**: `bool`, `string` (message)
-- **Output**: `void` - panics if false
-- **Example**: `@assert(x > 0, "x must be positive")`
+- **Input**: `string[]` (command and arguments)
+- **Output**: `int | SysError` - PID of spawned process, or error
+- **Example**: `var pid = @spawn(["my_program", "arg1"])`
 
-### @panic
+### @kill
 
-- **Input**: `string` (message)
-- **Output**: `never` - halts program
-- **Example**: `@panic("Fatal error")`
+- **Input**: `int` (PID)
+- **Output**: `nothing | SysError` - kills process, or error
+- **Example**: `@kill(pid)`
 
-## Error Handling
+### @wait
 
-Methods return error unions that can be handled with `else` or `match`:
+- **Input**: `int` (PID)
+- **Output**: `int | Nothing | WaitError` - exit code, or error
+- **Example**: `var exitCode = @wait(pid)`
 
-```doxa
-// Using else
-var content = @read("file.txt") else @panic("Read failed")
+### @alive
 
-// Using match for @input EOF handling
-const userInput is @input()
-var line is userInput match {
-    string then it, // actual input line
-    IOError.EOF then "", // handle EOF explicitly
-    else else @panic("Input error")
-}
+- **Input**: `int` (PID)
+- **Output**: `
 
-// Using match for type conversion
-const maybeInt is "123"
-var result is maybeInt match {
-    int then maybeInt, // narrowed to int
-    ValueError.ParseFailed then 0,
-    else else -1
-}
 ```
-
-Common error types:
-
-- `ValueError`: Array bounds, invalid inputs, overflow
-- `IOError`: File operations
-- `SysError`: System call failures
-
-```doxa
-enum ValueError {          // for invalid inputs, array issues, overflow
-    OutOfBounds,
-    ParseFailed,
-    Overflow
+enum ParseError {        // type conversion failures
+    InvalidFormat,       // e.g., "abc" -> int
+    Overflow,            // too large for target type
+    Underflow,           // too small for target type
 }
 
-enum IOError {             // for filesystem / I/O issues
-    EOF,
-    NotFound,
-    ReadFailed,
-    WriteFailed,
-    PermissionDenied
+enum IndexError {        // array/string/collection bounds issues
+    OutOfBounds,         // index >= length
+    Underflow,           // pop/remove from empty
+    Empty,               // access empty collection
+    InvalidRange         // invalid slice/range
 }
 
-enum SysError {            // for @syscall / OS errors
-    Failed,
-    NotFound,
-    Timeout
+enum IOError {           // filesystem / I/O issues
+    EOF,                 // end-of-file / input exhausted
+    NotFound,            // file missing
+    PermissionDenied,    // insufficient permissions
+    Failed               // read or write failed
+}
+
+enum SysError {          // system call failures
+    NotFound,            // missing process/resource
+    PermissionDenied,    // lack of privileges
+    Timeout,             // operation timed out
+    Failed               // generic system failure
 }
 ```

@@ -1689,6 +1689,32 @@ pub fn inferType(expr: *ast.Expr) !ast.TypeInfo {
     }
 }
 
+// Conditionally parse either a variable (default) or a struct literal / match
+// when an identifier is immediately followed by a '{'. This avoids hijacking
+// simple identifiers like `limit` inside expressions such as `1 to limit`.
+pub fn identifierOrStructLiteral(self: *Parser, left: ?*ast.Expr, precedence_level: Precedence) ErrorList!?*ast.Expr {
+    _ = left;
+    _ = precedence_level;
+
+    const start_pos = self.current;
+
+    // We expect IDENTIFIER at this point (rule-based dispatch). Consume it to look ahead.
+    if (self.peek().type != .IDENTIFIER) return null;
+    self.advance();
+
+    // If next token is a '{', this could be a struct literal or match expression.
+    if (self.peek().type == .LEFT_BRACE) {
+        // Rewind and delegate to the dedicated handler which distinguishes
+        // between struct literal and match based on brace contents.
+        self.current = start_pos;
+        return parseStructOrMatch(self, null, .NONE);
+    }
+
+    // Otherwise, it's a regular variable reference. Rewind so `variable` consumes it.
+    self.current = start_pos;
+    return variable(self, null, .NONE);
+}
+
 pub fn parseStructOrMatch(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     // We should be at an identifier
     if (self.peek().type != .IDENTIFIER) {
@@ -1852,8 +1878,8 @@ pub fn parseStructOrMatch(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList
             },
         };
         return match_expr;
-    } else if (first_token_after_brace.type == .IDENTIFIER) {
-        // This is likely a struct literal (starts with field name)
+    } else if (first_token_after_brace.type == .IDENTIFIER and self.peekAhead(1).type == .ASSIGN) {
+        // This is a struct literal only if it starts with `identifier is ...`
         self.current = start_pos; // Reset to before identifier
         return Parser.parseStructInit(self);
     } else {

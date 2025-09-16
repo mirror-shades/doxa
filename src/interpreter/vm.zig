@@ -906,7 +906,7 @@ pub const HIRVM = struct {
                     };
 
                     fields[i] = HIRStructField{
-                        .name = try self.allocator.dupe(u8, name_str),
+                        .name = try self.string_interner.intern(name_str),
                         .value = field_value.value,
                         .field_type = s.field_types[i],
                         .path = null,
@@ -946,7 +946,7 @@ pub const HIRVM = struct {
                             for (struct_inst.fields) |*field| {
                                 if (field.name.len == 0) {
                                     // Allocate and store the field name
-                                    field.name = try self.allocator.dupe(u8, store_field.field_name);
+                                    field.name = try self.string_interner.intern(store_field.field_name);
                                     break;
                                 }
                             }
@@ -1003,7 +1003,7 @@ pub const HIRVM = struct {
 
                         // Find field by name
                         for (struct_inst.fields) |field| {
-                            if (std.mem.eql(u8, field.name, interned_name)) {
+                            if ((field.name.ptr == interned_name.ptr and field.name.len == interned_name.len) or std.mem.eql(u8, field.name, interned_name)) {
                                 // For nested structs, we need to set the path
                                 var field_value = field.value;
                                 if (field_value == .struct_instance) {
@@ -1078,8 +1078,16 @@ pub const HIRVM = struct {
                     const value = try self.stack.pop(); // Pop value first
                     const key = try self.stack.pop(); // Pop key second
 
+                    const normalized_key: HIRValue = switch (key.value) {
+                        .string => |s| blk_key: {
+                            const interned = try self.string_interner.intern(s);
+                            break :blk_key HIRValue{ .string = interned };
+                        },
+                        else => key.value,
+                    };
+
                     entries[reverse_i] = HIRMapEntry{
-                        .key = key.value,
+                        .key = normalized_key,
                         .value = value.value,
                     };
                 }
@@ -1095,7 +1103,14 @@ pub const HIRVM = struct {
 
             .MapGet => {
                 // Get map value by key
-                const key = try self.stack.pop();
+                var key = try self.stack.pop();
+                switch (key.value) {
+                    .string => |s| {
+                        const interned = try self.string_interner.intern(s);
+                        key.value = HIRValue{ .string = interned };
+                    },
+                    else => {},
+                }
                 const map = try self.stack.pop();
 
                 if (self.reporter.debug_mode) {
@@ -1114,7 +1129,7 @@ pub const HIRVM = struct {
                             // Use custom comparison for HIRValue keys
                             const keys_match = switch (entry.key) {
                                 .string => |entry_str| switch (key.value) {
-                                    .string => |key_str| std.mem.eql(u8, entry_str, key_str),
+                                    .string => |key_str| ((entry_str.ptr == key_str.ptr and entry_str.len == key_str.len) or std.mem.eql(u8, entry_str, key_str)),
                                     else => false,
                                 },
                                 .int => |entry_int| switch (key.value) {
@@ -1144,7 +1159,14 @@ pub const HIRVM = struct {
                 // Set map value by key
                 // Stack order (top to bottom): value, key, map
                 const value = try self.stack.pop();
-                const key = try self.stack.pop();
+                var key = try self.stack.pop();
+                switch (key.value) {
+                    .string => |s| {
+                        const interned = try self.string_interner.intern(s);
+                        key.value = HIRValue{ .string = interned };
+                    },
+                    else => {},
+                }
                 const map_frame = try self.stack.pop();
 
                 if (self.reporter.debug_mode) {
@@ -1165,7 +1187,7 @@ pub const HIRVM = struct {
                         for (entries) |*entry| {
                             const keys_match = switch (entry.key) {
                                 .string => |entry_str| switch (key.value) {
-                                    .string => |key_str| std.mem.eql(u8, entry_str, key_str),
+                                    .string => |key_str| ((entry_str.ptr == key_str.ptr and entry_str.len == key_str.len) or std.mem.eql(u8, entry_str, key_str)),
                                     else => false,
                                 },
                                 .int => |entry_int| switch (key.value) {

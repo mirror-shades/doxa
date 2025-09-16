@@ -572,7 +572,18 @@ pub fn parseEachStmt(self: *Parser) ErrorList!ast.Stmt {
     const arr_index_left = try self.allocator.create(ast.Expr);
     arr_index_left.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(item_name) }, .data = .{ .Index = .{ .array = array_expr.?, .index = load_idx } } };
     const item_assign = try self.allocator.create(ast.Stmt);
-    const item_type = ast.TypeInfo{ .base = .Nothing, .is_mutable = true };
+
+    // Infer the array element type instead of hardcoding .Nothing
+    var item_type = ast.TypeInfo{ .base = .Int, .is_mutable = true }; // Default to Int for ranges
+    if (array_expr.?.data == .Range) {
+        // Range expressions always produce arrays of integers
+        item_type = ast.TypeInfo{ .base = .Int, .is_mutable = true };
+    } else if (array_expr.?.data == .Variable) {
+        // For variable arrays, we'll let type inference handle it
+        // The type will be inferred from the array[index] expression
+        item_type = ast.TypeInfo{ .base = .Nothing, .is_mutable = true };
+    }
+
     item_assign.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(item_name) }, .data = .{ .VarDecl = .{ .name = item_name, .type_info = item_type, .initializer = arr_index_left, .is_public = false } } };
 
     // Prepend item assignment to body

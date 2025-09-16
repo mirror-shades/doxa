@@ -1,30 +1,73 @@
-
-// Dice roll 1.0 to 6.0
-function diceRoll() {
-    return @int(@random() * 6 + 1 ) as int else -1 
+function diceRoll() returns int {
+    const random_float is @random() * 6 + 1
+    return @int(random_float) as int else -1 
 }
 
-// test the probability of each roll
-var ones is 0
-var twos is 0
-var threes is 0
-var fours is 0
-var fives is 0
-var sixes is 0
-
-each i in 1 to 1000 {
-    const roll is diceRoll()
-    if roll == 1 then ones += 1
-    if roll == 2 then twos += 1
-    if roll == 3 then threes += 1
-    if roll == 4 then fours += 1
-    if roll == 5 then fives += 1
-    if roll == 6 then sixes += 1
+function add(a :: int, b :: int) returns int {
+    return a + b
 }
 
-@print("Ones: {ones}\n")
-@print("Twos: {twos}\n")
-@print("Threes: {threes}\n")
-@print("Fours: {fours}\n")
-@print("Fives: {fives}\n")
-@print("Sixes: {sixes}\n")
+// Dice roll benchmark
+function dice_roll_benchmark() {
+    var count is 0
+    var start_time is @time()
+    
+    for i is 1 while i <= 10000 do i += 1 {
+        const roll is diceRoll()
+        count is count + roll  // Prevent optimization
+    }
+    
+    var end_time is @time()
+    @print("Dice rolls: {count}, Time: {end_time - start_time}s\n")
+}
+
+// FizzBuzz benchmark
+function fizzbuzz_benchmark() {
+    var start_time is @time()
+    
+    for i is 1 while i <= 10000 do i += 1 {
+        if i % 15 == 0 then "FizzBuzz"
+        else if i % 3 == 0 then "Fizz" 
+        else if i % 5 == 0 then "Buzz"
+        else @string(i)
+    }
+    
+    var end_time is @time()
+    @print("FizzBuzz time: {end_time - start_time}s\n")
+}
+
+// Arithmetic benchmark
+function arithmetic_benchmark() {
+    var sum is 0
+    var start is @time()
+    
+    each i in 1 to 10000 {
+        sum += i * 2 + 1
+    }
+    
+    @print("Arithmetic: {sum}, Time: {@time() - start}s\n")
+}
+
+// Function call benchmark  
+function call_benchmark() {
+    var sum is 0
+    var start is @time()
+    
+    each i in 1 to 10000 {
+        sum += add(i, i + 1)
+    }
+    
+    @print("Function calls: {sum}, Time: {@time() - start}s\n")
+}
+
+// Run all benchmarks
+@print("=== DOXA BENCHMARK SUITE ===\n")
+dice_roll_benchmark()
+fizzbuzz_benchmark()
+arithmetic_benchmark()
+call_benchmark()
+
+
+
+
+

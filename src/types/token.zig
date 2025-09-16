@@ -100,6 +100,7 @@ pub const TokenType = enum {
     TIME, // @time       - get current time
     EXIT, // @exit     - exit program
     SLEEP, // @sleep       - sleep for a given number of milliseconds
+    RANDOM, // @random       - get random number
     // NOT IMPLEMENTED
     SPAWN, // @spawn     - spawn OS process
     KILL, // @kill     - kill process
@@ -108,8 +109,6 @@ pub const TokenType = enum {
 
     READ, // @read        - read file
     WRITE, // @write       - write file
-
-    RANDOM, // @random       - get random number
 
     // keywords with alternate tokens
     AND, // and ∧
