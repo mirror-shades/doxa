@@ -105,7 +105,7 @@ var ip :: int is 0
 function getInput() returns byte {
     @print("Input: ")
     var userInput :: string is @input()
-    var newByte :: byte is @bytes(userInput)[0]
+    var newByte :: byte is @byte(userInput[0])
     return newByte
 }
 
@@ -142,7 +142,6 @@ function checkClosingBracket(scan :: string) returns tetra {
     return(openBrackets == 0)
 }
 
-
 function interpret(scan :: string) {
     const scanLength is @length(scan)
 
@@ -167,5 +166,4 @@ function interpret(scan :: string) {
 entry function main() {
     interpret(",+.")
 }
-
 ```
