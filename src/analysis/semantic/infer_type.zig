@@ -2290,7 +2290,8 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
             }
 
             // Create a new scope for EACH ITERATION
-            const iteration_scope = try self.memory.scope_manager.createScope(outer_loop_scope, self.memory);
+            // Use current_scope as parent to ensure function declarations are accessible
+            const iteration_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
             defer iteration_scope.deinit();
 
             // Rebind loop variable for each iteration

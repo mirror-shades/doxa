@@ -635,7 +635,7 @@ pub const Parser = struct {
 
                     // Expect equals
                     if (self.peek().type != .ASSIGN) {
-                        return error.ExpectedEquals;
+                        return error.ExpectedAssignmentOperator;
                     }
                     self.advance();
 
@@ -715,7 +715,7 @@ pub const Parser = struct {
 
             // Expect equals
             if (self.peek().type != .ASSIGN) {
-                return error.ExpectedEquals;
+                return error.ExpectedAssignmentOperator;
             }
             self.advance();
 

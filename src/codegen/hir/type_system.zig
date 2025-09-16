@@ -307,6 +307,7 @@ pub const TypeSystem = struct {
                 if (std.mem.eql(u8, name, "float")) return .Float;
                 if (std.mem.eql(u8, name, "string")) return .String;
                 if (std.mem.eql(u8, name, "byte")) return .Byte;
+                if (std.mem.eql(u8, name, "time")) return .Int;
                 if (std.mem.eql(u8, name, "push")) return .Nothing; // modifies in place, returns nothing
                 if (std.mem.eql(u8, name, "pop")) {
                     if (bc.arguments.len > 0) {

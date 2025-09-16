@@ -83,7 +83,7 @@ pub const HIRGenerator = struct {
 
     // Loop context stack to support break/continue codegen
     loop_context_stack: std.ArrayList(LoopContext),
-    
+
     // Track when we're generating nested array elements to avoid stack interference
     is_generating_nested_array: bool = false,
 
@@ -1187,7 +1187,46 @@ pub const HIRGenerator = struct {
     }
 
     pub fn inferTypeFromExpression(self: *HIRGenerator, expr: *ast.Expr) HIRType {
-        return self.type_system.inferTypeFromExpression(expr, &self.symbol_table);
+        // Special-case function calls to leverage known function signatures
+        // so we don't fall back to Unknown types during codegen (e.g., for '+=')
+        switch (expr.data) {
+            .FunctionCall => |call| {
+                // Try to resolve callee and determine call kind
+                var function_name: []const u8 = "";
+                var call_kind: CallKind = .LocalFunction;
+
+                switch (call.callee.data) {
+                    .Variable => |var_token| {
+                        function_name = var_token.lexeme;
+                        // If this is a known user-defined function, keep LocalFunction; otherwise treat as builtin
+                        if (self.getFunctionIndex(function_name) == null) {
+                            call_kind = .BuiltinFunction;
+                        }
+                    },
+                    .FieldAccess => |field_access| {
+                        // Module function or method - treat as ModuleFunction for return type inference
+                        if (field_access.object.data == .Variable) {
+                            function_name = field_access.field.lexeme;
+                            call_kind = .ModuleFunction;
+                        } else {
+                            // Fallback to generic inference
+                            return self.type_system.inferTypeFromExpression(expr, &self.symbol_table);
+                        }
+                    },
+                    else => {
+                        // Fallback to generic inference for complex callees
+                        return self.type_system.inferTypeFromExpression(expr, &self.symbol_table);
+                    },
+                }
+
+                // Use call return type inference based on collected function signatures
+                const inferred = self.inferCallReturnType(function_name, call_kind) catch .Unknown;
+                return inferred;
+            },
+            else => {
+                return self.type_system.inferTypeFromExpression(expr, &self.symbol_table);
+            },
+        }
     }
 
     pub fn trackVariableType(self: *HIRGenerator, var_name: []const u8, var_type: HIRType) !void {
@@ -1411,7 +1450,8 @@ pub const HIRGenerator = struct {
                 if (std.mem.eql(u8, function_name, "safeAdd") or
                     std.mem.eql(u8, function_name, "safeSub") or
                     std.mem.eql(u8, function_name, "safeMul") or
-                    std.mem.eql(u8, function_name, "foo"))
+                    std.mem.eql(u8, function_name, "foo") or
+                    std.mem.eql(u8, function_name, "time"))
                 {
                     return .Int;
                 }
