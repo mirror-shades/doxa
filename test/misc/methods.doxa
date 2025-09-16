@@ -64,3 +64,23 @@ unicode_str?
 nested?
 
 "end"?
+
+/////
+// CASTING
+/////
+
+@int("123")?
+@int("123.4")?
+@int(123.4)?
+@int(0x0A)?
+
+@float("123")?
+@float("123.4")?
+@float(123)?
+@float(0x0A)?
+
+@byte("123")?
+@byte("123.4")?
+@byte("0x0A")?
+@byte(123.4)?
+@byte(0x0A)?

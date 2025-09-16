@@ -95,10 +95,7 @@ pub const SemanticAnalyzer = struct {
     }
 
     fn ensureBuiltinEnums(self: *SemanticAnalyzer) !void {
-        if (!self.custom_types.contains("NumberError")) {
-            const variants = [_][]const u8{ "ParseFailed", "Overflow", "Underflow" };
-            try helpers.registerEnumType(self, "NumberError", &variants);
-        }
+        // NumberError removed - all numeric conversions now use ValueError
         if (!self.custom_types.contains("IndexError")) {
             const variants = [_][]const u8{"OutOfBounds"};
             try helpers.registerEnumType(self, "IndexError", &variants);

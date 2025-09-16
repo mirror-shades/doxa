@@ -282,8 +282,8 @@ pub const CallsHandler = struct {
             try self.generator.generateExpression(builtin_data.arguments[0], true, false);
             const t = self.generator.inferTypeFromExpression(builtin_data.arguments[0]);
             if (t == .String) {
-                // string -> byte[] (old @bytes)
-                try self.generator.instructions.append(.{ .StringOp = .{ .op = .Bytes } });
+                // string -> byte (single char/parsed) using ToByte
+                try self.generator.instructions.append(.{ .StringOp = .{ .op = .ToByte } });
             } else {
                 // numeric -> byte
                 try self.generator.instructions.append(.{ .Convert = .{ .from_type = t, .to_type = .Byte } });
@@ -374,8 +374,8 @@ pub const CallsHandler = struct {
             try self.generator.generateExpression(internal_data.receiver, true, false);
             const t = self.generator.inferTypeFromExpression(internal_data.receiver);
             if (t == .String) {
-                // string -> byte[]
-                try self.generator.instructions.append(.{ .StringOp = .{ .op = .Bytes } });
+                // string -> byte
+                try self.generator.instructions.append(.{ .StringOp = .{ .op = .ToByte } });
             } else {
                 // numeric -> byte
                 try self.generator.instructions.append(.{ .Convert = .{ .from_type = t, .to_type = .Byte } });
