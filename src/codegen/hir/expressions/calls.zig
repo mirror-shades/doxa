@@ -222,6 +222,43 @@ pub const CallsHandler = struct {
                         }
                         if (self.generator.symbol_table.getVariableCustomType(var_name)) |custom_type_name| break :blk custom_type_name;
                     }
+                    if (arg.data == .FieldAccess) {
+                        const field_access = arg.data.FieldAccess;
+                        if (field_access.object.data == .Variable) {
+                            const obj_name = field_access.object.data.Variable.lexeme;
+                            // If the object is a variable of a custom struct type, resolve the field type
+                            if (self.generator.symbol_table.getVariableCustomType(obj_name)) |var_custom_type_name| {
+                                if (self.generator.isCustomType(var_custom_type_name)) |custom_type| {
+                                    if (custom_type.kind == .Struct) {
+                                        if (custom_type.struct_fields) |fields| {
+                                            for (fields) |f| {
+                                                if (std.mem.eql(u8, f.name, field_access.field.lexeme)) {
+                                                    if (f.custom_type_name) |ctn| break :blk ctn;
+                                                    // Fallback to the field's HIR type
+                                                    const ft = f.field_type;
+                                                    break :blk switch (ft) {
+                                                        .Int => "int",
+                                                        .Float => "float",
+                                                        .String => "string",
+                                                        .Tetra => "tetra",
+                                                        .Byte => "byte",
+                                                        .Nothing => "nothing",
+                                                        .Array => "array",
+                                                        .Union => "union",
+                                                        .Struct => "struct",
+                                                        .Map => "map",
+                                                        .Enum => "enum",
+                                                        .Function => "function",
+                                                        .Unknown => "unknown",
+                                                    };
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                     break :blk "struct";
                 },
                 .Map => "map",
@@ -239,6 +276,21 @@ pub const CallsHandler = struct {
                             const obj_name = field_access.object.data.Variable.lexeme;
                             if (self.generator.isCustomType(obj_name)) |custom_type| {
                                 if (custom_type.kind == .Enum) break :blk obj_name;
+                            }
+                            // If this is a struct field access whose field type is an enum,
+                            // prefer returning the enum's custom type name (e.g., "Species").
+                            if (self.generator.symbol_table.getVariableCustomType(obj_name)) |var_custom_type_name| {
+                                if (self.generator.isCustomType(var_custom_type_name)) |ct| {
+                                    if (ct.kind == .Struct) {
+                                        if (ct.struct_fields) |fields| {
+                                            for (fields) |f| {
+                                                if (std.mem.eql(u8, f.name, field_access.field.lexeme)) {
+                                                    if (f.custom_type_name) |ctn| break :blk ctn;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -310,7 +362,7 @@ pub const CallsHandler = struct {
             // Push nothing as the return value
             const nothing_const_idx = try self.generator.addConstant(HIRValue.nothing);
             try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_const_idx } });
-            
+
             // If the caller doesn't need the result, pop it
             if (!preserve_result) {
                 try self.generator.instructions.append(.Pop);

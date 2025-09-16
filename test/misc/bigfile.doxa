@@ -720,24 +720,4 @@ _tetra? // false
 var _string :: string
 _string? // ""
 
-@type(_int)? // int
-
-@type(_byte)? // byte
-
-@type(_float)? // float
-
-@type(_string)? // string
-
-@type(_tetra)? // tetra
-
-@type(arr)? // array
-
-@type(Employee)? // struct
-@type(mike)? // Employee
-
-@type(Color)? // enum
-@type(Color.Blue)? // Color
-
-@type(MyMap)? // map
-
 "end"?

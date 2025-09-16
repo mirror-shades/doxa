@@ -21,6 +21,11 @@ var dog is Animal {
     species is Species.DOG,
 }
 
+var map mapping {
+    1 is "one",
+    2 is "two",
+    3 is "three",
+}
 
 /////
 // LENGTH
@@ -122,6 +127,22 @@ nested?
 @string(dog.species)?
 
 
+/////
+// TYPE
+/////
+
+@type(10)? // int
+@type(0x0A)? // byte
+@type(10.0)? // float
+@type("hello")? // string
+@type(both)? // tetra
+@type(arr)? // array
+@type(nested)? // array
+@type(dog)? // struct
+@type(dog.name)? // string
+@type(dog.species)? // Species
+@type(Species.DOG)? // Species
+@type(mapping)? // map
 
 
 "end"?

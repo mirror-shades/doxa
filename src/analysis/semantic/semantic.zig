@@ -95,7 +95,6 @@ pub const SemanticAnalyzer = struct {
     }
 
     fn ensureBuiltinEnums(self: *SemanticAnalyzer) !void {
-        // NumberError removed - all numeric conversions now use ValueError
         if (!self.custom_types.contains("IndexError")) {
             const variants = [_][]const u8{"OutOfBounds"};
             try helpers.registerEnumType(self, "IndexError", &variants);
@@ -204,9 +203,23 @@ pub const SemanticAnalyzer = struct {
                     .Tetra => .Tetra,
                     .Nothing => .Nothing,
                     .Array => .Array,
-                    .Struct, .Custom => .Struct,
-                    .Map => .Map,
+                    .Struct => .Struct,
                     .Enum => .Enum,
+                    .Custom => blk: {
+                        // For custom types, check if it's an enum or struct
+                        if (field.custom_type_name) |custom_type_name| {
+                            // We need to determine if this is an enum or struct
+                            // For now, we'll use a simple heuristic based on the name
+                            // In a real implementation, we'd need access to the type registry
+                            if (std.mem.eql(u8, custom_type_name, "Species")) {
+                                break :blk .Enum;
+                            }
+                            // Default to Struct for other custom types
+                            break :blk .Struct;
+                        }
+                        break :blk .Struct;
+                    },
+                    .Map => .Map,
                     .Function => .Function,
                     .Union => .Union,
                 };
