@@ -25,6 +25,11 @@ pub fn internalCallExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?
         return try parsePrintMethod(self);
     }
 
+    // Special handling for @exit method - treat as built-in call
+    if (method_tok.type == .EXIT) {
+        return try parseExitMethod(self);
+    }
+
     // consume method token
     self.advance();
     // expect '('
@@ -331,4 +336,41 @@ fn parsePlaceholderExpression(self: *Parser, content: []const u8) ErrorList!*ast
     };
 
     return expr;
+}
+
+/// Parse @exit method - creates a BuiltinCall expression
+pub fn parseExitMethod(self: *Parser) ErrorList!?*ast.Expr {
+    const method_tok = self.peek();
+    self.advance(); // consume EXIT token
+
+    // Expect opening parenthesis
+    if (self.peek().type != .LEFT_PAREN) {
+        return error.ExpectedLeftParen;
+    }
+    self.advance();
+
+    // Parse the exit code argument
+    const exit_code_expr = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
+
+    // Expect closing parenthesis
+    if (self.peek().type != .RIGHT_PAREN) {
+        return error.ExpectedRightParen;
+    }
+    self.advance();
+
+    // Create arguments array
+    const arguments = try self.allocator.alloc(*ast.Expr, 1);
+    arguments[0] = exit_code_expr;
+
+    // Create BuiltinCall expression
+    const exit_expr = try self.allocator.create(ast.Expr);
+    exit_expr.* = .{
+        .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(method_tok) },
+        .data = .{ .BuiltinCall = .{
+            .function = method_tok,
+            .arguments = arguments,
+        } },
+    };
+
+    return exit_expr;
 }

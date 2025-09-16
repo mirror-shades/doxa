@@ -1,0 +1,4 @@
+// Test @exit implementation
+@print("Before exit")
+@exit(42)
+@print("This should not print")

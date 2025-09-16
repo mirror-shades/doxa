@@ -448,6 +448,12 @@ pub const CallsHandler = struct {
             // @time() -> returns Unix timestamp as int
             if (builtin_data.arguments.len != 0) return error.InvalidArgumentCount;
             try self.generator.instructions.append(.{ .Call = .{ .function_index = 0, .qualified_name = "time", .arg_count = 0, .call_kind = .BuiltinFunction, .target_module = null, .return_type = .Int } });
+        } else if (std.mem.eql(u8, name, "exit")) {
+            // @exit(exit_code) -> exits program with exit code
+            if (builtin_data.arguments.len != 1) return error.InvalidArgumentCount;
+            // Evaluate the exit code argument
+            try self.generator.generateExpression(builtin_data.arguments[0], true, false);
+            try self.generator.instructions.append(.{ .Call = .{ .function_index = 0, .qualified_name = "exit", .arg_count = 1, .call_kind = .BuiltinFunction, .target_module = null, .return_type = .Nothing } });
         } else {
             // Fallback: no-op or error until implemented
             return error.NotImplemented;

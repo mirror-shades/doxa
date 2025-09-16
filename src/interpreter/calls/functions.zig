@@ -157,6 +157,8 @@ pub const FunctionOps = struct {
             try execBuiltinArch(vm);
         } else if (std.mem.eql(u8, c.qualified_name, "time")) {
             try execBuiltinTime(vm);
+        } else if (std.mem.eql(u8, c.qualified_name, "exit")) {
+            try execBuiltinExit(vm);
         } else {
             return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Unknown built-in function: {s}", .{c.qualified_name});
         }
@@ -547,5 +549,24 @@ pub const FunctionOps = struct {
     fn execBuiltinTime(vm: anytype) !void {
         const timestamp = std.time.timestamp();
         try vm.stack.push(HIRFrame.initInt(timestamp));
+    }
+
+    // Built-in EXIT function - exit program with exit code
+    fn execBuiltinExit(vm: anytype) !void {
+        // Pop the exit code from the stack
+        const exit_code_frame = try vm.stack.pop();
+        _ = switch (exit_code_frame.value) {
+            .int => |i| @as(u8, @intCast(i & 0xFF)), // Convert to u8 and mask to valid exit code range
+            .byte => |b| b,
+            else => {
+                return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "@exit: argument must be an integer", .{});
+            },
+        };
+        
+        // Set the VM to stop running
+        vm.running = false;
+        
+        // Note: In a real implementation, you might want to call std.process.exit(exit_code)
+        // but for the VM, just stopping execution is sufficient
     }
 };
