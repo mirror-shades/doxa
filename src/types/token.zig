@@ -97,7 +97,8 @@ pub const TokenType = enum {
     INPUT, // @input       - read from stdin
     OS, // @os     - get operating system
     ARCH, // @arch     - get architecture
-    TIME, // @time       - get current time
+    TIME, // @time       - get current time (Unix seconds)
+    TICK, // @tick      - monotonic high-resolution time in nanoseconds
     EXIT, // @exit     - exit program
     SLEEP, // @sleep       - sleep for a given number of milliseconds
     RANDOM, // @random       - get random number

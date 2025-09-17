@@ -497,23 +497,34 @@ pub const HIRGenerator = struct {
                 // Track the parameter's type
                 try self.trackVariableType(param.name.lexeme, param_type);
 
-                // If the parameter has an explicit enum type, also track its custom type name
+                // If the parameter has an explicit custom type, also track its custom type name
                 if (param.type_expr) |type_expr_for_custom| {
                     const type_info_for_custom = try ast.typeInfoFromExpr(self.allocator, type_expr_for_custom);
-                    // If explicitly Enum(GameState)
-                    if (type_info_for_custom.base == .Enum) {
+                    // Explicit struct parameter: track custom type so instance methods resolve
+                    if (type_info_for_custom.base == .Struct) {
+                        if (type_info_for_custom.custom_type) |struct_type_name_for_param| {
+                            try self.trackVariableCustomType(param.name.lexeme, struct_type_name_for_param);
+                            try self.trackVariableType(param.name.lexeme, .Struct);
+                        }
+                        // Explicit enum parameter
+                    } else if (type_info_for_custom.base == .Enum) {
                         if (type_info_for_custom.custom_type) |enum_type_name_for_param| {
                             try self.trackVariableCustomType(param.name.lexeme, enum_type_name_for_param);
-                            // Ensure tracked var type is Enum so downstream checks succeed
                             try self.trackVariableType(param.name.lexeme, .Enum);
                         }
+                        // Custom(named) type: resolve whether it's a struct or enum
                     } else if (type_info_for_custom.base == .Custom) {
                         if (type_info_for_custom.custom_type) |custom_type_name_for_param| {
-                            // Resolve custom type; if it's an enum, record it
                             if (self.isCustomType(custom_type_name_for_param)) |ct| {
-                                if (ct.kind == .Enum) {
-                                    try self.trackVariableCustomType(param.name.lexeme, custom_type_name_for_param);
-                                    try self.trackVariableType(param.name.lexeme, .Enum);
+                                switch (ct.kind) {
+                                    .Struct => {
+                                        try self.trackVariableCustomType(param.name.lexeme, custom_type_name_for_param);
+                                        try self.trackVariableType(param.name.lexeme, .Struct);
+                                    },
+                                    .Enum => {
+                                        try self.trackVariableCustomType(param.name.lexeme, custom_type_name_for_param);
+                                        try self.trackVariableType(param.name.lexeme, .Enum);
+                                    },
                                 }
                             }
                         }
@@ -870,7 +881,7 @@ pub const HIRGenerator = struct {
             .Array => |elements| {
                 if (self.is_generating_nested_array) {
                     // We're already inside a nested array context, use the internal method
-                    try collections_handler.generateArrayInternal(elements, preserve_result, true);
+                    try collections_handler.generateArrayInternal(elements, preserve_result);
                 } else {
                     // Normal top-level array
                     try collections_handler.generateArray(elements, preserve_result);
@@ -1022,7 +1033,6 @@ pub const HIRGenerator = struct {
                     if (method_table.get(name)) |mi| {
                         // This is a struct method call - generate as a function call
                         const qualified_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ struct_name, name });
-                        defer self.allocator.free(qualified_name);
 
                         // Generate arguments: push receiver first for instance methods
                         if (!mi.is_static) {

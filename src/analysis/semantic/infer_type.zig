@@ -396,7 +396,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                                 has_placeholders = true;
                             }
                         }
-                        
+
                         // Check total argument count (including placeholders)
                         if (function_call.arguments.len > expected_arg_count) {
                             self.reporter.reportCompileError(
@@ -409,7 +409,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                             type_info.base = .Nothing;
                             return type_info;
                         }
-                        
+
                         // Only error on too few arguments if no placeholders are used
                         // If placeholders (~) are used, that's an explicit choice to skip parameters
                         if (provided_arg_count < expected_arg_count and !has_placeholders) {
@@ -1217,6 +1217,11 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 if (bc.arguments.len != 0) return type_info;
                 type_info.* = .{ .base = .Float };
                 return type_info;
+            } else if (std.mem.eql(u8, fname, "tick")) {
+                requireArity.check(self, expr, bc.arguments.len, 0, fname);
+                if (bc.arguments.len != 0) return type_info;
+                type_info.* = .{ .base = .Int };
+                return type_info;
             }
 
             self.reporter.reportCompileError(getLocationFromBase(expr.base), ErrorCode.NOT_IMPLEMENTED, "Unknown builtin '@{s}'", .{fname});
@@ -1677,7 +1682,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 },
 
                 // System information methods (no receiver required)
-                .OS, .ARCH, .TIME => {
+                .OS, .ARCH, .TIME, .TICK => {
                     // These methods don't require a receiver, they're called as @os(), @arch(), @time()
                     // Transform into BuiltinCall with no arguments
                     expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = &[_]*ast.Expr{} } };

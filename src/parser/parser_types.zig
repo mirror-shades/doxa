@@ -526,7 +526,8 @@ pub const Parser = struct {
         }
         self.advance(); // consume )
 
-        // Disallow dot-syntax method sugar to avoid ambiguity with user fields/methods
+        // Disallow dot-syntax for built-in methods to avoid ambiguity
+        // Allow user-defined struct methods to use dot-syntax
         if (callee.?.data == .FieldAccess) {
             const fa = callee.?.data.FieldAccess;
             if (Parser.methodNameToTokenType(fa.field.lexeme)) |_| {
@@ -534,6 +535,7 @@ pub const Parser = struct {
                 self.reporter.reportCompileError(loc, ErrorCode.UNKNOWN_METHOD, "Unknown field or method '{s}'. If this is a compiler method, use @{s}(...)", .{ fa.field.lexeme, fa.field.lexeme });
                 return error.UnknownFieldOrMethod;
             }
+            // For user-defined methods (not in methodNameToTokenType), allow the call to proceed
         }
 
         // Fallback: regular function call

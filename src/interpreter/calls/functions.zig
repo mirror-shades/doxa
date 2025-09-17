@@ -140,6 +140,8 @@ pub const FunctionOps = struct {
             try execBuiltinArch(vm);
         } else if (std.mem.eql(u8, c.qualified_name, "time")) {
             try execBuiltinTime(vm);
+        } else if (std.mem.eql(u8, c.qualified_name, "tick")) {
+            try execBuiltinTick(vm);
         } else if (std.mem.eql(u8, c.qualified_name, "exit")) {
             try execBuiltinExit(vm);
         } else if (std.mem.eql(u8, c.qualified_name, "sleep")) {
@@ -546,6 +548,13 @@ pub const FunctionOps = struct {
     fn execBuiltinTime(vm: anytype) !void {
         const timestamp = std.time.timestamp();
         try vm.stack.push(HIRFrame.initInt(timestamp));
+    }
+
+    // Built-in TICK function - get monotonic time in nanoseconds
+    fn execBuiltinTick(vm: anytype) !void {
+        const ns = std.time.nanoTimestamp();
+        const ns_i64: i64 = @as(i64, @intCast(ns));
+        try vm.stack.push(HIRFrame.initInt(ns_i64));
     }
 
     // Built-in EXIT function - exit program with exit code
