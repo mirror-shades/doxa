@@ -781,7 +781,7 @@ pub const HIRVM = struct {
                 try debug_print.PrintOps.execPrintInterpolated(self, interp);
             },
 
-            .EnterScope => {
+            .EnterScope => |e| {
                 // TAIL CALL FIX: Skip scope creation if this is a tail call
                 if (self.skip_next_enter_scope) {
                     self.skip_next_enter_scope = false; // Reset flag
@@ -791,12 +791,16 @@ pub const HIRVM = struct {
 
                 // Create new scope - the memory module handles all the complexity
                 const new_scope = try self.memory_manager.scope_manager.createScope(self.current_scope, self.memory_manager);
+                // Pre-size maps for upcoming variable bindings (params/locals)
+                new_scope.reserveVariableCapacity(@intCast(e.var_count));
                 self.current_scope = new_scope;
                 // Reset hot variable cache for new scope to avoid stale entries
                 self.hot_var_count = 0;
                 // Optionally clear entries
                 var h_i: usize = 0;
                 while (h_i < self.hot_vars.len) : (h_i += 1) self.hot_vars[h_i] = null;
+                // Clear per-scope variable cache to avoid stale storage_id mappings
+                self.var_cache.clearRetainingCapacity();
                 // Reserved: potential fast-path hint
             },
 
@@ -812,6 +816,8 @@ pub const HIRVM = struct {
                 self.hot_var_count = 0;
                 var h_j: usize = 0;
                 while (h_j < self.hot_vars.len) : (h_j += 1) self.hot_vars[h_j] = null;
+                // Clear per-scope variable cache on scope exit as well
+                self.var_cache.clearRetainingCapacity();
                 // Reserved
             },
 

@@ -410,6 +410,13 @@ pub const Scope = struct {
         self.manager.allocator.destroy(self);
     }
 
+    /// Reserve capacity in variable/name maps to reduce rehashing cost when binding params/locals
+    pub fn reserveVariableCapacity(self: *Scope, count: usize) void {
+        // Best-effort; ignore errors to keep fast path simple
+        self.variables.ensureTotalCapacity(@intCast(count)) catch {};
+        self.name_map.ensureTotalCapacity(@intCast(count)) catch {};
+    }
+
     // Custom type instance creation - using arena allocator for unified cleanup
     pub fn createCustomTypeInstance(self: *Scope, type_name: []const u8, data: CustomTypeInstanceData) !*CustomTypeInstance {
         const instance = try self.arena.allocator().create(CustomTypeInstance);
