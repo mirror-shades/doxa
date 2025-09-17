@@ -10,6 +10,15 @@ struct Reactor {
     power :: int
     maxPower :: int
 
+    method new() returns Reactor {
+        return Reactor {
+        rods is 0,
+        neutrons is 0,
+        power is 0,
+        maxPower is 0,
+        }
+    }
+
     method addRod(this, x :: int) {
         var result is this.rods + x
         if result < 1 then {
@@ -29,7 +38,10 @@ function printMenu(state :: GameState, reactor :: Reactor) {
             @print("1. Start Game\n")
         }
         GameState.Running then {
-            @print("1. Retire\n")
+            @print("1: add rod\n")
+            @print("2: remove rod\n")
+            @print("default: next turn\n")
+            @print("retire: end game\n")
         }
         GameState.GameOver then {
             @print("Max power: {reactor.getMaxPower()}\n")
@@ -44,7 +56,10 @@ function handleInput(input :: string, ^state :: GameState, ^reactor :: Reactor) 
             if input == "1" then state is GameState.Running
         }
         GameState.Running then {
-            if input == "1" then state is GameState.GameOver
+            if input == "1" then reactor.addRod(1)
+            if input == "2" then reactor.addRod(-1)
+            if input == "" then nextTurn()
+            if input == "retire" then state is GameState.GameOver
         }
         GameState.GameOver then {
             if input == "1" then state is GameState.Start
@@ -54,6 +69,9 @@ function handleInput(input :: string, ^state :: GameState, ^reactor :: Reactor) 
 
 function printReactor(state :: GameState, reactor :: Reactor) {
     @print("Reactor is running\n")
+    @print("Rods: {reactor.rods}\n")
+    @print("Neutrons: {reactor.neutrons}\n")
+    @print("Power: {reactor.power}\n")
 }
 
 function render(state :: GameState, reactor :: Reactor) {
@@ -65,12 +83,7 @@ function render(state :: GameState, reactor :: Reactor) {
 
 entry function main() {
     var state is GameState.Start
-    var reactor is Reactor {
-        rods is 0,
-        neutrons is 0,
-        power is 0,
-        maxPower is 0,
-    }
+    var reactor is Reactor.new()
     do {
         @print("Enter a command: \n")
         render(state, reactor)
