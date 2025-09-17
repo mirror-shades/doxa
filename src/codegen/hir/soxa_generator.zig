@@ -497,6 +497,29 @@ pub const HIRGenerator = struct {
                 // Track the parameter's type
                 try self.trackVariableType(param.name.lexeme, param_type);
 
+                // If the parameter has an explicit enum type, also track its custom type name
+                if (param.type_expr) |type_expr_for_custom| {
+                    const type_info_for_custom = try ast.typeInfoFromExpr(self.allocator, type_expr_for_custom);
+                    // If explicitly Enum(GameState)
+                    if (type_info_for_custom.base == .Enum) {
+                        if (type_info_for_custom.custom_type) |enum_type_name_for_param| {
+                            try self.trackVariableCustomType(param.name.lexeme, enum_type_name_for_param);
+                            // Ensure tracked var type is Enum so downstream checks succeed
+                            try self.trackVariableType(param.name.lexeme, .Enum);
+                        }
+                    } else if (type_info_for_custom.base == .Custom) {
+                        if (type_info_for_custom.custom_type) |custom_type_name_for_param| {
+                            // Resolve custom type; if it's an enum, record it
+                            if (self.isCustomType(custom_type_name_for_param)) |ct| {
+                                if (ct.kind == .Enum) {
+                                    try self.trackVariableCustomType(param.name.lexeme, custom_type_name_for_param);
+                                    try self.trackVariableType(param.name.lexeme, .Enum);
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // Check if this parameter is an alias
                 if (function_body.param_is_alias[param_index]) {
                     // For alias parameters, generate StoreParamAlias

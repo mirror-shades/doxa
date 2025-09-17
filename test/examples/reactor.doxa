@@ -1,13 +1,32 @@
-function clearScreen() {
-    for i in 1 to 50 {
-        @print("\n")
+enum GameState {
+    Start,
+    Running,
+    GameOver,
+}
+
+
+function printMenu(state :: GameState) {
+    match state {
+        GameState.Start then {
+            @print("1. Start Game\n")
+        }
+        GameState.Running then {
+            @print("1. Quit Game\n")
+        }
+        GameState.GameOver then {
+            @print("1. Main Menu\n")
+        }
     }
 }
 
+
+
 entry function main() {
+    var state is GameState.Start
     do {
         @print("Enter a command: \n")
+        printMenu(state)
         const input is @input()
-        if input == "clear" then clearScreen()
+        
     }
 }
