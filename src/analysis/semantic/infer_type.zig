@@ -388,14 +388,35 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                         // Validate argument count allowing default placeholders (~)
                         const expected_arg_count: usize = func_type.params.len;
                         var provided_arg_count: usize = 0;
+                        var has_placeholders: bool = false;
                         for (function_call.arguments) |arg_expr_it| {
-                            if (arg_expr_it.expr.data != .DefaultArgPlaceholder) provided_arg_count += 1;
+                            if (arg_expr_it.expr.data != .DefaultArgPlaceholder) {
+                                provided_arg_count += 1;
+                            } else {
+                                has_placeholders = true;
+                            }
                         }
-                        if (provided_arg_count > expected_arg_count) {
+                        
+                        // Check total argument count (including placeholders)
+                        if (function_call.arguments.len > expected_arg_count) {
                             self.reporter.reportCompileError(
                                 getLocationFromBase(expr.base),
                                 ErrorCode.ARGUMENT_COUNT_MISMATCH,
                                 "Argument count mismatch: expected at most {}, got {}",
+                                .{ expected_arg_count, function_call.arguments.len },
+                            );
+                            self.fatal_error = true;
+                            type_info.base = .Nothing;
+                            return type_info;
+                        }
+                        
+                        // Only error on too few arguments if no placeholders are used
+                        // If placeholders (~) are used, that's an explicit choice to skip parameters
+                        if (provided_arg_count < expected_arg_count and !has_placeholders) {
+                            self.reporter.reportCompileError(
+                                getLocationFromBase(expr.base),
+                                ErrorCode.ARGUMENT_COUNT_MISMATCH,
+                                "Argument count mismatch: expected {}, got {} (use ~ to explicitly skip parameters)",
                                 .{ expected_arg_count, provided_arg_count },
                             );
                             self.fatal_error = true;

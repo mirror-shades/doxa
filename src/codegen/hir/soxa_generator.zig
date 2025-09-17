@@ -867,7 +867,15 @@ pub const HIRGenerator = struct {
             .Cast => try control_flow_handler.generateCast(expr.data, preserve_result),
 
             // Collections
-            .Array => |elements| try collections_handler.generateArray(elements, preserve_result),
+            .Array => |elements| {
+                if (self.is_generating_nested_array) {
+                    // We're already inside a nested array context, use the internal method
+                    try collections_handler.generateArrayInternal(elements, preserve_result, true);
+                } else {
+                    // Normal top-level array
+                    try collections_handler.generateArray(elements, preserve_result);
+                }
+            },
             .Map => |entries| try collections_handler.generateMap(entries),
             .Index => |index| try collections_handler.generateIndex(index, preserve_result, should_pop_after_use),
             .IndexAssign => try collections_handler.generateIndexAssign(expr.data, preserve_result),
