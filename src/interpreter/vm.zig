@@ -62,6 +62,8 @@ const CanonicalTypes = struct {
     nothing: *TypeInfo,
 };
 
+const ProfileEntry = struct { count: u64 = 0, ns: u64 = 0 };
+
 pub const HIRVM = struct {
     program: *HIRProgram,
     reporter: *Reporter,
@@ -85,6 +87,11 @@ pub const HIRVM = struct {
     // Hot variable cache - direct storage for most accessed variables
     hot_vars: [4]?HotVar = [_]?HotVar{null} ** 4,
     hot_var_count: u8 = 0,
+
+    // Profiling support
+    profile_mode: bool = false,
+    in_function_depth: u32 = 0,
+    profile_map: std.StringHashMap(ProfileEntry),
 
     // Tail call optimization: flag to skip scope creation on next EnterScope
     skip_next_enter_scope: bool = false,
@@ -467,11 +474,20 @@ pub const HIRVM = struct {
             .turbo_mode = true,
             .hot_vars = [_]?HotVar{null} ** 4,
             .hot_var_count = 0,
+            .profile_mode = false,
+            .in_function_depth = 0,
+            .profile_map = std.StringHashMap(ProfileEntry).init(allocator),
             .string_interner = string_interner,
             .custom_type_registry = std.StringHashMap(CustomTypeInfo).init(allocator), // NEW: Initialize custom type registry
             .canonical_types = undefined,
             ._reserved_flags = 0,
         };
+
+        // Enable profiling if environment variable DOXA_PROFILE is set
+        if (std.process.getEnvVarOwned(allocator, "DOXA_PROFILE")) |val| {
+            vm.profile_mode = val.len > 0 and val[0] != '0';
+            allocator.free(val);
+        } else |_| {}
 
         // Pre-resolve all labels for efficient jumps
         try vm.resolveLabels();
@@ -528,6 +544,7 @@ pub const HIRVM = struct {
         self.call_stack.deinit();
         self.label_map.deinit();
         self.var_cache.deinit();
+        self.profile_map.deinit();
     }
 
     /// Get a canonical TypeInfo pointer for primitive types to avoid allocations
@@ -570,6 +587,18 @@ pub const HIRVM = struct {
                 else => {},
             }
         }
+
+        // Cache function entry/body IPs for fast calls
+        for (self.program.function_table) |*fn_info| {
+            if (self.label_map.get(fn_info.start_label)) |start_ip| {
+                fn_info.start_ip = start_ip;
+            }
+            if (fn_info.body_label) |bl| {
+                if (self.label_map.get(bl)) |body_ip| {
+                    fn_info.body_ip = body_ip;
+                }
+            }
+        }
     }
 
     /// Main execution loop - directly execute HIR instructions
@@ -581,7 +610,23 @@ pub const HIRVM = struct {
         while (self.running and self.ip < self.program.instructions.len) {
             const instruction = self.program.instructions[self.ip];
 
+            var start_ns: i128 = 0;
+            if (self.profile_mode and self.in_function_depth > 0) {
+                start_ns = std.time.nanoTimestamp();
+            }
+
             try self.executeInstruction(instruction);
+
+            if (self.profile_mode and self.in_function_depth > 0 and instruction != .Call) {
+                const elapsed: u64 = @intCast(std.time.nanoTimestamp() - start_ns);
+                const tag_name = @tagName(instruction);
+                // Intern tag for stable key and minimal allocations
+                const key = self.string_interner.intern(tag_name) catch tag_name;
+                var gop = self.profile_map.getOrPut(key) catch unreachable;
+                if (!gop.found_existing) gop.value_ptr.* = .{ .count = 0, .ns = 0 };
+                gop.value_ptr.count += 1;
+                gop.value_ptr.ns += elapsed;
+            }
 
             // Only advance IP if instruction didn't jump
             if (!self.didJump(instruction)) {
@@ -591,9 +636,12 @@ pub const HIRVM = struct {
 
         // Return final result from stack if available
         if (self.stack.size() > 0) {
-            return try self.stack.pop();
+            const result = try self.stack.pop();
+            if (self.profile_mode) self.dumpProfile() catch {};
+            return result;
         }
 
+        if (self.profile_mode) self.dumpProfile() catch {};
         return null;
     }
 
@@ -908,11 +956,14 @@ pub const HIRVM = struct {
             },
 
             .Call => |c| {
+                // Enter function profiling region for local functions
+                if (self.profile_mode and c.call_kind == .LocalFunction) self.in_function_depth += 1;
                 try ops_functions.FunctionOps.execCall(self, c);
             },
 
             .Return => |r| {
                 try ops_functions.FunctionOps.execReturn(self, r);
+                if (self.profile_mode and self.in_function_depth > 0) self.in_function_depth -= 1;
             },
 
             .TryBegin => |t| {
@@ -1411,6 +1462,35 @@ pub const HIRVM = struct {
             std.debug.print("Stack is empty\n", .{});
         }
         std.debug.print("=========================\n\n", .{});
+    }
+
+    /// Dump profiling summary (sorted by total time desc)
+    fn dumpProfile(self: *HIRVM) !void {
+        const ProfileRow = struct { name: []const u8, count: u64, ns: u64 };
+        var entries = try self.allocator.alloc(ProfileRow, self.profile_map.count());
+        defer self.allocator.free(entries);
+        var idx: usize = 0;
+        var it = self.profile_map.iterator();
+        while (it.next()) |e| {
+            entries[idx] = .{ .name = e.key_ptr.*, .count = e.value_ptr.count, .ns = e.value_ptr.ns };
+            idx += 1;
+        }
+        const Cmp = struct {
+            fn less(_: void, a: ProfileRow, b: ProfileRow) bool {
+                return a.ns > b.ns; // Desc
+            }
+        };
+        std.sort.block(ProfileRow, entries, {}, Cmp.less);
+
+        const out = std.io.getStdOut().writer();
+        try out.print("\n=== PROFILE (inside functions) ===\n", .{});
+        var total_ns: u128 = 0;
+        for (entries) |en| total_ns += en.ns;
+        for (entries) |en| {
+            const pct: f64 = if (total_ns == 0) 0 else @as(f64, @floatFromInt(en.ns)) * 100.0 / @as(f64, @floatFromInt(total_ns));
+            try out.print("{s:18}  count={d:8}  time={d:12} ns  ({d:.2}%)\n", .{ en.name, en.count, en.ns, pct });
+        }
+        try out.print("Total: {d} ns\n", .{total_ns});
     }
 
     pub fn exitScope(self: *HIRVM, scope_id: u32) !void {

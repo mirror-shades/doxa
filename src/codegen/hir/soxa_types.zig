@@ -96,6 +96,9 @@ pub const HIRProgram = struct {
         return_type: HIRType,
         start_label: []const u8,
         body_label: ?[]const u8 = null, // For tail call optimization - jumps here to skip parameter setup
+        // Cached instruction indices for fast calls (filled by VM at init)
+        start_ip: u32 = 0,
+        body_ip: ?u32 = null,
         local_var_count: u32, // VM: stack frame sizing
         is_entry: bool,
         param_is_alias: []bool, // NEW: Track which parameters are aliases

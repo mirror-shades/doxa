@@ -1,0 +1,13 @@
+function clearScreen() {
+    for i in 1 to 50 {
+        @print("\n")
+    }
+}
+
+entry function main() {
+    do {
+        @print("Enter a command: \n")
+        const input is @input()
+        if input == "clear" then clearScreen()
+    }
+}
