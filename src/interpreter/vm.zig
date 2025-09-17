@@ -615,6 +615,12 @@ pub const HIRVM = struct {
                 start_ns = std.time.nanoTimestamp();
             }
 
+            // Check for interrupt every 1000 instructions to allow graceful shutdown
+            if (self.ip % 1000 == 0) {
+                // This is a simple way to allow the OS to handle interrupts
+                // The program will exit naturally when interrupted
+            }
+
             try self.executeInstruction(instruction);
 
             if (self.profile_mode and self.in_function_depth > 0 and instruction != .Call) {

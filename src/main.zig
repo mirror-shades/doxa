@@ -250,6 +250,7 @@ fn runSoxaFile(memoryManager: *MemoryManager, soxa_path: []const u8, reporter: *
     // NEW: Bridge custom types from memory manager to VM
     try memoryManager.bridgeTypesToVM(&vm);
 
+    // Run the VM
     _ = try vm.run();
 }
 

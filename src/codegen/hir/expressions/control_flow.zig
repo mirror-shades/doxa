@@ -119,16 +119,33 @@ pub const ControlFlowHandler = struct {
 
     /// Generate HIR for match expressions
     pub fn generateMatch(self: *ControlFlowHandler, match_expr: ast.MatchExpr) ErrorList!void {
-        // Extract enum type context from the match value if it's a variable
+        // Extract enum type context from the match value
         var match_enum_type: ?[]const u8 = null;
-        if (match_expr.value.data == .Variable) {
-            const var_name = match_expr.value.data.Variable.lexeme;
-            if (self.generator.symbol_table.getTrackedVariableType(var_name)) |var_type| {
-                if (var_type == .Enum) {
-                    // Look up the actual enum type name from tracked custom types
-                    match_enum_type = self.generator.symbol_table.getVariableCustomType(var_name);
+        switch (match_expr.value.data) {
+            .Variable => |v| {
+                const var_name = v.lexeme;
+                if (self.generator.symbol_table.getTrackedVariableType(var_name)) |var_type| {
+                    if (var_type == .Enum) {
+                        match_enum_type = self.generator.symbol_table.getVariableCustomType(var_name);
+                    }
                 }
-            }
+                // Fallback: if the variable name itself is a registered enum type, use it
+                if (match_enum_type == null) {
+                    if (self.generator.type_system.custom_types.get(var_name)) |ct| {
+                        if (ct.kind == .Enum) match_enum_type = var_name;
+                    }
+                }
+            },
+            .FieldAccess => |fa| {
+                // Handle matching on enum member container like GameState.Start (unlikely here but safe)
+                if (fa.object.data == .Variable) {
+                    const base_name = fa.object.data.Variable.lexeme;
+                    if (self.generator.type_system.custom_types.get(base_name)) |ct| {
+                        if (ct.kind == .Enum) match_enum_type = base_name;
+                    }
+                }
+            },
+            else => {},
         }
 
         try self.generator.generateExpression(match_expr.value, true, false);
@@ -202,6 +219,24 @@ pub const ControlFlowHandler = struct {
 
                     // Compare and jump if equal (use Enum operand type)
                     try self.generator.instructions.append(.{ .Compare = .{ .op = .Eq, .operand_type = .Enum } });
+                } else if (self.generator.current_enum_type) |enum_type_from_context| {
+                    // Fallback: if we are in an enum context (e.g., inside var decl init), use it
+                    const variant_index2 = if (self.generator.type_system.custom_types.get(enum_type_from_context)) |custom_type|
+                        custom_type.getEnumVariantIndex(case.pattern.lexeme) orelse 0
+                    else
+                        0;
+
+                    const pattern_value2 = HIRValue{
+                        .enum_variant = HIREnum{
+                            .type_name = enum_type_from_context,
+                            .variant_name = case.pattern.lexeme,
+                            .variant_index = variant_index2,
+                            .path = null,
+                        },
+                    };
+                    const pattern_idx2 = try self.generator.addConstant(pattern_value2);
+                    try self.generator.instructions.append(.{ .Const = .{ .value = pattern_value2, .constant_id = pattern_idx2 } });
+                    try self.generator.instructions.append(.{ .Compare = .{ .op = .Eq, .operand_type = .Enum } });
                 } else {
                     // Regular string literal pattern
                     const pattern_value = HIRValue{ .string = case.pattern.literal.string };
@@ -231,11 +266,19 @@ pub const ControlFlowHandler = struct {
                 self.generator.current_enum_type = enum_type_name;
             }
 
-            // Drop the original match value before producing the case body result
-            // to keep the stack balanced and ensure the case body value is on top.
-            try self.generator.instructions.append(.Pop);
-
-            try self.generator.generateExpression(case.body, true, false);
+            // Check if the case body is a block (statements) or an expression
+            const is_block = case.body.data == .Block;
+            
+            if (is_block) {
+                // For blocks, we don't need to pop the match value since blocks don't return values
+                // and we don't need to preserve the result
+                try self.generator.generateExpression(case.body, false, false);
+            } else {
+                // For expressions, drop the original match value before producing the case body result
+                // to keep the stack balanced and ensure the case body value is on top.
+                try self.generator.instructions.append(.Pop);
+                try self.generator.generateExpression(case.body, true, false);
+            }
 
             // Restore previous enum context
             self.generator.current_enum_type = old_enum_context;

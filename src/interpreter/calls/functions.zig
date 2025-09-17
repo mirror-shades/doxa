@@ -403,30 +403,40 @@ pub const FunctionOps = struct {
 
     // Built-in input function
     fn execBuiltinInput(vm: anytype) !void {
-        // Simple approach: use readUntilDelimiterAlloc which is more reliable
         const stdin = std.io.getStdIn().reader();
 
-        // Use the standard library's readUntilDelimiterAlloc for better platform compatibility
-        const input_line = stdin.readUntilDelimiterAlloc(vm.allocator, '\n', 4096) catch |err| switch (err) {
+        // Use readUntilDelimiterOrEof which handles EOF/interruption more gracefully
+        var buffer: [4096]u8 = undefined;
+        const input_line = stdin.readUntilDelimiterOrEof(buffer[0..], '\n') catch |err| switch (err) {
             error.StreamTooLong => blk: {
                 // Handle long lines by reading what we can
-                var buffer: [4096]u8 = undefined;
                 const line = stdin.readUntilDelimiterOrEof(buffer[0..], '\n') catch "";
-                break :blk try vm.allocator.dupe(u8, line orelse "");
+                break :blk line orelse "";
             },
-            error.EndOfStream => try vm.allocator.dupe(u8, ""),
+            error.Canceled, error.OperationAborted, error.BrokenPipe => {
+                // Treat Ctrl+C or stream interruption as graceful termination
+                vm.running = false;
+                return;
+            },
             else => return err,
         };
-        defer vm.allocator.free(input_line);
+
+        // Handle EOF (Ctrl+Z on Windows) by exiting cleanly
+        if (input_line == null) {
+            vm.running = false;
+            return;
+        }
+
+        const line = input_line.?;
 
         // Remove trailing carriage return if present (Windows compatibility)
-        var line = input_line;
-        if (line.len > 0 and line[line.len - 1] == '\r') {
-            line = line[0 .. line.len - 1];
+        var clean_line = line;
+        if (clean_line.len > 0 and clean_line[clean_line.len - 1] == '\r') {
+            clean_line = clean_line[0 .. clean_line.len - 1];
         }
 
         // Create a copy of the input string in VM memory
-        const input_string = try vm.allocator.dupe(u8, line);
+        const input_string = try vm.allocator.dupe(u8, clean_line);
         try vm.stack.push(HIRFrame.initString(input_string));
     }
 

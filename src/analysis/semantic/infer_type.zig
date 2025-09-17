@@ -603,7 +603,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                             resolved_object_type = resolved_type_info;
                         } else {
                             // Not a struct, treat as enum variant access
-                            type_info.* = .{ .base = .Enum };
+                            type_info.* = .{ .base = .Enum, .custom_type = custom_type_name };
                             return type_info;
                         }
                     } else {
@@ -619,7 +619,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                     }
                 } else {
                     // No custom type name, treat as enum variant access
-                    type_info.* = .{ .base = .Enum };
+                    type_info.* = .{ .base = .Enum, .custom_type = null };
                     return type_info;
                 }
             }
@@ -1678,7 +1678,8 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
         },
         .EnumMember => {
             // Enum members have the enum type
-            type_info.* = .{ .base = .Enum };
+            type_info.* = .{ .base = .Enum, .custom_type = null };
+            // Note: custom_type will be set by the caller if needed
         },
         .DefaultArgPlaceholder => {
             type_info.* = .{ .base = .Nothing };
