@@ -1,3 +1,5 @@
+const limit :: int is 10000;
+
 function diceRoll() returns int {
     const random_float is @random() * 6 + 1
     return @int(random_float) as int else -1 
@@ -12,7 +14,7 @@ function dice_roll_benchmark() {
     var count is 0
     var start_time is @time()
     
-    for i is 1 while i <= 10000 do i += 1 {
+    for i is 1 while i <= limit do i += 1 {
         const roll is diceRoll()
         count is count + roll  // Prevent optimization
     }
@@ -25,7 +27,7 @@ function dice_roll_benchmark() {
 function fizzbuzz_benchmark() {
     var start_time is @time()
     
-    for i is 1 while i <= 10000 do i += 1 {
+    for i is 1 while i <= limit do i += 1 {
         if i % 15 == 0 then "FizzBuzz"
         else if i % 3 == 0 then "Fizz" 
         else if i % 5 == 0 then "Buzz"
@@ -41,7 +43,7 @@ function arithmetic_benchmark() {
     var sum is 0
     var start is @time()
     
-    each i in 1 to 10000 {
+    each i in 1 to limit {
         sum += i * 2 + 1
     }
     
@@ -53,7 +55,7 @@ function call_benchmark() {
     var sum is 0
     var start is @time()
     
-    each i in 1 to 10000 {
+    each i in 1 to limit {
         sum += add(i, i + 1)
     }
     

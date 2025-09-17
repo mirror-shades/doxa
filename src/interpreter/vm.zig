@@ -53,6 +53,15 @@ const debug_print = @import("calls/print.zig");
 const STACK_SIZE: u32 = 1024 * 1024;
 
 /// HIR-based Virtual Machine - executes HIR instructions directly
+const CanonicalTypes = struct {
+    int: *TypeInfo,
+    byte: *TypeInfo,
+    float: *TypeInfo,
+    string: *TypeInfo,
+    tetra: *TypeInfo,
+    nothing: *TypeInfo,
+};
+
 pub const HIRVM = struct {
     program: *HIRProgram,
     reporter: *Reporter,
@@ -80,6 +89,9 @@ pub const HIRVM = struct {
     // Tail call optimization: flag to skip scope creation on next EnterScope
     skip_next_enter_scope: bool = false,
 
+    // Reserved for future fast-path hints
+    _reserved_flags: u1 = 0,
+
     // New field for catch target
     current_catch_target: ?u32 = null, // Track the current catch block's IP
 
@@ -88,6 +100,8 @@ pub const HIRVM = struct {
 
     // NEW: Custom type registry for runtime type safety
     custom_type_registry: std.StringHashMap(CustomTypeInfo),
+    // Canonical TypeInfo singletons for primitive types to avoid per-store allocations
+    canonical_types: CanonicalTypes,
 
     pub fn tokenLiteralToHIRValueWithType(self: *HIRVM, token_literal: TokenLiteral, type_info: *TypeInfo) HIRValue {
         // Handle enum types with proper type information
@@ -455,10 +469,26 @@ pub const HIRVM = struct {
             .hot_var_count = 0,
             .string_interner = string_interner,
             .custom_type_registry = std.StringHashMap(CustomTypeInfo).init(allocator), // NEW: Initialize custom type registry
+            .canonical_types = undefined,
+            ._reserved_flags = 0,
         };
 
         // Pre-resolve all labels for efficient jumps
         try vm.resolveLabels();
+
+        // Initialize canonical TypeInfo singletons
+        vm.canonical_types.int = try allocator.create(TypeInfo);
+        vm.canonical_types.int.* = TypeInfo{ .base = .Int, .is_mutable = true };
+        vm.canonical_types.byte = try allocator.create(TypeInfo);
+        vm.canonical_types.byte.* = TypeInfo{ .base = .Byte, .is_mutable = true };
+        vm.canonical_types.float = try allocator.create(TypeInfo);
+        vm.canonical_types.float.* = TypeInfo{ .base = .Float, .is_mutable = true };
+        vm.canonical_types.string = try allocator.create(TypeInfo);
+        vm.canonical_types.string.* = TypeInfo{ .base = .String, .is_mutable = true };
+        vm.canonical_types.tetra = try allocator.create(TypeInfo);
+        vm.canonical_types.tetra.* = TypeInfo{ .base = .Tetra, .is_mutable = true };
+        vm.canonical_types.nothing = try allocator.create(TypeInfo);
+        vm.canonical_types.nothing.* = TypeInfo{ .base = .Nothing, .is_mutable = true };
 
         return vm;
     }
@@ -485,11 +515,37 @@ pub const HIRVM = struct {
         // Clean up custom type registry
         self.custom_type_registry.deinit();
 
+        // Destroy canonical TypeInfos
+        self.allocator.destroy(self.canonical_types.int);
+        self.allocator.destroy(self.canonical_types.byte);
+        self.allocator.destroy(self.canonical_types.float);
+        self.allocator.destroy(self.canonical_types.string);
+        self.allocator.destroy(self.canonical_types.tetra);
+        self.allocator.destroy(self.canonical_types.nothing);
+
         // Clean up VM data structures
         self.stack.deinit();
         self.call_stack.deinit();
         self.label_map.deinit();
         self.var_cache.deinit();
+    }
+
+    /// Get a canonical TypeInfo pointer for primitive types to avoid allocations
+    pub fn getCanonicalTypeInfo(self: *HIRVM, ti: TypeInfo) !*TypeInfo {
+        return switch (ti.base) {
+            .Int => self.canonical_types.int,
+            .Byte => self.canonical_types.byte,
+            .Float => self.canonical_types.float,
+            .String => self.canonical_types.string,
+            .Tetra => self.canonical_types.tetra,
+            .Nothing => self.canonical_types.nothing,
+            else => blk: {
+                // For complex types, allocate a copy (caller owns arena lifetime)
+                const ptr = try self.allocator.create(TypeInfo);
+                ptr.* = ti;
+                break :blk ptr;
+            },
+        };
     }
 
     /// NEW: Register a custom type for runtime type safety
@@ -736,6 +792,12 @@ pub const HIRVM = struct {
                 // Create new scope - the memory module handles all the complexity
                 const new_scope = try self.memory_manager.scope_manager.createScope(self.current_scope, self.memory_manager);
                 self.current_scope = new_scope;
+                // Reset hot variable cache for new scope to avoid stale entries
+                self.hot_var_count = 0;
+                // Optionally clear entries
+                var h_i: usize = 0;
+                while (h_i < self.hot_vars.len) : (h_i += 1) self.hot_vars[h_i] = null;
+                // Reserved: potential fast-path hint
             },
 
             .ExitScope => {
@@ -746,6 +808,11 @@ pub const HIRVM = struct {
                     // Clean up the old scope
                     old_scope.deinit();
                 }
+                // Reset hot variable cache when leaving a scope
+                self.hot_var_count = 0;
+                var h_j: usize = 0;
+                while (h_j < self.hot_vars.len) : (h_j += 1) self.hot_vars[h_j] = null;
+                // Reserved
             },
 
             .AssertFail => |a| {
