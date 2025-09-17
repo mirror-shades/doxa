@@ -45,6 +45,11 @@ pub fn internalCallExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?
         return try parseTimeMethod(self);
     }
 
+    // Special handling for @tick method - treat as built-in call
+    if (method_tok.type == .TICK) {
+        return try parseTickMethod(self);
+    }
+
     // consume method token
     self.advance();
     // expect '('
@@ -485,4 +490,34 @@ pub fn parseTimeMethod(self: *Parser) ErrorList!?*ast.Expr {
     };
 
     return time_expr;
+}
+
+/// Parse @tick method - creates a BuiltinCall expression
+pub fn parseTickMethod(self: *Parser) ErrorList!?*ast.Expr {
+    const method_tok = self.peek();
+    self.advance(); // consume TICK token
+
+    // Expect opening parenthesis
+    if (self.peek().type != .LEFT_PAREN) {
+        return error.ExpectedLeftParen;
+    }
+    self.advance();
+
+    // Expect closing parenthesis (no arguments for @tick)
+    if (self.peek().type != .RIGHT_PAREN) {
+        return error.ExpectedRightParen;
+    }
+    self.advance();
+
+    // Create BuiltinCall expression with no arguments
+    const tick_expr = try self.allocator.create(ast.Expr);
+    tick_expr.* = .{
+        .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(method_tok) },
+        .data = .{ .BuiltinCall = .{
+            .function = method_tok,
+            .arguments = &[_]*ast.Expr{},
+        } },
+    };
+
+    return tick_expr;
 }

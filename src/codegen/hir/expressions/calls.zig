@@ -491,6 +491,10 @@ pub const CallsHandler = struct {
             // @time() -> returns Unix timestamp as int
             if (builtin_data.arguments.len != 0) return error.InvalidArgumentCount;
             try self.generator.instructions.append(.{ .Call = .{ .function_index = 0, .qualified_name = "time", .arg_count = 0, .call_kind = .BuiltinFunction, .target_module = null, .return_type = .Int } });
+        } else if (std.mem.eql(u8, name, "tick")) {
+            // @tick() -> returns monotonic nanoseconds as int
+            if (builtin_data.arguments.len != 0) return error.InvalidArgumentCount;
+            try self.generator.instructions.append(.{ .Call = .{ .function_index = 0, .qualified_name = "tick", .arg_count = 0, .call_kind = .BuiltinFunction, .target_module = null, .return_type = .Int } });
         } else if (std.mem.eql(u8, name, "exit")) {
             // @exit(exit_code) -> exits program with exit code
             if (builtin_data.arguments.len != 1) return error.InvalidArgumentCount;

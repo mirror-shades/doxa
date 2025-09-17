@@ -20,14 +20,11 @@ pub const CollectionsHandler = struct {
 
     /// Generate HIR for array literals
     pub fn generateArray(self: *CollectionsHandler, elements: []const *ast.Expr, preserve_result: bool) !void {
-        return self.generateArrayInternal(elements, preserve_result, false);
+        return self.generateArrayInternal(elements, preserve_result);
     }
 
     /// Internal array generation with nesting control
-    pub fn generateArrayInternal(self: *CollectionsHandler, elements: []const *ast.Expr, preserve_result: bool, is_nested_element: bool) !void {
-        _ = preserve_result; // Unused parameter
-        _ = is_nested_element; // Unused parameter
-        // Determine array element type from first element (for now)
+    pub fn generateArrayInternal(self: *CollectionsHandler, elements: []const *ast.Expr, preserve_result: bool) !void {
         var element_type: HIRType = .Unknown;
         var nested_element_type: ?HIRType = null;
 
@@ -92,6 +89,11 @@ pub const CollectionsHandler = struct {
 
             // ArraySet pops: value, index, array; and pushes updated array back
             try self.generator.instructions.append(.{ .ArraySet = .{ .bounds_check = false } }); // No bounds check for initialization
+        }
+
+        // Handle preserve_result parameter
+        if (!preserve_result) {
+            try self.generator.instructions.append(.Pop);
         }
     }
 
