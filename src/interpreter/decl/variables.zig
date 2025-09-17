@@ -39,11 +39,25 @@ pub const VariableOps = struct {
             }
         }
 
-        // FALLBACK: Standard variable lookup (populate cache for next time)
+        // Tier 2: O(1) per-scope cache: var name -> storage_id
+        if (vm.var_cache.get(v.var_name)) |cached_storage_id| {
+            if (vm.memory_manager.scope_manager.value_storage.get(cached_storage_id)) |storage| {
+                const hir_value = vm.tokenLiteralToHIRValueWithType(storage.value, storage.type_info);
+                try vm.stack.push(HIRFrame.initFromHIRValue(hir_value));
+                return;
+            }
+            // If cache is stale, fall through to full lookup and refresh
+        }
+
+        // FALLBACK: Standard variable lookup (populate caches for next time)
         if (vm.current_scope.lookupVariable(v.var_name)) |variable| {
             if (vm.memory_manager.scope_manager.value_storage.get(variable.storage_id)) |storage| {
                 const hir_value = vm.tokenLiteralToHIRValueWithType(storage.value, storage.type_info);
                 try vm.stack.push(HIRFrame.initFromHIRValue(hir_value));
+                // Populate per-scope cache for fast subsequent access
+                vm.var_cache.put(v.var_name, variable.storage_id) catch {};
+                // Also consider hot var cache
+                maybeAddHotVar(vm, v.var_name, variable.storage_id);
             } else {
                 // Propagate error so VM halts execution immediately
                 return vm.reporter.reportRuntimeError(
@@ -86,12 +100,15 @@ pub const VariableOps = struct {
                             return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Failed to create variable {s}: {}", .{ v.var_name, err });
                         };
                         maybeAddHotVar(vm, v.var_name, created.storage_id);
+                        // Update per-scope cache
+                        vm.var_cache.put(v.var_name, created.storage_id) catch {};
                     } else {
                         // Update nearest existing (non-constant) variable
                         storage.*.value = token_literal;
                         storage.*.type = token_type;
                         storage.*.type_info = type_info;
                         maybeAddHotVar(vm, v.var_name, nearest_var.storage_id);
+                        vm.var_cache.put(v.var_name, nearest_var.storage_id) catch {};
                     }
                 } else {
                     return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Variable storage not found for: {s}", .{v.var_name});
@@ -102,6 +119,7 @@ pub const VariableOps = struct {
                     return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Failed to create variable {s}: {}", .{ v.var_name, err });
                 };
                 maybeAddHotVar(vm, v.var_name, created2.storage_id);
+                vm.var_cache.put(v.var_name, created2.storage_id) catch {};
             }
         } else {
             // Non-local: nearest existing variable across active scopes; otherwise create in current scope
@@ -115,6 +133,7 @@ pub const VariableOps = struct {
                     storage.*.type = token_type;
                     storage.*.type_info = type_info;
                     maybeAddHotVar(vm, v.var_name, variable.storage_id);
+                    vm.var_cache.put(v.var_name, variable.storage_id) catch {};
                 } else {
                     return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Variable storage not found for: {s}", .{v.var_name});
                 }
@@ -123,6 +142,7 @@ pub const VariableOps = struct {
                     return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Failed to create variable {s}: {}", .{ v.var_name, err });
                 };
                 maybeAddHotVar(vm, v.var_name, created3.storage_id);
+                vm.var_cache.put(v.var_name, created3.storage_id) catch {};
             }
         }
     }
