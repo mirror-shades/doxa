@@ -9,6 +9,20 @@ const ErrorCode = Errors.ErrorCode;
 const TypeInfo = @import("../../ast/ast.zig").TypeInfo;
 
 pub const VariableOps = struct {
+    inline fn maybeAddHotVar(vm: anytype, name: []const u8, storage_id: u32) void {
+        // Only when turbo_mode is enabled
+        if (!vm.turbo_mode) return;
+        // Avoid duplicates
+        var i: usize = 0;
+        while (i < vm.hot_var_count) : (i += 1) {
+            const hv = vm.hot_vars[i];
+            if (hv != null and std.mem.eql(u8, hv.?.name, name)) return;
+        }
+        if (vm.hot_var_count < vm.hot_vars.len) {
+            vm.hot_vars[vm.hot_var_count] = HotVar{ .name = name, .storage_id = storage_id };
+            vm.hot_var_count += 1;
+        }
+    }
     // Execute LoadVar instruction
     pub fn execLoadVar(vm: anytype, v: anytype) !void {
         if (vm.turbo_mode) {
@@ -56,8 +70,7 @@ pub const VariableOps = struct {
         const token_literal = vm.hirValueToTokenLiteral(coerced_value);
         const token_type = vm.hirValueToTokenType(coerced_value);
         const type_info_value = vm.hirValueToTypeInfo(coerced_value);
-        const type_info = try vm.allocator.create(TypeInfo);
-        type_info.* = type_info_value;
+        const type_info = try vm.getCanonicalTypeInfo(type_info_value);
 
         if (@hasField(@TypeOf(v), "scope_kind") and v.scope_kind == .Local) {
             // Local semantics:
@@ -69,23 +82,26 @@ pub const VariableOps = struct {
                 if (vm.memory_manager.scope_manager.value_storage.getPtr(nearest_var.storage_id)) |storage| {
                     if (storage.*.constant) {
                         // Shadow constant from ancestor scope with a new local binding
-                        _ = vm.current_scope.createValueBinding(v.var_name, token_literal, token_type, type_info, false) catch |err| {
+                        const created = vm.current_scope.createValueBinding(v.var_name, token_literal, token_type, type_info, false) catch |err| {
                             return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Failed to create variable {s}: {}", .{ v.var_name, err });
                         };
+                        maybeAddHotVar(vm, v.var_name, created.storage_id);
                     } else {
                         // Update nearest existing (non-constant) variable
                         storage.*.value = token_literal;
                         storage.*.type = token_type;
                         storage.*.type_info = type_info;
+                        maybeAddHotVar(vm, v.var_name, nearest_var.storage_id);
                     }
                 } else {
                     return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Variable storage not found for: {s}", .{v.var_name});
                 }
             } else {
                 // Not found anywhere - create in current scope
-                _ = vm.current_scope.createValueBinding(v.var_name, token_literal, token_type, type_info, false) catch |err| {
+                const created2 = vm.current_scope.createValueBinding(v.var_name, token_literal, token_type, type_info, false) catch |err| {
                     return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Failed to create variable {s}: {}", .{ v.var_name, err });
                 };
+                maybeAddHotVar(vm, v.var_name, created2.storage_id);
             }
         } else {
             // Non-local: nearest existing variable across active scopes; otherwise create in current scope
@@ -98,13 +114,15 @@ pub const VariableOps = struct {
                     storage.*.value = token_literal;
                     storage.*.type = token_type;
                     storage.*.type_info = type_info;
+                    maybeAddHotVar(vm, v.var_name, variable.storage_id);
                 } else {
                     return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Variable storage not found for: {s}", .{v.var_name});
                 }
             } else {
-                _ = vm.current_scope.createValueBinding(v.var_name, token_literal, token_type, type_info, false) catch |err| {
+                const created3 = vm.current_scope.createValueBinding(v.var_name, token_literal, token_type, type_info, false) catch |err| {
                     return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Failed to create variable {s}: {}", .{ v.var_name, err });
                 };
+                maybeAddHotVar(vm, v.var_name, created3.storage_id);
             }
         }
     }
@@ -117,8 +135,7 @@ pub const VariableOps = struct {
         const token_literal = vm.hirValueToTokenLiteral(value.value);
         const token_type = vm.hirValueToTokenType(value.value);
         const type_info_value = vm.hirValueToTypeInfo(value.value);
-        const type_info = try vm.allocator.create(TypeInfo);
-        type_info.* = type_info_value;
+        const type_info = try vm.getCanonicalTypeInfo(type_info_value);
 
         // If a binding exists in any active scope, update only if it's uninitialized constant (nothing)
         if (vm.current_scope.lookupVariable(v.var_name)) |variable| {
@@ -167,11 +184,11 @@ pub const VariableOps = struct {
                 // Get the original storage to determine type info
                 if (vm.memory_manager.scope_manager.value_storage.get(storage_id)) |original_storage| {
                     const token_type = original_storage.type;
-                    const type_info = try vm.allocator.create(TypeInfo);
-                    type_info.* = original_storage.type_info.*;
+                    const type_info = try vm.getCanonicalTypeInfo(original_storage.type_info.*);
 
                     // Create alias variable in current scope
-                    _ = try vm.current_scope.createAliasFromStorageId(s.param_name, storage_id, token_type, type_info);
+                    const alias_var = try vm.current_scope.createAliasFromStorageId(s.param_name, storage_id, token_type, type_info);
+                    maybeAddHotVar(vm, s.param_name, alias_var.storage_id);
                 } else {
                     return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Storage not found for alias parameter: {s}", .{s.param_name});
                 }

@@ -49,17 +49,8 @@ pub const FunctionOps = struct {
 
                 const function = vm.program.function_table[c.function_index];
 
-                // Save SP before popping arguments so Return can restore caller stack correctly
+                // Save SP before the arguments so Return can restore caller stack correctly
                 const saved_sp = vm.stack.size() - @as(i64, @intCast(c.arg_count));
-
-                // Pop arguments from stack and store them temporarily
-                var args = try vm.allocator.alloc(HIRFrame, c.arg_count);
-                defer vm.allocator.free(args);
-
-                // Pop arguments in reverse order (they were pushed in reverse)
-                for (0..c.arg_count) |i| {
-                    args[c.arg_count - 1 - i] = try vm.stack.pop();
-                }
 
                 // Push call frame for proper return handling
                 const return_ip = vm.ip + 1; // Return to instruction after this call
@@ -71,11 +62,6 @@ pub const FunctionOps = struct {
                     .saved_sp = saved_sp,
                 };
                 try vm.call_stack.push(call_frame);
-
-                // Push arguments back onto stack in correct order for function
-                for (args) |arg| {
-                    try vm.stack.push(arg);
-                }
 
                 // Use pre-resolved label map for O(1) lookup
                 if (vm.label_map.get(function.start_label)) |target_ip| {
