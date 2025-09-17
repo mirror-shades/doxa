@@ -183,6 +183,49 @@ pub const CallsHandler = struct {
         }
 
         const return_type = self.generator.inferCallReturnType(function_name, call_kind) catch .String;
+
+        // Aggressive inlining: if this is a small, pure function with a single Return statement,
+        // inline it at the call site to eliminate call/return overhead.
+        if (call_kind == .LocalFunction) {
+            if (self.generator.findFunctionBody(function_name)) |func_body| {
+                // Inline only if function body is a single Return statement
+                if (func_body.statements.len == 1 and func_body.statements[0].data == .Return) {
+                    // Emit a new scope for the inlined call
+                    try self.generator.instructions.append(.{ .EnterScope = .{ .scope_id = self.generator.label_generator.label_count + 1000, .var_count = @intCast(func_body.function_info.arity) } });
+
+                    // Store parameters from the stack into local variables (reverse order)
+                    var p_index: usize = func_body.function_params.len;
+                    while (p_index > 0) {
+                        p_index -= 1;
+                        const param = func_body.function_params[p_index];
+                        const expected_t = func_body.param_types[p_index];
+                        if (func_body.param_is_alias[p_index]) {
+                            // Alias parameter: the caller pushed a storage id reference
+                            try self.generator.instructions.append(.{ .StoreParamAlias = .{ .param_name = param.name.lexeme, .param_type = expected_t } });
+                        } else {
+                            const var_idx_inline = try self.generator.getOrCreateVariable(param.name.lexeme);
+                            try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = var_idx_inline, .var_name = param.name.lexeme, .scope_kind = .Local, .module_context = null, .expected_type = expected_t } });
+                        }
+                    }
+
+                    // Generate the return expression inline
+                    const ret_stmt = func_body.statements[0];
+                    const ret_data = ret_stmt.data.Return;
+                    if (ret_data.value) |value_expr| {
+                        try self.generator.generateExpression(value_expr, true, true);
+                    } else {
+                        // No value; ensure consistency: do not push anything for .Nothing returns
+                    }
+
+                    // Exit the inlined scope
+                    try self.generator.instructions.append(.{ .ExitScope = .{ .scope_id = self.generator.label_generator.label_count + 1000 } });
+
+                    return; // Inlined successfully; skip emitting Call
+                }
+            }
+        }
+
+        // Fallback: regular call emission
         try self.generator.instructions.append(.{
             .Call = .{
                 .function_index = function_index,

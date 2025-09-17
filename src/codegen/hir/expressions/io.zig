@@ -227,10 +227,11 @@ pub const IOHandler = struct {
         } });
 
         // IMPORTANT: Peek pops the value, prints, then pushes it back.
-        // If the caller does not need the result (statement context), drop it now
-        if (!preserve_result) {
-            try self.generator.instructions.append(.Pop);
-        }
+        // In statement context (!preserve_result), we don't need to do anything else
+        // because the Peek instruction already handles the stack properly.
+        // The value is pushed back and will be consumed by the next operation or
+        // cleaned up at the end of the statement.
+        _ = preserve_result; // Acknowledge the parameter is intentionally unused
     }
 
     /// Generate HIR for struct peek expressions

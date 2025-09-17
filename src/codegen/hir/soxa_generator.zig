@@ -702,6 +702,8 @@ pub const HIRGenerator = struct {
                 .return_type = function_info.return_type,
                 .start_label = function_info.start_label,
                 .body_label = function_info.body_label,
+                .start_ip = 0,
+                .body_ip = null,
                 .local_var_count = function_info.local_var_count,
                 .is_entry = function_info.is_entry,
                 .param_is_alias = function_body.param_is_alias, // Use from function_body
@@ -729,7 +731,7 @@ pub const HIRGenerator = struct {
     }
 
     /// Find function body by name (helper method)
-    fn findFunctionBody(self: *HIRGenerator, function_name: []const u8) ?*FunctionBody {
+    pub fn findFunctionBody(self: *HIRGenerator, function_name: []const u8) ?*FunctionBody {
         for (self.function_bodies.items) |*function_body| {
             if (std.mem.eql(u8, function_body.function_info.name, function_name)) {
                 return function_body;

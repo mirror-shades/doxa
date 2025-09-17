@@ -20,17 +20,14 @@ pub const FunctionOps = struct {
                 }
 
                 const function = vm.program.function_table[c.function_index];
-                const target_label = function.start_label;
+                vm.skip_next_enter_scope = true; // Reuse current scope; still run callee parameter setup
 
-                vm.skip_next_enter_scope = true; // Skip scope creation when we jump to function start
-
-                // Jump to function start (including parameter setup) without call stack modification
-                if (vm.label_map.get(target_label)) |target_ip| {
-                    vm.ip = target_ip;
-                    return; // Jump to function body
-                } else {
-                    return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Function label not found: {s}", .{target_label});
+                // Jump to function start so parameter setup runs (StoreVar/alias from args)
+                if (function.start_ip != 0) {
+                    vm.ip = function.start_ip;
+                    return;
                 }
+                return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Function label not resolved: {s}", .{function.start_label});
             },
             else => {
                 return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Tail call not supported for call kind: {s}", .{@tagName(c.call_kind)});
@@ -63,13 +60,12 @@ pub const FunctionOps = struct {
                 };
                 try vm.call_stack.push(call_frame);
 
-                // Use pre-resolved label map for O(1) lookup
-                if (vm.label_map.get(function.start_label)) |target_ip| {
-                    vm.ip = target_ip;
-                    return; // Jump to function start
-                } else {
-                    return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Function label not found: {s}", .{function.start_label});
+                // Use cached start_ip for O(1) jump
+                if (function.start_ip != 0) {
+                    vm.ip = function.start_ip;
+                    return;
                 }
+                return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Function label not resolved: {s}", .{function.start_label});
             },
             .BuiltinFunction => {
                 try execBuiltinFunction(vm, c);
@@ -92,10 +88,11 @@ pub const FunctionOps = struct {
             // Restore operand stack to the saved position, preserving the top return value
             const current_sp = vm.stack.size();
             if (current_sp > call_frame.saved_sp) {
-                // There is at least one value to return on the stack; keep the topmost
-                const ret_val = vm.stack.pop() catch HIRFrame.initNothing();
-                vm.stack.sp = call_frame.saved_sp;
-                try vm.stack.push(ret_val);
+                // Fast path: move top frame into saved slot without extra pop/push
+                const src_index: usize = @intCast(current_sp - 1);
+                const dst_index: usize = @intCast(call_frame.saved_sp);
+                vm.stack.data[dst_index] = vm.stack.data[src_index];
+                vm.stack.sp = call_frame.saved_sp + 1;
             } else {
                 // No value returned; just restore SP
                 vm.stack.sp = call_frame.saved_sp;
