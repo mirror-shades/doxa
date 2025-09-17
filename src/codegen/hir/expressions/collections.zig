@@ -20,12 +20,13 @@ pub const CollectionsHandler = struct {
 
     /// Generate HIR for array literals
     pub fn generateArray(self: *CollectionsHandler, elements: []const *ast.Expr, preserve_result: bool) !void {
-        return self.generateArrayInternal(elements, preserve_result);
+        return self.generateArrayInternal(elements, preserve_result, false);
     }
 
     /// Internal array generation with nesting control
-    fn generateArrayInternal(self: *CollectionsHandler, elements: []const *ast.Expr, preserve_result: bool) !void {
+    pub fn generateArrayInternal(self: *CollectionsHandler, elements: []const *ast.Expr, preserve_result: bool, is_nested_element: bool) !void {
         _ = preserve_result; // Unused parameter
+        _ = is_nested_element; // Unused parameter
         // Determine array element type from first element (for now)
         var element_type: HIRType = .Unknown;
         var nested_element_type: ?HIRType = null;
@@ -72,15 +73,19 @@ pub const CollectionsHandler = struct {
 
         // Generate each element and ArraySet
         for (elements, 0..) |element, i| {
-            // Push index first so when we push value next the stack is: value, index, array
+            // Push index
             const index_value = HIRValue{ .int = @intCast(i) };
             const index_const = try self.generator.addConstant(index_value);
             try self.generator.instructions.append(.{ .Const = .{ .value = index_value, .constant_id = index_const } });
 
             // Generate the element value
             if (element.data == .Array) {
-                // For nested arrays, generate them recursively
-                try self.generateArrayInternal(element.data.Array, true);
+                // Set nested context flag before generating nested array
+                const prev_nested_flag = self.generator.is_generating_nested_array;
+                self.generator.is_generating_nested_array = true;
+                defer self.generator.is_generating_nested_array = prev_nested_flag;
+
+                try self.generator.generateExpression(element, true, false);
             } else {
                 try self.generator.generateExpression(element, true, false);
             }

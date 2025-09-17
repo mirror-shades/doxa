@@ -221,6 +221,10 @@ pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*
                             return error.ThisTypeMismatch;
                         }
                     }
+                    // Allow optional comma after 'this' parameter
+                    if (self.peek().type == .COMMA) {
+                        self.advance(); // consume ','
+                    }
                 }
 
                 while (self.peek().type != .RIGHT_PAREN) {
