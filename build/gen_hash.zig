@@ -5,7 +5,7 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var file_paths = std.ArrayList([]const u8).init(allocator);
+    var file_paths = std.array_list.Managed([]const u8).init(allocator);
     defer {
         for (file_paths.items) |path| {
             allocator.free(path);
@@ -31,7 +31,9 @@ pub fn main() !void {
     for (file_paths.items) |path| {
         var file = try std.fs.cwd().openFile(try std.fmt.allocPrint(allocator, "src/{s}", .{path}), .{});
         defer file.close();
-        var reader = file.reader();
+        var reader_buffer: [1024]u8 = undefined;
+        var file_reader = file.reader(&reader_buffer);
+        const reader = &file_reader.interface;
         while (true) {
             const n = reader.read(&buf) catch break;
             hasher.update(buf[0..n]);
@@ -46,9 +48,16 @@ pub fn main() !void {
     var hash_file = try std.fs.cwd().createFile(hash_file_path, .{});
     defer hash_file.close();
 
-    try hash_file.writer().print("pub const value = \"{s}\";\n", .{std.fmt.fmtSliceHexLower(&hash)});
+    var writer_buffer: [1024]u8 = undefined;
+    var file_writer = hash_file.writer(&writer_buffer);
+    const writer = &file_writer.interface;
+    try writer.print("pub const value = \"{s}\";\n", .{std.fmt.fmtSliceHexLower(&hash)});
+    try writer.flush();
 
     // Print hash to stdout
-    const stdout = std.io.getStdOut().writer();
+    var stdout_buffer: [1024]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    const stdout = &stdout_writer.interface;
     try stdout.print("{s}\n", .{std.fmt.fmtSliceHexLower(&hash)});
+    try stdout.flush();
 }

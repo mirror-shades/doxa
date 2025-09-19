@@ -328,7 +328,7 @@ pub const LLVMGenerator = struct {
                 const value = try self.generateExpr(match_expr.value);
 
                 // Create basic blocks for each case
-                var case_blocks = std.ArrayList(LLVMTypes.LLVMBasicBlockRef).init(self.allocator);
+                var case_blocks = std.array_list.Managed(LLVMTypes.LLVMBasicBlockRef).init(self.allocator);
                 defer case_blocks.deinit();
 
                 const merge_block = LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "match.merge");
@@ -356,7 +356,7 @@ pub const LLVMGenerator = struct {
 
             .Function => |func| {
                 // Create function type
-                var param_types = std.ArrayList(LLVMTypes.LLVMTypeRef).init(self.allocator);
+                var param_types = std.array_list.Managed(LLVMTypes.LLVMTypeRef).init(self.allocator);
                 defer param_types.deinit();
 
                 for (func.params) |param| {

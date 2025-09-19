@@ -27,13 +27,13 @@ pub const LabelGenerator = struct {
 
 /// Manages constant values and deduplication for HIR
 pub const ConstantManager = struct {
-    constants: std.ArrayList(HIRValue),
+    constants: std.array_list.Managed(HIRValue),
     constant_map: std.StringHashMap(u32), // For deduplication
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) ConstantManager {
         return ConstantManager{
-            .constants = std.ArrayList(HIRValue).init(allocator),
+            .constants = std.array_list.Managed(HIRValue).init(allocator),
             .constant_map = std.StringHashMap(u32).init(allocator),
             .allocator = allocator,
         };

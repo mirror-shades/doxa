@@ -1,0 +1,35 @@
+pub enum GameState {
+    Start,
+    Running,
+    GameOver,
+}
+
+pub struct Reactor {
+    rods :: int
+    neutrons :: int
+    power :: int
+    maxPower :: int
+
+    pub method new() returns Reactor {
+        return Reactor {
+        rods is 0,
+        neutrons is 0,
+        power is 0,
+        maxPower is 0,
+        }
+    }
+
+    pub method addRod(this, x :: int) {
+        var result is this.rods + x
+        if result < 1 then {
+            result is 1
+        }
+        this.rods is result
+    }
+
+    pub method getMaxPower(this) returns int {
+        return this.maxPower
+    }
+}
+
+

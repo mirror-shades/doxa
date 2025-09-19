@@ -236,6 +236,8 @@ pub const ErrorList = error{
     // File I/O and Source Reading
     FileReadError,
     LineTooLong,
+    WriteFailed,
+    ReadFailed,
 
     // Module System
     ModuleNotFound,

@@ -49,7 +49,7 @@ pub fn parse(self: *Parser, reporter: *Reporter) ErrorList![]ast.Stmt {
     self.current = original_pos;
 
     // Create statements array with function declarations first
-    var statements = std.ArrayList(ast.Stmt).init(self.allocator);
+    var statements = std.array_list.Managed(ast.Stmt).init(self.allocator);
     errdefer {
         for (statements.items) |*stmt| {
             stmt.deinit(self.allocator);
@@ -214,7 +214,7 @@ pub fn parseBlockStmt(self: *Parser) ErrorList![]ast.Stmt {
     }
     self.advance(); // consume {
 
-    var statements = std.ArrayList(ast.Stmt).init(self.allocator);
+    var statements = std.array_list.Managed(ast.Stmt).init(self.allocator);
     errdefer {
         for (statements.items) |*stmt| {
             stmt.deinit(self.allocator);
@@ -622,7 +622,7 @@ pub fn parseMapStatement(self: *Parser) ErrorList!ast.Stmt {
         return error.ExpectedLeftBrace;
     }
     self.advance();
-    var entries = std.ArrayList(*ast.MapEntry).init(self.allocator);
+    var entries = std.array_list.Managed(*ast.MapEntry).init(self.allocator);
     errdefer {
         for (entries.items) |entry| {
             entry.key.deinit(self.allocator);

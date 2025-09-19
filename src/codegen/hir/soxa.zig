@@ -29,7 +29,7 @@ const HIRGenerator = @import("soxa_generator.zig").HIRGenerator;
 const SoxaTextParser = @import("soxa_parser.zig").SoxaTextParser;
 
 pub fn translateToVMBytecode(program: *HIRProgram, allocator: std.mem.Allocator, reporter: *reporting.Reporter) ![]u8 {
-    var bytecode = std.ArrayList(u8).init(allocator);
+    var bytecode = std.array_list.Managed(u8).init(allocator);
     defer bytecode.deinit();
 
     // First pass: resolve labels to addresses
@@ -167,7 +167,7 @@ fn getBytecodeSize(instruction: HIRInstruction) u32 {
 }
 
 pub fn convertHIRConstants(hir_constants: []HIRValue, allocator: std.mem.Allocator) ![]instructions.Value {
-    var vm_constants = std.ArrayList(instructions.Value).init(allocator);
+    var vm_constants = std.array_list.Managed(instructions.Value).init(allocator);
     defer vm_constants.deinit();
 
     for (hir_constants) |hir_const| {
@@ -220,30 +220,29 @@ fn computeCacheKey(source_path: []const u8, allocator: std.mem.Allocator) ![]u8 
     hasher.final(&hash);
 
     // Return first 16 hex chars (8 bytes) as string
-    return std.fmt.allocPrint(allocator, "{}", .{std.fmt.fmtSliceHexLower(hash[0..8])});
+    return std.fmt.allocPrint(allocator, "{x}", .{hash[0..8]});
 }
 
 pub fn validateSoxaCache(soxa_path: []const u8, source_path: []const u8, allocator: std.mem.Allocator) !bool {
     const file = std.fs.cwd().openFile(soxa_path, .{}) catch return false;
     defer file.close();
 
-    var reader = file.reader();
-    var buf: [512]u8 = undefined;
+    var reader_buffer: [512]u8 = undefined;
+    var file_reader = file.reader(&reader_buffer);
+    const reader = &file_reader.interface;
 
     // Skip first line ("; SOXA HIR v0.1.0")
-    _ = reader.readUntilDelimiterOrEof(&buf, '\n') catch return false;
+    _ = reader.takeDelimiterExclusive('\n') catch return false;
 
     // Read second line looking for Source-Hash
-    if (try reader.readUntilDelimiterOrEof(&buf, '\n')) |line| {
-        if (std.mem.indexOf(u8, line, "Source-Hash: ")) |start| {
-            const cached_hash = std.mem.trim(u8, line[start + 13 ..], " \n\r");
-            const current_hash = try computeCacheKey(source_path, allocator);
-            defer allocator.free(current_hash);
+    const line = reader.takeDelimiterExclusive('\n') catch return false;
+    if (std.mem.indexOf(u8, line, "Source-Hash: ")) |start| {
+        const cached_hash = std.mem.trim(u8, line[start + 13 ..], " \n\r");
+        const current_hash = try computeCacheKey(source_path, allocator);
+        defer allocator.free(current_hash);
 
-            const is_valid = std.mem.eql(u8, cached_hash, current_hash);
-            if (!is_valid) {}
-            return is_valid;
-        }
+        const is_valid = std.mem.eql(u8, cached_hash, current_hash);
+        return is_valid;
     }
 
     return false; // No hash found = old format = invalid
@@ -257,7 +256,9 @@ pub fn writeSoxaFile(program: *HIRProgram, file_path: []const u8, source_path: [
     };
     defer file.close();
 
-    var writer = file.writer();
+    var writer_buffer: [1024]u8 = undefined;
+    var file_writer = file.writer(&writer_buffer);
+    const writer = &file_writer.interface;
 
     // Compute cache key for validation
     const cache_key = try computeCacheKey(source_path, allocator);
@@ -299,6 +300,9 @@ pub fn writeSoxaFile(program: *HIRProgram, file_path: []const u8, source_path: [
     for (program.instructions) |instruction| {
         try writeHIRInstructionText(writer, instruction);
     }
+
+    // Flush the writer to ensure all data is written
+    try writer.flush();
 }
 
 pub fn readSoxaFile(file_path: []const u8, allocator: std.mem.Allocator) !HIRProgram {

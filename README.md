@@ -59,6 +59,7 @@ VM pipeline is currently working as expected with almost all core features imple
 
 TODO:
 
+- struct should use function/method better (method uses implict this, function is static)
 - standard lib
 - add key access via each loops over maps using `at`
 - SOXA to LLVMIR code gen

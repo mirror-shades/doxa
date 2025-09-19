@@ -136,7 +136,7 @@ fn normalizeModulePath(self: *Parser, module_path: []const u8) ![]const u8 {
 }
 
 fn reportCircularImport(self: *Parser, current_module: []const u8) ErrorList!ast.ModuleInfo {
-    var error_msg = std.ArrayList(u8).init(self.allocator);
+    var error_msg = std.array_list.Managed(u8).init(self.allocator);
     defer error_msg.deinit();
 
     try error_msg.appendSlice("Circular import detected:\n");
@@ -208,7 +208,7 @@ pub fn loadModuleSourceWithPath(self: *Parser, module_name: []const u8) ErrorLis
     // Prefer resolving relative to the current file first
     // 0a. Same directory as current file with potential existing extension
     if (has_extension) {
-        var same_dir_exact_path_pre = std.ArrayList(u8).init(self.allocator);
+        var same_dir_exact_path_pre = std.array_list.Managed(u8).init(self.allocator);
         defer same_dir_exact_path_pre.deinit();
         try same_dir_exact_path_pre.appendSlice(current_dir);
         try same_dir_exact_path_pre.appendSlice("/");
@@ -221,7 +221,7 @@ pub fn loadModuleSourceWithPath(self: *Parser, module_name: []const u8) ErrorLis
     }
 
     // 0b. Same directory as current file with .doxa extension
-    var same_dir_path_pre = std.ArrayList(u8).init(self.allocator);
+    var same_dir_path_pre = std.array_list.Managed(u8).init(self.allocator);
     defer same_dir_path_pre.deinit();
     try same_dir_path_pre.appendSlice(current_dir);
     try same_dir_path_pre.appendSlice("/");
@@ -235,7 +235,7 @@ pub fn loadModuleSourceWithPath(self: *Parser, module_name: []const u8) ErrorLis
 
     // 1. First try directly with the given name (possibly including extension)
     if (has_extension) {
-        var direct_path = std.ArrayList(u8).init(self.allocator);
+        var direct_path = std.array_list.Managed(u8).init(self.allocator);
         defer direct_path.deinit();
         try direct_path.appendSlice(clean_name);
 
@@ -247,7 +247,7 @@ pub fn loadModuleSourceWithPath(self: *Parser, module_name: []const u8) ErrorLis
     }
 
     // 2. Try in CWD with .doxa extension
-    var cwd_doxa_path = std.ArrayList(u8).init(self.allocator);
+    var cwd_doxa_path = std.array_list.Managed(u8).init(self.allocator);
     defer cwd_doxa_path.deinit();
     try cwd_doxa_path.appendSlice(clean_name);
     if (!has_extension) try cwd_doxa_path.appendSlice(".doxa");
@@ -260,7 +260,7 @@ pub fn loadModuleSourceWithPath(self: *Parser, module_name: []const u8) ErrorLis
 
     // 3. Try the same directory as the current file with potential existing extension
     if (has_extension) {
-        var same_dir_exact_path = std.ArrayList(u8).init(self.allocator);
+        var same_dir_exact_path = std.array_list.Managed(u8).init(self.allocator);
         defer same_dir_exact_path.deinit();
         try same_dir_exact_path.appendSlice(current_dir);
         try same_dir_exact_path.appendSlice("/");
@@ -274,7 +274,7 @@ pub fn loadModuleSourceWithPath(self: *Parser, module_name: []const u8) ErrorLis
     }
 
     // 4. Try the same directory as the current file with .doxa extension
-    var same_dir_path = std.ArrayList(u8).init(self.allocator);
+    var same_dir_path = std.array_list.Managed(u8).init(self.allocator);
     defer same_dir_path.deinit();
     try same_dir_path.appendSlice(current_dir);
     try same_dir_path.appendSlice("/");
@@ -289,7 +289,7 @@ pub fn loadModuleSourceWithPath(self: *Parser, module_name: []const u8) ErrorLis
 
     // 5. Try the modules subdirectory (with potential existing extension)
     if (has_extension) {
-        var modules_exact_path = std.ArrayList(u8).init(self.allocator);
+        var modules_exact_path = std.array_list.Managed(u8).init(self.allocator);
         defer modules_exact_path.deinit();
         try modules_exact_path.appendSlice(current_dir);
         try modules_exact_path.appendSlice("/modules/");
@@ -303,7 +303,7 @@ pub fn loadModuleSourceWithPath(self: *Parser, module_name: []const u8) ErrorLis
     }
 
     // 6. Try the modules subdirectory with .doxa extension
-    var modules_path = std.ArrayList(u8).init(self.allocator);
+    var modules_path = std.array_list.Managed(u8).init(self.allocator);
     defer modules_path.deinit();
     try modules_path.appendSlice(current_dir);
     try modules_path.appendSlice("/modules/");
@@ -325,7 +325,7 @@ pub fn loadModuleSource(self: *Parser, module_name: []const u8) ErrorList![]cons
 }
 
 pub fn extractModuleInfo(self: *Parser, module_ast: *ast.Expr, module_path: []const u8, specific_symbol: ?[]const u8) !ast.ModuleInfo {
-    var imports = std.ArrayList(ast.ImportInfo).init(self.allocator);
+    var imports = std.array_list.Managed(ast.ImportInfo).init(self.allocator);
     var name: []const u8 = "";
 
     // Extract module name from path
@@ -516,7 +516,7 @@ pub fn extractModuleInfo(self: *Parser, module_ast: *ast.Expr, module_path: []co
 }
 
 pub fn extractModuleInfoWithParser(self: *Parser, module_ast: *ast.Expr, module_path: []const u8, specific_symbol: ?[]const u8, module_parser: *Parser) !ast.ModuleInfo {
-    var imports = std.ArrayList(ast.ImportInfo).init(self.allocator);
+    var imports = std.array_list.Managed(ast.ImportInfo).init(self.allocator);
     var name: []const u8 = "";
 
     // Extract module name from path

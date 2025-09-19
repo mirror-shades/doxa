@@ -17,6 +17,7 @@ const TypeSystem = @import("../../codegen/hir/type_system.zig").TypeSystem;
 const types = @import("types.zig");
 const union_handling = @import("union_handling.zig");
 const scope_management = @import("scope_management.zig");
+const helpers = @import("helpers.zig");
 
 /// Helper function to get location from AST Base, handling optional spans
 fn getLocationFromBase(base: ast.Base) Location {
@@ -335,9 +336,64 @@ pub fn inferTypeFromExpr(ctx: *TypeAnalysisContext, expr: *ast.Expr) !*ast.TypeI
             }
         },
         .FunctionCall => |call| {
-            // Infer type from function call
-            const callee_type = try inferTypeFromExpr(ctx, call.callee);
+            // Method call support: receiver.method(args)
+            if (call.callee.data == .FieldAccess) {
+                const fa = call.callee.data.FieldAccess;
+                const object_type = try inferTypeFromExpr(ctx, fa.object);
+                const method_name = fa.field.lexeme;
 
+                // Static method on a struct type: Type.Method(...)
+                if (fa.object.data == .Variable) {
+                    const object_name = fa.object.data.Variable.lexeme;
+                    if (helpers.isModuleNamespace(@constCast(ctx), object_name)) {
+                        // Module function call - return a generic type for now
+                        type_info.* = .{ .base = .Int };
+                        return type_info;
+                    }
+                    if (ctx.custom_types.get(object_name)) |ct| {
+                        if (ct.kind == .Struct) {
+                            if (ctx.struct_methods.get(object_name)) |mt| {
+                                if (mt.get(method_name)) |mi| {
+                                    if (mi.is_static) {
+                                        type_info.* = mi.return_type.*;
+                                        return type_info;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Instance method based on receiver type
+                var struct_name: ?[]const u8 = null;
+                if (object_type.base == .Custom and object_type.custom_type) |ctn| {
+                    struct_name = ctn;
+                } else if (object_type.base == .Struct and object_type.custom_type) |ctn2| {
+                    struct_name = ctn2;
+                }
+
+                if (struct_name) |sn| {
+                    if (ctx.struct_methods.get(sn)) |tbl| {
+                        if (tbl.get(method_name)) |mi2| {
+                            type_info.* = mi2.return_type.*;
+                            return type_info;
+                        }
+                    }
+                }
+                // Fallthrough to error below
+                ctx.reporter.reportCompileError(
+                    getLocationFromBase(expr.base),
+                    ErrorCode.UNKNOWN_METHOD,
+                    "Unknown method '{s}'",
+                    .{method_name},
+                );
+                ctx.fatal_error.* = true;
+                type_info.base = .Nothing;
+                return type_info;
+            }
+
+            // Regular function call: f(args)
+            const callee_type = try inferTypeFromExpr(ctx, call.callee);
             if (callee_type.base == .Function) {
                 if (callee_type.function_type) |func_type| {
                     type_info.* = func_type.return_type.*;

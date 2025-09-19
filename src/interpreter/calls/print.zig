@@ -12,6 +12,13 @@ pub const formatHIRValue = PrintOps.formatHIRValue;
 pub const formatHIRValueRaw = PrintOps.formatHIRValueRaw;
 pub const printHIRValue = PrintOps.printHIRValue;
 
+fn printToStdout(comptime format: []const u8, args: anytype) !void {
+    const stdout_file = std.fs.File.stdout();
+    const formatted = try std.fmt.allocPrint(std.heap.page_allocator, format, args);
+    defer std.heap.page_allocator.free(formatted);
+    _ = try stdout_file.write(formatted);
+}
+
 pub const PrintOps = struct {
     // Execute Print instruction
     pub fn execPrint(vm: anytype) !void {
@@ -19,7 +26,7 @@ pub const PrintOps = struct {
 
         // Print instruction doesn't include variable name, just the value
         // Format the value directly without quotes or extra formatting
-        try PrintOps.formatHIRValueRaw(vm, std.io.getStdOut().writer(), value.value);
+        try PrintOps.formatHIRValueRaw(vm, value.value);
 
         // Output will be flushed automatically on newline
 
@@ -32,57 +39,56 @@ pub const PrintOps = struct {
         const value = try vm.stack.pop();
 
         if (peek.location) |location| {
-            try std.io.getStdOut().writer().print("[{s}:{d}:{d}] ", .{ location.file, location.range.start_line, location.range.start_col });
+            try printToStdout("[{s}:{d}:{d}] ", .{ location.file, location.range.start_line, location.range.start_col });
         }
 
         // Print variable name before :: if available, then always show type
-        const writer = std.io.getStdOut().writer();
 
         // If we have union member info, print union with '>' on active member; else fallback to concrete type
         if (peek.name) |name| {
             if (peek.union_members) |members| {
                 if (members.len > 1) {
                     const active = PrintOps.getTypeString(vm, value.value);
-                    try writer.print("{s} :: ", .{name});
+                    try printToStdout("{s} :: ", .{name});
                     for (members, 0..) |m, i| {
-                        if (i > 0) try writer.print(" | ", .{});
-                        if (std.mem.eql(u8, m, active)) try writer.print(">", .{});
-                        try writer.print("{s}", .{m});
+                        if (i > 0) try printToStdout(" | ", .{});
+                        if (std.mem.eql(u8, m, active)) try printToStdout(">", .{});
+                        try printToStdout("{s}", .{m});
                     }
-                    try writer.print(" is ", .{});
+                    try printToStdout(" is ", .{});
                 } else {
                     // If a union was detected but only one member present, still print as that type
                     const type_string = PrintOps.getTypeString(vm, value.value);
-                    try writer.print("{s} :: {s} is ", .{ name, type_string });
+                    try printToStdout("{s} :: {s} is ", .{ name, type_string });
                 }
             } else {
                 const type_string = PrintOps.getTypeString(vm, value.value);
-                try writer.print("{s} :: {s} is ", .{ name, type_string });
+                try printToStdout("{s} :: {s} is ", .{ name, type_string });
             }
         } else {
             if (peek.union_members) |members| {
                 if (members.len > 1) {
                     const active = PrintOps.getTypeString(vm, value.value);
-                    try writer.print(":: ", .{});
+                    try printToStdout(":: ", .{});
                     for (members, 0..) |m, i| {
-                        if (i > 0) try writer.print(" | ", .{});
-                        if (std.mem.eql(u8, m, active)) try writer.print(">", .{});
-                        try writer.print("{s}", .{m});
+                        if (i > 0) try printToStdout(" | ", .{});
+                        if (std.mem.eql(u8, m, active)) try printToStdout(">", .{});
+                        try printToStdout("{s}", .{m});
                     }
-                    try writer.print(" is ", .{});
+                    try printToStdout(" is ", .{});
                 } else {
                     const type_string = PrintOps.getTypeString(vm, value.value);
-                    try writer.print(":: {s} is ", .{type_string});
+                    try printToStdout(":: {s} is ", .{type_string});
                 }
             } else {
                 const type_string = PrintOps.getTypeString(vm, value.value);
-                try writer.print(":: {s} is ", .{type_string});
+                try printToStdout(":: {s} is ", .{type_string});
             }
         }
 
         // Format the value
-        try PrintOps.formatHIRValue(vm, std.io.getStdOut().writer(), value.value);
-        try std.io.getStdOut().writer().print("\n", .{});
+        try PrintOps.formatHIRValue(vm, value.value);
+        try printToStdout("\n", .{});
 
         // Push the value back onto the stack for potential further use
         try vm.stack.push(value);
@@ -99,7 +105,7 @@ pub const PrintOps = struct {
                 for (s.fields) |field| {
                     // Format with location information like the regular Peek instruction
                     if (i.location) |location| {
-                        try std.io.getStdOut().writer().print("[{s}:{d}:{d}] ", .{ location.file, location.range.start_line, location.range.start_col });
+                        try printToStdout("[{s}:{d}:{d}] ", .{ location.file, location.range.start_line, location.range.start_col });
                     }
 
                     // Build the full field path
@@ -112,7 +118,7 @@ pub const PrintOps = struct {
                     defer vm.allocator.free(field_path);
 
                     const field_type_string = PrintOps.getTypeString(vm, field.value);
-                    try std.io.getStdOut().writer().print(":: {s} is ", .{field_type_string});
+                    try printToStdout(":: {s} is ", .{field_type_string});
 
                     // For nested structs, recursively print their fields
                     switch (field.value) {
@@ -142,8 +148,8 @@ pub const PrintOps = struct {
                             try vm.executeInstruction(nested_peek);
                         },
                         else => {
-                            try PrintOps.formatHIRValue(vm, std.io.getStdOut().writer(), field.value);
-                            try std.io.getStdOut().writer().print("\n", .{});
+                            try PrintOps.formatHIRValue(vm, field.value);
+                            try printToStdout("\n", .{});
                         },
                     }
                 }
@@ -152,14 +158,14 @@ pub const PrintOps = struct {
                 // For non-struct values (like field access results), print as a single value with location
                 if (i.field_names.len > 0) {
                     if (i.location) |location| {
-                        try std.io.getStdOut().writer().print("[{s}:{d}:{d}] ", .{ location.file, location.range.start_line, location.range.start_col });
+                        try printToStdout("[{s}:{d}:{d}] ", .{ location.file, location.range.start_line, location.range.start_col });
                     }
 
                     // Show type information for non-struct values
                     const value_type_string = PrintOps.getTypeString(vm, value.value);
-                    try std.io.getStdOut().writer().print(":: {s} is ", .{value_type_string});
-                    try PrintOps.formatHIRValue(vm, std.io.getStdOut().writer(), value.value);
-                    try std.io.getStdOut().writer().print("\n", .{});
+                    try printToStdout(":: {s} is ", .{value_type_string});
+                    try PrintOps.formatHIRValue(vm, value.value);
+                    try printToStdout("\n", .{});
                 }
             },
         }
@@ -182,7 +188,7 @@ pub const PrintOps = struct {
         }
 
         // Get the actual format parts from the constants using format_part_ids
-        var actual_format_parts = std.ArrayList([]const u8).init(vm.allocator);
+        var actual_format_parts = std.array_list.Managed([]const u8).init(vm.allocator);
         defer actual_format_parts.deinit();
 
         for (interp.format_part_ids) |id| {
@@ -198,59 +204,54 @@ pub const PrintOps = struct {
             }
         }
 
-        // Build the final string by interleaving format parts and argument values
-        var result = std.ArrayList(u8).init(vm.allocator);
-        defer result.deinit();
-
+        // Stream parts and arguments directly to stdout in correct order
         for (actual_format_parts.items, 0..) |part, i| {
-            try result.appendSlice(part);
+            if (part.len != 0) {
+                try printToStdout("{s}", .{part});
+            }
 
-            // Add argument value if there is one for this part
             if (i < interp.placeholder_indices.len) {
                 const arg_index = interp.placeholder_indices[i];
                 if (arg_index < args.len) {
-                    try PrintOps.formatHIRValueRaw(vm, result.writer(), args[arg_index]);
+                    try PrintOps.formatHIRValueRaw(vm, args[arg_index]);
                 }
             }
         }
-
-        // Print the final interpolated string
-        try std.io.getStdOut().writer().print("{s}", .{result.items});
     }
 
     // Print a HIR value for debugging
     pub fn printHIRValue(vm: anytype, value: HIRValue) !void {
         switch (value) {
-            .int => |i| std.debug.print("{}", .{i}),
-            .float => |f| std.debug.print("{d}", .{f}),
-            .string => |s| std.debug.print("\"{s}\"", .{s}),
-            .tetra => |b| std.debug.print("{}", .{b}),
-            .byte => |u| std.debug.print("{}", .{u}),
-            .nothing => std.debug.print("nothing", .{}),
+            .int => |i| try printToStdout("{}", .{i}),
+            .float => |f| try printToStdout("{d}", .{f}),
+            .string => |s| try printToStdout("\"{s}\"", .{s}),
+            .tetra => |b| try printToStdout("{}", .{b}),
+            .byte => |u| try printToStdout("{}", .{u}),
+            .nothing => try printToStdout("nothing", .{}),
             // Complex types - show contents for arrays
             .array => |arr| {
-                std.debug.print("[", .{});
+                try printToStdout("[", .{});
                 var first = true;
                 for (arr.elements) |elem| {
                     if (std.meta.eql(elem, HIRValue.nothing)) break;
-                    if (!first) std.debug.print(", ", .{});
+                    if (!first) try printToStdout(", ", .{});
                     try PrintOps.printHIRValue(vm, elem);
                     first = false;
                 }
-                std.debug.print("]", .{});
+                try printToStdout("]", .{});
             },
             .struct_instance => |s| {
-                std.debug.print("{{ ", .{}); // Add opening bracket
+                try printToStdout("{{ ", .{}); // Add opening bracket
                 for (s.fields, 0..) |field, i| {
-                    std.debug.print("{s}: ", .{field.name});
+                    try printToStdout("{s}: ", .{field.name});
                     try PrintOps.printHIRValue(vm, field.value);
-                    if (i < s.fields.len - 1) std.debug.print(", ", .{});
+                    if (i < s.fields.len - 1) try printToStdout(", ", .{});
                 }
-                std.debug.print(" }}", .{}); // Fix closing bracket
+                try printToStdout(" }}", .{}); // Fix closing bracket
             },
-            .map => std.debug.print("{{map}}", .{}),
-            .enum_variant => |e| std.debug.print(".{s}", .{e.variant_name}),
-            .storage_id_ref => |storage_id| std.debug.print("storage_id_ref({})", .{storage_id}),
+            .map => try printToStdout("{{map}}", .{}),
+            .enum_variant => |e| try printToStdout(".{s}", .{e.variant_name}),
+            .storage_id_ref => |storage_id| try printToStdout("storage_id_ref({})", .{storage_id}),
         }
     }
 
@@ -363,93 +364,93 @@ pub const PrintOps = struct {
     }
 
     // Format HIR value to a writer (for proper UTF-8 buffered output)
-    pub fn formatHIRValue(vm: anytype, writer: anytype, value: HIRValue) !void {
+    pub fn formatHIRValue(vm: anytype, value: HIRValue) !void {
         switch (value) {
-            .int => |i| try writer.print("{}", .{i}),
-            .byte => |u| try writer.print("0x{X:0>2}", .{u}),
-            .float => |f| try printFloat(writer, f),
-            .string => |s| try writer.print("\"{s}\"", .{s}),
-            .tetra => |t| try writer.print("{s}", .{switch (t) {
+            .int => |i| try printToStdout("{}", .{i}),
+            .byte => |u| try printToStdout("0x{X:0>2}", .{u}),
+            .float => |f| try printFloat(f),
+            .string => |s| try printToStdout("\"{s}\"", .{s}),
+            .tetra => |t| try printToStdout("{s}", .{switch (t) {
                 0 => "false",
                 1 => "true",
                 2 => "both",
                 3 => "neither",
                 else => "invalid",
             }}),
-            .nothing => try writer.print("nothing", .{}),
+            .nothing => try printToStdout("nothing", .{}),
             .array => |arr| {
-                try writer.print("[", .{});
+                try printToStdout("[", .{});
                 var first = true;
                 for (arr.elements) |elem| {
                     if (std.meta.eql(elem, HIRValue.nothing)) break; // Stop at first nothing element
-                    if (!first) try writer.print(", ", .{});
-                    try PrintOps.formatHIRValue(vm, writer, elem);
+                    if (!first) try printToStdout(", ", .{});
+                    try PrintOps.formatHIRValue(vm, elem);
                     first = false;
                 }
-                try writer.print("]", .{});
+                try printToStdout("]", .{});
             },
             .struct_instance => |s| {
-                try writer.print("{{ ", .{}); // Add opening bracket
+                try printToStdout("{{ ", .{}); // Add opening bracket
                 for (s.fields, 0..) |field, i| {
-                    try writer.print("{s}: ", .{field.name});
-                    try PrintOps.formatHIRValue(vm, writer, field.value);
-                    if (i < s.fields.len - 1) try writer.print(", ", .{});
+                    try printToStdout("{s}: ", .{field.name});
+                    try PrintOps.formatHIRValue(vm, field.value);
+                    if (i < s.fields.len - 1) try printToStdout(", ", .{});
                 }
-                try writer.print(" }}", .{}); // Fix closing bracket
+                try printToStdout(" }}", .{}); // Fix closing bracket
             },
-            .enum_variant => |e| try writer.print(".{s}", .{e.variant_name}),
-            .storage_id_ref => |storage_id| try writer.print("storage_id_ref({})", .{storage_id}),
-            else => try writer.print("{s}", .{@tagName(value)}),
+            .enum_variant => |e| try printToStdout(".{s}", .{e.variant_name}),
+            .storage_id_ref => |storage_id| try printToStdout("storage_id_ref({})", .{storage_id}),
+            else => try printToStdout("{s}", .{@tagName(value)}),
         }
     }
 
     // Format HIR value to a writer without quotes or extra formatting (for Show instruction)
-    pub fn formatHIRValueRaw(vm: anytype, writer: anytype, value: HIRValue) !void {
+    pub fn formatHIRValueRaw(vm: anytype, value: HIRValue) !void {
         switch (value) {
-            .int => |i| try writer.print("{}", .{i}),
-            .byte => |u| try writer.print("0x{X:0>2}", .{u}),
-            .float => |f| try printFloat(writer, f),
-            .string => |s| try writer.writeAll(s), // No quotes around strings, direct write
-            .tetra => |t| try writer.print("{s}", .{switch (t) {
+            .int => |i| try printToStdout("{}", .{i}),
+            .byte => |u| try printToStdout("0x{X:0>2}", .{u}),
+            .float => |f| try printFloat(f),
+            .string => |s| try printToStdout("{s}", .{s}), // No quotes around strings, direct write
+            .tetra => |t| try printToStdout("{s}", .{switch (t) {
                 0 => "false",
                 1 => "true",
                 2 => "both",
                 3 => "neither",
                 else => "invalid",
             }}),
-            .nothing => try writer.print("nothing", .{}),
+            .nothing => try printToStdout("nothing", .{}),
             .array => |arr| {
-                try writer.print("[", .{});
+                try printToStdout("[", .{});
                 var first = true;
                 for (arr.elements) |elem| {
                     if (std.meta.eql(elem, HIRValue.nothing)) break; // Stop at first nothing element
-                    if (!first) try writer.print(", ", .{});
-                    try PrintOps.formatHIRValueRaw(vm, writer, elem);
+                    if (!first) try printToStdout(", ", .{});
+                    try PrintOps.formatHIRValueRaw(vm, elem);
                     first = false;
                 }
-                try writer.print("]", .{});
+                try printToStdout("]", .{});
             },
             .struct_instance => |s| {
-                try writer.print("{{ ", .{}); // Add opening bracket
+                try printToStdout("{{ ", .{}); // Add opening bracket
                 for (s.fields, 0..) |field, i| {
-                    try writer.print("{s}: ", .{field.name});
-                    try PrintOps.formatHIRValueRaw(vm, writer, field.value);
-                    if (i < s.fields.len - 1) try writer.print(", ", .{});
+                    try printToStdout("{s}: ", .{field.name});
+                    try PrintOps.formatHIRValueRaw(vm, field.value);
+                    if (i < s.fields.len - 1) try printToStdout(", ", .{});
                 }
-                try writer.print(" }}", .{}); // Fix closing bracket
+                try printToStdout(" }}", .{}); // Fix closing bracket
             },
-            .enum_variant => |e| try writer.print(".{s}", .{e.variant_name}),
-            .storage_id_ref => |storage_id| try writer.print("storage_id_ref({})", .{storage_id}),
-            else => try writer.print("{s}", .{@tagName(value)}),
+            .enum_variant => |e| try printToStdout(".{s}", .{e.variant_name}),
+            .storage_id_ref => |storage_id| try printToStdout("storage_id_ref({})", .{storage_id}),
+            else => try printToStdout("{s}", .{@tagName(value)}),
         }
     }
 
-    fn printFloat(writer: anytype, f: f64) !void {
+    fn printFloat(f: f64) !void {
         const roundedDown = std.math.floor(f);
         if (f - roundedDown == 0) {
-            try writer.print("{d}.0", .{f});
+            try printToStdout("{d}.0", .{f});
         } else {
-            try writer.print("{d}", .{f});
+            try printToStdout("{d}", .{f});
         }
     }
 };
