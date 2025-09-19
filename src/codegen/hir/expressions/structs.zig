@@ -79,6 +79,24 @@ pub const StructsHandler = struct {
 
     /// Generate HIR for field access expressions
     pub fn generateFieldAccess(self: *StructsHandler, field: ast.FieldAccess) !void {
+        // Handle module namespace constants like rl.SKYBLUE (raylib)
+        if (field.object.data == .Variable) {
+            const obj_name = field.object.data.Variable.lexeme;
+            if (self.generator.isModuleNamespace(obj_name)) {
+                // If this namespace refers to the built-in raylib module, lower constants as identifiers
+                if (self.generator.module_namespaces.get(obj_name)) |mi| {
+                    // Accept both name "raylib" and file_path "raylib" for built-in
+                    const is_raylib = std.mem.eql(u8, mi.name, "raylib") or std.mem.eql(u8, mi.file_path, "raylib");
+                    if (is_raylib) {
+                        const full_name = try std.fmt.allocPrint(self.generator.allocator, "raylib.{s}", .{field.field.lexeme});
+                        const const_idx = try self.generator.addConstant(HIRValue{ .string = full_name });
+                        try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue{ .string = full_name }, .constant_id = const_idx } });
+                        return;
+                    }
+                }
+            }
+        }
+
         var handled_as_enum_member: bool = false;
         // Check the type of the object being accessed first
         const obj_type = self.generator.inferTypeFromExpression(field.object);

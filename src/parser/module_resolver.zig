@@ -18,6 +18,24 @@ const ModuleResolutionStatus = @import("parser_types.zig").ModuleResolutionStatu
 const ImportStackEntry = @import("parser_types.zig").ImportStackEntry;
 
 pub fn resolveModule(self: *Parser, module_name: []const u8) ErrorList!ast.ModuleInfo {
+    // Built-in module: raylib
+    if (std.mem.eql(u8, module_name, "raylib")) {
+        // Create a minimal ModuleInfo for the built-in raylib module
+        var imports = std.array_list.Managed(ast.ImportInfo).init(self.allocator);
+        defer imports.deinit();
+
+        const info = ast.ModuleInfo{
+            .name = "raylib",
+            .imports = try imports.toOwnedSlice(),
+            .ast = null,
+            .file_path = "raylib",
+            .symbols = null,
+        };
+
+        // Cache as completed for future lookups
+        try self.module_cache.put("raylib", info);
+        return info;
+    }
     // Normalize the module path for consistent tracking
     const normalized_path = try normalizeModulePath(self, module_name);
     defer self.allocator.free(normalized_path);
