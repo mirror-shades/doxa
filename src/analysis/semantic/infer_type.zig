@@ -241,6 +241,28 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
             type_info.* = operand_type.*;
         },
         .FunctionCall => |function_call| {
+            // Early: recognize nested module namespace calls by AST shape (graphics.raylib.Func)
+            if (function_call.callee.data == .FieldAccess) {
+                const fa = function_call.callee.data.FieldAccess;
+                if (fa.object.data == .FieldAccess) {
+                    const inner = fa.object.data.FieldAccess;
+                    if (inner.object.data == .Variable) {
+                        const alias = inner.object.data.Variable.lexeme;
+                        if (helpers.isModuleNamespace(self, alias)) {
+                            // Confirm this alias refers to graphics
+                            if (self.parser) |p| {
+                                if (p.module_namespaces.get(alias)) |mi| {
+                                    if (std.mem.eql(u8, mi.name, "graphics") or std.mem.eql(u8, mi.file_path, "graphics")) {
+                                        // Treat as module function call
+                                        type_info.* = .{ .base = .Int };
+                                        return type_info;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             // Check if this is a method call (callee is FieldAccess)
             if (function_call.callee.data == .FieldAccess) {
                 const field_access = function_call.callee.data.FieldAccess;
@@ -266,6 +288,20 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                                         type_info.* = method_info.return_type.*;
                                         return type_info;
                                     }
+                                }
+                            }
+                        }
+                    }
+                } else if (field_access.object.data == .FieldAccess) {
+                    // Nested module namespace call: e.g., graphics.raylib.InitWindow
+                    // If object_type is a Custom with a dotted name whose root is a module namespace, treat as module function
+                    if (object_type.base == .Custom) {
+                        if (object_type.custom_type) |ct_name| {
+                            if (std.mem.indexOfScalar(u8, ct_name, '.')) |dot_idx| {
+                                const root = ct_name[0..dot_idx];
+                                if (helpers.isModuleNamespace(self, root)) {
+                                    type_info.* = .{ .base = .Int };
+                                    return type_info;
                                 }
                             }
                         }
