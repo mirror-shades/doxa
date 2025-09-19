@@ -196,4 +196,12 @@ enum SysError {          // system call failures
     Timeout,             // operation timed out
     Failed               // generic system failure
 }
+
+// enum name reserved for future builtins
+enum NetworkError {
+    Unreachable,      // host/server cannot be reached
+    Timeout,          // request timed out
+    PermissionDenied, // lack of privileges to open socket/port
+    Failed            // generic network failure
+}
 ```

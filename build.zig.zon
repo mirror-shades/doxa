@@ -1,9 +1,14 @@
 .{
     .name = .doxa,
     .version = "0.0.0",
-    .minimum_zig_version = "0.14.0",
+    .minimum_zig_version = "0.15.1",
     .fingerprint = 0xbd891657afd13d1,
-    .dependencies = .{},
+    .dependencies = .{
+        .raylib = .{
+            .url = "git+https://github.com/raysan5/raylib.git#ff8333435a787bd07aeaf9caafafa7d267f989fe",
+            .hash = "raylib-5.6.0-dev-whq8uMw1ywQblBEHnrrJ2dLC7ifPmZJZbvCgdIak3CQs",
+        },
+    },
     .paths = .{
         "build.zig",
         "build.zig.zon",

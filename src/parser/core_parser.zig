@@ -62,7 +62,7 @@ pub const Parser = struct {
 
     // Add circular import detection fields
     module_resolution_status: std.StringHashMap(ModuleResolutionStatus),
-    import_stack: std.ArrayList(ImportStackEntry),
+    import_stack: std.array_list.Managed(ImportStackEntry),
 
     pub fn init(allocator: std.mem.Allocator, tokens: []const token.Token, current_file: []const u8, reporter: *Reporter) Parser {
         const parser = Parser{
@@ -77,7 +77,7 @@ pub const Parser = struct {
             .imported_symbols = std.StringHashMap(import_parser.ImportedSymbol).init(allocator),
             .declared_types = std.StringHashMap(void).init(allocator),
             .module_resolution_status = std.StringHashMap(ModuleResolutionStatus).init(allocator),
-            .import_stack = std.ArrayList(ImportStackEntry).init(allocator),
+            .import_stack = std.array_list.Managed(ImportStackEntry).init(allocator),
         };
 
         return parser;
@@ -154,7 +154,7 @@ pub const Parser = struct {
 
     // Main parsing loop - moved from parser_types.zig
     pub fn execute(self: *Parser) ErrorList![]ast.Stmt {
-        var statements = std.ArrayList(ast.Stmt).init(self.allocator);
+        var statements = std.array_list.Managed(ast.Stmt).init(self.allocator);
         errdefer {
             for (statements.items) |*stmt| {
                 stmt.deinit(self.allocator);
@@ -493,8 +493,8 @@ pub const Parser = struct {
         // TODO: Implement this properly
         return ModuleInfo{
             .file_path = file_path,
-            .public_symbols = std.ArrayList(ast.ModuleSymbol).init(self.allocator),
-            .imports = std.ArrayList(ast.ImportStmt).init(self.allocator),
+            .public_symbols = std.array_list.Managed(ast.ModuleSymbol).init(self.allocator),
+            .imports = std.array_list.Managed(ast.ImportStmt).init(self.allocator),
         };
     }
 
@@ -505,8 +505,8 @@ pub const Parser = struct {
         // TODO: Implement this properly
         return ModuleInfo{
             .file_path = file_path,
-            .public_symbols = std.ArrayList(ast.ModuleSymbol).init(self.allocator),
-            .imports = std.ArrayList(ast.ImportStmt).init(self.allocator),
+            .public_symbols = std.array_list.Managed(ast.ModuleSymbol).init(self.allocator),
+            .imports = std.array_list.Managed(ast.ImportStmt).init(self.allocator),
         };
     }
 

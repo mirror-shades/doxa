@@ -221,7 +221,7 @@ pub fn parseMatchExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*a
     self.advance();
 
     // Parse match cases
-    var cases = std.ArrayList(ast.MatchCase).init(self.allocator);
+    var cases = std.array_list.Managed(ast.MatchCase).init(self.allocator);
     errdefer cases.deinit();
 
     var has_else_case = false;
@@ -807,7 +807,7 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
         if (self.peek().type != .LEFT_BRACE) return error.ExpectedLeftBrace;
         self.advance(); // consume {
 
-        var fields = std.ArrayList(*ast.StructField).init(self.allocator);
+        var fields = std.array_list.Managed(*ast.StructField).init(self.allocator);
         errdefer {
             for (fields.items) |field| {
                 field.deinit(self.allocator);
@@ -951,7 +951,7 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
 
     // --- Check for Union Type ---
     if (self.peek().type == .PIPE) {
-        var types = std.ArrayList(*ast.TypeExpr).init(self.allocator);
+        var types = std.array_list.Managed(*ast.TypeExpr).init(self.allocator);
         errdefer {
             for (types.items) |type_expr| {
                 type_expr.deinit(self.allocator);
@@ -1463,7 +1463,7 @@ pub fn parseArrayLiteral(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!
     // Skip optional newlines after '['
     while (self.peek().type == .NEWLINE) self.advance();
 
-    var elements = std.ArrayList(*ast.Expr).init(self.allocator);
+    var elements = std.array_list.Managed(*ast.Expr).init(self.allocator);
     errdefer {
         for (elements.items) |element| {
             element.deinit(self.allocator);
@@ -1770,7 +1770,7 @@ pub fn parseStructOrMatch(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList
         self.advance();
 
         // Parse match cases
-        var cases = std.ArrayList(ast.MatchCase).init(self.allocator);
+        var cases = std.array_list.Managed(ast.MatchCase).init(self.allocator);
         errdefer cases.deinit();
 
         var has_else_case = false;

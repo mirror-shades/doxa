@@ -863,7 +863,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
 
                 // For match expressions used as statements, analyze case bodies without type narrowing
                 // This allows assignments in match cases to work properly
-                var union_types = std.ArrayList(*ast.TypeInfo).init(self.allocator);
+                var union_types = std.array_list.Managed(*ast.TypeInfo).init(self.allocator);
                 defer union_types.deinit();
 
                 // Infer each case body type with proper type narrowing

@@ -152,9 +152,9 @@ pub const ControlFlowHandler = struct {
 
         // Create labels for each case body and the end
         const end_label = try self.generator.generateLabel("match_end");
-        var case_labels = std.ArrayList([]const u8).init(self.generator.allocator);
+        var case_labels = std.array_list.Managed([]const u8).init(self.generator.allocator);
         defer case_labels.deinit();
-        var check_labels = std.ArrayList([]const u8).init(self.generator.allocator);
+        var check_labels = std.array_list.Managed([]const u8).init(self.generator.allocator);
         defer check_labels.deinit();
 
         // Generate labels for each case body and case check
@@ -268,7 +268,7 @@ pub const ControlFlowHandler = struct {
 
             // Check if the case body is a block (statements) or an expression
             const is_block = case.body.data == .Block;
-            
+
             if (is_block) {
                 // For blocks, we don't need to pop the match value since blocks don't return values
                 // and we don't need to preserve the result

@@ -152,7 +152,7 @@ fn compileDoxaToSoxaFromAST(memoryManager: *MemoryManager, statements: []ast.Stm
 
     // Apply constant folding to statements
     var constant_folder = ConstantFolder.init(memoryManager.getAllocator());
-    var folded_statements = std.ArrayList(ast.Stmt).init(memoryManager.getAllocator());
+    var folded_statements = std.array_list.Managed(ast.Stmt).init(memoryManager.getAllocator());
     defer folded_statements.deinit();
 
     // Create mutable copies of statements for constant folding

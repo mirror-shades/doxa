@@ -28,26 +28,26 @@ pub const SoxaTextParser = struct {
     source: []const u8,
     pos: usize = 0,
     line: u32 = 1,
-    constants: std.ArrayList(HIRValue),
-    functions: std.ArrayList(HIRProgram.HIRFunction),
-    instructions: std.ArrayList(HIRInstruction),
+    constants: std.array_list.Managed(HIRValue),
+    functions: std.array_list.Managed(HIRProgram.HIRFunction),
+    instructions: std.array_list.Managed(HIRInstruction),
     struct_context: ?StructContext = null,
 
     const StructContext = struct {
         type_name: []const u8, // Changed from struct_name to type_name to match usage
         field_count: u32,
-        field_names: std.ArrayList([]const u8),
-        field_types: std.ArrayList(HIRType),
-        field_path: std.ArrayList([]const u8), // Added to track nested field access
+        field_names: std.array_list.Managed([]const u8),
+        field_types: std.array_list.Managed(HIRType),
+        field_path: std.array_list.Managed([]const u8), // Added to track nested field access
     };
 
     pub fn init(allocator: std.mem.Allocator, source: []const u8) SoxaTextParser {
         return SoxaTextParser{
             .allocator = allocator,
             .source = source,
-            .constants = std.ArrayList(HIRValue).init(allocator),
-            .functions = std.ArrayList(HIRProgram.HIRFunction).init(allocator),
-            .instructions = std.ArrayList(HIRInstruction).init(allocator),
+            .constants = std.array_list.Managed(HIRValue).init(allocator),
+            .functions = std.array_list.Managed(HIRProgram.HIRFunction).init(allocator),
+            .instructions = std.array_list.Managed(HIRInstruction).init(allocator),
             .struct_context = null,
         };
     }
@@ -261,9 +261,9 @@ pub const SoxaTextParser = struct {
             const field_count = try std.fmt.parseInt(u32, trimmed[count_start..count_end], 10);
 
             // Initialize new struct context
-            var field_names = std.ArrayList([]const u8).init(self.allocator);
-            var field_types = std.ArrayList(HIRType).init(self.allocator);
-            const field_path = std.ArrayList([]const u8).init(self.allocator);
+            var field_names = std.array_list.Managed([]const u8).init(self.allocator);
+            var field_types = std.array_list.Managed(HIRType).init(self.allocator);
+            const field_path = std.array_list.Managed([]const u8).init(self.allocator);
 
             // Parse field names and types
             var in_names = true;
@@ -450,13 +450,13 @@ pub const SoxaTextParser = struct {
 
             // For struct peekion
             var struct_name: ?[]const u8 = null;
-            var field_names = std.ArrayList([]const u8).init(self.allocator);
-            var field_types = std.ArrayList(HIRType).init(self.allocator);
+            var field_names = std.array_list.Managed([]const u8).init(self.allocator);
+            var field_types = std.array_list.Managed(HIRType).init(self.allocator);
             defer field_names.deinit();
             defer field_types.deinit();
 
             // Track the full path for struct fields
-            var path_builder = std.ArrayList(u8).init(self.allocator);
+            var path_builder = std.array_list.Managed(u8).init(self.allocator);
             defer path_builder.deinit();
 
             // Build path from struct context if available
@@ -514,7 +514,7 @@ pub const SoxaTextParser = struct {
                     const inner = std.mem.trim(u8, trimmed[list_start..end_pos], " \t");
                     // Split by commas
                     var items = std.mem.splitScalar(u8, inner, ',');
-                    var tmp = std.ArrayList([]const u8).init(self.allocator);
+                    var tmp = std.array_list.Managed([]const u8).init(self.allocator);
                     defer tmp.deinit();
                     while (items.next()) |it| {
                         const item_trim = std.mem.trim(u8, it, " \t");
@@ -593,7 +593,7 @@ pub const SoxaTextParser = struct {
             }
 
             const ids_content = format_part_ids_str[1 .. format_part_ids_str.len - 1];
-            var format_part_ids = std.ArrayList(u32).init(self.allocator);
+            var format_part_ids = std.array_list.Managed(u32).init(self.allocator);
             defer format_part_ids.deinit();
 
             if (ids_content.len > 0) {
@@ -856,7 +856,7 @@ pub const SoxaTextParser = struct {
             const content = quoted[1 .. quoted.len - 1];
 
             // Handle escaped sequences
-            var result = std.ArrayList(u8).init(self.allocator);
+            var result = std.array_list.Managed(u8).init(self.allocator);
             defer result.deinit();
 
             var i: usize = 0;

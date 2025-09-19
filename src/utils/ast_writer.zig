@@ -5,12 +5,15 @@ pub fn writeASTToFile(statements: []const ast.Stmt, file_path: []const u8) !void
     var file = try std.fs.cwd().createFile(file_path, .{});
     defer file.close();
 
-    const writer = file.writer();
+    var buffer: [1024]u8 = undefined;
+    var file_writer = file.writer(&buffer);
+    const writer = &file_writer.interface;
     try writeStatements(statements, writer);
+    try writer.flush();
 }
 
 // Helper function to write source location information
-fn writeSourceLocation(base: ast.Base, writer: anytype) std.fs.File.WriteError!void {
+fn writeSourceLocation(base: ast.Base, writer: anytype) anyerror!void {
     try writer.print("node_id:{d}\n", .{base.id});
 
     if (base.span) |span| {
@@ -27,7 +30,7 @@ fn writeSourceLocation(base: ast.Base, writer: anytype) std.fs.File.WriteError!v
 }
 
 // Helper function to write detailed type information
-fn writeDetailedTypeInfo(type_info: ast.TypeInfo, writer: anytype) std.fs.File.WriteError!void {
+fn writeDetailedTypeInfo(type_info: ast.TypeInfo, writer: anytype) anyerror!void {
     try writer.print("type_base:{s}\n", .{@tagName(type_info.base)});
     try writer.print("is_mutable:{}\n", .{type_info.is_mutable});
 
@@ -64,7 +67,7 @@ fn writeDetailedTypeInfo(type_info: ast.TypeInfo, writer: anytype) std.fs.File.W
     }
 }
 
-fn writeStatements(statements: []const ast.Stmt, writer: anytype) std.fs.File.WriteError!void {
+fn writeStatements(statements: []const ast.Stmt, writer: anytype) anyerror!void {
     // Write number of statements
     try writer.print("{d}\n", .{statements.len});
 
@@ -74,7 +77,7 @@ fn writeStatements(statements: []const ast.Stmt, writer: anytype) std.fs.File.Wr
     }
 }
 
-fn writeStatement(stmt: ast.Stmt, writer: anytype) std.fs.File.WriteError!void {
+fn writeStatement(stmt: ast.Stmt, writer: anytype) anyerror!void {
     // Write statement type
     try writer.print("{s}\n", .{@tagName(stmt.data)});
 
@@ -156,7 +159,7 @@ fn writeStatement(stmt: ast.Stmt, writer: anytype) std.fs.File.WriteError!void {
     }
 }
 
-fn writeExpression(expr: *const ast.Expr, writer: anytype) std.fs.File.WriteError!void {
+fn writeExpression(expr: *const ast.Expr, writer: anytype) anyerror!void {
     try writer.print("expr_type:{s}\n", .{@tagName(expr.data)});
 
     // Write source location information

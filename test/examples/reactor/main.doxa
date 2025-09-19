@@ -1,0 +1,35 @@
+module Render from "./render/render.doxa"
+import GameState, Reactor from "./utils/types.doxa"
+
+function handleInput(input :: string, ^state :: GameState, ^reactor :: Reactor, ^turn :: int) {
+    match state {
+        GameState.Start then {
+            if input == "1" then state is GameState.Running
+        }
+        GameState.Running then {
+            if input == "1" then reactor.addRod(1)
+            if input == "2" then reactor.addRod(-1)
+            if input == "3" then nextTurn(^turn)
+            if input == "4" then state is GameState.GameOver
+        }
+        GameState.GameOver then {
+            if input == "1" then state is GameState.Start
+        }
+    }
+}
+
+function nextTurn(^turn :: int) {
+    turn is turn + 1
+}
+
+entry function main() {
+    var state is GameState.Start
+    var reactor is Reactor.new()
+    var turn is 0
+    do {
+        @print("Enter a command: \n")
+        Render.render(state, reactor, turn)
+        const input is @input()
+        handleInput(input, ^state, ^reactor, ^turn)
+    }
+}

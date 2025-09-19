@@ -48,20 +48,25 @@ pub const Diagnostic = struct {
 };
 
 pub const Reporter = struct {
-    diagnostics: std.ArrayList(Diagnostic),
+    diagnostics: std.array_list.Managed(Diagnostic),
     options: ReporterOptions,
-    writer: std.io.AnyWriter,
+    writer: *std.Io.Writer,
     allocator: std.mem.Allocator,
     debug_mode: bool,
+    stderr_buffer: [1024]u8,
+    stderr_writer: std.fs.File.Writer,
 
     pub fn init(allocator: std.mem.Allocator, options: ReporterOptions) Reporter {
-        const writer = std.io.getStdErr().writer().any();
+        var stderr_buffer: [1024]u8 = undefined;
+        var stderr_writer = std.fs.File.stderr().writer(&stderr_buffer);
         return .{
-            .diagnostics = std.ArrayList(Diagnostic).init(allocator),
+            .diagnostics = std.array_list.Managed(Diagnostic).init(allocator),
             .options = options,
-            .writer = writer,
+            .writer = &stderr_writer.interface,
             .allocator = allocator,
             .debug_mode = options.debug_mode,
+            .stderr_buffer = stderr_buffer,
+            .stderr_writer = stderr_writer,
         };
     }
 
@@ -92,7 +97,7 @@ pub const Reporter = struct {
             final_severity = .Error;
         }
 
-        var buf = std.ArrayList(u8).init(self.allocator);
+        var buf = std.array_list.Managed(u8).init(self.allocator);
         defer buf.deinit();
 
         // Handle formatting errors properly
@@ -166,7 +171,7 @@ pub const Reporter = struct {
         };
 
         // Build a rich, single-line diagnostic with location and code
-        var line_buf = std.ArrayList(u8).init(self.allocator);
+        var line_buf = std.array_list.Managed(u8).init(self.allocator);
         defer line_buf.deinit();
 
         if (loc) |l| {
