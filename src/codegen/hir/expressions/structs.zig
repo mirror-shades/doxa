@@ -79,16 +79,23 @@ pub const StructsHandler = struct {
 
     /// Generate HIR for field access expressions
     pub fn generateFieldAccess(self: *StructsHandler, field: ast.FieldAccess) !void {
-        // Handle module namespace constants like rl.SKYBLUE (raylib)
+        // Handle module namespace constants like g.raylib.SKYBLUE
         if (field.object.data == .Variable) {
             const obj_name = field.object.data.Variable.lexeme;
             if (self.generator.isModuleNamespace(obj_name)) {
-                // If this namespace refers to the built-in raylib module, lower constants as identifiers
-                if (self.generator.module_namespaces.get(obj_name)) |mi| {
-                    // Accept both name "raylib" and file_path "raylib" for built-in
-                    const is_raylib = std.mem.eql(u8, mi.name, "raylib") or std.mem.eql(u8, mi.file_path, "raylib");
-                    if (is_raylib) {
-                        const full_name = try std.fmt.allocPrint(self.generator.allocator, "raylib.{s}", .{field.field.lexeme});
+                // No longer support root-level raylib; constants under graphics.raylib handled below
+            }
+        }
+
+        // Handle nested module constants: graphics.raylib.SKYBLUE
+        if (field.object.data == .FieldAccess) {
+            const inner = field.object.data.FieldAccess;
+            if (inner.object.data == .Variable and self.generator.isModuleNamespace(inner.object.data.Variable.lexeme)) {
+                if (self.generator.module_namespaces.get(inner.object.data.Variable.lexeme)) |mi| {
+                    const root_name = if (mi.name.len > 0) mi.name else mi.file_path; // e.g., "graphics"
+                    const sub_ns = inner.field.lexeme; // e.g., "raylib"
+                    if (std.mem.eql(u8, root_name, "graphics") and std.mem.eql(u8, sub_ns, "raylib")) {
+                        const full_name = try std.fmt.allocPrint(self.generator.allocator, "graphics.raylib.{s}", .{field.field.lexeme});
                         const const_idx = try self.generator.addConstant(HIRValue{ .string = full_name });
                         try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue{ .string = full_name }, .constant_id = const_idx } });
                         return;

@@ -362,6 +362,17 @@ pub fn inferTypeFromExpr(ctx: *TypeAnalysisContext, expr: *ast.Expr) !*ast.TypeI
                             }
                         }
                     }
+                } else if (fa.object.data == .FieldAccess) {
+                    // Nested namespace: graphics.raylib.Func
+                    if (object_type.base == .Custom and object_type.custom_type) |ctn| {
+                        if (std.mem.indexOfScalar(u8, ctn, '.')) |dot_idx| {
+                            const root = ctn[0..dot_idx];
+                            if (helpers.isModuleNamespace(@constCast(ctx), root)) {
+                                type_info.* = .{ .base = .Int };
+                                return type_info;
+                            }
+                        }
+                    }
                 }
 
                 // Instance method based on receiver type
