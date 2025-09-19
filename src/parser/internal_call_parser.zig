@@ -59,7 +59,7 @@ pub fn internalCallExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?
     // Allow newlines after '('
     while (self.peek().type == .NEWLINE) self.advance();
 
-    var args = std.ArrayList(*ast.Expr).init(self.allocator);
+    var args = std.array_list.Managed(*ast.Expr).init(self.allocator);
     errdefer {
         for (args.items) |arg| {
             arg.deinit(self.allocator);
@@ -99,7 +99,7 @@ pub fn internalCallExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?
     // For @methods that act on a receiver, we use first argument as receiver
     // and keep remaining as method arguments. If no args, receiver is a dummy.
     var receiver_expr: *ast.Expr = undefined;
-    var call_args = std.ArrayList(*ast.Expr).init(self.allocator);
+    var call_args = std.array_list.Managed(*ast.Expr).init(self.allocator);
     errdefer call_args.deinit();
 
     if (args.items.len > 0) {
@@ -156,7 +156,7 @@ pub fn parsePrintMethod(self: *Parser) ErrorList!?*ast.Expr {
     const interp_info = try parseStringInterpolation(self, format_expr);
 
     // Use the placeholder expressions directly as arguments (for legacy compatibility)
-    var arguments = std.ArrayList(*ast.Expr).init(self.allocator);
+    var arguments = std.array_list.Managed(*ast.Expr).init(self.allocator);
     errdefer {
         for (arguments.items) |arg| {
             arg.deinit(self.allocator);
@@ -217,9 +217,9 @@ fn parseStringInterpolation(self: *Parser, format_expr: *ast.Expr) ErrorList!Int
     };
 
     // Build both new FormatTemplate structure and legacy compatibility fields
-    var template_parts = std.ArrayList(ast.FormatPart).init(self.allocator);
-    var legacy_format_parts = std.ArrayList([]const u8).init(self.allocator);
-    var placeholder_expressions = std.ArrayList(*ast.Expr).init(self.allocator);
+    var template_parts = std.array_list.Managed(ast.FormatPart).init(self.allocator);
+    var legacy_format_parts = std.array_list.Managed([]const u8).init(self.allocator);
+    var placeholder_expressions = std.array_list.Managed(*ast.Expr).init(self.allocator);
 
     errdefer {
         // Clean up template parts

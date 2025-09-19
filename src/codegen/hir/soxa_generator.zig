@@ -52,10 +52,10 @@ pub const TETRA_NEITHER: u8 = 3; // 11
 
 pub const HIRGenerator = struct {
     allocator: std.mem.Allocator,
-    instructions: std.ArrayList(HIRInstruction),
+    instructions: std.array_list.Managed(HIRInstruction),
     current_peek_expr: ?*ast.Expr = null,
     current_field_name: ?[]const u8 = null,
-    string_pool: std.ArrayList([]const u8),
+    string_pool: std.array_list.Managed([]const u8),
     reporter: *Reporter,
 
     // New composed components
@@ -66,13 +66,13 @@ pub const HIRGenerator = struct {
     struct_methods: std.StringHashMap(std.StringHashMap(StructMethodInfo)), // Track struct methods
 
     function_signatures: std.StringHashMap(FunctionInfo),
-    function_bodies: std.ArrayList(FunctionBody),
+    function_bodies: std.array_list.Managed(FunctionBody),
     current_function: ?[]const u8,
     current_function_return_type: HIRType, // Track current function's return type for Return instructions
 
     stats: HIRStats,
 
-    function_calls: std.ArrayList(FunctionCallSite),
+    function_calls: std.array_list.Managed(FunctionCallSite),
 
     module_namespaces: std.StringHashMap(ast.ModuleInfo), // Track module namespaces for function call resolution
 
@@ -82,7 +82,7 @@ pub const HIRGenerator = struct {
     current_enum_type: ?[]const u8 = null,
 
     // Loop context stack to support break/continue codegen
-    loop_context_stack: std.ArrayList(LoopContext),
+    loop_context_stack: std.array_list.Managed(LoopContext),
 
     // Track when we're generating nested array elements to avoid stack interference
     is_generating_nested_array: bool = false,
@@ -149,9 +149,9 @@ pub const HIRGenerator = struct {
     pub fn init(allocator: std.mem.Allocator, reporter: *Reporter, module_namespaces: std.StringHashMap(ast.ModuleInfo), imported_symbols: ?std.StringHashMap(import_parser.ImportedSymbol)) HIRGenerator {
         return HIRGenerator{
             .allocator = allocator,
-            .instructions = std.ArrayList(HIRInstruction).init(allocator),
+            .instructions = std.array_list.Managed(HIRInstruction).init(allocator),
             .current_peek_expr = null,
-            .string_pool = std.ArrayList([]const u8).init(allocator),
+            .string_pool = std.array_list.Managed([]const u8).init(allocator),
             .reporter = reporter,
 
             // Initialize new composed components
@@ -161,15 +161,15 @@ pub const HIRGenerator = struct {
             .type_system = TypeSystem.init(allocator, reporter),
             .struct_methods = std.StringHashMap(std.StringHashMap(StructMethodInfo)).init(allocator),
             .function_signatures = std.StringHashMap(FunctionInfo).init(allocator),
-            .function_bodies = std.ArrayList(FunctionBody).init(allocator),
+            .function_bodies = std.array_list.Managed(FunctionBody).init(allocator),
             .current_function = null,
             .current_function_return_type = .Nothing,
-            .function_calls = std.ArrayList(FunctionCallSite).init(allocator),
+            .function_calls = std.array_list.Managed(FunctionCallSite).init(allocator),
             .module_namespaces = module_namespaces,
             .imported_symbols = imported_symbols,
             .current_enum_type = null,
             .stats = HIRStats.init(allocator),
-            .loop_context_stack = std.ArrayList(LoopContext).init(allocator),
+            .loop_context_stack = std.array_list.Managed(LoopContext).init(allocator),
         };
     }
 
@@ -533,7 +533,9 @@ pub const HIRGenerator = struct {
 
                 // Check if this parameter is an alias
                 if (function_body.param_is_alias[param_index]) {
-                    // For alias parameters, generate StoreParamAlias
+                    // Ensure a local variable slot exists for the alias parameter name so nested aliasing works
+                    _ = try self.getOrCreateVariable(param.name.lexeme);
+                    // For alias parameters, bind the alias to the incoming storage id
                     // The stack should contain the storage ID pushed by the caller
                     try self.instructions.append(.{ .StoreParamAlias = .{
                         .param_name = param.name.lexeme,
@@ -723,7 +725,7 @@ pub const HIRGenerator = struct {
 
     /// Pass 4: Build function table from collected signatures
     fn buildFunctionTable(self: *HIRGenerator) ![]HIRProgram.HIRFunction {
-        var function_table = std.ArrayList(HIRProgram.HIRFunction).init(self.allocator);
+        var function_table = std.array_list.Managed(HIRProgram.HIRFunction).init(self.allocator);
 
         // Use function_bodies order for deterministic indices (same as getFunctionIndex)
         for (self.function_bodies.items) |function_body| {

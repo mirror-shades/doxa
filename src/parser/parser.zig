@@ -45,7 +45,7 @@ fn infix_call(self: *Parser, left: ?*ast.Expr, precedence: Precedence) ErrorList
 fn array(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     self.advance(); // First, consume the LEFT_BRACKET token!
 
-    var elements = std.ArrayList(*ast.Expr).init(self.allocator);
+    var elements = std.array_list.Managed(*ast.Expr).init(self.allocator);
     errdefer elements.deinit();
 
     // Parse first element to establish the type
@@ -179,7 +179,7 @@ fn map(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     // Consume the left brace
     self.advance();
 
-    var entries = std.ArrayList(ast.MapEntry).init(self.allocator); // Changed from *ast.MapEntry
+    var entries = std.array_list.Managed(ast.MapEntry).init(self.allocator); // Changed from *ast.MapEntry
     errdefer {
         for (entries.items) |*entry| { // Changed to use pointer to entry
             entry.key.deinit(self.allocator);

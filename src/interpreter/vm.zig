@@ -891,11 +891,15 @@ pub const HIRVM = struct {
                     };
 
                     // Print formatted assertion failure
-                    const stderr = std.io.getStdErr().writer();
+                    var stderr_buffer: [1024]u8 = undefined;
+                    var stderr_writer = std.fs.File.stderr().writer(&stderr_buffer);
+                    const stderr = &stderr_writer.interface;
                     try stderr.print("Assertion failed at {s}:\n{s}\n", .{ location_str, message_str });
                 } else {
                     // No message provided
-                    const stderr = std.io.getStdErr().writer();
+                    var stderr_buffer: [1024]u8 = undefined;
+                    var stderr_writer = std.fs.File.stderr().writer(&stderr_buffer);
+                    const stderr = &stderr_writer.interface;
                     try stderr.print("Assertion failed at {s}\n", .{location_str});
                 }
 
@@ -1402,7 +1406,7 @@ pub const HIRVM = struct {
             }}),
             .nothing => try self.allocator.dupe(u8, "nothing"),
             .array => |arr| {
-                var result = std.ArrayList(u8).init(self.allocator);
+                var result = std.array_list.Managed(u8).init(self.allocator);
                 defer result.deinit();
                 try result.append('[');
                 var first = true;
@@ -1418,7 +1422,7 @@ pub const HIRVM = struct {
                 return try result.toOwnedSlice();
             },
             .struct_instance => |s| {
-                var result = std.ArrayList(u8).init(self.allocator);
+                var result = std.array_list.Managed(u8).init(self.allocator);
                 defer result.deinit();
                 try result.appendSlice("{ ");
                 for (s.fields, 0..) |field, i| {
@@ -1488,7 +1492,9 @@ pub const HIRVM = struct {
         };
         std.sort.block(ProfileRow, entries, {}, Cmp.less);
 
-        const out = std.io.getStdOut().writer();
+        var stdout_buffer: [1024]u8 = undefined;
+        var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+        const out = &stdout_writer.interface;
         try out.print("\n=== PROFILE (inside functions) ===\n", .{});
         var total_ns: u128 = 0;
         for (entries) |en| total_ns += en.ns;

@@ -6,9 +6,11 @@ pub fn build(b: *std.Build) void {
 
     const exe = b.addExecutable(.{
         .name = "doxa",
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
 
     // Install the executable first
@@ -23,7 +25,11 @@ pub fn build(b: *std.Build) void {
     // Add test steps
     const test_run = b.addTest(.{
         .name = "test_run",
-        .root_source_file = b.path("test/test_run.zig"),
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/test_run.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
     const run_test_run = b.addRunArtifact(test_run);
 

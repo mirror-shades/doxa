@@ -200,6 +200,8 @@ pub const CallsHandler = struct {
                         const param = func_body.function_params[p_index];
                         const expected_t = func_body.param_types[p_index];
                         if (func_body.param_is_alias[p_index]) {
+                            // Ensure a local variable slot exists for the alias parameter in inline scope
+                            _ = try self.generator.getOrCreateVariable(param.name.lexeme);
                             // Alias parameter: the caller pushed a storage id reference
                             try self.generator.instructions.append(.{ .StoreParamAlias = .{ .param_name = param.name.lexeme, .param_type = expected_t } });
                         } else {

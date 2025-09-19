@@ -9,7 +9,7 @@ const ErrorCode = Errors.ErrorCode;
 
 /// Flatten union types to ensure no nested unions
 pub fn flattenUnionType(allocator: std.mem.Allocator, union_type: *ast.UnionType) !*ast.UnionType {
-    var flat_types = std.ArrayList(*ast.TypeInfo).init(allocator);
+    var flat_types = std.array_list.Managed(*ast.TypeInfo).init(allocator);
     defer flat_types.deinit();
 
     for (union_type.types) |member_type| {
@@ -58,7 +58,7 @@ pub fn flattenUnionType(allocator: std.mem.Allocator, union_type: *ast.UnionType
 /// Create a union type from multiple types
 pub fn createUnionType(allocator: std.mem.Allocator, types: []*ast.TypeInfo) !*ast.TypeInfo {
     // Flatten any existing unions in the input types
-    var flat_types = std.ArrayList(*ast.TypeInfo).init(allocator);
+    var flat_types = std.array_list.Managed(*ast.TypeInfo).init(allocator);
     defer flat_types.deinit();
 
     for (types) |type_info| {
@@ -166,7 +166,7 @@ pub fn isTypeCompatibleWithUnion(
                 }
                 if (!member_allowed) {
                     // Build expected list for error message
-                    var type_list = std.ArrayList(u8).init(allocator);
+                    var type_list = std.array_list.Managed(u8).init(allocator);
                     defer type_list.deinit();
                     for (expected_union.types, 0..) |m, i| {
                         if (i > 0) try type_list.appendSlice(" | ");
