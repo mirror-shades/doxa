@@ -155,6 +155,71 @@ pub const FunctionOps = struct {
 
     // Execute module function calls
     fn execModuleFunction(vm: anytype, c: anytype) !void {
+        // Fast-path: raylib module bridging. Expect qualified_name like "rl.Func" or "raylib.Func"
+        if (std.mem.indexOfScalar(u8, c.qualified_name, '.')) |dot_idx| {
+            const module_alias = c.qualified_name[0..dot_idx];
+            const func_name = c.qualified_name[dot_idx + 1 ..];
+
+            const is_raylib = std.mem.eql(u8, module_alias, "raylib") or std.mem.eql(u8, module_alias, "rl");
+            if (is_raylib) {
+                const ray = @import("../../runtime/raylib.zig");
+                if (std.mem.eql(u8, func_name, "InitWindow")) {
+                    const title = try vm.stack.pop();
+                    const height = try vm.stack.pop();
+                    const width = try vm.stack.pop();
+                    const w = try width.asInt();
+                    const h = try height.asInt();
+                    const t = try title.asString();
+                    try ray.InitWindowDoxa(w, h, t);
+                    try vm.stack.push(HIRFrame.initNothing());
+                    return;
+                } else if (std.mem.eql(u8, func_name, "CloseWindow")) {
+                    ray.CloseWindow();
+                    try vm.stack.push(HIRFrame.initNothing());
+                    return;
+                } else if (std.mem.eql(u8, func_name, "WindowShouldClose")) {
+                    const res = ray.WindowShouldClose();
+                    try vm.stack.push(HIRFrame.initTetra(if (res) 1 else 0));
+                    return;
+                } else if (std.mem.eql(u8, func_name, "BeginDrawing")) {
+                    ray.BeginDrawing();
+                    try vm.stack.push(HIRFrame.initNothing());
+                    return;
+                } else if (std.mem.eql(u8, func_name, "EndDrawing")) {
+                    ray.EndDrawing();
+                    try vm.stack.push(HIRFrame.initNothing());
+                    return;
+                } else if (std.mem.eql(u8, func_name, "ClearBackground")) {
+                    const color_frame = try vm.stack.pop();
+                    // Accept either string token "raylib.SKYBLUE" or a struct-like map in future; for now support string
+                    var color: ray.DoxaColor = .{ .r = 0, .g = 0, .b = 0, .a = 255 };
+                    switch (color_frame.value) {
+                        .string => |s| {
+                            if (std.mem.eql(u8, s, "raylib.SKYBLUE") or std.mem.eql(u8, s, "rl.SKYBLUE")) {
+                                color = ray.SKYBLUE_DOXA;
+                            } else {
+                                // Unknown string; default to SKYBLUE
+                                color = ray.SKYBLUE_DOXA;
+                            }
+                        },
+                        else => {
+                            // Default for now
+                            color = ray.SKYBLUE_DOXA;
+                        },
+                    }
+                    ray.ClearBackgroundDoxa(color);
+                    try vm.stack.push(HIRFrame.initNothing());
+                    return;
+                } else if (std.mem.eql(u8, func_name, "SetTargetFPS")) {
+                    const fps = try vm.stack.pop();
+                    const f = try fps.asInt();
+                    ray.SetTargetFPSDoxa(f);
+                    try vm.stack.push(HIRFrame.initNothing());
+                    return;
+                }
+            }
+        }
+
         // Treat any module alias ending in ".safeAdd" as the safe add from safeMath.doxa
         const is_safe_add = blk: {
             if (std.mem.lastIndexOfScalar(u8, c.qualified_name, '.')) |dot_idx| {
