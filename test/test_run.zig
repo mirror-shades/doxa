@@ -577,23 +577,48 @@ fn runDoxaCommandEx(allocator: std.mem.Allocator, path: []const u8, input: ?[]co
     try child.spawn();
 
     if (input) |input_data| {
-        try child.stdin.?.writer().writeAll(input_data);
+        var stdin_buffer: [1024]u8 = undefined;
+        var stdin_writer = child.stdin.?.writer(&stdin_buffer);
+        const stdin = &stdin_writer.interface;
+        try stdin.writeAll(input_data);
+        try stdin.flush();
         child.stdin.?.close();
         // Avoid double-close on Windows: Child.wait() will cleanup streams
         child.stdin = null;
     }
 
-    const stdout = try child.stdout.?.reader().readAllAlloc(child_allocator, std.math.maxInt(usize));
-    const stderr = try child.stderr.?.reader().readAllAlloc(child_allocator, std.math.maxInt(usize));
+    var stdout_buffer: [4096]u8 = undefined;
+    var stdout = std.array_list.Managed(u8).initCapacity(child_allocator, 4096) catch return error.OutOfMemory;
+    defer stdout.deinit();
+    while (true) {
+        const bytes_read = child.stdout.?.read(&stdout_buffer) catch |err| switch (err) {
+            error.BrokenPipe => break,
+            else => return err,
+        };
+        if (bytes_read == 0) break;
+        stdout.appendSlice(stdout_buffer[0..bytes_read]) catch return error.OutOfMemory;
+    }
+
+    var stderr_buffer: [4096]u8 = undefined;
+    var stderr = std.array_list.Managed(u8).initCapacity(child_allocator, 4096) catch return error.OutOfMemory;
+    defer stderr.deinit();
+    while (true) {
+        const bytes_read = child.stderr.?.read(&stderr_buffer) catch |err| switch (err) {
+            error.BrokenPipe => break,
+            else => return err,
+        };
+        if (bytes_read == 0) break;
+        stderr.appendSlice(stderr_buffer[0..bytes_read]) catch return error.OutOfMemory;
+    }
     const term = try child.wait();
 
     if (term.Exited != 0) {
         std.debug.print("Command failed with exit code {}:\n", .{term.Exited});
-        std.debug.print("stderr: {s}\n", .{stderr});
+        std.debug.print("stderr: {s}\n", .{stderr.items});
         return error.CommandFailed;
     }
 
-    return try allocator.dupe(u8, stdout);
+    return try allocator.dupe(u8, stdout.items);
 }
 
 fn runDoxaCommand(allocator: std.mem.Allocator, path: []const u8) ![]const u8 {
@@ -817,8 +842,8 @@ test "summary" {
     std.debug.print("=============================\n", .{});
 }
 
-fn parsePeekOutput(output: []const u8, allocator: std.mem.Allocator) !std.ArrayList(peek_result) {
-    var outputs = std.ArrayList(peek_result).init(allocator);
+fn parsePeekOutput(output: []const u8, allocator: std.mem.Allocator) !std.array_list.Managed(peek_result) {
+    var outputs = std.array_list.Managed(peek_result).init(allocator);
 
     var lines = std.mem.splitScalar(u8, output, '\n');
     while (lines.next()) |line| {
@@ -839,8 +864,8 @@ fn parsePeekOutput(output: []const u8, allocator: std.mem.Allocator) !std.ArrayL
     return outputs;
 }
 
-fn parsePrintOutput(output: []const u8, allocator: std.mem.Allocator) !std.ArrayList([]const u8) {
-    var outputs = std.ArrayList([]const u8).init(allocator);
+fn parsePrintOutput(output: []const u8, allocator: std.mem.Allocator) !std.array_list.Managed([]const u8) {
+    var outputs = std.array_list.Managed([]const u8).init(allocator);
 
     var lines = std.mem.splitScalar(u8, output, '\n');
     while (lines.next()) |line| {

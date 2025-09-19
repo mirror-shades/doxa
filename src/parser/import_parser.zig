@@ -123,7 +123,7 @@ pub fn parseImportStmt(self: *Parser) !ast.Stmt {
     self.advance(); // consume 'import'
 
     // Parse specific symbols (one or more)
-    var symbols = std.ArrayList([]const u8).init(self.allocator);
+    var symbols = std.array_list.Managed([]const u8).init(self.allocator);
     defer symbols.deinit();
 
     // Parse first symbol

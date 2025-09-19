@@ -29,7 +29,7 @@ pub const SemanticAnalyzer = struct {
     custom_types: std.StringHashMap(types.CustomTypeInfo),
     struct_methods: std.StringHashMap(std.StringHashMap(types.StructMethodInfo)),
     function_return_types: std.AutoHashMap(u32, *ast.TypeInfo),
-    current_function_returns: std.ArrayList(*ast.TypeInfo),
+    current_function_returns: std.array_list.Managed(*ast.TypeInfo),
     current_initializing_var: ?[]const u8 = null,
     parser: ?*const Parser = null,
 
@@ -44,7 +44,7 @@ pub const SemanticAnalyzer = struct {
             .custom_types = std.StringHashMap(types.CustomTypeInfo).init(allocator),
             .struct_methods = std.StringHashMap(std.StringHashMap(types.StructMethodInfo)).init(allocator),
             .function_return_types = std.AutoHashMap(u32, *ast.TypeInfo).init(allocator),
-            .current_function_returns = std.ArrayList(*ast.TypeInfo).init(allocator),
+            .current_function_returns = std.array_list.Managed(*ast.TypeInfo).init(allocator),
             .parser = parser,
         };
     }
@@ -198,6 +198,118 @@ pub const SemanticAnalyzer = struct {
 
         // Inject compiler-provided enums (shared error categories)
         try self.ensureBuiltinEnums();
+
+        // Register types and methods from parser-imported symbols so cross-module dot-methods work
+        if (self.parser) |p| {
+            // Safely access parser's imported symbols map
+            if (p.imported_symbols) |symbols| {
+                var it = symbols.iterator();
+                while (it.next()) |entry| {
+                    const sym = entry.value_ptr.*;
+                    // Only process direct Struct/Enum symbols (specific imports)
+                    switch (sym.kind) {
+                        .Struct => {
+                            // Fetch module info to locate the struct declaration
+                            var mod_info: ?@import("../../ast/ast.zig").ModuleInfo = null;
+                            if (p.module_cache.get(sym.original_module)) |mi| {
+                                mod_info = mi;
+                            } else {
+                                const module_resolver = @import("../../parser/module_resolver.zig");
+                                mod_info = module_resolver.resolveModule(@constCast(p), sym.original_module) catch null;
+                            }
+                            if (mod_info) |mi| {
+                                if (mi.ast) |module_ast| {
+                                    if (module_ast.data == .Block) {
+                                        const module_statements = module_ast.data.Block.statements;
+                                        // Find the public struct declaration matching the symbol name
+                                        for (module_statements) |stmt| {
+                                            if (stmt.data == .Expression) {
+                                                if (stmt.data.Expression) |expr| {
+                                                    if (expr.data == .StructDecl) {
+                                                        const sd = expr.data.StructDecl;
+                                                        if (!sd.is_public) continue;
+                                                        if (!std.mem.eql(u8, sd.name.lexeme, sym.name)) continue;
+
+                                                        // Convert fields to TypeInfo
+                                                        const field_types = try self.allocator.alloc(@import("../../ast/ast.zig").StructFieldType, sd.fields.len);
+                                                        for (sd.fields, field_types) |field, *ft| {
+                                                            const ti = try @import("../../ast/ast.zig").typeInfoFromExpr(self.allocator, field.type_expr);
+                                                            ft.* = .{ .name = field.name.lexeme, .type_info = ti };
+                                                        }
+
+                                                        // Register struct type for type system/runtime
+                                                        try @import("helpers.zig").registerStructType(self, sd.name.lexeme, field_types);
+
+                                                        // Create scope binding so static calls like Type.method work
+                                                        const struct_type_info = try self.allocator.create(@import("../../ast/ast.zig").TypeInfo);
+                                                        struct_type_info.* = .{ .base = .Struct, .custom_type = sd.name.lexeme, .struct_fields = field_types, .is_mutable = false };
+                                                        const placeholder = @import("../../types/types.zig").TokenLiteral{ .string = sd.name.lexeme };
+                                                        _ = self.current_scope.?.createValueBinding(sd.name.lexeme, placeholder, .STRUCT, struct_type_info, true) catch {};
+
+                                                        // Register public methods
+                                                        var method_table = std.StringHashMap(@import("types.zig").StructMethodInfo).init(self.allocator);
+                                                        for (sd.methods) |m| {
+                                                            if (!m.is_public) continue;
+                                                            var ret_type_ptr: *@import("../../ast/ast.zig").TypeInfo = undefined;
+                                                            if (m.return_type_info.base != .Nothing) {
+                                                                const rtp = try self.allocator.create(@import("../../ast/ast.zig").TypeInfo);
+                                                                rtp.* = try self.resolveTypeInfo(m.return_type_info);
+                                                                ret_type_ptr = rtp;
+                                                            } else {
+                                                                const rtp = try self.allocator.create(@import("../../ast/ast.zig").TypeInfo);
+                                                                rtp.* = .{ .base = .Struct, .custom_type = sd.name.lexeme, .struct_fields = field_types, .is_mutable = false };
+                                                                ret_type_ptr = rtp;
+                                                            }
+                                                            const mi2 = @import("types.zig").StructMethodInfo{
+                                                                .name = m.name.lexeme,
+                                                                .is_public = m.is_public,
+                                                                .is_static = m.is_static,
+                                                                .return_type = ret_type_ptr,
+                                                            };
+                                                            _ = try method_table.put(m.name.lexeme, mi2);
+                                                        }
+                                                        if (self.struct_methods.getPtr(sd.name.lexeme)) |existing| {
+                                                            var mit = method_table.iterator();
+                                                            while (mit.next()) |e| {
+                                                                _ = try existing.put(e.key_ptr.*, e.value_ptr.*);
+                                                            }
+                                                        } else {
+                                                            try self.struct_methods.put(sd.name.lexeme, method_table);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        .Enum => {
+                            // Register imported public enum
+                            var mod_info2: ?@import("../../ast/ast.zig").ModuleInfo = null;
+                            if (p.module_cache.get(sym.original_module)) |mi| mod_info2 = mi;
+                            if (mod_info2) |mi| {
+                                if (mi.ast) |module_ast| {
+                                    if (module_ast.data == .Block) {
+                                        for (module_ast.data.Block.statements) |stmt| {
+                                            if (stmt.data == .EnumDecl) {
+                                                const ed = stmt.data.EnumDecl;
+                                                if (!ed.is_public) continue;
+                                                if (!std.mem.eql(u8, ed.name.lexeme, sym.name)) continue;
+                                                const vars = try self.allocator.alloc([]const u8, ed.variants.len);
+                                                for (ed.variants, 0..) |v, i| vars[i] = v.lexeme;
+                                                try @import("helpers.zig").registerEnumType(self, ed.name.lexeme, vars);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        else => {},
+                    }
+                }
+            }
+        }
 
         // Create context for declaration collection
         var decl_ctx = declaration_collection.DeclarationCollectionContext.init(

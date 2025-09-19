@@ -19,15 +19,15 @@ const TokenLiteral = TypesImport.TokenLiteral;
 
 pub const LexicalAnalyzer = struct {
     keywords: std.StringHashMap(TokenType),
-    tokens: std.ArrayList(Token),
+    tokens: std.array_list.Managed(Token),
     source: []const u8,
     start: usize,
     current: usize,
     line: usize,
     column: usize,
     allocator: std.mem.Allocator,
-    allocated_strings: std.ArrayList([]const u8),
-    allocated_arrays: std.ArrayList([]const TokenLiteral),
+    allocated_strings: std.array_list.Managed([]const u8),
+    allocated_arrays: std.array_list.Managed([]const TokenLiteral),
     line_start: usize, // Add this to track start of current line
     file_path: []const u8,
     token_line: usize, // Add this to track line at token start
@@ -46,10 +46,10 @@ pub const LexicalAnalyzer = struct {
             .column = 1,
             .line_start = 0, // Initialize line_start
             .allocator = allocator,
-            .tokens = std.ArrayList(Token).init(allocator),
+            .tokens = std.array_list.Managed(Token).init(allocator),
             .keywords = std.StringHashMap(TokenType).init(allocator),
-            .allocated_strings = std.ArrayList([]const u8).init(allocator),
-            .allocated_arrays = std.ArrayList([]const TokenLiteral).init(allocator),
+            .allocated_strings = std.array_list.Managed([]const u8).init(allocator),
+            .allocated_arrays = std.array_list.Managed([]const TokenLiteral).init(allocator),
             .file_path = file_path,
             .token_line = 1, // Initialize token_line
             .reporter = reporter,
@@ -153,7 +153,7 @@ pub const LexicalAnalyzer = struct {
     // Public Interface
     //======================================================================
 
-    pub fn lexTokens(self: *LexicalAnalyzer) !std.ArrayList(Token) {
+    pub fn lexTokens(self: *LexicalAnalyzer) !std.array_list.Managed(Token) {
         while (!self.isAtEnd()) {
             try self.getNextToken();
         }
@@ -612,7 +612,7 @@ pub const LexicalAnalyzer = struct {
     //======================================================================
 
     fn string(self: *LexicalAnalyzer) !void {
-        var result = std.ArrayList(u8).init(self.allocator);
+        var result = std.array_list.Managed(u8).init(self.allocator);
         errdefer result.deinit();
 
         while (!self.isAtEnd() and self.peekAt(0) != '"') {
@@ -684,7 +684,7 @@ pub const LexicalAnalyzer = struct {
     fn rawString(self: *LexicalAnalyzer) !void {
         self.advance(); // Consume the 'r'
         self.advance(); // Consume the opening quote
-        var result = std.ArrayList(u8).init(self.allocator);
+        var result = std.array_list.Managed(u8).init(self.allocator);
         errdefer result.deinit();
 
         // For raw strings, consume everything literally until an unescaped closing quote
@@ -1076,7 +1076,7 @@ pub const LexicalAnalyzer = struct {
     //======================================================================
 
     fn removeUnderscores(self: *LexicalAnalyzer, input: []const u8) ![]const u8 {
-        var result = std.ArrayList(u8).init(self.allocator);
+        var result = std.array_list.Managed(u8).init(self.allocator);
         errdefer result.deinit();
 
         // Handle negative sign if present

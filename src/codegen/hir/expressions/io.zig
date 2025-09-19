@@ -32,11 +32,11 @@ pub const IOHandler = struct {
         } else if (print.format_template) |template| {
             // Generate code for each template part and build correct placeholder mapping
             var arg_count: u32 = 0;
-            var format_parts = std.ArrayList([]const u8).init(self.generator.allocator);
+            var format_parts = std.array_list.Managed([]const u8).init(self.generator.allocator);
             // VM expects placeholder_indices to be argument indices (0..N-1) by placeholder order.
             // We will later interleave using the format part positions, so here we only record arg order.
-            var placeholder_indices = std.ArrayList(u32).init(self.generator.allocator);
-            var expressions = std.ArrayList(*ast.Expr).init(self.generator.allocator);
+            var placeholder_indices = std.array_list.Managed(u32).init(self.generator.allocator);
+            var expressions = std.array_list.Managed(*ast.Expr).init(self.generator.allocator);
             defer format_parts.deinit();
             defer placeholder_indices.deinit();
             defer expressions.deinit();

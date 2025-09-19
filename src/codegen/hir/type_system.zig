@@ -543,7 +543,7 @@ pub const TypeSystem = struct {
 
     /// Collect flattened union member names (lowercase) from a possibly nested union type
     pub fn collectUnionMemberNames(self: *TypeSystem, ut: *ast.UnionType) ![][]const u8 {
-        var list = std.ArrayList([]const u8).init(self.allocator);
+        var list = std.array_list.Managed([]const u8).init(self.allocator);
         defer if (false) list.deinit(); // transferred to caller
 
         // Depth-first traversal to flatten nested unions

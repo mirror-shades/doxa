@@ -49,7 +49,7 @@ pub const SemanticAnalyzer = struct {
     custom_types: std.StringHashMap(CustomTypeInfo),
     struct_methods: std.StringHashMap(std.StringHashMap(@This().StructMethodInfo)),
     function_return_types: std.AutoHashMap(NodeId, *ast.TypeInfo),
-    current_function_returns: std.ArrayList(*ast.TypeInfo),
+    current_function_returns: std.array_list.Managed(*ast.TypeInfo),
     current_initializing_var: ?[]const u8 = null,
     parser: ?*const Parser = null,
 
@@ -64,7 +64,7 @@ pub const SemanticAnalyzer = struct {
             .custom_types = std.StringHashMap(CustomTypeInfo).init(allocator),
             .struct_methods = std.StringHashMap(std.StringHashMap(@This().StructMethodInfo)).init(allocator),
             .function_return_types = std.AutoHashMap(NodeId, *ast.TypeInfo).init(allocator),
-            .current_function_returns = std.ArrayList(*ast.TypeInfo).init(allocator),
+            .current_function_returns = std.array_list.Managed(*ast.TypeInfo).init(allocator),
             .parser = parser,
         };
     }
@@ -1457,7 +1457,7 @@ pub const SemanticAnalyzer = struct {
                     if (expr) |expression| {
 
                         // Check for return expressions embedded inside this expression (e.g., blocks or nested ifs)
-                        var expr_return_types = std.ArrayList(*ast.TypeInfo).init(self.allocator);
+                        var expr_return_types = std.array_list.Managed(*ast.TypeInfo).init(self.allocator);
                         defer expr_return_types.deinit();
                         try self.collectReturnTypesFromExpr(expression, &expr_return_types);
                         if (expr_return_types.items.len > 0) {
@@ -1650,6 +1650,103 @@ pub const SemanticAnalyzer = struct {
                 return;
             }
         }
+
+        // Import registration: load the module AST and register public structs/enums and struct methods
+        // so that method resolution works across modules (dot-methods like obj.method()).
+        if (self.parser) |pconst| {
+            const ParserType = @TypeOf(pconst.*);
+            var p: *ParserType = @constCast(pconst);
+
+            // Try to get module info from cache; fall back to resolving
+            var mod_info: ?ast.ModuleInfo = null;
+            if (p.module_cache.get(import_info.module_path)) |mi| {
+                mod_info = mi;
+            } else {
+                // Import here to avoid a cyclic import at file top-level
+                const module_resolver = @import("../../parser/module_resolver.zig");
+                mod_info = module_resolver.resolveModule(p, import_info.module_path) catch null;
+            }
+
+            if (mod_info) |mi| {
+                if (mi.ast) |module_ast| {
+                    if (module_ast.data == .Block) {
+                        const statements = module_ast.data.Block.statements;
+
+                        // Helper to decide if a symbol should be imported based on specificity
+                        const wantsSymbol = struct {
+                            fn check(name: []const u8, info: ast.ImportInfo) bool {
+                                if (info.import_type == .Module) return true;
+                                if (info.specific_symbols) |syms| {
+                                    for (syms) |s| if (std.mem.eql(u8, s, name)) return true;
+                                    return false;
+                                }
+                                if (info.specific_symbol) |s| return std.mem.eql(u8, s, name);
+                                return false;
+                            }
+                        };
+
+                        for (statements) |stmt| {
+                            switch (stmt.data) {
+                                .Expression => |expr_opt| {
+                                    if (expr_opt) |expr| if (expr.data == .StructDecl) {
+                                        const sd = expr.data.StructDecl;
+                                        if (!sd.is_public) continue;
+                                        if (!wantsSymbol.check(sd.name.lexeme, import_info)) continue;
+
+                                        // Convert fields to TypeInfo and register struct
+                                        const field_types = try self.allocator.alloc(ast.StructFieldType, sd.fields.len);
+                                        for (sd.fields, field_types) |field, *ft| {
+                                            const ti = try ast.typeInfoFromExpr(self.allocator, field.type_expr);
+                                            ft.* = .{ .name = field.name.lexeme, .type_info = ti };
+                                        }
+                                        try helpers.registerStructType(self, sd.name.lexeme, field_types);
+
+                                        // Register methods (static and instance)
+                                        var method_table = std.StringHashMap(@This().StructMethodInfo).init(self.allocator);
+                                        for (sd.methods) |m| {
+                                            if (!m.is_public) continue; // only export public methods
+                                            var ret_type_ptr: *ast.TypeInfo = undefined;
+                                            if (m.return_type_info.base != .Nothing) {
+                                                const rtp = try self.allocator.create(ast.TypeInfo);
+                                                rtp.* = try self.resolveTypeInfo(m.return_type_info);
+                                                ret_type_ptr = rtp;
+                                            } else {
+                                                const rtp = try self.allocator.create(ast.TypeInfo);
+                                                rtp.* = .{ .base = .Struct, .custom_type = sd.name.lexeme, .struct_fields = field_types, .is_mutable = false };
+                                                ret_type_ptr = rtp;
+                                            }
+                                            const mi2 = @This().StructMethodInfo{
+                                                .name = m.name.lexeme,
+                                                .is_public = m.is_public,
+                                                .is_static = m.is_static,
+                                                .return_type = ret_type_ptr,
+                                            };
+                                            _ = try method_table.put(m.name.lexeme, mi2);
+                                        }
+                                        if (self.struct_methods.getPtr(sd.name.lexeme)) |existing| {
+                                            var it = method_table.iterator();
+                                            while (it.next()) |e| {
+                                                _ = try existing.put(e.key_ptr.*, e.value_ptr.*);
+                                            }
+                                        } else {
+                                            try self.struct_methods.put(sd.name.lexeme, method_table);
+                                        }
+                                    };
+                                },
+                                .EnumDecl => |ed| {
+                                    if (!ed.is_public) break;
+                                    if (!wantsSymbol.check(ed.name.lexeme, import_info)) break;
+                                    const variants = try self.allocator.alloc([]const u8, ed.variants.len);
+                                    for (ed.variants, variants) |v, *name| name.* = v.lexeme;
+                                    try helpers.registerEnumType(self, ed.name.lexeme, variants);
+                                },
+                                else => {},
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     fn checkModuleExists(_: *SemanticAnalyzer, _: []const u8) bool {
@@ -1671,7 +1768,7 @@ pub const SemanticAnalyzer = struct {
     }
 
     fn inferFunctionReturnType(self: *SemanticAnalyzer, func: anytype) ErrorList!*ast.TypeInfo {
-        var return_types = std.ArrayList(*ast.TypeInfo).init(self.allocator);
+        var return_types = std.array_list.Managed(*ast.TypeInfo).init(self.allocator);
         defer return_types.deinit();
 
         // Create function scope with parameters for return type inference
@@ -1731,7 +1828,7 @@ pub const SemanticAnalyzer = struct {
         return try helpers.createUnionType(self, return_types.items);
     }
 
-    fn collectReturnTypes(self: *SemanticAnalyzer, statements: []ast.Stmt, return_types: *std.ArrayList(*ast.TypeInfo)) ErrorList!void {
+    fn collectReturnTypes(self: *SemanticAnalyzer, statements: []ast.Stmt, return_types: *std.array_list.Managed(*ast.TypeInfo)) ErrorList!void {
         for (statements) |stmt| {
             switch (stmt.data) {
                 .Return => |return_stmt| {
@@ -1772,7 +1869,7 @@ pub const SemanticAnalyzer = struct {
         }
     }
 
-    fn collectReturnTypesFromIf(self: *SemanticAnalyzer, if_expr: *ast.Expr, return_types: *std.ArrayList(*ast.TypeInfo)) ErrorList!void {
+    fn collectReturnTypesFromIf(self: *SemanticAnalyzer, if_expr: *ast.Expr, return_types: *std.array_list.Managed(*ast.TypeInfo)) ErrorList!void {
         const if_data = if_expr.data.If;
 
         // Check then branch
@@ -1786,7 +1883,7 @@ pub const SemanticAnalyzer = struct {
         }
     }
 
-    fn collectReturnTypesFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr, return_types: *std.ArrayList(*ast.TypeInfo)) ErrorList!void {
+    fn collectReturnTypesFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr, return_types: *std.array_list.Managed(*ast.TypeInfo)) ErrorList!void {
         switch (expr.data) {
             .ReturnExpr => |return_expr| {
                 if (return_expr.value) |value| {
@@ -1893,7 +1990,7 @@ pub const SemanticAnalyzer = struct {
 
                     if (!found_match) {
                         // Build a list of allowed types for the error message
-                        var type_list = std.ArrayList(u8).init(self.allocator);
+                        var type_list = std.array_list.Managed(u8).init(self.allocator);
                         defer type_list.deinit();
 
                         for (union_type.types, 0..) |member_type, i| {

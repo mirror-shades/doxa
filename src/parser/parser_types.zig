@@ -74,7 +74,7 @@ pub const Parser = struct {
 
     // Add circular import detection fields
     module_resolution_status: std.StringHashMap(ModuleResolutionStatus),
-    import_stack: std.ArrayList(ImportStackEntry),
+    import_stack: std.array_list.Managed(ImportStackEntry),
 
     pub fn init(allocator: std.mem.Allocator, tokens: []const token.Token, current_file: []const u8, reporter: *Reporter) Parser {
         const parser = Parser{
@@ -89,7 +89,7 @@ pub const Parser = struct {
             .imported_symbols = std.StringHashMap(import_parser.ImportedSymbol).init(allocator),
             .declared_types = std.StringHashMap(void).init(allocator),
             .module_resolution_status = std.StringHashMap(ModuleResolutionStatus).init(allocator),
-            .import_stack = std.ArrayList(ImportStackEntry).init(allocator),
+            .import_stack = std.array_list.Managed(ImportStackEntry).init(allocator),
         };
 
         return parser;
@@ -147,7 +147,7 @@ pub const Parser = struct {
         }
         self.advance();
 
-        var statements = std.ArrayList(ast.Stmt).init(self.allocator);
+        var statements = std.array_list.Managed(ast.Stmt).init(self.allocator);
         errdefer {
             for (statements.items) |*stmt| {
                 stmt.deinit(self.allocator);
@@ -210,7 +210,7 @@ pub const Parser = struct {
     }
 
     pub fn execute(self: *Parser) ErrorList![]ast.Stmt {
-        var statements = std.ArrayList(ast.Stmt).init(self.allocator);
+        var statements = std.array_list.Managed(ast.Stmt).init(self.allocator);
         errdefer {
             for (statements.items) |*stmt| {
                 stmt.deinit(self.allocator);
@@ -476,7 +476,7 @@ pub const Parser = struct {
     pub fn call(self: *Parser, callee: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
         self.advance(); // consume (
 
-        var arguments = std.ArrayList(ast.CallArgument).init(self.allocator);
+        var arguments = std.array_list.Managed(ast.CallArgument).init(self.allocator);
         errdefer {
             for (arguments.items) |arg| {
                 arg.expr.deinit(self.allocator);
@@ -615,7 +615,7 @@ pub const Parser = struct {
                 // Parse struct initialization
                 self.advance(); // consume {
 
-                var fields = std.ArrayList(*ast.StructInstanceField).init(self.allocator);
+                var fields = std.array_list.Managed(*ast.StructInstanceField).init(self.allocator);
                 errdefer {
                     for (fields.items) |field| {
                         field.deinit(self.allocator);
@@ -695,7 +695,7 @@ pub const Parser = struct {
         }
         self.advance(); // consume {
 
-        var fields = std.ArrayList(*ast.StructInstanceField).init(self.allocator);
+        var fields = std.array_list.Managed(*ast.StructInstanceField).init(self.allocator);
         errdefer {
             for (fields.items) |field| {
                 field.deinit(self.allocator);
@@ -1040,7 +1040,7 @@ pub const Parser = struct {
     }
 
     pub fn parseMap(self: *Parser) ErrorList!?*ast.Expr {
-        var entries = std.ArrayList(ast.MapEntry).init(self.allocator);
+        var entries = std.array_list.Managed(ast.MapEntry).init(self.allocator);
         errdefer {
             for (entries.items) |*entry| {
                 entry.key.deinit(self.allocator);
@@ -1115,7 +1115,7 @@ pub const Parser = struct {
     }
 
     pub fn parseBlock(self: *Parser) ErrorList!?*ast.Expr {
-        var statements = std.ArrayList(ast.Stmt).init(self.allocator);
+        var statements = std.array_list.Managed(ast.Stmt).init(self.allocator);
         errdefer {
             for (statements.items) |*stmt| {
                 stmt.deinit(self.allocator);
@@ -1173,7 +1173,7 @@ pub const Parser = struct {
 
     // Helper function to report circular import with full chain
     pub fn reportCircularImport(self: *Parser, current_module: []const u8) ErrorList!ast.ModuleInfo {
-        var error_msg = std.ArrayList(u8).init(self.allocator);
+        var error_msg = std.array_list.Managed(u8).init(self.allocator);
         defer error_msg.deinit();
 
         try error_msg.appendSlice("Circular import detected:\n");
@@ -1245,7 +1245,7 @@ pub const Parser = struct {
         // Prefer resolving relative to the current file first
         // 0a. Same directory as current file with potential existing extension
         if (has_extension) {
-            var same_dir_exact_path_pre = std.ArrayList(u8).init(self.allocator);
+            var same_dir_exact_path_pre = std.array_list.Managed(u8).init(self.allocator);
             defer same_dir_exact_path_pre.deinit();
             try same_dir_exact_path_pre.appendSlice(current_dir);
             try same_dir_exact_path_pre.appendSlice("/");
@@ -1258,7 +1258,7 @@ pub const Parser = struct {
         }
 
         // 0b. Same directory as current file with .doxa extension
-        var same_dir_path_pre = std.ArrayList(u8).init(self.allocator);
+        var same_dir_path_pre = std.array_list.Managed(u8).init(self.allocator);
         defer same_dir_path_pre.deinit();
         try same_dir_path_pre.appendSlice(current_dir);
         try same_dir_path_pre.appendSlice("/");
@@ -1272,7 +1272,7 @@ pub const Parser = struct {
 
         // 1. First try directly with the given name (possibly including extension)
         if (has_extension) {
-            var direct_path = std.ArrayList(u8).init(self.allocator);
+            var direct_path = std.array_list.Managed(u8).init(self.allocator);
             defer direct_path.deinit();
             try direct_path.appendSlice(clean_name);
 
@@ -1284,7 +1284,7 @@ pub const Parser = struct {
         }
 
         // 2. Try in CWD with .doxa extension
-        var cwd_doxa_path = std.ArrayList(u8).init(self.allocator);
+        var cwd_doxa_path = std.array_list.Managed(u8).init(self.allocator);
         defer cwd_doxa_path.deinit();
         try cwd_doxa_path.appendSlice(clean_name);
         if (!has_extension) try cwd_doxa_path.appendSlice(".doxa");
@@ -1297,7 +1297,7 @@ pub const Parser = struct {
 
         // 3. Try the same directory as the current file with potential existing extension
         if (has_extension) {
-            var same_dir_exact_path = std.ArrayList(u8).init(self.allocator);
+            var same_dir_exact_path = std.array_list.Managed(u8).init(self.allocator);
             defer same_dir_exact_path.deinit();
             try same_dir_exact_path.appendSlice(current_dir);
             try same_dir_exact_path.appendSlice("/");
@@ -1311,7 +1311,7 @@ pub const Parser = struct {
         }
 
         // 4. Try the same directory as the current file with .doxa extension
-        var same_dir_path = std.ArrayList(u8).init(self.allocator);
+        var same_dir_path = std.array_list.Managed(u8).init(self.allocator);
         defer same_dir_path.deinit();
         try same_dir_path.appendSlice(current_dir);
         try same_dir_path.appendSlice("/");
@@ -1326,7 +1326,7 @@ pub const Parser = struct {
 
         // 5. Try the modules subdirectory (with potential existing extension)
         if (has_extension) {
-            var modules_exact_path = std.ArrayList(u8).init(self.allocator);
+            var modules_exact_path = std.array_list.Managed(u8).init(self.allocator);
             defer modules_exact_path.deinit();
             try modules_exact_path.appendSlice(current_dir);
             try modules_exact_path.appendSlice("/modules/");
@@ -1340,7 +1340,7 @@ pub const Parser = struct {
         }
 
         // 6. Try the modules subdirectory with .doxa extension
-        var modules_path = std.ArrayList(u8).init(self.allocator);
+        var modules_path = std.array_list.Managed(u8).init(self.allocator);
         defer modules_path.deinit();
         try modules_path.appendSlice(current_dir);
         try modules_path.appendSlice("/modules/");

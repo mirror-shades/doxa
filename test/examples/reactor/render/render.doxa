@@ -1,0 +1,35 @@
+module Types from "../utils/types.doxa"
+import GameState, Reactor from "../utils/types.doxa"
+
+function printMenu(state :: GameState, reactor :: Reactor, turn :: int) {
+    match state {
+        GameState.Start then {
+            @print("1. Start Game\n")
+        }
+        GameState.Running then {
+            @print("Turn: {turn}\n")
+            @print("1: add rod\n")
+            @print("2: remove rod\n")
+            @print("3: next turn\n")
+            @print("4: end game\n")
+        }
+        GameState.GameOver then {
+            @print("Max power: {reactor.getMaxPower()}\n")
+            @print("1. Main Menu\n")
+        }
+    }
+}
+
+function printReactor(state :: GameState, reactor :: Reactor) {
+    @print("Reactor is running\n")
+    @print("Rods: {reactor.rods}\n")
+    @print("Neutrons: {reactor.neutrons}\n")
+    @print("Power: {reactor.power}\n")
+}
+
+pub function render(state :: GameState, reactor :: Reactor, turn :: int) {
+    if state == GameState.Running then {
+        printReactor(state, reactor)
+    }
+    printMenu(state, reactor, turn)
+}

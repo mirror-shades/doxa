@@ -43,7 +43,7 @@ pub fn parseEnumDecl(self: *Parser) ErrorList!ast.Stmt {
     self.advance();
 
     // Parse variants
-    var variants = std.ArrayList(token.Token).init(self.allocator);
+    var variants = std.array_list.Managed(token.Token).init(self.allocator);
     errdefer variants.deinit();
 
     while (self.peek().type != .RIGHT_BRACE) {
@@ -129,8 +129,8 @@ pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*
     self.advance();
 
     // Parse fields and methods
-    var fields = std.ArrayList(*ast.StructField).init(self.allocator);
-    var methods = std.ArrayList(*ast.StructMethod).init(self.allocator);
+    var fields = std.array_list.Managed(*ast.StructField).init(self.allocator);
+    var methods = std.array_list.Managed(*ast.StructMethod).init(self.allocator);
     errdefer {
         for (fields.items) |field| {
             field.deinit(self.allocator);
@@ -185,7 +185,7 @@ pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*
             var method_is_static: bool = true;
 
             // Parse parameters
-            var params = std.ArrayList(ast.FunctionParam).init(self.allocator);
+            var params = std.array_list.Managed(ast.FunctionParam).init(self.allocator);
             errdefer {
                 for (params.items) |*param| {
                     param.deinit(self.allocator);
@@ -280,7 +280,7 @@ pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*
             }
             self.advance(); // consume '{'
 
-            var body = std.ArrayList(ast.Stmt).init(self.allocator);
+            var body = std.array_list.Managed(ast.Stmt).init(self.allocator);
             errdefer {
                 for (body.items) |*stmt| {
                     stmt.deinit(self.allocator);
@@ -423,7 +423,7 @@ pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
     self.advance(); // consume '('
 
     // Parse parameters
-    var params = std.ArrayList(ast.FunctionParam).init(self.allocator);
+    var params = std.array_list.Managed(ast.FunctionParam).init(self.allocator);
     errdefer params.deinit();
 
     if (self.peek().type != .RIGHT_PAREN) {
@@ -487,7 +487,7 @@ pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
     }
     self.advance(); // consume '{'
 
-    var body_statements = std.ArrayList(ast.Stmt).init(self.allocator);
+    var body_statements = std.array_list.Managed(ast.Stmt).init(self.allocator);
     errdefer {
         for (body_statements.items) |*stmt| {
             stmt.deinit(self.allocator);

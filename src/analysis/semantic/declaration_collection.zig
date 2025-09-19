@@ -41,7 +41,7 @@ pub const DeclarationCollectionContext = struct {
     custom_types: std.StringHashMap(types.CustomTypeInfo),
     struct_methods: std.StringHashMap(std.StringHashMap(types.StructMethodInfo)),
     function_return_types: std.AutoHashMap(u32, *ast.TypeInfo),
-    current_function_returns: std.ArrayList(*ast.TypeInfo),
+    current_function_returns: std.array_list.Managed(*ast.TypeInfo),
     parser: ?*const Parser,
     fatal_error: *bool,
 
@@ -54,7 +54,7 @@ pub const DeclarationCollectionContext = struct {
         custom_types: std.StringHashMap(types.CustomTypeInfo),
         struct_methods: std.StringHashMap(std.StringHashMap(types.StructMethodInfo)),
         function_return_types: std.AutoHashMap(u32, *ast.TypeInfo),
-        current_function_returns: std.ArrayList(*ast.TypeInfo),
+        current_function_returns: std.array_list.Managed(*ast.TypeInfo),
         parser: ?*const Parser,
         fatal_error: *bool,
     ) DeclarationCollectionContext {

@@ -26,7 +26,7 @@ pub const PeepholeOptimizer = struct {
 
     /// Apply comprehensive peephole optimizations
     pub fn optimize(self: *PeepholeOptimizer, instructions: []HIRInstruction) ![]HIRInstruction {
-        var optimized = std.ArrayList(HIRInstruction).init(self.allocator);
+        var optimized = std.array_list.Managed(HIRInstruction).init(self.allocator);
         defer optimized.deinit();
 
         var i: usize = 0;
@@ -39,7 +39,7 @@ pub const PeepholeOptimizer = struct {
     }
 
     /// Try to optimize at position i, returns number of instructions consumed
-    fn tryOptimizeAt(self: *PeepholeOptimizer, instructions: []HIRInstruction, i: usize, optimized: *std.ArrayList(HIRInstruction)) !usize {
+    fn tryOptimizeAt(self: *PeepholeOptimizer, instructions: []HIRInstruction, i: usize, optimized: *std.array_list.Managed(HIRInstruction)) !usize {
         // Try optimization patterns in order of complexity (most specific first)
 
         // CATEGORY 1: REDUNDANT INSTRUCTION ELIMINATION
@@ -66,7 +66,7 @@ pub const PeepholeOptimizer = struct {
     // CATEGORY 1: REDUNDANT INSTRUCTION ELIMINATION
     //==================================================================
 
-    fn tryRedundantElimination(self: *PeepholeOptimizer, instructions: []HIRInstruction, i: usize, optimized: *std.ArrayList(HIRInstruction)) !?usize {
+    fn tryRedundantElimination(self: *PeepholeOptimizer, instructions: []HIRInstruction, i: usize, optimized: *std.array_list.Managed(HIRInstruction)) !?usize {
 
         // Pattern 1: Detect chain of Dups followed by Peek + Pop → just Peek
         if (std.meta.activeTag(instructions[i]) == .Dup) {
@@ -168,7 +168,7 @@ pub const PeepholeOptimizer = struct {
     // CATEGORY 2: ARITHMETIC OPTIMIZATIONS
     //==================================================================
 
-    fn tryArithmeticOptimization(self: *PeepholeOptimizer, instructions: []HIRInstruction, i: usize, optimized: *std.ArrayList(HIRInstruction)) !?usize {
+    fn tryArithmeticOptimization(self: *PeepholeOptimizer, instructions: []HIRInstruction, i: usize, optimized: *std.array_list.Managed(HIRInstruction)) !?usize {
 
         // Pattern 1: Arithmetic identity operations (x + 0, x * 1, etc.)
         if (i + 2 < instructions.len and
@@ -247,7 +247,7 @@ pub const PeepholeOptimizer = struct {
     // CATEGORY 3: VARIABLE ACCESS OPTIMIZATIONS
     //==================================================================
 
-    fn tryVariableOptimization(self: *PeepholeOptimizer, instructions: []HIRInstruction, i: usize, optimized: *std.ArrayList(HIRInstruction)) !?usize {
+    fn tryVariableOptimization(self: *PeepholeOptimizer, instructions: []HIRInstruction, i: usize, optimized: *std.array_list.Managed(HIRInstruction)) !?usize {
 
         // Pattern 1: StoreVar + LoadVar (same variable) → StoreVar + Dup
         if (i + 1 < instructions.len and

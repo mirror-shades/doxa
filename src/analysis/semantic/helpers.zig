@@ -41,7 +41,7 @@ pub fn unifyTypes(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual
                         }
                         if (!member_allowed) {
                             // Build expected list for error message
-                            var type_list = std.ArrayList(u8).init(self.allocator);
+                            var type_list = std.array_list.Managed(u8).init(self.allocator);
                             defer type_list.deinit();
                             for (exp_union.types, 0..) |m, i| {
                                 if (i > 0) try type_list.appendSlice(" | ");
@@ -87,7 +87,7 @@ pub fn unifyTypes(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual
                 }
 
                 // Build a list of allowed types for the error message
-                var type_list = std.ArrayList(u8).init(self.allocator);
+                var type_list = std.array_list.Managed(u8).init(self.allocator);
                 defer type_list.deinit();
                 for (exp_union.types, 0..) |member_type, i| {
                     if (i > 0) try type_list.appendSlice(" | ");
@@ -354,7 +354,7 @@ pub fn createImportedSymbolVariable(self: *SemanticAnalyzer, name: []const u8, i
                                             // Found matching function; construct FunctionType from its params/return
                                             const ft = self.allocator.create(ast.FunctionType) catch break;
                                             // Duplicate param TypeInfos into a flat slice as FunctionType expects []TypeInfo
-                                            var params_list = std.ArrayList(ast.TypeInfo).init(self.allocator);
+                                            var params_list = std.array_list.Managed(ast.TypeInfo).init(self.allocator);
                                             errdefer params_list.deinit();
                                             for (f.params) |p| {
                                                 const ti_ptr = if (p.type_expr) |texpr| (self.typeExprToTypeInfo(texpr) catch null) else null;
@@ -434,7 +434,7 @@ pub fn convertTypeToTokenType(self: *SemanticAnalyzer, base_type: ast.Type) Toke
 
 pub fn createUnionType(self: *SemanticAnalyzer, types: []*ast.TypeInfo) !*ast.TypeInfo {
     // Flatten any existing unions in the input types
-    var flat_types = std.ArrayList(*ast.TypeInfo).init(self.allocator);
+    var flat_types = std.array_list.Managed(*ast.TypeInfo).init(self.allocator);
     defer flat_types.deinit();
 
     for (types) |type_info| {
@@ -615,7 +615,7 @@ pub fn registerStructType(self: *SemanticAnalyzer, struct_name: []const u8, fiel
 }
 
 pub fn flattenUnionType(self: *SemanticAnalyzer, union_type: *ast.UnionType) !*ast.UnionType {
-    var flat_types = std.ArrayList(*ast.TypeInfo).init(self.allocator);
+    var flat_types = std.array_list.Managed(*ast.TypeInfo).init(self.allocator);
     defer flat_types.deinit();
 
     for (union_type.types) |member_type| {
