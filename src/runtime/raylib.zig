@@ -127,4 +127,7 @@ pub const doxa_module = struct {
         .{ .name = "WHITE", .value = .{ .color = rl.colorNameToDoxaColor(.WHITE) } },
         .{ .name = "BLACK", .value = .{ .color = rl.colorNameToDoxaColor(.BLACK) } },
     };
+
+    // Simple array of all valid field names for validation
+    pub const valid_fields = [_][]const u8{ "InitWindow", "CloseWindow", "WindowShouldClose", "BeginDrawing", "EndDrawing", "ClearBackground", "SetTargetFPS", "DrawCircle", "DrawCircleV", "DrawRectangle", "DrawRectangleV", "GetTime", "DARKGRAY", "MAROON", "ORANGE", "DARKGREEN", "DARKBLUE", "DARKPURPLE", "DARKBROWN", "GRAY", "RED", "GOLD", "LIME", "BLUE", "VIOLET", "BROWN", "LIGHTGRAY", "PINK", "YELLOW", "GREEN", "SKYBLUE", "PURPLE", "BEIGE", "WHITE", "BLACK" };
 };

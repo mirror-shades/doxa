@@ -9,9 +9,9 @@ entry function main() {
     const fps is 60
     const name is "Doxa + Raylib"
     
-    var app is dg.Init(w, h, fps, name)
+    dg.Init(w, h, fps, name)
     
-    while app.running {
+    while dg.Running() {
         dg.Draw()
         rl.ClearBackground(rl.ORANGE)
     }

@@ -18,6 +18,18 @@ pub const doxa = struct {
         rl.BeginDrawing();
         // EndDrawing is implicitly deferred by the VM via defer_stacks in module call bridge
     }
+
+    pub fn Running() bool {
+        return !rl.WindowShouldClose();
+    }
 };
 
-
+pub const doxa_module = struct {
+    pub const name = "doxa";
+    pub const functions = &.{
+        .{ .name = "Init", .func = doxa.Init },
+        .{ .name = "Draw", .func = doxa.Draw },
+        .{ .name = "Running", .func = doxa.Running },
+    };
+    pub const constants = &.{};
+};

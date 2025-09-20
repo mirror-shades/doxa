@@ -574,6 +574,12 @@ pub fn inferTypeFromExpr(ctx: *TypeAnalysisContext, expr: *ast.Expr) !*ast.TypeI
             } else if (object_type.base == .Custom) {
                 // Handle custom type field access
                 if (object_type.custom_type) |custom_type_name| {
+                    // First check if this is a module namespace
+                    if (helpers.isModuleNamespace(@constCast(ctx), custom_type_name)) {
+                        // Handle module namespace access
+                        return helpers.handleModuleFieldAccess(@constCast(ctx), custom_type_name, field_access.field.lexeme, .{ .location = getLocationFromBase(expr.base) });
+                    }
+
                     if (ctx.custom_types.get(custom_type_name)) |custom_type| {
                         if (custom_type.kind == .Struct and custom_type.struct_fields != null) {
                             const fields = custom_type.struct_fields.?;

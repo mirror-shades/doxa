@@ -4,18 +4,18 @@ entry function main() {
     const rl is g.raylib
     const dg is g.doxa
     
-    const w is 800
-    const h is 600
-    const fps is 60
-    const name is "Working Graphics Demo"
+    const WIDTH is 800
+    const HEIGHT is 600
+    const FPS is 60
+    const NAME is "Working Graphics Demo"
     
     // doxa has a simplified API for initializing graphics
     // Initialize graphics (defers CloseWindow automatically)
-    var app is dg.Init(w, h, fps, name)
+    dg.Init(WIDTH, HEIGHT, FPS, NAME)
     
-    var frame_count is 0
+    var frame_count :: int
     
-    while app.running {
+    while dg.Running() {
         // Begin drawing (defers EndDrawing automatically)
         dg.Draw()
 
@@ -30,6 +30,6 @@ entry function main() {
         const circle_y is (frame_count * 3) % 600
         rl.DrawCircle(circle_x, circle_y, 30, rl.ORANGE)
         
-        frame_count is frame_count + 1
+        frame_count += 1
     }    
 }

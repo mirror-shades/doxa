@@ -411,6 +411,7 @@ pub const ErrorCode = struct {
     pub const INVALID_STRING_INDEX_TYPE = "E6014";
     pub const INVALID_RETURN_TYPE_FOR_UNION = "E6015";
     pub const PRIVATE_FIELD_ACCESS = "E6016";
+    pub const UNDEFINED_FIELD = "E6017";
 
     // 7xxx - Modules & Imports
     pub const MODULE_NOT_FOUND = "E7001";

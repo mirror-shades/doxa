@@ -1165,13 +1165,6 @@ pub const HIRVM = struct {
                         }
                     },
                     .struct_instance => |struct_inst| {
-                        // Special handling for graphics.App.running field - check WindowShouldClose dynamically
-                        if (std.mem.eql(u8, struct_inst.type_name, "graphics.App") and std.mem.eql(u8, get_field.field_name, "running")) {
-                            const ray = @import("../runtime/raylib.zig");
-                            const should_close = ray.WindowShouldClose();
-                            try self.stack.push(HIRFrame.initTetra(if (should_close) 0 else 1));
-                            return;
-                        }
 
                         // Intern the field name for comparison
                         const interned_name = try self.string_interner.intern(get_field.field_name);
