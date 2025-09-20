@@ -562,33 +562,21 @@ pub const HIRGenerator = struct {
                 if (self.struct_methods.get(struct_name)) |method_table| {
                     if (method_table.get(method_name)) |mi| {
                         if (!mi.is_static) {
-                            const this_idx2 = try self.getOrCreateVariable("this");
+                            // For instance methods, automatically add implicit 'this' parameter
+                            const this_idx = try self.getOrCreateVariable("this");
                             // Track type for 'this' to be a struct by default
                             try self.trackVariableType("this", .Struct);
                             try self.instructions.append(.{ .StoreVar = .{
-                                .var_index = this_idx2,
+                                .var_index = this_idx,
                                 .var_name = "this",
                                 .scope_kind = .Local,
                                 .module_context = null,
                                 .expected_type = .Struct,
                             } });
-                        } else {
-                            // Ensure no accidental 'this' store in static methods
-                            // (No-op; we simply don't emit any StoreVar here.)
                         }
+                        // Functions (static) don't get implicit 'this'
                     }
                 }
-            }
-
-            // Special handling: if this is a struct instance method, ensure the implicit 'this' is stored
-            // Convention: instance methods declare first param named 'this' (parser supplies it)
-            if (params.len > 0 and std.mem.eql(u8, params[0].name.lexeme, "this")) {
-                const this_type = self.getTrackedVariableType("this") orelse .Struct;
-                const this_idx = try self.getOrCreateVariable("this");
-                // If not already stored by loop above (depends on parser), ensure we have a var
-                // No-op if already present
-                _ = this_type;
-                _ = this_idx;
             }
 
             // TAIL CALL FIX: Add a separate label for tail calls to jump to (after parameter setup)

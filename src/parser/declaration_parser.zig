@@ -155,34 +155,22 @@ pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*
             self.advance(); // consume 'pub'
         }
 
-        // Check if this is a function (method) or a field
-        if (self.peek().type == .FUNCTION) {
-            const location = Reporting.Location{
-                .file = self.current_file,
-                .range = .{
-                    .start_line = self.peek().line,
-                    .start_col = self.peek().column,
-                    .end_line = self.peek().line,
-                    .end_col = self.peek().column,
-                },
-            };
-            self.reporter.reportCompileError(location, ErrorCode.EXPECTED_METHOD, "Expected method, got function", .{});
-            return error.ExpectedMethod;
-        }
+        // Check if this is a function/method or a field
 
-        if (self.peek().type == .METHOD) {
-            // Parse method
-            self.advance(); // consume 'method'
+        if (self.peek().type == .METHOD or self.peek().type == .FUNCTION) {
+            // Parse method or function
+            const is_function = self.peek().type == .FUNCTION;
+            self.advance(); // consume 'method' or 'function'
 
-            // Parse method name
+            // Parse method/function name
             if (self.peek().type != .IDENTIFIER) {
                 return error.ExpectedIdentifier;
             }
             const method_name = self.peek();
             self.advance();
 
-            // Default: methods are static unless they include 'this'
-            var method_is_static: bool = true;
+            // Functions are always static, methods are always instance
+            const method_is_static: bool = is_function;
 
             // Parse parameters
             var params = std.array_list.Managed(ast.FunctionParam).init(self.allocator);
@@ -195,37 +183,6 @@ pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*
 
             if (self.peek().type == .LEFT_PAREN) {
                 self.advance(); // consume '('
-
-                if (self.peek().type == .THIS) {
-                    method_is_static = false;
-                    self.advance(); // consume 'this'
-                    if (self.peek().type == .TYPE_SYMBOL) {
-                        self.advance(); // consume '::'
-                        // Validate that the annotated type matches the enclosing struct name
-                        if (self.peek().type != .IDENTIFIER) {
-                            return error.ExpectedIdentifier;
-                        }
-                        const param_type = self.peek();
-                        self.advance();
-                        if (!std.mem.eql(u8, param_type.lexeme, name.lexeme)) {
-                            const location = Reporting.Location{
-                                .file = self.current_file,
-                                .range = .{
-                                    .start_line = param_type.line,
-                                    .start_col = param_type.column,
-                                    .end_line = param_type.line,
-                                    .end_col = param_type.column + param_type.lexeme.len,
-                                },
-                            };
-                            self.reporter.reportCompileError(location, ErrorCode.THIS_TYPE_MISMATCH, "This must be the same type as the struct it is within", .{});
-                            return error.ThisTypeMismatch;
-                        }
-                    }
-                    // Allow optional comma after 'this' parameter
-                    if (self.peek().type == .COMMA) {
-                        self.advance(); // consume ','
-                    }
-                }
 
                 while (self.peek().type != .RIGHT_PAREN) {
                     // Allow blank lines between parameters
