@@ -366,6 +366,11 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                         var struct_name: ?[]const u8 = null;
                         if (object_type.base == .Custom) {
                             if (object_type.custom_type) |ct_name| {
+                                // If this is a nested graphics namespace (graphics.raylib / graphics.doxa), treat as module function
+                                if (std.mem.startsWith(u8, ct_name, "graphics.")) {
+                                    type_info.* = .{ .base = .Int };
+                                    return type_info;
+                                }
                                 struct_name = ct_name;
                             }
                         } else if (object_type.base == .Struct) {

@@ -33,7 +33,21 @@ pub const CallsHandler = struct {
                 // Module function call: namespace.func(...)
                 if (field_access.object.data == .Variable and self.generator.isModuleNamespace(field_access.object.data.Variable.lexeme)) {
                     const object_name = field_access.object.data.Variable.lexeme;
-                    function_name = try std.fmt.allocPrint(self.generator.allocator, "{s}.{s}", .{ object_name, field_access.field.lexeme });
+
+                    // Check if this is an aliased module namespace (e.g., rl -> graphics.raylib)
+                    if (self.generator.module_namespaces.get(object_name)) |mi| {
+                        const root_name = if (mi.name.len > 0) mi.name else mi.file_path;
+                        if (std.mem.eql(u8, root_name, "graphics.raylib") or std.mem.eql(u8, root_name, "graphics.doxa")) {
+                            // Generate the full qualified name for aliased module namespaces
+                            function_name = try std.fmt.allocPrint(self.generator.allocator, "{s}.{s}", .{ root_name, field_access.field.lexeme });
+                        } else {
+                            // Fallback to original behavior for other module namespaces
+                            function_name = try std.fmt.allocPrint(self.generator.allocator, "{s}.{s}", .{ object_name, field_access.field.lexeme });
+                        }
+                    } else {
+                        // Fallback to original behavior
+                        function_name = try std.fmt.allocPrint(self.generator.allocator, "{s}.{s}", .{ object_name, field_access.field.lexeme });
+                    }
 
                     if (std.mem.eql(u8, function_name, "safeMath.safeAdd")) {
                         call_kind = .ModuleFunction;

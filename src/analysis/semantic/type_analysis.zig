@@ -378,6 +378,11 @@ pub fn inferTypeFromExpr(ctx: *TypeAnalysisContext, expr: *ast.Expr) !*ast.TypeI
                 // Instance method based on receiver type
                 var struct_name: ?[]const u8 = null;
                 if (object_type.base == .Custom and object_type.custom_type) |ctn| {
+                    // If this is a nested graphics namespace (graphics.raylib / graphics.doxa), treat as module function
+                    if (std.mem.startsWith(u8, ctn, "graphics.")) {
+                        type_info.* = .{ .base = .Int };
+                        return type_info;
+                    }
                     struct_name = ctn;
                 } else if (object_type.base == .Struct and object_type.custom_type) |ctn2| {
                     struct_name = ctn2;
