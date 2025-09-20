@@ -22,6 +22,15 @@ pub fn build(b: *std.Build) void {
         run_cmd.addArgs(args);
     }
 
+    // requires running `zig fetch --save git+https://github.com/raysan5/raylib.git` in the root directory`
+    // Add raylib dependency
+    const raylib_dep = b.dependency("raylib", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const raylib = raylib_dep.artifact("raylib");
+    exe.linkLibrary(raylib);
+
     // Add test steps
     const test_run = b.addTest(.{
         .name = "test_run",

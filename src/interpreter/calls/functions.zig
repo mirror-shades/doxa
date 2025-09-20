@@ -155,6 +155,196 @@ pub const FunctionOps = struct {
 
     // Execute module function calls
     fn execModuleFunction(vm: anytype, c: anytype) !void {
+        // Fast-path: graphics module bridging. Expect qualified_name like "graphics.doxa.Func" or "graphics.raylib.Func"
+        if (std.mem.indexOfScalar(u8, c.qualified_name, '.')) |dot_idx| {
+            const module_alias = c.qualified_name[0..dot_idx];
+            const remainder = c.qualified_name[dot_idx + 1 ..];
+
+            // Handle nested module namespaces: e.g., graphics.doxa.Draw
+            var sub_alias: []const u8 = remainder;
+            var func_name: []const u8 = remainder;
+            if (std.mem.indexOfScalar(u8, remainder, '.')) |sub_dot| {
+                sub_alias = remainder[0..sub_dot];
+                func_name = remainder[sub_dot + 1 ..];
+            }
+
+            // Remove standalone raylib bridging; raylib is only accessible under graphics.raylib.
+
+            // Built-in graphics module: implicit defers for Draw/Init
+            const is_graphics = std.mem.eql(u8, module_alias, "graphics") or std.mem.eql(u8, module_alias, "g");
+            if (is_graphics) {
+                const ray = @import("../../runtime/raylib.zig");
+                // Submodule dispatch: doxa vs raylib passthrough
+                if (std.mem.eql(u8, sub_alias, "doxa")) {
+                    if (std.mem.eql(u8, func_name, "Init")) {
+                        const name_frame = try vm.stack.pop();
+                        const fps_frame = try vm.stack.pop();
+                        const height_frame = try vm.stack.pop();
+                        const width_frame = try vm.stack.pop();
+
+                        const w = try width_frame.asInt();
+                        const h = try height_frame.asInt();
+                        const fps = try fps_frame.asInt();
+                        const name = try name_frame.asString();
+
+                        try ray.InitWindowDoxa(w, h, name);
+                        ray.SetTargetFPSDoxa(fps);
+
+                        // Implicit function-scope defer: CloseWindow on surrounding scope exit
+                        if (vm.defer_stacks.items.len > 0) {
+                            var list = &vm.defer_stacks.items[vm.defer_stacks.items.len - 1];
+                            try list.append(&ray.CloseWindow);
+                        }
+
+                        // Init function doesn't return anything (void)
+                        try vm.stack.push(HIRFrame.initNothing());
+                        return;
+                    } else if (std.mem.eql(u8, func_name, "Draw")) {
+                        // Begin drawing now, defer EndDrawing at current scope exit
+                        ray.BeginDrawing();
+                        if (vm.defer_stacks.items.len > 0) {
+                            var list = &vm.defer_stacks.items[vm.defer_stacks.items.len - 1];
+                            try list.append(&ray.EndDrawing);
+                        }
+                        try vm.stack.push(HIRFrame.initNothing());
+                        return;
+                    } else if (std.mem.eql(u8, func_name, "Running")) {
+                        // Return the negation of WindowShouldClose
+                        const should_close = ray.WindowShouldClose();
+                        try vm.stack.push(HIRFrame.initTetra(if (should_close) 0 else 1));
+                        return;
+                    }
+                } else if (std.mem.eql(u8, sub_alias, "raylib")) {
+                    // Passthrough to raylib wrappers via graphics.raylib.*
+                    if (std.mem.eql(u8, func_name, "ClearBackground")) {
+                        const color_frame = try vm.stack.pop();
+                        // Use the new color system with WHITE as default
+                        var color: ray.DoxaColor = ray.colorNameToDoxaColor(.WHITE);
+
+                        switch (color_frame.value) {
+                            .string => |s| {
+                                // Try to parse color from string like "graphics.raylib.SKYBLUE" or "g.raylib.RED"
+                                if (std.mem.startsWith(u8, s, "graphics.raylib.")) {
+                                    const color_name = s[16..]; // Skip "graphics.raylib." (16 chars)
+                                    if (ray.stringToDoxaColor(color_name)) |parsed_color| {
+                                        color = parsed_color;
+                                    }
+                                } else if (std.mem.startsWith(u8, s, "g.raylib.")) {
+                                    const color_name = s[9..]; // Skip "g.raylib." (9 chars)
+                                    if (ray.stringToDoxaColor(color_name)) |parsed_color| {
+                                        color = parsed_color;
+                                    }
+                                } else {
+                                    // Try direct color name
+                                    if (ray.stringToDoxaColor(s)) |parsed_color| {
+                                        color = parsed_color;
+                                    }
+                                }
+                            },
+                            .struct_instance => |struct_val| {
+                                // Check if this is a color struct
+                                if (std.mem.eql(u8, struct_val.type_name, "color")) {
+                                    // Extract color values from struct fields
+                                    for (struct_val.fields) |field| {
+                                        if (std.mem.eql(u8, field.name, "r")) {
+                                            if (field.value == .int) {
+                                                color.r = @intCast(field.value.int);
+                                            }
+                                        } else if (std.mem.eql(u8, field.name, "g")) {
+                                            if (field.value == .int) {
+                                                color.g = @intCast(field.value.int);
+                                            }
+                                        } else if (std.mem.eql(u8, field.name, "b")) {
+                                            if (field.value == .int) {
+                                                color.b = @intCast(field.value.int);
+                                            }
+                                        } else if (std.mem.eql(u8, field.name, "a")) {
+                                            if (field.value == .int) {
+                                                color.a = @intCast(field.value.int);
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                            else => {},
+                        }
+                        ray.ClearBackgroundDoxa(color);
+                        try vm.stack.push(HIRFrame.initNothing());
+                        return;
+                    } else if (std.mem.eql(u8, func_name, "WindowShouldClose")) {
+                        const res = ray.WindowShouldClose();
+                        try vm.stack.push(HIRFrame.initTetra(if (res) 1 else 0));
+                        return;
+                    } else if (std.mem.eql(u8, func_name, "InitWindow")) {
+                        const title = try vm.stack.pop();
+                        const height = try vm.stack.pop();
+                        const width = try vm.stack.pop();
+                        const w = try width.asInt();
+                        const h = try height.asInt();
+                        const t = try title.asString();
+                        try ray.InitWindowDoxa(w, h, t);
+                        try vm.stack.push(HIRFrame.initNothing());
+                        return;
+                    } else if (std.mem.eql(u8, func_name, "CloseWindow")) {
+                        ray.CloseWindow();
+                        try vm.stack.push(HIRFrame.initNothing());
+                        return;
+                    } else if (std.mem.eql(u8, func_name, "BeginDrawing")) {
+                        ray.BeginDrawing();
+                        try vm.stack.push(HIRFrame.initNothing());
+                        return;
+                    } else if (std.mem.eql(u8, func_name, "EndDrawing")) {
+                        ray.EndDrawing();
+                        try vm.stack.push(HIRFrame.initNothing());
+                        return;
+                    } else if (std.mem.eql(u8, func_name, "SetTargetFPS")) {
+                        const fps = try vm.stack.pop();
+                        const f = try fps.asInt();
+                        ray.SetTargetFPSDoxa(f);
+                        try vm.stack.push(HIRFrame.initNothing());
+                        return;
+                    } else if (std.mem.eql(u8, func_name, "DrawCircle")) {
+                        const color_frame = try vm.stack.pop();
+                        const radius_frame = try vm.stack.pop();
+                        const y_frame = try vm.stack.pop();
+                        const x_frame = try vm.stack.pop();
+
+                        const x = try x_frame.asInt();
+                        const y = try y_frame.asInt();
+                        const radius_int = try radius_frame.asInt();
+                        const radius = @as(f32, @floatFromInt(radius_int));
+
+                        // Parse color similar to ClearBackground
+                        var color: ray.DoxaColor = ray.colorNameToDoxaColor(.YELLOW);
+                        switch (color_frame.value) {
+                            .string => |s| {
+                                if (std.mem.startsWith(u8, s, "graphics.raylib.")) {
+                                    const color_name = s[16..];
+                                    if (ray.stringToDoxaColor(color_name)) |parsed_color| {
+                                        color = parsed_color;
+                                    }
+                                } else if (std.mem.startsWith(u8, s, "g.raylib.")) {
+                                    const color_name = s[9..];
+                                    if (ray.stringToDoxaColor(color_name)) |parsed_color| {
+                                        color = parsed_color;
+                                    }
+                                } else {
+                                    if (ray.stringToDoxaColor(s)) |parsed_color| {
+                                        color = parsed_color;
+                                    }
+                                }
+                            },
+                            else => {},
+                        }
+
+                        ray.DrawCircle(@intCast(x), @intCast(y), @floatCast(radius), .{ .r = color.r, .g = color.g, .b = color.b, .a = color.a });
+                        try vm.stack.push(HIRFrame.initNothing());
+                        return;
+                    }
+                }
+            }
+        }
+
         // Treat any module alias ending in ".safeAdd" as the safe add from safeMath.doxa
         const is_safe_add = blk: {
             if (std.mem.lastIndexOfScalar(u8, c.qualified_name, '.')) |dot_idx| {

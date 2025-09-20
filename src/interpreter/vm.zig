@@ -4,6 +4,8 @@ const hir_instructions = @import("../codegen/hir/soxa_instructions.zig");
 const hir_values = @import("../codegen/hir/soxa_values.zig");
 const hir_types = @import("../codegen/hir/soxa_types.zig");
 const HIRInstruction = hir_instructions.HIRInstruction;
+// Implicit defer callback type
+const DeferAction = *const fn () void;
 const HIRValue = hir_values.HIRValue;
 const HIRArray = hir_values.HIRArray;
 const HIRMap = hir_values.HIRMap;
@@ -109,6 +111,9 @@ pub const HIRVM = struct {
     custom_type_registry: std.StringHashMap(CustomTypeInfo),
     // Canonical TypeInfo singletons for primitive types to avoid per-store allocations
     canonical_types: CanonicalTypes,
+
+    // Implicit defer support: per-scope stacks of zero-arg callbacks to run on scope exit
+    defer_stacks: std.array_list.Managed(std.array_list.Managed(DeferAction)),
 
     pub fn tokenLiteralToHIRValueWithType(self: *HIRVM, token_literal: TokenLiteral, type_info: *TypeInfo) HIRValue {
         // Handle enum types with proper type information
@@ -481,6 +486,7 @@ pub const HIRVM = struct {
             .custom_type_registry = std.StringHashMap(CustomTypeInfo).init(allocator), // NEW: Initialize custom type registry
             .canonical_types = undefined,
             ._reserved_flags = 0,
+            .defer_stacks = std.array_list.Managed(std.array_list.Managed(DeferAction)).init(allocator),
         };
 
         // Enable profiling if environment variable DOXA_PROFILE is set
@@ -545,6 +551,11 @@ pub const HIRVM = struct {
         self.label_map.deinit();
         self.var_cache.deinit();
         self.profile_map.deinit();
+
+        // Deinit defer stacks
+        var i: usize = self.defer_stacks.items.len;
+        while (i > 0) : (i -= 1) self.defer_stacks.items[i - 1].deinit();
+        self.defer_stacks.deinit();
     }
 
     /// Get a canonical TypeInfo pointer for primitive types to avoid allocations
@@ -856,9 +867,24 @@ pub const HIRVM = struct {
                 // Clear per-scope variable cache to avoid stale storage_id mappings
                 self.var_cache.clearRetainingCapacity();
                 // Reserved: potential fast-path hint
+
+                // Push a new defer list for this scope
+                try self.defer_stacks.append(std.array_list.Managed(DeferAction).init(self.allocator));
             },
 
             .ExitScope => {
+                // Run implicit defers registered for this scope (in reverse order)
+                if (self.defer_stacks.items.len > 0) {
+                    var list = &self.defer_stacks.items[self.defer_stacks.items.len - 1];
+                    var d: usize = list.items.len;
+                    while (d > 0) : (d -= 1) {
+                        const action = list.items[d - 1];
+                        action();
+                    }
+                    list.deinit();
+                    _ = self.defer_stacks.pop();
+                }
+
                 if (self.current_scope.parent) |parent_scope| {
                     const old_scope = self.current_scope;
                     self.current_scope = parent_scope;
@@ -1105,6 +1131,13 @@ pub const HIRVM = struct {
                 // Handle struct fields
                 switch (frame.value) {
                     .string => {
+                        // Handle module namespace field access (e.g., "graphics.raylib".WindowShouldClose or "graphics.raylib".SKYBLUE)
+                        if (std.mem.startsWith(u8, frame.value.string, "graphics.")) {
+                            const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ frame.value.string, get_field.field_name });
+                            try self.stack.push(HIRFrame.initFromHIRValue(HIRValue{ .string = full_name }));
+                            return;
+                        }
+
                         // Handle special string operations
                         if (std.mem.eql(u8, get_field.field_name, "length")) {
                             // String length operation
@@ -1132,6 +1165,7 @@ pub const HIRVM = struct {
                         }
                     },
                     .struct_instance => |struct_inst| {
+
                         // Intern the field name for comparison
                         const interned_name = try self.string_interner.intern(get_field.field_name);
 

@@ -33,7 +33,21 @@ pub const CallsHandler = struct {
                 // Module function call: namespace.func(...)
                 if (field_access.object.data == .Variable and self.generator.isModuleNamespace(field_access.object.data.Variable.lexeme)) {
                     const object_name = field_access.object.data.Variable.lexeme;
-                    function_name = try std.fmt.allocPrint(self.generator.allocator, "{s}.{s}", .{ object_name, field_access.field.lexeme });
+
+                    // Check if this is an aliased module namespace (e.g., rl -> graphics.raylib)
+                    if (self.generator.module_namespaces.get(object_name)) |mi| {
+                        const root_name = if (mi.name.len > 0) mi.name else mi.file_path;
+                        if (std.mem.eql(u8, root_name, "graphics.raylib") or std.mem.eql(u8, root_name, "graphics.doxa")) {
+                            // Generate the full qualified name for aliased module namespaces
+                            function_name = try std.fmt.allocPrint(self.generator.allocator, "{s}.{s}", .{ root_name, field_access.field.lexeme });
+                        } else {
+                            // Fallback to original behavior for other module namespaces
+                            function_name = try std.fmt.allocPrint(self.generator.allocator, "{s}.{s}", .{ object_name, field_access.field.lexeme });
+                        }
+                    } else {
+                        // Fallback to original behavior
+                        function_name = try std.fmt.allocPrint(self.generator.allocator, "{s}.{s}", .{ object_name, field_access.field.lexeme });
+                    }
 
                     if (std.mem.eql(u8, function_name, "safeMath.safeAdd")) {
                         call_kind = .ModuleFunction;
@@ -47,6 +61,23 @@ pub const CallsHandler = struct {
                     // Emit only the arguments for module function
                     for (call_data.arguments) |arg| {
                         try self.generator.generateExpression(arg.expr, true, should_pop_after_use);
+                    }
+                } else if (field_access.object.data == .FieldAccess) {
+                    // Nested module namespace: e.g., graphics.raylib.Func(...)
+                    const inner = field_access.object.data.FieldAccess;
+                    if (inner.object.data == .Variable and self.generator.isModuleNamespace(inner.object.data.Variable.lexeme)) {
+                        const ns_alias = inner.object.data.Variable.lexeme;
+                        // Resolve root module name from namespace alias
+                        if (self.generator.module_namespaces.get(ns_alias)) |mi| {
+                            const root_name = if (mi.name.len > 0) mi.name else mi.file_path;
+                            const sub_ns = inner.field.lexeme; // e.g., "raylib" or "doxa"
+                            function_name = try std.fmt.allocPrint(self.generator.allocator, "{s}.{s}.{s}", .{ root_name, sub_ns, field_access.field.lexeme });
+                            call_kind = .ModuleFunction;
+                            // Emit only the arguments for module function
+                            for (call_data.arguments) |arg| {
+                                try self.generator.generateExpression(arg.expr, true, should_pop_after_use);
+                            }
+                        }
                     }
                 } else if (field_access.object.data == .Variable) {
                     // Static struct method: TypeName.method(...)
