@@ -20,16 +20,14 @@ entry function main() {
         dg.Draw()
 
         // raylib is still available        
-        if (frame_count % 60 < 20) then {
+        if (frame_count % 200 < 100) then {
             rl.ClearBackground(rl.GRAY)
-        } else if (frame_count % 60 < 40) then {
-            rl.ClearBackground(rl.LIGHTGRAY)
         } else {
-            rl.ClearBackground(rl.WHITE)
-        }
+            rl.ClearBackground(rl.LIGHTGRAY)
+        } 
         
-        const circle_x is 400 + (frame_count * 3) % 600 - 300
-        const circle_y is 300 + (frame_count * 2) % 400 - 200
+        const circle_x is (frame_count * 4) % 800 
+        const circle_y is (frame_count * 3) % 600
         rl.DrawCircle(circle_x, circle_y, 30, rl.ORANGE)
         
         frame_count is frame_count + 1
