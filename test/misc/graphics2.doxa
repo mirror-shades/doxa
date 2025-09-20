@@ -5,7 +5,7 @@ entry function main() {
     rl.InitWindow(800, 600, "Doxa + Raylib")
     while not rl.WindowShouldClose() {
         rl.BeginDrawing()
-        rl.ClearBackground(rl.GREEN)
+        rl.ClearBackground(rl.LIME)
         rl.EndDrawing()
     }
     rl.CloseWindow()

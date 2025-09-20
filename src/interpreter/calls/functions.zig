@@ -200,7 +200,7 @@ pub const FunctionOps = struct {
                         var fields = try vm.allocator.alloc(@import("../../codegen/hir/soxa_values.zig").HIRStructField, 1);
                         fields[0] = .{
                             .name = try vm.string_interner.intern("running"),
-                            .value = .{ .tetra = 1 },
+                            .value = .{ .tetra = 1 }, // Static value - dynamic checking handled in GetField instruction
                             .field_type = @import("../../codegen/hir/soxa_types.zig").HIRType.Tetra,
                             .path = null,
                         };
@@ -226,12 +226,52 @@ pub const FunctionOps = struct {
                     // Passthrough to raylib wrappers via graphics.raylib.*
                     if (std.mem.eql(u8, func_name, "ClearBackground")) {
                         const color_frame = try vm.stack.pop();
-                        // Fallback: use SKYBLUE if unknown
-                        var color: ray.DoxaColor = ray.WHITE;
+                        // Use the new color system with WHITE as default
+                        var color: ray.DoxaColor = ray.colorNameToDoxaColor(.WHITE);
+
                         switch (color_frame.value) {
                             .string => |s| {
-                                if (std.mem.eql(u8, s, "graphics.raylib.SKYBLUE") or std.mem.eql(u8, s, "g.raylib.SKYBLUE")) {
-                                    color = ray.SKYBLUE_DOXA;
+                                // Try to parse color from string like "graphics.raylib.SKYBLUE" or "g.raylib.RED"
+                                if (std.mem.startsWith(u8, s, "graphics.raylib.")) {
+                                    const color_name = s[16..]; // Skip "graphics.raylib." (16 chars)
+                                    if (ray.stringToDoxaColor(color_name)) |parsed_color| {
+                                        color = parsed_color;
+                                    }
+                                } else if (std.mem.startsWith(u8, s, "g.raylib.")) {
+                                    const color_name = s[9..]; // Skip "g.raylib." (9 chars)
+                                    if (ray.stringToDoxaColor(color_name)) |parsed_color| {
+                                        color = parsed_color;
+                                    }
+                                } else {
+                                    // Try direct color name
+                                    if (ray.stringToDoxaColor(s)) |parsed_color| {
+                                        color = parsed_color;
+                                    }
+                                }
+                            },
+                            .struct_instance => |struct_val| {
+                                // Check if this is a color struct
+                                if (std.mem.eql(u8, struct_val.type_name, "color")) {
+                                    // Extract color values from struct fields
+                                    for (struct_val.fields) |field| {
+                                        if (std.mem.eql(u8, field.name, "r")) {
+                                            if (field.value == .int) {
+                                                color.r = @intCast(field.value.int);
+                                            }
+                                        } else if (std.mem.eql(u8, field.name, "g")) {
+                                            if (field.value == .int) {
+                                                color.g = @intCast(field.value.int);
+                                            }
+                                        } else if (std.mem.eql(u8, field.name, "b")) {
+                                            if (field.value == .int) {
+                                                color.b = @intCast(field.value.int);
+                                            }
+                                        } else if (std.mem.eql(u8, field.name, "a")) {
+                                            if (field.value == .int) {
+                                                color.a = @intCast(field.value.int);
+                                            }
+                                        }
+                                    }
                                 }
                             },
                             else => {},
@@ -269,6 +309,43 @@ pub const FunctionOps = struct {
                         const fps = try vm.stack.pop();
                         const f = try fps.asInt();
                         ray.SetTargetFPSDoxa(f);
+                        try vm.stack.push(HIRFrame.initNothing());
+                        return;
+                    } else if (std.mem.eql(u8, func_name, "DrawCircle")) {
+                        const color_frame = try vm.stack.pop();
+                        const radius_frame = try vm.stack.pop();
+                        const y_frame = try vm.stack.pop();
+                        const x_frame = try vm.stack.pop();
+
+                        const x = try x_frame.asInt();
+                        const y = try y_frame.asInt();
+                        const radius_int = try radius_frame.asInt();
+                        const radius = @as(f32, @floatFromInt(radius_int));
+
+                        // Parse color similar to ClearBackground
+                        var color: ray.DoxaColor = ray.colorNameToDoxaColor(.YELLOW);
+                        switch (color_frame.value) {
+                            .string => |s| {
+                                if (std.mem.startsWith(u8, s, "graphics.raylib.")) {
+                                    const color_name = s[16..];
+                                    if (ray.stringToDoxaColor(color_name)) |parsed_color| {
+                                        color = parsed_color;
+                                    }
+                                } else if (std.mem.startsWith(u8, s, "g.raylib.")) {
+                                    const color_name = s[9..];
+                                    if (ray.stringToDoxaColor(color_name)) |parsed_color| {
+                                        color = parsed_color;
+                                    }
+                                } else {
+                                    if (ray.stringToDoxaColor(s)) |parsed_color| {
+                                        color = parsed_color;
+                                    }
+                                }
+                            },
+                            else => {},
+                        }
+
+                        ray.DrawCircle(@intCast(x), @intCast(y), @floatCast(radius), .{ .r = color.r, .g = color.g, .b = color.b, .a = color.a });
                         try vm.stack.push(HIRFrame.initNothing());
                         return;
                     }

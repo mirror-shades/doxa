@@ -380,6 +380,14 @@ pub fn inferTypeFromExpr(ctx: *TypeAnalysisContext, expr: *ast.Expr) !*ast.TypeI
                 if (object_type.base == .Custom and object_type.custom_type) |ctn| {
                     // If this is a nested graphics namespace (graphics.raylib / graphics.doxa), treat as module function
                     if (std.mem.startsWith(u8, ctn, "graphics.")) {
+                        // Special handling for graphics.doxa.Init
+                        if (std.mem.eql(u8, ctn, "graphics.doxa")) {
+                            if (std.mem.eql(u8, method_name, "Init")) {
+                                // This is graphics.doxa.Init - return a struct type
+                                type_info.* = .{ .base = .Struct, .custom_type = "graphics.App" };
+                                return type_info;
+                            }
+                        }
                         type_info.* = .{ .base = .Int };
                         return type_info;
                     }

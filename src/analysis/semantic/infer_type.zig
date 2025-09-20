@@ -253,7 +253,19 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                             if (self.parser) |p| {
                                 if (p.module_namespaces.get(alias)) |mi| {
                                     if (std.mem.eql(u8, mi.name, "graphics") or std.mem.eql(u8, mi.file_path, "graphics")) {
-                                        // Treat as module function call
+                                        // Special handling for graphics.doxa.Init - returns a struct
+                                        if (fa.field.lexeme.len >= 2) {
+                                            const submodule = fa.field.lexeme;
+                                            if (std.mem.eql(u8, submodule, "doxa")) {
+                                                // Check if this is the Init function
+                                                if (function_call.arguments.len >= 4) {
+                                                    // This is graphics.doxa.Init - return a struct type
+                                                    type_info.* = .{ .base = .Struct, .custom_type = "graphics.App" };
+                                                    return type_info;
+                                                }
+                                            }
+                                        }
+                                        // Treat other graphics module function calls as Int
                                         type_info.* = .{ .base = .Int };
                                         return type_info;
                                     }
@@ -274,6 +286,19 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                     const object_name = field_access.object.data.Variable.lexeme;
                     if (helpers.isModuleNamespace(self, object_name)) {
                         // This is a module function call, not a method call
+                        // Special handling for graphics.doxa.Init
+                        if (std.mem.eql(u8, object_name, "g") or std.mem.eql(u8, object_name, "graphics")) {
+                            if (field_access.object.data == .FieldAccess) {
+                                const inner_fa = field_access.object.data.FieldAccess;
+                                if (std.mem.eql(u8, inner_fa.field.lexeme, "doxa")) {
+                                    if (std.mem.eql(u8, method_name, "Init")) {
+                                        // This is graphics.doxa.Init - return a struct type
+                                        type_info.* = .{ .base = .Struct, .custom_type = "graphics.App" };
+                                        return type_info;
+                                    }
+                                }
+                            }
+                        }
                         // Return a generic type for now - the actual type will be resolved during code generation
                         type_info.* = .{ .base = .Int }; // Assume module functions return int for now
                         return type_info;
@@ -368,6 +393,14 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                             if (object_type.custom_type) |ct_name| {
                                 // If this is a nested graphics namespace (graphics.raylib / graphics.doxa), treat as module function
                                 if (std.mem.startsWith(u8, ct_name, "graphics.")) {
+                                    // Special handling for graphics.doxa.Init
+                                    if (std.mem.eql(u8, ct_name, "graphics.doxa")) {
+                                        if (std.mem.eql(u8, method_name, "Init")) {
+                                            // This is graphics.doxa.Init - return a struct type
+                                            type_info.* = .{ .base = .Struct, .custom_type = "graphics.App" };
+                                            return type_info;
+                                        }
+                                    }
                                     type_info.* = .{ .base = .Int };
                                     return type_info;
                                 }
