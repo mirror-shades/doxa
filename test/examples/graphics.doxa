@@ -19,10 +19,22 @@ entry function main() {
     while dg.Running() {
         // Begin drawing (defers EndDrawing automatically)
         dg.Draw()
-        rl.ClearBackground(rl.GRAY)
-        const circle_x is (frame_count * 4) % 800 
-        const circle_y is (frame_count * 3) % 600
-        rl.DrawCircle(circle_x, circle_y, 30, rl.ORANGE)
+        drawBackground(frame_count)
+        drawCircle(frame_count)
         frame_count += 1
     }    
+}
+
+function drawBackground(frame_count :: int) {
+    if (frame_count % 200 < 100) then {
+        rl.ClearBackground(rl.GRAY)
+    } else {
+        rl.ClearBackground(rl.LIGHTGRAY)
+    }
+}
+
+function drawCircle(frame_count :: int) {
+    const circle_x is (frame_count * 4) % 800 
+    const circle_y is (frame_count * 3) % 600
+    rl.DrawCircle(circle_x, circle_y, 30, rl.ORANGE)
 }
