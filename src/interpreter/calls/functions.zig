@@ -196,21 +196,8 @@ pub const FunctionOps = struct {
                             try list.append(&ray.CloseWindow);
                         }
 
-                        // Return lightweight App struct marker with dynamic 'running'
-                        var fields = try vm.allocator.alloc(@import("../../codegen/hir/soxa_values.zig").HIRStructField, 1);
-                        fields[0] = .{
-                            .name = try vm.string_interner.intern("running"),
-                            .value = .{ .tetra = 1 }, // Static value - dynamic checking handled in GetField instruction
-                            .field_type = @import("../../codegen/hir/soxa_types.zig").HIRType.Tetra,
-                            .path = null,
-                        };
-                        const app_struct = @import("../../codegen/hir/soxa_values.zig").HIRValue{ .struct_instance = .{
-                            .type_name = try vm.allocator.dupe(u8, "graphics.App"),
-                            .fields = fields,
-                            .field_name = null,
-                            .path = null,
-                        } };
-                        try vm.stack.push(HIRFrame.initFromHIRValue(app_struct));
+                        // Init function doesn't return anything (void)
+                        try vm.stack.push(HIRFrame.initNothing());
                         return;
                     } else if (std.mem.eql(u8, func_name, "Draw")) {
                         // Begin drawing now, defer EndDrawing at current scope exit
@@ -220,6 +207,11 @@ pub const FunctionOps = struct {
                             try list.append(&ray.EndDrawing);
                         }
                         try vm.stack.push(HIRFrame.initNothing());
+                        return;
+                    } else if (std.mem.eql(u8, func_name, "Running")) {
+                        // Return the negation of WindowShouldClose
+                        const should_close = ray.WindowShouldClose();
+                        try vm.stack.push(HIRFrame.initTetra(if (should_close) 0 else 1));
                         return;
                     }
                 } else if (std.mem.eql(u8, sub_alias, "raylib")) {
