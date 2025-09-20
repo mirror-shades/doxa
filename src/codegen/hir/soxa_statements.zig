@@ -141,6 +141,34 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
 
             // Generate the initializer expression with enum type context
             if (decl.initializer) |init_expr| {
+                // Special case: namespace aliasing like `const rl is g.raylib`
+                // If initializer is a module namespace field (graphics.raylib / graphics.doxa),
+                // register LHS name as a module namespace alias and emit no runtime code.
+                if (init_expr.data == .FieldAccess) {
+                    const fa = init_expr.data.FieldAccess;
+                    if (fa.object.data == .Variable) {
+                        const root_alias = fa.object.data.Variable.lexeme;
+                        if (self.isModuleNamespace(root_alias)) {
+                            if (std.mem.eql(u8, fa.field.lexeme, "raylib") or std.mem.eql(u8, fa.field.lexeme, "doxa")) {
+                                if (self.module_namespaces.get(root_alias)) |_| {
+                                    // Create a minimal nested ModuleInfo to tag this alias as graphics.<sub>
+                                    const nested_name = if (std.mem.eql(u8, fa.field.lexeme, "raylib")) "graphics.raylib" else "graphics.doxa";
+                                    const nested_info: @import("../../ast/ast.zig").ModuleInfo = .{
+                                        .name = nested_name,
+                                        .imports = &[_]@import("../../ast/ast.zig").ImportInfo{},
+                                        .ast = null,
+                                        .file_path = nested_name,
+                                        .symbols = null,
+                                    };
+                                    try self.module_namespaces.put(decl.name.lexeme, nested_info);
+                                    // Do not generate any runtime instructions for this aliasing assignment
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // Set enum type context if we're declaring an enum variable
                 const old_enum_context = self.current_enum_type;
                 if (custom_type_name != null) {

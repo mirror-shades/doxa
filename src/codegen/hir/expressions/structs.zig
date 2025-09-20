@@ -79,11 +79,33 @@ pub const StructsHandler = struct {
 
     /// Generate HIR for field access expressions
     pub fn generateFieldAccess(self: *StructsHandler, field: ast.FieldAccess) !void {
-        // Handle module namespace constants like g.raylib.SKYBLUE
+        // Handle module namespace field access like g.raylib
         if (field.object.data == .Variable) {
             const obj_name = field.object.data.Variable.lexeme;
             if (self.generator.isModuleNamespace(obj_name)) {
-                // No longer support root-level raylib; constants under graphics.raylib handled below
+                // Handle g.raylib or g.doxa - these are module namespace references
+                if (self.generator.module_namespaces.get(obj_name)) |mi| {
+                    const root_name = if (mi.name.len > 0) mi.name else mi.file_path; // e.g., "graphics" or "graphics.raylib"
+                    if (std.mem.eql(u8, root_name, "graphics")) {
+                        const sub_ns = field.field.lexeme; // e.g., "raylib" or "doxa"
+                        if (std.mem.eql(u8, sub_ns, "raylib") or std.mem.eql(u8, sub_ns, "doxa")) {
+                            // For module namespace field access like g.raylib, we need to handle this differently
+                            // Instead of pushing a constant and then doing field access, we need to generate
+                            // a special instruction that the VM can handle for module namespace field access
+                            const full_name = try std.fmt.allocPrint(self.generator.allocator, "graphics.{s}", .{sub_ns});
+                            const const_idx = try self.generator.addConstant(HIRValue{ .string = full_name });
+                            try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue{ .string = full_name }, .constant_id = const_idx } });
+                            return;
+                        }
+                    } else if (std.mem.startsWith(u8, root_name, "graphics.")) {
+                        // Handle aliased module namespace field access like rl.SKYBLUE
+                        // where rl is aliased to graphics.raylib
+                        const full_name = try std.fmt.allocPrint(self.generator.allocator, "{s}.{s}", .{ root_name, field.field.lexeme });
+                        const const_idx = try self.generator.addConstant(HIRValue{ .string = full_name });
+                        try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue{ .string = full_name }, .constant_id = const_idx } });
+                        return;
+                    }
+                }
             }
         }
 
@@ -108,7 +130,6 @@ pub const StructsHandler = struct {
         // Check the type of the object being accessed first
         const obj_type = self.generator.inferTypeFromExpression(field.object);
 
-        // CRITICAL FIX: Handle enum member access (e.g., Color.Blue syntax)
         if (field.object.data == .Variable) {
             const var_token = field.object.data.Variable;
             // Check if this variable name matches a registered enum type

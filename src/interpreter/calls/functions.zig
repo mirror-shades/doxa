@@ -227,7 +227,7 @@ pub const FunctionOps = struct {
                     if (std.mem.eql(u8, func_name, "ClearBackground")) {
                         const color_frame = try vm.stack.pop();
                         // Fallback: use SKYBLUE if unknown
-                        var color: ray.DoxaColor = ray.SKYBLUE_DOXA;
+                        var color: ray.DoxaColor = ray.WHITE;
                         switch (color_frame.value) {
                             .string => |s| {
                                 if (std.mem.eql(u8, s, "graphics.raylib.SKYBLUE") or std.mem.eql(u8, s, "g.raylib.SKYBLUE")) {

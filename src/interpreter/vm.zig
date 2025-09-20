@@ -1131,6 +1131,13 @@ pub const HIRVM = struct {
                 // Handle struct fields
                 switch (frame.value) {
                     .string => {
+                        // Handle module namespace field access (e.g., "graphics.raylib".WindowShouldClose or "graphics.raylib".SKYBLUE)
+                        if (std.mem.startsWith(u8, frame.value.string, "graphics.")) {
+                            const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ frame.value.string, get_field.field_name });
+                            try self.stack.push(HIRFrame.initFromHIRValue(HIRValue{ .string = full_name }));
+                            return;
+                        }
+
                         // Handle special string operations
                         if (std.mem.eql(u8, get_field.field_name, "length")) {
                             // String length operation
