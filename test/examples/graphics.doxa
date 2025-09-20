@@ -1,0 +1,37 @@
+module g from "graphics"
+
+entry function main() {
+    const rl is g.raylib
+    const dg is g.doxa
+    
+    const w is 800
+    const h is 600
+    const fps is 60
+    const name is "Working Graphics Demo"
+    
+    // doxa has a simplified API for initializing graphics
+    // Initialize graphics (defers CloseWindow automatically)
+    var app is dg.Init(w, h, fps, name)
+    
+    var frame_count is 0
+    
+    while app.running {
+        // Begin drawing (defers EndDrawing automatically)
+        dg.Draw()
+
+        // raylib is still available        
+        if (frame_count % 60 < 20) then {
+            rl.ClearBackground(rl.GRAY)
+        } else if (frame_count % 60 < 40) then {
+            rl.ClearBackground(rl.LIGHTGRAY)
+        } else {
+            rl.ClearBackground(rl.WHITE)
+        }
+        
+        const circle_x is 400 + (frame_count * 3) % 600 - 300
+        const circle_y is 300 + (frame_count * 2) % 400 - 200
+        rl.DrawCircle(circle_x, circle_y, 30, rl.ORANGE)
+        
+        frame_count is frame_count + 1
+    }    
+}
