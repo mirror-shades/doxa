@@ -18,6 +18,7 @@ pub const ImportedSymbol = struct {
     namespace_alias: ?[]const u8 = null,
     // Optional function metadata for accurate arity/typing
     param_count: ?u32 = null,
+    param_types: ?[]ast.TypeInfo = null,
     return_type_info: ?ast.TypeInfo = null,
 };
 
@@ -280,15 +281,31 @@ fn registerSpecificSymbol(self: *Parser, module_ast: *ast.Expr, module_path: []c
             for (statements) |stmt| {
                 switch (stmt.data) {
                     // Handle function declarations
-                    .Function => |func| {
+                    .FunctionDecl => |func| {
                         const is_public = func.is_public;
                         if (is_public and std.mem.eql(u8, func.name.lexeme, symbol_name)) {
+                            // Extract parameter types
+                            var param_types: ?[]ast.TypeInfo = null;
+                            if (func.params.len > 0) {
+                                param_types = try self.allocator.alloc(ast.TypeInfo, func.params.len);
+                                for (func.params, 0..) |param, i| {
+                                    if (param.type_expr) |type_expr| {
+                                        const type_info_ptr = try ast.typeInfoFromExpr(self.allocator, type_expr);
+                                        param_types.?[i] = type_info_ptr.*;
+                                        self.allocator.destroy(type_info_ptr);
+                                    } else {
+                                        param_types.?[i] = .{ .base = .Nothing };
+                                    }
+                                }
+                            }
+
                             // Register the symbol directly (not with namespace prefix)
                             try self.imported_symbols.?.put(symbol_name, .{
                                 .kind = .Function,
                                 .name = func.name.lexeme,
                                 .original_module = module_path,
                                 .param_count = @intCast(func.params.len),
+                                .param_types = param_types,
                                 .return_type_info = func.return_type_info,
                             });
                             return; // Found the symbol, we're done

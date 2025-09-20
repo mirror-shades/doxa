@@ -190,6 +190,7 @@ pub const HIRGenerator = struct {
         self.function_calls.deinit();
         self.loop_context_stack.deinit();
         // Note: module_namespaces is not owned by HIRGenerator, so we don't deinit it
+        // Note: imported_symbols is not owned by HIRGenerator, so we don't deinit it
     }
 
     pub inline fn pushLoopContext(self: *HIRGenerator, break_label: []const u8, continue_label: []const u8) !void {
@@ -472,67 +473,63 @@ pub const HIRGenerator = struct {
             try self.instructions.append(.{ .Label = .{ .name = function_body.function_info.start_label, .vm_address = 0 } });
 
             // Enter function scope
-            try self.instructions.append(.{ .EnterScope = .{ .scope_id = self.label_generator.label_count + 1000, .var_count = 0 } });
+            const function_scope_id = self.label_generator.label_count + 1000;
+            try self.instructions.append(.{ .EnterScope = .{ .scope_id = function_scope_id, .var_count = 0 } });
 
             // Generate parameter setup - copy arguments from stack to local variables
             const params = function_body.function_params;
 
-            // Parameters are pushed in order, so we pop them in reverse order
-            var param_index = params.len;
-            while (param_index > 0) {
-                param_index -= 1;
-                const param = params[param_index];
+            // First, handle alias parameters in the correct order (they reference storage IDs pushed in order)
+            for (params, 0..) |param, param_index| {
+                if (function_body.param_is_alias[param_index]) {
+                    // Extract parameter type information with proper inference
+                    var param_type: HIRType = .Unknown;
+                    if (param.type_expr) |type_expr| {
+                        const type_info_ptr = try ast.typeInfoFromExpr(self.allocator, type_expr);
+                        defer self.allocator.destroy(type_info_ptr);
+                        param_type = self.convertTypeInfo(type_info_ptr.*);
+                    } else {
+                        // Infer parameter type from usage in function body and call sites
+                        param_type = self.inferParameterType(param.name.lexeme, function_body.statements, function_body.function_name) catch .Int;
+                    }
 
-                // Extract parameter type information with proper inference
-                var param_type: HIRType = .Unknown;
-                if (param.type_expr) |type_expr| {
-                    const type_info_ptr = try ast.typeInfoFromExpr(self.allocator, type_expr);
-                    defer self.allocator.destroy(type_info_ptr);
-                    param_type = self.convertTypeInfo(type_info_ptr.*);
-                } else {
-                    // Infer parameter type from usage in function body and call sites
-                    param_type = self.inferParameterType(param.name.lexeme, function_body.statements, function_body.function_name) catch .Int;
-                }
+                    // Track the parameter's type
+                    try self.trackVariableType(param.name.lexeme, param_type);
 
-                // Track the parameter's type
-                try self.trackVariableType(param.name.lexeme, param_type);
-
-                // If the parameter has an explicit custom type, also track its custom type name
-                if (param.type_expr) |type_expr_for_custom| {
-                    const type_info_for_custom = try ast.typeInfoFromExpr(self.allocator, type_expr_for_custom);
-                    // Explicit struct parameter: track custom type so instance methods resolve
-                    if (type_info_for_custom.base == .Struct) {
-                        if (type_info_for_custom.custom_type) |struct_type_name_for_param| {
-                            try self.trackVariableCustomType(param.name.lexeme, struct_type_name_for_param);
-                            try self.trackVariableType(param.name.lexeme, .Struct);
-                        }
-                        // Explicit enum parameter
-                    } else if (type_info_for_custom.base == .Enum) {
-                        if (type_info_for_custom.custom_type) |enum_type_name_for_param| {
-                            try self.trackVariableCustomType(param.name.lexeme, enum_type_name_for_param);
-                            try self.trackVariableType(param.name.lexeme, .Enum);
-                        }
-                        // Custom(named) type: resolve whether it's a struct or enum
-                    } else if (type_info_for_custom.base == .Custom) {
-                        if (type_info_for_custom.custom_type) |custom_type_name_for_param| {
-                            if (self.isCustomType(custom_type_name_for_param)) |ct| {
-                                switch (ct.kind) {
-                                    .Struct => {
-                                        try self.trackVariableCustomType(param.name.lexeme, custom_type_name_for_param);
-                                        try self.trackVariableType(param.name.lexeme, .Struct);
-                                    },
-                                    .Enum => {
-                                        try self.trackVariableCustomType(param.name.lexeme, custom_type_name_for_param);
-                                        try self.trackVariableType(param.name.lexeme, .Enum);
-                                    },
+                    // If the parameter has an explicit custom type, also track its custom type name
+                    if (param.type_expr) |type_expr_for_custom| {
+                        const type_info_for_custom = try ast.typeInfoFromExpr(self.allocator, type_expr_for_custom);
+                        // Explicit struct parameter: track custom type so instance methods resolve
+                        if (type_info_for_custom.base == .Struct) {
+                            if (type_info_for_custom.custom_type) |struct_type_name_for_param| {
+                                try self.trackVariableCustomType(param.name.lexeme, struct_type_name_for_param);
+                                try self.trackVariableType(param.name.lexeme, .Struct);
+                            }
+                            // Explicit enum parameter
+                        } else if (type_info_for_custom.base == .Enum) {
+                            if (type_info_for_custom.custom_type) |enum_type_name_for_param| {
+                                try self.trackVariableCustomType(param.name.lexeme, enum_type_name_for_param);
+                                try self.trackVariableType(param.name.lexeme, .Enum);
+                            }
+                            // Custom(named) type: resolve whether it's a struct or enum
+                        } else if (type_info_for_custom.base == .Custom) {
+                            if (type_info_for_custom.custom_type) |custom_type_name_for_param| {
+                                if (self.isCustomType(custom_type_name_for_param)) |ct| {
+                                    switch (ct.kind) {
+                                        .Struct => {
+                                            try self.trackVariableCustomType(param.name.lexeme, custom_type_name_for_param);
+                                            try self.trackVariableType(param.name.lexeme, .Struct);
+                                        },
+                                        .Enum => {
+                                            try self.trackVariableCustomType(param.name.lexeme, custom_type_name_for_param);
+                                            try self.trackVariableType(param.name.lexeme, .Enum);
+                                        },
+                                    }
                                 }
                             }
                         }
                     }
-                }
 
-                // Check if this parameter is an alias
-                if (function_body.param_is_alias[param_index]) {
                     // Ensure a local variable slot exists for the alias parameter name so nested aliasing works
                     _ = try self.getOrCreateVariable(param.name.lexeme);
                     // For alias parameters, bind the alias to the incoming storage id
@@ -541,7 +538,64 @@ pub const HIRGenerator = struct {
                         .param_name = param.name.lexeme,
                         .param_type = param_type,
                     } });
-                } else {
+                }
+            }
+
+            // Then, handle regular parameters in reverse order (they are values on the stack)
+            var param_index = params.len;
+            while (param_index > 0) {
+                param_index -= 1;
+                const param = params[param_index];
+
+                if (!function_body.param_is_alias[param_index]) {
+                    // Extract parameter type information with proper inference
+                    var param_type: HIRType = .Unknown;
+                    if (param.type_expr) |type_expr| {
+                        const type_info_ptr = try ast.typeInfoFromExpr(self.allocator, type_expr);
+                        defer self.allocator.destroy(type_info_ptr);
+                        param_type = self.convertTypeInfo(type_info_ptr.*);
+                    } else {
+                        // Infer parameter type from usage in function body and call sites
+                        param_type = self.inferParameterType(param.name.lexeme, function_body.statements, function_body.function_name) catch .Int;
+                    }
+
+                    // Track the parameter's type
+                    try self.trackVariableType(param.name.lexeme, param_type);
+
+                    // If the parameter has an explicit custom type, also track its custom type name
+                    if (param.type_expr) |type_expr_for_custom| {
+                        const type_info_for_custom = try ast.typeInfoFromExpr(self.allocator, type_expr_for_custom);
+                        // Explicit struct parameter: track custom type so instance methods resolve
+                        if (type_info_for_custom.base == .Struct) {
+                            if (type_info_for_custom.custom_type) |struct_type_name_for_param| {
+                                try self.trackVariableCustomType(param.name.lexeme, struct_type_name_for_param);
+                                try self.trackVariableType(param.name.lexeme, .Struct);
+                            }
+                            // Explicit enum parameter
+                        } else if (type_info_for_custom.base == .Enum) {
+                            if (type_info_for_custom.custom_type) |enum_type_name_for_param| {
+                                try self.trackVariableCustomType(param.name.lexeme, enum_type_name_for_param);
+                                try self.trackVariableType(param.name.lexeme, .Enum);
+                            }
+                            // Custom(named) type: resolve whether it's a struct or enum
+                        } else if (type_info_for_custom.base == .Custom) {
+                            if (type_info_for_custom.custom_type) |custom_type_name_for_param| {
+                                if (self.isCustomType(custom_type_name_for_param)) |ct| {
+                                    switch (ct.kind) {
+                                        .Struct => {
+                                            try self.trackVariableCustomType(param.name.lexeme, custom_type_name_for_param);
+                                            try self.trackVariableType(param.name.lexeme, .Struct);
+                                        },
+                                        .Enum => {
+                                            try self.trackVariableCustomType(param.name.lexeme, custom_type_name_for_param);
+                                            try self.trackVariableType(param.name.lexeme, .Enum);
+                                        },
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     // For regular parameters, create a local variable and store the stack value
                     const var_idx = try self.getOrCreateVariable(param.name.lexeme);
                     try self.instructions.append(.{ .StoreVar = .{
@@ -603,7 +657,7 @@ pub const HIRGenerator = struct {
             }
 
             // Exit function scope
-            try self.instructions.append(.{ .ExitScope = .{ .scope_id = self.label_generator.label_count + 1000 } });
+            try self.instructions.append(.{ .ExitScope = .{ .scope_id = function_scope_id } });
 
             // Add implicit return if no explicit return
             if (!has_returned) {
@@ -747,6 +801,17 @@ pub const HIRGenerator = struct {
             }
         }
         return null;
+    }
+
+    /// Check if a function is a module function
+    pub fn isModuleFunction(self: *HIRGenerator, function_name: []const u8) bool {
+        // Check if the function is in any of the imported modules
+        if (self.imported_symbols) |imported_symbols| {
+            if (imported_symbols.get(function_name)) |imported_symbol| {
+                return imported_symbol.kind == .Function;
+            }
+        }
+        return false;
     }
 
     /// Convert TypeInfo to HIRType

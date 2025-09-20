@@ -155,6 +155,51 @@ pub const FunctionOps = struct {
 
     // Execute module function calls
     fn execModuleFunction(vm: anytype, c: anytype) !void {
+        // Handle direct module function calls (without module prefix)
+        if (std.mem.indexOfScalar(u8, c.qualified_name, '.') == null) {
+            // This is a direct module function call without prefix
+            // Look for the function in the function table with module prefix
+            const function_name = c.qualified_name;
+
+            // Try common module prefixes
+            const prefixes = [_][]const u8{ "Render.", "render.", "Render.doxa.", "render.doxa." };
+            for (prefixes) |prefix| {
+                const qualified_name = try std.fmt.allocPrint(vm.allocator, "{s}{s}", .{ prefix, function_name });
+                defer vm.allocator.free(qualified_name);
+
+                // Look for this function in the function table
+                for (vm.program.function_table, 0..) |func, index| {
+                    if (std.mem.eql(u8, func.name, qualified_name)) {
+                        // Found the function, call it as a local function
+                        const function = vm.program.function_table[index];
+
+                        // Save SP before the arguments
+                        const saved_sp = vm.stack.size() - @as(i64, @intCast(c.arg_count));
+
+                        // Push call frame
+                        const return_ip = vm.ip + 1;
+                        const call_frame = CallFrame{
+                            .return_ip = return_ip,
+                            .function_name = function.name,
+                            .arg_count = c.arg_count,
+                            .saved_sp = saved_sp,
+                        };
+                        try vm.call_stack.push(call_frame);
+
+                        // Jump to function
+                        if (function.start_ip != 0) {
+                            vm.ip = function.start_ip;
+                            return;
+                        }
+                        return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Function label not resolved: {s}", .{function.start_label});
+                    }
+                }
+            }
+
+            // Function not found
+            return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Unknown function: {s}", .{c.qualified_name});
+        }
+
         // Fast-path: graphics module bridging. Expect qualified_name like "graphics.doxa.Func" or "graphics.raylib.Func"
         if (std.mem.indexOfScalar(u8, c.qualified_name, '.')) |dot_idx| {
             const module_alias = c.qualified_name[0..dot_idx];

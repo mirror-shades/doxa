@@ -1,0 +1,7 @@
+entry function main() {
+    do {
+        const input is @input()
+        @print("You entered: {input}\n")
+        if input == "quit" then break
+    }
+}

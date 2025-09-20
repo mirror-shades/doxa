@@ -15,6 +15,7 @@ const Location = Reporting.Location;
 
 const Errors = @import("../../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
+const types = @import("types.zig");
 const ErrorCode = Errors.ErrorCode;
 
 const Types = @import("../../types/types.zig");
@@ -244,6 +245,9 @@ pub const SemanticAnalyzer = struct {
         // Inject compiler-provided enums (shared error categories)
         try self.ensureBuiltinEnums();
 
+        // Process imported symbols to register their methods
+        try self.processImportedSymbols();
+
         try self.collectDeclarations(statements, root_scope);
 
         if (self.fatal_error) {
@@ -268,6 +272,141 @@ pub const SemanticAnalyzer = struct {
         //         }
         //     }
         // }
+    }
+
+    fn processImportedSymbols(self: *SemanticAnalyzer) ErrorList!void {
+        // Register types and methods from parser-imported symbols so cross-module dot-methods work
+        if (self.parser) |p| {
+            // Safely access parser's imported symbols map
+            if (p.imported_symbols) |symbols| {
+                var it = symbols.iterator();
+                while (it.next()) |entry| {
+                    const sym = entry.value_ptr.*;
+                    // Process all imported symbols, including functions
+                    switch (sym.kind) {
+                        .Function => {
+                            const func_type = try self.allocator.create(ast.FunctionType);
+                            const return_type = try self.allocator.create(ast.TypeInfo);
+                            return_type.* = if (sym.return_type_info) |rti| rti else ast.TypeInfo{ .base = .Nothing };
+
+                            // Use stored parameter types if available, otherwise create empty ones
+                            var params: []ast.TypeInfo = undefined;
+                            if (sym.param_types) |param_types| {
+                                params = try self.allocator.alloc(ast.TypeInfo, param_types.len);
+                                for (param_types, 0..) |param_type, i| {
+                                    params[i] = param_type;
+                                }
+                            } else {
+                                params = try self.allocator.alloc(ast.TypeInfo, sym.param_count orelse 0);
+                                for (params) |*param| {
+                                    param.* = .{ .base = .Nothing };
+                                }
+                            }
+
+                            func_type.* = .{
+                                .params = params,
+                                .return_type = return_type,
+                            };
+
+                            const type_info = try self.allocator.create(ast.TypeInfo);
+                            type_info.* = .{ .base = .Function, .function_type = func_type, .is_mutable = false };
+
+                            const placeholder = @import("../../types/types.zig").TokenLiteral{ .nothing = {} };
+                            _ = self.current_scope.?.createValueBinding(sym.name, placeholder, .FUNCTION, type_info, true) catch {};
+                        },
+                        .Struct => {
+                            // Fetch module info to locate the struct declaration
+                            var mod_info: ?@import("../../ast/ast.zig").ModuleInfo = null;
+                            if (p.module_cache.get(sym.original_module)) |mi| {
+                                mod_info = mi;
+                            } else {
+                                const module_resolver = @import("../../parser/module_resolver.zig");
+                                mod_info = module_resolver.resolveModule(@constCast(p), sym.original_module) catch null;
+                            }
+                            if (mod_info) |mi| {
+                                // Process the module's AST to find the struct
+                                if (mi.ast) |module_ast| {
+                                    // The module AST is a block expression containing statements
+                                    if (module_ast.data == .Block) {
+                                        for (module_ast.data.Block.statements) |stmt| {
+                                            switch (stmt.data) {
+                                                .Expression => |expr_opt| {
+                                                    if (expr_opt) |expr| {
+                                                        if (expr.data == .StructDecl) {
+                                                            const sd = expr.data.StructDecl;
+                                                            if (std.mem.eql(u8, sd.name.lexeme, sym.name)) {
+                                                                // Found the struct, register its type and methods
+                                                                const field_types = try self.allocator.alloc(ast.StructFieldType, sd.fields.len);
+                                                                for (sd.fields, 0..) |field, i| {
+                                                                    field_types[i] = ast.StructFieldType{
+                                                                        .name = field.name.lexeme,
+                                                                        .type_info = try self.typeExprToTypeInfo(field.type_expr),
+                                                                    };
+                                                                }
+                                                                try helpers.registerStructType(self, sd.name.lexeme, field_types);
+
+                                                                // Create scope binding so static calls like Type.method work
+                                                                const struct_type_info = try self.allocator.create(@import("../../ast/ast.zig").TypeInfo);
+                                                                struct_type_info.* = .{ .base = .Struct, .custom_type = sd.name.lexeme, .struct_fields = field_types, .is_mutable = false };
+                                                                const placeholder = @import("../../types/types.zig").TokenLiteral{ .string = sd.name.lexeme };
+                                                                _ = self.current_scope.?.createValueBinding(sd.name.lexeme, placeholder, .STRUCT, struct_type_info, true) catch {};
+
+                                                                // Register public methods
+                                                                var method_table = std.StringHashMap(@This().StructMethodInfo).init(self.allocator);
+                                                                for (sd.methods) |m| {
+                                                                    if (!m.is_public) continue;
+                                                                    var ret_type_ptr: *@import("../../ast/ast.zig").TypeInfo = undefined;
+                                                                    if (m.return_type_info.base != .Nothing) {
+                                                                        const rtp = try self.allocator.create(@import("../../ast/ast.zig").TypeInfo);
+                                                                        rtp.* = try self.resolveTypeInfo(m.return_type_info);
+                                                                        ret_type_ptr = rtp;
+                                                                    } else {
+                                                                        const rtp = try self.allocator.create(@import("../../ast/ast.zig").TypeInfo);
+                                                                        rtp.* = .{ .base = .Struct, .custom_type = sd.name.lexeme, .struct_fields = field_types, .is_mutable = false };
+                                                                        ret_type_ptr = rtp;
+                                                                    }
+                                                                    const mi2 = @This().StructMethodInfo{
+                                                                        .name = m.name.lexeme,
+                                                                        .is_public = m.is_public,
+                                                                        .is_static = m.is_static,
+                                                                        .return_type = ret_type_ptr,
+                                                                    };
+                                                                    _ = try method_table.put(m.name.lexeme, mi2);
+                                                                }
+                                                                if (self.struct_methods.getPtr(sd.name.lexeme)) |existing| {
+                                                                    var mit2 = method_table.iterator();
+                                                                    while (mit2.next()) |e| {
+                                                                        _ = try existing.put(e.key_ptr.*, e.value_ptr.*);
+                                                                    }
+                                                                } else {
+                                                                    try self.struct_methods.put(sd.name.lexeme, method_table);
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                },
+                                                .EnumDecl => |ed| {
+                                                    if (std.mem.eql(u8, ed.name.lexeme, sym.name)) {
+                                                        const variants = try self.allocator.alloc([]const u8, ed.variants.len);
+                                                        for (ed.variants, variants) |v, *name| name.* = v.lexeme;
+                                                        try helpers.registerEnumType(self, ed.name.lexeme, variants);
+                                                    }
+                                                },
+                                                else => {},
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        .Enum => {
+                            // Handle enum imports if needed
+                        },
+                        else => {},
+                    }
+                }
+            }
+        }
     }
 
     fn collectDeclarations(self: *SemanticAnalyzer, statements: []ast.Stmt, scope: *Scope) ErrorList!void {
@@ -989,14 +1128,14 @@ pub const SemanticAnalyzer = struct {
             .Enum => |_| {
                 type_info.* = .{ .base = .Nothing };
             },
-            .Union => |types| {
-                var union_types = try self.allocator.alloc(*ast.TypeInfo, types.len);
-                for (types, 0..) |union_type_expr, i| {
-                    union_types[i] = try self.typeExprToTypeInfo(union_type_expr);
+            .Union => |union_types| {
+                var union_type_infos = try self.allocator.alloc(*ast.TypeInfo, union_types.len);
+                for (union_types, 0..) |union_type_expr, i| {
+                    union_type_infos[i] = try self.typeExprToTypeInfo(union_type_expr);
                 }
                 const union_type = try self.allocator.create(ast.UnionType);
                 union_type.* = .{
-                    .types = union_types,
+                    .types = union_type_infos,
                     .current_type_index = 0,
                 };
                 type_info.* = .{ .base = .Union, .union_type = union_type };

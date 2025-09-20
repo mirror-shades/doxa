@@ -165,7 +165,8 @@ fn compileDoxaToSoxaFromAST(memoryManager: *MemoryManager, statements: []ast.Stm
     reporter.debug(">> Constant folding applied: {} optimizations\n", .{constant_folder.getOptimizationCount()}, @src());
 
     // NEW: Pass custom type information to HIR generator
-    var hir_generator = HIRGenerator.init(memoryManager.getAllocator(), reporter, parser.module_namespaces, parser.imported_symbols);
+    // Use analysis arena for HIR generation since this happens during compilation phase
+    var hir_generator = HIRGenerator.init(memoryManager.getAnalysisAllocator(), reporter, parser.module_namespaces, parser.imported_symbols);
     defer hir_generator.deinit();
 
     // NEW: Import custom types from semantic analysis
@@ -173,7 +174,7 @@ fn compileDoxaToSoxaFromAST(memoryManager: *MemoryManager, statements: []ast.Stm
     var custom_types_iter = custom_types.iterator();
     while (custom_types_iter.next()) |entry| {
         const custom_type = entry.value_ptr.*;
-        const converted_type = try SemanticAnalyzer.convertCustomTypeInfo(custom_type, memoryManager.getAllocator());
+        const converted_type = try SemanticAnalyzer.convertCustomTypeInfo(custom_type, memoryManager.getAnalysisAllocator());
         try hir_generator.type_system.custom_types.put(custom_type.name, converted_type);
     }
 
@@ -184,7 +185,7 @@ fn compileDoxaToSoxaFromAST(memoryManager: *MemoryManager, statements: []ast.Stm
         const struct_name = entry.key_ptr.*;
         const method_table_src = entry.value_ptr.*;
 
-        var method_table_dst = std.StringHashMap(@import("analysis/semantic/semantic.zig").StructMethodInfo).init(memoryManager.getAllocator());
+        var method_table_dst = std.StringHashMap(@import("analysis/semantic/semantic.zig").StructMethodInfo).init(memoryManager.getAnalysisAllocator());
         var mi_it = method_table_src.iterator();
         while (mi_it.next()) |mi_entry| {
             const mname = mi_entry.key_ptr.*;
@@ -434,7 +435,7 @@ pub fn main() !void {
 
     // Process the script
     const path = cli_options.script_path.?; // Safe to unwrap since we validated it
-    reporter.debug("Debug: Processing script: '{s}'\n", .{path}, @src());
+    reporter.debug("Processing script: '{s}'\n", .{path}, @src());
 
     if (!stringEndsWith(path, DOXA_EXTENSION)) {
         const loc = Location{
@@ -454,7 +455,7 @@ pub fn main() !void {
     var path_buffer: [std.fs.max_path_bytes]u8 = undefined; // Changed from MAX_PATH_BYTES to max_path_bytes
     const abs_path = try std.fs.cwd().realpath(path, &path_buffer);
 
-    reporter.debug("Debug: Absolute path: '{s}'\n", .{abs_path}, @src());
+    reporter.debug("Absolute path: '{s}'\n", .{abs_path}, @src());
 
     if (cli_options.reporter_options.debug_mode) {
         std.debug.print("Debug mode enabled\n", .{});
@@ -498,7 +499,7 @@ pub fn main() !void {
     //==========================================================================
     // Semantic analysis
     //==========================================================================
-    var semantic_analyzer = SemanticAnalyzer.init(memoryManager.getAllocator(), &reporter, &memoryManager, &parser);
+    var semantic_analyzer = SemanticAnalyzer.init(memoryManager.getAnalysisAllocator(), &reporter, &memoryManager, &parser);
     defer semantic_analyzer.deinit();
     try semantic_analyzer.analyze(statements);
 
