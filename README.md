@@ -78,16 +78,9 @@ TODO:
 ### Molecular
 
 - array (homogeneous)
-- map
 - struct
 - enum
 - union
-- function
-
-### Meta
-
-- alias (pass-by-alias for mutation)
-- intrinsic (@length, @bytes, etc.)
 
 ## Example
 
