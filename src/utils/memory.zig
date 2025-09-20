@@ -122,7 +122,7 @@ pub const HashMapManager = struct {
     auto_hashes: std.array_list.Managed(std.AutoHashMap(u32, *Variable)),
     custom_type_hashes: std.array_list.Managed(std.AutoHashMap(u32, *CustomTypeInstance)),
     profile_hashes: std.array_list.Managed(std.StringHashMap(ProfileEntry)),
-    
+
     // Track Scope objects for cleanup
     scopes: std.array_list.Managed(*Scope),
 
@@ -160,7 +160,7 @@ pub const HashMapManager = struct {
             hash.deinit();
         }
         self.profile_hashes.deinit();
-        
+
         // Clean up all tracked Scope objects
         for (self.scopes.items) |scope| {
             scope.deinit();
@@ -193,7 +193,7 @@ pub const HashMapManager = struct {
         try self.profile_hashes.append(hash);
         return hash;
     }
-    
+
     // Factory method for creating and tracking Scope objects
     pub fn createScope(self: *HashMapManager, scope_id: u32, parent: ?*Scope, memory_manager: *MemoryManager) !*Scope {
         const scope = try self.allocator.create(Scope);
@@ -368,7 +368,7 @@ pub const MemoryManager = struct {
     pub fn createProfileHashMap(self: *MemoryManager) !std.StringHashMap(ProfileEntry) {
         return self.hashmap_manager.createProfileHashMap();
     }
-    
+
     // Convenience method for creating and tracking Scope objects
     pub fn createScope(self: *MemoryManager, scope_id: u32, parent: ?*Scope) !*Scope {
         return self.hashmap_manager.createScope(scope_id, parent, self);
@@ -485,12 +485,12 @@ pub const Scope = struct {
 
     // Custom type instances owned by this scope
     custom_type_instances: std.AutoHashMap(u32, *CustomTypeInstance),
-    
+
     // Track if HashMaps have been deinitialized
     variables_deinit: bool = false,
     name_map_deinit: bool = false,
     custom_type_instances_deinit: bool = false,
-    
+
     // Track if the entire scope has been deinitialized
     scope_deinit: bool = false,
 
