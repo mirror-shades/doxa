@@ -95,7 +95,17 @@ pub const Parser = struct {
         return parser;
     }
 
-    pub fn deinit(_: *Parser) void {}
+    pub fn deinit(self: *Parser) void {
+        self.module_cache.deinit();
+        self.module_namespaces.deinit();
+        self.module_imports.deinit();
+        if (self.imported_symbols) |*imported_symbols| {
+            imported_symbols.deinit();
+        }
+        self.declared_types.deinit();
+        self.module_resolution_status.deinit();
+        self.import_stack.deinit();
+    }
 
     pub fn peek(self: *Parser) token.Token {
         var i = self.current;
@@ -1536,17 +1546,10 @@ pub const Parser = struct {
     }
 
     pub fn loadAndRegisterModule(self: *Parser, module_path: []const u8, namespace: []const u8, specific_symbol: ?[]const u8) ErrorList!void {
-        // Skip self-import check and debug code...
-
-        // 1. Load module if not already loaded (caching at file level)
         const module_info = try module_resolver.resolveModule(self, module_path);
 
-        // 2. Register module in module map using its unique path as identity
-        // This creates a module instance accessible by its namespace
         try self.module_namespaces.put(namespace, module_info);
 
-        // 3. Process the module's imports AFTER registering it
-        // Each module maintains its own view of its imports
         if (module_info.imports.len > 0) {
             for (module_info.imports) |import| {
                 if (import.namespace_alias) |alias| {
@@ -1685,6 +1688,21 @@ pub const Parser = struct {
                         .FunctionDecl => |func| {
                             const is_public = func.is_public;
                             if (is_public and std.mem.eql(u8, func.name.lexeme, symbol_name)) {
+                                // Extract parameter types
+                                var param_types: ?[]ast.TypeInfo = null;
+                                if (func.params.len > 0) {
+                                    param_types = try self.allocator.alloc(ast.TypeInfo, func.params.len);
+                                    for (func.params, 0..) |param, i| {
+                                        if (param.type_expr) |type_expr| {
+                                            const type_info_ptr = try ast.typeInfoFromExpr(self.allocator, type_expr);
+                                            param_types.?[i] = type_info_ptr.*;
+                                            self.allocator.destroy(type_info_ptr);
+                                        } else {
+                                            param_types.?[i] = .{ .base = .Nothing };
+                                        }
+                                    }
+                                }
+
                                 // Register the symbol directly (not with namespace prefix)
                                 try self.imported_symbols.?.put(symbol_name, .{
                                     .kind = .Function,
@@ -1692,6 +1710,7 @@ pub const Parser = struct {
                                     .original_module = module_path,
                                     .namespace_alias = null,
                                     .param_count = @intCast(func.params.len),
+                                    .param_types = param_types,
                                     .return_type_info = func.return_type_info,
                                 });
                                 return; // Found the symbol, we're done

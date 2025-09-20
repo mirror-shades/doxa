@@ -142,8 +142,11 @@ pub const CallsHandler = struct {
                 if (self.generator.getFunctionIndex(function_name)) |index| {
                     function_index = index;
                     call_kind = .LocalFunction;
-                } else {
+                } else if (function_name.len > 0 and function_name[0] == '@') {
                     call_kind = .BuiltinFunction;
+                } else {
+                    // All other functions are module functions
+                    call_kind = .ModuleFunction;
                 }
             },
             else => {

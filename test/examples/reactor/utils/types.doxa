@@ -10,16 +10,16 @@ pub struct Reactor {
     power :: int
     maxPower :: int
 
-    pub method new() returns Reactor {
+    pub function New() returns Reactor {
         return Reactor {
-        rods is 0,
-        neutrons is 0,
-        power is 0,
-        maxPower is 0,
+            rods is 0,
+            neutrons is 0,
+            power is 0,
+            maxPower is 0,
         }
     }
 
-    pub method addRod(this, x :: int) {
+    pub method addRod(x :: int) {
         var result is this.rods + x
         if result < 1 then {
             result is 1
@@ -27,7 +27,7 @@ pub struct Reactor {
         this.rods is result
     }
 
-    pub method getMaxPower(this) returns int {
+    pub method getMaxPower() returns int {
         return this.maxPower
     }
 }

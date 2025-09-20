@@ -682,7 +682,6 @@ pub fn postfixIncrement(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorLis
 
 pub fn prefixDecrement(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     const operator = self.peek(); // Get the current token as operator
-    std.debug.print("DEBUG: prefixDecrement called with token type: {}\n", .{operator.type});
 
     self.advance(); // Move past the operator
     const expr = try parseExpression(self);

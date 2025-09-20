@@ -269,8 +269,8 @@ pub const SemanticAnalyzer = struct {
                                                             _ = try method_table.put(m.name.lexeme, mi2);
                                                         }
                                                         if (self.struct_methods.getPtr(sd.name.lexeme)) |existing| {
-                                                            var mit = method_table.iterator();
-                                                            while (mit.next()) |e| {
+                                                            var mit2 = method_table.iterator();
+                                                            while (mit2.next()) |e| {
                                                                 _ = try existing.put(e.key_ptr.*, e.value_ptr.*);
                                                             }
                                                         } else {

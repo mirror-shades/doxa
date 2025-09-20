@@ -202,6 +202,7 @@ pub const ErrorList = error{
     InternalParserError,
     SemanticError,
     RuntimeError,
+    ScopeIdAlreadyUsed,
 
     // Print Statements
     UnsupportedPrintStatement,

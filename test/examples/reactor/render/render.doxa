@@ -1,7 +1,6 @@
-module Types from "../utils/types.doxa"
 import GameState, Reactor from "../utils/types.doxa"
 
-function printMenu(state :: GameState, reactor :: Reactor, turn :: int) {
+pub function printMenu(state :: GameState, reactor :: Reactor, turn :: int) {
     match state {
         GameState.Start then {
             @print("1. Start Game\n")
@@ -20,7 +19,7 @@ function printMenu(state :: GameState, reactor :: Reactor, turn :: int) {
     }
 }
 
-function printReactor(state :: GameState, reactor :: Reactor) {
+pub function printReactor(state :: GameState, reactor :: Reactor) {
     @print("Reactor is running\n")
     @print("Rods: {reactor.rods}\n")
     @print("Neutrons: {reactor.neutrons}\n")

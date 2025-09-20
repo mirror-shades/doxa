@@ -448,6 +448,8 @@ pub const HIRVM = struct {
 
     pub fn init(program: *HIRProgram, reporter: *Reporter, memory_manager: *MemoryManager) !HIRVM {
         const allocator = memory_manager.getAllocator();
+        // Use the main allocator for HashMaps that grow during execution to avoid arena memory leaks
+        const gpa_allocator = memory_manager.analysis_arena.child_allocator;
 
         // Ensure a fresh root scope for each run to avoid leftover globals from prior executions
         if (memory_manager.scope_manager.root_scope) |existing_root| {
@@ -464,7 +466,7 @@ pub const HIRVM = struct {
         const execution_scope = try memory_manager.scope_manager.createScope(memory_manager.scope_manager.root_scope, memory_manager);
 
         const string_interner = try allocator.create(StringInterner);
-        string_interner.* = StringInterner.init(allocator);
+        string_interner.* = StringInterner.init(gpa_allocator); // Use GPA for growing HashMap
 
         var vm = HIRVM{
             .program = program,
@@ -474,16 +476,16 @@ pub const HIRVM = struct {
             .stack = try HIRStack.init(allocator), // Use the passed allocator
             .call_stack = try CallStack.init(allocator), // Use the passed allocator
             .current_scope = execution_scope,
-            .label_map = std.StringHashMap(u32).init(allocator), // Use the passed allocator
-            .var_cache = std.StringHashMap(u32).init(allocator), // Use the passed allocator
+            .label_map = std.StringHashMap(u32).init(gpa_allocator), // Use GPA for growing HashMaps
+            .var_cache = std.StringHashMap(u32).init(gpa_allocator), // Use GPA for growing HashMaps
             .turbo_mode = true,
             .hot_vars = [_]?HotVar{null} ** 4,
             .hot_var_count = 0,
             .profile_mode = false,
             .in_function_depth = 0,
-            .profile_map = std.StringHashMap(ProfileEntry).init(allocator),
+            .profile_map = std.StringHashMap(ProfileEntry).init(gpa_allocator), // Use GPA for growing HashMaps
             .string_interner = string_interner,
-            .custom_type_registry = std.StringHashMap(CustomTypeInfo).init(allocator), // NEW: Initialize custom type registry
+            .custom_type_registry = std.StringHashMap(CustomTypeInfo).init(gpa_allocator), // Use GPA for growing HashMaps
             .canonical_types = undefined,
             ._reserved_flags = 0,
             .defer_stacks = std.array_list.Managed(std.array_list.Managed(DeferAction)).init(allocator),
@@ -520,7 +522,9 @@ pub const HIRVM = struct {
         // This ensures we don't leak per-scope arena allocations when execution halts early (e.g., AssertFail).
         var scope: ?*Scope = self.current_scope;
         const root_scope = self.memory_manager.scope_manager.root_scope;
+        var scope_count: u32 = 0;
         while (scope) |s| {
+            scope_count += 1;
             if (root_scope != null and s == root_scope.?) break;
             const parent = s.parent;
             s.deinit();
@@ -530,32 +534,34 @@ pub const HIRVM = struct {
             self.current_scope = rs; // Normalize to root for consistency
         }
 
-        // Clean up string interner
+        // Clean up string interner - needs explicit deinit to clean up internal HashMap
+        // even though it's allocated in the arena
         self.string_interner.deinit();
-        self.allocator.destroy(self.string_interner);
 
-        // Clean up custom type registry
-        self.custom_type_registry.deinit();
+        // Note: custom_type_registry is allocated in the execution arena
+        // and will be automatically cleaned up when the arena is deinitialized
 
-        // Destroy canonical TypeInfos
-        self.allocator.destroy(self.canonical_types.int);
-        self.allocator.destroy(self.canonical_types.byte);
-        self.allocator.destroy(self.canonical_types.float);
-        self.allocator.destroy(self.canonical_types.string);
-        self.allocator.destroy(self.canonical_types.tetra);
-        self.allocator.destroy(self.canonical_types.nothing);
+        // Note: canonical TypeInfos are allocated in the execution arena
+        // and will be automatically cleaned up when the arena is deinitialized
+        // No manual destruction needed
 
-        // Clean up VM data structures
-        self.stack.deinit();
-        self.call_stack.deinit();
+        // Clean up HashMaps - these need explicit deinit to clean up internal state
+        // even though they're allocated in the arena
         self.label_map.deinit();
         self.var_cache.deinit();
         self.profile_map.deinit();
+        self.custom_type_registry.deinit();
 
-        // Deinit defer stacks
+        // Clean up defer stacks - need to deinit each individual stack first
         var i: usize = self.defer_stacks.items.len;
         while (i > 0) : (i -= 1) self.defer_stacks.items[i - 1].deinit();
         self.defer_stacks.deinit();
+
+        // Note: Other VM data structures are allocated in the execution arena
+        // and will be automatically cleaned up when the arena is deinitialized
+        // No manual deinit needed for:
+        // - self.stack (HIRStack)
+        // - self.call_stack (CallStack)
     }
 
     /// Get a canonical TypeInfo pointer for primitive types to avoid allocations
@@ -855,7 +861,7 @@ pub const HIRVM = struct {
                 }
 
                 // Create new scope - the memory module handles all the complexity
-                const new_scope = try self.memory_manager.scope_manager.createScope(self.current_scope, self.memory_manager);
+                const new_scope = try self.memory_manager.scope_manager.createScopeWithId(self.current_scope, self.memory_manager, e.scope_id);
                 // Pre-size maps for upcoming variable bindings (params/locals)
                 new_scope.reserveVariableCapacity(@intCast(e.var_count));
                 self.current_scope = new_scope;
@@ -872,7 +878,7 @@ pub const HIRVM = struct {
                 try self.defer_stacks.append(std.array_list.Managed(DeferAction).init(self.allocator));
             },
 
-            .ExitScope => {
+            .ExitScope => |e| {
                 // Run implicit defers registered for this scope (in reverse order)
                 if (self.defer_stacks.items.len > 0) {
                     var list = &self.defer_stacks.items[self.defer_stacks.items.len - 1];
@@ -885,12 +891,16 @@ pub const HIRVM = struct {
                     _ = self.defer_stacks.pop();
                 }
 
-                if (self.current_scope.parent) |parent_scope| {
-                    const old_scope = self.current_scope;
-                    self.current_scope = parent_scope;
-
-                    // Clean up the old scope
-                    old_scope.deinit();
+                // Find the scope with the specified ID and exit it
+                var current_scope: ?*Scope = self.current_scope;
+                while (current_scope) |scope| {
+                    if (scope.id == e.scope_id) {
+                        if (scope.parent) |parent_scope| {
+                            self.current_scope = parent_scope;
+                        }
+                        break;
+                    }
+                    current_scope = scope.parent;
                 }
                 // Reset hot variable cache when leaving a scope
                 self.hot_var_count = 0;

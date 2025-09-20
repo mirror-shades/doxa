@@ -91,8 +91,13 @@ pub const SymbolTable = struct {
 
     /// Get existing variable index if it exists
     pub fn getVariable(self: *SymbolTable, name: []const u8) ?u32 {
+        // When in function scope, check local variables first, then global
         if (self.current_function != null) {
-            return self.local_variables.get(name);
+            if (self.local_variables.get(name)) |idx| {
+                return idx;
+            }
+            // Also check global variables for cross-scope access
+            return self.variables.get(name);
         }
         return self.variables.get(name);
     }

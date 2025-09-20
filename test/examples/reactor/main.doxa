@@ -24,7 +24,7 @@ function nextTurn(^turn :: int) {
 
 entry function main() {
     var state is GameState.Start
-    var reactor is Reactor.new()
+    var reactor is Reactor.New()
     var turn is 0
     do {
         @print("Enter a command: \n")

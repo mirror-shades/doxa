@@ -19,19 +19,14 @@ pub const AssignmentsHandler = struct {
 
     /// Generate HIR for assignment expressions
     pub fn generateAssignment(self: *AssignmentsHandler, assign: ast.Assignment, preserve_result: bool) !void {
-        // Debug: print the assignment being processed
-        std.debug.print("DEBUG: Processing assignment: {s} = ...\n", .{assign.name.lexeme});
-
         // Special case: namespace aliasing like `const rl is g.raylib`
         // If RHS is a module namespace field (graphics.raylib / graphics.doxa),
         // register LHS name as a module namespace alias and emit no runtime code.
         if (assign.value) |rhs| {
             if (rhs.data == .FieldAccess) {
                 const fa = rhs.data.FieldAccess;
-                std.debug.print("DEBUG: RHS is FieldAccess: {s}.{s}\n", .{ fa.object.data.Variable.lexeme, fa.field.lexeme });
                 if (fa.object.data == .Variable) {
                     const root_alias = fa.object.data.Variable.lexeme;
-                    std.debug.print("DEBUG: Root alias: {s}, isModuleNamespace: {}\n", .{ root_alias, self.generator.isModuleNamespace(root_alias) });
                     if (self.generator.isModuleNamespace(root_alias)) {
                         if (std.mem.eql(u8, fa.field.lexeme, "raylib") or std.mem.eql(u8, fa.field.lexeme, "doxa")) {
                             if (self.generator.module_namespaces.get(root_alias)) |_| {
@@ -45,8 +40,6 @@ pub const AssignmentsHandler = struct {
                                     .symbols = null,
                                 };
                                 try self.generator.module_namespaces.put(assign.name.lexeme, nested_info);
-                                // Debug: print the alias being registered
-                                std.debug.print("DEBUG: Registered alias '{s}' as module namespace '{s}'\n", .{ assign.name.lexeme, nested_name });
                                 // Do not generate any runtime instructions for this aliasing assignment
                                 return;
                             }

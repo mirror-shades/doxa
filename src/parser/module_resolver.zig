@@ -428,6 +428,8 @@ pub fn extractModuleInfo(self: *Parser, module_ast: *ast.Expr, module_path: []co
                                 .kind = .Function,
                                 .name = symbol_name,
                                 .original_module = module_path,
+                                .param_count = @intCast(func.params.len),
+                                .return_type_info = func.return_type_info,
                             });
                         }
                     }
@@ -660,6 +662,8 @@ pub fn extractModuleInfoWithParser(self: *Parser, module_ast: *ast.Expr, module_
                                 .kind = .Function,
                                 .name = symbol_name,
                                 .original_module = module_path,
+                                .param_count = @intCast(func.params.len),
+                                .return_type_info = func.return_type_info,
                             });
                         }
                     }
