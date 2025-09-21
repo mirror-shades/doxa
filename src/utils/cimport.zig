@@ -156,6 +156,7 @@ pub const DrawCircleV = c.DrawCircleV;
 pub const DrawRectangle = c.DrawRectangle;
 pub const DrawRectangleV = c.DrawRectangleV;
 pub const GetTime = c.GetTime;
+pub const DrawFPS = c.DrawFPS;
 // Input functions
 pub const IsKeyPressed = c.IsKeyPressed;
 pub const IsKeyDown = c.IsKeyDown;

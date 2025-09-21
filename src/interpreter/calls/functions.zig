@@ -472,6 +472,17 @@ pub const FunctionOps = struct {
                         const f = try fps.asInt();
                         ray.SetTargetFPSDoxa(f);
                         return;
+                    } else if (std.mem.eql(u8, func_name, "DrawFPS")) {
+                        // Accept either (x, y) or (x, y, fps) and ignore fps value
+                        if (c.arg_count == 3) {
+                            _ = try vm.stack.pop(); // fps (ignored)
+                        }
+                        const y_frame = try vm.stack.pop();
+                        const x_frame = try vm.stack.pop();
+                        const x = try x_frame.asInt();
+                        const y = try y_frame.asInt();
+                        ray.DrawFPS(@as(i32, @intCast(x)), @as(i32, @intCast(y)), 0);
+                        return;
                     } else if (std.mem.eql(u8, func_name, "DrawCircle")) {
                         const color_frame = try vm.stack.pop();
                         const radius_frame = try vm.stack.pop();
@@ -484,7 +495,7 @@ pub const FunctionOps = struct {
                         const radius = @as(f32, @floatFromInt(radius_int));
 
                         // Parse color similar to ClearBackground
-                        var color: ray.DoxaColor = ray.colorNameToDoxaColor(.YELLOW);
+                        var color: ray.DoxaColor = ray.colorNameToDoxaColor(.WHITE);
                         switch (color_frame.value) {
                             .string => |s| {
                                 if (std.mem.startsWith(u8, s, "graphics.raylib.")) {

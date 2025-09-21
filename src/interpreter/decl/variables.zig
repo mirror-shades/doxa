@@ -88,10 +88,23 @@ pub const VariableOps = struct {
 
         if (@hasField(@TypeOf(v), "scope_kind") and v.scope_kind == .Local) {
             // Local semantics:
-            // - If a variable exists anywhere in the active scope chain:
+            // - If a variable exists in the CURRENT scope: update in-place (idempotent re-exec of decls)
+            // - Else if a variable exists anywhere in the active scope chain:
             //     * If it's constant, shadow by creating a new current-scope binding
             //     * Else update that existing storage
             // - If not found, create in current scope
+            if (vm.current_scope.name_map.get(v.var_name)) |cur_var| {
+                if (vm.memory_manager.scope_manager.value_storage.getPtr(cur_var.storage_id)) |storage| {
+                    storage.*.value = token_literal;
+                    storage.*.type = token_type;
+                    storage.*.type_info = type_info;
+                    maybeAddHotVar(vm, v.var_name, cur_var.storage_id);
+                    vm.var_cache.put(v.var_name, cur_var.storage_id) catch {};
+                    return;
+                } else {
+                    return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Variable storage not found for: {s}", .{v.var_name});
+                }
+            }
             if (vm.current_scope.lookupVariable(v.var_name)) |nearest_var| {
                 if (vm.memory_manager.scope_manager.value_storage.getPtr(nearest_var.storage_id)) |storage| {
                     if (storage.*.constant) {
@@ -157,7 +170,23 @@ pub const VariableOps = struct {
         const type_info_value = vm.hirValueToTypeInfo(value.value);
         const type_info = try vm.getCanonicalTypeInfo(type_info_value);
 
-        // If a binding exists in any active scope, update only if it's uninitialized constant (nothing)
+        // First: if a binding exists in the CURRENT scope, update in-place (idempotent)
+        if (vm.current_scope.name_map.get(v.var_name)) |cur_var| {
+            if (vm.memory_manager.scope_manager.value_storage.getPtr(cur_var.storage_id)) |storage| {
+                const is_nothing = storage.*.value == .nothing;
+                if (is_nothing) {
+                    storage.*.value = token_literal;
+                    storage.*.type = token_type;
+                    storage.*.type_info = type_info;
+                }
+                storage.*.constant = true;
+            } else {
+                return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Variable storage not found for: {s}", .{v.var_name});
+            }
+            return;
+        }
+
+        // Else: If a binding exists in any active scope, update only if it's uninitialized constant (nothing)
         if (vm.current_scope.lookupVariable(v.var_name)) |variable| {
             if (vm.memory_manager.scope_manager.value_storage.getPtr(variable.storage_id)) |storage| {
                 if (storage.*.constant) {

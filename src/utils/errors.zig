@@ -378,6 +378,7 @@ pub const ErrorCode = struct {
     // 4xxx - Runtime & VM
     pub const RUNTIME_ERROR = "E4001";
     pub const STACK_OVERFLOW = "E4002";
+    pub const DIVISION_BY_ZERO = "E4003";
 
     // 5xxx - Functions & Calls
     pub const FUNCTION_NOT_FOUND = "E5001";

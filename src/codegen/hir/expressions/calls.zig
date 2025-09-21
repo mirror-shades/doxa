@@ -57,7 +57,6 @@ pub const CallsHandler = struct {
                     } else {
                         call_kind = .ModuleFunction;
                     }
-
                 } else if (field_access.object.data == .FieldAccess) {
                     // Nested module namespace: e.g., graphics.raylib.Func(...)
                     const inner = field_access.object.data.FieldAccess;
