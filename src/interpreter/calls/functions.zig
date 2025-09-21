@@ -1,5 +1,7 @@
 const std = @import("std");
 const HIRValue = @import("../../codegen/hir/soxa_values.zig").HIRValue;
+const HIRStruct = @import("../../codegen/hir/soxa_values.zig").HIRStruct;
+const HIRStructField = @import("../../codegen/hir/soxa_values.zig").HIRStructField;
 const Core = @import("../core.zig");
 const HIRFrame = Core.HIRFrame;
 const CallFrame = Core.CallFrame;
@@ -242,7 +244,6 @@ pub const FunctionOps = struct {
                         }
 
                         // Init function doesn't return anything (void)
-                        try vm.stack.push(HIRFrame.initNothing());
                         return;
                     } else if (std.mem.eql(u8, func_name, "Draw")) {
                         // Begin drawing now, defer EndDrawing at current scope exit
@@ -251,12 +252,141 @@ pub const FunctionOps = struct {
                             var list = &vm.defer_stacks.items[vm.defer_stacks.items.len - 1];
                             try list.append(&ray.EndDrawing);
                         }
-                        try vm.stack.push(HIRFrame.initNothing());
                         return;
                     } else if (std.mem.eql(u8, func_name, "Running")) {
                         // Return the negation of WindowShouldClose
                         const should_close = ray.WindowShouldClose();
                         try vm.stack.push(HIRFrame.initTetra(if (should_close) 0 else 1));
+                        return;
+                    } else if (std.mem.eql(u8, func_name, "rgbToDoxaColor")) {
+                        // Handle rgbToDoxaColor(r, g, b) -> returns DoxaColor
+                        const b_frame = try vm.stack.pop();
+                        const g_frame = try vm.stack.pop();
+                        const r_frame = try vm.stack.pop();
+
+                        const r = switch (r_frame.value) {
+                            .int => |val| @as(u8, @intCast(val)),
+                            .byte => |val| val,
+                            else => return vm.reporter.reportRuntimeError(null, ErrorCode.INVALID_ARGUMENT, "Expected int or byte for red component", .{}),
+                        };
+                        const g = switch (g_frame.value) {
+                            .int => |val| @as(u8, @intCast(val)),
+                            .byte => |val| val,
+                            else => return vm.reporter.reportRuntimeError(null, ErrorCode.INVALID_ARGUMENT, "Expected int or byte for green component", .{}),
+                        };
+                        const b = switch (b_frame.value) {
+                            .int => |val| @as(u8, @intCast(val)),
+                            .byte => |val| val,
+                            else => return vm.reporter.reportRuntimeError(null, ErrorCode.INVALID_ARGUMENT, "Expected int or byte for blue component", .{}),
+                        };
+
+                        // Validate byte range
+                        if (r < 0 or r > 255 or g < 0 or g > 255 or b < 0 or b > 255) {
+                            return vm.reporter.reportRuntimeError(null, ErrorCode.INVALID_ARGUMENT, "Color values must be between 0 and 255", .{});
+                        }
+
+                        const color = ray.rgbToDoxaColor(r, g, b);
+
+                        // Create a struct instance for the color
+                        var fields = std.array_list.Managed(HIRStructField).init(vm.allocator);
+                        defer fields.deinit();
+
+                        try fields.append(HIRStructField{
+                            .name = try vm.allocator.dupe(u8, "r"),
+                            .value = HIRValue{ .int = color.r },
+                            .field_type = .Int,
+                        });
+                        try fields.append(HIRStructField{
+                            .name = try vm.allocator.dupe(u8, "g"),
+                            .value = HIRValue{ .int = color.g },
+                            .field_type = .Int,
+                        });
+                        try fields.append(HIRStructField{
+                            .name = try vm.allocator.dupe(u8, "b"),
+                            .value = HIRValue{ .int = color.b },
+                            .field_type = .Int,
+                        });
+                        try fields.append(HIRStructField{
+                            .name = try vm.allocator.dupe(u8, "a"),
+                            .value = HIRValue{ .int = color.a },
+                            .field_type = .Int,
+                        });
+
+                        const color_struct = HIRStruct{
+                            .type_name = try vm.allocator.dupe(u8, "color"),
+                            .fields = try fields.toOwnedSlice(),
+                        };
+
+                        const struct_value = HIRValue{ .struct_instance = color_struct };
+                        try vm.stack.push(HIRFrame.initFromHIRValue(struct_value));
+                        return;
+                    } else if (std.mem.eql(u8, func_name, "bytesToDoxaColor")) {
+                        // Handle bytesToDoxaColor(r, g, b, a) -> returns DoxaColor
+                        const a_frame = try vm.stack.pop();
+                        const b_frame = try vm.stack.pop();
+                        const g_frame = try vm.stack.pop();
+                        const r_frame = try vm.stack.pop();
+
+                        const r = switch (r_frame.value) {
+                            .int => |val| @as(u8, @intCast(val)),
+                            .byte => |val| val,
+                            else => return vm.reporter.reportRuntimeError(null, ErrorCode.INVALID_ARGUMENT, "Expected int or byte for red component", .{}),
+                        };
+                        const g = switch (g_frame.value) {
+                            .int => |val| @as(u8, @intCast(val)),
+                            .byte => |val| val,
+                            else => return vm.reporter.reportRuntimeError(null, ErrorCode.INVALID_ARGUMENT, "Expected int or byte for green component", .{}),
+                        };
+                        const b = switch (b_frame.value) {
+                            .int => |val| @as(u8, @intCast(val)),
+                            .byte => |val| val,
+                            else => return vm.reporter.reportRuntimeError(null, ErrorCode.INVALID_ARGUMENT, "Expected int or byte for blue component", .{}),
+                        };
+                        const a = switch (a_frame.value) {
+                            .int => |val| @as(u8, @intCast(val)),
+                            .byte => |val| val,
+                            else => return vm.reporter.reportRuntimeError(null, ErrorCode.INVALID_ARGUMENT, "Expected int or byte for alpha component", .{}),
+                        };
+
+                        // Validate byte range
+                        if (r < 0 or r > 255 or g < 0 or g > 255 or b < 0 or b > 255 or a < 0 or a > 255) {
+                            return vm.reporter.reportRuntimeError(null, ErrorCode.INVALID_ARGUMENT, "Color values must be between 0 and 255", .{});
+                        }
+
+                        const color = ray.bytesToDoxaColor(r, g, b, a);
+
+                        // Create a struct instance for the color
+                        var fields = std.array_list.Managed(HIRStructField).init(vm.allocator);
+                        defer fields.deinit();
+
+                        try fields.append(HIRStructField{
+                            .name = try vm.allocator.dupe(u8, "r"),
+                            .value = HIRValue{ .int = color.r },
+                            .field_type = .Int,
+                        });
+                        try fields.append(HIRStructField{
+                            .name = try vm.allocator.dupe(u8, "g"),
+                            .value = HIRValue{ .int = color.g },
+                            .field_type = .Int,
+                        });
+                        try fields.append(HIRStructField{
+                            .name = try vm.allocator.dupe(u8, "b"),
+                            .value = HIRValue{ .int = color.b },
+                            .field_type = .Int,
+                        });
+                        try fields.append(HIRStructField{
+                            .name = try vm.allocator.dupe(u8, "a"),
+                            .value = HIRValue{ .int = color.a },
+                            .field_type = .Int,
+                        });
+
+                        const color_struct = HIRStruct{
+                            .type_name = try vm.allocator.dupe(u8, "color"),
+                            .fields = try fields.toOwnedSlice(),
+                        };
+
+                        const struct_value = HIRValue{ .struct_instance = color_struct };
+                        try vm.stack.push(HIRFrame.initFromHIRValue(struct_value));
                         return;
                     }
                 } else if (std.mem.eql(u8, sub_alias, "raylib")) {
@@ -293,19 +423,19 @@ pub const FunctionOps = struct {
                                     for (struct_val.fields) |field| {
                                         if (std.mem.eql(u8, field.name, "r")) {
                                             if (field.value == .int) {
-                                                color.r = @intCast(field.value.int);
+                                                color.r = @as(u8, @intCast(field.value.int));
                                             }
                                         } else if (std.mem.eql(u8, field.name, "g")) {
                                             if (field.value == .int) {
-                                                color.g = @intCast(field.value.int);
+                                                color.g = @as(u8, @intCast(field.value.int));
                                             }
                                         } else if (std.mem.eql(u8, field.name, "b")) {
                                             if (field.value == .int) {
-                                                color.b = @intCast(field.value.int);
+                                                color.b = @as(u8, @intCast(field.value.int));
                                             }
                                         } else if (std.mem.eql(u8, field.name, "a")) {
                                             if (field.value == .int) {
-                                                color.a = @intCast(field.value.int);
+                                                color.a = @as(u8, @intCast(field.value.int));
                                             }
                                         }
                                     }
@@ -314,7 +444,6 @@ pub const FunctionOps = struct {
                             else => {},
                         }
                         ray.ClearBackgroundDoxa(color);
-                        try vm.stack.push(HIRFrame.initNothing());
                         return;
                     } else if (std.mem.eql(u8, func_name, "WindowShouldClose")) {
                         const res = ray.WindowShouldClose();
@@ -328,25 +457,20 @@ pub const FunctionOps = struct {
                         const h = try height.asInt();
                         const t = try title.asString();
                         try ray.InitWindowDoxa(w, h, t);
-                        try vm.stack.push(HIRFrame.initNothing());
                         return;
                     } else if (std.mem.eql(u8, func_name, "CloseWindow")) {
                         ray.CloseWindow();
-                        try vm.stack.push(HIRFrame.initNothing());
                         return;
                     } else if (std.mem.eql(u8, func_name, "BeginDrawing")) {
                         ray.BeginDrawing();
-                        try vm.stack.push(HIRFrame.initNothing());
                         return;
                     } else if (std.mem.eql(u8, func_name, "EndDrawing")) {
                         ray.EndDrawing();
-                        try vm.stack.push(HIRFrame.initNothing());
                         return;
                     } else if (std.mem.eql(u8, func_name, "SetTargetFPS")) {
                         const fps = try vm.stack.pop();
                         const f = try fps.asInt();
                         ray.SetTargetFPSDoxa(f);
-                        try vm.stack.push(HIRFrame.initNothing());
                         return;
                     } else if (std.mem.eql(u8, func_name, "DrawCircle")) {
                         const color_frame = try vm.stack.pop();
@@ -379,11 +503,35 @@ pub const FunctionOps = struct {
                                     }
                                 }
                             },
+                            .struct_instance => |struct_val| {
+                                // Check if this is a color struct
+                                if (std.mem.eql(u8, struct_val.type_name, "color")) {
+                                    // Extract color values from struct fields
+                                    for (struct_val.fields) |field| {
+                                        if (std.mem.eql(u8, field.name, "r")) {
+                                            if (field.value == .int) {
+                                                color.r = @as(u8, @intCast(field.value.int));
+                                            }
+                                        } else if (std.mem.eql(u8, field.name, "g")) {
+                                            if (field.value == .int) {
+                                                color.g = @as(u8, @intCast(field.value.int));
+                                            }
+                                        } else if (std.mem.eql(u8, field.name, "b")) {
+                                            if (field.value == .int) {
+                                                color.b = @as(u8, @intCast(field.value.int));
+                                            }
+                                        } else if (std.mem.eql(u8, field.name, "a")) {
+                                            if (field.value == .int) {
+                                                color.a = @as(u8, @intCast(field.value.int));
+                                            }
+                                        }
+                                    }
+                                }
+                            },
                             else => {},
                         }
 
-                        ray.DrawCircle(@intCast(x), @intCast(y), @floatCast(radius), .{ .r = color.r, .g = color.g, .b = color.b, .a = color.a });
-                        try vm.stack.push(HIRFrame.initNothing());
+                        ray.DrawCircle(@as(i32, @intCast(x)), @as(i32, @intCast(y)), @floatCast(radius), .{ .r = color.r, .g = color.g, .b = color.b, .a = color.a });
                         return;
                     }
                 }
@@ -553,7 +701,7 @@ pub const FunctionOps = struct {
                 .byte => |b| @as(i64, b),
                 else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "powi: exponent must be integer", .{}),
             };
-            const result = std.math.pow(i64, base_int, @intCast(exp_int));
+            const result = std.math.pow(i64, base_int, @as(u32, @intCast(exp_int)));
             try vm.stack.push(HIRFrame.initInt(result));
             return;
         }

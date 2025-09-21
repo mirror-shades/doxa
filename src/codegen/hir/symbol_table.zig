@@ -76,6 +76,8 @@ pub const SymbolTable = struct {
             const idx = self.local_variable_count;
             try self.local_variables.put(name, idx);
             self.local_variable_count += 1;
+            
+            
             return idx;
         }
 
@@ -86,6 +88,8 @@ pub const SymbolTable = struct {
         const idx = self.variable_count;
         try self.variables.put(name, idx);
         self.variable_count += 1;
+        
+        
         return idx;
     }
 

@@ -61,6 +61,10 @@ pub fn stringToDoxaColor(color_str: []const u8) ?DoxaColor {
 // Re-export the colorNameToDoxaColor function from cimport
 pub const colorNameToDoxaColor = rl.colorNameToDoxaColor;
 
+// Re-export the byte-based color creation functions
+pub const bytesToDoxaColor = rl.bytesToDoxaColor;
+pub const rgbToDoxaColor = rl.rgbToDoxaColor;
+
 pub fn ClearBackground(color: Color) void {
     rl.ClearBackground(color);
 }
@@ -101,6 +105,8 @@ pub const doxa_module = struct {
         .{ .name = "DrawRectangle", .func = DrawRectangle },
         .{ .name = "DrawRectangleV", .func = DrawRectangleV },
         .{ .name = "GetTime", .func = GetTime },
+        .{ .name = "bytesToDoxaColor", .func = bytesToDoxaColor },
+        .{ .name = "rgbToDoxaColor", .func = rgbToDoxaColor },
     };
     pub const constants = &.{
         .{ .name = "DARKGRAY", .value = .{ .color = rl.colorNameToDoxaColor(.DARKGRAY) } },
@@ -129,5 +135,5 @@ pub const doxa_module = struct {
     };
 
     // Simple array of all valid field names for validation
-    pub const valid_fields = [_][]const u8{ "InitWindow", "CloseWindow", "WindowShouldClose", "BeginDrawing", "EndDrawing", "ClearBackground", "SetTargetFPS", "DrawCircle", "DrawCircleV", "DrawRectangle", "DrawRectangleV", "GetTime", "DARKGRAY", "MAROON", "ORANGE", "DARKGREEN", "DARKBLUE", "DARKPURPLE", "DARKBROWN", "GRAY", "RED", "GOLD", "LIME", "BLUE", "VIOLET", "BROWN", "LIGHTGRAY", "PINK", "YELLOW", "GREEN", "SKYBLUE", "PURPLE", "BEIGE", "WHITE", "BLACK" };
+    pub const valid_fields = [_][]const u8{ "InitWindow", "CloseWindow", "WindowShouldClose", "BeginDrawing", "EndDrawing", "ClearBackground", "SetTargetFPS", "DrawCircle", "DrawCircleV", "DrawRectangle", "DrawRectangleV", "GetTime", "bytesToDoxaColor", "rgbToDoxaColor", "DARKGRAY", "MAROON", "ORANGE", "DARKGREEN", "DARKBLUE", "DARKPURPLE", "DARKBROWN", "GRAY", "RED", "GOLD", "LIME", "BLUE", "VIOLET", "BROWN", "LIGHTGRAY", "PINK", "YELLOW", "GREEN", "SKYBLUE", "PURPLE", "BEIGE", "WHITE", "BLACK" };
 };

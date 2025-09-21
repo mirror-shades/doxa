@@ -1,0 +1,9 @@
+const GLOBAL_VAR is 42
+
+function testFunction() {
+    GLOBAL_VAR?
+}
+
+entry function main() {
+    testFunction()
+}

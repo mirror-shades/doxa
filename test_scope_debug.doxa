@@ -1,0 +1,11 @@
+const WIDTH is 800
+const HEIGHT is 600
+
+function testFunction() {
+    WIDTH?
+    HEIGHT?
+}
+
+entry function main() {
+    testFunction()
+}

@@ -1,0 +1,16 @@
+var up :: tetra is true
+var shift :: byte   
+var frame_count :: int
+
+entry function main() {
+    frame_count?
+    up?
+    testFunc(frame_count, ^shift, ^up)
+    frame_count is frame_count + 1
+    frame_count?
+    up?
+}
+
+function testFunc(frame_count :: int, ^shift :: byte, ^up :: tetra) {
+    up?
+}

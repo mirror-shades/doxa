@@ -7,6 +7,7 @@ const Errors = @import("../../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
 const ErrorCode = Errors.ErrorCode;
 const TypeInfo = @import("../../ast/ast.zig").TypeInfo;
+const Scope = @import("../../utils/memory.zig").Scope;
 
 pub const VariableOps = struct {
     inline fn maybeAddHotVar(vm: anytype, name: []const u8, storage_id: u32) void {
@@ -77,7 +78,6 @@ pub const VariableOps = struct {
     pub fn execStoreVar(vm: anytype, v: anytype) !void {
         // Store top of stack to variable
         const value = try vm.stack.pop();
-
         // Perform type coercion if needed
         const coerced_value = vm.coerceValue(value.value, v.expected_type);
 
@@ -188,6 +188,7 @@ pub const VariableOps = struct {
     // Execute PushStorageId instruction
     pub fn execPushStorageId(vm: anytype, p: anytype) !void {
         // Push a variable's storage ID onto the stack for alias arguments
+        // Look up variable by name in the current scope (where global variables are)
         if (vm.current_scope.lookupVariable(p.var_name)) |variable| {
             try vm.stack.push(HIRFrame.initFromHIRValue(HIRValue{ .storage_id_ref = variable.storage_id }));
         } else {
@@ -210,6 +211,7 @@ pub const VariableOps = struct {
                     const alias_var = try vm.current_scope.createAliasFromStorageId(s.param_name, storage_id, token_type, type_info);
                     maybeAddHotVar(vm, s.param_name, alias_var.storage_id);
                 } else {
+                    std.debug.print("Storage not found!\n", .{});
                     return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Storage not found for alias parameter: {s}", .{s.param_name});
                 }
             },

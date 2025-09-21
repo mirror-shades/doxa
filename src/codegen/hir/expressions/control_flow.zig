@@ -78,40 +78,91 @@ pub const ControlFlowHandler = struct {
             // Standard if codegen
             try self.generator.generateExpression(if_expr.condition.?, true, should_pop_after_use);
 
-            const else_label = try self.generator.generateLabel("else");
             const end_label = try self.generator.generateLabel("end_if");
             const then_label = try self.generator.generateLabel("then");
-            try self.generator.instructions.append(.{
-                .JumpCond = .{
-                    .label_true = then_label,
-                    .label_false = else_label,
-                    .vm_offset = 0,
-                    .condition_type = .Tetra,
-                },
-            });
 
-            // THEN branch
-            try self.generator.instructions.append(.{ .Label = .{ .name = then_label, .vm_address = 0 } });
-            if (preserve_result) {
-                try self.generator.generateExpression(if_expr.then_branch.?, true, should_pop_after_use);
-            } else {
-                // Statement context: do not produce a value
-                try self.generator.generateExpression(if_expr.then_branch.?, false, should_pop_after_use);
-            }
-            try self.generator.instructions.append(.{ .Jump = .{ .label = end_label, .vm_offset = 0 } });
-
-            // ELSE branch
-            try self.generator.instructions.append(.{ .Label = .{ .name = else_label, .vm_address = 0 } });
             if (if_expr.else_branch) |else_branch| {
-                if (preserve_result) {
-                    try self.generator.generateExpression(else_branch, true, should_pop_after_use);
+                // Check if else branch is just a nothing literal (implicit else)
+                const is_implicit_nothing = switch (else_branch.data) {
+                    .Literal => |lit| switch (lit) {
+                        .nothing => true,
+                        else => false,
+                    },
+                    else => false,
+                };
+
+                if (is_implicit_nothing) {
+                    // No real else branch - only generate then branch
+                    try self.generator.instructions.append(.{
+                        .JumpCond = .{
+                            .label_true = then_label,
+                            .label_false = end_label,
+                            .vm_offset = 0,
+                            .condition_type = .Tetra,
+                        },
+                    });
+
+                    // THEN branch
+                    try self.generator.instructions.append(.{ .Label = .{ .name = then_label, .vm_address = 0 } });
+                    if (preserve_result) {
+                        try self.generator.generateExpression(if_expr.then_branch.?, true, should_pop_after_use);
+                    } else {
+                        // Statement context: do not produce a value
+                        try self.generator.generateExpression(if_expr.then_branch.?, false, should_pop_after_use);
+                    }
                 } else {
-                    try self.generator.generateExpression(else_branch, false, should_pop_after_use);
+                    // Has real else branch - generate both branches
+                    const else_label = try self.generator.generateLabel("else");
+                    try self.generator.instructions.append(.{
+                        .JumpCond = .{
+                            .label_true = then_label,
+                            .label_false = else_label,
+                            .vm_offset = 0,
+                            .condition_type = .Tetra,
+                        },
+                    });
+
+                    // THEN branch
+                    try self.generator.instructions.append(.{ .Label = .{ .name = then_label, .vm_address = 0 } });
+                    if (preserve_result) {
+                        try self.generator.generateExpression(if_expr.then_branch.?, true, should_pop_after_use);
+                    } else {
+                        // Statement context: do not produce a value
+                        try self.generator.generateExpression(if_expr.then_branch.?, false, should_pop_after_use);
+                    }
+                    try self.generator.instructions.append(.{ .Jump = .{ .label = end_label, .vm_offset = 0 } });
+
+                    // ELSE branch
+                    try self.generator.instructions.append(.{ .Label = .{ .name = else_label, .vm_address = 0 } });
+                    if (preserve_result) {
+                        try self.generator.generateExpression(if_expr.else_branch.?, true, should_pop_after_use);
+                    } else {
+                        try self.generator.generateExpression(if_expr.else_branch.?, false, should_pop_after_use);
+                    }
                 }
-            } else if (preserve_result) {
-                // Only push a value when needed
-                const nothing_idx = try self.generator.addConstant(HIRValue.nothing);
-                try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } });
+            } else {
+                // No else branch - only generate then branch
+                try self.generator.instructions.append(.{
+                    .JumpCond = .{
+                        .label_true = then_label,
+                        .label_false = end_label,
+                        .vm_offset = 0,
+                        .condition_type = .Tetra,
+                    },
+                });
+
+                // THEN branch
+                try self.generator.instructions.append(.{ .Label = .{ .name = then_label, .vm_address = 0 } });
+                if (preserve_result) {
+                    // If we need to preserve result but there's no else branch,
+                    // we need to generate a nothing value for the else case
+                    try self.generator.generateExpression(if_expr.then_branch.?, true, should_pop_after_use);
+                    // Jump to end to skip the nothing value generation
+                    try self.generator.instructions.append(.{ .Jump = .{ .label = end_label, .vm_offset = 0 } });
+                } else {
+                    // Statement context: do not produce a value
+                    try self.generator.generateExpression(if_expr.then_branch.?, false, should_pop_after_use);
+                }
             }
             try self.generator.instructions.append(.{ .Label = .{ .name = end_label, .vm_address = 0 } });
         }
@@ -359,11 +410,10 @@ pub const ControlFlowHandler = struct {
         // Generate final value if present
         if (block_data.value) |value_expr| {
             // Evaluate the final value expression
-            // Always evaluate, but only preserve on stack when requested
-            try self.generator.generateExpression(value_expr, true, false);
-            if (!preserve_result) {
-                // Discard the produced value in statement context
-                try self.generator.instructions.append(.Pop);
+            if (preserve_result) {
+                try self.generator.generateExpression(value_expr, true, false);
+            } else {
+                try self.generator.generateExpression(value_expr, false, false);
             }
         } else if (preserve_result) {
             // Block without value: only push 'nothing' when a value is expected

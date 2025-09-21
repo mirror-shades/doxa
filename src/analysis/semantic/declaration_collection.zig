@@ -281,7 +281,18 @@ pub fn collectDeclarations(ctx: *DeclarationCollectionContext, statements: []ast
                     _ = init_expr; // May be used for evaluation in the future
                     // For now, just use a placeholder value
                     // In a full implementation, this would evaluate the expression
-                    value = TokenLiteral{ .nothing = {} };
+                    value = switch (type_info.base) {
+                        .Int => TokenLiteral{ .int = 0 },
+                        .Float => TokenLiteral{ .float = 0.0 },
+                        .String => TokenLiteral{ .string = "" },
+                        .Tetra => TokenLiteral{ .tetra = .false },
+                        .Byte => TokenLiteral{ .byte = 0 },
+                        .Union => if (type_info.union_type) |ut|
+                            union_handling.getUnionDefaultValue(ut)
+                        else
+                            TokenLiteral{ .nothing = {} },
+                        else => TokenLiteral{ .nothing = {} },
+                    };
                 } else {
                     // Only use defaults for uninitialized variables
                     value = switch (type_info.base) {

@@ -343,7 +343,9 @@ pub const SoxaTextParser = struct {
         } else if (std.mem.eql(u8, op, "StoreParamAlias")) {
             const name_quoted = tokens.next() orelse return;
             const param_name = try self.parseQuotedString(name_quoted);
-            try self.instructions.append(HIRInstruction{ .StoreParamAlias = .{ .param_name = param_name, .param_type = .Unknown } });
+            const idx_str = tokens.next() orelse return;
+            const var_index = std.fmt.parseInt(u32, idx_str, 10) catch return;
+            try self.instructions.append(HIRInstruction{ .StoreParamAlias = .{ .param_name = param_name, .param_type = .Unknown, .var_index = var_index } });
         } else if (std.mem.eql(u8, op, "PushStorageId")) {
             const idx_str = tokens.next() orelse return;
             const var_index = std.fmt.parseInt(u32, idx_str, 10) catch return;

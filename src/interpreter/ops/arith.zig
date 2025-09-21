@@ -78,6 +78,45 @@ pub fn exec(vm: anytype, a: anytype) !void {
     const a_is_float = left.value == .float;
     const b_is_float = right.value == .float;
 
+    // Respect the operand_type from the instruction
+    if (a.operand_type == .Byte) {
+        // Byte arithmetic: both operands should be bytes
+        const left_byte = switch (left.value) {
+            .byte => |u| u,
+            .int => |i| if (i >= 0 and i <= 255) @as(u8, @intCast(i)) else return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert int {d} to byte for arithmetic", .{i}),
+            else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert {s} to byte for arithmetic", .{@tagName(left.value)}),
+        };
+
+        const right_byte = switch (right.value) {
+            .byte => |u| u,
+            .int => |i| if (i >= 0 and i <= 255) @as(u8, @intCast(i)) else return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert int {d} to byte for arithmetic", .{i}),
+            else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert {s} to byte for arithmetic", .{@tagName(right.value)}),
+        };
+
+        var byte_result: u8 = undefined;
+        switch (a.op) {
+            .Add => byte_result = std.math.add(u8, left_byte, right_byte) catch {
+                return vm.reporter.reportRuntimeError(null, ErrorCode.ARITHMETIC_OVERFLOW, "Byte addition overflow", .{});
+            },
+            .Sub => byte_result = std.math.sub(u8, left_byte, right_byte) catch {
+                return vm.reporter.reportRuntimeError(null, ErrorCode.ARITHMETIC_OVERFLOW, "Byte subtraction overflow", .{});
+            },
+            .Mul => byte_result = std.math.mul(u8, left_byte, right_byte) catch {
+                return vm.reporter.reportRuntimeError(null, ErrorCode.ARITHMETIC_OVERFLOW, "Byte multiplication overflow", .{});
+            },
+            .Div => unreachable,
+            .Mod => byte_result = @as(u8, @intCast(@mod(left_byte, right_byte))),
+            .Pow => byte_result = @as(u8, @intCast(std.math.pow(u8, left_byte, right_byte))),
+        }
+
+        if (vm.reporter.debug_mode) {
+            vm.reporter.report(.Debug, .Hint, null, null, "Byte arith result: {d}", .{byte_result});
+        }
+
+        try vm.stack.push(HIRFrame.initByte(byte_result));
+        return;
+    }
+
     // All division promotes to float. If either operand is float or op is Div, promote both to float path.
     if (a_is_float or b_is_float or a.op == .Div) {
         // Convert both operands to float and perform float arithmetic
@@ -195,7 +234,7 @@ pub fn exec(vm: anytype, a: anytype) !void {
     }
 
     // Preserve the original type when possible
-    if (left.value == .byte and int_result >= 0 and int_result <= 255) {
+    if (left.value == .byte and right.value == .byte and int_result >= 0 and int_result <= 255) {
         try vm.stack.push(HIRFrame.initByte(@intCast(int_result)));
     } else {
         try vm.stack.push(HIRFrame.initInt(int_result));

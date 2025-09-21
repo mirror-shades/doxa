@@ -394,6 +394,7 @@ pub const ErrorCode = struct {
     pub const UNSUPPORTED_FUNCTION_CALL_TYPE = "E5012";
     pub const EXPECTED_METHOD = "E5013";
     pub const THIS_TYPE_MISMATCH = "E5014";
+    pub const INVALID_ARGUMENT = "E5015";
 
     // 6xxx - Collections & Data Structures
     pub const INVALID_ARRAY_TYPE = "E6001";
