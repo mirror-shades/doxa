@@ -26,8 +26,8 @@ entry function main() {
     var up :: tetra is true
 
     var circle is Circle {
-        x is @int(WIDTH / 2),
-        y is @int(HEIGHT / 2),
+        x is @int(WIDTH / 2) as int else 0,
+        y is @int(HEIGHT / 2) as int else 0,
         x_speed is 3,
         y_speed is 3,
         radius is 30,
@@ -42,27 +42,29 @@ entry function main() {
     }    
 }
 
+// circle is passed by value because we don't need to mutate the original circle
 function drawBackground(circle :: Circle, frame_count :: int) {
-    // the background colour changes colour based on the direction the circle is moving
+    // the background colour changes based on the direction the circle is moving
     if circle.x_speed > 0 then {
         if circle.y_speed > 0 then {
-            const color is dg.bytesToDoxaColor(0x22, 0x32, 0x50, 0xFF)
+            const color is dg.bytesToColor(0x22, 0x32, 0x50, 0xFF)
             rl.ClearBackground(color)
         } else {
-            const color is dg.bytesToDoxaColor(0x22, 0x42, 0x60, 0xFF)
+            const color is dg.bytesToColor(0x22, 0x42, 0x60, 0xFF)
             rl.ClearBackground(color)
         }
     } else {
         if circle.y_speed > 0 then {
-            const color is dg.bytesToDoxaColor(0x22, 0x52, 0x80, 0xFF)
+            const color is dg.bytesToColor(0x22, 0x52, 0x80, 0xFF)
             rl.ClearBackground(color)
         } else {
-            const color is dg.bytesToDoxaColor(0x22, 0x62, 0x70, 0xFF)
+            const color is dg.bytesToColor(0x22, 0x62, 0x70, 0xFF)
             rl.ClearBackground(color)
         }
     }
 }
 
+// circle is aliased because we need to mutate the original circle
 function drawCircle(^circle :: Circle, frame_count :: int, ^shift :: byte, ^up :: tetra) {
     // Reverse the speed when the circle hits the edges of the screen
     if circle.x > (WIDTH - circle.radius) or circle.x < circle.radius then {  
@@ -87,6 +89,6 @@ function drawCircle(^circle :: Circle, frame_count :: int, ^shift :: byte, ^up :
     }
 
     // draw the circle with raylib
-    const color is dg.bytesToDoxaColor(0xAA, 0x22, shift, 0xFF)
+    const color is dg.bytesToColor(0xAA, 0x22, shift, 0xFF)
     rl.DrawCircle(circle.x, circle.y, circle.radius, color)
 }

@@ -50,20 +50,19 @@ pub fn ClearBackgroundDoxa(color: DoxaColor) void {
     rl.ClearBackground(.{ .r = color.r, .g = color.g, .b = color.b, .a = color.a });
 }
 
-// Helper function to convert string to DoxaColor
-pub fn stringToDoxaColor(color_str: []const u8) ?DoxaColor {
-    if (rl.stringToColorName(color_str)) |color_name| {
-        return rl.colorNameToDoxaColor(color_name);
-    }
-    return null;
-}
-
-// Re-export the colorNameToDoxaColor function from cimport
-pub const colorNameToDoxaColor = rl.colorNameToDoxaColor;
-
 // Re-export the byte-based color creation functions
-pub const bytesToDoxaColor = rl.bytesToDoxaColor;
-pub const rgbToDoxaColor = rl.rgbToDoxaColor;
+pub const bytesToColor = rl.bytesToColor;
+
+// Clean internal aliases without "Doxa" in the name
+pub fn rgbToColor(r: u8, g: u8, b: u8) DoxaColor {
+    return rl.rgbToColor(r, g, b);
+}
+pub fn stringToColor(color_str: []const u8) ?DoxaColor {
+    return rl.stringToColor(color_str);
+}
+pub fn colorNameToColor(color_name: ColorName) DoxaColor {
+    return rl.colorNameToColor(color_name);
+}
 
 pub fn ClearBackground(color: Color) void {
     rl.ClearBackground(color);
@@ -111,35 +110,9 @@ pub const doxa_module = struct {
         .{ .name = "DrawRectangleV", .func = DrawRectangleV },
         .{ .name = "GetTime", .func = GetTime },
         .{ .name = "DrawFPS", .func = DrawFPS },
-        .{ .name = "bytesToDoxaColor", .func = bytesToDoxaColor },
-        .{ .name = "rgbToDoxaColor", .func = rgbToDoxaColor },
     };
-    pub const constants = &.{
-        .{ .name = "DARKGRAY", .value = .{ .color = rl.colorNameToDoxaColor(.DARKGRAY) } },
-        .{ .name = "MAROON", .value = .{ .color = rl.colorNameToDoxaColor(.MAROON) } },
-        .{ .name = "ORANGE", .value = .{ .color = rl.colorNameToDoxaColor(.ORANGE) } },
-        .{ .name = "DARKGREEN", .value = .{ .color = rl.colorNameToDoxaColor(.DARKGREEN) } },
-        .{ .name = "DARKBLUE", .value = .{ .color = rl.colorNameToDoxaColor(.DARKBLUE) } },
-        .{ .name = "DARKPURPLE", .value = .{ .color = rl.colorNameToDoxaColor(.DARKPURPLE) } },
-        .{ .name = "DARKBROWN", .value = .{ .color = rl.colorNameToDoxaColor(.DARKBROWN) } },
-        .{ .name = "GRAY", .value = .{ .color = rl.colorNameToDoxaColor(.GRAY) } },
-        .{ .name = "RED", .value = .{ .color = rl.colorNameToDoxaColor(.RED) } },
-        .{ .name = "GOLD", .value = .{ .color = rl.colorNameToDoxaColor(.GOLD) } },
-        .{ .name = "LIME", .value = .{ .color = rl.colorNameToDoxaColor(.LIME) } },
-        .{ .name = "BLUE", .value = .{ .color = rl.colorNameToDoxaColor(.BLUE) } },
-        .{ .name = "VIOLET", .value = .{ .color = rl.colorNameToDoxaColor(.VIOLET) } },
-        .{ .name = "BROWN", .value = .{ .color = rl.colorNameToDoxaColor(.BROWN) } },
-        .{ .name = "LIGHTGRAY", .value = .{ .color = rl.colorNameToDoxaColor(.LIGHTGRAY) } },
-        .{ .name = "PINK", .value = .{ .color = rl.colorNameToDoxaColor(.PINK) } },
-        .{ .name = "YELLOW", .value = .{ .color = rl.colorNameToDoxaColor(.YELLOW) } },
-        .{ .name = "GREEN", .value = .{ .color = rl.colorNameToDoxaColor(.GREEN) } },
-        .{ .name = "SKYBLUE", .value = .{ .color = rl.colorNameToDoxaColor(.SKYBLUE) } },
-        .{ .name = "PURPLE", .value = .{ .color = rl.colorNameToDoxaColor(.PURPLE) } },
-        .{ .name = "BEIGE", .value = .{ .color = rl.colorNameToDoxaColor(.BEIGE) } },
-        .{ .name = "WHITE", .value = .{ .color = rl.colorNameToDoxaColor(.WHITE) } },
-        .{ .name = "BLACK", .value = .{ .color = rl.colorNameToDoxaColor(.BLACK) } },
-    };
+    pub const constants = &.{};
 
     // Simple array of all valid field names for validation
-    pub const valid_fields = [_][]const u8{ "InitWindow", "CloseWindow", "WindowShouldClose", "BeginDrawing", "EndDrawing", "ClearBackground", "SetTargetFPS", "DrawCircle", "DrawCircleV", "DrawRectangle", "DrawRectangleV", "GetTime", "DrawFPS", "bytesToDoxaColor", "rgbToDoxaColor", "DARKGRAY", "MAROON", "ORANGE", "DARKGREEN", "DARKBLUE", "DARKPURPLE", "DARKBROWN", "GRAY", "RED", "GOLD", "LIME", "BLUE", "VIOLET", "BROWN", "LIGHTGRAY", "PINK", "YELLOW", "GREEN", "SKYBLUE", "PURPLE", "BEIGE", "WHITE", "BLACK" };
+    pub const valid_fields = [_][]const u8{ "InitWindow", "CloseWindow", "WindowShouldClose", "BeginDrawing", "EndDrawing", "ClearBackground", "SetTargetFPS", "DrawCircle", "DrawCircleV", "DrawRectangle", "DrawRectangleV", "GetTime", "DrawFPS" };
 };

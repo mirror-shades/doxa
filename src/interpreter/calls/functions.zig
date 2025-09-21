@@ -219,7 +219,7 @@ pub const FunctionOps = struct {
 
             // Built-in graphics module: implicit defers for Draw/Init
             const is_graphics = std.mem.eql(u8, module_alias, "graphics") or std.mem.eql(u8, module_alias, "g");
-            if (is_graphics) {
+                if (is_graphics) {
                 const ray = @import("../../runtime/raylib.zig");
                 // Submodule dispatch: doxa vs raylib passthrough
                 if (std.mem.eql(u8, sub_alias, "doxa")) {
@@ -258,8 +258,8 @@ pub const FunctionOps = struct {
                         const should_close = ray.WindowShouldClose();
                         try vm.stack.push(HIRFrame.initTetra(if (should_close) 0 else 1));
                         return;
-                    } else if (std.mem.eql(u8, func_name, "rgbToDoxaColor")) {
-                        // Handle rgbToDoxaColor(r, g, b) -> returns DoxaColor
+                    } else if (std.mem.eql(u8, func_name, "rgbToColor")) {
+                        // Handle rgbToColor(r, g, b) -> returns DoxaColor
                         const b_frame = try vm.stack.pop();
                         const g_frame = try vm.stack.pop();
                         const r_frame = try vm.stack.pop();
@@ -285,7 +285,7 @@ pub const FunctionOps = struct {
                             return vm.reporter.reportRuntimeError(null, ErrorCode.INVALID_ARGUMENT, "Color values must be between 0 and 255", .{});
                         }
 
-                        const color = ray.rgbToDoxaColor(r, g, b);
+                        const color = ray.rgbToColor(r, g, b);
 
                         // Create a struct instance for the color
                         var fields = std.array_list.Managed(HIRStructField).init(vm.allocator);
@@ -320,8 +320,8 @@ pub const FunctionOps = struct {
                         const struct_value = HIRValue{ .struct_instance = color_struct };
                         try vm.stack.push(HIRFrame.initFromHIRValue(struct_value));
                         return;
-                    } else if (std.mem.eql(u8, func_name, "bytesToDoxaColor")) {
-                        // Handle bytesToDoxaColor(r, g, b, a) -> returns DoxaColor
+                    } else if (std.mem.eql(u8, func_name, "bytesToColor")) {
+                        // Handle bytesToColor(r, g, b, a) -> returns DoxaColor
                         const a_frame = try vm.stack.pop();
                         const b_frame = try vm.stack.pop();
                         const g_frame = try vm.stack.pop();
@@ -353,7 +353,7 @@ pub const FunctionOps = struct {
                             return vm.reporter.reportRuntimeError(null, ErrorCode.INVALID_ARGUMENT, "Color values must be between 0 and 255", .{});
                         }
 
-                        const color = ray.bytesToDoxaColor(r, g, b, a);
+                        const color = ray.bytesToColor(r, g, b, a);
 
                         // Create a struct instance for the color
                         var fields = std.array_list.Managed(HIRStructField).init(vm.allocator);
@@ -388,30 +388,70 @@ pub const FunctionOps = struct {
                         const struct_value = HIRValue{ .struct_instance = color_struct };
                         try vm.stack.push(HIRFrame.initFromHIRValue(struct_value));
                         return;
+                    } else if (std.mem.eql(u8, func_name, "stringToColor")) {
+                        // Handle stringToColor(name) -> returns DoxaColor
+                        const name_frame = try vm.stack.pop();
+                        const name = try name_frame.asString();
+                        if (ray.stringToColor(name)) |color| {
+                            var fields = std.array_list.Managed(HIRStructField).init(vm.allocator);
+                            defer fields.deinit();
+
+                            try fields.append(HIRStructField{ .name = try vm.allocator.dupe(u8, "r"), .value = HIRValue{ .int = color.r }, .field_type = .Int });
+                            try fields.append(HIRStructField{ .name = try vm.allocator.dupe(u8, "g"), .value = HIRValue{ .int = color.g }, .field_type = .Int });
+                            try fields.append(HIRStructField{ .name = try vm.allocator.dupe(u8, "b"), .value = HIRValue{ .int = color.b }, .field_type = .Int });
+                            try fields.append(HIRStructField{ .name = try vm.allocator.dupe(u8, "a"), .value = HIRValue{ .int = color.a }, .field_type = .Int });
+
+                            const color_struct = HIRStruct{ .type_name = try vm.allocator.dupe(u8, "color"), .fields = try fields.toOwnedSlice() };
+                            const struct_value = HIRValue{ .struct_instance = color_struct };
+                            try vm.stack.push(HIRFrame.initFromHIRValue(struct_value));
+                            return;
+                        } else {
+                            return vm.reporter.reportRuntimeError(null, ErrorCode.INVALID_ARGUMENT, "Unknown color name: {s}", .{name});
+                        }
+                    } else if (std.mem.eql(u8, func_name, "ClearBackground")) {
+                        // doxa.ClearBackground(color_struct)
+                        const color_frame = try vm.stack.pop();
+                        switch (color_frame.value) {
+                            .struct_instance => |struct_val| {
+                                if (std.mem.eql(u8, struct_val.type_name, "color")) {
+                                    var color: ray.DoxaColor = ray.colorNameToColor(.WHITE);
+                                    for (struct_val.fields) |field| {
+                                        if (std.mem.eql(u8, field.name, "r")) color.r = @as(u8, @intCast(field.value.int));
+                                        if (std.mem.eql(u8, field.name, "g")) color.g = @as(u8, @intCast(field.value.int));
+                                        if (std.mem.eql(u8, field.name, "b")) color.b = @as(u8, @intCast(field.value.int));
+                                        if (std.mem.eql(u8, field.name, "a")) color.a = @as(u8, @intCast(field.value.int));
+                                    }
+                                    ray.ClearBackgroundDoxa(color);
+                                    return;
+                                }
+                            },
+                            else => {},
+                        }
+                        return vm.reporter.reportRuntimeError(null, ErrorCode.INVALID_ARGUMENT, "Expected color struct for doxa.ClearBackground", .{});
                     }
                 } else if (std.mem.eql(u8, sub_alias, "raylib")) {
                     // Passthrough to raylib wrappers via graphics.raylib.*
                     if (std.mem.eql(u8, func_name, "ClearBackground")) {
                         const color_frame = try vm.stack.pop();
                         // Use the new color system with WHITE as default
-                        var color: ray.DoxaColor = ray.colorNameToDoxaColor(.WHITE);
+                        var color: ray.DoxaColor = ray.colorNameToColor(.WHITE);
 
                         switch (color_frame.value) {
                             .string => |s| {
                                 // Try to parse color from string like "graphics.raylib.SKYBLUE" or "g.raylib.RED"
                                 if (std.mem.startsWith(u8, s, "graphics.raylib.")) {
                                     const color_name = s[16..]; // Skip "graphics.raylib." (16 chars)
-                                    if (ray.stringToDoxaColor(color_name)) |parsed_color| {
+                                    if (ray.stringToColor(color_name)) |parsed_color| {
                                         color = parsed_color;
                                     }
                                 } else if (std.mem.startsWith(u8, s, "g.raylib.")) {
                                     const color_name = s[9..]; // Skip "g.raylib." (9 chars)
-                                    if (ray.stringToDoxaColor(color_name)) |parsed_color| {
+                                    if (ray.stringToColor(color_name)) |parsed_color| {
                                         color = parsed_color;
                                     }
                                 } else {
                                     // Try direct color name
-                                    if (ray.stringToDoxaColor(s)) |parsed_color| {
+                                    if (ray.stringToColor(s)) |parsed_color| {
                                         color = parsed_color;
                                     }
                                 }
@@ -495,21 +535,21 @@ pub const FunctionOps = struct {
                         const radius = @as(f32, @floatFromInt(radius_int));
 
                         // Parse color similar to ClearBackground
-                        var color: ray.DoxaColor = ray.colorNameToDoxaColor(.WHITE);
+                        var color: ray.DoxaColor = ray.colorNameToColor(.WHITE);
                         switch (color_frame.value) {
                             .string => |s| {
                                 if (std.mem.startsWith(u8, s, "graphics.raylib.")) {
                                     const color_name = s[16..];
-                                    if (ray.stringToDoxaColor(color_name)) |parsed_color| {
+                                    if (ray.stringToColor(color_name)) |parsed_color| {
                                         color = parsed_color;
                                     }
                                 } else if (std.mem.startsWith(u8, s, "g.raylib.")) {
                                     const color_name = s[9..];
-                                    if (ray.stringToDoxaColor(color_name)) |parsed_color| {
+                                    if (ray.stringToColor(color_name)) |parsed_color| {
                                         color = parsed_color;
                                     }
                                 } else {
-                                    if (ray.stringToDoxaColor(s)) |parsed_color| {
+                                    if (ray.stringToColor(s)) |parsed_color| {
                                         color = parsed_color;
                                     }
                                 }
