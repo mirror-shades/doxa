@@ -80,7 +80,7 @@ pub const ColorName = enum {
 };
 
 // Helper function to convert ColorName to DoxaColor
-pub fn colorNameToDoxaColor(color_name: ColorName) DoxaColor {
+pub fn colorNameToColor(color_name: ColorName) DoxaColor {
     return switch (color_name) {
         .DARKGRAY => .{ .r = DARKGRAY.r, .g = DARKGRAY.g, .b = DARKGRAY.b, .a = DARKGRAY.a },
         .MAROON => .{ .r = MAROON.r, .g = MAROON.g, .b = MAROON.b, .a = MAROON.a },
@@ -136,14 +136,17 @@ pub fn stringToColorName(color_str: []const u8) ?ColorName {
     return null;
 }
 
-// Helper function to create DoxaColor from 4 bytes (RGBA format)
-pub fn bytesToDoxaColor(r: u8, g: u8, b: u8, a: u8) DoxaColor {
+pub fn bytesToColor(r: u8, g: u8, b: u8, a: u8) DoxaColor {
     return DoxaColor{ .r = r, .g = g, .b = b, .a = a };
 }
 
-// Helper function to create DoxaColor from 3 bytes (RGB format, alpha defaults to 255)
-pub fn rgbToDoxaColor(r: u8, g: u8, b: u8) DoxaColor {
+pub fn rgbToColor(r: u8, g: u8, b: u8) DoxaColor {
     return DoxaColor{ .r = r, .g = g, .b = b, .a = 255 };
+}
+
+pub fn stringToColor(color_str: []const u8) ?DoxaColor {
+    if (stringToColorName(color_str)) |n| return colorNameToColor(n);
+    return null;
 }
 
 const std = @import("std");
