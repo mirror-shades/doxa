@@ -565,7 +565,7 @@ pub const HIRGenerator = struct {
                 }
             }
 
-            // Handle implicit receiver for instance methods: store 'this'
+            // Handle implicit receiver for instance methods: alias-bind 'this'
             // Only for struct instance methods (not static and not free functions)
             if (std.mem.indexOfScalar(u8, function_body.function_info.name, '.')) |dot_idx| {
                 const struct_name = function_body.function_info.name[0..dot_idx];
@@ -573,16 +573,15 @@ pub const HIRGenerator = struct {
                 if (self.struct_methods.get(struct_name)) |method_table| {
                     if (method_table.get(method_name)) |mi| {
                         if (!mi.is_static) {
-                            // For instance methods, automatically add implicit 'this' parameter
-                            const this_idx = try self.getOrCreateVariable("this");
-                            // Track type for 'this' to be a struct by default
+                            // For instance methods, automatically bind implicit 'this' as an alias parameter.
+                            // Caller is expected to have pushed a storage id reference first.
+                            // Track type info for 'this' for downstream inference.
                             try self.trackVariableType("this", .Struct);
-                            try self.instructions.append(.{ .StoreVar = .{
-                                .var_index = this_idx,
-                                .var_name = "this",
-                                .scope_kind = .Local,
-                                .module_context = null,
-                                .expected_type = .Struct,
+                            // Bind alias parameter named 'this'. var_index is informational here.
+                            try self.instructions.append(.{ .StoreParamAlias = .{
+                                .param_name = "this",
+                                .param_type = .Struct,
+                                .var_index = 1,
                             } });
                         }
                         // Functions (static) don't get implicit 'this'
@@ -1046,9 +1045,39 @@ pub const HIRGenerator = struct {
                         // This is a struct method call - generate as a function call
                         const qualified_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ struct_name, name });
 
-                        // Generate arguments: push receiver first for instance methods
+                        // Generate arguments: for instance methods, push receiver storage-id (alias) first
                         if (!mi.is_static) {
-                            try self.generateExpression(receiver, true, false);
+                            switch (receiver.data) {
+                                .Variable => |recv_var| {
+                                    // Push storage id of the receiver variable
+                                    const recv_idx = try self.getOrCreateVariable(recv_var.lexeme);
+                                    try self.instructions.append(.{ .PushStorageId = .{
+                                        .var_index = recv_idx,
+                                        .var_name = recv_var.lexeme,
+                                        .scope_kind = .Local,
+                                    } });
+                                },
+                                else => {
+                                    // Spill temporary receiver into a hidden local, then push its storage id
+                                    try self.generateExpression(receiver, true, false);
+                                    const tmp_name = try std.fmt.allocPrint(self.allocator, "__this_tmp_{}", .{self.instructions.items.len});
+                                    // Track as struct to guide SetField/etc.
+                                    try self.trackVariableType(tmp_name, .Struct);
+                                    const tmp_idx = try self.getOrCreateVariable(tmp_name);
+                                    try self.instructions.append(.{ .StoreVar = .{
+                                        .var_index = tmp_idx,
+                                        .var_name = tmp_name,
+                                        .scope_kind = .Local,
+                                        .module_context = null,
+                                        .expected_type = .Struct,
+                                    } });
+                                    try self.instructions.append(.{ .PushStorageId = .{
+                                        .var_index = tmp_idx,
+                                        .var_name = tmp_name,
+                                        .scope_kind = .Local,
+                                    } });
+                                },
+                            }
                         }
                         // Then generate explicit arguments
                         for (args) |arg| {

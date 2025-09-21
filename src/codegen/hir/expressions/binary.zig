@@ -149,8 +149,10 @@ pub const BinaryExpressionHandler = struct {
                 const zero_idx = try self.generator.addConstant(zero_value);
                 try self.generator.instructions.append(.{ .Const = .{ .value = zero_value, .constant_id = zero_idx } });
 
-                // Swap operands so we have: 0, operand on stack
+                // Stack before: [..., operand, 0]
+                // Swap -> [..., 0, operand]
                 // Then subtract: 0 - operand = -operand
+                try self.generator.instructions.append(.Swap);
                 try self.generator.instructions.append(.{ .Arith = .{ .op = .Sub, .operand_type = operand_type } });
             },
             .PLUS => {

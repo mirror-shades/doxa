@@ -95,18 +95,30 @@ pub fn exec(vm: anytype, a: anytype) !void {
 
         var byte_result: u8 = undefined;
         switch (a.op) {
-            .Add => byte_result = std.math.add(u8, left_byte, right_byte) catch {
-                return vm.reporter.reportRuntimeError(null, ErrorCode.ARITHMETIC_OVERFLOW, "Byte addition overflow", .{});
+            // Saturating byte arithmetic (no wrap)
+            .Add => {
+                const sum: u16 = @as(u16, left_byte) + @as(u16, right_byte);
+                byte_result = if (sum > 255) 255 else @intCast(sum);
             },
-            .Sub => byte_result = std.math.sub(u8, left_byte, right_byte) catch {
-                return vm.reporter.reportRuntimeError(null, ErrorCode.ARITHMETIC_OVERFLOW, "Byte subtraction overflow", .{});
+            .Sub => {
+                byte_result = if (left_byte >= right_byte) left_byte - right_byte else 0;
             },
-            .Mul => byte_result = std.math.mul(u8, left_byte, right_byte) catch {
-                return vm.reporter.reportRuntimeError(null, ErrorCode.ARITHMETIC_OVERFLOW, "Byte multiplication overflow", .{});
+            .Mul => {
+                const prod: u32 = @as(u32, left_byte) * @as(u32, right_byte);
+                byte_result = if (prod > 255) 255 else @intCast(prod);
             },
-            .Div => unreachable,
+            .Div => {
+                if (right_byte == 0) {
+                    return vm.reporter.reportRuntimeError(null, ErrorCode.DIVISION_BY_ZERO, "Division by zero in byte arithmetic", .{});
+                }
+                byte_result = @intCast(left_byte / right_byte);
+            },
             .Mod => byte_result = @as(u8, @intCast(@mod(left_byte, right_byte))),
-            .Pow => byte_result = @as(u8, @intCast(std.math.pow(u8, left_byte, right_byte))),
+            .Pow => {
+                // Compute in wider type and clamp
+                const p: u32 = std.math.pow(u32, @as(u32, left_byte), @as(u32, right_byte));
+                byte_result = if (p > 255) 255 else @intCast(p);
+            },
         }
 
         if (vm.reporter.debug_mode) {

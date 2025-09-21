@@ -216,7 +216,7 @@ pub const StructsHandler = struct {
             });
 
             // Now we need to store the modified nested struct back to the original
-            // Generate base object again (mike)
+            // Generate base object again (mike or this)
             try self.generator.generateExpression(outer_field.object, true, false);
 
             // Swap the modified nested struct to the top of the stack
@@ -231,20 +231,36 @@ pub const StructsHandler = struct {
                 },
             });
 
-            // Store the result back to the base variable
-            if (outer_field.object.data == .Variable) {
-                const var_name = outer_field.object.data.Variable.lexeme;
-                const var_index = try self.generator.getOrCreateVariable(var_name);
-                const expected_type = self.generator.getTrackedVariableType(var_name) orelse .Unknown;
-                try self.generator.instructions.append(.{
-                    .StoreVar = .{
-                        .var_index = var_index,
-                        .var_name = var_name,
-                        .scope_kind = .Local,
-                        .module_context = null,
-                        .expected_type = expected_type,
-                    },
-                });
+            // Store the result back to the base variable/alias
+            switch (outer_field.object.data) {
+                .Variable => |tok| {
+                    const var_name = tok.lexeme;
+                    const var_index = try self.generator.getOrCreateVariable(var_name);
+                    const expected_type = self.generator.getTrackedVariableType(var_name) orelse .Unknown;
+                    try self.generator.instructions.append(.{
+                        .StoreVar = .{
+                            .var_index = var_index,
+                            .var_name = var_name,
+                            .scope_kind = .Local,
+                            .module_context = null,
+                            .expected_type = expected_type,
+                        },
+                    });
+                },
+                .This => {
+                    const var_index = try self.generator.getOrCreateVariable("this");
+                    // 'this' is always a struct alias in instance methods
+                    try self.generator.instructions.append(.{
+                        .StoreVar = .{
+                            .var_index = var_index,
+                            .var_name = "this",
+                            .scope_kind = .Local,
+                            .module_context = null,
+                            .expected_type = .Struct,
+                        },
+                    });
+                },
+                else => {},
             }
         } else {
             // Regular field assignment - generate object expression
@@ -261,6 +277,37 @@ pub const StructsHandler = struct {
                     .field_index = 0, // Index will be resolved by VM
                 },
             });
+
+            // If assigning to a variable/alias field, persist the modified struct back
+            switch (assign_data.object.data) {
+                .Variable => |tok| {
+                    const var_name = tok.lexeme;
+                    const var_index = try self.generator.getOrCreateVariable(var_name);
+                    const expected_type = self.generator.getTrackedVariableType(var_name) orelse .Unknown;
+                    try self.generator.instructions.append(.{
+                        .StoreVar = .{
+                            .var_index = var_index,
+                            .var_name = var_name,
+                            .scope_kind = .Local,
+                            .module_context = null,
+                            .expected_type = expected_type,
+                        },
+                    });
+                },
+                .This => {
+                    const var_index = try self.generator.getOrCreateVariable("this");
+                    try self.generator.instructions.append(.{
+                        .StoreVar = .{
+                            .var_index = var_index,
+                            .var_name = "this",
+                            .scope_kind = .Local,
+                            .module_context = null,
+                            .expected_type = .Struct,
+                        },
+                    });
+                },
+                else => {},
+            }
         }
     }
 

@@ -318,6 +318,7 @@ fn compound_assignment(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList
     const is_valid_target = switch (left.?.data) {
         .Variable => true,
         .Index => true,
+        .FieldAccess => true,
         else => false,
     };
 
@@ -359,6 +360,8 @@ fn compound_assignment(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList
                             .PLUS_EQUAL => token.TokenType.PLUS,
                             .MINUS_EQUAL => token.TokenType.MINUS,
                             .POWER_EQUAL => token.TokenType.POWER,
+                            .ASTERISK_EQUAL => token.TokenType.ASTERISK,
+                            .SLASH_EQUAL => token.TokenType.SLASH,
                             else => unreachable,
                         };
 
@@ -384,6 +387,62 @@ fn compound_assignment(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList
                             },
                             .data = .{ .Binary = .{
                                 .left = array_access,
+                                .operator = .{
+                                    .type = binary_op,
+                                    .lexeme = operator.lexeme,
+                                    .literal = operator.literal,
+                                    .line = operator.line,
+                                    .column = operator.column,
+                                    .file = operator.file,
+                                },
+                                .right = value,
+                            } },
+                        };
+
+                        break :blk binary_expr;
+                    },
+                },
+            },
+        },
+        .FieldAccess => |fa| .{
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(operator),
+            },
+            .data = .{
+                .FieldAssignment = .{
+                    .object = fa.object,
+                    .field = fa.field,
+                    .value = blk: {
+                        // Convert compound operator to binary operator
+                        const binary_op = switch (operator.type) {
+                            .PLUS_EQUAL => token.TokenType.PLUS,
+                            .MINUS_EQUAL => token.TokenType.MINUS,
+                            .POWER_EQUAL => token.TokenType.POWER,
+                            .ASTERISK_EQUAL => token.TokenType.ASTERISK,
+                            .SLASH_EQUAL => token.TokenType.SLASH,
+                            else => unreachable,
+                        };
+
+                        // Recreate a FieldAccess expression for left side (object.field)
+                        const field_left = try self.allocator.create(ast.Expr);
+                        field_left.* = .{
+                            .base = .{
+                                .id = ast.generateNodeId(),
+                                .span = ast.SourceSpan.fromToken(operator),
+                            },
+                            .data = .{ .FieldAccess = .{ .object = fa.object, .field = fa.field } },
+                        };
+
+                        // Build binary expression: (object.field) <op> value
+                        const binary_expr = try self.allocator.create(ast.Expr);
+                        binary_expr.* = .{
+                            .base = .{
+                                .id = ast.generateNodeId(),
+                                .span = ast.SourceSpan.fromToken(operator),
+                            },
+                            .data = .{ .Binary = .{
+                                .left = field_left,
                                 .operator = .{
                                     .type = binary_op,
                                     .lexeme = operator.lexeme,
