@@ -107,6 +107,7 @@ pub const HIRInstruction = union(enum) {
     StoreParamAlias: struct {
         param_name: []const u8,
         param_type: HIRType, // For initial type info of the alias
+        var_index: u32, // Variable index for the alias parameter
     },
 
     //==================================================================

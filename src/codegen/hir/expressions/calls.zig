@@ -58,10 +58,6 @@ pub const CallsHandler = struct {
                         call_kind = .ModuleFunction;
                     }
 
-                    // Emit only the arguments for module function
-                    for (call_data.arguments) |arg| {
-                        try self.generator.generateExpression(arg.expr, true, should_pop_after_use);
-                    }
                 } else if (field_access.object.data == .FieldAccess) {
                     // Nested module namespace: e.g., graphics.raylib.Func(...)
                     const inner = field_access.object.data.FieldAccess;
@@ -73,10 +69,6 @@ pub const CallsHandler = struct {
                             const sub_ns = inner.field.lexeme; // e.g., "raylib" or "doxa"
                             function_name = try std.fmt.allocPrint(self.generator.allocator, "{s}.{s}.{s}", .{ root_name, sub_ns, field_access.field.lexeme });
                             call_kind = .ModuleFunction;
-                            // Emit only the arguments for module function
-                            for (call_data.arguments) |arg| {
-                                try self.generator.generateExpression(arg.expr, true, should_pop_after_use);
-                            }
                         }
                     }
                 } else if (field_access.object.data == .Variable) {
@@ -228,16 +220,17 @@ pub const CallsHandler = struct {
                     try self.generator.instructions.append(.{ .EnterScope = .{ .scope_id = self.generator.label_generator.label_count + 1000, .var_count = @intCast(func_body.function_info.arity) } });
 
                     // Store parameters from the stack into local variables (reverse order)
+                    // ALL parameters must be processed in reverse order since they're all popped from the same stack
                     var p_index: usize = func_body.function_params.len;
                     while (p_index > 0) {
                         p_index -= 1;
                         const param = func_body.function_params[p_index];
                         const expected_t = func_body.param_types[p_index];
                         if (func_body.param_is_alias[p_index]) {
-                            // Ensure a local variable slot exists for the alias parameter in inline scope
-                            _ = try self.generator.getOrCreateVariable(param.name.lexeme);
                             // Alias parameter: the caller pushed a storage id reference
-                            try self.generator.instructions.append(.{ .StoreParamAlias = .{ .param_name = param.name.lexeme, .param_type = expected_t } });
+                            // Use the actual parameter position (not the reverse index)
+                            const param_position = p_index + 1;
+                            try self.generator.instructions.append(.{ .StoreParamAlias = .{ .param_name = param.name.lexeme, .param_type = expected_t, .var_index = @intCast(param_position) } });
                         } else {
                             const var_idx_inline = try self.generator.getOrCreateVariable(param.name.lexeme);
                             try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = var_idx_inline, .var_name = param.name.lexeme, .scope_kind = .Local, .module_context = null, .expected_type = expected_t } });

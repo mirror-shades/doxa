@@ -362,8 +362,10 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                 // Also record union members by index if present by name (only if pre-stored)
                 if (self.current_function == null) {
                     if (self.symbol_table.getUnionMembersByName(decl.name.lexeme)) |members0| {
-                        const var_idx2 = try self.getOrCreateVariable(decl.name.lexeme);
-                        try self.symbol_table.trackVariableUnionMembersByIndex(var_idx2, members0);
+                        // Use the same variable index that was already created above
+                        if (self.symbol_table.getVariable(decl.name.lexeme)) |idx| {
+                            try self.symbol_table.trackVariableUnionMembersByIndex(idx, members0);
+                        }
                     }
                 }
             }

@@ -136,6 +136,16 @@ pub fn stringToColorName(color_str: []const u8) ?ColorName {
     return null;
 }
 
+// Helper function to create DoxaColor from 4 bytes (RGBA format)
+pub fn bytesToDoxaColor(r: u8, g: u8, b: u8, a: u8) DoxaColor {
+    return DoxaColor{ .r = r, .g = g, .b = b, .a = a };
+}
+
+// Helper function to create DoxaColor from 3 bytes (RGB format, alpha defaults to 255)
+pub fn rgbToDoxaColor(r: u8, g: u8, b: u8) DoxaColor {
+    return DoxaColor{ .r = r, .g = g, .b = b, .a = 255 };
+}
+
 const std = @import("std");
 pub const ImageFlipHorizontal = c.ImageFlipHorizontal;
 pub const ImageFlipVertical = c.ImageFlipVertical;
