@@ -121,16 +121,29 @@ pub const AssignmentsHandler = struct {
 
     /// Generate HIR for compound assignment expressions
     pub fn generateCompoundAssign(self: *AssignmentsHandler, compound: ast.CompoundAssignment, preserve_result: bool) !void {
-        // Load current variable value
-        const var_idx = try self.generator.getOrCreateVariable(compound.name.lexeme);
-        try self.generator.instructions.append(.{
-            .LoadVar = .{
-                .var_index = var_idx,
-                .var_name = compound.name.lexeme,
-                .scope_kind = .Local,
-                .module_context = null,
-            },
-        });
+        // Check if this is an alias parameter
+        if (self.generator.symbol_table.isAliasParameter(compound.name.lexeme)) {
+            // For alias parameters, we need to load from the alias, not the local variable
+            // The alias should be bound to the original variable's storage
+            // We'll use a special instruction to load from the alias
+            try self.generator.instructions.append(.{
+                .LoadAlias = .{
+                    .var_name = compound.name.lexeme,
+                    .slot_index = 1, // TODO: Get the correct slot index from the alias binding
+                },
+            });
+        } else {
+            // Regular variable - load from local storage
+            const var_idx = try self.generator.getOrCreateVariable(compound.name.lexeme);
+            try self.generator.instructions.append(.{
+                .LoadVar = .{
+                    .var_index = var_idx,
+                    .var_name = compound.name.lexeme,
+                    .scope_kind = .Local,
+                    .module_context = null,
+                },
+            });
+        }
 
         // Generate the value expression (e.g., the "1" in "current += 1")
         try self.generator.generateExpression(compound.value.?, true, false);
@@ -180,13 +193,26 @@ pub const AssignmentsHandler = struct {
 
         // Store the result back to the variable
         const expected_type = self.generator.getTrackedVariableType(compound.name.lexeme) orelse .Unknown;
-        try self.generator.instructions.append(.{ .StoreVar = .{
-            .var_index = var_idx,
-            .var_name = compound.name.lexeme,
-            .scope_kind = .Local,
-            .module_context = null,
-            .expected_type = expected_type,
-        } });
+        if (self.generator.symbol_table.isAliasParameter(compound.name.lexeme)) {
+            // For alias parameters, store to the alias, not the local variable
+            try self.generator.instructions.append(.{
+                .StoreAlias = .{
+                    .var_name = compound.name.lexeme,
+                    .slot_index = 1, // TODO: Get the correct slot index from the alias binding
+                    .expected_type = expected_type,
+                },
+            });
+        } else {
+            // Regular variable - store to local storage
+            const var_idx = try self.generator.getOrCreateVariable(compound.name.lexeme);
+            try self.generator.instructions.append(.{ .StoreVar = .{
+                .var_index = var_idx,
+                .var_name = compound.name.lexeme,
+                .scope_kind = .Local,
+                .module_context = null,
+                .expected_type = expected_type,
+            } });
+        }
     }
 
     // Private helper methods for each compound operator type

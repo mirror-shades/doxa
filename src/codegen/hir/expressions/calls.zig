@@ -254,13 +254,14 @@ pub const CallsHandler = struct {
         }
 
         // Fallback: regular call emission
+        const target_module = try self.generator.computeTargetModule(function_name, call_kind);
         try self.generator.instructions.append(.{
             .Call = .{
                 .function_index = function_index,
                 .qualified_name = function_name,
                 .arg_count = arg_emitted_count,
                 .call_kind = call_kind,
-                .target_module = null,
+                .target_module = target_module,
                 .return_type = return_type,
             },
         });

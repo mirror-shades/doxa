@@ -70,11 +70,17 @@ pub const TypeOps = struct {
         try vm.stack.push(HIRFrame.initFromHIRValue(out));
     }
 
-    /// Type reflection operation (placeholder - not currently implemented in VM)
+    /// Type reflection operation - returns the type of the top stack value
     pub fn execTypeOf(vm: anytype, t: anytype) !void {
-        _ = vm;
-        _ = t;
-        // TODO: Implement TypeOf operation when needed
-        return ErrorList.NotImplemented;
+        _ = t; // We don't need the type parameter for this operation
+
+        // Pop the value from the stack
+        const value = try vm.stack.pop();
+
+        // Get the runtime type string
+        const type_string = debug_print.getTypeString(vm, value.value);
+
+        // Push the type string back to the stack
+        try vm.stack.push(HIRFrame.initString(type_string));
     }
 };

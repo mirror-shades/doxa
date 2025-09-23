@@ -8,6 +8,10 @@ const ErrorList = Errors.ErrorList;
 pub const StackOps = struct {
     /// Duplicate top stack value
     pub fn execDup(vm: anytype) !void {
+        if (vm.stack.sp == 0) {
+            std.debug.print("DEBUG: execDup called with empty stack (sp=0)\n", .{});
+            return ErrorList.StackUnderflow;
+        }
         const value = try vm.stack.peek();
         try vm.stack.push(HIRFrame.initFromHIRValue(value.value));
     }

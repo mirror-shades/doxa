@@ -28,6 +28,27 @@ const ResizeBehavior = SoxaInstructions.ResizeBehavior;
 const HIRGenerator = @import("soxa_generator.zig").HIRGenerator;
 const SoxaTextParser = @import("soxa_parser.zig").SoxaTextParser;
 
+const HirTypeNames = [_][]const u8{
+    "Int",
+    "Byte",
+    "Float",
+    "String",
+    "Tetra",
+    "Nothing",
+    "Array",
+    "Struct",
+    "Map",
+    "Enum",
+    "Function",
+    "Union",
+    "Unknown",
+};
+
+fn hirTypeNameSafe(value: HIRType) []const u8 {
+    const raw = @intFromEnum(value);
+    return if (raw < HirTypeNames.len) HirTypeNames[raw] else "Invalid";
+}
+
 pub fn translateToVMBytecode(program: *HIRProgram, allocator: std.mem.Allocator, reporter: *reporting.Reporter) ![]u8 {
     var bytecode = std.array_list.Managed(u8).init(allocator);
     defer bytecode.deinit();
@@ -288,6 +309,13 @@ pub fn writeSoxaFile(program: *HIRProgram, file_path: []const u8, source_path: [
         for (program.function_table) |func| {
             try writer.print("    {s}({} args) -> {s}\n", .{ func.name, func.arity, @tagName(func.return_type) });
             try writer.print("        entry: {s}\n", .{func.start_label});
+
+            for (func.param_types, 0..) |param_type, idx| {
+                const alias_flag = if (idx < func.param_is_alias.len) func.param_is_alias[idx] else false;
+                const alias_str = if (alias_flag) "true" else "false";
+                try writer.print("        param[{}]:{s} alias:{s}\n", .{ idx, hirTypeNameSafe(param_type), alias_str });
+            }
+
             if (func.is_entry) {
                 try writer.print("        main: true\n", .{});
             }
@@ -987,6 +1015,9 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
         .TypeCheck => |tc| try writer.print("    TypeCheck \"{s}\"              ; Type check\n", .{tc.target_type}),
 
         .Range => |r| try writer.print("    Range {s}                    ; Create array from range\n", .{@tagName(r.element_type)}),
+
+        .LoadAlias => |la| try writer.print("    LoadAlias {} \"{s}\"           ; Load from alias parameter\n", .{ la.slot_index, la.var_name }),
+        .StoreAlias => |sa| try writer.print("    StoreAlias {} \"{s}\" {s}        ; Store to alias parameter\n", .{ sa.slot_index, sa.var_name, @tagName(sa.expected_type) }),
 
         else => try writer.print("    ; TODO: {s}\n", .{@tagName(instruction)}),
     }
