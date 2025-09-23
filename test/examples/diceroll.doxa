@@ -12,20 +12,20 @@ function add(a :: int, b :: int) returns int {
 // Dice roll benchmark
 function dice_roll_benchmark() {
     var count is 0
-    var start_time is @time()
+    var start_time is @tick()
     
     for i is 1 while i <= limit do i += 1 {
         const roll is diceRoll()
         count is count + roll  // Prevent optimization
     }
     
-    var end_time is @time()
-    @print("Dice rolls: {count}, Time: {end_time - start_time}s\n")
+    var end_time is @tick()
+    @print("Dice rolls: {count}, Time: {(end_time - start_time) / 1000000000 }s\n")
 }
 
 // FizzBuzz benchmark
 function fizzbuzz_benchmark() {
-    var start_time is @time()
+    var start_time is @tick()
     
     for i is 1 while i <= limit do i += 1 {
         if i % 15 == 0 then "FizzBuzz"
@@ -34,32 +34,32 @@ function fizzbuzz_benchmark() {
         else @string(i)
     }
     
-    var end_time is @time()
-    @print("FizzBuzz time: {end_time - start_time}s\n")
+    var end_time is @tick()
+    @print("FizzBuzz time: {(end_time - start_time) / 1000000000 }s\n")
 }
 
 // Arithmetic benchmark
 function arithmetic_benchmark() {
     var sum is 0
-    var start is @time()
+    var start is @tick()
     
     each i in 1 to limit {
         sum += i * 2 + 1
     }
     
-    @print("Arithmetic: {sum}, Time: {@time() - start}s\n")
+    @print("Arithmetic: {sum}, Time: {(@tick() - start) / 1000000000}s\n")
 }
 
 // Function call benchmark  
 function call_benchmark() {
     var sum is 0
-    var start is @time()
+    var start is @tick()
     
     each i in 1 to limit {
         sum += add(i, i + 1)
     }
     
-    @print("Function calls: {sum}, Time: {@time() - start}s\n")
+    @print("Function calls: {sum}, Time: {(@tick() - start) / 1000000000}s\n")
 }
 
 // Run all benchmarks

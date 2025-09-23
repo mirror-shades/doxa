@@ -435,11 +435,15 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
             // Skip - function declarations are handled in multi-pass approach
         },
         .Return => |ret| {
+            std.debug.print("DEBUG: Processing return statement\n", .{});
             if (ret.value) |value| {
+                std.debug.print("DEBUG: Return has value, checking for tail call\n", .{});
                 // TAIL CALL OPTIMIZATION: Check if return value is a direct function call
                 if (self.tryGenerateTailCall(value)) {
+                    std.debug.print("DEBUG: Tail call generated for return statement\n", .{});
                     return; // Tail call replaces both Call and Return
                 } else {
+                    std.debug.print("DEBUG: Regular return with value, generating expression\n", .{});
                     // Regular return with value
                     try self.generateExpression(value, true, true);
                     // Infer return type from the returned expression to avoid relying on signature inference
@@ -447,6 +451,7 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                     try self.instructions.append(.{ .Return = .{ .has_value = true, .return_type = inferred_ret_type } });
                 }
             } else {
+                std.debug.print("DEBUG: Return without value\n", .{});
                 try self.instructions.append(.{ .Return = .{ .has_value = false, .return_type = .Nothing } });
             }
         },

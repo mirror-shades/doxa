@@ -20,6 +20,9 @@ pub const SymbolTable = struct {
     variable_union_members: std.StringHashMap([][]const u8), // Legacy, may cause collisions across scopes
     variable_union_members_by_index: std.AutoHashMap(u32, [][]const u8), // Index-based to avoid name collisions
 
+    // Alias parameter tracking
+    alias_parameters: std.StringHashMap(void), // Track which variables are alias parameters
+
     // Function context
     current_function: ?[]const u8,
 
@@ -36,6 +39,7 @@ pub const SymbolTable = struct {
             .variable_array_element_types = std.StringHashMap(HIRType).init(allocator),
             .variable_union_members = std.StringHashMap([][]const u8).init(allocator),
             .variable_union_members_by_index = std.AutoHashMap(u32, [][]const u8).init(allocator),
+            .alias_parameters = std.StringHashMap(void).init(allocator),
             .current_function = null,
             .allocator = allocator,
         };
@@ -49,6 +53,7 @@ pub const SymbolTable = struct {
         self.variable_array_element_types.deinit();
         self.variable_union_members.deinit();
         self.variable_union_members_by_index.deinit();
+        self.alias_parameters.deinit();
     }
 
     /// Enter function scope - resets local variable tracking
@@ -59,6 +64,10 @@ pub const SymbolTable = struct {
         self.local_variables.deinit();
         self.local_variables = std.StringHashMap(u32).init(self.allocator);
         self.local_variable_count = 0;
+        
+        // Clear alias parameters for the new function scope
+        self.alias_parameters.deinit();
+        self.alias_parameters = std.StringHashMap(void).init(self.allocator);
     }
 
     /// Exit function scope
@@ -139,6 +148,16 @@ pub const SymbolTable = struct {
     /// Track union member type names by variable index to avoid name collisions
     pub fn trackVariableUnionMembersByIndex(self: *SymbolTable, var_index: u32, members: [][]const u8) !void {
         try self.variable_union_members_by_index.put(var_index, members);
+    }
+
+    /// Track an alias parameter
+    pub fn trackAliasParameter(self: *SymbolTable, var_name: []const u8) !void {
+        try self.alias_parameters.put(var_name, {});
+    }
+
+    /// Check if a variable is an alias parameter
+    pub fn isAliasParameter(self: *SymbolTable, var_name: []const u8) bool {
+        return self.alias_parameters.contains(var_name);
     }
 
     /// Get union members by variable index

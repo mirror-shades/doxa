@@ -32,6 +32,8 @@ pub const SoxaTextParser = struct {
     functions: std.array_list.Managed(HIRProgram.HIRFunction),
     instructions: std.array_list.Managed(HIRInstruction),
     struct_context: ?StructContext = null,
+    label_to_function: std.StringHashMap(usize),
+    current_function: ?usize = null,
 
     const StructContext = struct {
         type_name: []const u8, // Changed from struct_name to type_name to match usage
@@ -49,6 +51,8 @@ pub const SoxaTextParser = struct {
             .functions = std.array_list.Managed(HIRProgram.HIRFunction).init(allocator),
             .instructions = std.array_list.Managed(HIRInstruction).init(allocator),
             .struct_context = null,
+            .label_to_function = std.StringHashMap(usize).init(allocator),
+            .current_function = null,
         };
     }
 
@@ -58,6 +62,7 @@ pub const SoxaTextParser = struct {
             context.field_types.deinit();
             context.field_path.deinit();
         }
+        self.label_to_function.deinit();
     }
 
     pub fn parse(self: *SoxaTextParser) !HIRProgram {
@@ -85,6 +90,9 @@ pub const SoxaTextParser = struct {
                 // Function metadata - update the last function's entry point
                 try self.updateFunctionEntry(trimmed_right);
                 continue;
+            } else if (std.mem.startsWith(u8, trimmed_right, "        param[")) {
+                try self.updateFunctionParam(trimmed_right);
+                continue;
             } else if (std.mem.indexOf(u8, trimmed_right, ":")) |_| {
                 // Check if this is an instruction with location info (like "Peek ... @file:line:column")
                 const trimmed_line = std.mem.trim(u8, trimmed_right, " \t");
@@ -110,8 +118,9 @@ pub const SoxaTextParser = struct {
                     if (is_label) {
                         const label_line = pre_comment;
                         const label_colon_pos = std.mem.indexOf(u8, label_line, ":").?;
-                        const label_name = try self.allocator.dupe(u8, label_line[0..label_colon_pos]);
-                        try self.instructions.append(HIRInstruction{ .Label = .{ .name = label_name, .vm_address = 0 } });
+                        const label_slice = label_line[0..label_colon_pos];
+                        try self.handleLabel(label_slice);
+                        continue;
                     } else {
                         // Not a label, fall through to instruction parsing
                         if (std.mem.indexOf(u8, trimmed_right, "(") != null and std.mem.indexOf(u8, trimmed_right, "args)") != null) {
@@ -208,12 +217,21 @@ pub const SoxaTextParser = struct {
                 }
             }
 
+            var return_type: HIRType = .Unknown;
+            if (std.mem.indexOf(u8, trimmed, "->")) |arrow_pos| {
+                const type_start = arrow_pos + 2;
+                const type_str = std.mem.trim(u8, trimmed[type_start..], " \t");
+                if (type_str.len != 0) {
+                    return_type = parseTypeToken(type_str);
+                }
+            }
+
             // Create function with placeholder start_label - will be updated when we see the entry line
             try self.functions.append(HIRProgram.HIRFunction{
                 .name = name,
                 .qualified_name = name,
                 .arity = arity,
-                .return_type = .Unknown,
+                .return_type = return_type,
                 .start_label = try self.allocator.dupe(u8, "unknown"), // Will be updated
                 .local_var_count = 0,
                 .is_entry = false,
@@ -240,11 +258,115 @@ pub const SoxaTextParser = struct {
             // Update the last function we parsed
             if (self.functions.items.len > 0) {
                 const last_func_idx = self.functions.items.len - 1;
-                self.functions.items[last_func_idx].start_label = try self.allocator.dupe(u8, label);
+                const label_copy = try self.allocator.dupe(u8, label);
+                self.functions.items[last_func_idx].start_label = label_copy;
+                _ = try self.label_to_function.put(label_copy, last_func_idx);
             }
         }
     }
 
+    fn updateFunctionParam(self: *SoxaTextParser, param_line: []const u8) !void {
+        const trimmed = std.mem.trim(u8, param_line, " \t");
+        const open_idx = std.mem.indexOfScalar(u8, trimmed, '[') orelse return;
+        const close_idx = std.mem.indexOfScalarPos(u8, trimmed, open_idx + 1, ']') orelse return;
+        const index_str = std.mem.trim(u8, trimmed[open_idx + 1 .. close_idx], " \t");
+        const param_index = std.fmt.parseInt(usize, index_str, 10) catch return;
+
+        const colon_idx = std.mem.indexOfScalarPos(u8, trimmed, close_idx + 1, ':') orelse return;
+        const after_colon_full = std.mem.trimLeft(u8, trimmed[colon_idx + 1 ..], " \t");
+
+        const alias_marker = std.mem.indexOf(u8, after_colon_full, "alias:");
+        const type_slice = blk: {
+            if (alias_marker) |pos| {
+                break :blk std.mem.trimRight(u8, after_colon_full[0..pos], " \t");
+            }
+            break :blk std.mem.trimRight(u8, after_colon_full, " \t");
+        };
+
+        var alias_flag = false;
+        if (alias_marker) |pos| {
+            const alias_start = pos + "alias:".len;
+            const alias_slice = std.mem.trim(u8, after_colon_full[alias_start..], " \t");
+            alias_flag = std.mem.startsWith(u8, alias_slice, "true");
+        }
+
+        if (self.functions.items.len == 0) return;
+        const last_func_idx = self.functions.items.len - 1;
+        if (param_index >= self.functions.items[last_func_idx].param_types.len) return;
+
+        self.functions.items[last_func_idx].param_types[param_index] = parseTypeToken(type_slice);
+        if (param_index < self.functions.items[last_func_idx].param_is_alias.len) {
+            self.functions.items[last_func_idx].param_is_alias[param_index] = alias_flag;
+        }
+    }
+
+    fn parseTypeToken(token: []const u8) HIRType {
+        if (std.mem.eql(u8, token, "Int")) return .Int;
+        if (std.mem.eql(u8, token, "Float")) return .Float;
+        if (std.mem.eql(u8, token, "String")) return .String;
+        if (std.mem.eql(u8, token, "Byte")) return .Byte;
+        if (std.mem.eql(u8, token, "Tetra")) return .Tetra;
+        if (std.mem.eql(u8, token, "Nothing")) return .Nothing;
+        if (std.mem.eql(u8, token, "Array")) return .Array;
+        if (std.mem.eql(u8, token, "Struct")) return .Struct;
+        if (std.mem.eql(u8, token, "Map")) return .Map;
+        if (std.mem.eql(u8, token, "Enum")) return .Enum;
+        if (std.mem.eql(u8, token, "Function")) return .Function;
+        if (std.mem.eql(u8, token, "Union")) return .Union;
+        if (std.mem.eql(u8, token, "Auto")) return .Unknown;
+        return .Unknown;
+    }
+
+    fn inferTargetModule(self: *SoxaTextParser, qualified_name: []const u8, call_kind: CallKind) !?[]const u8 {
+        if (call_kind != .ModuleFunction) {
+            return null;
+        }
+        const dot_idx = std.mem.lastIndexOfScalar(u8, qualified_name, '.') orelse return null;
+        if (dot_idx == 0) return null;
+        return try self.allocator.dupe(u8, qualified_name[0..dot_idx]);
+    }
+
+    fn findFunctionIndexForLabel(self: *SoxaTextParser, label: []const u8) ?usize {
+        if (self.label_to_function.get(label)) |idx| {
+            return idx;
+        }
+
+        if (std.mem.startsWith(u8, label, "func_")) {
+            const rest = label[5..];
+            if (std.mem.indexOfScalar(u8, rest, '_')) |underscore| {
+                const name_slice = rest[0..underscore];
+                for (self.functions.items, 0..) |func, idx| {
+                    if (std.mem.eql(u8, func.name, name_slice)) {
+                        _ = self.label_to_function.put(label, idx) catch {};
+                        return idx;
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
+
+    fn handleLabel(self: *SoxaTextParser, label_slice: []const u8) !void {
+        const label_copy = try self.allocator.dupe(u8, label_slice);
+
+        if (self.findFunctionIndexForLabel(label_copy)) |idx| {
+            self.current_function = idx;
+            var func = &self.functions.items[idx];
+            if (std.mem.indexOf(u8, label_copy, "_body_") != null) {
+                if (func.body_label == null) {
+                    func.body_label = label_copy;
+                }
+                _ = self.label_to_function.put(label_copy, idx) catch {};
+            } else {
+                _ = self.label_to_function.put(label_copy, idx) catch {};
+            }
+        } else if (self.current_function == null) {
+            self.current_function = null;
+        }
+
+        try self.instructions.append(HIRInstruction{ .Label = .{ .name = label_copy, .vm_address = 0 } });
+    }
     fn parseInstruction(self: *SoxaTextParser, line: []const u8) !void {
         const trimmed = std.mem.trim(u8, line, " \t");
 
@@ -334,6 +456,20 @@ pub const SoxaTextParser = struct {
             const name_quoted = tokens.next() orelse return;
             const var_name = try self.parseQuotedString(name_quoted);
             try self.instructions.append(HIRInstruction{ .StoreVar = .{ .var_index = var_index, .var_name = var_name, .scope_kind = .Local, .module_context = null, .expected_type = .Unknown } });
+        } else if (std.mem.eql(u8, op, "LoadAlias")) {
+            const idx_str = tokens.next() orelse return;
+            const slot_index = std.fmt.parseInt(u32, idx_str, 10) catch return;
+            const name_quoted = tokens.next() orelse return;
+            const var_name = try self.parseQuotedString(name_quoted);
+            try self.instructions.append(HIRInstruction{ .LoadAlias = .{ .slot_index = slot_index, .var_name = var_name } });
+        } else if (std.mem.eql(u8, op, "StoreAlias")) {
+            const idx_str = tokens.next() orelse return;
+            const slot_index = std.fmt.parseInt(u32, idx_str, 10) catch return;
+            const name_quoted = tokens.next() orelse return;
+            const var_name = try self.parseQuotedString(name_quoted);
+            const type_str = tokens.next() orelse return;
+            const expected_type = if (std.mem.eql(u8, type_str, "Int")) HIRType.Int else if (std.mem.eql(u8, type_str, "String")) HIRType.String else if (std.mem.eql(u8, type_str, "Float")) HIRType.Float else HIRType.Unknown;
+            try self.instructions.append(HIRInstruction{ .StoreAlias = .{ .slot_index = slot_index, .var_name = var_name, .expected_type = expected_type } });
         } else if (std.mem.eql(u8, op, "StoreConst")) {
             const idx_str = tokens.next() orelse return;
             const var_index = std.fmt.parseInt(u32, idx_str, 10) catch return;
@@ -400,14 +536,19 @@ pub const SoxaTextParser = struct {
             const qualified_name = try self.parseQuotedString(name_quoted);
             const call_kind = if (std.mem.eql(u8, kind_str, "LocalFunction")) CallKind.LocalFunction else if (std.mem.eql(u8, kind_str, "ModuleFunction")) CallKind.ModuleFunction else if (std.mem.eql(u8, kind_str, "BuiltinFunction")) CallKind.BuiltinFunction else CallKind.LocalFunction;
 
+            var return_type: HIRType = .Unknown;
+            if (call_kind == .LocalFunction and function_index < self.functions.items.len) {
+                return_type = self.functions.items[function_index].return_type;
+            }
+
             try self.instructions.append(HIRInstruction{
                 .Call = .{
                     .function_index = function_index,
                     .qualified_name = qualified_name,
                     .arg_count = arg_count,
                     .call_kind = call_kind,
-                    .target_module = null,
-                    .return_type = .String, // Default to String to prevent Auto leakage
+                    .target_module = try self.inferTargetModule(qualified_name, call_kind),
+                    .return_type = return_type,
                 },
             });
         } else if (std.mem.eql(u8, op, "TailCall")) {
@@ -421,20 +562,33 @@ pub const SoxaTextParser = struct {
             const qualified_name = try self.parseQuotedString(name_quoted);
             const call_kind = if (std.mem.eql(u8, kind_str, "LocalFunction")) CallKind.LocalFunction else if (std.mem.eql(u8, kind_str, "ModuleFunction")) CallKind.ModuleFunction else if (std.mem.eql(u8, kind_str, "BuiltinFunction")) CallKind.BuiltinFunction else CallKind.LocalFunction;
 
+            var return_type: HIRType = .Unknown;
+            if (call_kind == .LocalFunction and function_index < self.functions.items.len) {
+                return_type = self.functions.items[function_index].return_type;
+            }
+
             try self.instructions.append(HIRInstruction{
                 .TailCall = .{
                     .function_index = function_index,
                     .qualified_name = qualified_name,
                     .arg_count = arg_count,
                     .call_kind = call_kind,
-                    .target_module = null,
-                    .return_type = .String, // Default to String to prevent Auto leakage
+                    .target_module = try self.inferTargetModule(qualified_name, call_kind),
+                    .return_type = return_type,
                 },
             });
         } else if (std.mem.eql(u8, op, "Return")) {
             const has_val_str = tokens.next() orelse return;
             const has_value = std.mem.eql(u8, has_val_str, "true");
-            try self.instructions.append(HIRInstruction{ .Return = .{ .has_value = has_value, .return_type = .Nothing } }); // Default to Nothing to prevent Auto leakage
+            var return_type: HIRType = .Nothing;
+            if (has_value) {
+                if (self.current_function) |idx| {
+                    return_type = self.functions.items[idx].return_type;
+                } else {
+                    return_type = .Unknown;
+                }
+            }
+            try self.instructions.append(HIRInstruction{ .Return = .{ .has_value = has_value, .return_type = return_type } });
         } else if (std.mem.eql(u8, op, "Dup")) {
             try self.instructions.append(HIRInstruction.Dup);
         } else if (std.mem.eql(u8, op, "Pop")) {

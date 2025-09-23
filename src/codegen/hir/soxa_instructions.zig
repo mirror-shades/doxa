@@ -110,6 +110,19 @@ pub const HIRInstruction = union(enum) {
         var_index: u32, // Variable index for the alias parameter
     },
 
+    /// Load value from an alias parameter
+    LoadAlias: struct {
+        var_name: []const u8,
+        slot_index: u32,
+    },
+
+    /// Store value to an alias parameter
+    StoreAlias: struct {
+        var_name: []const u8,
+        slot_index: u32,
+        expected_type: HIRType,
+    },
+
     //==================================================================
     // ARITHMETIC OPERATIONS (Type-preserving)
     //==================================================================

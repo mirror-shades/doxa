@@ -40,6 +40,7 @@ const CallStack = core.CallStack;
 const HotVar = core.HotVar;
 const HIRFrame = core.HIRFrame;
 const CallFrame = core.CallFrame;
+pub const BytecodeVM = @import("bytecode_vm.zig").BytecodeVM;
 const ops_logical = @import("ops/logical.zig");
 const ops_strings = @import("ops/strings.zig");
 const ops_array = @import("ops/array.zig");

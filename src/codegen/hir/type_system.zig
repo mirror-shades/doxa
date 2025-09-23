@@ -226,7 +226,7 @@ pub const TypeSystem = struct {
 
     /// Comprehensive type inference from expressions
     pub fn inferTypeFromExpression(self: *TypeSystem, expr: *ast.Expr, symbol_table: *SymbolTable) HIRType {
-        return switch (expr.data) {
+        const result = switch (expr.data) {
             .Literal => |lit| self.inferTypeFromLiteral(lit),
             .Map => .Map,
             .Variable => |var_token| {
@@ -308,6 +308,7 @@ pub const TypeSystem = struct {
                 if (std.mem.eql(u8, name, "string")) return .String;
                 if (std.mem.eql(u8, name, "byte")) return .Byte;
                 if (std.mem.eql(u8, name, "time")) return .Int;
+                if (std.mem.eql(u8, name, "tick")) return .Int;
                 if (std.mem.eql(u8, name, "push")) return .Nothing; // modifies in place, returns nothing
                 if (std.mem.eql(u8, name, "pop")) {
                     if (bc.arguments.len > 0) {
@@ -388,6 +389,7 @@ pub const TypeSystem = struct {
             },
             else => .String, // Default to String for any unhandled expression types to prevent Auto leakage
         };
+        return result;
     }
 
     /// Infer binary operation result type with proper type promotion

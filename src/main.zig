@@ -22,10 +22,17 @@ const SoxaCompiler = @import("./codegen/hir/soxa.zig");
 const HIRGenerator = @import("./codegen/hir/soxa_generator.zig").HIRGenerator;
 const SoxaTextParser = @import("./codegen/hir/soxa_parser.zig").SoxaTextParser;
 const DoxaVM = @import("./interpreter/vm.zig").HIRVM;
+const BytecodeVM = @import("./interpreter/bytecode_vm.zig").BytecodeVM;
 const ConstantFolder = @import("./parser/constant_folder.zig").ConstantFolder;
 const PeepholeOptimizer = @import("./codegen/hir/peephole.zig").PeepholeOptimizer;
 const Errors = @import("./utils/errors.zig");
 const ErrorCode = Errors.ErrorCode;
+const ProfilerImport = @import("./utils/profiler.zig");
+const Phase = ProfilerImport.Phase;
+const Profiler = ProfilerImport.Profiler;
+const BytecodeGenerator = @import("./codegen/bytecode/generator.zig").BytecodeGenerator;
+const BytecodeWriter = @import("./codegen/bytecode/writer.zig");
+const BytecodeModule = @import("./codegen/bytecode/module.zig").BytecodeModule;
 
 ///==========================================================================
 /// Constants
@@ -59,6 +66,7 @@ const CLI = struct {
     keep_artifacts: bool,
     output: ?[]const u8,
     script_path: ?[]const u8,
+    profile: bool,
 };
 
 ///==========================================================================
@@ -143,6 +151,15 @@ fn compileToNative(memoryManager: *MemoryManager, soxa_path: []const u8, output_
     // TODO: Implement LLVM pipeline
     reporter.reportInternalError("!! LLVM compilation not implemented yet\n", .{}, @src());
     reporter.debug(">> Would compile {s} -> {s}\n", .{ soxa_path, output_path }, @src());
+}
+
+fn writeBytecodeArtifact(bytecode_module: *BytecodeModule, path: []const u8, reporter: *Reporter) !void {
+    if (std.fs.path.dirname(path)) |dir| {
+        std.fs.cwd().makePath(dir) catch {};
+    }
+
+    reporter.debug(">> Writing bytecode artifact: {s}\n", .{path}, @src());
+    try BytecodeWriter.writeBytecodeModuleToFile(bytecode_module, path);
 }
 
 ///==========================================================================
@@ -255,6 +272,51 @@ fn runSoxaFile(memoryManager: *MemoryManager, soxa_path: []const u8, reporter: *
     _ = try vm.run();
 }
 
+fn runBytecodeModule(memoryManager: *MemoryManager, bytecode_module: *BytecodeModule, reporter: *Reporter) !void {
+    var vm = try BytecodeVM.init(memoryManager.getAllocator(), bytecode_module, reporter, memoryManager);
+    defer vm.deinit();
+
+    // NEW: Bridge custom types from memory manager to VM
+    try memoryManager.bridgeTypesToVM(&vm);
+
+    // Run the VM
+    try vm.run();
+}
+
+fn runHirWithFallback(
+    memoryManager: *MemoryManager,
+    soxa_path: []const u8,
+    reporter: *Reporter,
+    statements: []ast.Stmt,
+    parser: *Parser,
+    semantic_analyzer: *SemanticAnalyzer,
+    path: []const u8,
+) !void {
+    runSoxaFile(memoryManager, soxa_path, reporter) catch |err| {
+        if (err == error.EndOfStream or err == error.InvalidFormat) {
+            reporter.reportCompileError(
+                Location{
+                    .file = path,
+                    .range = .{
+                        .start_line = 0,
+                        .start_col = 0,
+                        .end_line = 0,
+                        .end_col = 0,
+                    },
+                },
+                ErrorCode.SOXA_FILE_INCOMPATIBLE,
+                "!! SOXA file incompatible, regenerating...\n",
+                .{},
+            );
+            std.fs.cwd().deleteFile(soxa_path) catch {};
+            try compileDoxaToSoxaFromAST(memoryManager, statements, parser, semantic_analyzer, path, soxa_path, reporter);
+            try runSoxaFile(memoryManager, soxa_path, reporter);
+        } else {
+            return err;
+        }
+    };
+}
+
 fn parseArgs(allocator: std.mem.Allocator) !CLI {
     const args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);
@@ -275,6 +337,7 @@ fn parseArgs(allocator: std.mem.Allocator) !CLI {
         .debug_lexer = false,
         .output = null,
         .script_path = null,
+        .profile = false,
     };
 
     var i: usize = 1;
@@ -289,6 +352,9 @@ fn parseArgs(allocator: std.mem.Allocator) !CLI {
             continue;
         } else if (stringEquals(arg, "--debug-lexer")) {
             options.debug_lexer = true;
+            continue;
+        } else if (stringEquals(arg, "--profile")) {
+            options.profile = true;
             continue;
         } else if (stringEquals(arg, "--output") or stringEquals(arg, "-o")) {
             if (i + 1 >= args.len) {
@@ -429,9 +495,15 @@ pub fn main() !void {
         output_file = out_file;
     }
 
+    var profiler = Profiler.init(gpa.allocator(), cli_options.profile);
+    defer profiler.deinit();
+
     //==========================================================================
     // Process the script
     //==========================================================================
+
+    // Start validation phase if active
+    profiler.startPhase(Phase.VALIDATION);
 
     // Process the script
     const path = cli_options.script_path.?; // Safe to unwrap since we validated it
@@ -460,15 +532,24 @@ pub fn main() !void {
     if (cli_options.reporter_options.debug_mode) {
         std.debug.print("Debug mode enabled\n", .{});
     }
+    if (cli_options.profile) {
+        std.debug.print("Profile mode enabled\n", .{});
+    }
     reporter.debug("reporter debug method working\n", .{}, @src());
 
     // Read source file for AST interpretation
     const source = try std.fs.cwd().readFileAlloc(memoryManager.getAllocator(), path, MAX_FILE_SIZE);
     defer memoryManager.getAllocator().free(source);
 
+    // Stop validation phase if active
+    profiler.stopPhase();
+
     //==========================================================================
     // Lexical analysis
     //==========================================================================
+
+    // Start lexical analysis phase if active
+    profiler.startPhase(Phase.LEXIC_A);
 
     // Lexical analysis
     var lexer = LexicalAnalyzer.init(memoryManager.getAllocator(), source, path, &reporter);
@@ -482,9 +563,15 @@ pub fn main() !void {
         }
     }
 
+    // Stop lexical analysis phase if active
+    profiler.stopPhase();
+
     //==========================================================================
     // Parsing phase
     //==========================================================================
+
+    // Start parsing phase if active
+    profiler.startPhase(Phase.PARSING);
 
     // Parsing phase
     var parser = Parser.init(memoryManager.getAllocator(), tokens.items, path, &reporter);
@@ -496,18 +583,31 @@ pub fn main() !void {
     defer memoryManager.getAllocator().free(ast_path);
     try ASTWriter.writeASTToFile(statements, ast_path);
 
+    // Stop parsing phase if active
+    profiler.stopPhase();
+
     //==========================================================================
     // Semantic analysis
     //==========================================================================
+
+    // Start semantic analysis phase if active
+    profiler.startPhase(Phase.SEMANTIC_A);
+
     var semantic_analyzer = SemanticAnalyzer.init(memoryManager.getAnalysisAllocator(), &reporter, &memoryManager, &parser);
     defer semantic_analyzer.deinit();
     try semantic_analyzer.analyze(statements);
+
+    // Stop semantic analysis phase if active
+    profiler.stopPhase();
 
     //memoryManager.scope_manager.dumpState(0);
 
     //==========================================================================
     // Compile to SOXA
     //==========================================================================
+
+    // Start generation phase if active
+    profiler.startPhase(Phase.GENERATE_S);
 
     // Determine output paths
     const soxa_path = try generateArtifactPath(&memoryManager, path, ".soxa");
@@ -526,40 +626,62 @@ pub fn main() !void {
         reporter.debug(">> Using cached SOXA: {s}\n", .{soxa_path}, @src());
     }
 
+    // Stop generation phase if active
+    profiler.stopPhase();
+
+    //==========================================================================
+    // Bytecode generation
+    //==========================================================================
+
+    // Start bytecode generation phase if active
+    profiler.startPhase(Phase.GENERATE_B);
+
+    // Use original HIR program instead of reading from .soxa file to preserve LoadAlias/StoreAlias instructions
+    var hir_program_for_bytecode = try SoxaCompiler.readSoxaFile(soxa_path, memoryManager.getAllocator());
+    defer hir_program_for_bytecode.deinit();
+    
+    // TODO: Use original HIR program instead of reading from .soxa file
+    // The issue is that SoxaTextParser doesn't handle LoadAlias/StoreAlias instructions
+
+    const artifact_stem = blk: {
+        var filename_start: usize = 0;
+        for (path, 0..) |c, i| {
+            if (c == '/' or c == '\\') filename_start = i + 1;
+        }
+        const filename = path[filename_start..];
+        if (std.mem.lastIndexOfScalar(u8, filename, '.')) |dot| {
+            break :blk filename[0..dot];
+        }
+        break :blk filename;
+    };
+
+    var bytecode_generator = BytecodeGenerator.init(memoryManager.getAllocator(), "out", artifact_stem);
+    var bytecode_module = try bytecode_generator.generate(&hir_program_for_bytecode);
+    defer bytecode_module.deinit();
+
+    if (bytecode_module.artifact_path) |bc_path| {
+        try writeBytecodeArtifact(&bytecode_module, bc_path, &reporter);
+    }
+
+    profiler.stopPhase();
+
     //==========================================================================
     // Execute
     //==========================================================================
 
+    // Start execution phase if active
+    profiler.startPhase(Phase.EXECUTION);
+
     // Execute based on command
     switch (cli_options.command) {
         .run => {
-            reporter.debug(">> Executing with HIR VM\n", .{}, @src());
-            // Try to run SOXA file, but recompile if it's incompatible
-            runSoxaFile(&memoryManager, soxa_path, &reporter) catch |err| {
-                if (err == error.EndOfStream or err == error.InvalidFormat) {
-                    reporter.reportCompileError(
-                        Location{
-                            .file = path,
-                            .range = .{
-                                .start_line = 0,
-                                .start_col = 0,
-                                .end_line = 0,
-                                .end_col = 0,
-                            },
-                        },
-                        ErrorCode.SOXA_FILE_INCOMPATIBLE,
-                        "!! SOXA file incompatible, regenerating...\n",
-                        .{},
-                    );
-                    // Delete the incompatible SOXA file
-                    std.fs.cwd().deleteFile(soxa_path) catch {};
-                    // Recompile
-                    try compileDoxaToSoxaFromAST(&memoryManager, statements, &parser, &semantic_analyzer, path, soxa_path, &reporter);
-                    // Try again
-                    try runSoxaFile(&memoryManager, soxa_path, &reporter);
-                } else {
-                    return err;
-                }
+            reporter.debug(">> Executing with Bytecode VM\n", .{}, @src());
+            runBytecodeModule(&memoryManager, &bytecode_module, &reporter) catch |err| switch (err) {
+                error.UnimplementedInstruction => {
+                    reporter.debug(">> Bytecode VM missing instruction, falling back to HIR VM\n", .{}, @src());
+                    try runHirWithFallback(&memoryManager, soxa_path, &reporter, statements, &parser, &semantic_analyzer, path);
+                },
+                else => return err,
             };
         },
 
@@ -571,4 +693,8 @@ pub fn main() !void {
             try compileToNative(&memoryManager, soxa_path, output_path, &reporter);
         },
     }
+
+    // Stop execution phase if active
+    profiler.stopPhase();
+    try profiler.dump();
 }

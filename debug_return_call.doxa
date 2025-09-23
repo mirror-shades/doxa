@@ -1,0 +1,9 @@
+function add(a :: int, b :: int) returns int {
+    return a + b
+}
+
+function testReturnCall() returns int {
+    return add(5, 10)
+}
+
+testReturnCall()?
