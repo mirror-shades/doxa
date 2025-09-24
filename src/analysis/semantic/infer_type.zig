@@ -608,7 +608,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 }
             } else if (array_type.base == .Map) {
                 // Map indexing - allow string, int, or enum keys, but not unions
-                if (index_type.base != .String and index_type.base != .Int and index_type.base != .Enum) {
+                if (index_type.base != .String and index_type.base != .Int and index_type.base != .Enum and index_type.base != .Custom) {
                     if (index_type.base == .Union) {
                         self.reporter.reportCompileError(
                             getLocationFromBase(expr.base),
@@ -698,7 +698,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                             resolved_object_type = resolved_type_info;
                         } else {
                             // Not a struct, treat as enum variant access
-                            type_info.* = .{ .base = .Enum, .custom_type = custom_type_name };
+                            type_info.* = .{ .base = .Custom, .custom_type = custom_type_name };
                             return type_info;
                         }
                     } else {
@@ -1608,20 +1608,14 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                                         type_info.* = u.*;
                                     },
                                     .TOBYTE => {
-                                        // If receiver is string, result is byte[] with possible parse/out-of-bounds error is not represented; keep array type
-                                        if (receiver_type.base == .String) {
-                                            const elem = try self.allocator.create(ast.TypeInfo);
-                                            elem.* = .{ .base = .Byte };
-                                            type_info.* = .{ .base = .Array, .array_type = elem };
-                                        } else {
-                                            const a = try self.allocator.create(ast.TypeInfo);
-                                            a.* = .{ .base = .Byte };
-                                            const b = try self.allocator.create(ast.TypeInfo);
-                                            b.* = .{ .base = .Custom, .custom_type = "ValueError" };
-                                            var members = [_]*ast.TypeInfo{ a, b };
-                                            const u = try helpers.createUnionType(self, members[0..]);
-                                            type_info.* = u.*;
-                                        }
+                                        // @byte always returns byte | ValueError union type
+                                        const a = try self.allocator.create(ast.TypeInfo);
+                                        a.* = .{ .base = .Byte };
+                                        const b = try self.allocator.create(ast.TypeInfo);
+                                        b.* = .{ .base = .Custom, .custom_type = "ValueError" };
+                                        var members = [_]*ast.TypeInfo{ a, b };
+                                        const u = try helpers.createUnionType(self, members[0..]);
+                                        type_info.* = u.*;
                                     },
                                     else => unreachable,
                                 }
@@ -1670,19 +1664,14 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                                 return type_info;
                             }
                             if (method_call.method.type == .TOBYTE) {
-                                if (receiver_type.base == .String) {
-                                    const elem = try self.allocator.create(ast.TypeInfo);
-                                    elem.* = .{ .base = .Byte };
-                                    type_info.* = .{ .base = .Array, .array_type = elem };
-                                } else {
-                                    const a = try self.allocator.create(ast.TypeInfo);
-                                    a.* = .{ .base = .Byte };
-                                    const b = try self.allocator.create(ast.TypeInfo);
-                                    b.* = .{ .base = .Custom, .custom_type = "ValueError" };
-                                    var members = [_]*ast.TypeInfo{ a, b };
-                                    const u = try helpers.createUnionType(self, members[0..]);
-                                    type_info.* = u.*;
-                                }
+                                // @byte always returns byte | ValueError union type
+                                const a = try self.allocator.create(ast.TypeInfo);
+                                a.* = .{ .base = .Byte };
+                                const b = try self.allocator.create(ast.TypeInfo);
+                                b.* = .{ .base = .Custom, .custom_type = "ValueError" };
+                                var members = [_]*ast.TypeInfo{ a, b };
+                                const u = try helpers.createUnionType(self, members[0..]);
+                                type_info.* = u.*;
                                 return type_info;
                             }
                         },
@@ -1778,7 +1767,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
         },
         .EnumMember => {
             // Enum members have the enum type
-            type_info.* = .{ .base = .Enum, .custom_type = null };
+            type_info.* = .{ .base = .Custom, .custom_type = null };
             // Note: custom_type will be set by the caller if needed
         },
         .DefaultArgPlaceholder => {
@@ -1824,7 +1813,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 self.fatal_error = true;
                 type_info.base = .Nothing;
                 return type_info;
-            } else if (array_type.base == .Map and index_type.base != .Int and index_type.base != .String and index_type.base != .Enum) {
+            } else if (array_type.base == .Map and index_type.base != .Int and index_type.base != .String and index_type.base != .Enum and index_type.base != .Custom) {
                 if (index_type.base == .Union) {
                     self.reporter.reportCompileError(
                         getLocationFromBase(expr.base),
@@ -2106,7 +2095,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
             // Look up the struct declaration to get canonical TypeInfo
             if (lookupVariable(self, struct_lit.name.lexeme)) |variable| {
                 if (self.memory.scope_manager.value_storage.get(variable.storage_id)) |storage| {
-                    if (storage.type_info.base == .Struct) {
+                    if (storage.type_info.base == .Custom) {
                         // Just point to the canonical TypeInfo
                         type_info.* = storage.type_info.*;
 

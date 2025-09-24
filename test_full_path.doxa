@@ -1,4 +1,0 @@
-module safeMath from "./test/misc/safeMath.doxa"
-
-var result is safeMath.safeAdd(15, 66)
-result?

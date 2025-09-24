@@ -205,11 +205,13 @@ pub fn exec(vm: anytype, s: anytype) !void {
         return;
     }
     if (s.op == .ToByte) {
-        // Return ValueError.OutOfBounds or ValueError.ParseFailed for invalid conversions
+        // Always return tagged union (byte | ValueError) for consistency
         const out: HIRValue = switch (val.value) {
-            .byte => val.value,
+            .byte => |b| HIRValue{ .byte = b },
             .int => |i| blk: {
-                if (i >= 0 and i <= 255) break :blk HIRValue{ .byte = @intCast(i) };
+                if (i >= 0 and i <= 255) {
+                    break :blk HIRValue{ .byte = @intCast(i) };
+                }
                 var variant_index: u32 = 0;
                 if (vm.custom_type_registry.get("ValueError")) |ct| {
                     if (ct.enum_variants) |variants| {
@@ -221,11 +223,14 @@ pub fn exec(vm: anytype, s: anytype) !void {
                         }
                     }
                 }
-                break :blk HIRValue{ .enum_variant = .{ .type_name = "ValueError", .variant_name = "OutOfBounds", .variant_index = variant_index } };
+                const error_variant = HIRValue{ .enum_variant = .{ .type_name = "ValueError", .variant_name = "OutOfBounds", .variant_index = variant_index, .path = null } };
+                break :blk error_variant;
             },
             .float => |f| blk: {
                 const i: i64 = @as(i64, @intFromFloat(f));
-                if (i >= 0 and i <= 255) break :blk HIRValue{ .byte = @intCast(i) };
+                if (i >= 0 and i <= 255) {
+                    break :blk HIRValue{ .byte = @intCast(i) };
+                }
                 var variant_index: u32 = 0;
                 if (vm.custom_type_registry.get("ValueError")) |ct| {
                     if (ct.enum_variants) |variants| {
@@ -237,7 +242,8 @@ pub fn exec(vm: anytype, s: anytype) !void {
                         }
                     }
                 }
-                break :blk HIRValue{ .enum_variant = .{ .type_name = "ValueError", .variant_name = "OutOfBounds", .variant_index = variant_index } };
+                const error_variant = HIRValue{ .enum_variant = .{ .type_name = "ValueError", .variant_name = "OutOfBounds", .variant_index = variant_index, .path = null } };
+                break :blk error_variant;
             },
             .string => |s_val| blk: {
                 // Empty string => ParseFailed
@@ -253,7 +259,8 @@ pub fn exec(vm: anytype, s: anytype) !void {
                             }
                         }
                     }
-                    break :blk HIRValue{ .enum_variant = .{ .type_name = "ValueError", .variant_name = "ParseFailed", .variant_index = v_idx } };
+                    const parse_failed_variant = HIRValue{ .enum_variant = .{ .type_name = "ValueError", .variant_name = "ParseFailed", .variant_index = v_idx, .path = null } };
+                    break :blk parse_failed_variant;
                 }
 
                 // Single char => return its byte value (first byte)
@@ -264,7 +271,7 @@ pub fn exec(vm: anytype, s: anytype) !void {
                 // Hex string with 0x prefix -> parse as u8
                 if (s_val.len > 2 and std.mem.eql(u8, s_val[0..2], "0x")) {
                     const hex_str = s_val[2..];
-                    const parsed_hex = std.fmt.parseInt(u8, hex_str, 16) catch {
+                    const parsed_hex_byte = std.fmt.parseInt(u8, hex_str, 16) catch {
                         var v_idx: u32 = 0;
                         if (vm.custom_type_registry.get("ValueError")) |ct| {
                             if (ct.enum_variants) |variants| {
@@ -276,15 +283,18 @@ pub fn exec(vm: anytype, s: anytype) !void {
                                 }
                             }
                         }
-                        break :blk HIRValue{ .enum_variant = .{ .type_name = "ValueError", .variant_name = "ParseFailed", .variant_index = v_idx } };
+                        const parse_failed_variant = HIRValue{ .enum_variant = .{ .type_name = "ValueError", .variant_name = "ParseFailed", .variant_index = v_idx, .path = null } };
+                        break :blk parse_failed_variant;
                     };
-                    break :blk HIRValue{ .byte = parsed_hex };
+                    break :blk HIRValue{ .byte = parsed_hex_byte };
                 }
 
                 // Decimal parse fallback (try int, else float then floor)
                 const parsed_opt: ?i64 = std.fmt.parseInt(i64, s_val, 10) catch null;
                 if (parsed_opt) |parsed_int| {
-                    if (parsed_int >= 0 and parsed_int <= 255) break :blk HIRValue{ .byte = @intCast(parsed_int) };
+                    if (parsed_int >= 0 and parsed_int <= 255) {
+                        break :blk HIRValue{ .byte = @intCast(parsed_int) };
+                    }
                     var v_idx2: u32 = 0;
                     if (vm.custom_type_registry.get("ValueError")) |ct2| {
                         if (ct2.enum_variants) |variants| {
@@ -296,7 +306,7 @@ pub fn exec(vm: anytype, s: anytype) !void {
                             }
                         }
                     }
-                    break :blk HIRValue{ .enum_variant = .{ .type_name = "ValueError", .variant_name = "OutOfBounds", .variant_index = v_idx2 } };
+                    break :blk HIRValue{ .enum_variant = .{ .type_name = "ValueError", .variant_name = "OutOfBounds", .variant_index = v_idx2, .path = null } };
                 }
 
                 const f = std.fmt.parseFloat(f64, s_val) catch {
@@ -311,10 +321,12 @@ pub fn exec(vm: anytype, s: anytype) !void {
                             }
                         }
                     }
-                    break :blk HIRValue{ .enum_variant = .{ .type_name = "ValueError", .variant_name = "ParseFailed", .variant_index = v_idx_pf } };
+                    break :blk HIRValue{ .enum_variant = .{ .type_name = "ValueError", .variant_name = "ParseFailed", .variant_index = v_idx_pf, .path = null } };
                 };
                 const floored: i64 = @as(i64, @intFromFloat(f));
-                if (floored >= 0 and floored <= 255) break :blk HIRValue{ .byte = @intCast(floored) };
+                if (floored >= 0 and floored <= 255) {
+                    break :blk HIRValue{ .byte = @intCast(floored) };
+                }
                 var v_idx2: u32 = 0;
                 if (vm.custom_type_registry.get("ValueError")) |ct2| {
                     if (ct2.enum_variants) |variants| {
@@ -326,7 +338,7 @@ pub fn exec(vm: anytype, s: anytype) !void {
                         }
                     }
                 }
-                break :blk HIRValue{ .enum_variant = .{ .type_name = "ValueError", .variant_name = "OutOfBounds", .variant_index = v_idx2 } };
+                break :blk HIRValue{ .enum_variant = .{ .type_name = "ValueError", .variant_name = "OutOfBounds", .variant_index = v_idx2, .path = null } };
             },
             else => blk_unsupported: {
                 // Unsupported source type -> ParseFailed
@@ -341,7 +353,8 @@ pub fn exec(vm: anytype, s: anytype) !void {
                         }
                     }
                 }
-                break :blk_unsupported HIRValue{ .enum_variant = .{ .type_name = "ValueError", .variant_name = "ParseFailed", .variant_index = v_idx } };
+                const unsupported_variant = HIRValue{ .enum_variant = .{ .type_name = "ValueError", .variant_name = "ParseFailed", .variant_index = v_idx, .path = null } };
+                break :blk_unsupported unsupported_variant;
             },
         };
         try vm.stack.push(HIRFrame.initFromHIRValue(out));

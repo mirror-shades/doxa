@@ -363,11 +363,7 @@ pub const BytecodeGenerator = struct {
                     try self.instructions.append(self.allocator, .{ .StoreSlot = .{ .target = operand, .type_tag = module.typeFromHIR(payload.expected_type) } });
                 },
                 .StoreConst => |payload| {
-                    const operand = self.slotFromCache(payload.var_index) orelse module.SlotOperand{
-                        .slot = @as(module.SlotIndex, payload.var_index),
-                        .kind = .local,
-                        .module_id = null,
-                    };
+                    const operand = try self.makeSlotOperand(payload.scope_kind, payload.var_index, payload.module_context);
                     if (self.slot_cache.get(payload.var_index) == null) {
                         try self.slot_cache.put(payload.var_index, operand);
                     }
@@ -411,8 +407,27 @@ pub const BytecodeGenerator = struct {
                     const true_id = try self.ensureLabelId(payload.label_true);
                     const false_id = try self.ensureLabelId(payload.label_false);
                     const cond_type = module.typeFromHIR(payload.condition_type);
-                    try self.instructions.append(self.allocator, .{ .JumpIfFalse = .{ .label_id = false_id, .condition_type = cond_type } });
-                    try self.instructions.append(self.allocator, .{ .Jump = .{ .label_id = true_id } });
+
+                    // Special handling for tetra values
+                    if (payload.condition_type == .Tetra) {
+                        // For tetra values, we need to handle both/neither cases
+                        // The logic is:
+                        // - if condition is false (0) -> jump to false
+                        // - if condition is true (1) -> jump to true
+                        // - if condition is both (2) -> execute both branches
+                        // - if condition is neither (3) -> skip both branches
+
+                        // Check if condition is false (0) -> jump to false (pops condition)
+                        try self.instructions.append(self.allocator, .{ .JumpIfFalse = .{ .label_id = false_id, .condition_type = cond_type } });
+
+                        // If we reach here, condition is true (1) -> jump to true (condition already popped by JumpIfFalse)
+                        try self.instructions.append(self.allocator, .{ .Jump = .{ .label_id = true_id } });
+                        // This will fall through to the next instruction
+                    } else {
+                        // Standard boolean logic for non-tetra values
+                        try self.instructions.append(self.allocator, .{ .JumpIfFalse = .{ .label_id = false_id, .condition_type = cond_type } });
+                        try self.instructions.append(self.allocator, .{ .Jump = .{ .label_id = true_id } });
+                    }
                 },
                 .Label => |payload| {
                     const id = try self.ensureLabelId(payload.name);

@@ -108,6 +108,60 @@ pub const CallsHandler = struct {
                         }
                     }
 
+                    // Check if this is a user-defined struct method first
+                    if (field_access.object.data == .Variable) {
+                        const recv_var_name = field_access.object.data.Variable.lexeme;
+                        const struct_name = blk: {
+                            if (self.generator.symbol_table.getVariableCustomType(recv_var_name)) |ctype| break :blk ctype;
+                            break :blk recv_var_name;
+                        };
+
+                        if (self.generator.struct_methods.get(struct_name)) |method_table| {
+                            if (method_table.get(field_access.field.lexeme)) |mi| {
+                                // This is a user-defined struct method - generate as a function call
+                                const qualified_name = try std.fmt.allocPrint(self.generator.allocator, "{s}.{s}", .{ struct_name, field_access.field.lexeme });
+
+                                // Generate arguments: for instance methods, push receiver value first
+                                if (!mi.is_static) {
+                                    try self.generator.generateExpression(field_access.object, true, false);
+                                }
+                                // Then generate explicit arguments
+                                for (call_data.arguments) |arg| {
+                                    try self.generator.generateExpression(arg.expr, true, false);
+                                }
+
+                                // Determine return type from semantic info
+                                const ret_type: HIRType = self.generator.convertTypeInfo(mi.return_type.*);
+
+                                // Resolve function index if already registered
+                                const fn_index: u32 = blk: {
+                                    if (self.generator.getFunctionIndex(qualified_name)) |idx| {
+                                        break :blk idx;
+                                    } else {
+                                        break :blk 0;
+                                    }
+                                };
+
+                                // Compute argument count at runtime
+                                var arg_count: u32 = @intCast(call_data.arguments.len);
+                                if (!mi.is_static) arg_count += 1;
+
+                                // Generate function call
+                                try self.generator.instructions.append(.{
+                                    .Call = .{
+                                        .function_index = fn_index, // May be resolved later if 0
+                                        .qualified_name = qualified_name,
+                                        .arg_count = arg_count,
+                                        .call_kind = .LocalFunction,
+                                        .target_module = null,
+                                        .return_type = ret_type,
+                                    },
+                                });
+                                return;
+                            }
+                        }
+                    }
+
                     // Built-in/internal method on a receiver: delegate and return early
                     try self.generator.generateInternalMethodCall(field_access.field, field_access.object, call_data.arguments, should_pop_after_use);
                     return;
@@ -286,6 +340,7 @@ pub const CallsHandler = struct {
                 .Nothing => "nothing",
                 .Array => "array",
                 .Union => "union",
+                .Poison => "poison",
                 .Struct => blk: {
                     if (arg.data == .Variable) {
                         const var_name = arg.data.Variable.lexeme;
@@ -316,6 +371,7 @@ pub const CallsHandler = struct {
                                                         .Byte => "byte",
                                                         .Nothing => "nothing",
                                                         .Array => "array",
+                                                        .Poison => "poison",
                                                         .Union => "union",
                                                         .Struct => "struct",
                                                         .Map => "map",
@@ -412,6 +468,10 @@ pub const CallsHandler = struct {
                 // numeric -> byte
                 try self.generator.instructions.append(.{ .Convert = .{ .from_type = t, .to_type = .Byte } });
             }
+
+            // Track that @byte returns byte | ValueError union type
+            // This is needed for proper union type tracking in variable declarations
+            // The actual union type information is handled by the type inference system
         } else if (std.mem.eql(u8, name, "push")) {
             if (builtin_data.arguments.len != 2) return error.InvalidArgumentCount;
             const target_type = self.generator.inferTypeFromExpression(builtin_data.arguments[0]);

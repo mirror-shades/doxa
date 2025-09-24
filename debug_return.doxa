@@ -1,5 +1,0 @@
-function testReturn() returns int {
-    return 42
-}
-
-testReturn()?

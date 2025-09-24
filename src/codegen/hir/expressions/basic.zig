@@ -17,7 +17,7 @@ pub const BasicExpressionHandler = struct {
     }
 
     /// Generate HIR for literal expressions
-    pub fn generateLiteral(self: *BasicExpressionHandler, lit: ast.TokenLiteral) (std.mem.Allocator.Error || ErrorList)!void {
+    pub fn generateLiteral(self: *BasicExpressionHandler, lit: ast.TokenLiteral, preserve_result: bool, should_pop_after_use: bool) (std.mem.Allocator.Error || ErrorList)!void {
         const hir_value = switch (lit) {
             .int => |i| HIRValue{ .int = i },
             .float => |f| HIRValue{ .float = f },
@@ -52,6 +52,11 @@ pub const BasicExpressionHandler = struct {
         };
         const const_idx = try self.generator.addConstant(hir_value);
         try self.generator.instructions.append(.{ .Const = .{ .value = hir_value, .constant_id = const_idx } });
+
+        // Pop the result if it's not needed
+        if (!preserve_result and should_pop_after_use) {
+            try self.generator.instructions.append(.Pop);
+        }
     }
 
     /// Generate HIR for variable access

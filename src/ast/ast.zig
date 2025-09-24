@@ -1363,38 +1363,58 @@ pub fn typeInfoFromHIRType(allocator: std.mem.Allocator, hir_type: HIRType) !*Ty
     const type_info = try allocator.create(TypeInfo);
     errdefer allocator.destroy(type_info);
 
-    type_info.* = switch (hir_type) {
-        .Int => TypeInfo{ .base = .Int },
-        .Byte => TypeInfo{ .base = .Byte },
-        .Float => TypeInfo{ .base = .Float },
-        .String => TypeInfo{ .base = .String },
-        .Tetra => TypeInfo{ .base = .Tetra },
-        .Nothing => TypeInfo{ .base = .Nothing },
-        .Array => blk: {
-            const element_type = try allocator.create(TypeInfo);
-            element_type.* = TypeInfo{ .base = .Nothing }; // Default element type
-            break :blk TypeInfo{
-                .base = .Array,
-                .array_type = element_type,
+    switch (hir_type) {
+        .Int => type_info.* = .{ .base = .Int },
+        .Byte => type_info.* = .{ .base = .Byte },
+        .Float => type_info.* = .{ .base = .Float },
+        .String => type_info.* = .{ .base = .String },
+        .Tetra => type_info.* = .{ .base = .Tetra },
+        .Nothing => type_info.* = .{ .base = .Nothing },
+
+        .Array => |elem_ptr| {
+            const elem_ti = try typeInfoFromHIRType(allocator, elem_ptr.*);
+            type_info.* = .{ .base = .Array, .array_type = elem_ti };
+        },
+
+        .Map => {
+            // FIX #1: keep Map as Map
+            type_info.* = .{ .base = .Map };
+        },
+
+        .Struct => type_info.* = .{ .base = .Struct },
+
+        .Enum => |_| {
+            // Create enum type info with the ID
+            type_info.* = .{
+                .base = .Enum,
+                .custom_type = "ValueError", // TODO: Look up enum name by ID
             };
         },
-        .Struct => TypeInfo{ .base = .Struct },
-        .Map => TypeInfo{ .base = .Custom },
-        .Enum => TypeInfo{ .base = .Enum },
-        .Function => TypeInfo{ .base = .Function },
-        .Union => blk: {
-            // Minimal representation: unknown members (will be resolved from AST where available)
-            // Represent as a union with no members to avoid collapsing to a concrete type.
-            const union_types = try allocator.alloc(*TypeInfo, 0);
-            const union_expr = try allocator.create(TypeExpr);
-            union_expr.* = .{ .base = .{ .id = 0, .span = null }, .data = .{ .Union = union_types } };
-            // Note: We only need TypeInfo; build a bare Union TypeInfo with no members
-            const u = try allocator.create(UnionType);
-            u.* = .{ .types = union_types, .current_type_index = null };
-            break :blk TypeInfo{ .base = .Union, .union_type = u };
+
+        .Function => {
+            // If you have parameter/return info in HIRType, rebuild here.
+            type_info.* = .{ .base = .Function };
         },
-        .Unknown => TypeInfo{ .base = .Nothing },
-    };
+
+        .Union => |member_ptrs| {
+            // FIX #3: actually rebuild member list (don't emit an empty union)
+            var member_types = try allocator.alloc(*TypeInfo, member_ptrs.len);
+            for (member_ptrs, 0..) |member_ptr, i| {
+                member_types[i] = try typeInfoFromHIRType(allocator, member_ptr.*);
+            }
+
+            const ut = try allocator.create(UnionType);
+            ut.* = .{
+                .types = member_types,
+                .current_type_index = null, // leave unset for type-level info
+            };
+
+            type_info.* = .{ .base = .Union, .union_type = ut };
+        },
+
+        .Unknown => type_info.* = .{ .base = .Nothing },
+        .Poison => type_info.* = .{ .base = .Nothing }, // Treat poison as nothing for now
+    }
 
     return type_info;
 }

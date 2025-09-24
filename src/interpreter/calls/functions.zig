@@ -79,7 +79,7 @@ pub const FunctionOps = struct {
     }
 
     // Execute Return instruction
-    pub fn execReturn(vm: anytype, _: anytype) !void {
+    pub fn execReturn(vm: anytype, payload: anytype) !void {
         // Check if we're returning from main program or a function call
         if (vm.call_stack.isEmpty()) {
             vm.running = false;
@@ -96,8 +96,15 @@ pub const FunctionOps = struct {
                 vm.stack.data[dst_index] = vm.stack.data[src_index];
                 vm.stack.sp = call_frame.saved_sp + 1;
             } else {
-                // No value returned; just restore SP
+                // No value returned; push nothing value so caller gets proper return value
                 vm.stack.sp = call_frame.saved_sp;
+                if (payload.has_value) {
+                    // This shouldn't happen if current_sp <= saved_sp, but handle it
+                    return vm.reporter.reportRuntimeError(null, ErrorCode.INTERNAL_ERROR, "Return has value but stack is empty", .{});
+                } else {
+                    // Push nothing value for functions that return without a value
+                    try vm.stack.push(HIRFrame.initNothing());
+                }
             }
 
             // Return to caller
@@ -219,7 +226,7 @@ pub const FunctionOps = struct {
 
             // Built-in graphics module: implicit defers for Draw/Init
             const is_graphics = std.mem.eql(u8, module_alias, "graphics") or std.mem.eql(u8, module_alias, "g");
-                if (is_graphics) {
+            if (is_graphics) {
                 const ray = @import("../../runtime/raylib.zig");
                 // Submodule dispatch: doxa vs raylib passthrough
                 if (std.mem.eql(u8, sub_alias, "doxa")) {

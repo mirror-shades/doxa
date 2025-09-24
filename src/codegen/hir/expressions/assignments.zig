@@ -54,7 +54,13 @@ pub const AssignmentsHandler = struct {
 
         // NEW: Track the variable's type from the assigned value
         const assigned_type = self.generator.inferTypeFromExpression(assign.value.?);
-        try self.generator.trackVariableType(assign.name.lexeme, assigned_type);
+        
+        // Only update the variable's type if it wasn't already explicitly declared
+        // This preserves the original type annotation (e.g., "var ip :: int")
+        const existing_type = self.generator.getTrackedVariableType(assign.name.lexeme);
+        if (existing_type == null or existing_type.? == .Unknown) {
+            try self.generator.trackVariableType(assign.name.lexeme, assigned_type);
+        }
 
         // NEW: Track array element type for array literals
         if (assigned_type == .Array and assign.value.?.data == .Array) {
@@ -69,7 +75,7 @@ pub const AssignmentsHandler = struct {
                         .byte => .Byte,
                         else => .Unknown,
                     },
-                    .Array => .Array, // Handle nested arrays
+                    .Array => HIRType.Unknown, // Handle nested arrays
                     else => .Unknown,
                 };
                 if (element_type != .Unknown) {
@@ -230,7 +236,7 @@ pub const AssignmentsHandler = struct {
         } else if (left_type == .String and right_type == .String) {
             try self.generator.instructions.append(.{ .StringOp = .{ .op = .Concat } });
         } else if (left_type == .Array and right_type == .Array) {
-            try self.generator.instructions.append(.{ .Arith = .{ .op = .Add, .operand_type = .Array } });
+            try self.generator.instructions.append(.{ .Arith = .{ .op = .Add, .operand_type = .Unknown } });
         } else {
             const location = Location{
                 .file = name.file,

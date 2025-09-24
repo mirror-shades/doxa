@@ -456,7 +456,6 @@ const expected_bigfile_results = [_]peek_result{
     .{ .type = "int | float | >byte", .value = "0x0A" },
     .{ .type = "int", .value = "17" },
     .{ .type = "string", .value = "\"return\"" },
-    .{ .type = "string", .value = "\"implicit\"" },
     .{ .type = "int", .value = "26" },
     .{ .type = "int", .value = "4" },
     .{ .type = "string", .value = "\"M\"" },

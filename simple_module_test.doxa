@@ -1,3 +1,0 @@
-module math from "./test/misc/math.doxa"
-
-math.add(5, 10)?

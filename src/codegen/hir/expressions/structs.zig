@@ -194,7 +194,7 @@ pub const StructsHandler = struct {
             try self.generator.instructions.append(.{
                 .GetField = .{
                     .field_name = outer_field.field.lexeme,
-                    .container_type = .Struct,
+                    .container_type = HIRType{ .Struct = 0 },
                     .field_index = 0,
                     .field_for_peek = false,
                 },
@@ -210,7 +210,7 @@ pub const StructsHandler = struct {
             try self.generator.instructions.append(.{
                 .SetField = .{
                     .field_name = assign_data.field.lexeme,
-                    .container_type = .Struct,
+                    .container_type = HIRType{ .Struct = 0 },
                     .field_index = 0,
                 },
             });
@@ -226,7 +226,7 @@ pub const StructsHandler = struct {
             try self.generator.instructions.append(.{
                 .SetField = .{
                     .field_name = outer_field.field.lexeme,
-                    .container_type = .Struct,
+                    .container_type = HIRType{ .Struct = 0 },
                     .field_index = 0,
                 },
             });
@@ -256,7 +256,7 @@ pub const StructsHandler = struct {
                             .var_name = "this",
                             .scope_kind = .Local,
                             .module_context = null,
-                            .expected_type = .Struct,
+                            .expected_type = HIRType{ .Struct = 0 },
                         },
                     });
                 },
@@ -273,7 +273,7 @@ pub const StructsHandler = struct {
             try self.generator.instructions.append(.{
                 .SetField = .{
                     .field_name = assign_data.field.lexeme,
-                    .container_type = .Struct,
+                    .container_type = HIRType{ .Struct = 0 },
                     .field_index = 0, // Index will be resolved by VM
                 },
             });
@@ -302,7 +302,7 @@ pub const StructsHandler = struct {
                             .var_name = "this",
                             .scope_kind = .Local,
                             .module_context = null,
-                            .expected_type = .Struct,
+                            .expected_type = HIRType{ .Struct = 0 },
                         },
                     });
                 },
@@ -324,7 +324,7 @@ pub const StructsHandler = struct {
 
         // Register the enum type name as a special variable so Color.Red works
         const var_idx = try self.generator.getOrCreateVariable(enum_data.name.lexeme);
-        try self.generator.trackVariableType(enum_data.name.lexeme, .Enum);
+        try self.generator.trackVariableType(enum_data.name.lexeme, HIRType{ .Enum = 0 });
 
         // Create a special enum type value and store it
         const enum_type_value = HIRValue{ .string = enum_data.name.lexeme }; // Simple representation for now
@@ -333,6 +333,8 @@ pub const StructsHandler = struct {
         try self.generator.instructions.append(.{ .StoreConst = .{
             .var_index = var_idx,
             .var_name = enum_data.name.lexeme,
+            .scope_kind = if (self.generator.current_function == null) .ModuleGlobal else .Local,
+            .module_context = null,
         } });
     }
 
