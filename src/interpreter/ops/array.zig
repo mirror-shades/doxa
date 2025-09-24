@@ -48,6 +48,7 @@ fn arrayNew(vm: anytype, a: anytype) !void {
 
     // Initialize elements: first 'size' with type default, remainder with 'nothing'
     const default_value = getDefaultValue(a.element_type);
+
     var i: usize = 0;
     while (i < @as(usize, @intCast(a.size)) and i < elements.len) : (i += 1) {
         elements[i] = default_value;
@@ -377,8 +378,8 @@ fn arrayInsert(vm: anytype) !void {
                     .float => .Float,
                     .string => .String,
                     .tetra => .Tetra,
-                    .array => .Array,
-                    .struct_instance => .Struct,
+                    .array => HIRType.Unknown,
+                    .struct_instance => HIRType.Unknown,
                     else => mutable_arr.element_type,
                 };
             }
@@ -696,8 +697,8 @@ fn handleArrayPush(vm: anytype, element_value: HIRValue) !void {
                     .float => .Float,
                     .string => .String,
                     .tetra => .Tetra,
-                    .array => .Array,
-                    .struct_instance => .Struct,
+                    .array => HIRType.Unknown,
+                    .struct_instance => HIRType.Unknown,
                     else => mutable_arr.element_type,
                 };
             }
@@ -795,6 +796,7 @@ fn getDefaultValue(hir_type: HIRType) HIRValue {
         .String => HIRValue{ .string = "" },
         .Tetra => HIRValue{ .tetra = 0 },
         .Nothing => HIRValue.nothing,
+        .Poison => HIRValue.nothing,
         .Array => HIRValue{ .array = .{
             .elements = &[_]HIRValue{},
             .element_type = .Unknown,

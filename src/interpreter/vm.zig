@@ -158,9 +158,9 @@ pub const HIRVM = struct {
                             .Float => .Float,
                             .String => .String,
                             .Tetra => .Tetra,
-                            .Array => .Array,
-                            .Struct => .Struct,
-                            .Enum => .Enum,
+                            .Array => HIRType.Unknown,
+                            .Struct => HIRType.Unknown,
+                            .Enum => HIRType.Unknown,
                             else => mutable_arr.element_type,
                         };
                         mutable_arr.element_type = mapped_elem_type;
@@ -205,8 +205,8 @@ pub const HIRVM = struct {
                             .string => .String,
                             .tetra => .Tetra,
                             .nothing => .Nothing,
-                            .array => .Array,
-                            .struct_instance => .Struct,
+                            .array => HIRType.Unknown,
+                            .struct_instance => HIRType.Unknown,
                             else => .Unknown,
                         };
                     }
@@ -261,9 +261,9 @@ pub const HIRVM = struct {
                             .string => .String,
                             .tetra => .Tetra,
                             .nothing => .Nothing,
-                            .struct_instance => .Struct,
-                            .enum_variant => .Enum,
-                            .array => .Array,
+                            .struct_instance => HIRType.Unknown,
+                            .enum_variant => HIRType.Unknown,
+                            .array => HIRType.Unknown,
                             else => .Unknown,
                         },
                         .path = s.path,

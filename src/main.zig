@@ -183,7 +183,8 @@ fn compileDoxaToSoxaFromAST(memoryManager: *MemoryManager, statements: []ast.Stm
 
     // NEW: Pass custom type information to HIR generator
     // Use analysis arena for HIR generation since this happens during compilation phase
-    var hir_generator = HIRGenerator.init(memoryManager.getAnalysisAllocator(), reporter, parser.module_namespaces, parser.imported_symbols);
+    const function_return_types = semantic_analyzer.getFunctionReturnTypes();
+    var hir_generator = HIRGenerator.init(memoryManager.getAnalysisAllocator(), reporter, parser.module_namespaces, parser.imported_symbols, function_return_types, semantic_analyzer);
     defer hir_generator.deinit();
 
     // NEW: Import custom types from semantic analysis
@@ -639,7 +640,7 @@ pub fn main() !void {
     // Use original HIR program instead of reading from .soxa file to preserve LoadAlias/StoreAlias instructions
     var hir_program_for_bytecode = try SoxaCompiler.readSoxaFile(soxa_path, memoryManager.getAllocator());
     defer hir_program_for_bytecode.deinit();
-    
+
     // TODO: Use original HIR program instead of reading from .soxa file
     // The issue is that SoxaTextParser doesn't handle LoadAlias/StoreAlias instructions
 

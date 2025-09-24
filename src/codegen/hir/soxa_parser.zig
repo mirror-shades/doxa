@@ -176,7 +176,45 @@ pub const SoxaTextParser = struct {
         } else if (std.mem.eql(u8, type_tok, "byte")) {
             const value = try std.fmt.parseInt(u8, payload, 10);
             try self.constants.append(HIRValue{ .byte = value });
+        } else if (std.mem.eql(u8, type_tok, "enum")) {
+            // Parse format: "TypeName.VariantName (idx Index)"
+            const variant_str = std.mem.trim(u8, payload, " \t");
+            if (std.mem.indexOfScalar(u8, variant_str, '.')) |dot_pos| {
+                const type_name = try self.allocator.dupe(u8, variant_str[0..dot_pos]);
+
+                // Find the variant name and index
+                const after_dot = variant_str[dot_pos + 1 ..];
+                if (std.mem.indexOfScalar(u8, after_dot, ' ')) |space_pos| {
+                    const variant_name = try self.allocator.dupe(u8, after_dot[0..space_pos]);
+
+                    // Parse the index from "(idx Index)"
+                    const idx_start = std.mem.indexOf(u8, after_dot, "(idx ") orelse {
+                        try self.constants.append(HIRValue.nothing);
+                        return;
+                    };
+                    const idx_str = after_dot[idx_start + 5 ..];
+                    const idx_end = std.mem.indexOfScalar(u8, idx_str, ')') orelse {
+                        try self.constants.append(HIRValue.nothing);
+                        return;
+                    };
+                    const variant_index = std.fmt.parseInt(u32, idx_str[0..idx_end], 10) catch 0;
+
+                    try self.constants.append(HIRValue{
+                        .enum_variant = HIREnum{
+                            .type_name = type_name,
+                            .variant_name = variant_name,
+                            .variant_index = variant_index,
+                            .path = null,
+                        },
+                    });
+                } else {
+                    try self.constants.append(HIRValue.nothing);
+                }
+            } else {
+                try self.constants.append(HIRValue.nothing);
+            }
         } else if (std.mem.eql(u8, type_tok, "enum_variant")) {
+            // Legacy format: "TypeName.VariantName" (without index)
             const variant_str = std.mem.trim(u8, payload, " \t");
             if (std.mem.indexOfScalar(u8, variant_str, '.')) |dot_pos| {
                 const type_name = try self.allocator.dupe(u8, variant_str[0..dot_pos]);
@@ -185,7 +223,7 @@ pub const SoxaTextParser = struct {
                     .enum_variant = HIREnum{
                         .type_name = type_name,
                         .variant_name = variant_name,
-                        .variant_index = 0,
+                        .variant_index = 0, // Default to 0 for legacy format
                         .path = null,
                     },
                 });
@@ -307,12 +345,12 @@ pub const SoxaTextParser = struct {
         if (std.mem.eql(u8, token, "Byte")) return .Byte;
         if (std.mem.eql(u8, token, "Tetra")) return .Tetra;
         if (std.mem.eql(u8, token, "Nothing")) return .Nothing;
-        if (std.mem.eql(u8, token, "Array")) return .Array;
-        if (std.mem.eql(u8, token, "Struct")) return .Struct;
-        if (std.mem.eql(u8, token, "Map")) return .Map;
-        if (std.mem.eql(u8, token, "Enum")) return .Enum;
-        if (std.mem.eql(u8, token, "Function")) return .Function;
-        if (std.mem.eql(u8, token, "Union")) return .Union;
+        if (std.mem.eql(u8, token, "Array")) return .Unknown; // Array type requires element type info
+        if (std.mem.eql(u8, token, "Struct")) return HIRType{ .Struct = 0 };
+        if (std.mem.eql(u8, token, "Map")) return .Unknown; // Map type requires key/value type info
+        if (std.mem.eql(u8, token, "Enum")) return HIRType{ .Enum = 0 };
+        if (std.mem.eql(u8, token, "Function")) return .Unknown; // Function type requires param/return type info
+        if (std.mem.eql(u8, token, "Union")) return .Unknown; // Union type requires member type info
         if (std.mem.eql(u8, token, "Auto")) return .Unknown;
         return .Unknown;
     }
@@ -468,14 +506,14 @@ pub const SoxaTextParser = struct {
             const name_quoted = tokens.next() orelse return;
             const var_name = try self.parseQuotedString(name_quoted);
             const type_str = tokens.next() orelse return;
-            const expected_type = if (std.mem.eql(u8, type_str, "Int")) HIRType.Int else if (std.mem.eql(u8, type_str, "String")) HIRType.String else if (std.mem.eql(u8, type_str, "Float")) HIRType.Float else HIRType.Unknown;
-            try self.instructions.append(HIRInstruction{ .StoreAlias = .{ .slot_index = slot_index, .var_name = var_name, .expected_type = expected_type } });
+            _ = if (std.mem.eql(u8, type_str, "Int")) HIRType.Int else if (std.mem.eql(u8, type_str, "String")) HIRType.String else if (std.mem.eql(u8, type_str, "Float")) HIRType.Float else HIRType.Nothing;
+            try self.instructions.append(HIRInstruction{ .StoreAlias = .{ .slot_index = slot_index, .var_name = var_name, .expected_type = HIRType.Nothing } });
         } else if (std.mem.eql(u8, op, "StoreConst")) {
             const idx_str = tokens.next() orelse return;
             const var_index = std.fmt.parseInt(u32, idx_str, 10) catch return;
             const name_quoted = tokens.next() orelse return;
             const var_name = try self.parseQuotedString(name_quoted);
-            try self.instructions.append(HIRInstruction{ .StoreConst = .{ .var_index = var_index, .var_name = var_name } });
+            try self.instructions.append(HIRInstruction{ .StoreConst = .{ .var_index = var_index, .var_name = var_name, .scope_kind = .Local, .module_context = null } });
         } else if (std.mem.eql(u8, op, "StoreParamAlias")) {
             const name_quoted = tokens.next() orelse return;
             const param_name = try self.parseQuotedString(name_quoted);
@@ -494,7 +532,7 @@ pub const SoxaTextParser = struct {
             const op_str = tokens.next() orelse return;
             const type_str = tokens.next() orelse return;
             const arith_op = if (std.mem.eql(u8, op_str, "Add")) ArithOp.Add else if (std.mem.eql(u8, op_str, "Sub")) ArithOp.Sub else if (std.mem.eql(u8, op_str, "Mul")) ArithOp.Mul else if (std.mem.eql(u8, op_str, "Div")) ArithOp.Div else if (std.mem.eql(u8, op_str, "Mod")) ArithOp.Mod else if (std.mem.eql(u8, op_str, "Pow")) ArithOp.Pow else unreachable;
-            const operand_type = if (std.mem.eql(u8, type_str, "Int")) HIRType.Int else if (std.mem.eql(u8, type_str, "Float")) HIRType.Float else if (std.mem.eql(u8, type_str, "Byte")) HIRType.Byte else if (std.mem.eql(u8, type_str, "Array")) HIRType.Array else HIRType.Int;
+            const operand_type: HIRType = if (std.mem.eql(u8, type_str, "Int")) .Int else if (std.mem.eql(u8, type_str, "Float")) .Float else if (std.mem.eql(u8, type_str, "Byte")) .Byte else .Int;
             try self.instructions.append(HIRInstruction{ .Arith = .{ .op = arith_op, .operand_type = operand_type } });
         } else if (std.mem.eql(u8, op, "Convert")) {
             // Type conversion instruction
@@ -511,7 +549,7 @@ pub const SoxaTextParser = struct {
             const maybe_type = tokens.next();
             var operand_type: HIRType = .Int;
             if (maybe_type) |type_str| {
-                operand_type = if (std.mem.eql(u8, type_str, "Int")) HIRType.Int else if (std.mem.eql(u8, type_str, "Byte")) HIRType.Byte else if (std.mem.eql(u8, type_str, "Float")) HIRType.Float else if (std.mem.eql(u8, type_str, "String")) HIRType.String else if (std.mem.eql(u8, type_str, "Tetra")) HIRType.Tetra else if (std.mem.eql(u8, type_str, "Nothing")) HIRType.Nothing else if (std.mem.eql(u8, type_str, "Array")) HIRType.Array else if (std.mem.eql(u8, type_str, "Struct")) HIRType.Struct else if (std.mem.eql(u8, type_str, "Map")) HIRType.Map else if (std.mem.eql(u8, type_str, "Enum")) HIRType.Enum else if (std.mem.eql(u8, type_str, "Function")) HIRType.Function else if (std.mem.eql(u8, type_str, "Auto")) HIRType.Unknown else HIRType.Int;
+                operand_type = if (std.mem.eql(u8, type_str, "Int")) HIRType.Int else if (std.mem.eql(u8, type_str, "Byte")) HIRType.Byte else if (std.mem.eql(u8, type_str, "Float")) HIRType.Float else if (std.mem.eql(u8, type_str, "String")) HIRType.String else if (std.mem.eql(u8, type_str, "Tetra")) HIRType.Tetra else if (std.mem.eql(u8, type_str, "Nothing")) HIRType.Nothing else HIRType.Int;
             }
 
             try self.instructions.append(HIRInstruction{ .Compare = .{ .op = comp_op, .operand_type = operand_type } });
@@ -628,13 +666,13 @@ pub const SoxaTextParser = struct {
                 // Has quoted name, get type from next token
                 name = try self.parseQuotedString(name_or_type);
                 const type_str = tokens.next() orelse "String";
-                value_type = if (std.mem.eql(u8, type_str, "Int")) HIRType.Int else if (std.mem.eql(u8, type_str, "Float")) HIRType.Float else if (std.mem.eql(u8, type_str, "String")) HIRType.String else if (std.mem.eql(u8, type_str, "Tetra")) HIRType.Tetra else if (std.mem.eql(u8, type_str, "Array")) HIRType.Array else if (std.mem.eql(u8, type_str, "Map")) HIRType.Map else if (std.mem.eql(u8, type_str, "Struct")) blk: {
+                value_type = if (std.mem.eql(u8, type_str, "Int")) HIRType.Int else if (std.mem.eql(u8, type_str, "Float")) HIRType.Float else if (std.mem.eql(u8, type_str, "String")) HIRType.String else if (std.mem.eql(u8, type_str, "Tetra")) HIRType.Tetra else if (std.mem.eql(u8, type_str, "Array")) HIRType.Nothing else if (std.mem.eql(u8, type_str, "Map")) HIRType.Nothing else if (std.mem.eql(u8, type_str, "Struct")) blk: {
                     // For structs, we need to collect field information
                     struct_name = if (path_builder.items.len > 0)
                         try self.allocator.dupe(u8, path_builder.items)
                     else if (name) |n| n else "anonymous";
-                    break :blk HIRType.Struct;
-                } else if (std.mem.eql(u8, type_str, "Enum")) HIRType.Enum else HIRType.String;
+                    break :blk HIRType{ .Struct = 0 };
+                } else if (std.mem.eql(u8, type_str, "Enum")) HIRType{ .Enum = 0 } else HIRType.String;
 
                 // Check for location info
                 if (tokens.next()) |location_str| {
@@ -644,13 +682,13 @@ pub const SoxaTextParser = struct {
                 }
             } else {
                 // Similar logic for non-quoted case...
-                value_type = if (std.mem.eql(u8, name_or_type, "Int")) HIRType.Int else if (std.mem.eql(u8, name_or_type, "Float")) HIRType.Float else if (std.mem.eql(u8, name_or_type, "String")) HIRType.String else if (std.mem.eql(u8, name_or_type, "Tetra")) HIRType.Tetra else if (std.mem.eql(u8, name_or_type, "Array")) HIRType.Map else if (std.mem.eql(u8, name_or_type, "Struct")) blk: {
+                value_type = if (std.mem.eql(u8, name_or_type, "Int")) HIRType.Int else if (std.mem.eql(u8, name_or_type, "Float")) HIRType.Float else if (std.mem.eql(u8, name_or_type, "String")) HIRType.String else if (std.mem.eql(u8, name_or_type, "Tetra")) HIRType.Tetra else if (std.mem.eql(u8, name_or_type, "Array")) HIRType.Nothing else if (std.mem.eql(u8, name_or_type, "Struct")) blk: {
                     struct_name = if (path_builder.items.len > 0)
                         try self.allocator.dupe(u8, path_builder.items)
                     else
                         "anonymous";
-                    break :blk HIRType.Struct;
-                } else if (std.mem.eql(u8, name_or_type, "Enum")) HIRType.Enum else HIRType.String;
+                    break :blk HIRType{ .Struct = 0 };
+                } else if (std.mem.eql(u8, name_or_type, "Enum")) HIRType{ .Enum = 0 } else HIRType.String;
 
                 // Check for location info after type
                 if (tokens.next()) |location_str| {
@@ -786,7 +824,7 @@ pub const SoxaTextParser = struct {
         } else if (std.mem.eql(u8, op, "ArrayNew")) {
             const type_str = tokens.next() orelse return;
             const size_str = tokens.next() orelse return;
-            const element_type = if (std.mem.eql(u8, type_str, "Int")) HIRType.Int else if (std.mem.eql(u8, type_str, "Float")) HIRType.Float else if (std.mem.eql(u8, type_str, "String")) HIRType.String else if (std.mem.eql(u8, type_str, "Byte")) HIRType.Byte else if (std.mem.eql(u8, type_str, "Tetra")) HIRType.Tetra else if (std.mem.eql(u8, type_str, "Array")) HIRType.Array else HIRType.Unknown;
+            const element_type: HIRType = if (std.mem.eql(u8, type_str, "Int")) .Int else if (std.mem.eql(u8, type_str, "Float")) .Float else if (std.mem.eql(u8, type_str, "String")) .String else if (std.mem.eql(u8, type_str, "Byte")) .Byte else if (std.mem.eql(u8, type_str, "Tetra")) .Tetra else if (std.mem.eql(u8, type_str, "Array")) .Nothing else .Nothing;
             const size = std.fmt.parseInt(u32, size_str, 10) catch return;
             try self.instructions.append(HIRInstruction{ .ArrayNew = .{ .element_type = element_type, .size = size } });
         } else if (std.mem.eql(u8, op, "ArrayGet")) {
@@ -815,13 +853,13 @@ pub const SoxaTextParser = struct {
             try self.instructions.append(HIRInstruction.ArrayConcat);
         } else if (std.mem.eql(u8, op, "Range")) {
             const type_str = tokens.next() orelse return;
-            const element_type = if (std.mem.eql(u8, type_str, "Int")) HIRType.Int else if (std.mem.eql(u8, type_str, "Byte")) HIRType.Byte else if (std.mem.eql(u8, type_str, "Float")) HIRType.Float else HIRType.Int;
+            const element_type: HIRType = if (std.mem.eql(u8, type_str, "Int")) .Int else if (std.mem.eql(u8, type_str, "Byte")) .Byte else if (std.mem.eql(u8, type_str, "Float")) .Float else .Int;
             try self.instructions.append(HIRInstruction{ .Range = .{ .element_type = element_type } });
         } else if (std.mem.eql(u8, op, "Map")) {
             const count_str = tokens.next() orelse return;
             const key_type_str = tokens.next() orelse return;
             const entry_count = std.fmt.parseInt(u32, count_str, 10) catch return;
-            const key_type = if (std.mem.eql(u8, key_type_str, "String")) HIRType.String else if (std.mem.eql(u8, key_type_str, "Int")) HIRType.Int else HIRType.String;
+            const key_type: HIRType = if (std.mem.eql(u8, key_type_str, "String")) .String else if (std.mem.eql(u8, key_type_str, "Int")) .Int else .String;
 
             // Create dummy entries array with correct size
             const dummy_entries = try self.allocator.alloc(HIRMapEntry, entry_count);
@@ -835,18 +873,18 @@ pub const SoxaTextParser = struct {
             try self.instructions.append(HIRInstruction{ .Map = .{
                 .entries = dummy_entries,
                 .key_type = key_type,
-                .value_type = .Unknown,
+                .value_type = HIRType.Unknown,
             } });
         } else if (std.mem.eql(u8, op, "MapGet")) {
             const key_type_str = tokens.next() orelse return;
-            const key_type = if (std.mem.eql(u8, key_type_str, "String")) HIRType.String else if (std.mem.eql(u8, key_type_str, "Int")) HIRType.Int else HIRType.String;
+            const key_type: HIRType = if (std.mem.eql(u8, key_type_str, "String")) .String else if (std.mem.eql(u8, key_type_str, "Int")) .Int else .String;
 
             try self.instructions.append(HIRInstruction{ .MapGet = .{
                 .key_type = key_type,
             } });
         } else if (std.mem.eql(u8, op, "MapSet")) {
             const key_type_str = tokens.next() orelse return;
-            const key_type = if (std.mem.eql(u8, key_type_str, "String")) HIRType.String else if (std.mem.eql(u8, key_type_str, "Int")) HIRType.Int else HIRType.String;
+            const key_type: HIRType = if (std.mem.eql(u8, key_type_str, "String")) .String else if (std.mem.eql(u8, key_type_str, "Int")) .Int else .String;
 
             try self.instructions.append(HIRInstruction{ .MapSet = .{
                 .key_type = key_type,
@@ -872,7 +910,7 @@ pub const SoxaTextParser = struct {
             // based on the actual values on the stack
             const field_types = try self.allocator.alloc(HIRType, field_count);
             for (field_types) |*field_type| {
-                field_type.* = HIRType.Unknown; // Default to Auto, will be resolved at runtime
+                field_type.* = HIRType.Nothing; // Default to Nothing, will be resolved at runtime
             }
 
             try self.instructions.append(HIRInstruction{
@@ -890,7 +928,7 @@ pub const SoxaTextParser = struct {
             try self.instructions.append(HIRInstruction{
                 .GetField = .{
                     .field_name = field_name,
-                    .container_type = HIRType.Struct,
+                    .container_type = HIRType{ .Struct = 0 },
                     .field_index = 0, // Will be resolved at runtime
                     .field_for_peek = false,
                 },
@@ -903,7 +941,7 @@ pub const SoxaTextParser = struct {
             try self.instructions.append(HIRInstruction{
                 .SetField = .{
                     .field_name = field_name,
-                    .container_type = HIRType.Struct,
+                    .container_type = HIRType{ .Struct = 0 },
                     .field_index = 0, // Will be resolved at runtime
                 },
             });

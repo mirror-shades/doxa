@@ -111,11 +111,17 @@ fn logicalNot(vm: anytype, a: HIRFrame) !u8 {
         },
     };
 
-    // First-order logic: collapse 4-valued input to classical true/false, then apply classical NOT
-    const a_classical = if (a_tetra == 1 or a_tetra == 2) true else false;
-
-    // Classical NOT: flip the truth value
-    return if (a_classical) 0 else 1;
+    // Proper tetra logic: not false == true, not true == false, not both == both, not neither == neither
+    return switch (a_tetra) {
+        0 => 1, // not false == true
+        1 => 0, // not true == false
+        2 => 2, // not both == both (both does NOT negate)
+        3 => 3, // not neither == neither (neither does NOT negate)
+        else => {
+            vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid tetra value: {}", .{a_tetra});
+            return ErrorList.TypeError;
+        },
+    };
 }
 
 fn logicalIff(vm: anytype, a: HIRFrame, b: HIRFrame) !u8 {

@@ -187,7 +187,8 @@ pub const BinaryExpressionHandler = struct {
             try self.generator.instructions.append(.Swap);
             try self.generator.instructions.append(.{ .StringOp = .{ .op = .Concat } });
         } else if (left_type == .Array and right_type == .Array) {
-            try self.generator.instructions.append(.{ .Arith = .{ .op = .Add, .operand_type = .Array } });
+            // Array concatenation
+            try self.generator.instructions.append(.ArrayConcat);
         } else {
             // For numeric types, use the promoted common type
             const common_type = self.generator.computeNumericCommonType(left_type, right_type, bin.operator.type);

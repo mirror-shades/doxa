@@ -100,6 +100,7 @@ fn writeInstruction(idx: usize, inst: module.Instruction, writer: anytype) !void
         .StoreConstSlot => |operand| try writeSlotOperand(idx, "StoreConst", operand, writer),
         .PushStorageRef => |operand| try writeSlotOperand(idx, "PushStorageRef", operand, writer),
         .BindAlias => |payload| try writer.print("ip[{d}] BindAlias slot:{} type:{s}\n", .{ idx, payload.alias_slot, @tagName(payload.type_tag) }),
+        .LoadAlias => |payload| try writer.print("ip[{d}] LoadAlias slot:{}\n", .{ idx, payload.slot_index }),
         .Arith => |payload| try writer.print("ip[{d}] Arith op:{s} type:{s}\n", .{ idx, @tagName(payload.op), @tagName(payload.type_tag) }),
         .Convert => |payload| try writer.print("ip[{d}] Convert {s}->{s}\n", .{ idx, @tagName(payload.from), @tagName(payload.to) }),
         .Compare => |payload| try writer.print("ip[{d}] Compare op:{s} type:{s}\n", .{ idx, @tagName(payload.op), @tagName(payload.type_tag) }),

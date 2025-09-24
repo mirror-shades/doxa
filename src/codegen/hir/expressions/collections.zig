@@ -40,7 +40,7 @@ pub const CollectionsHandler = struct {
                     else => .Unknown,
                 },
                 .Array => |nested_elements| {
-                    element_type = .Array;
+                    element_type = .Unknown; // Array type requires element type info
                     // For nested arrays, determine the nested element type
                     if (nested_elements.len > 0) {
                         nested_element_type = switch (nested_elements[0].data) {
@@ -52,7 +52,7 @@ pub const CollectionsHandler = struct {
                                 .byte => .Byte,
                                 else => .Unknown,
                             },
-                            .Array => .Array, // Could be deeper nesting
+                            .Array => .Unknown, // Array type requires element type info
                             else => .Unknown,
                         };
                     }
@@ -155,8 +155,9 @@ pub const CollectionsHandler = struct {
                 try self.generator.generateExpression(index.index, true, false);
 
                 // Map access - use MapGet with key type inferred from index
-                const idx_type = self.generator.inferTypeFromExpression(index.index);
-                const key_type = if (idx_type == .Int) HIRType.Int else HIRType.String;
+                _ = self.generator.inferTypeFromExpression(index.index);
+                // For now, use String as default since HIRType comparisons are not supported
+                const key_type = HIRType.String;
                 try self.generator.instructions.append(.{ .MapGet = .{ .key_type = key_type } });
             },
             .Array, .String => {
@@ -204,8 +205,8 @@ pub const CollectionsHandler = struct {
         const container_type = self.generator.inferTypeFromExpression(assign_data.array);
         if (container_type == .Map) {
             const idx_type = self.generator.inferTypeFromExpression(assign_data.index);
-            const key_type = if (idx_type == .Int) HIRType.Int else HIRType.String;
-            try self.generator.instructions.append(.{ .MapSet = .{ .key_type = key_type } });
+            _ = if (idx_type == .Int) HIRType.Int else HIRType.String;
+            try self.generator.instructions.append(.{ .MapSet = .{ .key_type = HIRType.String } });
         } else {
             // Generate ArraySet instruction
             // Stack order expected by VM (top to bottom): value, index, array

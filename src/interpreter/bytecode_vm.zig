@@ -298,6 +298,12 @@ pub const BytecodeVM = struct {
                     else => return error.InvalidAliasReference,
                 }
             },
+            .LoadAlias => |payload| {
+                const frame = try self.currentFrame();
+                const ptr = frame.pointer(payload.slot_index);
+                const value = ptr.load();
+                try self.stack.pushValue(value);
+            },
             .Dup => {
                 try ops_stack.StackOps.execDup(self);
             },
@@ -520,8 +526,7 @@ pub const BytecodeVM = struct {
             .local, .alias => blk: {
                 const frame = try self.currentFrame();
                 const ptr = frame.pointer(operand.slot);
-                if (operand.kind == .alias) {
-                }
+                if (operand.kind == .alias) {}
                 break :blk ptr;
             },
             .module_global, .imported_module => blk: {
@@ -1422,7 +1427,13 @@ pub const BytecodeVM = struct {
             .int => |v| v != 0,
             .byte => |v| v != 0,
             .float => |v| v != 0,
-            .tetra => |v| v != 0,
+            .tetra => |v| switch (v) {
+                0 => false, // false
+                1 => true, // true
+                2 => true, // both (contains true)
+                3 => false, // neither (contains no truth)
+                else => false,
+            },
             .string => |v| v.len != 0,
             .array => |v| blk: {
                 var count: usize = 0;
@@ -1475,6 +1486,8 @@ pub const BytecodeVM = struct {
                 // Push a new frame for the function call
                 _ = try self.pushFrame(function_index, stack_base, return_ip);
 
+                // Debug: Check what's on the stack before the call
+
                 // Jump to the function start
                 if (func_ptr.start_ip >= self.bytecode.instructions.len) return error.UnimplementedInstruction;
                 self.ip = func_ptr.start_ip;
@@ -1506,6 +1519,9 @@ pub const BytecodeVM = struct {
 
         if (return_value) |val| {
             try self.stack.pushValue(val);
+        } else {
+            // Push nothing value for functions that return without a value
+            try self.stack.pushValue(HIRValue.nothing);
         }
 
         if (self.frames.items.len == 0) {
@@ -1568,18 +1584,52 @@ pub const BytecodeVM = struct {
                 return;
             }
         }
-        // If no entry function found, create a default frame for global execution
-        // Create a frame with enough local variables to handle the bytecode
-        // The bytecode expects local variables, so we need to create a frame with enough slots
-        const required_locals = 1000; // Ensure we have enough local variables for the bytecode
 
-        // Create a custom frame with enough local variables
+        // If no entry function found, handle scripts without explicit functions
         if (self.bytecode.functions.len == 0) {
-            return error.NoActiveFrame;
+            // For scripts without functions, start execution at instruction 0
+            // Create a minimal frame for global execution
+            const required_locals = 1000; // Ensure we have enough local variables for the bytecode
+
+            // Create a dummy function structure for the frame
+            var dummy_function = module.BytecodeFunction{
+                .name = "main",
+                .qualified_name = "main",
+                .module_id = 0,
+                .arity = 0,
+                .return_type = .Nothing,
+                .start_label = "main",
+                .body_label = null,
+                .start_ip = 0,
+                .body_ip = null,
+                .local_var_count = required_locals,
+                .is_entry = true,
+                .param_types = &[_]module.BytecodeType{},
+                .param_is_alias = &[_]bool{},
+            };
+
+            var frame = try runtime.Frame.init(self.allocator, &dummy_function, self.stack.len(), self.slot_refs.items.len, 0);
+
+            // Resize the frame to have enough local variables
+            frame.allocator.free(frame.locals);
+            frame.allocator.free(frame.alias_refs);
+            frame.locals = try frame.allocator.alloc(HIRValue, required_locals);
+            frame.alias_refs = try frame.allocator.alloc(?runtime.SlotPointer, required_locals);
+            for (frame.locals) |*slot| slot.* = HIRValue.nothing;
+            for (frame.alias_refs) |*entry| entry.* = null;
+
+            self.frames.append(frame) catch |err| {
+                frame.deinit();
+                return err;
+            };
+            self.ip = 0;
+            return;
         }
 
+        // If we have functions but no entry function, use the first function
         var frame = try runtime.Frame.init(self.allocator, &self.bytecode.functions[0], self.stack.len(), self.slot_refs.items.len, 0);
         // Resize the frame to have enough local variables
+        const required_locals = 1000; // Ensure we have enough local variables for the bytecode
         frame.allocator.free(frame.locals);
         frame.allocator.free(frame.alias_refs);
         frame.locals = try frame.allocator.alloc(HIRValue, required_locals);
@@ -1588,7 +1638,6 @@ pub const BytecodeVM = struct {
         for (frame.alias_refs) |*entry| entry.* = null;
 
         // Update the function's local_var_count to match our allocated locals
-        // This ensures the frame thinks it has enough local variables
         frame.function.local_var_count = @intCast(required_locals);
 
         self.frames.append(frame) catch |err| {
@@ -1606,10 +1655,10 @@ pub const BytecodeVM = struct {
             .String => .String,
             .Tetra => .Tetra,
             .Nothing => .Nothing,
-            .Array => .Array,
-            .Struct => .Struct,
-            .Map => .Map,
-            .Enum => .Enum,
+            .Array => .Unknown,
+            .Struct => .Unknown,
+            .Map => .Unknown,
+            .Enum => .Unknown,
             .Any => .Unknown,
         };
     }

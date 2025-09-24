@@ -846,7 +846,7 @@ fn writeHIRValueText(writer: anytype, value: HIRValue) !void {
         .array => |arr| try writer.print("array[{s}] capacity:{}", .{ @tagName(arr.element_type), arr.capacity }),
         .struct_instance => try writer.print("struct", .{}),
         .map => try writer.print("map", .{}),
-        .enum_variant => |variant| try writer.print("enum_variant {s}.{s}", .{ variant.type_name, variant.variant_name }),
+        .enum_variant => |variant| try writer.print("enum {s}.{s} (idx {})", .{ variant.type_name, variant.variant_name, variant.variant_index }),
         .storage_id_ref => |storage_id| try writer.print("storage_id_ref {}", .{storage_id}),
     }
 }

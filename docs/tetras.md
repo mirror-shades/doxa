@@ -8,8 +8,8 @@ A tetra is a type which represents four cornered logic as opposed to Booles bina
 
 `true` - These first two values should be familiar  
 `false`  
-`both` - This is equivilant to both true _and_ false  
-`neither` - This is equivilatnt neither to true _or_ false
+`both` - This is equivalent to both true _and_ false  
+`neither` - This is equivalent neither to true _or_ false
 
 ### An Example
 
@@ -46,7 +46,7 @@ living(zombie)
 living(angel)
 ```
 
-And here is the ouput I received:
+And here is the output I received:
 
 ```
 [C:\dev\zig\doxa\test.doxa:11:6] value = "Bob"
@@ -77,7 +77,7 @@ Angel triggers neither and so we see no output from either branch.
 
 Keep in mind, a tetra is a value. It doesn't actually alter the logic flow of your program, it's purpose is simply to follow the logic flow in ways basic true and false cannot.
 
-Special attention should (not) be paid to the else clause. The else clause is exactly what it sounds like - "if a condition is ment, then do x, OR ELSE, do y". As we now know, both will always trigger a condition, and neither will never trigger a condition. The effect with else blocks is then as you would assume, both with never trigger an else clause, and neither will always trigger an else clause.
+Special attention should (not) be paid to the else clause. The else clause is exactly what it sounds like - "if a condition is met, then do x, OR ELSE, do y". As we now know, both will always trigger a condition, and neither will never trigger a condition. The effect with else blocks is then as you would assume, both with never trigger an else clause, and neither will always trigger an else clause.
 
 ```
 const zombie is both

@@ -282,7 +282,7 @@ pub const IOHandler = struct {
                 try self.generator.instructions.append(.{
                     .GetField = .{
                         .field_name = field.field.lexeme,
-                        .container_type = .Struct,
+                        .container_type = HIRType{ .Struct = 0 },
                         .field_index = 0,
                         .field_for_peek = true,
                     },

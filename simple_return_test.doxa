@@ -1,7 +1,0 @@
-module math from "./test/misc/math.doxa"
-
-function simpleTest(a :: int, b :: int) returns int {
-    return math.add(a, b)
-}
-
-simpleTest(5, 10)?

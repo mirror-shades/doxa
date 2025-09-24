@@ -92,6 +92,8 @@ pub const HIRInstruction = union(enum) {
     StoreConst: struct {
         var_index: u32,
         var_name: []const u8,
+        scope_kind: ScopeKind,
+        module_context: ?[]const u8,
     },
 
     /// NEW: Push a variable's storage ID onto the stack
