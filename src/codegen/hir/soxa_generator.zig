@@ -715,8 +715,9 @@ pub const HIRGenerator = struct {
                     continue;
                 },
                 .VarDecl => {
-                    // Skip - already processed in global initialization phase
-                    continue;
+                    // Now execute variable declarations in the correct order
+                    // This ensures function calls in variable initializers happen in source order
+                    try SoxaStatements.generateStatement(self, stmt);
                 },
                 else => {
                     try SoxaStatements.generateStatement(self, stmt);
@@ -762,6 +763,7 @@ pub const HIRGenerator = struct {
         const previous_function = self.current_function;
         self.current_function = null;
         defer self.current_function = previous_function;
+
         // Process global variables from imported modules first
         var it = self.module_namespaces.iterator();
         while (it.next()) |entry| {
@@ -773,30 +775,20 @@ pub const HIRGenerator = struct {
                         switch (mod_stmt.data) {
                             .FunctionDecl => continue, // skip functions here
                             .VarDecl => {
-                                // For module-level globals, ensure they are stored in the root/global scope
-                                // by emitting StoreConst/StoreVar before any function bodies.
+                                // For module-level globals, execute them immediately
+                                // since they don't have function calls that need ordering
                                 try SoxaStatements.generateStatement(self, mod_stmt);
                             },
-                            else => try SoxaStatements.generateStatement(self, mod_stmt),
+                            else => continue, // skip all other statement types during global initialization
                         }
                     }
                 }
             }
         }
 
-        // Process variable declarations in main module during global initialization
-        for (statements) |stmt| {
-            switch (stmt.data) {
-                .VarDecl => {
-                    // Process global variable declarations during global initialization
-                    try SoxaStatements.generateStatement(self, stmt);
-                },
-                else => {
-                    // Skip non-variable declarations during global initialization
-                    continue;
-                },
-            }
-        }
+        // For main module variables, we'll process them in the main program phase
+        // to ensure proper execution order of function calls
+        _ = statements; // Suppress unused parameter warning
     }
 
     /// Pass 4: Build function table from collected signatures
