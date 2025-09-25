@@ -519,8 +519,19 @@ pub const CallsHandler = struct {
                 const var_name = builtin_data.arguments[0].data.Variable.lexeme;
                 const var_idx = try self.generator.getOrCreateVariable(var_name);
                 const expected_type = self.generator.getTrackedVariableType(var_name) orelse .Unknown;
-                try self.generator.instructions.append(.Swap);
-                try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = var_idx, .var_name = var_name, .scope_kind = .Local, .module_context = null, .expected_type = expected_type } });
+
+                // Determine the correct scope for the variable
+                const scope_kind = self.generator.symbol_table.determineVariableScope(var_name);
+
+                if (target_type == .String) {
+                    // For strings: swap so we store the updated string, keep popped char for return
+                    try self.generator.instructions.append(.Swap);
+                    try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = var_idx, .var_name = var_name, .scope_kind = scope_kind, .module_context = null, .expected_type = expected_type } });
+                } else {
+                    // For arrays: swap so we store the updated array, keep popped element for return
+                    try self.generator.instructions.append(.Swap);
+                    try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = var_idx, .var_name = var_name, .scope_kind = scope_kind, .module_context = null, .expected_type = expected_type } });
+                }
             }
         } else if (std.mem.eql(u8, name, "insert")) {
             // @insert(container, index, value) -> returns nothing; stores updated container
