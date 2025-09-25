@@ -347,18 +347,29 @@ pub const PrintOps = struct {
             switch (cursor) {
                 .array => |arr| {
                     depth += 1;
-                    if (arr.element_type != .Array) {
-                        // We know the leaf element type.
-                        const base = mapBaseTypeNameFromHIRType(arr.element_type);
-                        return writeTypeWithBrackets(base, depth);
-                    }
-                    // Need to look into first non-nothing element to go deeper.
-                    if (firstNonNothingElement(arr.elements)) |next| {
-                        cursor = next;
-                        continue;
+                    // Check if this is a nested array by looking at the first element
+                    if (firstNonNothingElement(arr.elements)) |first_elem| {
+                        switch (first_elem) {
+                            .array => {
+                                // This is a nested array, continue to next level
+                                cursor = first_elem;
+                                continue;
+                            },
+                            else => {
+                                // This is the leaf level, use the element type
+                                const base = mapBaseTypeNameFromValue(first_elem);
+                                return writeTypeWithBrackets(base, depth);
+                            },
+                        }
                     } else {
-                        // Empty or unknown nested array
-                        return writeTypeWithBrackets("array", depth);
+                        // Empty array - try to use element_type if available
+                        if (arr.element_type != .Unknown) {
+                            const base = mapBaseTypeNameFromHIRType(arr.element_type);
+                            return writeTypeWithBrackets(base, depth);
+                        } else {
+                            // Unknown nested array
+                            return writeTypeWithBrackets("unknown", depth);
+                        }
                     }
                 },
                 else => {
