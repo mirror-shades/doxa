@@ -348,7 +348,9 @@ pub const CallsHandler = struct {
                         if (self.generator.isCustomType(var_name)) |custom_type| {
                             if (custom_type.kind == .Struct) break :blk "struct";
                         }
-                        if (self.generator.symbol_table.getVariableCustomType(var_name)) |custom_type_name| break :blk custom_type_name;
+                        if (self.generator.symbol_table.getVariableCustomType(var_name)) |custom_type_name| {
+                            break :blk custom_type_name;
+                        }
                     }
                     if (arg.data == .FieldAccess) {
                         const field_access = arg.data.FieldAccess;
@@ -628,6 +630,7 @@ pub const CallsHandler = struct {
 
         // Generate HIR for compiler methods like @string, @length, @substring
         const name = internal_data.method.lexeme;
+
         if (std.mem.eql(u8, name, "substring")) {
             // Evaluate in VM-expected order: start, length, then receiver on top
             try self.generator.generateExpression(internal_data.arguments[0], true, false);
@@ -663,6 +666,10 @@ pub const CallsHandler = struct {
                 // numeric -> byte
                 try self.generator.instructions.append(.{ .Convert = .{ .from_type = t, .to_type = .Byte } });
             }
+        } else if (std.mem.eql(u8, name, "type")) {
+            // Evaluate receiver and get its type
+            try self.generator.generateExpression(internal_data.receiver, true, false);
+            try self.generator.instructions.append(.{ .TypeOf = .{ .value_type = .Unknown } });
         } else {
             // Unknown method - fallback to nothing
             const nothing_idx = try self.generator.addConstant(HIRValue.nothing);

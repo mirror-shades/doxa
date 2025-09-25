@@ -407,7 +407,13 @@ pub const PrintOps = struct {
             .tetra => "tetra",
             .nothing => "nothing",
             .array => buildArrayTypeStringFromValue(value),
-            .struct_instance => |s| s.type_name,
+            .struct_instance => |s| {
+                if (s.type_name.len == 0) {
+                    return "struct"; // fallback for empty type name
+                } else {
+                    return s.type_name;
+                }
+            },
             .map => "map",
             .enum_variant => |e| e.type_name,
             .storage_id_ref => "storage_id_ref",
@@ -484,7 +490,7 @@ pub const PrintOps = struct {
             .struct_instance => |s| {
                 try printToStdout("{{ ", .{}); // Add opening bracket
                 for (s.fields, 0..) |field, i| {
-                    try printToStdout("{s}: ", .{field.name});
+                    try printToStdout(" {s}: ", .{field.name});
                     try PrintOps.formatHIRValueRaw(vm, field.value);
                     if (i < s.fields.len - 1) try printToStdout(", ", .{});
                 }

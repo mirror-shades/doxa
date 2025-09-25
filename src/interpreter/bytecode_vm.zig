@@ -1760,7 +1760,7 @@ pub const BytecodeVM = struct {
             .struct_instance => |s| {
                 var result = std.array_list.Managed(u8).init(self.allocator);
                 defer result.deinit();
-                try result.appendSlice("{");
+                try result.appendSlice("{ ");
                 var first = true;
                 for (s.fields) |field| {
                     if (!first) try result.appendSlice(", ");
@@ -1771,11 +1771,11 @@ pub const BytecodeVM = struct {
                     try result.appendSlice(field_str);
                     first = false;
                 }
-                try result.append('}');
+                try result.appendSlice(" }");
                 return try result.toOwnedSlice();
             },
             .map => try self.allocator.dupe(u8, "{map}"),
-            .enum_variant => |e| try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ e.type_name, e.variant_name }),
+            .enum_variant => |e| try std.fmt.allocPrint(self.allocator, ".{s}", .{e.variant_name}),
             .storage_id_ref => |storage_id| try std.fmt.allocPrint(self.allocator, "storage_id_ref({})", .{storage_id}),
         };
     }

@@ -188,6 +188,7 @@ pub const TypeSystem = struct {
                 return HIRType{ .Map = .{ .key = key_type, .value = value_type } };
             },
             .Union => .Unknown, // Union type requires member type info
+            .Custom => HIRType{ .Struct = 0 }, // Custom types are structs or enums, default to struct
             else => .Nothing,
         };
     }
@@ -288,7 +289,6 @@ pub const TypeSystem = struct {
                             if (semantic.memory.scope_manager.value_storage.get(variable.storage_id)) |storage| {
                                 // Convert AST TypeInfo to HIRType
                                 const hir_type = self.convertTypeInfo(storage.type_info.*);
-                                // std.debug.print("DEBUG: Found variable '{s}' in semantic scope with AST base: {}, HIR type: {any}\n", .{ var_token.lexeme, storage.type_info.*.base, hir_type });
                                 return hir_type;
                             }
                         }
@@ -297,7 +297,6 @@ pub const TypeSystem = struct {
 
                 // Final fallback to HIR generator's symbol table
                 const var_type = symbol_table.getTrackedVariableType(var_token.lexeme) orelse .Unknown;
-                // std.debug.print("DEBUG: TypeSystem - variable '{s}' type: {any}\n", .{ var_token.lexeme, var_type });
                 return var_type;
             },
             .FieldAccess => |field| {
@@ -638,7 +637,7 @@ pub const TypeSystem = struct {
         if (resolved_left == .Byte and resolved_right == .Byte) {
             return .Byte;
         }
-        
+
         return .Unknown;
     }
 

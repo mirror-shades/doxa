@@ -77,8 +77,18 @@ pub const TypeOps = struct {
         // Pop the value from the stack
         const value = try vm.stack.pop();
 
+        // DEBUG: Print the value being type-checked
+        if (vm.reporter.debug_mode) {
+            vm.reporter.report(.Debug, .Hint, null, null, "execTypeOf: value type={s}, value={any}", .{ @tagName(value.value), value.value });
+        }
+
         // Get the runtime type string
         const type_string = debug_print.getTypeString(vm, value.value);
+
+        // DEBUG: Print the type string result
+        if (vm.reporter.debug_mode) {
+            vm.reporter.report(.Debug, .Hint, null, null, "execTypeOf: result type_string='{s}'", .{type_string});
+        }
 
         // Push the type string back to the stack
         try vm.stack.push(HIRFrame.initString(type_string));
