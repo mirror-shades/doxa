@@ -516,12 +516,9 @@ pub const SemanticAnalyzer = struct {
                             const param_type_ptr = try ast.typeInfoFromExpr(self.allocator, type_expr);
                             defer self.allocator.destroy(param_type_ptr);
 
-                            const resolved_param_type = try self.resolveTypeInfo(param_type_ptr.*);
-                            if (resolved_param_type.base == .Union) {
-                                // Use union type as-is since flattenUnionType was removed
-                                // resolved_param_type is already correct
-                            }
-                            param_types[i] = resolved_param_type;
+                            // For explicit parameter types, use the declared type directly
+                            // Don't call resolveTypeInfo which might trigger type inference
+                            param_types[i] = param_type_ptr.*;
                         } else {
                             param_types[i] = .{ .base = .Nothing };
                         }

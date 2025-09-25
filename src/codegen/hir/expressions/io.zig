@@ -212,8 +212,23 @@ pub const IOHandler = struct {
             const var_name = peek.expr.data.Variable.lexeme;
             // Prefer index-based lookup to avoid name collisions; do this for all scopes
             if (self.generator.symbol_table.getVariable(var_name)) |var_index| {
-                if (self.generator.symbol_table.getUnionMembersByIndex(var_index)) |members2| {
-                    union_members = members2;
+                // FIXED: Only use union member information if we're looking at the correct scope
+                // When inside a function, only use union members for local variables to avoid
+                // global union variables affecting function parameters with the same name
+                var should_use_union_members = true;
+                if (self.generator.symbol_table.current_function != null) {
+                    // Inside function: only use union members if this is a local variable
+                    if (self.generator.symbol_table.local_variables.get(var_name) == null) {
+                        // This is a global variable accessed from inside a function
+                        // Don't use union member information to avoid scope confusion
+                        should_use_union_members = false;
+                    }
+                }
+
+                if (should_use_union_members) {
+                    if (self.generator.symbol_table.getUnionMembersByIndex(var_index)) |members2| {
+                        union_members = members2;
+                    }
                 }
             }
         }
