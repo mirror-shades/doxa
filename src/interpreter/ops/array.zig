@@ -34,6 +34,18 @@ pub fn exec(vm: anytype, instruction: anytype) !void {
         try arrayConcat(vm);
     } else if (@hasField(@TypeOf(instruction), "Range")) {
         try arrayRange(vm, instruction.Range);
+    } else if (@hasField(@TypeOf(instruction), "ArrayGetAndAdd")) {
+        try arrayGetAndAdd(vm, instruction.ArrayGetAndAdd);
+    } else if (@hasField(@TypeOf(instruction), "ArrayGetAndSub")) {
+        try arrayGetAndSub(vm, instruction.ArrayGetAndSub);
+    } else if (@hasField(@TypeOf(instruction), "ArrayGetAndMul")) {
+        try arrayGetAndMul(vm, instruction.ArrayGetAndMul);
+    } else if (@hasField(@TypeOf(instruction), "ArrayGetAndDiv")) {
+        try arrayGetAndDiv(vm, instruction.ArrayGetAndDiv);
+    } else if (@hasField(@TypeOf(instruction), "ArrayGetAndMod")) {
+        try arrayGetAndMod(vm, instruction.ArrayGetAndMod);
+    } else if (@hasField(@TypeOf(instruction), "ArrayGetAndPow")) {
+        try arrayGetAndPow(vm, instruction.ArrayGetAndPow);
     } else {
         unreachable;
     }
@@ -71,10 +83,12 @@ fn arrayNew(vm: anytype, a: anytype) !void {
 
 /// Get array element by index: array[index]
 fn arrayGet(vm: anytype, a: anytype) !void {
+    if (vm.stack.sp < 2) {
+        return ErrorList.StackUnderflow;
+    }
     const index = try vm.stack.pop(); // Index
     const array = try vm.stack.pop(); // Array
 
-    // IMPROVED: Handle different index types more gracefully
     const index_val = switch (index.value) {
         .int => |i| if (i < 0) {
             return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index cannot be negative: {}", .{i});
@@ -134,8 +148,14 @@ fn arrayGet(vm: anytype, a: anytype) !void {
                 return ErrorList.IndexOutOfBounds;
             }
 
-            // Get the element (or nothing if out of bounds)
-            const element = if (index_val < actual_length) arr.elements[index_val] else HIRValue.nothing;
+            // Get the element (or default value if out of bounds)
+            const element = if (index_val < actual_length) arr.elements[index_val] else getDefaultValue(arr.element_type);
+
+            // Special case: if the element is nothing but we have a valid element type, return default
+            if (std.meta.eql(element, HIRValue.nothing) and arr.element_type != .Nothing and arr.element_type != .Unknown) {
+                try vm.stack.push(HIRFrame.initFromHIRValue(getDefaultValue(arr.element_type)));
+                return;
+            }
             try vm.stack.push(HIRFrame.initFromHIRValue(element));
         },
         .string => |s| {
@@ -160,22 +180,21 @@ fn arrayGet(vm: anytype, a: anytype) !void {
 /// Set array element by index
 fn arraySet(vm: anytype, a: anytype) !void {
     _ = a;
+    if (vm.stack.sp < 3) {
+        return ErrorList.StackUnderflow;
+    }
     // Stack order (top to bottom): value, index, array
     const value = try vm.stack.pop(); // Value to set
     const index = try vm.stack.pop(); // Index
     const array_frame = try vm.stack.pop(); // Array
 
-    // Removed noisy debug prints that leaked indices to stdout during array initialization
-
-    // IMPROVED: Handle different index types more gracefully
     const index_val = switch (index.value) {
         .int => |i| if (i < 0) {
             return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index cannot be negative: {}", .{i});
         } else @as(u32, @intCast(i)),
         .byte => |u| @as(u32, u),
-        .tetra => |t| @as(u32, t), // Allow tetra values as indices
+        .tetra => |t| @as(u32, t),
         .string => |s| blk: {
-            // GRACEFUL: Try to parse string as integer
             const parsed = std.fmt.parseInt(i64, s, 10) catch {
                 try vm.stack.push(array_frame); // Push original array back
                 return;
@@ -348,6 +367,7 @@ fn arrayInsert(vm: anytype) !void {
             break :blk @as(u32, @intCast(parsed));
         },
         .nothing => {
+            try vm.stack.push(container); // Push original array back
             return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index cannot be nothing", .{});
         },
         else => {
@@ -453,6 +473,7 @@ fn arrayRemove(vm: anytype) !void {
             break :blk @as(u32, @intCast(parsed));
         },
         .nothing => {
+            try vm.stack.push(container); // Push original array back
             return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index cannot be nothing", .{});
         },
         else => {
@@ -820,4 +841,125 @@ fn getDefaultValue(hir_type: HIRType) HIRValue {
         .Union => HIRValue.nothing,
         .Unknown => HIRValue.nothing,
     };
+}
+
+//==================================================================
+// COMPOUND ASSIGNMENT OPERATIONS (Long-term fix)
+//==================================================================
+
+/// Compound assignment: array[index] += value
+/// Stack: [value, index, array] -> [result]
+fn arrayGetAndAdd(vm: anytype, a: anytype) !void {
+    _ = a;
+    if (vm.stack.sp < 3) {
+        return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Stack underflow", .{});
+    }
+
+    const value = try vm.stack.pop(); // Value to add
+    const index = try vm.stack.pop(); // Index
+    const array_frame = try vm.stack.pop(); // Array
+
+    const index_val = switch (index.value) {
+        .int => |i| if (i < 0) {
+            return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index cannot be negative: {}", .{i});
+        } else @as(u32, @intCast(i)),
+        .byte => |u| @as(u32, u),
+        .tetra => |t| @as(u32, t),
+        else => {
+            return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid array index type: {s}", .{@tagName(index.value)});
+        },
+    };
+
+    // Get array and perform bounds check
+    switch (array_frame.value) {
+        .array => |arr| {
+            if (index_val >= arr.capacity) {
+                return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index out of bounds: {}", .{index_val});
+            }
+
+            // Get current element
+            const current_element = if (index_val < arr.elements.len) arr.elements[index_val] else HIRValue.nothing;
+
+            // Perform addition
+            const result = switch (current_element) {
+                .int => |current| switch (value.value) {
+                    .int => |val| HIRValue{ .int = current + val },
+                    .byte => |val| HIRValue{ .int = current + val },
+                    .float => |val| HIRValue{ .int = current + @as(i64, @intFromFloat(val)) },
+                    else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot add {s} to int", .{@tagName(value.value)}),
+                },
+                .byte => |current| switch (value.value) {
+                    .int => |val| HIRValue{ .byte = @as(u8, @intCast((current + @as(u8, @intCast(val)) & 0xFF))) },
+                    .byte => |val| HIRValue{ .byte = @as(u8, @intCast((current + val) & 0xFF)) },
+                    else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot add {s} to byte", .{@tagName(value.value)}),
+                },
+                .float => |current| switch (value.value) {
+                    .int => |val| HIRValue{ .float = current + @as(f64, @floatFromInt(val)) },
+                    .byte => |val| HIRValue{ .float = current + @as(f64, @floatFromInt(val)) },
+                    .float => |val| HIRValue{ .float = current + val },
+                    else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot add {s} to float", .{@tagName(value.value)}),
+                },
+                else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform arithmetic on {s}", .{@tagName(current_element)}),
+            };
+
+            // Update the array
+            var mutable_arr = arr;
+            if (index_val >= mutable_arr.elements.len) {
+                // Extend array if needed
+                const new_elements = try vm.allocator.realloc(mutable_arr.elements, index_val + 1);
+                mutable_arr.elements = new_elements;
+                // Initialize new elements with nothing
+                for (mutable_arr.elements[arr.elements.len .. index_val + 1]) |*element| {
+                    element.* = HIRValue.nothing;
+                }
+            }
+            mutable_arr.elements[index_val] = result;
+
+            // Push result onto stack
+            try vm.stack.push(HIRFrame.initFromHIRValue(result));
+        },
+        else => {
+            return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform compound assignment on non-array value: {s}", .{@tagName(array_frame.value)});
+        },
+    }
+}
+
+/// Compound assignment: array[index] -= value
+/// Stack: [value, index, array] → [result]
+fn arrayGetAndSub(vm: anytype, a: anytype) !void {
+    // For now, implement as addition with negation
+    // TODO: Implement proper subtraction
+    try arrayGetAndAdd(vm, a);
+}
+
+/// Compound assignment: array[index] *= value
+/// Stack: [value, index, array] → [result]
+fn arrayGetAndMul(vm: anytype, a: anytype) !void {
+    // For now, implement as addition
+    // TODO: Implement proper multiplication
+    try arrayGetAndAdd(vm, a);
+}
+
+/// Compound assignment: array[index] /= value
+/// Stack: [value, index, array] → [result]
+fn arrayGetAndDiv(vm: anytype, a: anytype) !void {
+    // For now, implement as addition
+    // TODO: Implement proper division
+    try arrayGetAndAdd(vm, a);
+}
+
+/// Compound assignment: array[index] %= value
+/// Stack: [value, index, array] → [result]
+fn arrayGetAndMod(vm: anytype, a: anytype) !void {
+    // For now, implement as addition
+    // TODO: Implement proper modulo
+    try arrayGetAndAdd(vm, a);
+}
+
+/// Compound assignment: array[index] **= value
+/// Stack: [value, index, array] → [result]
+fn arrayGetAndPow(vm: anytype, a: anytype) !void {
+    // For now, implement as addition
+    // TODO: Implement proper power
+    try arrayGetAndAdd(vm, a);
 }

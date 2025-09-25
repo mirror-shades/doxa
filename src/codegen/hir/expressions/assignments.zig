@@ -5,6 +5,7 @@ const Location = @import("../../../utils/reporting.zig").Location;
 const HIRGenerator = @import("../soxa_generator.zig").HIRGenerator;
 const HIRValue = @import("../soxa_values.zig").HIRValue;
 const HIRType = @import("../soxa_types.zig").HIRType;
+const ScopeKind = @import("../soxa_types.zig").ScopeKind;
 const HIRInstruction = @import("../soxa_instructions.zig").HIRInstruction;
 const ErrorCode = @import("../../../utils/errors.zig").ErrorCode;
 const ErrorList = @import("../../../utils/errors.zig").ErrorList;
@@ -54,7 +55,7 @@ pub const AssignmentsHandler = struct {
 
         // NEW: Track the variable's type from the assigned value
         const assigned_type = self.generator.inferTypeFromExpression(assign.value.?);
-        
+
         // Only update the variable's type if it wasn't already explicitly declared
         // This preserves the original type annotation (e.g., "var ip :: int")
         const existing_type = self.generator.getTrackedVariableType(assign.name.lexeme);
@@ -115,11 +116,14 @@ pub const AssignmentsHandler = struct {
             try self.generator.instructions.append(.Dup);
         }
 
+        // Determine correct scope for the variable
+        const scope_kind = self.generator.symbol_table.determineVariableScope(assign.name.lexeme);
+
         // Store to variable
         try self.generator.instructions.append(.{ .StoreVar = .{
             .var_index = var_idx,
             .var_name = assign.name.lexeme,
-            .scope_kind = .Local,
+            .scope_kind = scope_kind,
             .module_context = null,
             .expected_type = assigned_type,
         } });
@@ -139,13 +143,17 @@ pub const AssignmentsHandler = struct {
                 },
             });
         } else {
-            // Regular variable - load from local storage
+            // Regular variable - determine correct scope
             const var_idx = try self.generator.getOrCreateVariable(compound.name.lexeme);
+
+            // Determine correct scope for the variable
+            const scope_kind = self.generator.symbol_table.determineVariableScope(compound.name.lexeme);
+
             try self.generator.instructions.append(.{
                 .LoadVar = .{
                     .var_index = var_idx,
                     .var_name = compound.name.lexeme,
-                    .scope_kind = .Local,
+                    .scope_kind = scope_kind,
                     .module_context = null,
                 },
             });
@@ -209,12 +217,16 @@ pub const AssignmentsHandler = struct {
                 },
             });
         } else {
-            // Regular variable - store to local storage
+            // Regular variable - determine correct scope
             const var_idx = try self.generator.getOrCreateVariable(compound.name.lexeme);
+
+            // Determine correct scope for the variable
+            const scope_kind = self.generator.symbol_table.determineVariableScope(compound.name.lexeme);
+
             try self.generator.instructions.append(.{ .StoreVar = .{
                 .var_index = var_idx,
                 .var_name = compound.name.lexeme,
-                .scope_kind = .Local,
+                .scope_kind = scope_kind,
                 .module_context = null,
                 .expected_type = expected_type,
             } });

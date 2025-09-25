@@ -205,6 +205,11 @@ pub const BytecodeVM = struct {
     }
 
     fn popValue(self: *BytecodeVM) VmError!HIRValue {
+        if (self.stack.sp == 0) {
+            std.debug.print("StackUnderflow: Attempting to pop from empty stack at IP {d}\n", .{self.ip});
+            std.debug.print("Current instruction: {any}\n", .{self.bytecode.instructions[self.ip]});
+            return ErrorList.StackUnderflow;
+        }
         return try self.stack.popValue();
     }
     pub fn execute(self: *BytecodeVM, inst: module.Instruction) VmError!void {
@@ -272,14 +277,14 @@ pub const BytecodeVM = struct {
                 try self.stack.pushValue(value);
             },
             .StoreSlot => |payload| {
-                const frame = try self.popFrame();
+                const value = try self.popValue();
                 const ptr = try self.resolveSlot(payload.target);
-                ptr.store(frame.value);
+                ptr.store(value);
             },
             .StoreConstSlot => |operand| {
-                const frame = try self.popFrame();
+                const value = try self.popValue();
                 const ptr = try self.resolveSlot(operand);
-                ptr.store(frame.value);
+                ptr.store(value);
             },
             .PushStorageRef => |operand| {
                 const ptr = try self.resolveSlot(operand);
@@ -356,6 +361,37 @@ pub const BytecodeVM = struct {
             .Range => |payload| {
                 try ops_array.exec(self, .{ .Range = .{
                     .element_type = toHIRType(payload.element_type),
+                } });
+            },
+            // Compound assignment operations
+            .ArrayGetAndAdd => |payload| {
+                try ops_array.exec(self, .{ .ArrayGetAndAdd = .{
+                    .bounds_check = payload.bounds_check,
+                } });
+            },
+            .ArrayGetAndSub => |payload| {
+                try ops_array.exec(self, .{ .ArrayGetAndSub = .{
+                    .bounds_check = payload.bounds_check,
+                } });
+            },
+            .ArrayGetAndMul => |payload| {
+                try ops_array.exec(self, .{ .ArrayGetAndMul = .{
+                    .bounds_check = payload.bounds_check,
+                } });
+            },
+            .ArrayGetAndDiv => |payload| {
+                try ops_array.exec(self, .{ .ArrayGetAndDiv = .{
+                    .bounds_check = payload.bounds_check,
+                } });
+            },
+            .ArrayGetAndMod => |payload| {
+                try ops_array.exec(self, .{ .ArrayGetAndMod = .{
+                    .bounds_check = payload.bounds_check,
+                } });
+            },
+            .ArrayGetAndPow => |payload| {
+                try ops_array.exec(self, .{ .ArrayGetAndPow = .{
+                    .bounds_check = payload.bounds_check,
                 } });
             },
             .Map => |payload| {
@@ -1576,13 +1612,23 @@ pub const BytecodeVM = struct {
 
     fn prepareEntryFrame(self: *BytecodeVM) VmError!void {
         if (self.frames.items.len != 0) return;
+
+        // First, execute global initialization instructions (at the beginning of the instruction array)
+        // before jumping to the entry function
+        self.ip = 0;
+
+        // Find the entry function to prepare the frame
+        var entry_function_index: ?usize = null;
         for (self.bytecode.functions, 0..) |func, idx| {
             if (func.is_entry) {
-                _ = try self.pushFrame(idx, self.stack.len(), 0);
-                if (func.start_ip >= self.bytecode.instructions.len) return error.UnimplementedInstruction;
-                self.ip = func.start_ip;
-                return;
+                entry_function_index = idx;
+                break;
             }
+        }
+
+        if (entry_function_index) |entry_idx| {
+            // Prepare the entry function frame but don't jump to it yet
+            _ = try self.pushFrame(entry_idx, self.stack.len(), 0);
         }
 
         // If no entry function found, handle scripts without explicit functions

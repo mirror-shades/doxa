@@ -638,6 +638,32 @@ fn writeHIRInstruction(writer: anytype, instruction: HIRInstruction, allocator: 
             try writer.writeInt(u32, s.scope_id, .little);
         },
 
+        // Compound assignment operations
+        .ArrayGetAndAdd => |a| {
+            try writer.writeByte(26); // Instruction tag
+            try writer.writeByte(if (a.bounds_check) 1 else 0);
+        },
+        .ArrayGetAndSub => |a| {
+            try writer.writeByte(27); // Instruction tag
+            try writer.writeByte(if (a.bounds_check) 1 else 0);
+        },
+        .ArrayGetAndMul => |a| {
+            try writer.writeByte(28); // Instruction tag
+            try writer.writeByte(if (a.bounds_check) 1 else 0);
+        },
+        .ArrayGetAndDiv => |a| {
+            try writer.writeByte(29); // Instruction tag
+            try writer.writeByte(if (a.bounds_check) 1 else 0);
+        },
+        .ArrayGetAndMod => |a| {
+            try writer.writeByte(30); // Instruction tag
+            try writer.writeByte(if (a.bounds_check) 1 else 0);
+        },
+        .ArrayGetAndPow => |a| {
+            try writer.writeByte(31); // Instruction tag
+            try writer.writeByte(if (a.bounds_check) 1 else 0);
+        },
+
         else => {
             return ErrorList.UnsupportedStatement;
         },
@@ -816,6 +842,33 @@ fn readHIRInstruction(reader: anytype, allocator: std.mem.Allocator) !HIRInstruc
             return HIRInstruction{ .ExitScope = .{ .scope_id = scope_id } };
         },
 
+        // Compound assignment operations
+        26 => { // ArrayGetAndAdd
+            const bounds_check = (try reader.readByte()) != 0;
+            std.debug.print("HIR DESERIALIZER: Deserializing ArrayGetAndAdd instruction\n", .{});
+            return HIRInstruction{ .ArrayGetAndAdd = .{ .bounds_check = bounds_check } };
+        },
+        27 => { // ArrayGetAndSub
+            const bounds_check = (try reader.readByte()) != 0;
+            return HIRInstruction{ .ArrayGetAndSub = .{ .bounds_check = bounds_check } };
+        },
+        28 => { // ArrayGetAndMul
+            const bounds_check = (try reader.readByte()) != 0;
+            return HIRInstruction{ .ArrayGetAndMul = .{ .bounds_check = bounds_check } };
+        },
+        29 => { // ArrayGetAndDiv
+            const bounds_check = (try reader.readByte()) != 0;
+            return HIRInstruction{ .ArrayGetAndDiv = .{ .bounds_check = bounds_check } };
+        },
+        30 => { // ArrayGetAndMod
+            const bounds_check = (try reader.readByte()) != 0;
+            return HIRInstruction{ .ArrayGetAndMod = .{ .bounds_check = bounds_check } };
+        },
+        31 => { // ArrayGetAndPow
+            const bounds_check = (try reader.readByte()) != 0;
+            return HIRInstruction{ .ArrayGetAndPow = .{ .bounds_check = bounds_check } };
+        },
+
         else => {
             return ErrorList.UnsupportedStatement;
         },
@@ -961,6 +1014,12 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
         // Array operations
         .ArrayNew => |a| try writer.print("    ArrayNew {s} {}             ; Create array\n", .{ @tagName(a.element_type), a.size }),
         .ArrayGet => |a| try writer.print("    ArrayGet {}                 ; Get array element\n", .{a.bounds_check}),
+        .ArrayGetAndAdd => |a| try writer.print("    ArrayGetAndAdd {}           ; Compound assignment: array[index] += value\n", .{a.bounds_check}),
+        .ArrayGetAndSub => |a| try writer.print("    ArrayGetAndSub {}           ; Compound assignment: array[index] -= value\n", .{a.bounds_check}),
+        .ArrayGetAndMul => |a| try writer.print("    ArrayGetAndMul {}           ; Compound assignment: array[index] *= value\n", .{a.bounds_check}),
+        .ArrayGetAndDiv => |a| try writer.print("    ArrayGetAndDiv {}           ; Compound assignment: array[index] /= value\n", .{a.bounds_check}),
+        .ArrayGetAndMod => |a| try writer.print("    ArrayGetAndMod {}           ; Compound assignment: array[index] %= value\n", .{a.bounds_check}),
+        .ArrayGetAndPow => |a| try writer.print("    ArrayGetAndPow {}           ; Compound assignment: array[index] **= value\n", .{a.bounds_check}),
         .ArraySet => |a| try writer.print("    ArraySet {}                 ; Set array element\n", .{a.bounds_check}),
         .ArrayPush => |a| try writer.print("    ArrayPush {s}               ; Push to array\n", .{@tagName(a.resize_behavior)}),
         .ArrayPop => try writer.print("    ArrayPop                    ; Pop from array\n", .{}),

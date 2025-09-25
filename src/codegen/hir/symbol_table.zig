@@ -1,5 +1,6 @@
 const std = @import("std");
 const HIRType = @import("soxa_types.zig").HIRType;
+const ScopeKind = @import("soxa_types.zig").ScopeKind;
 
 /// Manages variable declarations, types, and metadata for HIR generation
 pub const SymbolTable = struct {
@@ -64,7 +65,7 @@ pub const SymbolTable = struct {
         self.local_variables.deinit();
         self.local_variables = std.StringHashMap(u32).init(self.allocator);
         self.local_variable_count = 0;
-        
+
         // Clear alias parameters for the new function scope
         self.alias_parameters.deinit();
         self.alias_parameters = std.StringHashMap(void).init(self.allocator);
@@ -77,16 +78,19 @@ pub const SymbolTable = struct {
 
     /// Get or create a variable index, handling local vs global scope
     pub fn getOrCreateVariable(self: *SymbolTable, name: []const u8) !u32 {
-        // When inside a function, keep variable indices local to the function to avoid collisions
+        // When inside a function, check local variables first, then global
         if (self.current_function != null) {
             if (self.local_variables.get(name)) |idx| {
                 return idx;
             }
+            // Check if variable exists globally
+            if (self.variables.get(name)) |global_idx| {
+                return global_idx;
+            }
+            // Variable doesn't exist anywhere, create new local variable
             const idx = self.local_variable_count;
             try self.local_variables.put(name, idx);
             self.local_variable_count += 1;
-            
-            
             return idx;
         }
 
@@ -97,8 +101,6 @@ pub const SymbolTable = struct {
         const idx = self.variable_count;
         try self.variables.put(name, idx);
         self.variable_count += 1;
-        
-        
         return idx;
     }
 
@@ -118,6 +120,28 @@ pub const SymbolTable = struct {
     /// Track a variable's type when it's declared or assigned
     pub fn trackVariableType(self: *SymbolTable, var_name: []const u8, var_type: HIRType) !void {
         try self.variable_types.put(var_name, var_type);
+    }
+
+    /// Determine the correct scope for a variable based on where it exists
+    pub fn determineVariableScope(self: *SymbolTable, var_name: []const u8) ScopeKind {
+        if (self.current_function != null) {
+            // Inside function: check if it's a local variable first
+            const in_local = self.local_variables.get(var_name);
+            const in_global = self.variables.get(var_name);
+
+            if (in_local) |_| {
+                return .Local;
+            } else if (in_global) |_| {
+                // Found in global scope, must be global
+                return .ModuleGlobal;
+            } else {
+                // New variable in function scope
+                return .Local;
+            }
+        } else {
+            // Not in function scope, must be global
+            return .ModuleGlobal;
+        }
     }
 
     /// Get tracked variable type

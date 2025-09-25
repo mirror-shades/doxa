@@ -489,6 +489,15 @@ pub const BytecodeGenerator = struct {
                 .Range => |payload| try self.instructions.append(self.allocator, .{ .Range = .{ .element_type = module.typeFromHIR(payload.element_type) } }),
                 .Exists => |payload| try self.instructions.append(self.allocator, .{ .Exists = .{ .predicate_type = module.typeFromHIR(payload.predicate_type) } }),
                 .Forall => |payload| try self.instructions.append(self.allocator, .{ .Forall = .{ .predicate_type = module.typeFromHIR(payload.predicate_type) } }),
+                // Compound assignment operations
+                .ArrayGetAndAdd => |payload| {
+                    try self.instructions.append(self.allocator, .{ .ArrayGetAndAdd = .{ .bounds_check = payload.bounds_check } });
+                },
+                .ArrayGetAndSub => |payload| try self.instructions.append(self.allocator, .{ .ArrayGetAndSub = .{ .bounds_check = payload.bounds_check } }),
+                .ArrayGetAndMul => |payload| try self.instructions.append(self.allocator, .{ .ArrayGetAndMul = .{ .bounds_check = payload.bounds_check } }),
+                .ArrayGetAndDiv => |payload| try self.instructions.append(self.allocator, .{ .ArrayGetAndDiv = .{ .bounds_check = payload.bounds_check } }),
+                .ArrayGetAndMod => |payload| try self.instructions.append(self.allocator, .{ .ArrayGetAndMod = .{ .bounds_check = payload.bounds_check } }),
+                .ArrayGetAndPow => |payload| try self.instructions.append(self.allocator, .{ .ArrayGetAndPow = .{ .bounds_check = payload.bounds_check } }),
                 .StructNew => |payload| try self.instructions.append(self.allocator, .{ .StructNew = .{
                     .type_name = payload.type_name,
                     .field_count = payload.field_count,

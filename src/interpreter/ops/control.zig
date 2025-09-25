@@ -33,9 +33,11 @@ pub const ControlFlowOps = struct {
         };
 
         const target_label = if (should_jump) j.label_true else j.label_false;
+        std.debug.print("JumpCond: condition={any}, should_jump={}, target_label='{s}'\n", .{ condition.value, should_jump, target_label });
 
         if (vm.label_map.get(target_label)) |target_ip| {
             // Always set IP explicitly since JumpCond is marked as a "jump" instruction
+            std.debug.print("JumpCond: jumping to label '{s}' at IP {}\n", .{ target_label, target_ip });
             vm.ip = target_ip;
         } else {
             return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Unknown label: {s}", .{target_label});
