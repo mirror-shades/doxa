@@ -9,6 +9,7 @@ const HIRMapEntry = SoxaValues.HIRMapEntry;
 
 const SoxaInstructions = @import("soxa_instructions.zig");
 const HIRInstruction = SoxaInstructions.HIRInstruction;
+const ScopeKind = @import("soxa_types.zig").ScopeKind;
 const ExceptionBehavior = SoxaInstructions.ExceptionBehavior;
 const ArithOp = SoxaInstructions.ArithOp;
 const ResizeBehavior = SoxaInstructions.ResizeBehavior;
@@ -487,13 +488,31 @@ pub const SoxaTextParser = struct {
             const var_index = std.fmt.parseInt(u32, idx_str, 10) catch return;
             const name_quoted = tokens.next() orelse return;
             const var_name = try self.parseQuotedString(name_quoted);
-            try self.instructions.append(HIRInstruction{ .LoadVar = .{ .var_index = var_index, .var_name = var_name, .scope_kind = .Local, .module_context = null } });
+            const scope_str = tokens.next() orelse "Local"; // Default to Local for backward compatibility
+            const scope_kind = if (std.mem.eql(u8, scope_str, "ModuleGlobal"))
+                ScopeKind.ModuleGlobal
+            else if (std.mem.eql(u8, scope_str, "ImportedModule"))
+                ScopeKind.ImportedModule
+            else if (std.mem.eql(u8, scope_str, "Builtin"))
+                ScopeKind.Builtin
+            else
+                ScopeKind.Local;
+            try self.instructions.append(HIRInstruction{ .LoadVar = .{ .var_index = var_index, .var_name = var_name, .scope_kind = scope_kind, .module_context = null } });
         } else if (std.mem.eql(u8, op, "StoreVar")) {
             const idx_str = tokens.next() orelse return;
             const var_index = std.fmt.parseInt(u32, idx_str, 10) catch return;
             const name_quoted = tokens.next() orelse return;
             const var_name = try self.parseQuotedString(name_quoted);
-            try self.instructions.append(HIRInstruction{ .StoreVar = .{ .var_index = var_index, .var_name = var_name, .scope_kind = .Local, .module_context = null, .expected_type = .Unknown } });
+            const scope_str = tokens.next() orelse "Local"; // Default to Local for backward compatibility
+            const scope_kind = if (std.mem.eql(u8, scope_str, "ModuleGlobal"))
+                ScopeKind.ModuleGlobal
+            else if (std.mem.eql(u8, scope_str, "ImportedModule"))
+                ScopeKind.ImportedModule
+            else if (std.mem.eql(u8, scope_str, "Builtin"))
+                ScopeKind.Builtin
+            else
+                ScopeKind.Local;
+            try self.instructions.append(HIRInstruction{ .StoreVar = .{ .var_index = var_index, .var_name = var_name, .scope_kind = scope_kind, .module_context = null, .expected_type = .Unknown } });
         } else if (std.mem.eql(u8, op, "LoadAlias")) {
             const idx_str = tokens.next() orelse return;
             const slot_index = std.fmt.parseInt(u32, idx_str, 10) catch return;
@@ -513,7 +532,16 @@ pub const SoxaTextParser = struct {
             const var_index = std.fmt.parseInt(u32, idx_str, 10) catch return;
             const name_quoted = tokens.next() orelse return;
             const var_name = try self.parseQuotedString(name_quoted);
-            try self.instructions.append(HIRInstruction{ .StoreConst = .{ .var_index = var_index, .var_name = var_name, .scope_kind = .Local, .module_context = null } });
+            const scope_str = tokens.next() orelse "Local"; // Default to Local for backward compatibility
+            const scope_kind = if (std.mem.eql(u8, scope_str, "ModuleGlobal"))
+                ScopeKind.ModuleGlobal
+            else if (std.mem.eql(u8, scope_str, "ImportedModule"))
+                ScopeKind.ImportedModule
+            else if (std.mem.eql(u8, scope_str, "Builtin"))
+                ScopeKind.Builtin
+            else
+                ScopeKind.Local;
+            try self.instructions.append(HIRInstruction{ .StoreConst = .{ .var_index = var_index, .var_name = var_name, .scope_kind = scope_kind, .module_context = null } });
         } else if (std.mem.eql(u8, op, "StoreParamAlias")) {
             const name_quoted = tokens.next() orelse return;
             const param_name = try self.parseQuotedString(name_quoted);

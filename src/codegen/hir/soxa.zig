@@ -855,10 +855,10 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
     switch (instruction) {
         .Const => |c| try writer.print("    Const {}                    ; Push constant\n", .{c.constant_id}),
 
-        .LoadVar => |v| try writer.print("    LoadVar {} \"{s}\"           ; Load variable\n", .{ v.var_index, v.var_name }),
+        .LoadVar => |v| try writer.print("    LoadVar {} \"{s}\" {s}           ; Load variable\n", .{ v.var_index, v.var_name, @tagName(v.scope_kind) }),
 
-        .StoreVar => |v| try writer.print("    StoreVar {} \"{s}\"          ; Store variable\n", .{ v.var_index, v.var_name }),
-        .StoreConst => |v| try writer.print("    StoreConst {} \"{s}\"        ; Store constant\n", .{ v.var_index, v.var_name }),
+        .StoreVar => |v| try writer.print("    StoreVar {} \"{s}\" {s}          ; Store variable\n", .{ v.var_index, v.var_name, @tagName(v.scope_kind) }),
+        .StoreConst => |v| try writer.print("    StoreConst {} \"{s}\" {s}        ; Store constant\n", .{ v.var_index, v.var_name, @tagName(v.scope_kind) }),
         .PushStorageId => |p| try writer.print("    PushStorageId {} \"{s}\"     ; Push storage ID for alias\n", .{ p.var_index, p.var_name }),
         .StoreParamAlias => |s| try writer.print("    StoreParamAlias \"{s}\" {}      ; Store alias parameter\n", .{ s.param_name, s.var_index }),
 

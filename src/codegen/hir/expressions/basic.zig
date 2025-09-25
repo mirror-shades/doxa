@@ -5,6 +5,7 @@ const HIRValue = @import("../soxa_values.zig").HIRValue;
 const HIREnum = @import("../soxa_values.zig").HIREnum;
 const HIRInstruction = @import("../soxa_instructions.zig").HIRInstruction;
 const HIRGeneratorType = @import("../soxa_generator.zig").HIRGenerator;
+const ScopeKind = @import("../soxa_types.zig").ScopeKind;
 const ErrorCode = @import("../../../utils/errors.zig").ErrorCode;
 const ErrorList = @import("../../../utils/errors.zig").ErrorList;
 
@@ -65,25 +66,56 @@ pub const BasicExpressionHandler = struct {
         const maybe_idx: ?u32 = self.generator.symbol_table.getVariable(var_token.lexeme);
         if (maybe_idx) |existing_idx| {
             const var_idx = existing_idx;
-            try self.generator.instructions.append(.{
+
+            // Determine scope based on where the variable was found
+            const scope_kind: ScopeKind = if (self.generator.symbol_table.current_function != null) blk: {
+                // Inside function: check if it's a local variable first
+                const in_local = self.generator.symbol_table.local_variables.get(var_token.lexeme);
+                const in_global = self.generator.symbol_table.variables.get(var_token.lexeme);
+
+                if (in_local) |_| {
+                    break :blk .Local;
+                } else if (in_global) |_| {
+                    // Found in global scope, must be global
+                    break :blk .ModuleGlobal;
+                } else {
+                    // This shouldn't happen if getVariable returned a value
+                    break :blk .Local;
+                }
+            } else blk: {
+                // Not in function scope, must be global
+                break :blk .ModuleGlobal;
+            };
+
+            const load_var_inst = HIRInstruction{
                 .LoadVar = .{
                     .var_index = var_idx,
                     .var_name = var_token.lexeme,
-                    .scope_kind = .Local, // TODO: determine actual scope
+                    .scope_kind = scope_kind,
                     .module_context = null,
                 },
-            });
+            };
+            try self.generator.instructions.append(load_var_inst);
         } else {
             // Ensure the variable exists in the current scope and load it at runtime
             const var_idx2 = try self.generator.getOrCreateVariable(var_token.lexeme);
-            try self.generator.instructions.append(.{
+
+            // Determine scope based on current function context
+            const scope_kind: ScopeKind = if (self.generator.symbol_table.current_function != null) blk: {
+                break :blk .Local;
+            } else blk: {
+                break :blk .ModuleGlobal;
+            };
+
+            const load_var_inst2 = HIRInstruction{
                 .LoadVar = .{
                     .var_index = var_idx2,
                     .var_name = var_token.lexeme,
-                    .scope_kind = .Local,
+                    .scope_kind = scope_kind,
                     .module_context = null,
                 },
-            });
+            };
+            try self.generator.instructions.append(load_var_inst2);
         }
     }
 
