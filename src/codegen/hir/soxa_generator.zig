@@ -1374,6 +1374,9 @@ pub const HIRGenerator = struct {
         // Special-case function calls to leverage known function signatures
         // so we don't fall back to Unknown types during codegen (e.g., for '+=')
         switch (expr.data) {
+            .Variable => {
+                return self.type_system.inferTypeFromExpression(expr, &self.symbol_table);
+            },
             .FunctionCall => |call| {
                 // Try to resolve callee and determine call kind
                 var function_name: []const u8 = "";
