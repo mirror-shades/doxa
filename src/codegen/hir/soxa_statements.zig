@@ -399,7 +399,7 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                 // Only perform this pre-store in global scope where we intentionally
                 // keep a duplicate around for subsequent global initialization steps.
                 if (self.current_function == null) {
-                    const var_idx2 = try self.getOrCreateVariable(decl.name.lexeme);
+                    const var_idx2 = try self.symbol_table.createVariable(decl.name.lexeme);
                     // Duplicate so subsequent code can see the value if needed (globals only)
                     try self.instructions.append(.Dup);
                     try self.instructions.append(.{ .StoreVar = .{
@@ -432,7 +432,7 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
             }
 
             // Store variable (single instruction). Duplicate value only at global scope
-            const var_idx = try self.getOrCreateVariable(decl.name.lexeme);
+            const var_idx = try self.symbol_table.createVariable(decl.name.lexeme);
             if (self.current_function == null) {
                 try self.instructions.append(.Dup);
             }
