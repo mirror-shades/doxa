@@ -409,6 +409,52 @@ pub const HIRInstruction = union(enum) {
     },
 
     //==================================================================
+    // COMPOUND ASSIGNMENT OPERATIONS (Long-term fix)
+    //==================================================================
+
+    /// Compound assignment: array[index] += value
+    /// VM: Get element, add value, set element atomically
+    /// LLVM: Generate optimized compound assignment
+    ArrayGetAndAdd: struct {
+        bounds_check: bool,
+    },
+
+    /// Compound assignment: array[index] -= value
+    /// VM: Get element, subtract value, set element atomically
+    /// LLVM: Generate optimized compound assignment
+    ArrayGetAndSub: struct {
+        bounds_check: bool,
+    },
+
+    /// Compound assignment: array[index] *= value
+    /// VM: Get element, multiply value, set element atomically
+    /// LLVM: Generate optimized compound assignment
+    ArrayGetAndMul: struct {
+        bounds_check: bool,
+    },
+
+    /// Compound assignment: array[index] /= value
+    /// VM: Get element, divide value, set element atomically
+    /// LLVM: Generate optimized compound assignment
+    ArrayGetAndDiv: struct {
+        bounds_check: bool,
+    },
+
+    /// Compound assignment: array[index] %= value
+    /// VM: Get element, modulo value, set element atomically
+    /// LLVM: Generate optimized compound assignment
+    ArrayGetAndMod: struct {
+        bounds_check: bool,
+    },
+
+    /// Compound assignment: array[index] **= value
+    /// VM: Get element, power value, set element atomically
+    /// LLVM: Generate optimized compound assignment
+    ArrayGetAndPow: struct {
+        bounds_check: bool,
+    },
+
+    //==================================================================
     // STRUCT OPERATIONS (Phase 1)
     //==================================================================
 

@@ -1487,9 +1487,9 @@ pub const Parser = struct {
 
         // Check if there's a prompt string (with or without parentheses)
         var prompt: token.Token = token.Token{
-            .type = .IDENTIFIER,
-            .lexeme = "prompt",
-            .literal = .{ .string = "Enter a value: " },
+            .type = .STRING,
+            .lexeme = "",
+            .literal = .{ .string = "" },
             .line = 0,
             .column = 0,
             .file = "",

@@ -21,6 +21,7 @@ const ast = AST;
 const SoxaCompiler = @import("./codegen/hir/soxa.zig");
 const HIRGenerator = @import("./codegen/hir/soxa_generator.zig").HIRGenerator;
 const SoxaTextParser = @import("./codegen/hir/soxa_parser.zig").SoxaTextParser;
+const HIRProgram = @import("./codegen/hir/soxa_types.zig").HIRProgram;
 const DoxaVM = @import("./interpreter/vm.zig").HIRVM;
 const BytecodeVM = @import("./interpreter/bytecode_vm.zig").BytecodeVM;
 const ConstantFolder = @import("./parser/constant_folder.zig").ConstantFolder;
@@ -163,9 +164,9 @@ fn writeBytecodeArtifact(bytecode_module: *BytecodeModule, path: []const u8, rep
 }
 
 ///==========================================================================
-/// Compile DOXA to SOXA (HIR) - using pre-parsed AST
+/// Generate HIR program from AST (returns HIR program in memory)
 ///==========================================================================
-fn compileDoxaToSoxaFromAST(memoryManager: *MemoryManager, statements: []ast.Stmt, parser: *Parser, semantic_analyzer: *SemanticAnalyzer, source_path: []const u8, soxa_path: []const u8, reporter: *Reporter) !void {
+fn generateHIRProgram(memoryManager: *MemoryManager, statements: []ast.Stmt, parser: *Parser, semantic_analyzer: *SemanticAnalyzer, source_path: []const u8, soxa_path: []const u8, reporter: *Reporter) !HIRProgram {
 
     // Apply constant folding to statements
     var constant_folder = ConstantFolder.init(memoryManager.getAllocator());
@@ -215,7 +216,6 @@ fn compileDoxaToSoxaFromAST(memoryManager: *MemoryManager, statements: []ast.Stm
     }
 
     var hir_program = try hir_generator.generateProgram(folded_statements.items);
-    defer hir_program.deinit();
 
     // // Apply peephole optimizations to HIR
     // // TODO: Re-enable this once we are more stable
@@ -229,27 +229,22 @@ fn compileDoxaToSoxaFromAST(memoryManager: *MemoryManager, statements: []ast.Stm
 
     // reporter.debug(">> Peephole optimizations applied: {} HIR instruction optimizations\n", .{peephole_optimizer.getTotalOptimizations()}, @src());
 
-    // Delete existing .soxa file if it exists
-    std.fs.cwd().deleteFile(soxa_path) catch |err| {
-        // It's fine if the file doesn't exist
-        if (err != error.FileNotFound) {
-            const location = Location{
-                .file = soxa_path,
-                .range = .{
-                    .start_line = 0,
-                    .start_col = 0,
-                    .end_line = 0,
-                    .end_col = 0,
-                },
-            };
-            reporter.reportWarning(location, ErrorCode.COULD_NOT_DELETE_ARTIFACT, "Could not delete existing SOXA file {s}: {}\n", .{ soxa_path, err });
-        }
-    };
-
-    // Write the HIR program to .soxa file with cache validation
+    // Write the HIR program to .soxa file for caching (but keep the program in memory)
     try SoxaCompiler.writeSoxaFile(&hir_program, soxa_path, source_path, memoryManager.getAllocator());
 
     reporter.debug(">> Compiled {s} -> {s} ({} HIR instructions)\n", .{ source_path, soxa_path, hir_program.instructions.len }, @src());
+
+    // Return the HIR program (caller will be responsible for deinit)
+    return hir_program;
+}
+
+///==========================================================================
+/// Compile DOXA to SOXA (HIR) - using pre-parsed AST (legacy function for direct execution)
+///==========================================================================
+fn compileDoxaToSoxaFromAST(memoryManager: *MemoryManager, statements: []ast.Stmt, parser: *Parser, semantic_analyzer: *SemanticAnalyzer, source_path: []const u8, soxa_path: []const u8, reporter: *Reporter) !void {
+    // Generate HIR program and write to file (for direct execution)
+    var hir_program = try generateHIRProgram(memoryManager, statements, parser, semantic_analyzer, source_path, soxa_path, reporter);
+    defer hir_program.deinit();
 }
 
 ///==========================================================================
@@ -618,14 +613,13 @@ pub fn main() !void {
     // TODO: Remove this once we have a proper cache system
     std.fs.cwd().deleteFile(soxa_path) catch {};
 
-    // Check if we need to recompile .doxa → .soxa using cache validation
-    const needs_recompile = try needsRecompilation(path, soxa_path, memoryManager.getAllocator());
+    // Generate HIR program for bytecode generation
+    var hir_program_for_bytecode: ?HIRProgram = null;
+    defer if (hir_program_for_bytecode) |*program| program.deinit();
 
-    if (needs_recompile) {
-        try compileDoxaToSoxaFromAST(&memoryManager, statements, &parser, &semantic_analyzer, path, soxa_path, &reporter);
-    } else {
-        reporter.debug(">> Using cached SOXA: {s}\n", .{soxa_path}, @src());
-    }
+    // Always generate HIR program directly to avoid SoxaTextParser issues
+    // TODO: We could optimize this by caching the HIR program in memory or using binary format
+    hir_program_for_bytecode = try generateHIRProgram(&memoryManager, statements, &parser, &semantic_analyzer, path, soxa_path, &reporter);
 
     // Stop generation phase if active
     profiler.stopPhase();
@@ -637,12 +631,27 @@ pub fn main() !void {
     // Start bytecode generation phase if active
     profiler.startPhase(Phase.GENERATE_B);
 
-    // Use original HIR program instead of reading from .soxa file to preserve LoadAlias/StoreAlias instructions
-    var hir_program_for_bytecode = try SoxaCompiler.readSoxaFile(soxa_path, memoryManager.getAllocator());
-    defer hir_program_for_bytecode.deinit();
+    // Use the HIR program directly (either generated or loaded from cache)
+    const hir_program = hir_program_for_bytecode.?;
 
-    // TODO: Use original HIR program instead of reading from .soxa file
-    // The issue is that SoxaTextParser doesn't handle LoadAlias/StoreAlias instructions
+    // Debug: Print HIR program info
+    reporter.debug(">> HIR Program: {} instructions, {} constants\n", .{ hir_program.instructions.len, hir_program.constant_pool.len }, @src());
+
+    // Debug: Look for variable assignments
+    for (hir_program.instructions, 0..) |inst, i| {
+        switch (inst) {
+            .StoreVar => |store| {
+                reporter.debug(">> HIR[{}]: StoreVar slot={} name='{s}' scope={}\n", .{ i, store.var_index, store.var_name, store.scope_kind }, @src());
+            },
+            .StoreConst => |store| {
+                reporter.debug(">> HIR[{}]: StoreConst slot={} name='{s}' scope={}\n", .{ i, store.var_index, store.var_name, store.scope_kind }, @src());
+            },
+            .LoadVar => |load| {
+                reporter.debug(">> HIR[{}]: LoadVar slot={} name='{s}' scope={}\n", .{ i, load.var_index, load.var_name, load.scope_kind }, @src());
+            },
+            else => {},
+        }
+    }
 
     const artifact_stem = blk: {
         var filename_start: usize = 0;
@@ -657,7 +666,7 @@ pub fn main() !void {
     };
 
     var bytecode_generator = BytecodeGenerator.init(memoryManager.getAllocator(), "out", artifact_stem);
-    var bytecode_module = try bytecode_generator.generate(&hir_program_for_bytecode);
+    var bytecode_module = try bytecode_generator.generate(&hir_program);
     defer bytecode_module.deinit();
 
     if (bytecode_module.artifact_path) |bc_path| {

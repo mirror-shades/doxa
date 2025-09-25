@@ -9,6 +9,7 @@ const Errors = @import("../../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
 const ErrorCode = Errors.ErrorCode;
 const debug_print = @import("../calls/print.zig");
+const PrintOps = debug_print.PrintOps;
 
 pub const FunctionOps = struct {
     // Execute TailCall instruction
@@ -867,6 +868,25 @@ pub const FunctionOps = struct {
 
     // Built-in input function
     fn execBuiltinInput(vm: anytype) !void {
+        // Check if there are prompt arguments on the stack
+        if (vm.call_stack.sp > 0) {
+            const call_info = vm.call_stack.frames[vm.call_stack.sp - 1];
+            if (call_info.arg_count > 0) {
+                // Pop and print the prompt argument
+                const prompt_frame = try vm.stack.pop();
+                switch (prompt_frame.value) {
+                    .string => |prompt_str| {
+                        const stdout_file = std.fs.File.stdout();
+                        _ = try stdout_file.write(prompt_str);
+                    },
+                    else => {
+                        // If prompt is not a string, convert it to string and print
+                        try PrintOps.formatHIRValueRaw(vm, prompt_frame.value);
+                    },
+                }
+            }
+        }
+
         var stdin_buffer: [4096]u8 = undefined;
         var stdin_reader = std.fs.File.stdin().reader(&stdin_buffer);
         const stdin = &stdin_reader.interface;

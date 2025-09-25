@@ -517,6 +517,16 @@ pub const Parser = struct {
         const input_token = self.peek();
         self.advance();
 
+        // Create an empty prompt token instead of using the INPUT token
+        const empty_prompt = token.Token{
+            .file = self.current_file,
+            .type = .STRING,
+            .lexeme = "",
+            .literal = .{ .string = "" },
+            .line = input_token.line,
+            .column = input_token.column,
+        };
+
         // Create the input expression
         const input_expr = try self.allocator.create(ast.Expr);
         input_expr.* = .{
@@ -526,7 +536,7 @@ pub const Parser = struct {
             },
             .data = .{
                 .Input = .{
-                    .prompt = input_token,
+                    .prompt = empty_prompt,
                 },
             },
         };

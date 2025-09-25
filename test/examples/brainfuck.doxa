@@ -54,7 +54,7 @@ function interpret(scan :: string) {
     var closedBrackets :: tetra is checkClosingBracket(scan)
     @assert(closedBrackets, "Unmatched brackets")
 
-    while(ip < scanLength) {
+    while(ip < scanLength) do ip += 1 {
         var currentInstruction is scan[ip]
         if(currentInstruction == ">") then tp += 1
         if(currentInstruction == "<") then tp -= 1
@@ -64,7 +64,6 @@ function interpret(scan :: string) {
         if(currentInstruction == ",") then tape[tp] is getInput()
         if(currentInstruction == "[") then startLoop()
         if(currentInstruction == "]") then endLoop()
-        ip += 1
     }
 }
 

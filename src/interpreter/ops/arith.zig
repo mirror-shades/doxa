@@ -8,6 +8,9 @@ const ErrorCode = Errors.ErrorCode;
 
 // Execute the Arith instruction. Accepts the VM as `anytype` to avoid import cycles.
 pub fn exec(vm: anytype, a: anytype) !void {
+    if (vm.stack.sp < 2) {
+        return ErrorList.StackUnderflow;
+    }
     const right = try vm.stack.pop();
     const left = try vm.stack.pop();
 

@@ -232,8 +232,9 @@ pub const HIRGenerator = struct {
         // Pass 4: Build function table
         const function_table = try self.buildFunctionTable();
 
+        const instructions_slice = try self.instructions.toOwnedSlice();
         return HIRProgram{
-            .instructions = try self.instructions.toOwnedSlice(),
+            .instructions = instructions_slice,
             .constant_pool = try self.constant_manager.toOwnedSlice(),
             .string_pool = try self.string_pool.toOwnedSlice(),
             .function_table = function_table,
@@ -499,6 +500,7 @@ pub const HIRGenerator = struct {
             // Set current function context
             self.current_function = function_body.function_info.name;
             self.current_function_return_type = function_body.function_info.return_type;
+            self.is_global_init_phase = false; // Ensure we're not in global init phase when processing function bodies
             try self.symbol_table.enterFunctionScope(function_body.function_info.name);
 
             // Mark start of function
@@ -592,7 +594,7 @@ pub const HIRGenerator = struct {
                     try self.instructions.append(.{ .StoreVar = .{
                         .var_index = var_idx,
                         .var_name = param.name.lexeme,
-                        .scope_kind = .Local,
+                        .scope_kind = self.symbol_table.determineVariableScope(param.name.lexeme),
                         .module_context = null,
                         .expected_type = param_type,
                     } });
@@ -616,7 +618,7 @@ pub const HIRGenerator = struct {
                             try self.instructions.append(.{ .StoreVar = .{
                                 .var_index = this_idx,
                                 .var_name = "this",
-                                .scope_kind = .Local,
+                                .scope_kind = self.symbol_table.determineVariableScope("this"),
                                 .module_context = null,
                                 .expected_type = HIRType{ .Struct = 0 },
                             } });
@@ -658,8 +660,8 @@ pub const HIRGenerator = struct {
             // Special case for safeMath.safeAdd function - add missing return math.add(a, b)
             if (std.mem.eql(u8, function_body.function_info.name, "safeAdd") or std.mem.eql(u8, function_body.function_info.name, "safeMath.safeAdd")) {
                 // Load parameters a and b
-                try self.instructions.append(.{ .LoadVar = .{ .var_index = 1, .var_name = "a", .scope_kind = .Local, .module_context = null } });
-                try self.instructions.append(.{ .LoadVar = .{ .var_index = 0, .var_name = "b", .scope_kind = .Local, .module_context = null } });
+                try self.instructions.append(.{ .LoadVar = .{ .var_index = 1, .var_name = "a", .scope_kind = self.symbol_table.determineVariableScope("a"), .module_context = null } });
+                try self.instructions.append(.{ .LoadVar = .{ .var_index = 0, .var_name = "b", .scope_kind = self.symbol_table.determineVariableScope("b"), .module_context = null } });
                 // Call math.add function
                 try self.instructions.append(.{ .Call = .{ .function_index = 1, .qualified_name = "math.add", .arg_count = 2, .call_kind = .ModuleFunction, .target_module = "math", .return_type = .Int } });
                 try self.instructions.append(.{ .Return = .{ .has_value = true, .return_type = .Int } });
@@ -691,6 +693,11 @@ pub const HIRGenerator = struct {
                 try self.instructions.append(.{ .Return = .{ .has_value = false, .return_type = .Nothing } });
             }
 
+            // Update the function info with the actual local variable count
+            if (self.function_signatures.getPtr(function_body.function_info.name)) |func_info| {
+                func_info.local_var_count = self.symbol_table.local_variable_count;
+            }
+
             // Clear current function context
             self.current_function = null;
             self.current_function_return_type = .Nothing;
@@ -708,8 +715,8 @@ pub const HIRGenerator = struct {
                     continue;
                 },
                 .VarDecl => {
-                    // Process variable declarations in main program to maintain execution order
-                    try SoxaStatements.generateStatement(self, stmt);
+                    // Skip - already processed in global initialization phase
+                    continue;
                 },
                 else => {
                     try SoxaStatements.generateStatement(self, stmt);
@@ -777,20 +784,15 @@ pub const HIRGenerator = struct {
             }
         }
 
-        // Skip variable declarations in main module - they will be processed in main program
-        // to maintain correct execution order with peek operations
+        // Process variable declarations in main module during global initialization
         for (statements) |stmt| {
             switch (stmt.data) {
-                .FunctionDecl => {
-                    // Skip - already handled in previous passes
-                    continue;
-                },
                 .VarDecl => {
-                    // Skip - will be processed in main program to maintain execution order
-                    continue;
+                    // Process global variable declarations during global initialization
+                    try SoxaStatements.generateStatement(self, stmt);
                 },
                 else => {
-                    // Skip non-variable statements in global initialization
+                    // Skip non-variable declarations during global initialization
                     continue;
                 },
             }
@@ -1273,7 +1275,7 @@ pub const HIRGenerator = struct {
                 try self.instructions.append(.{ .StoreVar = .{
                     .var_index = var_idx,
                     .var_name = target_var,
-                    .scope_kind = .Local,
+                    .scope_kind = self.symbol_table.determineVariableScope(target_var),
                     .module_context = null,
                     .expected_type = expected_type,
                 } });

@@ -68,24 +68,7 @@ pub const BasicExpressionHandler = struct {
             const var_idx = existing_idx;
 
             // Determine scope based on where the variable was found
-            const scope_kind: ScopeKind = if (self.generator.symbol_table.current_function != null) blk: {
-                // Inside function: check if it's a local variable first
-                const in_local = self.generator.symbol_table.local_variables.get(var_token.lexeme);
-                const in_global = self.generator.symbol_table.variables.get(var_token.lexeme);
-
-                if (in_local) |_| {
-                    break :blk .Local;
-                } else if (in_global) |_| {
-                    // Found in global scope, must be global
-                    break :blk .ModuleGlobal;
-                } else {
-                    // This shouldn't happen if getVariable returned a value
-                    break :blk .Local;
-                }
-            } else blk: {
-                // Not in function scope, must be global
-                break :blk .ModuleGlobal;
-            };
+            const scope_kind = self.generator.symbol_table.determineVariableScope(var_token.lexeme);
 
             const load_var_inst = HIRInstruction{
                 .LoadVar = .{
@@ -100,12 +83,9 @@ pub const BasicExpressionHandler = struct {
             // Ensure the variable exists in the current scope and load it at runtime
             const var_idx2 = try self.generator.getOrCreateVariable(var_token.lexeme);
 
-            // Determine scope based on current function context
-            const scope_kind: ScopeKind = if (self.generator.symbol_table.current_function != null) blk: {
-                break :blk .Local;
-            } else blk: {
-                break :blk .ModuleGlobal;
-            };
+            // Determine scope based on where the variable was actually created
+            // This must happen AFTER getOrCreateVariable to ensure the variable is registered
+            const scope_kind = self.generator.symbol_table.determineVariableScope(var_token.lexeme);
 
             const load_var_inst2 = HIRInstruction{
                 .LoadVar = .{

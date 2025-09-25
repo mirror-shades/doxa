@@ -333,7 +333,7 @@ pub const StructsHandler = struct {
         try self.generator.instructions.append(.{ .StoreConst = .{
             .var_index = var_idx,
             .var_name = enum_data.name.lexeme,
-            .scope_kind = if (self.generator.current_function == null) .ModuleGlobal else .Local,
+            .scope_kind = self.generator.symbol_table.determineVariableScope(enum_data.name.lexeme),
             .module_context = null,
         } });
     }

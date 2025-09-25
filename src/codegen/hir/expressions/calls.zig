@@ -5,6 +5,7 @@ const Location = @import("../../../utils/reporting.zig").Location;
 const HIRGenerator = @import("../soxa_generator.zig").HIRGenerator;
 const HIRValue = @import("../soxa_values.zig").HIRValue;
 const HIRType = @import("../soxa_types.zig").HIRType;
+const ScopeKind = @import("../soxa_types.zig").ScopeKind;
 const HIRInstruction = @import("../soxa_instructions.zig").HIRInstruction;
 const CallKind = @import("../soxa_instructions.zig").CallKind;
 const ErrorCode = @import("../../../utils/errors.zig").ErrorCode;
@@ -488,8 +489,12 @@ pub const CallsHandler = struct {
                 const var_name = builtin_data.arguments[0].data.Variable.lexeme;
                 const var_idx = try self.generator.getOrCreateVariable(var_name);
                 const expected_type = self.generator.getTrackedVariableType(var_name) orelse .Unknown;
-                // Store the modified array back to the variable
-                try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = var_idx, .var_name = var_name, .scope_kind = .Local, .module_context = null, .expected_type = expected_type } });
+
+                // Determine the correct scope for the variable
+                const scope_kind = self.generator.symbol_table.determineVariableScope(var_name);
+
+                // Store the modified array back to the variable in the correct scope
+                try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = var_idx, .var_name = var_name, .scope_kind = scope_kind, .module_context = null, .expected_type = expected_type } });
             }
             // Push nothing as the return value
             const nothing_const_idx = try self.generator.addConstant(HIRValue.nothing);

@@ -879,6 +879,31 @@ pub const SoxaTextParser = struct {
             try self.instructions.append(HIRInstruction.ArrayLen);
         } else if (std.mem.eql(u8, op, "ArrayConcat")) {
             try self.instructions.append(HIRInstruction.ArrayConcat);
+        } else if (std.mem.eql(u8, op, "ArrayGetAndAdd")) {
+            const bounds_str = tokens.next() orelse return;
+            const bounds_check = std.mem.eql(u8, bounds_str, "true");
+            std.debug.print("SOXA PARSER: Parsing ArrayGetAndAdd instruction with bounds_check={}\n", .{bounds_check});
+            try self.instructions.append(HIRInstruction{ .ArrayGetAndAdd = .{ .bounds_check = bounds_check } });
+        } else if (std.mem.eql(u8, op, "ArrayGetAndSub")) {
+            const bounds_str = tokens.next() orelse return;
+            const bounds_check = std.mem.eql(u8, bounds_str, "true");
+            try self.instructions.append(HIRInstruction{ .ArrayGetAndSub = .{ .bounds_check = bounds_check } });
+        } else if (std.mem.eql(u8, op, "ArrayGetAndMul")) {
+            const bounds_str = tokens.next() orelse return;
+            const bounds_check = std.mem.eql(u8, bounds_str, "true");
+            try self.instructions.append(HIRInstruction{ .ArrayGetAndMul = .{ .bounds_check = bounds_check } });
+        } else if (std.mem.eql(u8, op, "ArrayGetAndDiv")) {
+            const bounds_str = tokens.next() orelse return;
+            const bounds_check = std.mem.eql(u8, bounds_str, "true");
+            try self.instructions.append(HIRInstruction{ .ArrayGetAndDiv = .{ .bounds_check = bounds_check } });
+        } else if (std.mem.eql(u8, op, "ArrayGetAndMod")) {
+            const bounds_str = tokens.next() orelse return;
+            const bounds_check = std.mem.eql(u8, bounds_str, "true");
+            try self.instructions.append(HIRInstruction{ .ArrayGetAndMod = .{ .bounds_check = bounds_check } });
+        } else if (std.mem.eql(u8, op, "ArrayGetAndPow")) {
+            const bounds_str = tokens.next() orelse return;
+            const bounds_check = std.mem.eql(u8, bounds_str, "true");
+            try self.instructions.append(HIRInstruction{ .ArrayGetAndPow = .{ .bounds_check = bounds_check } });
         } else if (std.mem.eql(u8, op, "Range")) {
             const type_str = tokens.next() orelse return;
             const element_type: HIRType = if (std.mem.eql(u8, type_str, "Int")) .Int else if (std.mem.eql(u8, type_str, "Byte")) .Byte else if (std.mem.eql(u8, type_str, "Float")) .Float else .Int;

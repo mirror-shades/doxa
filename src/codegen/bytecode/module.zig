@@ -105,6 +105,13 @@ pub const Instruction = union(enum) {
     Range: struct { element_type: BytecodeType },
     Exists: struct { predicate_type: BytecodeType },
     Forall: struct { predicate_type: BytecodeType },
+    // Compound assignment operations
+    ArrayGetAndAdd: struct { bounds_check: bool },
+    ArrayGetAndSub: struct { bounds_check: bool },
+    ArrayGetAndMul: struct { bounds_check: bool },
+    ArrayGetAndDiv: struct { bounds_check: bool },
+    ArrayGetAndMod: struct { bounds_check: bool },
+    ArrayGetAndPow: struct { bounds_check: bool },
     StructNew: struct { type_name: []const u8, field_count: u32, field_types: []const hir_types.HIRType, size_bytes: u32 },
     EnumNew: struct { enum_name: []const u8, variant_name: []const u8, variant_index: u32 },
     GetField: struct { field_name: []const u8, container_type: BytecodeType, field_index: u32 },
