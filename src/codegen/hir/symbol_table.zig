@@ -104,6 +104,24 @@ pub const SymbolTable = struct {
         return idx;
     }
 
+    /// Create a new variable index, always creating a local variable when inside a function
+    /// This is used for variable declarations to ensure they shadow global variables
+    pub fn createVariable(self: *SymbolTable, name: []const u8) !u32 {
+        if (self.current_function != null) {
+            // Inside function: always create local variable to shadow any global
+            const idx = self.local_variable_count;
+            try self.local_variables.put(name, idx);
+            self.local_variable_count += 1;
+            return idx;
+        } else {
+            // Global scope: create global variable
+            const idx = self.variable_count;
+            try self.variables.put(name, idx);
+            self.variable_count += 1;
+            return idx;
+        }
+    }
+
     /// Get existing variable index if it exists
     pub fn getVariable(self: *SymbolTable, name: []const u8) ?u32 {
         // When in function scope, check local variables first, then global
@@ -132,7 +150,8 @@ pub const SymbolTable = struct {
             if (in_local) |_| {
                 return .Local;
             } else if (in_global) |_| {
-                // Found in global scope, must be global
+                // Found in global scope, but we're inside a function
+                // This means we're accessing a global variable from within a function
                 return .ModuleGlobal;
             } else {
                 // New variable in function scope
