@@ -1,5 +1,6 @@
 const std = @import("std");
 const HIRValue = @import("../../codegen/hir/soxa_values.zig").HIRValue;
+const TokenLiteral = @import("../../types/types.zig").TokenLiteral;
 const hir_instructions = @import("../../codegen/hir/soxa_instructions.zig");
 const HIRInstruction = hir_instructions.HIRInstruction;
 const Core = @import("../core.zig");
@@ -20,6 +21,29 @@ fn printToStdout(comptime format: []const u8, args: anytype) !void {
 }
 
 pub const PrintOps = struct {
+    fn getVmConstant(vm: anytype, id: usize) ?HIRValue {
+        const vm_type = @TypeOf(vm);
+        const info = @typeInfo(vm_type);
+        switch (info) {
+            .pointer => |ptr| {
+                const child = ptr.child;
+                if (@hasField(child, "program")) {
+                    if (id < vm.program.constant_pool.len) {
+                        return vm.program.constant_pool[id];
+                    }
+                }
+                if (@hasField(child, "bytecode")) {
+                    const module_ptr = vm.bytecode;
+                    if (module_ptr.*.constants.len > id) {
+                        return module_ptr.*.constants[id];
+                    }
+                }
+            },
+            else => {},
+        }
+        return null;
+    }
+
     // Execute Print instruction
     pub fn execPrint(vm: anytype) !void {
         const value = try vm.stack.pop();
@@ -36,7 +60,7 @@ pub const PrintOps = struct {
 
     // Execute Peek instruction
     pub fn execPeek(vm: anytype, peek: anytype) !void {
-        const value = try vm.stack.pop();
+        const value = try vm.stack.peek();
 
         if (peek.location) |location| {
             try printToStdout("[{s}:{d}:{d}] ", .{ location.file, location.range.start_line, location.range.start_col });
@@ -96,7 +120,7 @@ pub const PrintOps = struct {
 
     // Execute PeekStruct instruction
     pub fn execPeekStruct(vm: anytype, i: anytype) !void {
-        const value = try vm.stack.pop();
+        const value = try vm.stack.peek();
 
         // Handle both struct instances and field values
         switch (value.value) {
@@ -145,7 +169,27 @@ pub const PrintOps = struct {
                             nested_with_path.path = field_path;
                             try vm.stack.push(HIRFrame{ .value = HIRValue{ .struct_instance = nested_with_path } });
                             // Recursively peek the nested struct
-                            try vm.executeInstruction(nested_peek);
+                            const vm_type = @TypeOf(vm);
+                            const info = @typeInfo(vm_type);
+                            switch (info) {
+                                .pointer => |ptr| {
+                                    const child = ptr.child;
+                                    if (@hasField(child, "program")) {
+                                        // BytecodeVM - can execute bytecode instructions
+                                        try vm.executeInstruction(nested_peek);
+                                    } else if (@hasField(child, "bytecode")) {
+                                        // BytecodeVM - cannot execute HIR instructions directly
+                                        // Skip recursive execution for BytecodeVM
+                                        try PrintOps.formatHIRValue(vm, field.value);
+                                        try printToStdout("\n", .{});
+                                        return;
+                                    }
+                                },
+                                else => {
+                                    // Fallback - try BytecodeVM method only
+                                    try vm.executeInstruction(nested_peek);
+                                },
+                            }
                         },
                         else => {
                             try PrintOps.formatHIRValue(vm, field.value);
@@ -192,16 +236,13 @@ pub const PrintOps = struct {
         defer actual_format_parts.deinit();
 
         for (interp.format_part_ids) |id| {
-            if (id < vm.program.constant_pool.len) {
-                const constant = vm.program.constant_pool[id];
+            if (getVmConstant(vm, id)) |constant| {
                 if (constant == .string) {
                     try actual_format_parts.append(constant.string);
-                } else {
-                    try actual_format_parts.append(""); // Fallback
+                    continue;
                 }
-            } else {
-                try actual_format_parts.append(""); // Fallback
             }
+            try actual_format_parts.append(""); // Fallback
         }
 
         // Stream parts and arguments directly to stdout in correct order
@@ -251,7 +292,14 @@ pub const PrintOps = struct {
             },
             .map => try printToStdout("{{map}}", .{}),
             .enum_variant => |e| try printToStdout(".{s}", .{e.variant_name}),
-            .storage_id_ref => |storage_id| try printToStdout("storage_id_ref({})", .{storage_id}),
+            .storage_id_ref => |storage_id| {
+                // Dereference the storage_id_ref to get the actual value
+                if (vm.memory_manager.scope_manager.value_storage.get(storage_id)) |storage| {
+                    try PrintOps.formatTokenLiteral(vm, storage.value);
+                } else {
+                    try printToStdout("storage_id_ref({})", .{storage_id});
+                }
+            },
         }
     }
 
@@ -307,18 +355,29 @@ pub const PrintOps = struct {
             switch (cursor) {
                 .array => |arr| {
                     depth += 1;
-                    if (arr.element_type != .Array) {
-                        // We know the leaf element type.
-                        const base = mapBaseTypeNameFromHIRType(arr.element_type);
-                        return writeTypeWithBrackets(base, depth);
-                    }
-                    // Need to look into first non-nothing element to go deeper.
-                    if (firstNonNothingElement(arr.elements)) |next| {
-                        cursor = next;
-                        continue;
+                    // Check if this is a nested array by looking at the first element
+                    if (firstNonNothingElement(arr.elements)) |first_elem| {
+                        switch (first_elem) {
+                            .array => {
+                                // This is a nested array, continue to next level
+                                cursor = first_elem;
+                                continue;
+                            },
+                            else => {
+                                // This is the leaf level, use the element type
+                                const base = mapBaseTypeNameFromValue(first_elem);
+                                return writeTypeWithBrackets(base, depth);
+                            },
+                        }
                     } else {
-                        // Empty or unknown nested array
-                        return writeTypeWithBrackets("array", depth);
+                        // Empty array - try to use element_type if available
+                        if (arr.element_type != .Unknown) {
+                            const base = mapBaseTypeNameFromHIRType(arr.element_type);
+                            return writeTypeWithBrackets(base, depth);
+                        } else {
+                            // Unknown nested array
+                            return writeTypeWithBrackets("unknown", depth);
+                        }
                     }
                 },
                 else => {
@@ -356,7 +415,13 @@ pub const PrintOps = struct {
             .tetra => "tetra",
             .nothing => "nothing",
             .array => buildArrayTypeStringFromValue(value),
-            .struct_instance => |s| s.type_name,
+            .struct_instance => |s| {
+                if (s.type_name.len == 0) {
+                    return "struct"; // fallback for empty type name
+                } else {
+                    return s.type_name;
+                }
+            },
             .map => "map",
             .enum_variant => |e| e.type_name,
             .storage_id_ref => "storage_id_ref",
@@ -399,12 +464,67 @@ pub const PrintOps = struct {
                 try printToStdout(" }}", .{}); // Fix closing bracket
             },
             .enum_variant => |e| try printToStdout(".{s}", .{e.variant_name}),
-            .storage_id_ref => |storage_id| try printToStdout("storage_id_ref({})", .{storage_id}),
+            .storage_id_ref => |storage_id| {
+                // Dereference the storage_id_ref to get the actual value
+                if (vm.memory_manager.scope_manager.value_storage.get(storage_id)) |storage| {
+                    try PrintOps.formatTokenLiteral(vm, storage.value);
+                } else {
+                    try printToStdout("storage_id_ref({})", .{storage_id});
+                }
+            },
             else => try printToStdout("{s}", .{@tagName(value)}),
         }
     }
 
-    // Format HIR value to a writer without quotes or extra formatting (for Show instruction)
+    pub fn formatTokenLiteral(vm: anytype, value: TokenLiteral) !void {
+        switch (value) {
+            .int => |i| try printToStdout("{}", .{i}),
+            .byte => |u| try printToStdout("0x{X:0>2}", .{u}),
+            .float => |f| try printFloat(f),
+            .string => |s| try printToStdout("\"{s}\"", .{s}),
+            .tetra => |t| try printToStdout("{s}", .{switch (t) {
+                .false => "false",
+                .true => "true",
+                .both => "both",
+                .neither => "neither",
+            }}),
+            .nothing => try printToStdout("nothing", .{}),
+            .array => |arr| {
+                try printToStdout("[", .{});
+                var first = true;
+                for (arr) |elem| {
+                    if (!first) try printToStdout(", ", .{});
+                    try PrintOps.formatTokenLiteral(vm, elem);
+                    first = false;
+                }
+                try printToStdout("]", .{});
+            },
+            .struct_value => |s| {
+                try printToStdout("{{ ", .{});
+                for (s.fields, 0..) |field, i| {
+                    try printToStdout("{s}: ", .{field.name});
+                    try PrintOps.formatTokenLiteral(vm, field.value);
+                    if (i < s.fields.len - 1) try printToStdout(", ", .{});
+                }
+                try printToStdout(" }}", .{});
+            },
+            .map => |m| {
+                try printToStdout("{{", .{});
+                var first = true;
+                var iter = m.iterator();
+                while (iter.next()) |entry| {
+                    if (!first) try printToStdout(", ", .{});
+                    try printToStdout("{s}: ", .{entry.key_ptr.*});
+                    try PrintOps.formatTokenLiteral(vm, entry.value_ptr.*);
+                    first = false;
+                }
+                try printToStdout("}}", .{});
+            },
+            .enum_variant => |e| try printToStdout(".{s}", .{e}),
+            else => try printToStdout("{s}", .{@tagName(value)}),
+        }
+    }
+
     pub fn formatHIRValueRaw(vm: anytype, value: HIRValue) !void {
         switch (value) {
             .int => |i| try printToStdout("{}", .{i}),
@@ -433,14 +553,21 @@ pub const PrintOps = struct {
             .struct_instance => |s| {
                 try printToStdout("{{ ", .{}); // Add opening bracket
                 for (s.fields, 0..) |field, i| {
-                    try printToStdout("{s}: ", .{field.name});
+                    try printToStdout(" {s}: ", .{field.name});
                     try PrintOps.formatHIRValueRaw(vm, field.value);
                     if (i < s.fields.len - 1) try printToStdout(", ", .{});
                 }
                 try printToStdout(" }}", .{}); // Fix closing bracket
             },
             .enum_variant => |e| try printToStdout(".{s}", .{e.variant_name}),
-            .storage_id_ref => |storage_id| try printToStdout("storage_id_ref({})", .{storage_id}),
+            .storage_id_ref => |storage_id| {
+                // Dereference the storage_id_ref to get the actual value
+                if (vm.memory_manager.scope_manager.value_storage.get(storage_id)) |storage| {
+                    try PrintOps.formatTokenLiteral(vm, storage.value);
+                } else {
+                    try printToStdout("storage_id_ref({})", .{storage_id});
+                }
+            },
             else => try printToStdout("{s}", .{@tagName(value)}),
         }
     }
@@ -451,6 +578,19 @@ pub const PrintOps = struct {
             try printToStdout("{d}.0", .{f});
         } else {
             try printToStdout("{d}", .{f});
+        }
+    }
+
+    /// Print struct operation - similar to PeekStruct but prints to stdout
+    pub fn execPrintStruct(vm: anytype, ps: anytype) !void {
+        const value = try vm.stack.pop();
+
+        // Print the struct to stdout
+        try PrintOps.printHIRValue(vm, value.value);
+
+        // If should_pop_after_peek is false, push the value back
+        if (!ps.should_pop_after_peek) {
+            try vm.stack.push(HIRFrame.initFromHIRValue(value.value));
         }
     }
 };

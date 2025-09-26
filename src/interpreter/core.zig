@@ -53,6 +53,8 @@ pub const HIRFrame = struct {
     pub fn asInt(self: HIRFrame) !i64 {
         return switch (self.value) {
             .int => |i| i,
+            .byte => |b| @as(i64, b),
+            .float => |f| @as(i64, @intFromFloat(f)),
             else => ErrorList.TypeError,
         };
     }
@@ -60,6 +62,8 @@ pub const HIRFrame = struct {
     pub fn asFloat(self: HIRFrame) !f64 {
         return switch (self.value) {
             .float => |f| f,
+            .int => |i| @as(f64, @floatFromInt(i)),
+            .byte => |b| @as(f64, @floatFromInt(b)),
             else => ErrorList.TypeError,
         };
     }
@@ -67,6 +71,8 @@ pub const HIRFrame = struct {
     pub fn asTetra(self: HIRFrame) !u8 {
         return switch (self.value) {
             .tetra => |t| t,
+            .byte => |b| b,
+            .int => |i| if (i >= 0 and i <= 3) @as(u8, @intCast(i)) else 0,
             else => ErrorList.TypeError,
         };
     }

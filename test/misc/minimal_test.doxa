@@ -1,0 +1,10 @@
+// Minimal test to isolate the variable scoping issue
+function testMinimal() {
+    var result is 42
+    return result
+}
+
+function main() {
+    var x is testMinimal()
+    @print("x: {x}\n")
+}

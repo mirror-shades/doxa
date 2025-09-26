@@ -8,12 +8,13 @@ const HIRType = @import("soxa_generator.zig").HIRType;
 const HIRValue = @import("soxa_generator.zig").HIRValue;
 const HIRInstruction = @import("soxa_generator.zig").HIRInstruction;
 const HIRMapEntry = @import("soxa_generator.zig").HIRMapEntry;
+const ScopeKind = @import("soxa_types.zig").ScopeKind;
 
 pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator.Error || ErrorList)!void {
     switch (stmt.data) {
         .Expression => |expr| {
             if (expr) |e| {
-                try self.generateExpression(e, false, false);
+                try self.generateExpression(e, false, true);
             }
         },
         .Continue => {
@@ -73,46 +74,34 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                     .String => .String,
                     .Tetra => .Tetra,
                     .Byte => .Byte,
-                    .Array => .Array, // Add missing Array case
+                    .Array => .Unknown, // Array type requires element type info
                     .Union => blk: {
-                        // Default unions to the first member's type for initialization
+                        // Handle union types properly - use .Union as the type, not the first member
                         if (decl.type_info.union_type) |ut| {
-                            if (ut.types.len > 0) {
-                                const first = ut.types[0];
-                                // New: record union member names (lowercase) for this variable (flatten nested unions)
-                                const list = try self.collectUnionMemberNames(ut);
+                            // Record union member names (lowercase) for this variable (flatten nested unions)
+                            const list = try self.collectUnionMemberNames(ut);
 
-                                try self.symbol_table.trackVariableUnionMembers(decl.name.lexeme, list);
-                                var maybe_index: ?u32 = null;
-                                maybe_index = self.symbol_table.getVariable(decl.name.lexeme);
-                                if (maybe_index) |var_index| {
-                                    try self.symbol_table.trackVariableUnionMembersByIndex(var_index, list);
-                                }
-
-                                break :blk switch (first.base) {
-                                    .Int => .Int,
-                                    .Float => .Float,
-                                    .String => .String,
-                                    .Tetra => .Tetra,
-                                    .Byte => .Byte,
-                                    .Array => .Array,
-                                    .Struct => .Struct,
-                                    .Enum => .Enum,
-                                    else => .Nothing,
-                                };
+                            try self.symbol_table.trackVariableUnionMembers(decl.name.lexeme, list);
+                            var maybe_index: ?u32 = null;
+                            maybe_index = self.symbol_table.getVariable(decl.name.lexeme);
+                            if (maybe_index) |var_index| {
+                                try self.symbol_table.trackVariableUnionMembersByIndex(var_index, list);
                             }
+
+                            // Use .Union as the type, not the first member's type
+                            break :blk .Unknown; // Union type requires member type info
                         }
                         break :blk .Nothing;
                     },
                     .Enum => blk: {
                         // Extract the actual enum type name from the custom_type field
                         custom_type_name = decl.type_info.custom_type;
-                        break :blk .Enum;
+                        break :blk HIRType{ .Enum = 0 };
                     },
                     .Struct => blk: {
                         // Extract the actual struct type name from the custom_type field
                         custom_type_name = decl.type_info.custom_type;
-                        break :blk .Struct;
+                        break :blk HIRType{ .Struct = 0 };
                     },
                     .Custom => blk: {
                         // CRITICAL FIX: Handle Custom type - check if it's an enum or struct
@@ -121,16 +110,16 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                             if (self.type_system.custom_types.get(type_name)) |custom_type| {
                                 if (custom_type.kind == .Enum) {
                                     custom_type_name = type_name;
-                                    break :blk .Enum;
+                                    break :blk HIRType{ .Enum = 0 };
                                 } else if (custom_type.kind == .Struct) {
                                     // Track the struct type name for instances
                                     try self.trackVariableCustomType(decl.name.lexeme, type_name);
-                                    break :blk .Struct;
+                                    break :blk HIRType{ .Struct = 0 };
                                 }
                             }
                             // If not found in custom_types, assume it's a struct and track it
                             try self.trackVariableCustomType(decl.name.lexeme, type_name);
-                            break :blk .Struct;
+                            break :blk HIRType{ .Struct = 0 };
                         }
                         // If we can't determine the custom type, it's unknown
                         break :blk .Nothing; // Unknown custom type
@@ -191,7 +180,7 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                             var element_type_fix: HIRType = .Unknown;
                             var nested_element_type_fix: ?HIRType = null;
                             if (annot_elem.base == .Array) {
-                                element_type_fix = .Array;
+                                element_type_fix = .Unknown;
                                 if (annot_elem.array_type) |inner| {
                                     nested_element_type_fix = switch (inner.base) {
                                         .Int => .Int,
@@ -199,7 +188,7 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                                         .String => .String,
                                         .Byte => .Byte,
                                         .Tetra => .Tetra,
-                                        .Array => .Array,
+                                        .Array => .Unknown,
                                         else => .Unknown,
                                     };
                                 }
@@ -225,7 +214,7 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                                 // Track element type for subsequent indexing
                                 try self.trackArrayElementType(decl.name.lexeme, element_type_fix);
                                 // Ensure var_type reflects array for downstream StoreVar expected_type
-                                var_type = .Array;
+                                var_type = HIRType.Nothing;
                             }
                         }
                     }
@@ -233,7 +222,43 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
 
                 // Only infer type if no explicit annotation was provided
                 if (var_type == .Nothing) {
+                    // std.debug.print("DEBUG: SoxaStatements - inferring type for variable '{s}' with init_expr type: {any}\n", .{ decl.name.lexeme, init_expr.data });
                     var_type = self.inferTypeFromExpression(init_expr);
+                    // std.debug.print("DEBUG: SoxaStatements - inferred type: {any}\n", .{var_type});
+
+                    // NEW: Extract union member names from inferred union types
+                    if (var_type == .Union) {
+                        const union_members = var_type.Union;
+                        // Extract member names from union type
+                        const member_names = try self.allocator.alloc([]const u8, union_members.len);
+                        for (union_members, 0..) |member_type, i| {
+                            member_names[i] = switch (member_type.*) {
+                                .Byte => "byte",
+                                .Int => "int",
+                                .Float => "float",
+                                .String => "string",
+                                .Tetra => "tetra",
+                                .Nothing => "nothing",
+                                .Enum => blk: {
+                                    // Look up the actual enum type name from custom types
+                                    // For @byte function, this should be ValueError
+                                    if (self.type_system.custom_types.get("ValueError")) |_| {
+                                        break :blk "ValueError";
+                                    }
+                                    // Fallback to generic enum name
+                                    break :blk "custom";
+                                },
+                                else => "unknown",
+                            };
+                        }
+
+                        // Track union members for this variable
+                        try self.symbol_table.trackVariableUnionMembers(decl.name.lexeme, member_names);
+
+                        // Create the variable first if it doesn't exist, then track by index
+                        const var_index = try self.getOrCreateVariable(decl.name.lexeme);
+                        try self.symbol_table.trackVariableUnionMembersByIndex(var_index, member_names);
+                    }
 
                     // FIXED: Extract custom type name from struct literals
                     if (var_type == .Struct and init_expr.data == .StructLiteral) {
@@ -266,7 +291,7 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                                     if (ct_new.kind == .Struct) {
                                         // Track custom type name (e.g., point -> Point) and set var type
                                         try self.trackVariableCustomType(decl.name.lexeme, type_name);
-                                        var_type = .Struct;
+                                        var_type = HIRType{ .Struct = 0 };
                                     }
                                 }
                             }
@@ -289,71 +314,98 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                 }
             } else {
                 // No initializer - push default value based on type
-                switch (var_type) {
-                    .Int => {
-                        const default_value = HIRValue{ .int = 0 };
-                        const const_idx = try self.addConstant(default_value);
-                        try self.instructions.append(.{ .Const = .{ .value = default_value, .constant_id = const_idx } });
-                    },
-                    .Float => {
-                        const default_value = HIRValue{ .float = 0.0 };
-                        const const_idx = try self.addConstant(default_value);
-                        try self.instructions.append(.{ .Const = .{ .value = default_value, .constant_id = const_idx } });
-                    },
-                    .String => {
-                        const default_value = HIRValue{ .string = "" };
-                        const const_idx = try self.addConstant(default_value);
-                        try self.instructions.append(.{ .Const = .{ .value = default_value, .constant_id = const_idx } });
-                    },
-                    .Tetra => {
-                        const default_value = HIRValue{ .tetra = 0 };
-                        const const_idx = try self.addConstant(default_value);
-                        try self.instructions.append(.{ .Const = .{ .value = default_value, .constant_id = const_idx } });
-                    },
-                    .Byte => {
-                        const default_value = HIRValue{ .byte = 0 };
-                        const const_idx = try self.addConstant(default_value);
-                        try self.instructions.append(.{ .Const = .{ .value = default_value, .constant_id = const_idx } });
-                    },
-                    .Array => {
-                        // Create an array with the proper size and element type
-                        const size = if (decl.type_info.array_size) |s| @as(u32, @intCast(s)) else 0;
-                        const element_type = if (decl.type_info.array_type) |at| switch (at.base) {
-                            .Byte => HIRType.Byte,
-                            .Int => HIRType.Int,
-                            .Float => HIRType.Float,
-                            .String => HIRType.String,
-                            .Tetra => HIRType.Tetra,
-                            else => HIRType.Nothing,
-                        } else HIRType.Nothing;
 
-                        // Create the array
-                        try self.instructions.append(.{ .ArrayNew = .{
-                            .element_type = element_type,
-                            .size = size,
-                        } });
+                // Special case: Handle arrays directly from type_info
+                if (decl.type_info.base == .Array) {
+                    // Create an array with the proper size and element type
+                    const size = if (decl.type_info.array_size) |s| @as(u32, @intCast(s)) else 0;
+                    const element_type: HIRType = if (decl.type_info.array_type) |at| switch (at.base) {
+                        .Byte => .Byte,
+                        .Int => .Int,
+                        .Float => .Float,
+                        .String => .String,
+                        .Tetra => .Tetra,
+                        else => .Nothing,
+                    } else .Nothing;
 
-                        // Track element type for this variable
-                        try self.trackArrayElementType(decl.name.lexeme, element_type);
-                    },
-                    else => {
-                        const default_value = HIRValue.nothing;
-                        const const_idx = try self.addConstant(default_value);
-                        try self.instructions.append(.{ .Const = .{ .value = default_value, .constant_id = const_idx } });
-                    },
-                }
+                    // Create the array
+                    try self.instructions.append(.{ .ArrayNew = .{
+                        .element_type = element_type,
+                        .size = size,
+                    } });
+
+                    // Track element type for this variable
+                    try self.trackArrayElementType(decl.name.lexeme, element_type);
+                } else {
+                    switch (var_type) {
+                        .Int => {
+                            const default_value = HIRValue{ .int = 0 };
+                            const const_idx = try self.addConstant(default_value);
+                            try self.instructions.append(.{ .Const = .{ .value = default_value, .constant_id = const_idx } });
+                        },
+                        .Float => {
+                            const default_value = HIRValue{ .float = 0.0 };
+                            const const_idx = try self.addConstant(default_value);
+                            try self.instructions.append(.{ .Const = .{ .value = default_value, .constant_id = const_idx } });
+                        },
+                        .String => {
+                            const default_value = HIRValue{ .string = "" };
+                            const const_idx = try self.addConstant(default_value);
+                            try self.instructions.append(.{ .Const = .{ .value = default_value, .constant_id = const_idx } });
+                        },
+                        .Tetra => {
+                            const default_value = HIRValue{ .tetra = 0 };
+                            const const_idx = try self.addConstant(default_value);
+                            try self.instructions.append(.{ .Const = .{ .value = default_value, .constant_id = const_idx } });
+                        },
+                        .Byte => {
+                            const default_value = HIRValue{ .byte = 0 };
+                            const const_idx = try self.addConstant(default_value);
+                            try self.instructions.append(.{ .Const = .{ .value = default_value, .constant_id = const_idx } });
+                        },
+                        .Array => {
+                            // Create an array with the proper size and element type
+                            const size = if (decl.type_info.array_size) |s| @as(u32, @intCast(s)) else 0;
+                            const element_type: HIRType = if (decl.type_info.array_type) |at| switch (at.base) {
+                                .Byte => .Byte,
+                                .Int => .Int,
+                                .Float => .Float,
+                                .String => .String,
+                                .Tetra => .Tetra,
+                                else => .Nothing,
+                            } else .Nothing;
+
+                            // DEBUG: Print array declaration info
+                            std.debug.print("DEBUG: Generating ArrayNew for {any} with size={any}, element_type={any}\n", .{ decl.name.lexeme, size, @tagName(element_type) });
+
+                            // Create the array
+                            try self.instructions.append(.{ .ArrayNew = .{
+                                .element_type = element_type,
+                                .size = size,
+                            } });
+
+                            // Track element type for this variable
+                            try self.trackArrayElementType(decl.name.lexeme, element_type);
+                        },
+                        else => {
+                            const default_value = HIRValue.nothing;
+                            const const_idx = try self.addConstant(default_value);
+                            try self.instructions.append(.{ .Const = .{ .value = default_value, .constant_id = const_idx } });
+                        },
+                    }
+                } // Close the else block for array handling
 
                 // Store into the declared variable now so it has a concrete value and index
                 // Only perform this pre-store in global scope where we intentionally
                 // keep a duplicate around for subsequent global initialization steps.
                 if (self.current_function == null) {
-                    const var_idx2 = try self.getOrCreateVariable(decl.name.lexeme);
+                    const var_idx2 = try self.symbol_table.createVariable(decl.name.lexeme);
                     // Duplicate so subsequent code can see the value if needed (globals only)
                     try self.instructions.append(.Dup);
                     try self.instructions.append(.{ .StoreVar = .{
                         .var_index = var_idx2,
                         .var_name = decl.name.lexeme,
-                        .scope_kind = .Local,
+                        .scope_kind = if (self.current_function == null or self.is_global_init_phase) .ModuleGlobal else .Local,
                         .module_context = null,
                         .expected_type = var_type,
                     } });
@@ -371,6 +423,7 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
             }
 
             // NEW: Track the variable's type
+            // std.debug.print("DEBUG: SoxaStatements - tracking variable '{s}' with type: {any}\n", .{ decl.name.lexeme, var_type });
             try self.trackVariableType(decl.name.lexeme, var_type);
 
             // NEW: Track custom type name for enums/structs
@@ -379,26 +432,34 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
             }
 
             // Store variable (single instruction). Duplicate value only at global scope
-            const var_idx = try self.getOrCreateVariable(decl.name.lexeme);
+            const var_idx = try self.symbol_table.createVariable(decl.name.lexeme);
             if (self.current_function == null) {
                 try self.instructions.append(.Dup);
             }
 
             // Use StoreConst for constant declarations, StoreVar for variables
             if (!decl.type_info.is_mutable) {
+                // Use the symbol table's scope determination logic instead of hardcoded logic
+                const scope_kind = self.symbol_table.determineVariableScope(decl.name.lexeme);
+
                 try self.instructions.append(.{ .StoreConst = .{
                     .var_index = var_idx,
                     .var_name = decl.name.lexeme,
+                    .scope_kind = scope_kind,
+                    .module_context = null,
                 } });
                 // In global scope, we duplicated the initializer; pop it to keep stack balanced
                 if (self.current_function == null) {
                     try self.instructions.append(.Pop);
                 }
             } else {
+                // Use the symbol table's scope determination logic instead of hardcoded logic
+                const scope_kind = self.symbol_table.determineVariableScope(decl.name.lexeme);
+
                 try self.instructions.append(.{ .StoreVar = .{
                     .var_index = var_idx,
                     .var_name = decl.name.lexeme,
-                    .scope_kind = .Local,
+                    .scope_kind = scope_kind,
                     .module_context = null,
                     .expected_type = var_type,
                 } });
@@ -436,16 +497,16 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
         },
         .Return => |ret| {
             if (ret.value) |value| {
-                // TAIL CALL OPTIMIZATION: Check if return value is a direct function call
-                if (self.tryGenerateTailCall(value)) {
-                    return; // Tail call replaces both Call and Return
-                } else {
-                    // Regular return with value
-                    try self.generateExpression(value, true, true);
-                    // Infer return type from the returned expression to avoid relying on signature inference
-                    const inferred_ret_type = self.inferTypeFromExpression(value);
-                    try self.instructions.append(.{ .Return = .{ .has_value = true, .return_type = inferred_ret_type } });
-                }
+                // TAIL CALL OPTIMIZATION: Disabled for now due to issues
+                // if (self.tryGenerateTailCall(value)) {
+                //     return; // Tail call replaces both Call and Return
+                // } else {
+                // Regular return with value
+                try self.generateExpression(value, true, true);
+                // Infer return type from the returned expression to avoid relying on signature inference
+                const inferred_ret_type = self.inferTypeFromExpression(value);
+                try self.instructions.append(.{ .Return = .{ .has_value = true, .return_type = inferred_ret_type } });
+                // }
             } else {
                 try self.instructions.append(.{ .Return = .{ .has_value = false, .return_type = .Nothing } });
             }
@@ -460,7 +521,7 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
 
             // Register the enum type name as a special variable so Color.Red works
             const var_idx = try self.getOrCreateVariable(enum_decl.name.lexeme);
-            try self.trackVariableType(enum_decl.name.lexeme, .Enum);
+            try self.trackVariableType(enum_decl.name.lexeme, HIRType{ .Enum = 0 });
 
             // Create a special enum type value and store it
             const enum_type_value = HIRValue{ .string = enum_decl.name.lexeme }; // Simple representation for now
@@ -469,6 +530,8 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
             try self.instructions.append(.{ .StoreConst = .{
                 .var_index = var_idx,
                 .var_name = enum_decl.name.lexeme,
+                .scope_kind = if (self.current_function == null or self.is_global_init_phase) .ModuleGlobal else .Local,
+                .module_context = null,
             } });
 
             // Enum declarations don't generate runtime instructions, they're compile-time only

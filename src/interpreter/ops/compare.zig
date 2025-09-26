@@ -63,7 +63,13 @@ fn compareEqual(vm: anytype, a: HIRFrame, b: HIRFrame) !bool {
             else => false,
         },
         .enum_variant => |a_val| switch (b.value) {
-            .enum_variant => |b_val| std.mem.eql(u8, a_val.variant_name, b_val.variant_name) and std.mem.eql(u8, a_val.type_name, b_val.type_name),
+            .enum_variant => |b_val| {
+                const name_match = std.mem.eql(u8, a_val.variant_name, b_val.variant_name);
+                const type_match = std.mem.eql(u8, a_val.type_name, b_val.type_name);
+                // Note: Can't use reporter here since this is a const method
+                const result = name_match and type_match;
+                return result;
+            },
             else => false,
         },
         // Complex types - basic equality for now
@@ -99,8 +105,16 @@ fn compareLess(vm: anytype, a: HIRFrame, b: HIRFrame) !bool {
             .float => |b_val| @as(f64, @floatFromInt(a_val)) < b_val,
             else => ErrorList.TypeError,
         },
+        .string => |a_val| switch (b.value) {
+            .string => |b_val| blk: {
+                const result = std.mem.order(u8, a_val, b_val) == .lt;
+                break :blk result;
+            },
+            else => ErrorList.TypeError,
+        },
+        .nothing => ErrorList.TypeError, // Nothing values cannot be compared
         // Complex types don't support comparison
-        .tetra, .string, .nothing, .array, .struct_instance, .map, .enum_variant, .storage_id_ref => ErrorList.TypeError,
+        .tetra, .array, .struct_instance, .map, .enum_variant, .storage_id_ref => ErrorList.TypeError,
     };
 }
 
@@ -128,7 +142,15 @@ fn compareGreater(vm: anytype, a: HIRFrame, b: HIRFrame) !bool {
             .float => |b_val| @as(f64, @floatFromInt(a_val)) > b_val,
             else => ErrorList.TypeError,
         },
+        .string => |a_val| switch (b.value) {
+            .string => |b_val| blk: {
+                const result = std.mem.order(u8, a_val, b_val) == .gt;
+                break :blk result;
+            },
+            else => ErrorList.TypeError,
+        },
+        .nothing => ErrorList.TypeError, // Nothing values cannot be compared
         // Complex types don't support comparison
-        .tetra, .string, .nothing, .array, .struct_instance, .map, .enum_variant, .storage_id_ref => ErrorList.TypeError,
+        .tetra, .array, .struct_instance, .map, .enum_variant, .storage_id_ref => ErrorList.TypeError,
     };
 }

@@ -1,5 +1,6 @@
 const std = @import("std");
 const HIRType = @import("soxa_types.zig").HIRType;
+const ScopeKind = @import("soxa_types.zig").ScopeKind;
 
 /// Manages variable declarations, types, and metadata for HIR generation
 pub const SymbolTable = struct {
@@ -20,6 +21,9 @@ pub const SymbolTable = struct {
     variable_union_members: std.StringHashMap([][]const u8), // Legacy, may cause collisions across scopes
     variable_union_members_by_index: std.AutoHashMap(u32, [][]const u8), // Index-based to avoid name collisions
 
+    // Alias parameter tracking
+    alias_parameters: std.StringHashMap(void), // Track which variables are alias parameters
+
     // Function context
     current_function: ?[]const u8,
 
@@ -36,6 +40,7 @@ pub const SymbolTable = struct {
             .variable_array_element_types = std.StringHashMap(HIRType).init(allocator),
             .variable_union_members = std.StringHashMap([][]const u8).init(allocator),
             .variable_union_members_by_index = std.AutoHashMap(u32, [][]const u8).init(allocator),
+            .alias_parameters = std.StringHashMap(void).init(allocator),
             .current_function = null,
             .allocator = allocator,
         };
@@ -49,6 +54,7 @@ pub const SymbolTable = struct {
         self.variable_array_element_types.deinit();
         self.variable_union_members.deinit();
         self.variable_union_members_by_index.deinit();
+        self.alias_parameters.deinit();
     }
 
     /// Enter function scope - resets local variable tracking
@@ -59,6 +65,10 @@ pub const SymbolTable = struct {
         self.local_variables.deinit();
         self.local_variables = std.StringHashMap(u32).init(self.allocator);
         self.local_variable_count = 0;
+
+        // Clear alias parameters for the new function scope
+        self.alias_parameters.deinit();
+        self.alias_parameters = std.StringHashMap(void).init(self.allocator);
     }
 
     /// Exit function scope
@@ -68,16 +78,19 @@ pub const SymbolTable = struct {
 
     /// Get or create a variable index, handling local vs global scope
     pub fn getOrCreateVariable(self: *SymbolTable, name: []const u8) !u32 {
-        // When inside a function, keep variable indices local to the function to avoid collisions
+        // When inside a function, check local variables first, then global
         if (self.current_function != null) {
             if (self.local_variables.get(name)) |idx| {
                 return idx;
             }
+            // Check if variable exists globally
+            if (self.variables.get(name)) |global_idx| {
+                return global_idx;
+            }
+            // Variable doesn't exist anywhere, create new local variable
             const idx = self.local_variable_count;
             try self.local_variables.put(name, idx);
             self.local_variable_count += 1;
-            
-            
             return idx;
         }
 
@@ -88,9 +101,25 @@ pub const SymbolTable = struct {
         const idx = self.variable_count;
         try self.variables.put(name, idx);
         self.variable_count += 1;
-        
-        
         return idx;
+    }
+
+    /// Create a new variable index, always creating a local variable when inside a function
+    /// This is used for variable declarations to ensure they shadow global variables
+    pub fn createVariable(self: *SymbolTable, name: []const u8) !u32 {
+        if (self.current_function != null) {
+            // Inside function: always create local variable to shadow any global
+            const idx = self.local_variable_count;
+            try self.local_variables.put(name, idx);
+            self.local_variable_count += 1;
+            return idx;
+        } else {
+            // Global scope: create global variable
+            const idx = self.variable_count;
+            try self.variables.put(name, idx);
+            self.variable_count += 1;
+            return idx;
+        }
     }
 
     /// Get existing variable index if it exists
@@ -109,6 +138,30 @@ pub const SymbolTable = struct {
     /// Track a variable's type when it's declared or assigned
     pub fn trackVariableType(self: *SymbolTable, var_name: []const u8, var_type: HIRType) !void {
         try self.variable_types.put(var_name, var_type);
+    }
+
+    /// Determine the correct scope for a variable based on where it exists
+    pub fn determineVariableScope(self: *SymbolTable, var_name: []const u8) ScopeKind {
+        if (self.current_function != null) {
+            // Inside function: check if it's a local variable first
+            const in_local = self.local_variables.get(var_name);
+            const in_global = self.variables.get(var_name);
+
+            if (in_local) |_| {
+                return .Local;
+            } else if (in_global) |_| {
+                // Found in global scope, but we're inside a function
+                // This means we're accessing a script-level global variable from within a function
+                return .GlobalLocal;
+            } else {
+                // New variable in function scope
+                return .Local;
+            }
+        } else {
+            // Not in function scope - top-level script variables should be GlobalLocal
+            // ModuleGlobal should only be used for truly persistent module-level variables
+            return .GlobalLocal;
+        }
     }
 
     /// Get tracked variable type
@@ -139,6 +192,16 @@ pub const SymbolTable = struct {
     /// Track union member type names by variable index to avoid name collisions
     pub fn trackVariableUnionMembersByIndex(self: *SymbolTable, var_index: u32, members: [][]const u8) !void {
         try self.variable_union_members_by_index.put(var_index, members);
+    }
+
+    /// Track an alias parameter
+    pub fn trackAliasParameter(self: *SymbolTable, var_name: []const u8) !void {
+        try self.alias_parameters.put(var_name, {});
+    }
+
+    /// Check if a variable is an alias parameter
+    pub fn isAliasParameter(self: *SymbolTable, var_name: []const u8) bool {
+        return self.alias_parameters.contains(var_name);
     }
 
     /// Get union members by variable index

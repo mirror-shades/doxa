@@ -28,6 +28,27 @@ const ResizeBehavior = SoxaInstructions.ResizeBehavior;
 const HIRGenerator = @import("soxa_generator.zig").HIRGenerator;
 const SoxaTextParser = @import("soxa_parser.zig").SoxaTextParser;
 
+const HirTypeNames = [_][]const u8{
+    "Int",
+    "Byte",
+    "Float",
+    "String",
+    "Tetra",
+    "Nothing",
+    "Array",
+    "Struct",
+    "Map",
+    "Enum",
+    "Function",
+    "Union",
+    "Unknown",
+};
+
+fn hirTypeNameSafe(value: HIRType) []const u8 {
+    const raw = @intFromEnum(value);
+    return if (raw < HirTypeNames.len) HirTypeNames[raw] else "Invalid";
+}
+
 pub fn translateToVMBytecode(program: *HIRProgram, allocator: std.mem.Allocator, reporter: *reporting.Reporter) ![]u8 {
     var bytecode = std.array_list.Managed(u8).init(allocator);
     defer bytecode.deinit();
@@ -288,6 +309,13 @@ pub fn writeSoxaFile(program: *HIRProgram, file_path: []const u8, source_path: [
         for (program.function_table) |func| {
             try writer.print("    {s}({} args) -> {s}\n", .{ func.name, func.arity, @tagName(func.return_type) });
             try writer.print("        entry: {s}\n", .{func.start_label});
+
+            for (func.param_types, 0..) |param_type, idx| {
+                const alias_flag = if (idx < func.param_is_alias.len) func.param_is_alias[idx] else false;
+                const alias_str = if (alias_flag) "true" else "false";
+                try writer.print("        param[{}]:{s} alias:{s}\n", .{ idx, hirTypeNameSafe(param_type), alias_str });
+            }
+
             if (func.is_entry) {
                 try writer.print("        main: true\n", .{});
             }
@@ -610,6 +638,32 @@ fn writeHIRInstruction(writer: anytype, instruction: HIRInstruction, allocator: 
             try writer.writeInt(u32, s.scope_id, .little);
         },
 
+        // Compound assignment operations
+        .ArrayGetAndAdd => |a| {
+            try writer.writeByte(26); // Instruction tag
+            try writer.writeByte(if (a.bounds_check) 1 else 0);
+        },
+        .ArrayGetAndSub => |a| {
+            try writer.writeByte(27); // Instruction tag
+            try writer.writeByte(if (a.bounds_check) 1 else 0);
+        },
+        .ArrayGetAndMul => |a| {
+            try writer.writeByte(28); // Instruction tag
+            try writer.writeByte(if (a.bounds_check) 1 else 0);
+        },
+        .ArrayGetAndDiv => |a| {
+            try writer.writeByte(29); // Instruction tag
+            try writer.writeByte(if (a.bounds_check) 1 else 0);
+        },
+        .ArrayGetAndMod => |a| {
+            try writer.writeByte(30); // Instruction tag
+            try writer.writeByte(if (a.bounds_check) 1 else 0);
+        },
+        .ArrayGetAndPow => |a| {
+            try writer.writeByte(31); // Instruction tag
+            try writer.writeByte(if (a.bounds_check) 1 else 0);
+        },
+
         else => {
             return ErrorList.UnsupportedStatement;
         },
@@ -788,6 +842,33 @@ fn readHIRInstruction(reader: anytype, allocator: std.mem.Allocator) !HIRInstruc
             return HIRInstruction{ .ExitScope = .{ .scope_id = scope_id } };
         },
 
+        // Compound assignment operations
+        26 => { // ArrayGetAndAdd
+            const bounds_check = (try reader.readByte()) != 0;
+            std.debug.print("HIR DESERIALIZER: Deserializing ArrayGetAndAdd instruction\n", .{});
+            return HIRInstruction{ .ArrayGetAndAdd = .{ .bounds_check = bounds_check } };
+        },
+        27 => { // ArrayGetAndSub
+            const bounds_check = (try reader.readByte()) != 0;
+            return HIRInstruction{ .ArrayGetAndSub = .{ .bounds_check = bounds_check } };
+        },
+        28 => { // ArrayGetAndMul
+            const bounds_check = (try reader.readByte()) != 0;
+            return HIRInstruction{ .ArrayGetAndMul = .{ .bounds_check = bounds_check } };
+        },
+        29 => { // ArrayGetAndDiv
+            const bounds_check = (try reader.readByte()) != 0;
+            return HIRInstruction{ .ArrayGetAndDiv = .{ .bounds_check = bounds_check } };
+        },
+        30 => { // ArrayGetAndMod
+            const bounds_check = (try reader.readByte()) != 0;
+            return HIRInstruction{ .ArrayGetAndMod = .{ .bounds_check = bounds_check } };
+        },
+        31 => { // ArrayGetAndPow
+            const bounds_check = (try reader.readByte()) != 0;
+            return HIRInstruction{ .ArrayGetAndPow = .{ .bounds_check = bounds_check } };
+        },
+
         else => {
             return ErrorList.UnsupportedStatement;
         },
@@ -818,7 +899,7 @@ fn writeHIRValueText(writer: anytype, value: HIRValue) !void {
         .array => |arr| try writer.print("array[{s}] capacity:{}", .{ @tagName(arr.element_type), arr.capacity }),
         .struct_instance => try writer.print("struct", .{}),
         .map => try writer.print("map", .{}),
-        .enum_variant => |variant| try writer.print("enum_variant {s}.{s}", .{ variant.type_name, variant.variant_name }),
+        .enum_variant => |variant| try writer.print("enum {s}.{s} (idx {})", .{ variant.type_name, variant.variant_name, variant.variant_index }),
         .storage_id_ref => |storage_id| try writer.print("storage_id_ref {}", .{storage_id}),
     }
 }
@@ -827,10 +908,10 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
     switch (instruction) {
         .Const => |c| try writer.print("    Const {}                    ; Push constant\n", .{c.constant_id}),
 
-        .LoadVar => |v| try writer.print("    LoadVar {} \"{s}\"           ; Load variable\n", .{ v.var_index, v.var_name }),
+        .LoadVar => |v| try writer.print("    LoadVar {} \"{s}\" {s}           ; Load variable\n", .{ v.var_index, v.var_name, @tagName(v.scope_kind) }),
 
-        .StoreVar => |v| try writer.print("    StoreVar {} \"{s}\"          ; Store variable\n", .{ v.var_index, v.var_name }),
-        .StoreConst => |v| try writer.print("    StoreConst {} \"{s}\"        ; Store constant\n", .{ v.var_index, v.var_name }),
+        .StoreVar => |v| try writer.print("    StoreVar {} \"{s}\" {s}          ; Store variable\n", .{ v.var_index, v.var_name, @tagName(v.scope_kind) }),
+        .StoreConst => |v| try writer.print("    StoreConst {} \"{s}\" {s}        ; Store constant\n", .{ v.var_index, v.var_name, @tagName(v.scope_kind) }),
         .PushStorageId => |p| try writer.print("    PushStorageId {} \"{s}\"     ; Push storage ID for alias\n", .{ p.var_index, p.var_name }),
         .StoreParamAlias => |s| try writer.print("    StoreParamAlias \"{s}\" {}      ; Store alias parameter\n", .{ s.param_name, s.var_index }),
 
@@ -933,6 +1014,12 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
         // Array operations
         .ArrayNew => |a| try writer.print("    ArrayNew {s} {}             ; Create array\n", .{ @tagName(a.element_type), a.size }),
         .ArrayGet => |a| try writer.print("    ArrayGet {}                 ; Get array element\n", .{a.bounds_check}),
+        .ArrayGetAndAdd => |a| try writer.print("    ArrayGetAndAdd {}           ; Compound assignment: array[index] += value\n", .{a.bounds_check}),
+        .ArrayGetAndSub => |a| try writer.print("    ArrayGetAndSub {}           ; Compound assignment: array[index] -= value\n", .{a.bounds_check}),
+        .ArrayGetAndMul => |a| try writer.print("    ArrayGetAndMul {}           ; Compound assignment: array[index] *= value\n", .{a.bounds_check}),
+        .ArrayGetAndDiv => |a| try writer.print("    ArrayGetAndDiv {}           ; Compound assignment: array[index] /= value\n", .{a.bounds_check}),
+        .ArrayGetAndMod => |a| try writer.print("    ArrayGetAndMod {}           ; Compound assignment: array[index] %= value\n", .{a.bounds_check}),
+        .ArrayGetAndPow => |a| try writer.print("    ArrayGetAndPow {}           ; Compound assignment: array[index] **= value\n", .{a.bounds_check}),
         .ArraySet => |a| try writer.print("    ArraySet {}                 ; Set array element\n", .{a.bounds_check}),
         .ArrayPush => |a| try writer.print("    ArrayPush {s}               ; Push to array\n", .{@tagName(a.resize_behavior)}),
         .ArrayPop => try writer.print("    ArrayPop                    ; Pop from array\n", .{}),
@@ -987,6 +1074,9 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
         .TypeCheck => |tc| try writer.print("    TypeCheck \"{s}\"              ; Type check\n", .{tc.target_type}),
 
         .Range => |r| try writer.print("    Range {s}                    ; Create array from range\n", .{@tagName(r.element_type)}),
+
+        .LoadAlias => |la| try writer.print("    LoadAlias {} \"{s}\"           ; Load from alias parameter\n", .{ la.slot_index, la.var_name }),
+        .StoreAlias => |sa| try writer.print("    StoreAlias {} \"{s}\" {s}        ; Store to alias parameter\n", .{ sa.slot_index, sa.var_name, @tagName(sa.expected_type) }),
 
         else => try writer.print("    ; TODO: {s}\n", .{@tagName(instruction)}),
     }

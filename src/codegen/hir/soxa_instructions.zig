@@ -92,6 +92,8 @@ pub const HIRInstruction = union(enum) {
     StoreConst: struct {
         var_index: u32,
         var_name: []const u8,
+        scope_kind: ScopeKind,
+        module_context: ?[]const u8,
     },
 
     /// NEW: Push a variable's storage ID onto the stack
@@ -108,6 +110,34 @@ pub const HIRInstruction = union(enum) {
         param_name: []const u8,
         param_type: HIRType, // For initial type info of the alias
         var_index: u32, // Variable index for the alias parameter
+    },
+
+    /// Load value from an alias parameter
+    LoadAlias: struct {
+        var_name: []const u8,
+        slot_index: u32,
+    },
+
+    /// Store value to an alias parameter
+    StoreAlias: struct {
+        var_name: []const u8,
+        slot_index: u32,
+        expected_type: HIRType,
+    },
+
+    /// Resolve an alias to its target slot dynamically
+    ResolveAlias: struct {
+        alias_name: []const u8,
+        target_slot: u32,
+    },
+
+    /// Bind an alias to its target variable
+    BindAlias: struct {
+        alias_name: []const u8,
+        target_variable_name: []const u8,
+        alias_slot: u32,
+        target_slot: u32,
+        target_type: HIRType,
     },
 
     //==================================================================
@@ -391,6 +421,52 @@ pub const HIRInstruction = union(enum) {
     /// LLVM: Generate loop with early exit
     Forall: struct {
         predicate_type: HIRType,
+    },
+
+    //==================================================================
+    // COMPOUND ASSIGNMENT OPERATIONS (Long-term fix)
+    //==================================================================
+
+    /// Compound assignment: array[index] += value
+    /// VM: Get element, add value, set element atomically
+    /// LLVM: Generate optimized compound assignment
+    ArrayGetAndAdd: struct {
+        bounds_check: bool,
+    },
+
+    /// Compound assignment: array[index] -= value
+    /// VM: Get element, subtract value, set element atomically
+    /// LLVM: Generate optimized compound assignment
+    ArrayGetAndSub: struct {
+        bounds_check: bool,
+    },
+
+    /// Compound assignment: array[index] *= value
+    /// VM: Get element, multiply value, set element atomically
+    /// LLVM: Generate optimized compound assignment
+    ArrayGetAndMul: struct {
+        bounds_check: bool,
+    },
+
+    /// Compound assignment: array[index] /= value
+    /// VM: Get element, divide value, set element atomically
+    /// LLVM: Generate optimized compound assignment
+    ArrayGetAndDiv: struct {
+        bounds_check: bool,
+    },
+
+    /// Compound assignment: array[index] %= value
+    /// VM: Get element, modulo value, set element atomically
+    /// LLVM: Generate optimized compound assignment
+    ArrayGetAndMod: struct {
+        bounds_check: bool,
+    },
+
+    /// Compound assignment: array[index] **= value
+    /// VM: Get element, power value, set element atomically
+    /// LLVM: Generate optimized compound assignment
+    ArrayGetAndPow: struct {
+        bounds_check: bool,
     },
 
     //==================================================================

@@ -6,20 +6,38 @@ const HIRValue = @import("soxa_values.zig").HIRValue;
 // SUPPORTING TYPES
 //==================================================================
 
-pub const HIRType = enum {
+pub const StructId = u32;
+pub const EnumId = u32;
+
+pub const HIRType = union(enum) {
     Int,
     Byte,
     Float,
     String,
     Tetra,
     Nothing,
-    Array,
-    Struct,
-    Map,
-    Enum,
-    Function,
-    Union,
-    Unknown, // will throw error in VM, Soxa is explicit
+
+    // OK: pointer, not by-value recursion
+    Array: *const HIRType,
+
+    // Map carries both key & value types
+    Map: struct { key: *const HIRType, value: *const HIRType },
+
+    // Store IDs; look up details in a table
+    Struct: StructId,
+    Enum: EnumId,
+
+    // Optional: carry function sig by pointers/ids
+    Function: struct {
+        params: []const *const HIRType,
+        ret: *const HIRType,
+    },
+
+    // OK: slice is a pointer+len; members are pointers (no by-value recursion)
+    Union: []const *const HIRType,
+
+    Unknown,
+    Poison, // Poison type for malformed/invalid types
 };
 
 // Additional type information for complex types
@@ -52,7 +70,8 @@ pub const EnumTypeInfo = struct {
 
 pub const ScopeKind = enum {
     Local, // Function-local variable
-    ModuleGlobal, // Module-level global
+    GlobalLocal, // Script-level global (accessible from functions, but local to script execution)
+    ModuleGlobal, // Module-level global (persistent across modules)
     ImportedModule, // Variable from imported module
     Builtin, // Built-in system variable
 };

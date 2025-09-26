@@ -4,6 +4,8 @@ const Token = @import("../../types/token.zig").Token;
 const TokenType = @import("../../types/token.zig").TokenType;
 const TokenLiteral = @import("../../types/types.zig").TokenLiteral;
 const HIRType = @import("soxa_types.zig").HIRType;
+const StructId = @import("soxa_types.zig").StructId;
+const EnumId = @import("soxa_types.zig").EnumId;
 const SymbolTable = @import("symbol_table.zig").SymbolTable;
 const Errors = @import("../../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
@@ -16,6 +18,7 @@ pub const TypeSystem = struct {
     custom_types: std.StringHashMap(CustomTypeInfo),
     allocator: std.mem.Allocator,
     reporter: *Reporting.Reporter,
+    semantic_analyzer: ?*const @import("../../analysis/semantic/semantic.zig").SemanticAnalyzer = null,
 
     pub const CustomTypeInfo = struct {
         name: []const u8,
@@ -44,10 +47,14 @@ pub const TypeSystem = struct {
 
         /// Get the index of an enum variant by name
         pub fn getEnumVariantIndex(self: *const CustomTypeInfo, variant_name: []const u8) ?u32 {
-            if (self.kind != .Enum or self.enum_variants == null) return null;
+            if (self.kind != .Enum or self.enum_variants == null) {
+                // Note: Can't use reporter here since this is a const method
+                return null;
+            }
 
             for (self.enum_variants.?) |variant| {
                 if (std.mem.eql(u8, variant.name, variant_name)) {
+                    // Note: Can't use reporter here since this is a const method
                     return variant.index;
                 }
             }
@@ -69,11 +76,12 @@ pub const TypeSystem = struct {
 
     pub const FieldResolveResult = struct { t: HIRType, custom_type_name: ?[]const u8 = null };
 
-    pub fn init(allocator: std.mem.Allocator, reporter: *Reporting.Reporter) TypeSystem {
+    pub fn init(allocator: std.mem.Allocator, reporter: *Reporting.Reporter, semantic_analyzer: ?*const @import("../../analysis/semantic/semantic.zig").SemanticAnalyzer) TypeSystem {
         return TypeSystem{
             .custom_types = std.StringHashMap(CustomTypeInfo).init(allocator),
             .allocator = allocator,
             .reporter = reporter,
+            .semantic_analyzer = semantic_analyzer,
         };
     }
 
@@ -152,16 +160,35 @@ pub const TypeSystem = struct {
 
     /// Convert AST TypeInfo to HIRType
     pub fn convertTypeInfo(self: *TypeSystem, type_info: ast.TypeInfo) HIRType {
-        _ = self;
         return switch (type_info.base) {
             .Int => .Int,
             .Float => .Float,
             .String => .String,
             .Tetra => .Tetra,
             .Byte => .Byte,
-            .Array => .Array,
-            .Map => .Map,
-            .Union => .Union,
+            .Array => {
+                if (type_info.array_type) |element_type| {
+                    // Create a pointer to the element type for the Array union field
+                    const element_type_ptr = self.allocator.create(HIRType) catch return .Unknown;
+                    element_type_ptr.* = self.convertTypeInfo(element_type.*);
+                    return HIRType{ .Array = element_type_ptr };
+                } else {
+                    // No element type info, use Unknown as element type
+                    const unknown_ptr = self.allocator.create(HIRType) catch return .Unknown;
+                    unknown_ptr.* = .Unknown;
+                    return HIRType{ .Array = unknown_ptr };
+                }
+            },
+            .Map => {
+                // Create a Map type with default key/value types
+                const key_type = self.allocator.create(HIRType) catch return .Unknown;
+                key_type.* = .String; // Default key type
+                const value_type = self.allocator.create(HIRType) catch return .Unknown;
+                value_type.* = .Unknown; // Unknown value type
+                return HIRType{ .Map = .{ .key = key_type, .value = value_type } };
+            },
+            .Union => .Unknown, // Union type requires member type info
+            .Custom => HIRType{ .Struct = 0 }, // Custom types are structs or enums, default to struct
             else => .Nothing,
         };
     }
@@ -184,12 +211,12 @@ pub const TypeSystem = struct {
         return switch (e.data) {
             .Variable => |var_token| blk: {
                 if (symbol_table.getVariableCustomType(var_token.lexeme)) |ctype| {
-                    break :blk FieldResolveResult{ .t = .Struct, .custom_type_name = ctype };
+                    break :blk FieldResolveResult{ .t = HIRType{ .Struct = 0 }, .custom_type_name = ctype };
                 }
                 if (self.isCustomType(var_token.lexeme)) |ct| {
                     switch (ct.kind) {
-                        .Struct => break :blk FieldResolveResult{ .t = .Struct, .custom_type_name = var_token.lexeme },
-                        .Enum => break :blk FieldResolveResult{ .t = .Enum, .custom_type_name = null },
+                        .Struct => break :blk FieldResolveResult{ .t = HIRType{ .Struct = 0 }, .custom_type_name = var_token.lexeme },
+                        .Enum => break :blk FieldResolveResult{ .t = HIRType{ .Enum = 0 }, .custom_type_name = null },
                     }
                 }
                 break :blk FieldResolveResult{ .t = symbol_table.getTrackedVariableType(var_token.lexeme) orelse .Unknown, .custom_type_name = null };
@@ -200,7 +227,7 @@ pub const TypeSystem = struct {
                     const base_name = fa.object.data.Variable.lexeme;
                     if (self.isCustomType(base_name)) |ct| {
                         if (ct.kind == .Enum) {
-                            return FieldResolveResult{ .t = .Enum, .custom_type_name = base_name };
+                            return FieldResolveResult{ .t = HIRType{ .Enum = 0 }, .custom_type_name = base_name };
                         }
                     }
                 }
@@ -226,19 +253,49 @@ pub const TypeSystem = struct {
 
     /// Comprehensive type inference from expressions
     pub fn inferTypeFromExpression(self: *TypeSystem, expr: *ast.Expr, symbol_table: *SymbolTable) HIRType {
-        return switch (expr.data) {
+        const result = switch (expr.data) {
             .Literal => |lit| self.inferTypeFromLiteral(lit),
-            .Map => .Map,
+            .Map => {
+                // Create a Map type with default key/value types
+                const key_type = self.allocator.create(HIRType) catch return .Unknown;
+                key_type.* = .String; // Default key type
+                const value_type = self.allocator.create(HIRType) catch return .Unknown;
+                value_type.* = .Unknown; // Unknown value type
+                return HIRType{ .Map = .{ .key = key_type, .value = value_type } };
+            },
             .Variable => |var_token| {
                 // First check if this is a custom type name
                 if (self.isCustomType(var_token.lexeme)) |custom_type| {
                     return switch (custom_type.kind) {
-                        .Struct => .Struct,
-                        .Enum => .Enum,
+                        .Struct => HIRType{ .Struct = 0 }, // Use placeholder struct ID
+                        .Enum => HIRType{ .Enum = 0 }, // Use placeholder enum ID
                     };
                 }
 
-                // Otherwise look up the variable's tracked type
+                // FIXED: When inside a function scope, prioritize HIR symbol table over semantic analyzer
+                // This ensures function parameters are found correctly and don't get shadowed by global variables
+                if (symbol_table.current_function != null) {
+                    // Inside function scope: check HIR symbol table first (contains function parameters)
+                    const var_type = symbol_table.getTrackedVariableType(var_token.lexeme);
+                    if (var_type != null and var_type.? != .Unknown) {
+                        return var_type.?;
+                    }
+                }
+
+                // Try to get type from semantic analyzer for global scope or when HIR symbol table lookup fails
+                if (self.semantic_analyzer) |semantic| {
+                    if (semantic.current_scope) |scope| {
+                        if (scope.lookupVariable(var_token.lexeme)) |variable| {
+                            if (semantic.memory.scope_manager.value_storage.get(variable.storage_id)) |storage| {
+                                // Convert AST TypeInfo to HIRType
+                                const hir_type = self.convertTypeInfo(storage.type_info.*);
+                                return hir_type;
+                            }
+                        }
+                    }
+                }
+
+                // Final fallback to HIR generator's symbol table
                 const var_type = symbol_table.getTrackedVariableType(var_token.lexeme) orelse .Unknown;
                 return var_type;
             },
@@ -248,39 +305,45 @@ pub const TypeSystem = struct {
                 }
                 const obj_type = self.inferTypeFromExpression(field.object, symbol_table);
                 if (std.mem.eql(u8, field.field.lexeme, "value")) return .String;
-                if (std.mem.eql(u8, field.field.lexeme, "token_type")) return .Enum;
+                if (std.mem.eql(u8, field.field.lexeme, "token_type")) return HIRType{ .Enum = 0 };
                 if (obj_type == .Struct) return .Unknown;
                 return .Unknown;
             },
             .Binary => |binary| {
                 // Simple type inference for binary operations
-                const left_type = if (binary.left) |left| self.inferTypeFromExpression(left, symbol_table) else .Unknown;
-                const right_type = if (binary.right) |right| self.inferTypeFromExpression(right, symbol_table) else .Unknown;
+                // For now, we don't use the types since HIRType comparisons are not supported
                 return switch (binary.operator.type) {
                     .EQUALITY, .BANG_EQUAL, .LESS, .LESS_EQUAL, .GREATER, .GREATER_EQUAL => .Tetra,
                     .AND, .OR, .XOR => .Tetra, // Logical operations return tetra values
                     .PLUS, .MINUS, .ASTERISK, .SLASH, .MODULO => {
                         // Arithmetic operations - return the promoted type
-                        if (left_type == right_type and left_type != .Unknown) return left_type;
-                        if ((left_type == .Int and right_type == .Float) or (left_type == .Float and right_type == .Int)) {
-                            return .Float;
-                        }
-                        return .Int; // Default to int for arithmetic
+                        // For now, return Unknown for type comparisons since HIRType is a union
+                        // TODO: Implement proper HIRType comparison
+                        return .Unknown;
                     },
                     .POWER => {
-                        // For power operation, if both operands are integers, return integer type
-                        if ((left_type == .Int or left_type == .Byte) and (right_type == .Int or right_type == .Byte)) {
-                            return .Int;
-                        }
-                        // If either operand is float, return float
-                        if (left_type == .Float or right_type == .Float) return .Float;
-                        // Default to int for other cases
-                        return .Int;
+                        // For now, return Unknown since HIRType comparisons are not supported
+                        // TODO: Implement proper HIRType comparison
+                        return .Unknown;
                     },
                     else => .Tetra, // Default to Tetra for any other binary operations
                 };
             },
-            .Array => .Array,
+            .Array => {
+                // For array literals, we need to infer the element type
+                const elements = expr.data.Array;
+                if (elements.len > 0) {
+                    const element_type = self.inferTypeFromExpression(elements[0], symbol_table);
+                    // Create a pointer to the element type for the Array union field
+                    const element_type_ptr = self.allocator.create(HIRType) catch return .Unknown;
+                    element_type_ptr.* = element_type;
+                    return HIRType{ .Array = element_type_ptr };
+                }
+                // Empty array - use Unknown as element type
+                const unknown_ptr = self.allocator.create(HIRType) catch return .Unknown;
+                unknown_ptr.* = .Unknown;
+                return HIRType{ .Array = unknown_ptr };
+            },
             .Index => |index| {
                 // Array/string indexing returns the element type
                 const container_type = self.inferTypeFromExpression(index.array, symbol_table);
@@ -292,12 +355,39 @@ pub const TypeSystem = struct {
                                 return elem_type;
                             }
                         }
-                        return .String; // Fallback: Most arrays contain strings by default
+                        return .Byte; // Fallback: Default to Byte for arrays (more common for tape-like structures)
                     },
                     .String => .String, // String indexing returns single character (still string in our system)
                     .Map => .Int, // Map values are integers in our test case
                     else => .String, // Default to String for most index operations
                 };
+            },
+            .InternalCall => |internal| {
+                // Handle direct internal calls like @byte(str[0])
+                const name = internal.method.lexeme;
+                if (std.mem.eql(u8, name, "substring")) return .String;
+                if (std.mem.eql(u8, name, "length")) return .Int;
+                if (std.mem.eql(u8, name, "int")) return .Int;
+                if (std.mem.eql(u8, name, "float")) return .Float;
+                if (std.mem.eql(u8, name, "string")) return .String;
+                if (std.mem.eql(u8, name, "byte")) {
+                    // @byte returns byte | ValueError (same as BuiltinCall case)
+                    var member_types = self.allocator.alloc(*const HIRType, 2) catch return .Unknown;
+
+                    // Create Byte type
+                    const byte_type = self.allocator.create(HIRType) catch return .Unknown;
+                    byte_type.* = .Byte;
+                    member_types[0] = byte_type;
+
+                    // Create ValueError enum type (assuming ValueError has ID 1)
+                    const value_error_type = self.allocator.create(HIRType) catch return .Unknown;
+                    value_error_type.* = HIRType{ .Enum = 1 }; // ValueError enum ID
+                    member_types[1] = value_error_type;
+
+                    return HIRType{ .Union = member_types };
+                }
+                // Unknown internal call: best-effort default
+                return .Unknown;
             },
             .BuiltinCall => |bc| {
                 const name = bc.function.lexeme;
@@ -306,8 +396,24 @@ pub const TypeSystem = struct {
                 if (std.mem.eql(u8, name, "int")) return .Int;
                 if (std.mem.eql(u8, name, "float")) return .Float;
                 if (std.mem.eql(u8, name, "string")) return .String;
-                if (std.mem.eql(u8, name, "byte")) return .Byte;
+                if (std.mem.eql(u8, name, "byte")) {
+                    // @byte returns byte | ValueError
+                    var member_types = self.allocator.alloc(*const HIRType, 2) catch return .Unknown;
+
+                    // Create Byte type
+                    const byte_type = self.allocator.create(HIRType) catch return .Unknown;
+                    byte_type.* = .Byte;
+                    member_types[0] = byte_type;
+
+                    // Create ValueError enum type (assuming ValueError has ID 1)
+                    const value_error_type = self.allocator.create(HIRType) catch return .Unknown;
+                    value_error_type.* = HIRType{ .Enum = 1 }; // ValueError enum ID
+                    member_types[1] = value_error_type;
+
+                    return HIRType{ .Union = member_types };
+                }
                 if (std.mem.eql(u8, name, "time")) return .Int;
+                if (std.mem.eql(u8, name, "tick")) return .Int;
                 if (std.mem.eql(u8, name, "push")) return .Nothing; // modifies in place, returns nothing
                 if (std.mem.eql(u8, name, "pop")) {
                     if (bc.arguments.len > 0) {
@@ -340,10 +446,25 @@ pub const TypeSystem = struct {
                     .InternalCall => |method| {
                         if (std.mem.eql(u8, method.method.lexeme, "substring")) return .String;
                         if (std.mem.eql(u8, method.method.lexeme, "length")) return .Int;
-                        if (std.mem.eql(u8, method.method.lexeme, "bytes")) return .Array;
+                        if (std.mem.eql(u8, method.method.lexeme, "bytes")) return .Unknown; // Array type requires element type info
                         if (std.mem.eql(u8, method.method.lexeme, "int")) return .Int;
                         if (std.mem.eql(u8, method.method.lexeme, "float")) return .Float;
-                        if (std.mem.eql(u8, method.method.lexeme, "byte")) return .Byte;
+                        if (std.mem.eql(u8, method.method.lexeme, "byte")) {
+                            // @byte returns byte | ValueError (same as BuiltinCall case)
+                            var member_types = self.allocator.alloc(*const HIRType, 2) catch return .Unknown;
+
+                            // Create Byte type
+                            const byte_type = self.allocator.create(HIRType) catch return .Unknown;
+                            byte_type.* = .Byte;
+                            member_types[0] = byte_type;
+
+                            // Create ValueError enum type (assuming ValueError has ID 1)
+                            const value_error_type = self.allocator.create(HIRType) catch return .Unknown;
+                            value_error_type.* = HIRType{ .Enum = 1 }; // ValueError enum ID
+                            member_types[1] = value_error_type;
+
+                            return HIRType{ .Union = member_types };
+                        }
                         if (std.mem.eql(u8, method.method.lexeme, "safeAdd")) return .Int;
                     },
                     .FieldAccess => |field| {
@@ -388,6 +509,7 @@ pub const TypeSystem = struct {
             },
             else => .String, // Default to String for any unhandled expression types to prevent Auto leakage
         };
+        return result;
     }
 
     /// Infer binary operation result type with proper type promotion
@@ -451,7 +573,7 @@ pub const TypeSystem = struct {
 
         // If either operand is an enum, use Enum operand type
         if (left_type == .Enum or right_type == .Enum) {
-            return .Enum;
+            return HIRType{ .Enum = 0 };
         }
 
         // If either operand is a string, use String operand type
@@ -483,43 +605,40 @@ pub const TypeSystem = struct {
     /// 2. Int fallback: If either operand is Int, promote to Int
     /// 3. No promotion: If neither is Float or Int, operands are Byte
     pub fn computeNumericCommonType(_: *TypeSystem, left_type: HIRType, right_type: HIRType, operator_type: TokenType) HIRType {
+        // Handle Unknown types by assuming they are Int (common case for literals)
+        const resolved_left = if (left_type == .Unknown) .Int else left_type;
+        const resolved_right = if (right_type == .Unknown) .Int else right_type;
+
         // Non-numeric types don't follow numeric promotion rules
-        if (left_type == .String or right_type == .String or
-            left_type == .Array or right_type == .Array or
-            left_type == .Map or right_type == .Map or
-            left_type == .Struct or right_type == .Struct or
-            left_type == .Enum or right_type == .Enum or
-            left_type == .Union or right_type == .Union or
-            left_type == .Function or right_type == .Function or
-            left_type == .Nothing or right_type == .Nothing)
+        if (resolved_left == .String or resolved_right == .String or
+            resolved_left == .Array or resolved_right == .Array or
+            resolved_left == .Map or resolved_right == .Map or
+            resolved_left == .Struct or resolved_right == .Struct or
+            resolved_left == .Enum or resolved_right == .Enum or
+            resolved_left == .Union or resolved_right == .Union or
+            resolved_left == .Function or resolved_right == .Function or
+            resolved_left == .Nothing or resolved_right == .Nothing)
         {
             return .Unknown; // Indicates no numeric promotion should occur
         }
 
         // Rule 1: Float dominance - division always promotes to float, or if either operand is float
-        if (operator_type == .SLASH or left_type == .Float or right_type == .Float) {
+        if (operator_type == .SLASH or resolved_left == .Float or resolved_right == .Float) {
             return .Float;
         }
 
         // Rule 2: Int fallback - if either operand is int, promote to int
-        if (left_type == .Int or right_type == .Int) {
+        if (resolved_left == .Int or resolved_right == .Int) {
             return .Int;
         }
 
         // Rule 3: No promotion - both operands are the same numeric type (e.g., Byte)
-        if (left_type == right_type) {
-            return left_type;
+        // Allow Byte + Byte operations
+        if (resolved_left == .Byte and resolved_right == .Byte) {
+            return .Byte;
         }
 
-        // Mixed byte types - promote to int for consistency
-        if ((left_type == .Byte and right_type == .Tetra) or
-            (left_type == .Tetra and right_type == .Byte))
-        {
-            return .Int;
-        }
-
-        // Default fallback to int for mixed numeric types
-        return .Int;
+        return .Unknown;
     }
 
     /// Convert AST Type to lowercase string name

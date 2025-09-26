@@ -9,6 +9,7 @@ const Errors = @import("../../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
 const ErrorCode = Errors.ErrorCode;
 const debug_print = @import("../calls/print.zig");
+const PrintOps = debug_print.PrintOps;
 
 pub const FunctionOps = struct {
     // Execute TailCall instruction
@@ -79,7 +80,7 @@ pub const FunctionOps = struct {
     }
 
     // Execute Return instruction
-    pub fn execReturn(vm: anytype, _: anytype) !void {
+    pub fn execReturn(vm: anytype, payload: anytype) !void {
         // Check if we're returning from main program or a function call
         if (vm.call_stack.isEmpty()) {
             vm.running = false;
@@ -96,8 +97,15 @@ pub const FunctionOps = struct {
                 vm.stack.data[dst_index] = vm.stack.data[src_index];
                 vm.stack.sp = call_frame.saved_sp + 1;
             } else {
-                // No value returned; just restore SP
+                // No value returned; push nothing value so caller gets proper return value
                 vm.stack.sp = call_frame.saved_sp;
+                if (payload.has_value) {
+                    // This shouldn't happen if current_sp <= saved_sp, but handle it
+                    return vm.reporter.reportRuntimeError(null, ErrorCode.INTERNAL_ERROR, "Return has value but stack is empty", .{});
+                } else {
+                    // Push nothing value for functions that return without a value
+                    try vm.stack.push(HIRFrame.initNothing());
+                }
             }
 
             // Return to caller
@@ -219,7 +227,7 @@ pub const FunctionOps = struct {
 
             // Built-in graphics module: implicit defers for Draw/Init
             const is_graphics = std.mem.eql(u8, module_alias, "graphics") or std.mem.eql(u8, module_alias, "g");
-                if (is_graphics) {
+            if (is_graphics) {
                 const ray = @import("../../runtime/raylib.zig");
                 // Submodule dispatch: doxa vs raylib passthrough
                 if (std.mem.eql(u8, sub_alias, "doxa")) {
@@ -238,20 +246,31 @@ pub const FunctionOps = struct {
                         ray.SetTargetFPSDoxa(fps);
 
                         // Implicit function-scope defer: CloseWindow on surrounding scope exit
-                        if (vm.defer_stacks.items.len > 0) {
-                            var list = &vm.defer_stacks.items[vm.defer_stacks.items.len - 1];
-                            try list.append(&ray.CloseWindow);
+                        vm.reporter.debug(">> dg.Init: scope_stack has {any) items", .{vm.scope_stack.items.len}, @src());
+                        if (vm.scope_stack.items.len > 0) {
+                            var scope = &vm.scope_stack.items[vm.scope_stack.items.len - 1];
+                            vm.reporter.debug(">> dg.Init: Adding CloseWindow defer to scope {any)", .{scope.id}, @src());
+                            try scope.defer_actions.append(&ray.CloseWindow);
+                            vm.reporter.debug(">> dg.Init: Scope now has {any) defer actions", .{scope.defer_actions.items.len}, @src());
+                        } else {
+                            vm.reporter.debug(">> dg.Init: No scope available for defer", .{}, @src());
                         }
 
                         // Init function doesn't return anything (void)
                         return;
                     } else if (std.mem.eql(u8, func_name, "Draw")) {
-                        // Begin drawing now, defer EndDrawing at current scope exit
+                        // For now, let's just call BeginDrawing and EndDrawing immediately
+                        // This is a simplified approach that doesn't use defer
                         ray.BeginDrawing();
-                        if (vm.defer_stacks.items.len > 0) {
-                            var list = &vm.defer_stacks.items[vm.defer_stacks.items.len - 1];
-                            try list.append(&ray.EndDrawing);
-                        }
+                        // We'll call EndDrawing at the end of the frame in the loop
+                        return;
+                    } else if (std.mem.eql(u8, func_name, "EndDrawing")) {
+                        // Explicit EndDrawing call
+                        ray.EndDrawing();
+                        return;
+                    } else if (std.mem.eql(u8, func_name, "CloseWindow")) {
+                        // Explicit CloseWindow call
+                        ray.CloseWindow();
                         return;
                     } else if (std.mem.eql(u8, func_name, "Running")) {
                         // Return the negation of WindowShouldClose
@@ -860,6 +879,25 @@ pub const FunctionOps = struct {
 
     // Built-in input function
     fn execBuiltinInput(vm: anytype) !void {
+        // Check if there are prompt arguments on the stack
+        if (vm.call_stack.sp > 0) {
+            const call_info = vm.call_stack.frames[vm.call_stack.sp - 1];
+            if (call_info.arg_count > 0) {
+                // Pop and print the prompt argument
+                const prompt_frame = try vm.stack.pop();
+                switch (prompt_frame.value) {
+                    .string => |prompt_str| {
+                        const stdout_file = std.fs.File.stdout();
+                        _ = try stdout_file.write(prompt_str);
+                    },
+                    else => {
+                        // If prompt is not a string, convert it to string and print
+                        try PrintOps.formatHIRValueRaw(vm, prompt_frame.value);
+                    },
+                }
+            }
+        }
+
         var stdin_buffer: [4096]u8 = undefined;
         var stdin_reader = std.fs.File.stdin().reader(&stdin_buffer);
         const stdin = &stdin_reader.interface;
