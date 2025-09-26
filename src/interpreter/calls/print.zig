@@ -1,5 +1,6 @@
 const std = @import("std");
 const HIRValue = @import("../../codegen/hir/soxa_values.zig").HIRValue;
+const TokenLiteral = @import("../../types/types.zig").TokenLiteral;
 const hir_instructions = @import("../../codegen/hir/soxa_instructions.zig");
 const HIRInstruction = hir_instructions.HIRInstruction;
 const Core = @import("../core.zig");
@@ -291,7 +292,14 @@ pub const PrintOps = struct {
             },
             .map => try printToStdout("{{map}}", .{}),
             .enum_variant => |e| try printToStdout(".{s}", .{e.variant_name}),
-            .storage_id_ref => |storage_id| try printToStdout("storage_id_ref({})", .{storage_id}),
+            .storage_id_ref => |storage_id| {
+                // Dereference the storage_id_ref to get the actual value
+                if (vm.memory_manager.scope_manager.value_storage.get(storage_id)) |storage| {
+                    try PrintOps.formatTokenLiteral(vm, storage.value);
+                } else {
+                    try printToStdout("storage_id_ref({})", .{storage_id});
+                }
+            },
         }
     }
 
@@ -456,12 +464,67 @@ pub const PrintOps = struct {
                 try printToStdout(" }}", .{}); // Fix closing bracket
             },
             .enum_variant => |e| try printToStdout(".{s}", .{e.variant_name}),
-            .storage_id_ref => |storage_id| try printToStdout("storage_id_ref({})", .{storage_id}),
+            .storage_id_ref => |storage_id| {
+                // Dereference the storage_id_ref to get the actual value
+                if (vm.memory_manager.scope_manager.value_storage.get(storage_id)) |storage| {
+                    try PrintOps.formatTokenLiteral(vm, storage.value);
+                } else {
+                    try printToStdout("storage_id_ref({})", .{storage_id});
+                }
+            },
             else => try printToStdout("{s}", .{@tagName(value)}),
         }
     }
 
-    // Format HIR value to a writer without quotes or extra formatting (for Show instruction)
+    pub fn formatTokenLiteral(vm: anytype, value: TokenLiteral) !void {
+        switch (value) {
+            .int => |i| try printToStdout("{}", .{i}),
+            .byte => |u| try printToStdout("0x{X:0>2}", .{u}),
+            .float => |f| try printFloat(f),
+            .string => |s| try printToStdout("\"{s}\"", .{s}),
+            .tetra => |t| try printToStdout("{s}", .{switch (t) {
+                .false => "false",
+                .true => "true",
+                .both => "both",
+                .neither => "neither",
+            }}),
+            .nothing => try printToStdout("nothing", .{}),
+            .array => |arr| {
+                try printToStdout("[", .{});
+                var first = true;
+                for (arr) |elem| {
+                    if (!first) try printToStdout(", ", .{});
+                    try PrintOps.formatTokenLiteral(vm, elem);
+                    first = false;
+                }
+                try printToStdout("]", .{});
+            },
+            .struct_value => |s| {
+                try printToStdout("{{ ", .{});
+                for (s.fields, 0..) |field, i| {
+                    try printToStdout("{s}: ", .{field.name});
+                    try PrintOps.formatTokenLiteral(vm, field.value);
+                    if (i < s.fields.len - 1) try printToStdout(", ", .{});
+                }
+                try printToStdout(" }}", .{});
+            },
+            .map => |m| {
+                try printToStdout("{{", .{});
+                var first = true;
+                var iter = m.iterator();
+                while (iter.next()) |entry| {
+                    if (!first) try printToStdout(", ", .{});
+                    try printToStdout("{s}: ", .{entry.key_ptr.*});
+                    try PrintOps.formatTokenLiteral(vm, entry.value_ptr.*);
+                    first = false;
+                }
+                try printToStdout("}}", .{});
+            },
+            .enum_variant => |e| try printToStdout(".{s}", .{e}),
+            else => try printToStdout("{s}", .{@tagName(value)}),
+        }
+    }
+
     pub fn formatHIRValueRaw(vm: anytype, value: HIRValue) !void {
         switch (value) {
             .int => |i| try printToStdout("{}", .{i}),
@@ -497,7 +560,14 @@ pub const PrintOps = struct {
                 try printToStdout(" }}", .{}); // Fix closing bracket
             },
             .enum_variant => |e| try printToStdout(".{s}", .{e.variant_name}),
-            .storage_id_ref => |storage_id| try printToStdout("storage_id_ref({})", .{storage_id}),
+            .storage_id_ref => |storage_id| {
+                // Dereference the storage_id_ref to get the actual value
+                if (vm.memory_manager.scope_manager.value_storage.get(storage_id)) |storage| {
+                    try PrintOps.formatTokenLiteral(vm, storage.value);
+                } else {
+                    try printToStdout("storage_id_ref({})", .{storage_id});
+                }
+            },
             else => try printToStdout("{s}", .{@tagName(value)}),
         }
     }

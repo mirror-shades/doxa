@@ -547,8 +547,12 @@ pub const CallsHandler = struct {
                 const var_name = builtin_data.arguments[0].data.Variable.lexeme;
                 const var_idx = try self.generator.getOrCreateVariable(var_name);
                 const expected_type = self.generator.getTrackedVariableType(var_name) orelse .Unknown;
-                // Store updated container back to the variable
-                try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = var_idx, .var_name = var_name, .scope_kind = .Local, .module_context = null, .expected_type = expected_type } });
+
+                // Determine the correct scope for the variable
+                const scope_kind = self.generator.symbol_table.determineVariableScope(var_name);
+
+                // Store updated container back to the variable in the correct scope
+                try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = var_idx, .var_name = var_name, .scope_kind = scope_kind, .module_context = null, .expected_type = expected_type } });
             } else {
                 // Not a variable: just discard updated container
                 try self.generator.instructions.append(.Pop);
@@ -568,10 +572,14 @@ pub const CallsHandler = struct {
                 const var_name = builtin_data.arguments[0].data.Variable.lexeme;
                 const var_idx = try self.generator.getOrCreateVariable(var_name);
                 const expected_type = self.generator.getTrackedVariableType(var_name) orelse .Unknown;
+
+                // Determine the correct scope for the variable
+                const scope_kind = self.generator.symbol_table.determineVariableScope(var_name);
+
                 // After ArrayRemove: stack [updated_container, removed_value]
                 // Swap so container is on top, store it, leaving removed_value as result
                 try self.generator.instructions.append(.Swap);
-                try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = var_idx, .var_name = var_name, .scope_kind = .Local, .module_context = null, .expected_type = expected_type } });
+                try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = var_idx, .var_name = var_name, .scope_kind = scope_kind, .module_context = null, .expected_type = expected_type } });
             } else {
                 // Not a variable: discard updated container, leave removed as result
                 try self.generator.instructions.append(.Swap);
