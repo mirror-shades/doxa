@@ -95,10 +95,18 @@ pub const SemanticAnalyzer = struct {
         return self.struct_methods;
     }
 
+    pub fn getFunctionReturnTypes(self: *SemanticAnalyzer) std.AutoHashMap(NodeId, *ast.TypeInfo) {
+        return self.function_return_types;
+    }
+
     fn ensureBuiltinEnums(self: *SemanticAnalyzer) !void {
         if (!self.custom_types.contains("IndexError")) {
             const variants = [_][]const u8{"OutOfBounds"};
             try helpers.registerEnumType(self, "IndexError", &variants);
+        }
+        if (!self.custom_types.contains("ValueError")) {
+            const variants = [_][]const u8{ "ParseFailed", "OutOfBounds", "Overflow", "Underflow" };
+            try helpers.registerEnumType(self, "ValueError", &variants);
         }
     }
 
@@ -142,7 +150,7 @@ pub const SemanticAnalyzer = struct {
             .Map => .Map,
             .Enum => .Enum,
             .Function => .Function,
-            .Union => .Union,
+            .Union => |members| HIRType{ .Union = members },
             .Unknown => .Nothing, // TODO: This feels hacky
         };
     }
@@ -163,7 +171,7 @@ pub const SemanticAnalyzer = struct {
             .Enum => .Enum,
             .Function => .Function,
             .Custom => .Struct, // Custom types are typically structs
-            .Union => .Union, // Unions need special handling
+            .Union => .Unknown, // Unions need special handling - not supported in ast.Type
         };
     }
 
@@ -203,9 +211,14 @@ pub const SemanticAnalyzer = struct {
                     .String => .String,
                     .Tetra => .Tetra,
                     .Nothing => .Nothing,
-                    .Array => .Array,
-                    .Struct => .Struct,
-                    .Enum => .Enum,
+                    .Array => array_blk: {
+                        // Create a simple array type with unknown element type
+                        const elem_type = try allocator.create(HIRType);
+                        elem_type.* = .Unknown;
+                        break :array_blk HIRType{ .Array = elem_type };
+                    },
+                    .Struct => HIRType{ .Struct = 0 }, // Unknown struct ID
+                    .Enum => HIRType{ .Enum = 0 }, // Unknown enum ID
                     .Custom => blk: {
                         // For custom types, check if it's an enum or struct
                         if (field.custom_type_name) |custom_type_name| {
@@ -213,16 +226,72 @@ pub const SemanticAnalyzer = struct {
                             // For now, we'll use a simple heuristic based on the name
                             // In a real implementation, we'd need access to the type registry
                             if (std.mem.eql(u8, custom_type_name, "Species")) {
-                                break :blk .Enum;
+                                break :blk HIRType{ .Enum = 0 }; // Unknown enum ID
                             }
                             // Default to Struct for other custom types
-                            break :blk .Struct;
+                            break :blk HIRType{ .Struct = 0 }; // Unknown struct ID
                         }
-                        break :blk .Struct;
+                        break :blk HIRType{ .Struct = 0 }; // Unknown struct ID
                     },
-                    .Map => .Map,
-                    .Function => .Function,
-                    .Union => .Union,
+                    .Map => blk: {
+                        // Create a simple map type with unknown key/value types
+                        const key_type = try allocator.create(HIRType);
+                        key_type.* = .Unknown;
+                        const value_type = try allocator.create(HIRType);
+                        value_type.* = .Unknown;
+                        break :blk HIRType{ .Map = .{ .key = key_type, .value = value_type } };
+                    },
+                    .Function => blk: {
+                        // Create a simple function type with unknown params/return
+                        const ret_type = try allocator.create(HIRType);
+                        ret_type.* = .Unknown;
+                        break :blk HIRType{ .Function = .{ .params = &[_]*const HIRType{}, .ret = ret_type } };
+                    },
+                    .Union => blk: {
+                        // Convert AST union to HIR union for struct fields
+                        if (field.field_type_info.union_type) |ut| {
+                            var member_types = try allocator.alloc(*const HIRType, ut.types.len);
+                            for (ut.types, 0..) |member, in| {
+                                const member_type = try allocator.create(HIRType);
+                                member_type.* = switch (member.base) {
+                                    .Int => .Int,
+                                    .Byte => .Byte,
+                                    .Float => .Float,
+                                    .String => .String,
+                                    .Tetra => .Tetra,
+                                    .Nothing => .Nothing,
+                                    .Array => array_blk: {
+                                        // Create a simple array type with unknown element type
+                                        const elem_type = try allocator.create(HIRType);
+                                        elem_type.* = .Unknown;
+                                        break :array_blk HIRType{ .Array = elem_type };
+                                    },
+                                    .Struct => HIRType{ .Struct = 0 }, // Unknown struct ID
+                                    .Map => array_blk: {
+                                        // Create a simple map type with unknown key/value types
+                                        const key_type = try allocator.create(HIRType);
+                                        key_type.* = .Unknown;
+                                        const value_type = try allocator.create(HIRType);
+                                        value_type.* = .Unknown;
+                                        break :array_blk HIRType{ .Map = .{ .key = key_type, .value = value_type } };
+                                    },
+                                    .Enum => HIRType{ .Enum = 0 }, // Unknown enum ID
+                                    .Function => array_blk: {
+                                        // Create a simple function type with unknown params/return
+                                        const ret_type = try allocator.create(HIRType);
+                                        ret_type.* = .Unknown;
+                                        break :array_blk HIRType{ .Function = .{ .params = &[_]*const HIRType{}, .ret = ret_type } };
+                                    },
+                                    .Custom => HIRType{ .Struct = 0 }, // Custom types are typically structs
+                                    .Union => .Unknown, // Nested unions not supported in this context
+                                };
+                                member_types[in] = member_type;
+                            }
+                            break :blk HIRType{ .Union = member_types };
+                        } else {
+                            break :blk .Unknown; // Fallback for malformed union
+                        }
+                    },
                 };
                 converted_fields[i] = .{
                     .name = field.name,
@@ -275,6 +344,14 @@ pub const SemanticAnalyzer = struct {
     }
 
     fn processImportedSymbols(self: *SemanticAnalyzer) ErrorList!void {
+        // Create an isolated scope for imported modules to prevent variable name conflicts
+        const import_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
+        defer import_scope.deinit();
+
+        // Temporarily set current scope to import scope
+        const prev_scope = self.current_scope;
+        self.current_scope = import_scope;
+
         // Register types and methods from parser-imported symbols so cross-module dot-methods work
         if (self.parser) |p| {
             // Safely access parser's imported symbols map
@@ -407,6 +484,9 @@ pub const SemanticAnalyzer = struct {
                 }
             }
         }
+
+        // Restore previous scope
+        self.current_scope = prev_scope;
     }
 
     fn collectDeclarations(self: *SemanticAnalyzer, statements: []ast.Stmt, scope: *Scope) ErrorList!void {
@@ -436,12 +516,9 @@ pub const SemanticAnalyzer = struct {
                             const param_type_ptr = try ast.typeInfoFromExpr(self.allocator, type_expr);
                             defer self.allocator.destroy(param_type_ptr);
 
-                            const resolved_param_type = try self.resolveTypeInfo(param_type_ptr.*);
-                            if (resolved_param_type.base == .Union) {
-                                // Use union type as-is since flattenUnionType was removed
-                                // resolved_param_type is already correct
-                            }
-                            param_types[i] = resolved_param_type;
+                            // For explicit parameter types, use the declared type directly
+                            // Don't call resolveTypeInfo which might trigger type inference
+                            param_types[i] = param_type_ptr.*;
                         } else {
                             param_types[i] = .{ .base = .Nothing };
                         }
@@ -596,7 +673,7 @@ pub const SemanticAnalyzer = struct {
                 .EnumDecl => |enum_decl| {
                     // Register the enum type in the current scope
                     const enum_type_info = try self.allocator.create(ast.TypeInfo);
-                    enum_type_info.* = .{ .base = .Enum, .custom_type = enum_decl.name.lexeme, .is_mutable = false };
+                    enum_type_info.* = .{ .base = .Custom, .custom_type = enum_decl.name.lexeme, .is_mutable = false };
 
                     // Create a placeholder value for the enum type
                     const enum_value = TokenLiteral{ .string = enum_decl.name.lexeme };
@@ -656,7 +733,7 @@ pub const SemanticAnalyzer = struct {
 
                             // Register the struct type in the current scope
                             const struct_type_info = try self.allocator.create(ast.TypeInfo);
-                            struct_type_info.* = .{ .base = .Struct, .custom_type = struct_decl.name.lexeme, .struct_fields = struct_fields, .is_mutable = false };
+                            struct_type_info.* = .{ .base = .Custom, .custom_type = struct_decl.name.lexeme, .struct_fields = struct_fields, .is_mutable = false };
 
                             // Create a placeholder value for the struct type
                             const struct_value = TokenLiteral{ .string = struct_decl.name.lexeme };

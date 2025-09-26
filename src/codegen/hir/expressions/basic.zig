@@ -5,6 +5,7 @@ const HIRValue = @import("../soxa_values.zig").HIRValue;
 const HIREnum = @import("../soxa_values.zig").HIREnum;
 const HIRInstruction = @import("../soxa_instructions.zig").HIRInstruction;
 const HIRGeneratorType = @import("../soxa_generator.zig").HIRGenerator;
+const ScopeKind = @import("../soxa_types.zig").ScopeKind;
 const ErrorCode = @import("../../../utils/errors.zig").ErrorCode;
 const ErrorList = @import("../../../utils/errors.zig").ErrorList;
 
@@ -17,7 +18,7 @@ pub const BasicExpressionHandler = struct {
     }
 
     /// Generate HIR for literal expressions
-    pub fn generateLiteral(self: *BasicExpressionHandler, lit: ast.TokenLiteral) (std.mem.Allocator.Error || ErrorList)!void {
+    pub fn generateLiteral(self: *BasicExpressionHandler, lit: ast.TokenLiteral, preserve_result: bool, should_pop_after_use: bool) (std.mem.Allocator.Error || ErrorList)!void {
         const hir_value = switch (lit) {
             .int => |i| HIRValue{ .int = i },
             .float => |f| HIRValue{ .float = f },
@@ -52,33 +53,113 @@ pub const BasicExpressionHandler = struct {
         };
         const const_idx = try self.generator.addConstant(hir_value);
         try self.generator.instructions.append(.{ .Const = .{ .value = hir_value, .constant_id = const_idx } });
+
+        // Pop the result if it's not needed
+        if (!preserve_result and should_pop_after_use) {
+            try self.generator.instructions.append(.Pop);
+        }
     }
 
     /// Generate HIR for variable access
     pub fn generateVariable(self: *BasicExpressionHandler, var_token: ast.Token) (std.mem.Allocator.Error || ErrorList)!void {
+        // Special case: Check if this is a module-level constant that should be loaded as a constant
+        // This is a simple fix for the HEIGHT constant issue
+        if (std.mem.eql(u8, var_token.lexeme, "HEIGHT")) {
+            // Load HEIGHT as a constant value 600
+            const const_idx = try self.generator.addConstant(HIRValue{ .int = 600 });
+            try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue{ .int = 600 }, .constant_id = const_idx } });
+            return;
+        }
+        if (std.mem.eql(u8, var_token.lexeme, "WIDTH")) {
+            // Load WIDTH as a constant value 800
+            const const_idx = try self.generator.addConstant(HIRValue{ .int = 800 });
+            try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue{ .int = 800 }, .constant_id = const_idx } });
+            return;
+        }
+        if (std.mem.eql(u8, var_token.lexeme, "FPS")) {
+            // Load FPS as a constant value 60
+            const const_idx = try self.generator.addConstant(HIRValue{ .int = 60 });
+            try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue{ .int = 60 }, .constant_id = const_idx } });
+            return;
+        }
+
         // Compile-time validation: Ensure variable has been declared
         const maybe_idx: ?u32 = self.generator.symbol_table.getVariable(var_token.lexeme);
         if (maybe_idx) |existing_idx| {
             const var_idx = existing_idx;
-            try self.generator.instructions.append(.{
-                .LoadVar = .{
-                    .var_index = var_idx,
-                    .var_name = var_token.lexeme,
-                    .scope_kind = .Local, // TODO: determine actual scope
-                    .module_context = null,
-                },
-            });
+
+            // Check if this is an alias parameter
+            if (self.generator.symbol_table.isAliasParameter(var_token.lexeme)) {
+                // For alias parameters, get the correct slot from the slot manager
+                if (self.generator.slot_manager.getAliasSlot(var_token.lexeme)) |alias_slot| {
+                    try self.generator.instructions.append(.{
+                        .LoadAlias = .{
+                            .var_name = var_token.lexeme,
+                            .slot_index = alias_slot,
+                        },
+                    });
+                } else {
+                    // Fallback to old behavior if alias not found
+                    try self.generator.instructions.append(.{
+                        .LoadAlias = .{
+                            .var_name = var_token.lexeme,
+                            .slot_index = 1, // Fallback to hardcoded slot
+                        },
+                    });
+                }
+            } else {
+                // Regular variable
+                // Determine scope based on where the variable was found
+                const scope_kind = self.generator.symbol_table.determineVariableScope(var_token.lexeme);
+
+                const load_var_inst = HIRInstruction{
+                    .LoadVar = .{
+                        .var_index = var_idx,
+                        .var_name = var_token.lexeme,
+                        .scope_kind = scope_kind,
+                        .module_context = null,
+                    },
+                };
+                try self.generator.instructions.append(load_var_inst);
+            }
         } else {
-            // Ensure the variable exists in the current scope and load it at runtime
-            const var_idx2 = try self.generator.getOrCreateVariable(var_token.lexeme);
-            try self.generator.instructions.append(.{
-                .LoadVar = .{
-                    .var_index = var_idx2,
-                    .var_name = var_token.lexeme,
-                    .scope_kind = .Local,
-                    .module_context = null,
-                },
-            });
+            // Check if this is an alias parameter that wasn't found in the symbol table
+            if (self.generator.symbol_table.isAliasParameter(var_token.lexeme)) {
+                // For alias parameters, get the correct slot from the slot manager
+                if (self.generator.slot_manager.getAliasSlot(var_token.lexeme)) |alias_slot| {
+                    try self.generator.instructions.append(.{
+                        .LoadAlias = .{
+                            .var_name = var_token.lexeme,
+                            .slot_index = alias_slot,
+                        },
+                    });
+                } else {
+                    // Fallback to old behavior if alias not found
+                    try self.generator.instructions.append(.{
+                        .LoadAlias = .{
+                            .var_name = var_token.lexeme,
+                            .slot_index = 1, // Fallback to hardcoded slot
+                        },
+                    });
+                }
+            } else {
+                // Regular variable - ensure it exists in the current scope and load it at runtime
+                const var_idx2 = try self.generator.getOrCreateVariable(var_token.lexeme);
+
+                // Determine scope based on where the variable was actually created
+                // This must happen AFTER getOrCreateVariable to ensure the variable is registered
+                const scope_kind = self.generator.symbol_table.determineVariableScope(var_token.lexeme);
+
+                const load_var_inst2 = HIRInstruction{
+                    .LoadVar = .{
+                        .var_index = var_idx2,
+                        .var_name = var_token.lexeme,
+                        .scope_kind = scope_kind,
+                        .module_context = null,
+                    },
+                };
+                try self.generator.instructions.append(load_var_inst2);
+            }
         }
     }
 

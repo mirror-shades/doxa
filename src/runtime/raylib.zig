@@ -43,7 +43,25 @@ pub fn EndDrawing() void {
     rl.EndDrawing();
 }
 
+// Color constants
 pub const SKYBLUE: Color = rl.SKYBLUE;
+pub const RED: Color = rl.RED;
+pub const GREEN: Color = rl.GREEN;
+pub const BLUE: Color = rl.BLUE;
+pub const YELLOW: Color = rl.YELLOW;
+pub const PURPLE: Color = rl.PURPLE;
+pub const PINK: Color = rl.PINK;
+pub const ORANGE: Color = rl.ORANGE;
+pub const WHITE: Color = rl.WHITE;
+pub const BLACK: Color = rl.BLACK;
+pub const GRAY: Color = rl.GRAY;
+pub const LIGHTGRAY: Color = rl.LIGHTGRAY;
+pub const DARKGRAY: Color = rl.DARKGRAY;
+pub const GOLD: Color = rl.GOLD;
+pub const LIME: Color = rl.LIME;
+pub const VIOLET: Color = rl.VIOLET;
+pub const BROWN: Color = rl.BROWN;
+pub const BEIGE: Color = rl.BEIGE;
 
 // Doxa-friendly ClearBackground accepting DoxaColor
 pub fn ClearBackgroundDoxa(color: DoxaColor) void {

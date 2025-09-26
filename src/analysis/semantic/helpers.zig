@@ -10,94 +10,370 @@ const TokenType = @import("../../types/token.zig").TokenType;
 const CustomTypeInfo = @import("semantic.zig").SemanticAnalyzer.CustomTypeInfo;
 const Memory = @import("../../utils/memory.zig");
 const HIRType = @import("../../codegen/hir/soxa_types.zig").HIRType;
+const HIREnum = @import("../../codegen/hir/soxa_types.zig").HIREnum;
 
-/// Helper function to get location from AST Base, handling optional spans
-pub fn getLocationFromBase(base: ast.Base) Reporting.Location {
-    if (base.span) |span| {
-        return span.location;
-    } else {
-        // Synthetic node - return default location
-        return .{
-            .file = "",
-            .range = .{ .start_line = 0, .start_col = 0, .end_line = 0, .end_col = 0 },
-        };
+/// Helper: structural equality for TypeInfo (avoid collapsing by .base only)
+fn typesEqual(a: *const ast.TypeInfo, b: *const ast.TypeInfo) bool {
+    if (a.base != b.base) return false;
+
+    switch (a.base) {
+        .Int, .Byte, .Float, .String, .Tetra, .Nothing => return true,
+
+        .Enum => {
+            // For now, just compare custom type names if available
+            if (a.custom_type == null or b.custom_type == null) return false;
+            return std.mem.eql(u8, a.custom_type.?, b.custom_type.?);
+        },
+
+        .Struct => {
+            // For now, just compare custom type names if available
+            if (a.custom_type == null or b.custom_type == null) return false;
+            return std.mem.eql(u8, a.custom_type.?, b.custom_type.?);
+        },
+
+        .Custom => {
+            // If both have custom_type, they must match
+            if (a.custom_type != null and b.custom_type != null) {
+                return std.mem.eql(u8, a.custom_type.?, b.custom_type.?);
+            }
+            // If one has custom_type and the other doesn't, allow it for enum literals
+            // This handles cases like Color (enum type) vs .Blue (enum literal)
+            return true;
+        },
+
+        .Array => {
+            // If both have array_type, they must match
+            if (a.array_type != null and b.array_type != null) {
+                return typesEqual(a.array_type.?, b.array_type.?);
+            }
+            // If one or both don't have array_type, allow it for array literals
+            // This handles cases where array literals don't have element type info
+            return true;
+        },
+
+        .Map => {
+            if (a.map_key_type == null or b.map_key_type == null or a.map_value_type == null or b.map_value_type == null) return false;
+            return typesEqual(a.map_key_type.?, b.map_key_type.?) and typesEqual(a.map_value_type.?, b.map_value_type.?);
+        },
+
+        .Function => {
+            if (a.function_type == null or b.function_type == null) return false;
+            const af = a.function_type.?;
+            const bf = b.function_type.?;
+            if (af.params.len != bf.params.len) return false;
+            for (af.params, bf.params) |ap, bp| {
+                if (!typesEqual(&ap, &bp)) return false;
+            }
+            return typesEqual(af.return_type, bf.return_type);
+        },
+
+        .Union => {
+            // Should be flattened before compare; compare as sets (order-independent)
+            if (a.union_type == null or b.union_type == null) return false;
+            const au = a.union_type.?;
+            const bu = b.union_type.?;
+            if (au.types.len != bu.types.len) return false;
+
+            // For each a-member, find a structurally equal b-member
+            var matched: usize = 0;
+            for (au.types) |amt| {
+                var found = false;
+                for (bu.types) |bmt| {
+                    if (typesEqual(amt, bmt)) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (found) matched += 1 else return false;
+            }
+            return matched == au.types.len;
+        },
     }
 }
 
+/// Helper: canonicalize a slice of *TypeInfo (dedup + stable order)
+fn canonicalizeUnion(
+    allocator: std.mem.Allocator,
+    members: []const *ast.TypeInfo,
+) ![]*ast.TypeInfo {
+    var list = std.ArrayListUnmanaged(*ast.TypeInfo){};
+    defer list.deinit(allocator);
+
+    // dedup (structural)
+    outer: for (members) |m| {
+        for (list.items) |e| if (typesEqual(e, m)) continue :outer;
+        try list.append(allocator, m);
+    }
+
+    // stable order by base enum value, with tie-breakers
+    std.sort.pdq(*ast.TypeInfo, list.items, {}, struct {
+        fn lessThan(_: void, a: *ast.TypeInfo, b: *ast.TypeInfo) bool {
+            const ba = @intFromEnum(a.base);
+            const bb = @intFromEnum(b.base);
+            if (ba != bb) return ba < bb;
+
+            // tie-breakers for deterministic printing
+            switch (a.base) {
+                .Enum => return std.mem.order(u8, a.custom_type orelse "", b.custom_type orelse "") == .lt,
+                .Custom => {
+                    if (a.custom_type == null or b.custom_type == null) return false;
+                    return std.mem.lessThan(u8, a.custom_type.?, b.custom_type.?);
+                },
+                .Array => {
+                    if (a.array_type == null or b.array_type == null) return false;
+                    // Not ideal, but keeps it deterministic: compare base of element
+                    return @intFromEnum(a.array_type.?.base) < @intFromEnum(b.array_type.?.base);
+                },
+                else => return false,
+            }
+        }
+    }.lessThan);
+
+    return try list.toOwnedSlice(allocator);
+}
+
+/// Centralized AST→HIR lowering (best-effort; plug IDs if you have them)
+fn lowerAstTypeToHIR(self: *SemanticAnalyzer, ti: *const ast.TypeInfo) !HIRType {
+    return switch (ti.base) {
+        .Int => HIRType.Int,
+        .Byte => HIRType.Byte,
+        .Float => HIRType.Float,
+        .String => HIRType.String,
+        .Tetra => HIRType.Tetra,
+        .Nothing => HIRType.Nothing,
+
+        .Array => blk: {
+            // If your HIRType.Array expects a pointer, create/own it accordingly.
+            // Fallback: if you only have HIRType.Array *without payload, adjust here.
+            if (ti.array_type) |elem| {
+                const elem_hir = try lowerAstTypeToHIR(self, elem);
+                const elem_ptr = try self.allocator.create(HIRType);
+                elem_ptr.* = elem_hir;
+                break :blk HIRType{ .Array = elem_ptr };
+            } else {
+                // No element info → leave as a generic Array; if you have Error, prefer it.
+                break :blk HIRType.Nothing; // or .Error if available
+            }
+        },
+
+        .Map => blk: {
+            if (ti.map_key_type != null and ti.map_value_type != null) {
+                const key_hir = try lowerAstTypeToHIR(self, ti.map_key_type.?);
+                const val_hir = try lowerAstTypeToHIR(self, ti.map_value_type.?);
+                const key_ptr = try self.allocator.create(HIRType);
+                key_ptr.* = key_hir;
+                const val_ptr = try self.allocator.create(HIRType);
+                val_ptr.* = val_hir;
+                break :blk HIRType{ .Map = .{ .key = key_ptr, .value = val_ptr } };
+            } else {
+                // Create generic map with unknown key/value types
+                const key_ptr = try self.allocator.create(HIRType);
+                key_ptr.* = .Unknown;
+                const val_ptr = try self.allocator.create(HIRType);
+                val_ptr.* = .Unknown;
+                break :blk HIRType{ .Map = .{ .key = key_ptr, .value = val_ptr } };
+            }
+        },
+
+        .Enum => blk: {
+            // For now, use placeholder enum ID
+            // TODO: Map to real enum ID if available
+            break :blk HIRType{ .Enum = 0 };
+        },
+
+        .Custom => blk: {
+            // Distinguish Struct vs Enum by consulting self.custom_types
+            if (ti.custom_type) |name| {
+                if (self.custom_types.get(name)) |ct| {
+                    switch (ct.kind) {
+                        .Struct => {
+                            // If you have struct ids, map here: HIRType{ .Struct = sid }
+                            break :blk HIRType{ .Struct = 0 };
+                        },
+                        .Enum => {
+                            // Map to real enum id if you can
+                            break :blk HIRType{ .Enum = 0 };
+                        },
+                    }
+                }
+            }
+            // Unknown custom type → prefer a poison type in HIR if you have one
+            break :blk HIRType.Nothing;
+        },
+
+        .Function => blk: {
+            if (ti.function_type) |ft| {
+                // Convert params & return
+                var params_list = std.ArrayListUnmanaged(*const HIRType){};
+                defer params_list.deinit(self.allocator);
+                for (ft.params) |p| {
+                    const ph = try lowerAstTypeToHIR(self, &p);
+                    const pptr = try self.allocator.create(HIRType);
+                    pptr.* = ph;
+                    try params_list.append(self.allocator, pptr);
+                }
+                const ret_h = try lowerAstTypeToHIR(self, ft.return_type);
+                const ret_ptr = try self.allocator.create(HIRType);
+                ret_ptr.* = ret_h;
+                break :blk HIRType{ .Function = .{
+                    .params = try params_list.toOwnedSlice(self.allocator),
+                    .ret = ret_ptr,
+                } };
+            }
+            break :blk HIRType{ .Function = .{ .params = &[_]*const HIRType{}, .ret = &HIRType{ .Unknown = {} } } };
+        },
+
+        .Struct => blk: {
+            // If you have struct ids, map here: HIRType{ .Struct = sid }
+            break :blk HIRType{ .Struct = 0 };
+        },
+
+        .Union => blk: {
+            const ut = ti.union_type.?;
+            const flat = try flattenUnionType(self, ut);
+
+            // Lower members
+            var lowered = std.ArrayListUnmanaged(*const HIRType){};
+            defer lowered.deinit(self.allocator);
+            for (flat.types) |mt| {
+                const mh = try lowerAstTypeToHIR(self, mt);
+                const mptr = try self.allocator.create(HIRType);
+                mptr.* = mh;
+                try lowered.append(self.allocator, mptr);
+            }
+            // Union expects []const *const HIRType, so use the pointers directly
+            break :blk HIRType{ .Union = try lowered.toOwnedSlice(self.allocator) };
+        },
+    };
+}
+
+/// REWRITE: better union flatten
+pub fn flattenUnionType(self: *SemanticAnalyzer, union_type: *ast.UnionType) !*ast.UnionType {
+    var scratch = std.ArrayListUnmanaged(*ast.TypeInfo){};
+    defer scratch.deinit(self.allocator);
+
+    // Gather members (recursively flatten)
+    for (union_type.types) |member_type| {
+        if (member_type.base == .Union) {
+            if (member_type.union_type) |nested_union| {
+                const nested_flat = try flattenUnionType(self, nested_union);
+                for (nested_flat.types) |nm| try scratch.append(self.allocator, nm);
+            } else {
+                try scratch.append(self.allocator, member_type);
+            }
+        } else {
+            try scratch.append(self.allocator, member_type);
+        }
+    }
+
+    // Canonicalize (structural dedup + stable order)
+    const unique = try canonicalizeUnion(self.allocator, scratch.items);
+
+    const flattened = try self.allocator.create(ast.UnionType);
+    flattened.* = .{
+        .types = unique,
+        .current_type_index = null, // order changed; don't carry index
+    };
+    return flattened;
+}
+
+/// REWRITE: createUnionType uses the same canonicalization
+pub fn createUnionType(self: *SemanticAnalyzer, types: []*ast.TypeInfo) !*ast.TypeInfo {
+    // First flatten any unions inside inputs
+    var flat = std.ArrayListUnmanaged(*ast.TypeInfo){};
+    defer flat.deinit(self.allocator);
+
+    for (types) |ti| {
+        if (ti.base == .Union) {
+            if (ti.union_type) |u| {
+                const f = try flattenUnionType(self, u);
+                for (f.types) |m| try flat.append(self.allocator, m);
+            } else {
+                try flat.append(self.allocator, ti);
+            }
+        } else {
+            try flat.append(self.allocator, ti);
+        }
+    }
+
+    const unique = try canonicalizeUnion(self.allocator, flat.items);
+
+    if (unique.len == 1) {
+        // Single type → not a union
+        return unique[0];
+    }
+
+    const ut = try self.allocator.create(ast.UnionType);
+    ut.* = .{ .types = unique, .current_type_index = null };
+
+    const out = try self.allocator.create(ast.TypeInfo);
+    out.* = .{ .base = .Union, .union_type = ut, .is_mutable = false };
+    return out;
+}
+
+/// REWRITE: unionContainsNothing
+pub fn unionContainsNothing(self: *SemanticAnalyzer, union_type_info: ast.TypeInfo) bool {
+    _ = self;
+    if (union_type_info.base != .Union) return false;
+    if (union_type_info.union_type) |u| {
+        for (u.types) |mt| if (mt.base == .Nothing) return true;
+    }
+    return false;
+}
+
+/// REWRITE: unifyTypes uses structural checks
 pub fn unifyTypes(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual: *ast.TypeInfo, span: ast.SourceSpan) !void {
-    // Handle union types first - check if actual type is compatible with the expected union
+    // If expected is union, actual must be a member (or a subset if it's a union)
     if (expected.base == .Union) {
-        if (expected.union_type) |exp_union| {
+        if (expected.union_type) |exp_u| {
             if (actual.base == .Union) {
-                // Union-to-union compatibility: every member of actual must be allowed by expected
-                if (actual.union_type) |act_union| {
-                    for (act_union.types) |act_member| {
-                        var member_allowed = false;
-                        for (exp_union.types) |exp_member| {
-                            if (exp_member.base == act_member.base) {
-                                member_allowed = true;
+                if (actual.union_type) |act_u| {
+                    // Every actual member must be allowed by expected
+                    for (act_u.types) |act_m| {
+                        var allowed = false;
+                        for (exp_u.types) |exp_m| {
+                            if (typesEqual(exp_m, act_m)) {
+                                allowed = true;
                                 break;
                             }
                         }
-                        if (!member_allowed) {
-                            // Build expected list for error message
-                            var type_list = std.array_list.Managed(u8).init(self.allocator);
-                            defer type_list.deinit();
-                            for (exp_union.types, 0..) |m, i| {
-                                if (i > 0) try type_list.appendSlice(" | ");
-                                try type_list.appendSlice(@tagName(m.base));
+                        if (!allowed) {
+                            // Build expected list (pretty)
+                            var list = std.ArrayListUnmanaged(u8){};
+                            defer list.deinit(self.allocator);
+                            for (exp_u.types, 0..) |m, i| {
+                                if (i > 0) list.appendSlice(self.allocator, " | ") catch {};
+                                list.appendSlice(self.allocator, @tagName(m.base)) catch {};
                             }
                             self.reporter.reportCompileError(
                                 span.location,
                                 ErrorCode.TYPE_MISMATCH,
-                                "Type mismatch: expected union ({s}), got {s}",
-                                .{ type_list.items, @tagName(act_member.base) },
+                                "Type mismatch: expected union ({s}), got member of kind {s}",
+                                .{ list.items, @tagName(act_m.base) },
                             );
                             self.fatal_error = true;
                             return;
                         }
                     }
-                    return; // All actual members are allowed by expected
-                }
-                // If actual has no union_type detail, accept conservatively
-                return;
-            } else {
-                // Non-union on the right: check membership in expected union
-                var found_match = false;
-                for (exp_union.types) |member_type| {
-                    if (member_type.base == actual.base) {
-                        found_match = true;
-                        break;
-                    }
-                    // Allow Enum types to be compatible with Custom types when they refer to the same enum
-                    if (member_type.base == .Custom and actual.base == .Enum) {
-                        if (member_type.custom_type) |custom_name| {
-                            // Check if this is the same enum type
-                            if (self.custom_types.get(custom_name)) |custom_type| {
-                                if (custom_type.kind == .Enum) {
-                                    found_match = true;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-                if (found_match) {
                     return;
                 }
-
-                // Build a list of allowed types for the error message
-                var type_list = std.array_list.Managed(u8).init(self.allocator);
-                defer type_list.deinit();
-                for (exp_union.types, 0..) |member_type, i| {
-                    if (i > 0) try type_list.appendSlice(" | ");
-                    try type_list.appendSlice(@tagName(member_type.base));
+                // Handle union with null union_type if needed
+            } else {
+                // Non-union actual must match one member structurally
+                for (exp_u.types) |m| {
+                    if (typesEqual(m, actual)) return;
+                }
+                var list = std.ArrayListUnmanaged(u8){};
+                defer list.deinit(self.allocator);
+                for (exp_u.types, 0..) |m, i| {
+                    if (i > 0) list.appendSlice(self.allocator, " | ") catch {};
+                    list.appendSlice(self.allocator, @tagName(m.base)) catch {};
                 }
                 self.reporter.reportCompileError(
                     span.location,
                     ErrorCode.TYPE_MISMATCH,
                     "Type mismatch: expected union ({s}), got {s}",
-                    .{ type_list.items, @tagName(actual.base) },
+                    .{ list.items, @tagName(actual.base) },
                 );
                 self.fatal_error = true;
                 return;
@@ -105,38 +381,24 @@ pub fn unifyTypes(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual
         }
     }
 
-    if (expected.base != actual.base) {
+    // Non-union expected: structural equality or permitted implicit conversions
+    if (!typesEqual(expected, actual)) {
+        // Implicit conversions (adjust to taste)
+        if (expected.base == .Float and (actual.base == .Int or actual.base == .Byte)) return;
+        if (expected.base == .Byte and actual.base == .Int) return;
+        if (expected.base == .Int and actual.base == .Byte) return;
 
-        // Special cases for type conversions
-        if (expected.base == .Float and (actual.base == .Int or actual.base == .Byte)) {
-            return; // Allow implicit int/byte to float
-        }
-        if (expected.base == .Byte and actual.base == .Int) {
-            return; // Allow implicit int to byte
-        }
-        if (expected.base == .Int and actual.base == .Byte) {
-            return; // Allow byte to int conversion (always safe)
-        }
-        // Allow enum variant literals (Enum) to be assigned to variables of enum types (Custom)
-        if (expected.base == .Custom and actual.base == .Enum) {
-            return; // Allow enum variant literals to be assigned to enum type variables
-        }
-        // Allow struct literals (Custom) to be assigned to variables of struct types (Custom)
-        if (expected.base == .Custom and actual.base == .Custom) {
-            return; // Allow struct literals to be assigned to struct type variables
-        }
-        // Allow Custom and Struct types to be compatible when they refer to the same user-defined struct
-        if ((expected.base == .Custom and actual.base == .Struct) or
-            (expected.base == .Struct and actual.base == .Custom))
-        {
-            // Check if they refer to the same custom type
+        // Allow enum variant literal to enum type
+        if (expected.base == .Enum and actual.base == .Enum) {
             if (expected.custom_type != null and actual.custom_type != null and
-                std.mem.eql(u8, expected.custom_type.?, actual.custom_type.?))
-            {
-                return; // They refer to the same custom type
-            }
+                std.mem.eql(u8, expected.custom_type.?, actual.custom_type.?)) return;
         }
+        // Allow custom/struct compatibility by name (if both named)
+        if ((expected.base == .Custom and actual.base == .Custom) and
+            expected.custom_type != null and actual.custom_type != null and
+            std.mem.eql(u8, expected.custom_type.?, actual.custom_type.?)) return;
 
+        // Otherwise mismatch
         self.reporter.reportCompileError(
             span.location,
             ErrorCode.TYPE_MISMATCH,
@@ -144,42 +406,39 @@ pub fn unifyTypes(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual
             .{ @tagName(expected.base), @tagName(actual.base) },
         );
         self.fatal_error = true;
-    } else {}
+        return;
+    }
 
-    // Handle complex type unification (arrays, structs, etc)
+    // Complex shape recursion
     switch (expected.base) {
         .Array => {
-            if (expected.array_type) |exp_elem| {
-                if (actual.array_type) |act_elem| {
-                    try unifyTypes(self, exp_elem, act_elem, span);
-                }
-            }
+            if (expected.array_type) |e| if (actual.array_type) |a| try unifyTypes(self, e, a, span);
         },
         .Struct, .Custom => {
-            if (expected.struct_fields) |exp_fields| {
-                if (actual.struct_fields) |act_fields| {
-                    if (exp_fields.len != act_fields.len) {
+            if (expected.struct_fields) |efs| {
+                if (actual.struct_fields) |afs| {
+                    if (efs.len != afs.len) {
                         self.reporter.reportCompileError(
                             span.location,
                             ErrorCode.STRUCT_FIELD_COUNT_MISMATCH,
                             "Struct field count mismatch: expected {}, got {}",
-                            .{ exp_fields.len, act_fields.len },
+                            .{ efs.len, afs.len },
                         );
                         self.fatal_error = true;
                         return;
                     }
-                    for (exp_fields, act_fields) |exp_field, act_field| {
-                        if (!std.mem.eql(u8, exp_field.name, act_field.name)) {
+                    for (efs, afs) |ef, af| {
+                        if (!std.mem.eql(u8, ef.name, af.name)) {
                             self.reporter.reportCompileError(
                                 span.location,
                                 ErrorCode.STRUCT_FIELD_NAME_MISMATCH,
                                 "Struct field name mismatch: expected '{s}', got '{s}'",
-                                .{ exp_field.name, act_field.name },
+                                .{ ef.name, af.name },
                             );
                             self.fatal_error = true;
                             return;
                         }
-                        try unifyTypes(self, exp_field.type_info, act_field.type_info, span);
+                        try unifyTypes(self, ef.type_info, af.type_info, span);
                     }
                 }
             }
@@ -188,51 +447,37 @@ pub fn unifyTypes(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual
     }
 }
 
+/// unchanged
 pub fn lookupVariable(self: *SemanticAnalyzer, name: []const u8) ?*Variable {
     if (self.current_scope) |scope| {
         const result = scope.lookupVariable(name);
         if (result != null) return result;
     }
-
-    // Check for imported symbols if not found in scope
     if (self.parser) |parser| {
         if (parser.imported_symbols) |imported_symbols| {
             if (imported_symbols.get(name)) |imported_symbol| {
-                // Create a variable for the imported symbol
                 return createImportedSymbolVariable(self, name, imported_symbol);
             }
         }
-
-        // Check for module namespaces
         if (parser.module_namespaces.contains(name)) {
-
-            // Create a variable for the module namespace
             return createModuleNamespaceVariable(self, name);
         }
     }
-
     return null;
 }
 
 pub fn createModuleNamespaceVariable(self: *SemanticAnalyzer, name: []const u8) ?*Variable {
-    // Create a TypeInfo for the module namespace
     const type_info = self.allocator.create(ast.TypeInfo) catch return null;
     errdefer self.allocator.destroy(type_info);
 
     type_info.* = ast.TypeInfo{ .base = .Custom, .is_mutable = false, .custom_type = name };
-
-    // Convert TypeInfo to TokenType
     const token_type = convertTypeToTokenType(self, type_info.base);
 
-    // Create a Variable object for the module namespace using the scope's createValueBinding
     if (self.current_scope) |scope| {
-        // Create a placeholder value for the module namespace
         const placeholder_value = TokenLiteral{ .nothing = {} };
-
         const variable = scope.createValueBinding(name, placeholder_value, token_type, type_info, false) catch return null;
         return variable;
     }
-
     return null;
 }
 
@@ -240,10 +485,8 @@ pub fn isModuleNamespace(self: *SemanticAnalyzer, name: []const u8) bool {
     if (self.parser) |parser| {
         if (parser.module_namespaces.contains(name)) return true;
 
-        // Support nested module namespaces like "graphics.raylib" where only the root alias exists
         if (std.mem.indexOfScalar(u8, name, '.')) |dot_idx| {
             const root = name[0..dot_idx];
-            // Match by alias OR by module actual name/file_path
             if (parser.module_namespaces.contains(root)) return true;
             var it = parser.module_namespaces.iterator();
             while (it.next()) |entry| {
@@ -255,6 +498,7 @@ pub fn isModuleNamespace(self: *SemanticAnalyzer, name: []const u8) bool {
     return false;
 }
 
+/// unchanged domain logic (minor nits left as-is)
 pub fn handleModuleFieldAccess(self: *SemanticAnalyzer, module_name: []const u8, field_name: []const u8, span: ast.SourceSpan) !*ast.TypeInfo {
     var type_info = try self.allocator.create(ast.TypeInfo);
     errdefer self.allocator.destroy(type_info);
@@ -384,7 +628,7 @@ pub fn handleModuleFieldAccess(self: *SemanticAnalyzer, module_name: []const u8,
     );
     self.fatal_error = true;
     type_info.base = .Nothing;
-    return type_info;
+    return error.NotImplemented;
 }
 
 pub fn createImportedSymbolVariable(self: *SemanticAnalyzer, name: []const u8, imported_symbol: import_parser.ImportedSymbol) ?*Variable {
@@ -510,75 +754,59 @@ pub fn convertTypeToTokenType(self: *SemanticAnalyzer, base_type: ast.Type) Toke
     };
 }
 
-pub fn createUnionType(self: *SemanticAnalyzer, types: []*ast.TypeInfo) !*ast.TypeInfo {
-    // Flatten any existing unions in the input types
-    var flat_types = std.array_list.Managed(*ast.TypeInfo).init(self.allocator);
-    defer flat_types.deinit();
+/// REWRITE: struct fields — use centralized lowering (no Unknown sprinkling)
+pub fn registerStructType(self: *SemanticAnalyzer, struct_name: []const u8, fields: []const ast.StructFieldType) !void {
+    const already_registered = self.custom_types.contains(struct_name);
 
-    for (types) |type_info| {
-        if (type_info.base == .Union) {
-            if (type_info.union_type) |union_type| {
-                const flattened = try flattenUnionType(self, union_type);
-                for (flattened.types) |member| {
-                    // Check for duplicates
-                    var is_duplicate = false;
-                    for (flat_types.items) |existing| {
-                        if (existing.base == member.base) {
-                            is_duplicate = true;
-                            break;
-                        }
-                    }
-                    if (!is_duplicate) {
-                        try flat_types.append(member);
-                    }
-                }
-            }
-        } else {
-            // Check for duplicates
-            var is_duplicate = false;
-            for (flat_types.items) |existing| {
-                if (existing.base == type_info.base) {
-                    is_duplicate = true;
-                    break;
-                }
-            }
-            if (!is_duplicate) {
-                try flat_types.append(type_info);
-            }
+    var struct_fields = try self.allocator.alloc(CustomTypeInfo.StructField, fields.len);
+    for (fields, 0..) |field, index| {
+        var custom_type_name: ?[]const u8 = null;
+        if (field.type_info.base == .Custom and field.type_info.custom_type != null) {
+            custom_type_name = try self.allocator.dupe(u8, field.type_info.custom_type.?);
         }
+        const full_type_info = try self.allocator.create(ast.TypeInfo);
+        full_type_info.* = field.type_info.*; // NOTE: shallow copy; deep-copy if needed
+        struct_fields[index] = CustomTypeInfo.StructField{
+            .name = try self.allocator.dupe(u8, field.name),
+            .field_type_info = full_type_info,
+            .custom_type_name = custom_type_name,
+            .index = @intCast(index),
+            .is_public = false,
+        };
     }
 
-    // If only one type remains, return it directly (no need for union)
-    if (flat_types.items.len == 1) {
-        return flat_types.items[0];
+    if (!already_registered) {
+        const custom_type = CustomTypeInfo{
+            .name = try self.allocator.dupe(u8, struct_name),
+            .kind = .Struct,
+            .struct_fields = struct_fields,
+        };
+        try self.custom_types.put(struct_name, custom_type);
     }
 
-    // Create union type
-    const union_type = try self.allocator.create(ast.UnionType);
-    union_type.* = .{
-        .types = try flat_types.toOwnedSlice(),
-        .current_type_index = 0,
-    };
-
-    const type_info = try self.allocator.create(ast.TypeInfo);
-    type_info.* = .{
-        .base = .Union,
-        .union_type = union_type,
-        .is_mutable = false,
-    };
-
-    return type_info;
-}
-
-pub fn unionContainsNothing(self: *SemanticAnalyzer, union_type_info: ast.TypeInfo) bool {
-    _ = self;
-    if (union_type_info.base != .Union) return false;
-    if (union_type_info.union_type) |union_type| {
-        for (union_type.types) |member_type| {
-            if (member_type.base == .Nothing) return true;
+    // Runtime memory registration with proper HIR lowering
+    var mem_fields = try self.allocator.alloc(Memory.CustomTypeInfo.StructField, fields.len);
+    for (fields, 0..) |field, i| {
+        const mapped_hir_type = try lowerAstTypeToHIR(self, field.type_info);
+        var ctn: ?[]const u8 = null;
+        if (field.type_info.base == .Custom and field.type_info.custom_type != null) {
+            ctn = try self.allocator.dupe(u8, field.type_info.custom_type.?);
         }
+        mem_fields[i] = Memory.CustomTypeInfo.StructField{
+            .name = try self.allocator.dupe(u8, field.name),
+            .field_type = mapped_hir_type,
+            .custom_type_name = ctn,
+            .index = @intCast(i),
+        };
     }
-    return false;
+
+    const mem_struct = Memory.CustomTypeInfo{
+        .name = try self.allocator.dupe(u8, struct_name),
+        .kind = .Struct,
+        .enum_variants = null,
+        .struct_fields = mem_fields,
+    };
+    try self.memory.registerCustomType(mem_struct);
 }
 
 pub fn registerCustomType(self: *SemanticAnalyzer, type_name: []const u8, kind: CustomTypeInfo.CustomTypeKind) !void {
@@ -605,7 +833,7 @@ pub fn registerEnumType(self: *SemanticAnalyzer, enum_name: []const u8, variants
     };
     try self.custom_types.put(enum_name, custom_type);
 
-    // Also register into runtime memory manager for VM access
+    // Mirror to VM memory
     var mem_enum_variants = try self.allocator.alloc(Memory.CustomTypeInfo.EnumVariant, variants.len);
     for (variants, 0..) |variant_name, i| {
         mem_enum_variants[i] = Memory.CustomTypeInfo.EnumVariant{
@@ -622,119 +850,7 @@ pub fn registerEnumType(self: *SemanticAnalyzer, enum_name: []const u8, variants
     try self.memory.registerCustomType(mem_enum);
 }
 
-pub fn registerStructType(self: *SemanticAnalyzer, struct_name: []const u8, fields: []const ast.StructFieldType) !void {
-    // If a richer struct definition already exists (e.g., from a StructDecl with visibility),
-    // do not overwrite it in the semantic registry. Still register to runtime memory manager below.
-    const already_registered = self.custom_types.contains(struct_name);
-
-    var struct_fields = try self.allocator.alloc(CustomTypeInfo.StructField, fields.len);
-    for (fields, 0..) |field, index| {
-        // Convert ast.Type to HIRType
-        var custom_type_name: ?[]const u8 = null;
-        if (field.type_info.base == .Custom and field.type_info.custom_type != null) {
-            custom_type_name = try self.allocator.dupe(u8, field.type_info.custom_type.?);
-        }
-        // Preserve full field type info (no lossy HIR conversion here)
-        const full_type_info = try self.allocator.create(ast.TypeInfo);
-        full_type_info.* = field.type_info.*;
-        struct_fields[index] = CustomTypeInfo.StructField{
-            .name = try self.allocator.dupe(u8, field.name),
-            .field_type_info = full_type_info,
-            .custom_type_name = custom_type_name,
-            .index = @intCast(index),
-            .is_public = false,
-        };
-    }
-
-    if (!already_registered) {
-        const custom_type = CustomTypeInfo{
-            .name = try self.allocator.dupe(u8, struct_name),
-            .kind = .Struct,
-            .struct_fields = struct_fields,
-        };
-        try self.custom_types.put(struct_name, custom_type);
-    }
-
-    // Also register into runtime memory manager for VM access
-    var mem_fields = try self.allocator.alloc(Memory.CustomTypeInfo.StructField, fields.len);
-    for (fields, 0..) |field, i| {
-        const mapped_hir_type: HIRType = switch (field.type_info.base) {
-            .Int => .Int,
-            .Byte => .Byte,
-            .Float => .Float,
-            .String => .String,
-            .Tetra => .Tetra,
-            .Nothing => .Nothing,
-            .Array => .Array,
-            .Struct, .Custom => .Struct,
-            .Map => .Map,
-            .Enum => .Enum,
-            .Function => .Function,
-            .Union => .Union,
-        };
-        var ctn: ?[]const u8 = null;
-        if (field.type_info.base == .Custom and field.type_info.custom_type != null) {
-            ctn = try self.allocator.dupe(u8, field.type_info.custom_type.?);
-        }
-        mem_fields[i] = Memory.CustomTypeInfo.StructField{
-            .name = try self.allocator.dupe(u8, field.name),
-            .field_type = mapped_hir_type,
-            .custom_type_name = ctn,
-            .index = @intCast(i),
-        };
-    }
-    const mem_struct = Memory.CustomTypeInfo{
-        .name = try self.allocator.dupe(u8, struct_name),
-        .kind = .Struct,
-        .enum_variants = null,
-        .struct_fields = mem_fields,
-    };
-    try self.memory.registerCustomType(mem_struct);
-}
-
-pub fn flattenUnionType(self: *SemanticAnalyzer, union_type: *ast.UnionType) !*ast.UnionType {
-    var flat_types = std.array_list.Managed(*ast.TypeInfo).init(self.allocator);
-    defer flat_types.deinit();
-
-    for (union_type.types) |member_type| {
-        if (member_type.base == .Union) {
-            if (member_type.union_type) |nested_union| {
-                // Recursively flatten nested union
-                const flattened_nested = try flattenUnionType(self, nested_union);
-                for (flattened_nested.types) |nested_member| {
-                    // Check for duplicates before adding
-                    var is_duplicate = false;
-                    for (flat_types.items) |existing_type| {
-                        if (existing_type.base == nested_member.base) {
-                            is_duplicate = true;
-                            break;
-                        }
-                    }
-                    if (!is_duplicate) {
-                        try flat_types.append(nested_member);
-                    }
-                }
-            }
-        } else {
-            // Check for duplicates before adding
-            var is_duplicate = false;
-            for (flat_types.items) |existing_type| {
-                if (existing_type.base == member_type.base) {
-                    is_duplicate = true;
-                    break;
-                }
-            }
-            if (!is_duplicate) {
-                try flat_types.append(member_type);
-            }
-        }
-    }
-
-    const flattened_union = try self.allocator.create(ast.UnionType);
-    flattened_union.* = .{
-        .types = try flat_types.toOwnedSlice(),
-        .current_type_index = union_type.current_type_index,
-    };
-
-    return flattened_union;
+/// Helper function to get location from AST base
+pub fn getLocationFromBase(base: ast.Base) Reporting.Location {
+    return base.location();
 }

@@ -183,7 +183,9 @@ pub const ControlFlowHandler = struct {
                 // Fallback: if the variable name itself is a registered enum type, use it
                 if (match_enum_type == null) {
                     if (self.generator.type_system.custom_types.get(var_name)) |ct| {
-                        if (ct.kind == .Enum) match_enum_type = var_name;
+                        if (ct.kind == .Enum) {
+                            match_enum_type = var_name;
+                        }
                     }
                 }
             },
@@ -269,7 +271,7 @@ pub const ControlFlowHandler = struct {
                     try self.generator.instructions.append(.{ .Const = .{ .value = pattern_value, .constant_id = pattern_idx } });
 
                     // Compare and jump if equal (use Enum operand type)
-                    try self.generator.instructions.append(.{ .Compare = .{ .op = .Eq, .operand_type = .Enum } });
+                    try self.generator.instructions.append(.{ .Compare = .{ .op = .Eq, .operand_type = HIRType{ .Enum = 0 } } });
                 } else if (self.generator.current_enum_type) |enum_type_from_context| {
                     // Fallback: if we are in an enum context (e.g., inside var decl init), use it
                     const variant_index2 = if (self.generator.type_system.custom_types.get(enum_type_from_context)) |custom_type|
@@ -287,7 +289,7 @@ pub const ControlFlowHandler = struct {
                     };
                     const pattern_idx2 = try self.generator.addConstant(pattern_value2);
                     try self.generator.instructions.append(.{ .Const = .{ .value = pattern_value2, .constant_id = pattern_idx2 } });
-                    try self.generator.instructions.append(.{ .Compare = .{ .op = .Eq, .operand_type = .Enum } });
+                    try self.generator.instructions.append(.{ .Compare = .{ .op = .Eq, .operand_type = HIRType{ .Enum = 0 } } });
                 } else {
                     // Regular string literal pattern
                     const pattern_value = HIRValue{ .string = case.pattern.literal.string };

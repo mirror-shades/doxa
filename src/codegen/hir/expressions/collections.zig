@@ -40,7 +40,7 @@ pub const CollectionsHandler = struct {
                     else => .Unknown,
                 },
                 .Array => |nested_elements| {
-                    element_type = .Array;
+                    element_type = .Unknown; // Array type requires element type info
                     // For nested arrays, determine the nested element type
                     if (nested_elements.len > 0) {
                         nested_element_type = switch (nested_elements[0].data) {
@@ -52,7 +52,7 @@ pub const CollectionsHandler = struct {
                                 .byte => .Byte,
                                 else => .Unknown,
                             },
-                            .Array => .Array, // Could be deeper nesting
+                            .Array => .Unknown, // Array type requires element type info
                             else => .Unknown,
                         };
                     }
@@ -155,8 +155,9 @@ pub const CollectionsHandler = struct {
                 try self.generator.generateExpression(index.index, true, false);
 
                 // Map access - use MapGet with key type inferred from index
-                const idx_type = self.generator.inferTypeFromExpression(index.index);
-                const key_type = if (idx_type == .Int) HIRType.Int else HIRType.String;
+                _ = self.generator.inferTypeFromExpression(index.index);
+                // For now, use String as default since HIRType comparisons are not supported
+                const key_type = HIRType.String;
                 try self.generator.instructions.append(.{ .MapGet = .{ .key_type = key_type } });
             },
             .Array, .String => {
@@ -191,29 +192,106 @@ pub const CollectionsHandler = struct {
     pub fn generateIndexAssign(self: *CollectionsHandler, assign: ast.Expr.Data, preserve_result: bool) !void {
         const assign_data = assign.IndexAssign;
 
-        // Generate array expression
-        try self.generator.generateExpression(assign_data.array, true, false);
+        // Check if this is a compound assignment (e.g., tape[tp] += 1)
+        // by checking if the value expression is a binary expression that references the same array access
+        const is_compound_assignment = switch (assign_data.value.data) {
+            .Binary => |binary| blk: {
+                // Check if the left side of the binary expression is the same array access
+                if (binary.left) |left| {
+                    switch (left.data) {
+                        .Index => |left_index| {
+                            // Check if it's the same array and index
+                            const same_array = switch (assign_data.array.data) {
+                                .Variable => |arr_var| switch (left_index.array.data) {
+                                    .Variable => |left_var| std.mem.eql(u8, arr_var.lexeme, left_var.lexeme),
+                                    else => false,
+                                },
+                                else => false,
+                            };
+                            const same_index = switch (assign_data.index.data) {
+                                .Variable => |idx_var| switch (left_index.index.data) {
+                                    .Variable => |left_idx_var| std.mem.eql(u8, idx_var.lexeme, left_idx_var.lexeme),
+                                    else => false,
+                                },
+                                else => false,
+                            };
+                            break :blk same_array and same_index;
+                        },
+                        else => break :blk false,
+                    }
+                } else break :blk false;
+            },
+            else => false,
+        };
 
-        // Generate index expression
-        try self.generator.generateExpression(assign_data.index, true, false);
+        if (is_compound_assignment) {
+            // Handle compound assignment: array[index] += value
+            // Generate: array, index, value, ArrayGetAndAdd (atomic operation)
 
-        // Generate value expression
-        try self.generator.generateExpression(assign_data.value, true, false);
+            // Generate array expression
+            try self.generator.generateExpression(assign_data.array, true, false);
 
-        // If the receiver is a map, emit MapSet; otherwise ArraySet
-        const container_type = self.generator.inferTypeFromExpression(assign_data.array);
-        if (container_type == .Map) {
-            const idx_type = self.generator.inferTypeFromExpression(assign_data.index);
-            const key_type = if (idx_type == .Int) HIRType.Int else HIRType.String;
-            try self.generator.instructions.append(.{ .MapSet = .{ .key_type = key_type } });
+            // Generate index expression
+            try self.generator.generateExpression(assign_data.index, true, false);
+
+            // Generate the right-hand side of the binary expression
+            const binary = assign_data.value.data.Binary;
+            if (binary.right) |right| {
+                try self.generator.generateExpression(right, true, false);
+            }
+
+            // Generate the appropriate compound assignment instruction
+            switch (binary.operator.type) {
+                .PLUS => {
+                    try self.generator.instructions.append(.{ .ArrayGetAndAdd = .{ .bounds_check = true } });
+                },
+                .MINUS => {
+                    try self.generator.instructions.append(.{ .ArrayGetAndSub = .{ .bounds_check = true } });
+                },
+                .ASTERISK => {
+                    try self.generator.instructions.append(.{ .ArrayGetAndMul = .{ .bounds_check = true } });
+                },
+                .SLASH => {
+                    try self.generator.instructions.append(.{ .ArrayGetAndDiv = .{ .bounds_check = true } });
+                },
+                .MODULO => {
+                    try self.generator.instructions.append(.{ .ArrayGetAndMod = .{ .bounds_check = true } });
+                },
+                .POWER => {
+                    try self.generator.instructions.append(.{ .ArrayGetAndPow = .{ .bounds_check = true } });
+                },
+                else => {
+                    // Fallback to addition for unknown operators
+                    try self.generator.instructions.append(.{ .ArrayGetAndAdd = .{ .bounds_check = true } });
+                },
+            }
         } else {
-            // Generate ArraySet instruction
-            // Stack order expected by VM (top to bottom): value, index, array
-            try self.generator.instructions.append(.{ .ArraySet = .{ .bounds_check = true } });
+            // Regular assignment: array[index] = value
+            // Generate array expression
+            try self.generator.generateExpression(assign_data.array, true, false);
+
+            // Generate index expression
+            try self.generator.generateExpression(assign_data.index, true, false);
+
+            // Generate value expression
+            try self.generator.generateExpression(assign_data.value, true, false);
+
+            // If the receiver is a map, emit MapSet; otherwise ArraySet
+            const container_type = self.generator.inferTypeFromExpression(assign_data.array);
+            if (container_type == .Map) {
+                const idx_type = self.generator.inferTypeFromExpression(assign_data.index);
+                _ = if (idx_type == .Int) HIRType.Int else HIRType.String;
+                try self.generator.instructions.append(.{ .MapSet = .{ .key_type = HIRType.String } });
+            } else {
+                // Generate ArraySet instruction
+                // Stack order expected by VM (top to bottom): value, index, array
+                try self.generator.instructions.append(.{ .ArraySet = .{ .bounds_check = true } });
+            }
         }
 
         // Store the modified array back to the variable
-        if (assign_data.array.data == .Variable) {
+        // Skip this for compound assignments since they are atomic operations
+        if (!is_compound_assignment and assign_data.array.data == .Variable) {
             const var_name = assign_data.array.data.Variable.lexeme;
 
             const var_idx = try self.generator.getOrCreateVariable(var_name);
@@ -227,7 +305,7 @@ pub const CollectionsHandler = struct {
             try self.generator.instructions.append(.{ .StoreVar = .{
                 .var_index = var_idx,
                 .var_name = var_name,
-                .scope_kind = .Local,
+                .scope_kind = self.generator.symbol_table.determineVariableScope(var_name),
                 .module_context = null,
                 .expected_type = expected_type,
             } });
@@ -269,7 +347,7 @@ pub const CollectionsHandler = struct {
                                 .LoadVar = .{
                                     .var_index = var_index,
                                     .var_name = var_name,
-                                    .scope_kind = .Local,
+                                    .scope_kind = self.generator.symbol_table.determineVariableScope(var_name),
                                     .module_context = null,
                                 },
                             });
@@ -354,7 +432,7 @@ pub const CollectionsHandler = struct {
                                 .LoadVar = .{
                                     .var_index = var_index,
                                     .var_name = var_name,
-                                    .scope_kind = .Local,
+                                    .scope_kind = self.generator.symbol_table.determineVariableScope(var_name),
                                     .module_context = null,
                                 },
                             });
@@ -415,7 +493,7 @@ pub const CollectionsHandler = struct {
                 .LoadVar = .{
                     .var_index = var_idx,
                     .var_name = var_name,
-                    .scope_kind = .Local,
+                    .scope_kind = self.generator.symbol_table.determineVariableScope(var_name),
                     .module_context = null,
                 },
             });
@@ -437,7 +515,7 @@ pub const CollectionsHandler = struct {
                 .StoreVar = .{
                     .var_index = var_idx,
                     .var_name = var_name,
-                    .scope_kind = .Local,
+                    .scope_kind = self.generator.symbol_table.determineVariableScope(var_name),
                     .module_context = null,
                     .expected_type = operand_type,
                 },
@@ -470,7 +548,7 @@ pub const CollectionsHandler = struct {
                 .LoadVar = .{
                     .var_index = var_idx,
                     .var_name = var_name,
-                    .scope_kind = .Local,
+                    .scope_kind = self.generator.symbol_table.determineVariableScope(var_name),
                     .module_context = null,
                 },
             });
@@ -492,7 +570,7 @@ pub const CollectionsHandler = struct {
                 .StoreVar = .{
                     .var_index = var_idx,
                     .var_name = var_name,
-                    .scope_kind = .Local,
+                    .scope_kind = self.generator.symbol_table.determineVariableScope(var_name),
                     .module_context = null,
                     .expected_type = operand_type,
                 },

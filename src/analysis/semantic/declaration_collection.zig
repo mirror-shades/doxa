@@ -119,29 +119,9 @@ pub fn collectDeclarations(ctx: *DeclarationCollectionContext, statements: []ast
                         const param_type_ptr = try ast.typeInfoFromExpr(ctx.allocator, type_expr);
                         defer ctx.allocator.destroy(param_type_ptr);
 
-                        var type_ctx = type_analysis.TypeAnalysisContext.init(
-                            ctx.allocator,
-                            ctx.reporter,
-                            ctx.memory,
-                            ctx.current_scope,
-                            ctx.type_cache,
-                            ctx.custom_types,
-                            ctx.struct_methods,
-                            ctx.parser,
-                            ctx.fatal_error,
-                        );
-                        var resolved_param_type = try type_analysis.resolveTypeInfo(&type_ctx, param_type_ptr.*);
-                        if (resolved_param_type.base == .Union) {
-                            if (resolved_param_type.union_type) |u| {
-                                const flattened = try union_handling.flattenUnionType(ctx.allocator, u);
-                                resolved_param_type = ast.TypeInfo{
-                                    .base = .Union,
-                                    .union_type = flattened,
-                                    .is_mutable = false,
-                                };
-                            }
-                        }
-                        param_types[i] = resolved_param_type;
+                        // For explicit parameter types, use the declared type directly
+                        // Don't call resolveTypeInfo which might trigger type inference
+                        param_types[i] = param_type_ptr.*;
                     } else {
                         param_types[i] = .{ .base = .Nothing };
                     }

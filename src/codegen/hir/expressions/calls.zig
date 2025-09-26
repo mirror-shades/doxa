@@ -5,6 +5,7 @@ const Location = @import("../../../utils/reporting.zig").Location;
 const HIRGenerator = @import("../soxa_generator.zig").HIRGenerator;
 const HIRValue = @import("../soxa_values.zig").HIRValue;
 const HIRType = @import("../soxa_types.zig").HIRType;
+const ScopeKind = @import("../soxa_types.zig").ScopeKind;
 const HIRInstruction = @import("../soxa_instructions.zig").HIRInstruction;
 const CallKind = @import("../soxa_instructions.zig").CallKind;
 const ErrorCode = @import("../../../utils/errors.zig").ErrorCode;
@@ -105,6 +106,60 @@ pub const CallsHandler = struct {
                         if (ct2.kind == .Struct and std.mem.eql(u8, field_access.field.lexeme, "New")) {
                             try self.generateStructConstructorCall(type_name2, call_data.arguments);
                             return;
+                        }
+                    }
+
+                    // Check if this is a user-defined struct method first
+                    if (field_access.object.data == .Variable) {
+                        const recv_var_name = field_access.object.data.Variable.lexeme;
+                        const struct_name = blk: {
+                            if (self.generator.symbol_table.getVariableCustomType(recv_var_name)) |ctype| break :blk ctype;
+                            break :blk recv_var_name;
+                        };
+
+                        if (self.generator.struct_methods.get(struct_name)) |method_table| {
+                            if (method_table.get(field_access.field.lexeme)) |mi| {
+                                // This is a user-defined struct method - generate as a function call
+                                const qualified_name = try std.fmt.allocPrint(self.generator.allocator, "{s}.{s}", .{ struct_name, field_access.field.lexeme });
+
+                                // Generate arguments: for instance methods, push receiver value first
+                                if (!mi.is_static) {
+                                    try self.generator.generateExpression(field_access.object, true, false);
+                                }
+                                // Then generate explicit arguments
+                                for (call_data.arguments) |arg| {
+                                    try self.generator.generateExpression(arg.expr, true, false);
+                                }
+
+                                // Determine return type from semantic info
+                                const ret_type: HIRType = self.generator.convertTypeInfo(mi.return_type.*);
+
+                                // Resolve function index if already registered
+                                const fn_index: u32 = blk: {
+                                    if (self.generator.getFunctionIndex(qualified_name)) |idx| {
+                                        break :blk idx;
+                                    } else {
+                                        break :blk 0;
+                                    }
+                                };
+
+                                // Compute argument count at runtime
+                                var arg_count: u32 = @intCast(call_data.arguments.len);
+                                if (!mi.is_static) arg_count += 1;
+
+                                // Generate function call
+                                try self.generator.instructions.append(.{
+                                    .Call = .{
+                                        .function_index = fn_index, // May be resolved later if 0
+                                        .qualified_name = qualified_name,
+                                        .arg_count = arg_count,
+                                        .call_kind = .LocalFunction,
+                                        .target_module = null,
+                                        .return_type = ret_type,
+                                    },
+                                });
+                                return;
+                            }
                         }
                     }
 
@@ -254,13 +309,14 @@ pub const CallsHandler = struct {
         }
 
         // Fallback: regular call emission
+        const target_module = try self.generator.computeTargetModule(function_name, call_kind);
         try self.generator.instructions.append(.{
             .Call = .{
                 .function_index = function_index,
                 .qualified_name = function_name,
                 .arg_count = arg_emitted_count,
                 .call_kind = call_kind,
-                .target_module = null,
+                .target_module = target_module,
                 .return_type = return_type,
             },
         });
@@ -285,13 +341,16 @@ pub const CallsHandler = struct {
                 .Nothing => "nothing",
                 .Array => "array",
                 .Union => "union",
+                .Poison => "poison",
                 .Struct => blk: {
                     if (arg.data == .Variable) {
                         const var_name = arg.data.Variable.lexeme;
                         if (self.generator.isCustomType(var_name)) |custom_type| {
                             if (custom_type.kind == .Struct) break :blk "struct";
                         }
-                        if (self.generator.symbol_table.getVariableCustomType(var_name)) |custom_type_name| break :blk custom_type_name;
+                        if (self.generator.symbol_table.getVariableCustomType(var_name)) |custom_type_name| {
+                            break :blk custom_type_name;
+                        }
                     }
                     if (arg.data == .FieldAccess) {
                         const field_access = arg.data.FieldAccess;
@@ -315,6 +374,7 @@ pub const CallsHandler = struct {
                                                         .Byte => "byte",
                                                         .Nothing => "nothing",
                                                         .Array => "array",
+                                                        .Poison => "poison",
                                                         .Union => "union",
                                                         .Struct => "struct",
                                                         .Map => "map",
@@ -411,6 +471,10 @@ pub const CallsHandler = struct {
                 // numeric -> byte
                 try self.generator.instructions.append(.{ .Convert = .{ .from_type = t, .to_type = .Byte } });
             }
+
+            // Track that @byte returns byte | ValueError union type
+            // This is needed for proper union type tracking in variable declarations
+            // The actual union type information is handled by the type inference system
         } else if (std.mem.eql(u8, name, "push")) {
             if (builtin_data.arguments.len != 2) return error.InvalidArgumentCount;
             const target_type = self.generator.inferTypeFromExpression(builtin_data.arguments[0]);
@@ -427,8 +491,12 @@ pub const CallsHandler = struct {
                 const var_name = builtin_data.arguments[0].data.Variable.lexeme;
                 const var_idx = try self.generator.getOrCreateVariable(var_name);
                 const expected_type = self.generator.getTrackedVariableType(var_name) orelse .Unknown;
-                // Store the modified array back to the variable
-                try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = var_idx, .var_name = var_name, .scope_kind = .Local, .module_context = null, .expected_type = expected_type } });
+
+                // Determine the correct scope for the variable
+                const scope_kind = self.generator.symbol_table.determineVariableScope(var_name);
+
+                // Store the modified array back to the variable in the correct scope
+                try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = var_idx, .var_name = var_name, .scope_kind = scope_kind, .module_context = null, .expected_type = expected_type } });
             }
             // Push nothing as the return value
             const nothing_const_idx = try self.generator.addConstant(HIRValue.nothing);
@@ -453,8 +521,19 @@ pub const CallsHandler = struct {
                 const var_name = builtin_data.arguments[0].data.Variable.lexeme;
                 const var_idx = try self.generator.getOrCreateVariable(var_name);
                 const expected_type = self.generator.getTrackedVariableType(var_name) orelse .Unknown;
-                try self.generator.instructions.append(.Swap);
-                try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = var_idx, .var_name = var_name, .scope_kind = .Local, .module_context = null, .expected_type = expected_type } });
+
+                // Determine the correct scope for the variable
+                const scope_kind = self.generator.symbol_table.determineVariableScope(var_name);
+
+                if (target_type == .String) {
+                    // For strings: swap so we store the updated string, keep popped char for return
+                    try self.generator.instructions.append(.Swap);
+                    try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = var_idx, .var_name = var_name, .scope_kind = scope_kind, .module_context = null, .expected_type = expected_type } });
+                } else {
+                    // For arrays: swap so we store the updated array, keep popped element for return
+                    try self.generator.instructions.append(.Swap);
+                    try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = var_idx, .var_name = var_name, .scope_kind = scope_kind, .module_context = null, .expected_type = expected_type } });
+                }
             }
         } else if (std.mem.eql(u8, name, "insert")) {
             // @insert(container, index, value) -> returns nothing; stores updated container
@@ -468,8 +547,12 @@ pub const CallsHandler = struct {
                 const var_name = builtin_data.arguments[0].data.Variable.lexeme;
                 const var_idx = try self.generator.getOrCreateVariable(var_name);
                 const expected_type = self.generator.getTrackedVariableType(var_name) orelse .Unknown;
-                // Store updated container back to the variable
-                try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = var_idx, .var_name = var_name, .scope_kind = .Local, .module_context = null, .expected_type = expected_type } });
+
+                // Determine the correct scope for the variable
+                const scope_kind = self.generator.symbol_table.determineVariableScope(var_name);
+
+                // Store updated container back to the variable in the correct scope
+                try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = var_idx, .var_name = var_name, .scope_kind = scope_kind, .module_context = null, .expected_type = expected_type } });
             } else {
                 // Not a variable: just discard updated container
                 try self.generator.instructions.append(.Pop);
@@ -489,10 +572,14 @@ pub const CallsHandler = struct {
                 const var_name = builtin_data.arguments[0].data.Variable.lexeme;
                 const var_idx = try self.generator.getOrCreateVariable(var_name);
                 const expected_type = self.generator.getTrackedVariableType(var_name) orelse .Unknown;
+
+                // Determine the correct scope for the variable
+                const scope_kind = self.generator.symbol_table.determineVariableScope(var_name);
+
                 // After ArrayRemove: stack [updated_container, removed_value]
                 // Swap so container is on top, store it, leaving removed_value as result
                 try self.generator.instructions.append(.Swap);
-                try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = var_idx, .var_name = var_name, .scope_kind = .Local, .module_context = null, .expected_type = expected_type } });
+                try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = var_idx, .var_name = var_name, .scope_kind = scope_kind, .module_context = null, .expected_type = expected_type } });
             } else {
                 // Not a variable: discard updated container, leave removed as result
                 try self.generator.instructions.append(.Swap);
@@ -551,6 +638,7 @@ pub const CallsHandler = struct {
 
         // Generate HIR for compiler methods like @string, @length, @substring
         const name = internal_data.method.lexeme;
+
         if (std.mem.eql(u8, name, "substring")) {
             // Evaluate in VM-expected order: start, length, then receiver on top
             try self.generator.generateExpression(internal_data.arguments[0], true, false);
@@ -586,6 +674,10 @@ pub const CallsHandler = struct {
                 // numeric -> byte
                 try self.generator.instructions.append(.{ .Convert = .{ .from_type = t, .to_type = .Byte } });
             }
+        } else if (std.mem.eql(u8, name, "type")) {
+            // Evaluate receiver and get its type
+            try self.generator.generateExpression(internal_data.receiver, true, false);
+            try self.generator.instructions.append(.{ .TypeOf = .{ .value_type = .Unknown } });
         } else {
             // Unknown method - fallback to nothing
             const nothing_idx = try self.generator.addConstant(HIRValue.nothing);
