@@ -85,8 +85,13 @@ function drawCircle(^circle :: Circle, frame_count :: int, ^shift :: byte, ^up :
         shift -= 0x01
     }
     if (shift == 0xFF or shift == 0x00) then {
+        @print("entered function \n")
+        @print("up begins as {up}\n")
         up is not up
+        @print("has become {up}\n")
     }
+    @print("up after if block is {up}\n")
+    
 
     // draw the circle with raylib
     const color is dg.bytesToColor(0xAA, 0x22, shift, 0xFF)
