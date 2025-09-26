@@ -70,6 +70,7 @@ function drawCircle(^circle :: Circle, frame_count :: int, ^shift :: byte, ^up :
     if circle.x > (WIDTH - circle.radius) or circle.x < circle.radius then {  
         circle.x_speed is -circle.x_speed
     }
+    @print("top at {HEIGHT}\n")
     if circle.y > (HEIGHT - circle.radius) or circle.y < circle.radius then {
         circle.y_speed is -circle.y_speed   
     }
