@@ -2023,6 +2023,74 @@ pub const BytecodeVM = struct {
         try self.custom_type_registry.put(type_info.name, type_info);
     }
 
+    /// Coerce a value to match the expected type
+    pub fn coerceValue(self: *BytecodeVM, value: HIRValue, expected_type: ?hir_types.HIRType) HIRValue {
+
+        // If no expected type, return value as-is
+        if (expected_type == null) {
+            return value;
+        }
+
+        const target_type = expected_type.?;
+
+        // If types already match, return as-is
+        if (std.meta.eql(value, target_type)) {
+            return value;
+        }
+
+        // Perform type coercion based on target type
+        return switch (target_type) {
+            .Int => switch (value) {
+                .int => value,
+                .byte => |b| HIRValue{ .int = @as(i64, b) },
+                .float => |f| HIRValue{ .int = @as(i64, @intFromFloat(f)) },
+                else => value, // Keep original if can't convert
+            },
+            .Byte => switch (value) {
+                .byte => value,
+                .int => |i| blk: {
+                    // Only convert to byte if value fits in byte range (0-255)
+                    if (i >= 0 and i <= 255) {
+                        break :blk HIRValue{ .byte = @intCast(i) };
+                    } else {
+                        // For values outside byte range, keep as int to avoid data loss
+                        break :blk value;
+                    }
+                },
+                .float => |f| blk: {
+                    const i: i64 = @as(i64, @intFromFloat(f));
+                    if (i >= 0 and i <= 255) {
+                        break :blk HIRValue{ .byte = @intCast(i) };
+                    } else {
+                        break :blk value;
+                    }
+                },
+                else => value,
+            },
+            .Float => switch (value) {
+                .float => value,
+                .int => |i| HIRValue{ .float = @as(f64, @floatFromInt(i)) },
+                .byte => |b| HIRValue{ .float = @as(f64, @floatFromInt(b)) },
+                else => value,
+            },
+            .String => switch (value) {
+                .string => value,
+                .int => |i| HIRValue{ .string = std.fmt.allocPrint(self.allocator, "{}", .{i}) catch "0" },
+                .byte => |b| HIRValue{ .string = std.fmt.allocPrint(self.allocator, "0x{X:0>2}", .{b}) catch "0x00" },
+                .float => |f| HIRValue{ .string = std.fmt.allocPrint(self.allocator, "{d}", .{f}) catch "0.0" },
+                else => value,
+            },
+            .Tetra => switch (value) {
+                .tetra => value,
+                .int => |i| HIRValue{ .tetra = if (i != 0) 1 else 0 },
+                .byte => |b| HIRValue{ .tetra = if (b != 0) 1 else 0 },
+                .float => |f| HIRValue{ .tetra = if (f != 0.0) 1 else 0 },
+                else => value,
+            },
+            else => value, // For complex types, return as-is
+        };
+    }
+
     pub fn valueToString(self: *BytecodeVM, value: HIRValue) ![]const u8 {
         return switch (value) {
             .int => |i| try std.fmt.allocPrint(self.allocator, "{}", .{i}),

@@ -439,9 +439,8 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
 
             // Use StoreConst for constant declarations, StoreVar for variables
             if (!decl.type_info.is_mutable) {
-                // Determine scope based on current function context and global init phase
-                // This is more reliable than semantic analyzer for determining scope
-                const scope_kind = if (self.current_function == null or self.is_global_init_phase) ScopeKind.ModuleGlobal else ScopeKind.Local;
+                // Use the symbol table's scope determination logic instead of hardcoded logic
+                const scope_kind = self.symbol_table.determineVariableScope(decl.name.lexeme);
 
                 try self.instructions.append(.{ .StoreConst = .{
                     .var_index = var_idx,
@@ -454,9 +453,8 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                     try self.instructions.append(.Pop);
                 }
             } else {
-                // Determine scope based on current function context and global init phase
-                // This is more reliable than semantic analyzer for determining scope
-                const scope_kind = if (self.current_function == null or self.is_global_init_phase) ScopeKind.ModuleGlobal else ScopeKind.Local;
+                // Use the symbol table's scope determination logic instead of hardcoded logic
+                const scope_kind = self.symbol_table.determineVariableScope(decl.name.lexeme);
 
                 try self.instructions.append(.{ .StoreVar = .{
                     .var_index = var_idx,
