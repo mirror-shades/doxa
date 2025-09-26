@@ -1,7 +1,0 @@
-var tape :: byte[10]
-var tp :: int is 0
-
-entry function main() {
-    tape[tp] is 0x01
-    {@print("Value: {tape[tp]}\n")}
-}
