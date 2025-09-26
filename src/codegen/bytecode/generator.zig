@@ -304,6 +304,16 @@ pub const BytecodeGenerator = struct {
                         .module_id = null,
                     };
                 },
+                .GlobalLocal => blk: {
+                    // GlobalLocal behaves like ModuleGlobal but represents script-level globals
+                    const module_id = try self.moduleIdFor(module_context);
+                    self.touchGlobalSlot(module_id, slot);
+                    break :blk module.SlotOperand{
+                        .slot = slot,
+                        .kind = .module_global,
+                        .module_id = module_id,
+                    };
+                },
                 .ModuleGlobal => blk: {
                     const module_id = try self.moduleIdFor(module_context);
                     self.touchGlobalSlot(module_id, slot);
@@ -373,7 +383,7 @@ pub const BytecodeGenerator = struct {
                     const operand = self.slotFromCache(payload.var_index) orelse blk: {
                         switch (payload.scope_kind) {
                             .Local => break :blk try self.makeSlotOperand(.Local, payload.var_index, null),
-                            .ModuleGlobal, .ImportedModule, .Builtin => return error.MissingModuleContext,
+                            .GlobalLocal, .ModuleGlobal, .ImportedModule, .Builtin => return error.MissingModuleContext,
                         }
                     };
                     try self.instructions.append(self.allocator, .{ .PushStorageRef = operand });

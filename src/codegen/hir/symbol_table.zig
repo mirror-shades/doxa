@@ -151,15 +151,16 @@ pub const SymbolTable = struct {
                 return .Local;
             } else if (in_global) |_| {
                 // Found in global scope, but we're inside a function
-                // This means we're accessing a global variable from within a function
-                return .ModuleGlobal;
+                // This means we're accessing a script-level global variable from within a function
+                return .GlobalLocal;
             } else {
                 // New variable in function scope
                 return .Local;
             }
         } else {
-            // Not in function scope, must be global
-            return .ModuleGlobal;
+            // Not in function scope - top-level script variables should be GlobalLocal
+            // ModuleGlobal should only be used for truly persistent module-level variables
+            return .GlobalLocal;
         }
     }
 

@@ -70,7 +70,8 @@ pub const EnumTypeInfo = struct {
 
 pub const ScopeKind = enum {
     Local, // Function-local variable
-    ModuleGlobal, // Module-level global
+    GlobalLocal, // Script-level global (accessible from functions, but local to script execution)
+    ModuleGlobal, // Module-level global (persistent across modules)
     ImportedModule, // Variable from imported module
     Builtin, // Built-in system variable
 };
