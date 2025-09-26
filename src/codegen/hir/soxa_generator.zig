@@ -26,6 +26,8 @@ const LabelGenerator = ResourceManager.LabelGenerator;
 const ConstantManager = ResourceManager.ConstantManager;
 const SymbolTable = @import("symbol_table.zig").SymbolTable;
 const TypeSystem = @import("type_system.zig").TypeSystem;
+const AliasTracker = @import("alias_tracker.zig").AliasTracker;
+const SlotManager = @import("slot_manager.zig").SlotManager;
 
 const Errors = @import("../../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
@@ -64,6 +66,10 @@ pub const HIRGenerator = struct {
     label_generator: LabelGenerator,
     type_system: TypeSystem,
     struct_methods: std.StringHashMap(std.StringHashMap(StructMethodInfo)), // Track struct methods
+    
+    // New alias and slot management components
+    alias_tracker: AliasTracker,
+    slot_manager: SlotManager,
 
     function_signatures: std.StringHashMap(FunctionInfo),
     function_bodies: std.array_list.Managed(FunctionBody),
@@ -163,6 +169,10 @@ pub const HIRGenerator = struct {
             .label_generator = LabelGenerator.init(allocator),
             .type_system = TypeSystem.init(allocator, reporter, semantic_analyzer),
             .struct_methods = std.StringHashMap(std.StringHashMap(StructMethodInfo)).init(allocator),
+            
+            // Initialize new alias and slot management components
+            .alias_tracker = AliasTracker.init(allocator),
+            .slot_manager = SlotManager.init(allocator),
             .function_signatures = std.StringHashMap(FunctionInfo).init(allocator),
             .function_bodies = std.array_list.Managed(FunctionBody).init(allocator),
             .semantic_function_return_types = semantic_function_return_types,
@@ -191,6 +201,11 @@ pub const HIRGenerator = struct {
         var methods_it = self.struct_methods.valueIterator();
         while (methods_it.next()) |tbl| tbl.*.deinit();
         self.struct_methods.deinit();
+        
+        // Deinit new alias and slot management components
+        self.alias_tracker.deinit();
+        self.slot_manager.deinit();
+        
         self.function_signatures.deinit();
         self.function_bodies.deinit();
         self.function_calls.deinit();
@@ -568,13 +583,15 @@ pub const HIRGenerator = struct {
                         }
                     }
 
-                    // For alias parameters, bind the alias to the incoming storage id
-                    // Use the actual parameter position (not the reverse index)
-                    const param_position = function_body.function_params.len - param_index;
+                    // For alias parameters, use the existing system but with proper slot allocation
+                    // Allocate a unique slot for this alias to avoid conflicts
+                    const alias_slot = try self.slot_manager.allocateAliasSlot(param.name.lexeme, param_type);
+                    
+                    // Use the existing StoreParamAlias instruction with the properly allocated slot
                     try self.instructions.append(.{ .StoreParamAlias = .{
                         .param_name = param.name.lexeme,
                         .param_type = param_type,
-                        .var_index = @intCast(param_position),
+                        .var_index = alias_slot, // Use the allocated slot instead of hardcoded value
                     } });
                 } else {
                     // Regular parameter: create local variable and store stack value

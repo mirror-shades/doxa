@@ -1,0 +1,10 @@
+// Very simple alias test
+function testAlias(^x :: int) {
+    @print("x: {x}\n")
+}
+
+function main() {
+    var y is 42
+    testAlias(^y)
+    @print("y after: {y}\n")
+}

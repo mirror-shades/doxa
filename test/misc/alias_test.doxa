@@ -1,0 +1,25 @@
+// Test file for the new alias system
+// This should demonstrate proper alias parameter handling without slot conflicts
+
+function testAliasFunction(^_circle :: int, ^_shift :: int) {
+    // Test compound assignment on alias parameters
+    _circle += 10
+    _shift += 10
+    
+    // Test regular operations on alias parameters
+    var _result is _circle + _shift
+    _result?
+}
+
+function main() {
+    var circle is 10
+    var shift is 20
+    
+    // Call function with alias parameters
+    var result is testAliasFunction(^circle, ^shift)
+    
+    // Verify that the original variables were modified
+    @print("circle: {circle}\n")
+    @print("shift: {shift}\n")
+    @print("result: {result}\n")
+}

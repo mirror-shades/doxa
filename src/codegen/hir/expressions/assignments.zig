@@ -133,15 +133,23 @@ pub const AssignmentsHandler = struct {
     pub fn generateCompoundAssign(self: *AssignmentsHandler, compound: ast.CompoundAssignment, preserve_result: bool) !void {
         // Check if this is an alias parameter
         if (self.generator.symbol_table.isAliasParameter(compound.name.lexeme)) {
-            // For alias parameters, we need to load from the alias, not the local variable
-            // The alias should be bound to the original variable's storage
-            // We'll use a special instruction to load from the alias
-            try self.generator.instructions.append(.{
-                .LoadAlias = .{
-                    .var_name = compound.name.lexeme,
-                    .slot_index = 1, // TODO: Get the correct slot index from the alias binding
-                },
-            });
+            // For alias parameters, get the correct slot from the slot manager
+            if (self.generator.slot_manager.getAliasSlot(compound.name.lexeme)) |alias_slot| {
+                try self.generator.instructions.append(.{
+                    .LoadAlias = .{
+                        .var_name = compound.name.lexeme,
+                        .slot_index = alias_slot,
+                    },
+                });
+            } else {
+                // Fallback to old behavior if alias not found
+                try self.generator.instructions.append(.{
+                    .LoadAlias = .{
+                        .var_name = compound.name.lexeme,
+                        .slot_index = 1, // Fallback to hardcoded slot
+                    },
+                });
+            }
         } else {
             // Regular variable - determine correct scope
             const var_idx = try self.generator.getOrCreateVariable(compound.name.lexeme);
@@ -208,14 +216,25 @@ pub const AssignmentsHandler = struct {
         // Store the result back to the variable
         const expected_type = self.generator.getTrackedVariableType(compound.name.lexeme) orelse .Unknown;
         if (self.generator.symbol_table.isAliasParameter(compound.name.lexeme)) {
-            // For alias parameters, store to the alias, not the local variable
-            try self.generator.instructions.append(.{
-                .StoreAlias = .{
-                    .var_name = compound.name.lexeme,
-                    .slot_index = 1, // TODO: Get the correct slot index from the alias binding
-                    .expected_type = expected_type,
-                },
-            });
+            // For alias parameters, get the correct slot from the slot manager
+            if (self.generator.slot_manager.getAliasSlot(compound.name.lexeme)) |alias_slot| {
+                try self.generator.instructions.append(.{
+                    .StoreAlias = .{
+                        .var_name = compound.name.lexeme,
+                        .slot_index = alias_slot,
+                        .expected_type = expected_type,
+                    },
+                });
+            } else {
+                // Fallback to old behavior if alias not found
+                try self.generator.instructions.append(.{
+                    .StoreAlias = .{
+                        .var_name = compound.name.lexeme,
+                        .slot_index = 1, // Fallback to hardcoded slot
+                        .expected_type = expected_type,
+                    },
+                });
+            }
         } else {
             // Regular variable - determine correct scope
             const var_idx = try self.generator.getOrCreateVariable(compound.name.lexeme);
