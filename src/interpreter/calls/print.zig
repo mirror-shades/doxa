@@ -175,7 +175,7 @@ pub const PrintOps = struct {
                                 .pointer => |ptr| {
                                     const child = ptr.child;
                                     if (@hasField(child, "program")) {
-                                        // HIRVM - can execute HIR instructions
+                                        // BytecodeVM - can execute bytecode instructions
                                         try vm.executeInstruction(nested_peek);
                                     } else if (@hasField(child, "bytecode")) {
                                         // BytecodeVM - cannot execute HIR instructions directly
@@ -186,7 +186,7 @@ pub const PrintOps = struct {
                                     }
                                 },
                                 else => {
-                                    // Fallback - try HIRVM method only
+                                    // Fallback - try BytecodeVM method only
                                     try vm.executeInstruction(nested_peek);
                                 },
                             }
