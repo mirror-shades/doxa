@@ -108,6 +108,36 @@ pub const AssignmentsHandler = struct {
             }
         }
 
+        // Check if this is an alias parameter
+        if (self.generator.symbol_table.isAliasParameter(assign.name.lexeme)) {
+            // For alias parameters, get the correct slot from the slot manager
+            if (self.generator.slot_manager.getAliasSlot(assign.name.lexeme)) |alias_slot| {
+                // Duplicate value to leave it on stack as assignment result
+                if (preserve_result) {
+                    try self.generator.instructions.append(.Dup);
+                }
+
+                try self.generator.instructions.append(.{
+                    .StoreAlias = .{
+                        .slot_index = alias_slot,
+                        .var_name = assign.name.lexeme,
+                        .expected_type = assigned_type,
+                    },
+                });
+                return;
+            } else {
+                // Fallback to old behavior if alias not found
+                try self.generator.instructions.append(.{
+                    .StoreAlias = .{
+                        .slot_index = 1, // Fallback to hardcoded slot
+                        .var_name = assign.name.lexeme,
+                        .expected_type = assigned_type,
+                    },
+                });
+                return;
+            }
+        }
+
         // Get or create variable index
         const var_idx = try self.generator.getOrCreateVariable(assign.name.lexeme);
 
