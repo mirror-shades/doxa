@@ -77,63 +77,67 @@ pub fn exec(vm: anytype, a: anytype) !void {
         }
     }
 
-    // Check if either operand is a float and needs promotion
-    const a_is_float = left.value == .float;
-    const b_is_float = right.value == .float;
+    // Implement proper type promotion: float > int > byte
+    // Determine the highest type among operands
+    const left_type_rank: u8 = switch (left.value) {
+        .float => 3, // highest
+        .int => 2,
+        .byte => 1, // lowest
+        else => 0,
+    };
 
-    // Respect the operand_type from the instruction
-    if (a.operand_type == .Byte) {
-        // Byte arithmetic: both operands should be bytes
-        const left_byte = switch (left.value) {
-            .byte => |u| u,
-            .int => |i| if (i >= 0 and i <= 255) @as(u8, @intCast(i)) else return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert int {d} to byte for arithmetic", .{i}),
-            else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert {s} to byte for arithmetic", .{@tagName(left.value)}),
+    const right_type_rank: u8 = switch (right.value) {
+        .float => 3, // highest
+        .int => 2,
+        .byte => 1, // lowest
+        else => 0,
+    };
+
+    const target_rank = @max(left_type_rank, right_type_rank);
+
+    // Perform arithmetic in the promoted type
+    if (target_rank == 3) {
+        // Float arithmetic: promote both operands to float
+        const left_float = switch (left.value) {
+            .float => |f| f,
+            .int => |i| @as(f64, @floatFromInt(i)),
+            .byte => |u| @as(f64, @floatFromInt(u)),
+            else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert {s} to float for arithmetic", .{@tagName(left.value)}),
         };
 
-        const right_byte = switch (right.value) {
-            .byte => |u| u,
-            .int => |i| if (i >= 0 and i <= 255) @as(u8, @intCast(i)) else return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert int {d} to byte for arithmetic", .{i}),
-            else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert {s} to byte for arithmetic", .{@tagName(right.value)}),
+        const right_float = switch (right.value) {
+            .float => |f| f,
+            .int => |i| @as(f64, @floatFromInt(i)),
+            .byte => |u| @as(f64, @floatFromInt(u)),
+            else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert {s} to float for arithmetic", .{@tagName(right.value)}),
         };
 
-        var byte_result: u8 = undefined;
+        var result: f64 = 0.0;
         switch (a.op) {
-            // Saturating byte arithmetic (no wrap)
-            .Add => {
-                const sum: u16 = @as(u16, left_byte) + @as(u16, right_byte);
-                byte_result = if (sum > 255) 255 else @intCast(sum);
-            },
-            .Sub => {
-                byte_result = if (left_byte >= right_byte) left_byte - right_byte else 0;
-            },
-            .Mul => {
-                const prod: u32 = @as(u32, left_byte) * @as(u32, right_byte);
-                byte_result = if (prod > 255) 255 else @intCast(prod);
-            },
+            .Add => result = left_float + right_float,
+            .Sub => result = left_float - right_float,
+            .Mul => result = left_float * right_float,
             .Div => {
-                if (right_byte == 0) {
-                    return vm.reporter.reportRuntimeError(null, ErrorCode.DIVISION_BY_ZERO, "Division by zero in byte arithmetic", .{});
-                }
-                byte_result = @intCast(left_byte / right_byte);
+                if (right_float == 0.0) {
+                    return ErrorList.DivisionByZero;
+                } else result = left_float / right_float;
             },
-            .Mod => byte_result = @as(u8, @intCast(@mod(left_byte, right_byte))),
+            .Mod => result = @mod(left_float, right_float),
             .Pow => {
-                // Compute in wider type and clamp
-                const p: u32 = std.math.pow(u32, @as(u32, left_byte), @as(u32, right_byte));
-                byte_result = if (p > 255) 255 else @intCast(p);
+                result = std.math.pow(f64, left_float, right_float);
             },
         }
 
         if (vm.reporter.debug_mode) {
-            vm.reporter.report(.Debug, .Hint, null, null, "Byte arith result: {d}", .{byte_result});
+            vm.reporter.report(.Debug, .Hint, null, null, "Arith result: {d}", .{result});
         }
 
-        try vm.stack.push(HIRFrame.initByte(byte_result));
+        try vm.stack.push(HIRFrame.initFloat(result));
         return;
     }
 
-    // All division promotes to float. If either operand is float or op is Div, promote both to float path.
-    if (a_is_float or b_is_float or a.op == .Div) {
+    // This section is now handled by the type promotion logic above
+    if (false) {
         // Convert both operands to float and perform float arithmetic
         const left_float = switch (left.value) {
             .int => |i| @as(f64, @floatFromInt(i)),
@@ -189,10 +193,58 @@ pub fn exec(vm: anytype, a: anytype) !void {
         return;
     }
 
-    // Both operands are integers, perform integer arithmetic
+    // Byte arithmetic: both operands are bytes (target_rank == 1)
+    if (target_rank == 1) {
+        const left_byte = switch (left.value) {
+            .byte => |u| u,
+            else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert {s} to byte for arithmetic", .{@tagName(left.value)}),
+        };
+
+        const right_byte = switch (right.value) {
+            .byte => |u| u,
+            else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert {s} to byte for arithmetic", .{@tagName(right.value)}),
+        };
+
+        var byte_result: u8 = undefined;
+        switch (a.op) {
+            // Saturating byte arithmetic (no wrap)
+            .Add => {
+                const sum: u16 = @as(u16, left_byte) + @as(u16, right_byte);
+                byte_result = if (sum > 255) 255 else @intCast(sum);
+            },
+            .Sub => {
+                byte_result = if (left_byte >= right_byte) left_byte - right_byte else 0;
+            },
+            .Mul => {
+                const prod: u32 = @as(u32, left_byte) * @as(u32, right_byte);
+                byte_result = if (prod > 255) 255 else @intCast(prod);
+            },
+            .Div => {
+                if (right_byte == 0) {
+                    return vm.reporter.reportRuntimeError(null, ErrorCode.DIVISION_BY_ZERO, "Division by zero in byte arithmetic", .{});
+                }
+                byte_result = @intCast(left_byte / right_byte);
+            },
+            .Mod => byte_result = @as(u8, @intCast(@mod(left_byte, right_byte))),
+            .Pow => {
+                // Compute in wider type and clamp
+                const p: u32 = std.math.pow(u32, @as(u32, left_byte), @as(u32, right_byte));
+                byte_result = if (p > 255) 255 else @intCast(p);
+            },
+        }
+
+        if (vm.reporter.debug_mode) {
+            vm.reporter.report(.Debug, .Hint, null, null, "Arith result: {d}", .{byte_result});
+        }
+
+        try vm.stack.push(HIRFrame.initByte(byte_result));
+        return;
+    }
+
+    // Integer arithmetic: promote both operands to int (target_rank == 2)
     const left_int = switch (left.value) {
         .int => |i| i,
-        .byte => |u| @as(i64, u),
+        .byte => |u| @as(i64, u), // Promote byte to int
         .tetra => |t| @as(i64, t),
         .string => |s| blk: {
             const parsed = std.fmt.parseInt(i64, s, 10) catch {
@@ -210,7 +262,7 @@ pub fn exec(vm: anytype, a: anytype) !void {
 
     const right_int = switch (right.value) {
         .int => |i| i,
-        .byte => |u| @as(i64, u),
+        .byte => |u| @as(i64, u), // Promote byte to int
         .tetra => |t| @as(i64, t),
         .string => |s| blk: {
             const parsed = std.fmt.parseInt(i64, s, 10) catch {
@@ -237,7 +289,20 @@ pub fn exec(vm: anytype, a: anytype) !void {
         .Mul => int_result = std.math.mul(i64, left_int, right_int) catch {
             return vm.reporter.reportRuntimeError(null, ErrorCode.ARITHMETIC_OVERFLOW, "Integer multiplication overflow", .{});
         },
-        .Div => unreachable,
+        .Div => {
+            // Division always promotes to float
+            const left_float = @as(f64, @floatFromInt(left_int));
+            const right_float = @as(f64, @floatFromInt(right_int));
+            if (right_float == 0.0) {
+                return ErrorList.DivisionByZero;
+            }
+            const result = left_float / right_float;
+            if (vm.reporter.debug_mode) {
+                vm.reporter.report(.Debug, .Hint, null, null, "Arith result: {d}", .{result});
+            }
+            try vm.stack.push(HIRFrame.initFloat(result));
+            return;
+        },
         .Mod => int_result = try fastIntMod(vm, left_int, right_int),
         .Pow => {
             int_result = std.math.pow(i64, left_int, right_int);

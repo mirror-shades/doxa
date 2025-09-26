@@ -246,20 +246,31 @@ pub const FunctionOps = struct {
                         ray.SetTargetFPSDoxa(fps);
 
                         // Implicit function-scope defer: CloseWindow on surrounding scope exit
-                        if (vm.defer_stacks.items.len > 0) {
-                            var list = &vm.defer_stacks.items[vm.defer_stacks.items.len - 1];
-                            try list.append(&ray.CloseWindow);
+                        vm.reporter.debug(">> dg.Init: scope_stack has {any) items", .{vm.scope_stack.items.len}, @src());
+                        if (vm.scope_stack.items.len > 0) {
+                            var scope = &vm.scope_stack.items[vm.scope_stack.items.len - 1];
+                            vm.reporter.debug(">> dg.Init: Adding CloseWindow defer to scope {any)", .{scope.id}, @src());
+                            try scope.defer_actions.append(&ray.CloseWindow);
+                            vm.reporter.debug(">> dg.Init: Scope now has {any) defer actions", .{scope.defer_actions.items.len}, @src());
+                        } else {
+                            vm.reporter.debug(">> dg.Init: No scope available for defer", .{}, @src());
                         }
 
                         // Init function doesn't return anything (void)
                         return;
                     } else if (std.mem.eql(u8, func_name, "Draw")) {
-                        // Begin drawing now, defer EndDrawing at current scope exit
+                        // For now, let's just call BeginDrawing and EndDrawing immediately
+                        // This is a simplified approach that doesn't use defer
                         ray.BeginDrawing();
-                        if (vm.defer_stacks.items.len > 0) {
-                            var list = &vm.defer_stacks.items[vm.defer_stacks.items.len - 1];
-                            try list.append(&ray.EndDrawing);
-                        }
+                        // We'll call EndDrawing at the end of the frame in the loop
+                        return;
+                    } else if (std.mem.eql(u8, func_name, "EndDrawing")) {
+                        // Explicit EndDrawing call
+                        ray.EndDrawing();
+                        return;
+                    } else if (std.mem.eql(u8, func_name, "CloseWindow")) {
+                        // Explicit CloseWindow call
+                        ray.CloseWindow();
                         return;
                     } else if (std.mem.eql(u8, func_name, "Running")) {
                         // Return the negation of WindowShouldClose

@@ -481,6 +481,7 @@ pub const BytecodeVM = struct {
                 }
             },
             .Call => |payload| {
+                self.reporter.debug(">> Executing Call instruction: fn:{any} qualified:{any} kind:{any} args:{any}", .{ payload.target.function_index, payload.target.qualified_name, @tagName(payload.target.call_kind), payload.arg_count }, @src());
                 try self.handleCall(payload);
             },
             .TailCall => |payload| {
@@ -687,10 +688,12 @@ pub const BytecodeVM = struct {
     }
 
     fn runScopeCleanup(self: *BytecodeVM, record: *ScopeRecord) VmError!void {
+        self.reporter.debug(">> runScopeCleanup: Executing {} defer actions for scope {}", .{ record.defer_actions.items.len, record.id }, @src());
         var d = record.defer_actions.items.len;
         while (d > 0) {
             d -= 1;
             const action = record.defer_actions.items[d];
+            self.reporter.debug(">> runScopeCleanup: Executing defer action {}", .{d}, @src());
             action();
         }
 
@@ -1324,6 +1327,29 @@ pub const BytecodeVM = struct {
         switch (frame.value) {
             .string => {
                 if (std.mem.startsWith(u8, frame.value.string, "graphics.")) {
+                    // Handle module constants like SKYBLUE
+                    if (std.mem.eql(u8, frame.value.string, "graphics.raylib")) {
+                        if (std.mem.eql(u8, payload.field_name, "SKYBLUE")) {
+                            self.reporter.debug(">> GetField: Resolving SKYBLUE constant", .{}, @src());
+                            const ray = @import("../runtime/raylib.zig");
+                            const skyblue_color = ray.SKYBLUE;
+                            self.reporter.debug(">> GetField: SKYBLUE color values: r={}, g={}, b={}, a={}", .{ skyblue_color.r, skyblue_color.g, skyblue_color.b, skyblue_color.a }, @src());
+                            // Convert raylib Color to DoxaColor struct
+                            const fields = try self.allocator.alloc(HIRStructField, 4);
+                            fields[0] = .{ .name = "r", .value = HIRValue{ .byte = skyblue_color.r }, .field_type = .Byte };
+                            fields[1] = .{ .name = "g", .value = HIRValue{ .byte = skyblue_color.g }, .field_type = .Byte };
+                            fields[2] = .{ .name = "b", .value = HIRValue{ .byte = skyblue_color.b }, .field_type = .Byte };
+                            fields[3] = .{ .name = "a", .value = HIRValue{ .byte = skyblue_color.a }, .field_type = .Byte };
+
+                            try self.stack.push(HIRFrame.initFromHIRValue(HIRValue{ .struct_instance = .{
+                                .type_name = "Color",
+                                .fields = fields,
+                                .field_name = null,
+                                .path = null,
+                            } }));
+                            return;
+                        }
+                    }
                     const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ frame.value.string, payload.field_name });
                     try self.stack.push(HIRFrame.initFromHIRValue(HIRValue{ .string = full_name }));
                     return;
@@ -1616,6 +1642,7 @@ pub const BytecodeVM = struct {
     }
 
     fn handleCall(self: *BytecodeVM, payload: anytype) VmError!void {
+        self.reporter.debug(">> handleCall: Processing call to '{any}' with {} arguments", .{ payload.target.qualified_name, payload.arg_count }, @src());
         switch (payload.target.call_kind) {
             .LocalFunction, .ModuleFunction => {
                 // Check if this is a graphics module function that needs special handling
@@ -1651,10 +1678,23 @@ pub const BytecodeVM = struct {
                                 try ray.InitWindowDoxa(w, h, name);
                                 ray.SetTargetFPSDoxa(fps);
 
+                                // Set up defer for CloseWindow at scope exit
+                                if (self.scope_stack.items.len > 0) {
+                                    var scope = &self.scope_stack.items[self.scope_stack.items.len - 1];
+                                    try scope.defer_actions.append(&ray.CloseWindow);
+                                }
+
                                 // Init function doesn't return anything (void)
                                 return;
                             } else if (std.mem.eql(u8, func_name, "Draw")) {
                                 ray.BeginDrawing();
+
+                                // Set up defer for EndDrawing at scope exit
+                                if (self.scope_stack.items.len > 0) {
+                                    var scope = &self.scope_stack.items[self.scope_stack.items.len - 1];
+                                    try scope.defer_actions.append(&ray.EndDrawing);
+                                }
+
                                 return;
                             } else if (std.mem.eql(u8, func_name, "Running")) {
                                 // Return the negation of WindowShouldClose
@@ -1707,6 +1747,7 @@ pub const BytecodeVM = struct {
                         } else if (std.mem.eql(u8, sub_alias, "raylib")) {
                             if (std.mem.eql(u8, func_name, "ClearBackground")) {
                                 const color_frame = try self.stack.pop();
+                                self.reporter.debug(">> ClearBackground: Color frame type: {s}", .{@tagName(color_frame.value)}, @src());
                                 // Extract color from struct
                                 switch (color_frame.value) {
                                     .struct_instance => |s| {
@@ -1743,19 +1784,75 @@ pub const BytecodeVM = struct {
                                             }
                                         }
 
+                                        self.reporter.debug(">> ClearBackground: Using color r={d}, g={d}, b={d}, a={d}", .{ r, g, b, a }, @src());
                                         ray.ClearBackgroundDoxa(.{ .r = r, .g = g, .b = b, .a = a });
                                     },
+                                    .string => |color_str| {
+                                        // Handle string constants like "SKYBLUE" or "graphics.raylib.SKYBLUE"
+                                        var color: ?ray.Color = null;
+
+                                        // Check for common raylib colors
+                                        if (std.mem.eql(u8, color_str, "SKYBLUE") or std.mem.eql(u8, color_str, "graphics.raylib.SKYBLUE")) {
+                                            color = ray.SKYBLUE;
+                                        } else if (std.mem.eql(u8, color_str, "RED") or std.mem.eql(u8, color_str, "graphics.raylib.RED")) {
+                                            color = @import("../utils/cimport.zig").RED;
+                                        } else if (std.mem.eql(u8, color_str, "GREEN") or std.mem.eql(u8, color_str, "graphics.raylib.GREEN")) {
+                                            color = @import("../utils/cimport.zig").GREEN;
+                                        } else if (std.mem.eql(u8, color_str, "BLUE") or std.mem.eql(u8, color_str, "graphics.raylib.BLUE")) {
+                                            color = @import("../utils/cimport.zig").BLUE;
+                                        } else if (std.mem.eql(u8, color_str, "YELLOW") or std.mem.eql(u8, color_str, "graphics.raylib.YELLOW")) {
+                                            color = @import("../utils/cimport.zig").YELLOW;
+                                        } else if (std.mem.eql(u8, color_str, "PURPLE") or std.mem.eql(u8, color_str, "graphics.raylib.PURPLE")) {
+                                            color = @import("../utils/cimport.zig").PURPLE;
+                                        } else if (std.mem.eql(u8, color_str, "PINK") or std.mem.eql(u8, color_str, "graphics.raylib.PINK")) {
+                                            color = @import("../utils/cimport.zig").PINK;
+                                        } else if (std.mem.eql(u8, color_str, "ORANGE") or std.mem.eql(u8, color_str, "graphics.raylib.ORANGE")) {
+                                            color = @import("../utils/cimport.zig").ORANGE;
+                                        } else if (std.mem.eql(u8, color_str, "WHITE") or std.mem.eql(u8, color_str, "graphics.raylib.WHITE")) {
+                                            color = @import("../utils/cimport.zig").WHITE;
+                                        } else if (std.mem.eql(u8, color_str, "BLACK") or std.mem.eql(u8, color_str, "graphics.raylib.BLACK")) {
+                                            color = @import("../utils/cimport.zig").BLACK;
+                                        } else if (std.mem.eql(u8, color_str, "GRAY") or std.mem.eql(u8, color_str, "graphics.raylib.GRAY")) {
+                                            color = @import("../utils/cimport.zig").GRAY;
+                                        } else if (std.mem.eql(u8, color_str, "LIGHTGRAY") or std.mem.eql(u8, color_str, "graphics.raylib.LIGHTGRAY")) {
+                                            color = @import("../utils/cimport.zig").LIGHTGRAY;
+                                        } else if (std.mem.eql(u8, color_str, "DARKGRAY") or std.mem.eql(u8, color_str, "graphics.raylib.DARKGRAY")) {
+                                            color = @import("../utils/cimport.zig").DARKGRAY;
+                                        } else if (std.mem.eql(u8, color_str, "GOLD") or std.mem.eql(u8, color_str, "graphics.raylib.GOLD")) {
+                                            color = @import("../utils/cimport.zig").GOLD;
+                                        } else if (std.mem.eql(u8, color_str, "LIME") or std.mem.eql(u8, color_str, "graphics.raylib.LIME")) {
+                                            color = @import("../utils/cimport.zig").LIME;
+                                        } else if (std.mem.eql(u8, color_str, "VIOLET") or std.mem.eql(u8, color_str, "graphics.raylib.VIOLET")) {
+                                            color = @import("../utils/cimport.zig").VIOLET;
+                                        } else if (std.mem.eql(u8, color_str, "BROWN") or std.mem.eql(u8, color_str, "graphics.raylib.BROWN")) {
+                                            color = @import("../utils/cimport.zig").BROWN;
+                                        } else if (std.mem.eql(u8, color_str, "BEIGE") or std.mem.eql(u8, color_str, "graphics.raylib.BEIGE")) {
+                                            color = @import("../utils/cimport.zig").BEIGE;
+                                        }
+
+                                        if (color) |c| {
+                                            self.reporter.debug(">> ClearBackground: Using {s} color r={d}, g={d}, b={d}, a={d}", .{ color_str, c.r, c.g, c.b, c.a }, @src());
+                                            ray.ClearBackgroundDoxa(.{ .r = c.r, .g = c.g, .b = c.b, .a = c.a });
+                                        } else {
+                                            // Default to black for unknown string constants
+                                            self.reporter.debug(">> ClearBackground: Unknown string constant '{s}', using black", .{color_str}, @src());
+                                            ray.ClearBackgroundDoxa(.{ .r = 0, .g = 0, .b = 0, .a = 255 });
+                                        }
+                                    },
                                     else => {
-                                        // Default to black if not a struct
+                                        // Default to black if not a struct or string
+                                        self.reporter.debug(">> ClearBackground: Using default black color", .{}, @src());
                                         ray.ClearBackgroundDoxa(.{ .r = 0, .g = 0, .b = 0, .a = 255 });
                                     },
                                 }
                                 return;
                             } else if (std.mem.eql(u8, func_name, "DrawCircle")) {
-                                const x_frame = try self.stack.pop();
-                                const y_frame = try self.stack.pop();
-                                const radius_frame = try self.stack.pop();
+                                // Arguments are pushed in order: x, y, radius, color
+                                // So we need to pop in reverse order: color, radius, y, x
                                 const color_frame = try self.stack.pop();
+                                const radius_frame = try self.stack.pop();
+                                const y_frame = try self.stack.pop();
+                                const x_frame = try self.stack.pop();
 
                                 const x = try x_frame.asInt();
                                 const y = try y_frame.asInt();
@@ -1806,6 +1903,32 @@ pub const BytecodeVM = struct {
                                 }
 
                                 ray.DrawCircle(@intCast(x), @intCast(y), radius, .{ .r = r, .g = g, .b = b, .a = a });
+                                return;
+                            } else if (std.mem.eql(u8, func_name, "InitWindow")) {
+                                // Handle InitWindow(width, height, title)
+                                const title_frame = try self.stack.pop();
+                                const height_frame = try self.stack.pop();
+                                const width_frame = try self.stack.pop();
+
+                                const width = try width_frame.asInt();
+                                const height = try height_frame.asInt();
+                                const title = try title_frame.asString();
+
+                                try ray.InitWindowDoxa(width, height, title);
+                                return;
+                            } else if (std.mem.eql(u8, func_name, "BeginDrawing")) {
+                                ray.BeginDrawing();
+                                return;
+                            } else if (std.mem.eql(u8, func_name, "EndDrawing")) {
+                                ray.EndDrawing();
+                                return;
+                            } else if (std.mem.eql(u8, func_name, "WindowShouldClose")) {
+                                const should_close = ray.WindowShouldClose();
+                                self.reporter.debug(">> WindowShouldClose: should_close={}", .{should_close}, @src());
+                                try self.stack.pushValue(HIRValue{ .tetra = if (should_close) 1 else 0 });
+                                return;
+                            } else if (std.mem.eql(u8, func_name, "CloseWindow")) {
+                                ray.CloseWindow();
                                 return;
                             }
                         }
