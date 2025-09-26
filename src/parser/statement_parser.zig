@@ -534,6 +534,46 @@ pub fn parseEachStmt(self: *Parser) ErrorList!ast.Stmt {
     }
     const body = try parseBlockStmt(self);
 
+    // Check if the array expression is a range (e.g., 1 to limit)
+    // If so, generate a direct loop instead of creating an array first
+    if (array_expr.?.data == .Range) {
+        const range = array_expr.?.data.Range;
+
+        // Create a direct loop: for item is start; while item <= end; step item += 1 { <body> }
+
+        // Build initializer: var item is start
+        const item_type = ast.TypeInfo{ .base = .Int };
+        const init_stmt = try self.allocator.create(ast.Stmt);
+        init_stmt.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(item_name) }, .data = .{ .VarDecl = .{ .name = item_name, .type_info = item_type, .initializer = range.start, .is_public = false } } };
+
+        // Build condition: item <= end
+        const load_item = try self.allocator.create(ast.Expr);
+        load_item.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(item_name) }, .data = .{ .Variable = item_name } };
+
+        const cond_expr = try self.allocator.create(ast.Expr);
+        cond_expr.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(item_name) }, .data = .{ .Binary = .{ .left = load_item, .operator = token.Token.initWithFile(.LESS_EQUAL, "<=", .{ .nothing = {} }, item_name.line, item_name.column, self.current_file), .right = range.end } } };
+
+        // Build step: item = item + 1
+        const one_expr = try self.allocator.create(ast.Expr);
+        one_expr.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(item_name) }, .data = .{ .Literal = .{ .int = 1 } } };
+        const left_item = try self.allocator.create(ast.Expr);
+        left_item.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(item_name) }, .data = .{ .Variable = item_name } };
+        const add_expr = try self.allocator.create(ast.Expr);
+        add_expr.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(item_name) }, .data = .{ .Binary = .{ .left = left_item, .operator = token.Token.initWithFile(.PLUS, "+", .{ .nothing = {} }, item_name.line, item_name.column, self.current_file), .right = one_expr } } };
+        const step_expr = try self.allocator.create(ast.Expr);
+        step_expr.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(item_name) }, .data = .{ .Assignment = .{ .name = item_name, .value = add_expr, .target_context = null } } };
+
+        // Create the loop expression
+        const loop_expr = try self.allocator.create(ast.Expr);
+        loop_expr.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(item_name) }, .data = .{ .Loop = .{ .var_decl = init_stmt, .condition = cond_expr, .body = try self.allocator.create(ast.Expr), .step = step_expr } } };
+
+        // Set the body as a block expression
+        loop_expr.data.Loop.body.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(item_name) }, .data = .{ .Block = .{ .statements = body, .value = null } } };
+
+        // Return as an expression statement
+        return ast.Stmt{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(item_name) }, .data = .{ .Expression = loop_expr } };
+    }
+
     // Create ForEach expression
     // Desugar foreach into Loop (init; cond; body; step)
     // for idx is 0; while idx < length(array); step idx += 1 { item is array[idx]; <body> }
@@ -573,16 +613,9 @@ pub fn parseEachStmt(self: *Parser) ErrorList!ast.Stmt {
     arr_index_left.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(item_name) }, .data = .{ .Index = .{ .array = array_expr.?, .index = load_idx } } };
     const item_assign = try self.allocator.create(ast.Stmt);
 
-    // Infer the array element type instead of hardcoding .Nothing
-    var item_type = ast.TypeInfo{ .base = .Int, .is_mutable = true }; // Default to Int for ranges
-    if (array_expr.?.data == .Range) {
-        // Range expressions always produce arrays of integers
-        item_type = ast.TypeInfo{ .base = .Int, .is_mutable = true };
-    } else if (array_expr.?.data == .Variable) {
-        // For variable arrays, we'll let type inference handle it
-        // The type will be inferred from the array[index] expression
-        item_type = ast.TypeInfo{ .base = .Nothing, .is_mutable = true };
-    }
+    // Let type inference handle the array element type
+    // The type will be inferred from the array[index] expression during semantic analysis
+    const item_type = ast.TypeInfo{ .base = .Nothing, .is_mutable = true };
 
     item_assign.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(item_name) }, .data = .{ .VarDecl = .{ .name = item_name, .type_info = item_type, .initializer = arr_index_left, .is_public = false } } };
 
