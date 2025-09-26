@@ -22,7 +22,6 @@ const SoxaCompiler = @import("./codegen/hir/soxa.zig");
 const HIRGenerator = @import("./codegen/hir/soxa_generator.zig").HIRGenerator;
 const SoxaTextParser = @import("./codegen/hir/soxa_parser.zig").SoxaTextParser;
 const HIRProgram = @import("./codegen/hir/soxa_types.zig").HIRProgram;
-const DoxaVM = @import("./interpreter/vm.zig").HIRVM;
 const BytecodeVM = @import("./interpreter/bytecode_vm.zig").BytecodeVM;
 const ConstantFolder = @import("./parser/constant_folder.zig").ConstantFolder;
 const PeepholeOptimizer = @import("./codegen/hir/peephole.zig").PeepholeOptimizer;
@@ -247,26 +246,7 @@ fn compileDoxaToSoxaFromAST(memoryManager: *MemoryManager, statements: []ast.Stm
     defer hir_program.deinit();
 }
 
-///==========================================================================
-/// Run SOXA file directly with HIR VM (optimized)
-///==========================================================================
-fn runSoxaFile(memoryManager: *MemoryManager, soxa_path: []const u8, reporter: *Reporter) !void {
-    // Load HIR program from SOXA file
-    var hir_program = try SoxaCompiler.readSoxaFile(soxa_path, memoryManager.getAllocator());
-    defer hir_program.deinit();
-
-    reporter.debug(">> Loaded SOXA: {} instructions, {} constants\n", .{ hir_program.instructions.len, hir_program.constant_pool.len }, @src());
-
-    // Create and run HIR VM directly
-    var vm = try DoxaVM.init(&hir_program, reporter, memoryManager);
-    defer vm.deinit();
-
-    // NEW: Bridge custom types from memory manager to VM
-    try memoryManager.bridgeTypesToVM(&vm);
-
-    // Run the VM
-    _ = try vm.run();
-}
+// HIRVM removed - using BytecodeVM only
 
 fn runBytecodeModule(memoryManager: *MemoryManager, bytecode_module: *BytecodeModule, reporter: *Reporter) !void {
     var vm = try BytecodeVM.init(memoryManager.getAllocator(), bytecode_module, reporter, memoryManager);
@@ -279,39 +259,7 @@ fn runBytecodeModule(memoryManager: *MemoryManager, bytecode_module: *BytecodeMo
     try vm.run();
 }
 
-fn runHirWithFallback(
-    memoryManager: *MemoryManager,
-    soxa_path: []const u8,
-    reporter: *Reporter,
-    statements: []ast.Stmt,
-    parser: *Parser,
-    semantic_analyzer: *SemanticAnalyzer,
-    path: []const u8,
-) !void {
-    runSoxaFile(memoryManager, soxa_path, reporter) catch |err| {
-        if (err == error.EndOfStream or err == error.InvalidFormat) {
-            reporter.reportCompileError(
-                Location{
-                    .file = path,
-                    .range = .{
-                        .start_line = 0,
-                        .start_col = 0,
-                        .end_line = 0,
-                        .end_col = 0,
-                    },
-                },
-                ErrorCode.SOXA_FILE_INCOMPATIBLE,
-                "!! SOXA file incompatible, regenerating...\n",
-                .{},
-            );
-            std.fs.cwd().deleteFile(soxa_path) catch {};
-            try compileDoxaToSoxaFromAST(memoryManager, statements, parser, semantic_analyzer, path, soxa_path, reporter);
-            try runSoxaFile(memoryManager, soxa_path, reporter);
-        } else {
-            return err;
-        }
-    };
-}
+// HIRVM fallback removed - using BytecodeVM only
 
 fn parseArgs(allocator: std.mem.Allocator) !CLI {
     const args = try std.process.argsAlloc(allocator);
@@ -686,13 +634,7 @@ pub fn main() !void {
     switch (cli_options.command) {
         .run => {
             reporter.debug(">> Executing with Bytecode VM\n", .{}, @src());
-            runBytecodeModule(&memoryManager, &bytecode_module, &reporter) catch |err| switch (err) {
-                error.UnimplementedInstruction => {
-                    reporter.debug(">> Bytecode VM missing instruction, falling back to HIR VM\n", .{}, @src());
-                    try runHirWithFallback(&memoryManager, soxa_path, &reporter, statements, &parser, &semantic_analyzer, path);
-                },
-                else => return err,
-            };
+            try runBytecodeModule(&memoryManager, &bytecode_module, &reporter);
         },
 
         .compile => {

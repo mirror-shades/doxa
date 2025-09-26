@@ -137,7 +137,7 @@ pub const BytecodeVM = struct {
     pub fn bridgeTypesToVM(self: *BytecodeVM) !void {
         _ = self; // Suppress unused parameter warning
         // Bridge custom types from memory manager to BytecodeVM
-        // This is similar to what HIRVM does
+        // BytecodeVM implementation
         // For now, we'll copy the custom type registry from memory manager
         // TODO: Implement proper type bridging for BytecodeVM
     }
@@ -1114,8 +1114,8 @@ pub const BytecodeVM = struct {
 
             const byte_val: u8 = switch (value.value) {
                 .string => |s| if (s.len > 0) s[0] else 0,
-                .int => |i| if (i >= 0 and i <= 255) @intCast(i) else 0,
-                .byte => |b| b,
+                .int => |i| if (i >= 0 and i <= 255) @as(u8, @intCast(i)) else 0,
+                .byte => |byte_val| byte_val,
                 .float => |f| if (f >= 0 and f <= 255) @intFromFloat(f) else 0,
                 else => 0,
             };
@@ -1509,6 +1509,200 @@ pub const BytecodeVM = struct {
     fn handleCall(self: *BytecodeVM, payload: anytype) VmError!void {
         switch (payload.target.call_kind) {
             .LocalFunction, .ModuleFunction => {
+                // Check if this is a graphics module function that needs special handling
+                if (std.mem.indexOfScalar(u8, payload.target.qualified_name, '.')) |dot_idx| {
+                    const module_alias = payload.target.qualified_name[0..dot_idx];
+                    const remainder = payload.target.qualified_name[dot_idx + 1 ..];
+
+                    // Handle nested module namespaces: e.g., graphics.doxa.Draw
+                    var sub_alias: []const u8 = remainder;
+                    var func_name: []const u8 = remainder;
+                    if (std.mem.indexOfScalar(u8, remainder, '.')) |sub_dot| {
+                        sub_alias = remainder[0..sub_dot];
+                        func_name = remainder[sub_dot + 1 ..];
+                    }
+
+                    // Graphics module bridging
+                    const is_graphics = std.mem.eql(u8, module_alias, "graphics") or std.mem.eql(u8, module_alias, "g");
+                    if (is_graphics) {
+                        const ray = @import("../runtime/raylib.zig");
+                        // Submodule dispatch: doxa vs raylib passthrough
+                        if (std.mem.eql(u8, sub_alias, "doxa")) {
+                            if (std.mem.eql(u8, func_name, "Init")) {
+                                const name_frame = try self.stack.pop();
+                                const fps_frame = try self.stack.pop();
+                                const height_frame = try self.stack.pop();
+                                const width_frame = try self.stack.pop();
+
+                                const w = try width_frame.asInt();
+                                const h = try height_frame.asInt();
+                                const fps = try fps_frame.asInt();
+                                const name = try name_frame.asString();
+
+                                try ray.InitWindowDoxa(w, h, name);
+                                ray.SetTargetFPSDoxa(fps);
+
+                                // Init function doesn't return anything (void)
+                                return;
+                            } else if (std.mem.eql(u8, func_name, "Draw")) {
+                                ray.BeginDrawing();
+                                return;
+                            } else if (std.mem.eql(u8, func_name, "Running")) {
+                                // Return the negation of WindowShouldClose
+                                const should_close = ray.WindowShouldClose();
+                                try self.stack.pushValue(HIRValue{ .tetra = if (should_close) 0 else 1 });
+                                return;
+                            } else if (std.mem.eql(u8, func_name, "bytesToColor")) {
+                                // Handle bytesToColor(r, g, b, a) -> returns DoxaColor
+                                const a_frame = try self.stack.pop();
+                                const b_frame = try self.stack.pop();
+                                const g_frame = try self.stack.pop();
+                                const r_frame = try self.stack.pop();
+
+                                const r = switch (r_frame.value) {
+                                    .byte => |byte_val| byte_val,
+                                    .int => |i| if (i >= 0 and i <= 255) @as(u8, @intCast(i)) else 0,
+                                    else => 0,
+                                };
+                                const g = switch (g_frame.value) {
+                                    .byte => |byte_val| byte_val,
+                                    .int => |i| if (i >= 0 and i <= 255) @as(u8, @intCast(i)) else 0,
+                                    else => 0,
+                                };
+                                const b = switch (b_frame.value) {
+                                    .byte => |byte_val| byte_val,
+                                    .int => |i| if (i >= 0 and i <= 255) @as(u8, @intCast(i)) else 0,
+                                    else => 0,
+                                };
+                                const a = switch (a_frame.value) {
+                                    .byte => |byte_val| byte_val,
+                                    .int => |i| if (i >= 0 and i <= 255) @as(u8, @intCast(i)) else 0,
+                                    else => 0,
+                                };
+
+                                const color = ray.bytesToColor(r, g, b, a);
+                                const fields = try self.allocator.alloc(HIRStructField, 4);
+                                fields[0] = .{ .name = "r", .value = HIRValue{ .byte = color.r }, .field_type = .Byte };
+                                fields[1] = .{ .name = "g", .value = HIRValue{ .byte = color.g }, .field_type = .Byte };
+                                fields[2] = .{ .name = "b", .value = HIRValue{ .byte = color.b }, .field_type = .Byte };
+                                fields[3] = .{ .name = "a", .value = HIRValue{ .byte = color.a }, .field_type = .Byte };
+                                
+                                try self.stack.pushValue(HIRValue{ .struct_instance = .{
+                                    .type_name = "Color",
+                                    .fields = fields,
+                                    .field_name = null,
+                                    .path = null,
+                                } });
+                                return;
+                            }
+                        } else if (std.mem.eql(u8, sub_alias, "raylib")) {
+                            if (std.mem.eql(u8, func_name, "ClearBackground")) {
+                                const color_frame = try self.stack.pop();
+                                // Extract color from struct
+                                switch (color_frame.value) {
+                                    .struct_instance => |s| {
+                                        var r: u8 = 0;
+                                        var g: u8 = 0;
+                                        var b: u8 = 0;
+                                        var a: u8 = 255;
+                                        
+                                        for (s.fields) |field| {
+                                            if (std.mem.eql(u8, field.name, "r")) {
+                                                r = switch (field.value) {
+                                                    .byte => |byte_val| byte_val,
+                                                    .int => |i| if (i >= 0 and i <= 255) @as(u8, @intCast(i)) else 0,
+                                                    else => 0,
+                                                };
+                                            } else if (std.mem.eql(u8, field.name, "g")) {
+                                                g = switch (field.value) {
+                                                    .byte => |byte_val| byte_val,
+                                                    .int => |i| if (i >= 0 and i <= 255) @as(u8, @intCast(i)) else 0,
+                                                    else => 0,
+                                                };
+                                            } else if (std.mem.eql(u8, field.name, "b")) {
+                                                b = switch (field.value) {
+                                                    .byte => |byte_val| byte_val,
+                                                    .int => |i| if (i >= 0 and i <= 255) @as(u8, @intCast(i)) else 0,
+                                                    else => 0,
+                                                };
+                                            } else if (std.mem.eql(u8, field.name, "a")) {
+                                                a = switch (field.value) {
+                                                    .byte => |byte_val| byte_val,
+                                                    .int => |i| if (i >= 0 and i <= 255) @as(u8, @intCast(i)) else 0,
+                                                    else => 255,
+                                                };
+                                            }
+                                        }
+                                        
+                                        ray.ClearBackgroundDoxa(.{ .r = r, .g = g, .b = b, .a = a });
+                                    },
+                                    else => {
+                                        // Default to black if not a struct
+                                        ray.ClearBackgroundDoxa(.{ .r = 0, .g = 0, .b = 0, .a = 255 });
+                                    },
+                                }
+                                return;
+                            } else if (std.mem.eql(u8, func_name, "DrawCircle")) {
+                                const color_frame = try self.stack.pop();
+                                const radius_frame = try self.stack.pop();
+                                const y_frame = try self.stack.pop();
+                                const x_frame = try self.stack.pop();
+
+                                const x = try x_frame.asInt();
+                                const y = try y_frame.asInt();
+                                const radius = switch (radius_frame.value) {
+                                    .int => |i| @as(f32, @floatFromInt(i)),
+                                    .float => |f| @as(f32, @floatCast(f)),
+                                    .byte => |b| @as(f32, @floatFromInt(b)),
+                                    else => 0.0,
+                                };
+
+                                // Extract color from struct
+                                var r: u8 = 0;
+                                var g: u8 = 0;
+                                var b: u8 = 0;
+                                var a: u8 = 255;
+                                
+                                switch (color_frame.value) {
+                                    .struct_instance => |s| {
+                                        for (s.fields) |field| {
+                                            if (std.mem.eql(u8, field.name, "r")) {
+                                                r = switch (field.value) {
+                                                    .byte => |byte_val| byte_val,
+                                                    .int => |i| if (i >= 0 and i <= 255) @as(u8, @intCast(i)) else 0,
+                                                    else => 0,
+                                                };
+                                            } else if (std.mem.eql(u8, field.name, "g")) {
+                                                g = switch (field.value) {
+                                                    .byte => |byte_val| byte_val,
+                                                    .int => |i| if (i >= 0 and i <= 255) @as(u8, @intCast(i)) else 0,
+                                                    else => 0,
+                                                };
+                                            } else if (std.mem.eql(u8, field.name, "b")) {
+                                                b = switch (field.value) {
+                                                    .byte => |byte_val| byte_val,
+                                                    .int => |i| if (i >= 0 and i <= 255) @as(u8, @intCast(i)) else 0,
+                                                    else => 0,
+                                                };
+                                            } else if (std.mem.eql(u8, field.name, "a")) {
+                                                a = switch (field.value) {
+                                                    .byte => |byte_val| byte_val,
+                                                    .int => |i| if (i >= 0 and i <= 255) @as(u8, @intCast(i)) else 0,
+                                                    else => 255,
+                                                };
+                                            }
+                                        }
+                                    },
+                                    else => {},
+                                }
+
+                                ray.DrawCircle(@intCast(x), @intCast(y), radius, .{ .r = r, .g = g, .b = b, .a = a });
+                                return;
+                            }
+                        }
+                    }
+                }
+
                 // Try to resolve function by qualified name if function_index doesn't match
                 const function_index = self.resolveFunctionIndex(payload.target.function_index, payload.target.qualified_name);
                 // Create a function invocation that preserves storage references for alias parameters
