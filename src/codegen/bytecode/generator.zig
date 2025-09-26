@@ -391,7 +391,17 @@ pub const BytecodeGenerator = struct {
                 .StoreAlias => |payload| {
                     // For alias parameters, we need to store to the alias slot
                     // This will be handled by the VM using the alias reference
-                    try self.instructions.append(self.allocator, .{ .StoreSlot = .{ .target = .{ .slot = payload.slot_index, .kind = .alias, .module_id = null }, .type_tag = module.typeFromHIR(payload.expected_type) } });
+                    try self.instructions.append(self.allocator, .{ .StoreAlias = .{ .slot_index = payload.slot_index, .type_tag = module.typeFromHIR(payload.expected_type) } });
+                },
+                .ResolveAlias => |payload| {
+                    // Resolve an alias to its target slot
+                    try self.instructions.append(self.allocator, .{ .ResolveAlias = .{ .target_slot = payload.target_slot } });
+                },
+                .BindAlias => |payload| {
+                    // Bind an alias to its target variable
+                    const alias_slot: module.SlotIndex = payload.alias_slot;
+                    try self.alias_slots.put(alias_slot, {});
+                    try self.instructions.append(self.allocator, .{ .BindAlias = .{ .alias_slot = alias_slot, .type_tag = module.typeFromHIR(payload.target_type) } });
                 },
                 .Arith => |payload| try self.instructions.append(self.allocator, .{ .Arith = .{ .op = payload.op, .type_tag = module.typeFromHIR(payload.operand_type) } }),
                 .Convert => |payload| try self.instructions.append(self.allocator, .{ .Convert = .{ .from = module.typeFromHIR(payload.from_type), .to = module.typeFromHIR(payload.to_type) } }),

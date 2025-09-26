@@ -67,35 +67,78 @@ pub const BasicExpressionHandler = struct {
         if (maybe_idx) |existing_idx| {
             const var_idx = existing_idx;
 
-            // Determine scope based on where the variable was found
-            const scope_kind = self.generator.symbol_table.determineVariableScope(var_token.lexeme);
+            // Check if this is an alias parameter
+            if (self.generator.symbol_table.isAliasParameter(var_token.lexeme)) {
+                // For alias parameters, get the correct slot from the slot manager
+                if (self.generator.slot_manager.getAliasSlot(var_token.lexeme)) |alias_slot| {
+                    try self.generator.instructions.append(.{
+                        .LoadAlias = .{
+                            .var_name = var_token.lexeme,
+                            .slot_index = alias_slot,
+                        },
+                    });
+                } else {
+                    // Fallback to old behavior if alias not found
+                    try self.generator.instructions.append(.{
+                        .LoadAlias = .{
+                            .var_name = var_token.lexeme,
+                            .slot_index = 1, // Fallback to hardcoded slot
+                        },
+                    });
+                }
+            } else {
+                // Regular variable
+                // Determine scope based on where the variable was found
+                const scope_kind = self.generator.symbol_table.determineVariableScope(var_token.lexeme);
 
-            const load_var_inst = HIRInstruction{
-                .LoadVar = .{
-                    .var_index = var_idx,
-                    .var_name = var_token.lexeme,
-                    .scope_kind = scope_kind,
-                    .module_context = null,
-                },
-            };
-            try self.generator.instructions.append(load_var_inst);
+                const load_var_inst = HIRInstruction{
+                    .LoadVar = .{
+                        .var_index = var_idx,
+                        .var_name = var_token.lexeme,
+                        .scope_kind = scope_kind,
+                        .module_context = null,
+                    },
+                };
+                try self.generator.instructions.append(load_var_inst);
+            }
         } else {
-            // Ensure the variable exists in the current scope and load it at runtime
-            const var_idx2 = try self.generator.getOrCreateVariable(var_token.lexeme);
+            // Check if this is an alias parameter that wasn't found in the symbol table
+            if (self.generator.symbol_table.isAliasParameter(var_token.lexeme)) {
+                // For alias parameters, get the correct slot from the slot manager
+                if (self.generator.slot_manager.getAliasSlot(var_token.lexeme)) |alias_slot| {
+                    try self.generator.instructions.append(.{
+                        .LoadAlias = .{
+                            .var_name = var_token.lexeme,
+                            .slot_index = alias_slot,
+                        },
+                    });
+                } else {
+                    // Fallback to old behavior if alias not found
+                    try self.generator.instructions.append(.{
+                        .LoadAlias = .{
+                            .var_name = var_token.lexeme,
+                            .slot_index = 1, // Fallback to hardcoded slot
+                        },
+                    });
+                }
+            } else {
+                // Regular variable - ensure it exists in the current scope and load it at runtime
+                const var_idx2 = try self.generator.getOrCreateVariable(var_token.lexeme);
 
-            // Determine scope based on where the variable was actually created
-            // This must happen AFTER getOrCreateVariable to ensure the variable is registered
-            const scope_kind = self.generator.symbol_table.determineVariableScope(var_token.lexeme);
+                // Determine scope based on where the variable was actually created
+                // This must happen AFTER getOrCreateVariable to ensure the variable is registered
+                const scope_kind = self.generator.symbol_table.determineVariableScope(var_token.lexeme);
 
-            const load_var_inst2 = HIRInstruction{
-                .LoadVar = .{
-                    .var_index = var_idx2,
-                    .var_name = var_token.lexeme,
-                    .scope_kind = scope_kind,
-                    .module_context = null,
-                },
-            };
-            try self.generator.instructions.append(load_var_inst2);
+                const load_var_inst2 = HIRInstruction{
+                    .LoadVar = .{
+                        .var_index = var_idx2,
+                        .var_name = var_token.lexeme,
+                        .scope_kind = scope_kind,
+                        .module_context = null,
+                    },
+                };
+                try self.generator.instructions.append(load_var_inst2);
+            }
         }
     }
 

@@ -78,6 +78,8 @@ pub const Instruction = union(enum) {
     PushStorageRef: SlotOperand,
     BindAlias: struct { alias_slot: SlotIndex, type_tag: BytecodeType },
     LoadAlias: struct { slot_index: SlotIndex },
+    StoreAlias: struct { slot_index: SlotIndex, type_tag: BytecodeType },
+    ResolveAlias: struct { target_slot: SlotIndex },
     Arith: struct { op: hir_instructions.ArithOp, type_tag: BytecodeType },
     Convert: struct { from: BytecodeType, to: BytecodeType },
     Compare: struct { op: hir_instructions.CompareOp, type_tag: BytecodeType },

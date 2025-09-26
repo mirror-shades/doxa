@@ -125,6 +125,21 @@ pub const HIRInstruction = union(enum) {
         expected_type: HIRType,
     },
 
+    /// Resolve an alias to its target slot dynamically
+    ResolveAlias: struct {
+        alias_name: []const u8,
+        target_slot: u32,
+    },
+
+    /// Bind an alias to its target variable
+    BindAlias: struct {
+        alias_name: []const u8,
+        target_variable_name: []const u8,
+        alias_slot: u32,
+        target_slot: u32,
+        target_type: HIRType,
+    },
+
     //==================================================================
     // ARITHMETIC OPERATIONS (Type-preserving)
     //==================================================================
