@@ -44,7 +44,6 @@ pub const BEIGE = c.BEIGE;
 pub const WHITE = c.WHITE;
 pub const BLACK = c.BLACK;
 
-// Doxa-friendly color type
 pub const DoxaColor = struct {
     r: u8,
     g: u8,
@@ -52,7 +51,6 @@ pub const DoxaColor = struct {
     a: u8 = 255,
 };
 
-// Color enum for easy mapping
 pub const ColorName = enum {
     DARKGRAY,
     MAROON,
@@ -79,7 +77,6 @@ pub const ColorName = enum {
     BLACK,
 };
 
-// Helper function to convert ColorName to DoxaColor
 pub fn colorNameToColor(color_name: ColorName) DoxaColor {
     return switch (color_name) {
         .DARKGRAY => .{ .r = DARKGRAY.r, .g = DARKGRAY.g, .b = DARKGRAY.b, .a = DARKGRAY.a },
@@ -108,7 +105,6 @@ pub fn colorNameToColor(color_name: ColorName) DoxaColor {
     };
 }
 
-// Helper function to convert string to ColorName
 pub fn stringToColorName(color_str: []const u8) ?ColorName {
     if (std.mem.eql(u8, color_str, "DARKGRAY")) return .DARKGRAY;
     if (std.mem.eql(u8, color_str, "MAROON")) return .MAROON;
@@ -150,6 +146,7 @@ pub fn stringToColor(color_str: []const u8) ?DoxaColor {
 }
 
 const std = @import("std");
+// Image functions
 pub const ImageFlipHorizontal = c.ImageFlipHorizontal;
 pub const ImageFlipVertical = c.ImageFlipVertical;
 pub const Rectangle = c.Rectangle;
@@ -160,6 +157,7 @@ pub const DrawRectangle = c.DrawRectangle;
 pub const DrawRectangleV = c.DrawRectangleV;
 pub const GetTime = c.GetTime;
 pub const DrawFPS = c.DrawFPS;
+
 // Input functions
 pub const IsKeyPressed = c.IsKeyPressed;
 pub const IsKeyDown = c.IsKeyDown;

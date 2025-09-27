@@ -17,6 +17,7 @@ pub const ErrorList = error{
     InvalidOperator,
     InvalidConstant,
     InvalidExpression,
+    InvalidTokenType,
     UnknownDirective,
     InvalidDirective,
     ExpectedEnumValue,

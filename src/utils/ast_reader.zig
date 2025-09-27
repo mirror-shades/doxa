@@ -44,7 +44,7 @@ pub const ASTReader = struct {
     fn readLiteral(self: *ASTReader) !*ast.Expr {
         const value_line = try self.readLine();
         const value_parts = std.mem.split(u8, value_line, ":");
-        _ = value_parts.next(); // Skip "value" prefix
+        _ = value_parts.next();
         const type_str = value_parts.next() orelse return error.InvalidFormat;
         const value_str = value_parts.next() orelse return error.InvalidFormat;
 
@@ -143,7 +143,6 @@ pub const ASTReader = struct {
         return peek;
     }
 
-    // Helper functions
     fn readLine(self: *ASTReader) ![]const u8 {
         self.current_line += 1;
         return self.lines.next() orelse return error.UnexpectedEndOfFile;

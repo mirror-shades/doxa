@@ -11,11 +11,10 @@ const Errors = @import("../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
 const ErrorCode = Errors.ErrorCode;
 
-// Forward declaration for circular reference
 pub const ModuleEnvironment = struct {
     module_name: []const u8,
     environment: *Environment,
-    imports: std.StringHashMap([]const u8), // alias -> module_path
+    imports: std.StringHashMap([]const u8),
 
     pub fn init(allocator: std.mem.Allocator, module_name: []const u8, memory_manager: *MemoryManager, debug_enabled: bool) !*ModuleEnvironment {
         const self = try allocator.create(ModuleEnvironment);
@@ -23,11 +22,11 @@ pub const ModuleEnvironment = struct {
         env.* = .{
             .values = std.StringHashMap(TokenLiteral).init(allocator),
             .types = std.StringHashMap(ast.TypeInfo).init(allocator),
-            .enclosing = null, // Module environments don't have enclosing by default
+            .enclosing = null,
             .debug_enabled = debug_enabled,
             .allocator = allocator,
             .memory_manager = memory_manager,
-            .module = self, // Circular reference
+            .module = self,
         };
 
         self.* = .{
@@ -58,7 +57,7 @@ pub const Environment = struct {
     debug_enabled: bool,
     allocator: std.mem.Allocator,
     memory_manager: *MemoryManager,
-    module: ?*ModuleEnvironment = null, // Reference to owning module if this is a module environment
+    module: ?*ModuleEnvironment = null,
 
     pub fn deinit(self: *Environment) void {
         var it = self.values.iterator();
@@ -77,10 +76,8 @@ pub const Environment = struct {
 
     pub fn define(self: *Environment, key: []const u8, value: TokenLiteral, type_info: ast.TypeInfo) !void {
         if (self.memory_manager.scope_manager.root_scope) |root_scope| {
-            // Use the mutability information from type_info to determine if this is constant
             const is_constant = !type_info.is_mutable;
 
-            // Convert TypeInfo to TokenType if needed
             const token_type = switch (type_info.base) {
                 .Int => TokenType.INT,
                 .Byte => TokenType.BYTE,
@@ -98,7 +95,6 @@ pub const Environment = struct {
                 else => unreachable,
             };
 
-            // Create value binding
             _ = try root_scope.createValueBinding(key, value, token_type, type_info, is_constant);
             return;
         }
@@ -114,7 +110,6 @@ pub const Environment = struct {
             }
         }
 
-        // If not found in current environment, check enclosing if it exists
         if (self.enclosing) |enclosing| {
             return enclosing.get(name);
         }
@@ -123,19 +118,13 @@ pub const Environment = struct {
     }
 
     pub fn assign(self: *Environment, name: []const u8, value: TokenLiteral) !void {
-
-        // Look up variable from root scope
         if (self.memory_manager.scope_manager.root_scope) |root_scope| {
-            // Use lookupVariable to find the variable in any accessible scope
             if (root_scope.lookupVariable(name)) |variable| {
-                // Get the storage location for this variable
                 if (self.memory_manager.scope_manager.value_storage.get(variable.storage_id)) |storage| {
-                    // Check if the variable is constant
                     if (storage.constant) {
                         return error.CannotAssignToConstant;
                     }
 
-                    // Update the value in storage
                     storage.value = value;
 
                     return;
@@ -193,7 +182,7 @@ pub const TokenLiteral = union(enum) {
         params: []FunctionParam,
         body: []ast.Stmt,
         closure: *Environment,
-        defining_module: ?*ModuleEnvironment, // Reference to the module where this function was defined
+        defining_module: ?*ModuleEnvironment,
     },
     enum_variant: []const u8,
 };

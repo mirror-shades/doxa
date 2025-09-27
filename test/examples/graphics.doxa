@@ -70,7 +70,6 @@ function drawCircle(^circle :: Circle, frame_count :: int, ^shift :: byte, ^up :
     if circle.x > (WIDTH - circle.radius) or circle.x < circle.radius then {  
         circle.x_speed is -circle.x_speed
     }
-    @print("top at {HEIGHT}\n")
     if circle.y > (HEIGHT - circle.radius) or circle.y < circle.radius then {
         circle.y_speed is -circle.y_speed   
     }
@@ -88,6 +87,7 @@ function drawCircle(^circle :: Circle, frame_count :: int, ^shift :: byte, ^up :
     if (shift == 0xFF or shift == 0x00) then {
         up is not up
     }
+    
 
     // draw the circle with raylib
     const color is dg.bytesToColor(0xAA, 0x22, shift, 0xFF)

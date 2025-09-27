@@ -22,7 +22,6 @@ pub const StringInterner = struct {
     }
 
     pub fn deinit(self: *StringInterner) void {
-        // Free all duplicated strings before deinitializing the HashMap
         var it = self.strings.iterator();
         while (it.next()) |entry| {
             self.allocator.free(entry.value_ptr.*);
@@ -40,22 +39,11 @@ pub const StringInterner = struct {
     }
 };
 
-// NEW: Custom type instance data union
 pub const CustomTypeInstanceData = union {
     struct_instance: *HIRStruct,
     enum_instance: *HIREnum,
-    // union_instance: *HIRUnion, // TODO: Add when union support is implemented
 };
 
-// NEW: Custom type instance tracking
-pub const CustomTypeInstance = struct {
-    id: u32,
-    type_name: []const u8,
-    scope_id: u32, // Which scope owns this instance
-    data: CustomTypeInstanceData,
-};
-
-// NEW: Unified CustomTypeInfo (shared between semantic analysis and VM)
 pub const CustomTypeInfo = struct {
     name: []const u8,
     kind: CustomTypeKind,
@@ -65,7 +53,6 @@ pub const CustomTypeInfo = struct {
     pub const CustomTypeKind = enum {
         Struct,
         Enum,
-        // Union, // TODO: Add when union support is implemented
     };
 
     pub const EnumVariant = struct {
@@ -76,11 +63,10 @@ pub const CustomTypeInfo = struct {
     pub const StructField = struct {
         name: []const u8,
         field_type: HIRType,
-        custom_type_name: ?[]const u8 = null, // For custom types like Person
+        custom_type_name: ?[]const u8 = null,
         index: u32,
     };
 
-    /// Get the index of an enum variant by name
     pub fn getEnumVariantIndex(self: *const CustomTypeInfo, variant_name: []const u8) ?u32 {
         if (self.kind != .Enum or self.enum_variants == null) return null;
 
@@ -92,7 +78,6 @@ pub const CustomTypeInfo = struct {
         return null;
     }
 
-    /// Get the index of a struct field by name
     pub fn getStructFieldIndex(self: *const CustomTypeInfo, field_name: []const u8) ?u32 {
         if (self.kind != .Struct or self.struct_fields == null) return null;
 
@@ -105,25 +90,19 @@ pub const CustomTypeInfo = struct {
     }
 };
 
-// NEW: Phase management
 pub const Phase = enum {
-    Analysis, // Semantic analysis phase
-    Generation, // HIR generation phase
-    Execution, // VM execution phase
+    Analysis,
+    Generation,
+    Execution,
 };
 
-// Profile entry for VM profiling
 pub const ProfileEntry = struct { count: u64 = 0, ns: u64 = 0 };
 
-// HashMap Manager - centralizes all HashMap lifecycle management
 pub const HashMapManager = struct {
-    // Track all HashMaps for centralized cleanup
     string_hashes: std.array_list.Managed(std.StringHashMap([]const u8)),
     auto_hashes: std.array_list.Managed(std.AutoHashMap(u32, *Variable)),
-    custom_type_hashes: std.array_list.Managed(std.AutoHashMap(u32, *CustomTypeInstance)),
     profile_hashes: std.array_list.Managed(std.StringHashMap(ProfileEntry)),
 
-    // Track Scope objects for cleanup
     scopes: std.array_list.Managed(*Scope),
 
     allocator: std.mem.Allocator,
@@ -132,7 +111,6 @@ pub const HashMapManager = struct {
         return .{
             .string_hashes = std.array_list.Managed(std.StringHashMap([]const u8)).init(allocator),
             .auto_hashes = std.array_list.Managed(std.AutoHashMap(u32, *Variable)).init(allocator),
-            .custom_type_hashes = std.array_list.Managed(std.AutoHashMap(u32, *CustomTypeInstance)).init(allocator),
             .profile_hashes = std.array_list.Managed(std.StringHashMap(ProfileEntry)).init(allocator),
             .scopes = std.array_list.Managed(*Scope).init(allocator),
             .allocator = allocator,
@@ -140,7 +118,6 @@ pub const HashMapManager = struct {
     }
 
     pub fn deinit(self: *HashMapManager) void {
-        // Clean up all tracked HashMaps
         for (self.string_hashes.items) |*hash| {
             hash.deinit();
         }
@@ -151,17 +128,11 @@ pub const HashMapManager = struct {
         }
         self.auto_hashes.deinit();
 
-        for (self.custom_type_hashes.items) |*hash| {
-            hash.deinit();
-        }
-        self.custom_type_hashes.deinit();
-
         for (self.profile_hashes.items) |*hash| {
             hash.deinit();
         }
         self.profile_hashes.deinit();
 
-        // Clean up all tracked Scope objects
         for (self.scopes.items) |scope| {
             scope.deinit();
             self.allocator.destroy(scope);
@@ -169,7 +140,6 @@ pub const HashMapManager = struct {
         self.scopes.deinit();
     }
 
-    // Factory methods that track HashMaps for cleanup
     pub fn createStringHashMap(self: *HashMapManager) !std.StringHashMap([]const u8) {
         const hash = std.StringHashMap([]const u8).init(self.allocator);
         try self.string_hashes.append(hash);
@@ -182,19 +152,12 @@ pub const HashMapManager = struct {
         return hash;
     }
 
-    pub fn createCustomTypeHashMap(self: *HashMapManager) !std.AutoHashMap(u32, *CustomTypeInstance) {
-        const hash = std.AutoHashMap(u32, *CustomTypeInstance).init(self.allocator);
-        try self.custom_type_hashes.append(hash);
-        return hash;
-    }
-
     pub fn createProfileHashMap(self: *HashMapManager) !std.StringHashMap(ProfileEntry) {
         const hash = std.StringHashMap(ProfileEntry).init(self.allocator);
         try self.profile_hashes.append(hash);
         return hash;
     }
 
-    // Factory method for creating and tracking Scope objects
     pub fn createScope(self: *HashMapManager, scope_id: u32, parent: ?*Scope, memory_manager: *MemoryManager) !*Scope {
         const scope = try self.allocator.create(Scope);
         scope.* = Scope.init(scope_id, parent, memory_manager);
@@ -204,23 +167,15 @@ pub const HashMapManager = struct {
 };
 
 pub const MemoryManager = struct {
-    // NEW: Phase-separated memory pools
-    analysis_arena: std.heap.ArenaAllocator, // Persistent through compilation
-    execution_arena: std.heap.ArenaAllocator, // Reset between runs
-    allocator: std.mem.Allocator, // Main allocator for general allocations
+    analysis_arena: std.heap.ArenaAllocator,
+    execution_arena: std.heap.ArenaAllocator,
+    allocator: std.mem.Allocator,
 
-    // Shared persistent data
     scope_manager: *ScopeManager,
-    hashmap_manager: HashMapManager, // NEW: Centralized HashMap management
+    hashmap_manager: HashMapManager,
 
-    // NEW: Unified type registry
     type_registry: std.StringHashMap(CustomTypeInfo),
 
-    // NEW: Type instance tracking
-    custom_type_instances: std.AutoHashMap(u32, *CustomTypeInstance),
-    next_instance_id: u32 = 0,
-
-    // NEW: Phase management
     current_phase: Phase = .Analysis,
 
     pub fn init(allocator: std.mem.Allocator) !MemoryManager {
@@ -232,27 +187,23 @@ pub const MemoryManager = struct {
             .scope_manager = scope_manager,
             .hashmap_manager = HashMapManager.init(allocator),
             .type_registry = std.StringHashMap(CustomTypeInfo).init(allocator),
-            .custom_type_instances = std.AutoHashMap(u32, *CustomTypeInstance).init(allocator),
             .current_phase = .Analysis,
         };
     }
 
     pub fn deinit(self: *MemoryManager) void {
-        // Clean up root scope first if it exists
         if (self.scope_manager.root_scope) |root_scope| {
             root_scope.deinit();
             self.scope_manager.root_scope = null;
         }
 
         self.scope_manager.deinit();
-        self.hashmap_manager.deinit(); // NEW: Clean up all tracked HashMaps
+        self.hashmap_manager.deinit();
         self.type_registry.deinit();
-        self.custom_type_instances.deinit();
         self.analysis_arena.deinit();
         self.execution_arena.deinit();
     }
 
-    // NEW: Phase-specific allocators
     pub fn getAnalysisAllocator(self: *MemoryManager) std.mem.Allocator {
         return self.analysis_arena.allocator();
     }
@@ -261,12 +212,10 @@ pub const MemoryManager = struct {
         return self.execution_arena.allocator();
     }
 
-    // Legacy compatibility - returns execution allocator for VM compatibility
     pub fn getAllocator(self: *MemoryManager) std.mem.Allocator {
         return self.getExecutionAllocator();
     }
 
-    // NEW: Phase transition management
     pub fn transitionToGeneration(self: *MemoryManager) !void {
         if (self.current_phase != .Analysis) {
             return error.InvalidPhaseTransition;
@@ -279,10 +228,8 @@ pub const MemoryManager = struct {
             return error.InvalidPhaseTransition;
         }
 
-        // Reset execution memory while preserving analysis results
         self.resetExecutionMemory();
 
-        // Create execution scope if needed
         if (self.scope_manager.root_scope == null) {
             const execution_scope = try self.scope_manager.createScope(null, self);
             self.scope_manager.root_scope = execution_scope;
@@ -295,17 +242,14 @@ pub const MemoryManager = struct {
         self.execution_arena.deinit();
         self.execution_arena = std.heap.ArenaAllocator.init(self.analysis_arena.child_allocator);
 
-        // Clear custom type instances but preserve type registry
         self.custom_type_instances.clearRetainingCapacity();
         self.next_instance_id = 0;
     }
 
-    // Legacy compatibility
     pub fn reset(self: *MemoryManager) void {
         self.resetExecutionMemory();
     }
 
-    // NEW: Type registry management
     pub fn registerCustomType(self: *MemoryManager, type_info: CustomTypeInfo) !void {
         try self.type_registry.put(type_info.name, type_info);
     }
@@ -314,7 +258,6 @@ pub const MemoryManager = struct {
         return self.type_registry.get(type_name);
     }
 
-    // NEW: Type-safe allocation functions
     pub fn allocateStruct(self: *MemoryManager, scope: *Scope, type_name: []const u8, fields: []HIRStructField) !*HIRStruct {
         const struct_data = try self.execution_arena.allocator().create(HIRStruct);
         struct_data.* = .{
@@ -345,7 +288,6 @@ pub const MemoryManager = struct {
         return enum_data;
     }
 
-    // NEW: Bridge function for VM integration
     pub fn bridgeTypesToVM(self: *MemoryManager, vm: anytype) !void {
         var type_iter = self.type_registry.iterator();
         while (type_iter.next()) |entry| {
@@ -361,38 +303,29 @@ pub const MemoryManager = struct {
         return self.hashmap_manager.createAutoHashMap();
     }
 
-    pub fn createCustomTypeHashMap(self: *MemoryManager) !std.AutoHashMap(u32, *CustomTypeInstance) {
-        return self.hashmap_manager.createCustomTypeHashMap();
-    }
-
     pub fn createProfileHashMap(self: *MemoryManager) !std.StringHashMap(ProfileEntry) {
         return self.hashmap_manager.createProfileHashMap();
     }
 
-    // Convenience method for creating and tracking Scope objects
     pub fn createScope(self: *MemoryManager, scope_id: u32, parent: ?*Scope) !*Scope {
         return self.hashmap_manager.createScope(scope_id, parent, self);
     }
 };
 
-/// ValueStorage holds a value - no longer needs alias counting with arena allocation
 const ValueStorage = struct { value: TokenLiteral, type: TokenType, type_info: *ast.TypeInfo, constant: bool };
 
-/// Variable represents a named alias to a storage location
 pub const Variable = struct {
     name: []const u8,
     type: TokenType,
-    storage_id: u32, // ID of the storage location
-    id: u32, // Unique variable ID
+    storage_id: u32,
+    id: u32,
     is_alias: bool,
 };
 
-/// ScopeManager handles all scope, variable and storage operations
 pub const ScopeManager = struct {
     variable_map: std.AutoHashMap(u32, *Variable),
     value_storage: std.AutoHashMap(u32, *ValueStorage),
     next_storage_id: u32 = 0,
-    // Use a separate counter for scope IDs to avoid colliding with storage IDs
     next_scope_id: u32 = 0,
     variable_counter: u32 = 0,
     root_scope: ?*Scope = null,
@@ -409,8 +342,6 @@ pub const ScopeManager = struct {
     }
 
     pub fn deinit(self: *ScopeManager) void {
-        // Note: Individual variables and storage are owned by scopes
-        // and will be cleaned up when scopes are deinitialized
         self.variable_map.deinit();
         self.value_storage.deinit();
         self.allocator.destroy(self);
@@ -428,7 +359,6 @@ pub const ScopeManager = struct {
     pub fn dumpState(self: *ScopeManager, scope_id: u32) void {
         std.debug.print("Current scope ID: {}\n", .{scope_id});
 
-        // Display variables
         if (self.variable_map.count() > 0) {
             std.debug.print("Variables:\n", .{});
             var var_it = self.variable_map.iterator();
@@ -445,14 +375,12 @@ pub const ScopeManager = struct {
             std.debug.print("No variables\n", .{});
         }
 
-        // Display storage
         if (self.value_storage.count() > 0) {
             std.debug.print("Storage:\n", .{});
             var storage_it = self.value_storage.iterator();
             while (storage_it.next()) |entry| {
                 const key = entry.key_ptr.*;
                 const value = entry.value_ptr.*;
-                // Safe debug output - avoid printing complex values that might have circular references
                 std.debug.print("  [{d}]: type={}, constant={}\n", .{ key, value.type, value.constant });
             }
         }
@@ -465,7 +393,6 @@ pub const ScopeManager = struct {
     }
 
     pub fn createScopeWithId(self: *ScopeManager, parent: ?*Scope, memory_manager: *MemoryManager, scope_id: u32) !*Scope {
-        // Update next_scope_id to avoid conflicts with future auto-generated IDs
         if (scope_id >= self.next_scope_id) {
             self.next_scope_id = scope_id + 1;
         }
@@ -473,7 +400,6 @@ pub const ScopeManager = struct {
     }
 };
 
-/// Scope represents a lexical scope with its own variables
 pub const Scope = struct {
     id: u32,
     parent: ?*Scope,
@@ -481,17 +407,12 @@ pub const Scope = struct {
     name_map: std.StringHashMap(*Variable),
     arena: std.heap.ArenaAllocator,
     manager: *ScopeManager,
-    memory_manager: *MemoryManager, // Reference to parent MemoryManager for cleanup
+    memory_manager: *MemoryManager,
 
-    // Custom type instances owned by this scope
-    custom_type_instances: std.AutoHashMap(u32, *CustomTypeInstance),
-
-    // Track if HashMaps have been deinitialized
     variables_deinit: bool = false,
     name_map_deinit: bool = false,
     custom_type_instances_deinit: bool = false,
 
-    // Track if the entire scope has been deinitialized
     scope_deinit: bool = false,
 
     pub fn init(scope_id: u32, parent: ?*Scope, memory_manager: *MemoryManager) Scope {
@@ -499,23 +420,19 @@ pub const Scope = struct {
             .id = scope_id,
             .parent = parent,
             .arena = std.heap.ArenaAllocator.init(memory_manager.allocator),
-            .variables = std.AutoHashMap(u32, *Variable).init(memory_manager.allocator), // Use main allocator for growing HashMaps
-            .name_map = std.StringHashMap(*Variable).init(memory_manager.allocator), // Use main allocator for growing HashMaps
+            .variables = std.AutoHashMap(u32, *Variable).init(memory_manager.allocator),
+            .name_map = std.StringHashMap(*Variable).init(memory_manager.allocator),
             .manager = memory_manager.scope_manager,
             .memory_manager = memory_manager,
-            .custom_type_instances = std.AutoHashMap(u32, *CustomTypeInstance).init(memory_manager.allocator), // Use main allocator for growing HashMaps
         };
     }
 
     pub fn deinit(self: *Scope) void {
-        // Prevent double deinitialization
         if (self.scope_deinit) {
             return;
         }
         self.scope_deinit = true;
 
-        // Clean up HashMaps first - they use the main allocator
-        // Only deinit if they haven't been deinitialized already
         if (!self.variables_deinit) {
             self.variables.deinit();
             self.variables_deinit = true;
@@ -524,53 +441,20 @@ pub const Scope = struct {
             self.name_map.deinit();
             self.name_map_deinit = true;
         }
-        if (!self.custom_type_instances_deinit) {
-            self.custom_type_instances.deinit();
-            self.custom_type_instances_deinit = true;
-        }
 
-        // Free all scope memory at once - this automatically cleans up:
-        // - All Variable instances
-        // - All ValueStorage instances
-        // - All CustomTypeInstance instances
         self.arena.deinit();
-        // Note: self is destroyed by HashMapManager.deinit(), not here
     }
 
-    /// Reserve capacity in variable/name maps to reduce rehashing cost when binding params/locals
     pub fn reserveVariableCapacity(self: *Scope, count: usize) void {
-        // Best-effort; ignore errors to keep fast path simple
         self.variables.ensureTotalCapacity(@intCast(count)) catch {};
         self.name_map.ensureTotalCapacity(@intCast(count)) catch {};
     }
 
-    // Custom type instance creation - using arena allocator for unified cleanup
-    pub fn createCustomTypeInstance(self: *Scope, type_name: []const u8, data: CustomTypeInstanceData) !*CustomTypeInstance {
-        const instance = try self.arena.allocator().create(CustomTypeInstance);
-        instance.* = .{
-            .id = self.manager.next_instance_id,
-            .type_name = type_name,
-            .scope_id = self.id,
-            .data = data,
-        };
-
-        self.manager.next_instance_id += 1;
-        try self.custom_type_instances.put(instance.id, instance);
-        // Also add to manager's global map for cross-scope lookups
-        try self.manager.custom_type_instances.put(instance.id, instance);
-
-        return instance;
-    }
-
-    // PHASE 6: Create a variable that can be safely accessed across scopes
-    // by allocating its storage in the root scope's arena
     pub fn createCrossScopeValueBinding(self: *Scope, name: []const u8, value: TokenLiteral, vtype: TokenType, type_info: *ast.TypeInfo, constant: bool) !*Variable {
-        // Check for duplicate variable name in current scope
         if (self.name_map.contains(name)) {
             return error.DuplicateVariableName;
         }
 
-        // Find the root scope for storage allocation
         var root_scope: *Scope = self;
         while (root_scope.parent) |parent| {
             root_scope = parent;
@@ -581,11 +465,9 @@ pub const Scope = struct {
         self.manager.next_storage_id += 1;
         self.manager.variable_counter += 1;
 
-        // Allocate storage in root scope's arena for cross-scope safety
         const storage = try root_scope.arena.allocator().create(ValueStorage);
         storage.* = .{ .value = value, .type = vtype, .type_info = type_info, .constant = constant };
 
-        // Create variable in current scope's arena
         const variable = try self.arena.allocator().create(Variable);
         variable.* = .{
             .name = name,
@@ -595,7 +477,6 @@ pub const Scope = struct {
             .is_alias = false,
         };
 
-        // Store in maps
         try self.manager.variable_map.put(variableId, variable);
         try self.manager.value_storage.put(storage_id, storage);
         try self.variables.put(variableId, variable);
@@ -605,7 +486,6 @@ pub const Scope = struct {
     }
 
     pub fn createValueBinding(self: *Scope, name: []const u8, value: TokenLiteral, vtype: TokenType, type_info: *ast.TypeInfo, constant: bool) !*Variable {
-        // Check for duplicate variable name in current scope
         if (self.name_map.contains(name)) {
             return error.DuplicateVariableName;
         }
@@ -615,11 +495,9 @@ pub const Scope = struct {
         self.manager.next_storage_id += 1;
         self.manager.variable_counter += 1;
 
-        // PHASE 1: Create storage using scope's arena allocator for unified cleanup
         const storage = try self.arena.allocator().create(ValueStorage);
         storage.* = .{ .value = value, .type = vtype, .type_info = type_info, .constant = constant };
 
-        // Create variable
         const variable = try self.arena.allocator().create(Variable);
         variable.* = .{
             .name = name,
@@ -629,7 +507,6 @@ pub const Scope = struct {
             .is_alias = false,
         };
 
-        // Store in maps
         try self.manager.variable_map.put(variableId, variable);
         try self.manager.value_storage.put(storage_id, storage);
         try self.variables.put(variableId, variable);
@@ -642,7 +519,6 @@ pub const Scope = struct {
         const variableId = self.manager.variable_counter;
         self.manager.variable_counter += 1;
 
-        // Create alias variable
         const variable = try self.arena.allocator().create(Variable);
         variable.* = .{
             .name = name,
@@ -652,10 +528,6 @@ pub const Scope = struct {
             .is_alias = true,
         };
 
-        // PHASE 3: No need to increment alias count with arena allocation
-        // Storage lifetime is managed by the scope that owns it
-
-        // Store in maps
         try self.manager.variable_map.put(variableId, variable);
         try self.variables.put(variableId, variable);
         try self.name_map.put(name, variable);
@@ -664,11 +536,10 @@ pub const Scope = struct {
     }
 
     pub fn createAliasFromStorageId(self: *Scope, name: []const u8, storage_id: u32, vtype: TokenType, type_info: *TypeInfo) !*Variable {
-        _ = type_info; // TODO: Use type_info for validation if needed
+        _ = type_info;
         const variableId = self.manager.variable_counter;
         self.manager.variable_counter += 1;
 
-        // Create alias variable
         const variable = try self.arena.allocator().create(Variable);
         variable.* = .{
             .name = name,
@@ -678,9 +549,7 @@ pub const Scope = struct {
             .is_alias = true,
         };
 
-        // Store in maps
         try self.manager.variable_map.put(variableId, variable);
-        // Note: storage is NOT created here, it's already existing
         try self.variables.put(variableId, variable);
         try self.name_map.put(name, variable);
 
@@ -697,7 +566,4 @@ pub const Scope = struct {
         }
         return null;
     }
-
-    // PHASE 3: Remove sanityCheck - no longer needed with unified arena allocation
-    // All memory management is handled automatically by the arena
 };
