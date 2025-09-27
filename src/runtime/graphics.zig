@@ -1,13 +1,11 @@
 const std = @import("std");
 const rl = @import("raylib.zig");
 
-// Global application/drawing state managed implicitly
 var window_open: bool = false;
 
-pub const raylib = rl; // Re-export raw wrappers for explicit control
+pub const raylib = rl;
 
 pub const doxa = struct {
-    // Types in the doxa namespace use simplified names
     pub const Color = rl.DoxaColor;
 
     pub fn Init(width: i64, height: i64, fps: i64, name: []const u8) !void {
@@ -19,16 +17,13 @@ pub const doxa = struct {
 
     pub fn Draw() void {
         rl.BeginDrawing();
-        // EndDrawing is implicitly deferred by the VM via defer_stacks in module call bridge
     }
 
     pub fn Running() bool {
         return !rl.WindowShouldClose();
     }
 
-    // Convenience wrappers and helpers that shouldn't live under raylib
     pub fn ClearBackground(color: Color) void {
-        // Use the DoxaColor-capable clear from raylib wrappers
         rl.ClearBackgroundDoxa(color);
     }
 
@@ -51,8 +46,6 @@ pub const doxa_module = struct {
         .{ .name = "Init", .func = doxa.Init },
         .{ .name = "Draw", .func = doxa.Draw },
         .{ .name = "Running", .func = doxa.Running },
-        // Helpers (names do not include "Doxa" since we're under doxa namespace)
-        .{ .name = "ClearBackground", .func = doxa.ClearBackground },
         .{ .name = "bytesToColor", .func = doxa.bytesToColor },
         .{ .name = "rgbToColor", .func = doxa.rgbToColor },
         .{ .name = "stringToColor", .func = doxa.stringToColor },
