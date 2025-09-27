@@ -110,8 +110,12 @@ pub const Parser = struct {
     pub fn peek(self: *Parser) token.Token {
         var i = self.current;
         // Skip over any semicolon tokens (non-semantic separators)
-        while (i < self.tokens.len - 1 and self.tokens[i].type == .SEMICOLON) {
+        while (i < self.tokens.len and self.tokens[i].type == .SEMICOLON) {
             i += 1;
+        }
+        // Ensure we don't go out of bounds
+        if (i >= self.tokens.len) {
+            return self.tokens[self.tokens.len - 1];
         }
         return self.tokens[i];
     }
@@ -121,11 +125,12 @@ pub const Parser = struct {
         var i: usize = self.current;
         var remaining = offset;
         // Ensure we start from a non-semicolon for offset 0 as well
-        while (i < self.tokens.len - 1 and self.tokens[i].type == .SEMICOLON) {
+        while (i < self.tokens.len and self.tokens[i].type == .SEMICOLON) {
             i += 1;
         }
-        while (remaining > 0 and i < self.tokens.len - 1) {
+        while (remaining > 0 and i < self.tokens.len) {
             i += 1;
+            if (i >= self.tokens.len) break;
             if (self.tokens[i].type == .SEMICOLON) continue;
             remaining -= 1;
         }
@@ -133,8 +138,11 @@ pub const Parser = struct {
             return self.tokens[self.tokens.len - 1];
         }
         // If we landed on a semicolon, skip to next non-semicolon or EOF
-        while (i < self.tokens.len - 1 and self.tokens[i].type == .SEMICOLON) {
+        while (i < self.tokens.len and self.tokens[i].type == .SEMICOLON) {
             i += 1;
+        }
+        if (i >= self.tokens.len) {
+            return self.tokens[self.tokens.len - 1];
         }
         return self.tokens[i];
     }

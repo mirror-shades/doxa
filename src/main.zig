@@ -120,7 +120,7 @@ fn writeBytecodeArtifact(bytecode_module: *BytecodeModule, path: []const u8) !vo
     try BytecodeWriter.writeBytecodeModuleToFile(bytecode_module, path);
 }
 
-fn generateHIRProgram(memoryManager: *MemoryManager, statements: []ast.Stmt, parser: *Parser, semantic_analyzer: *SemanticAnalyzer, source_path: []const u8, soxa_path: []const u8, reporter: *Reporter) !HIRProgram {
+fn generateHIRProgram(memoryManager: *MemoryManager, statements: []ast.Stmt, parser: *Parser, semantic_analyzer: *SemanticAnalyzer, reporter: *Reporter) !HIRProgram {
     var constant_folder = ConstantFolder.init(memoryManager.getAllocator());
     var folded_statements = std.array_list.Managed(ast.Stmt).init(memoryManager.getAllocator());
     defer folded_statements.deinit();
@@ -160,9 +160,7 @@ fn generateHIRProgram(memoryManager: *MemoryManager, statements: []ast.Stmt, par
         try hir_generator.struct_methods.put(struct_name, method_table_dst);
     }
 
-    var hir_program = try hir_generator.generateProgram(folded_statements.items);
-    try SoxaCompiler.writeSoxaFile(&hir_program, soxa_path, source_path, memoryManager.getAllocator());
-
+    const hir_program = try hir_generator.generateProgram(folded_statements.items);
     return hir_program;
 }
 
@@ -281,6 +279,14 @@ fn stringEndsWith(str: []const u8, suffix: []const u8) bool {
     const result = stringEquals(str[start..], suffix);
     return result;
 }
+
+fn lexicAnalysis(memoryManager: *MemoryManager, source: []const u8, path: []const u8, reporter: *Reporter) !std.array_list.Managed(Token) {
+    var lexer = LexicalAnalyzer.init(memoryManager.getAllocator(), source, path, reporter);
+    try lexer.initKeywords();
+    const tokens = try lexer.lexTokens();
+    return tokens;
+}
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 
@@ -310,8 +316,6 @@ pub fn main() !void {
     var profiler = Profiler.init(gpa.allocator(), cli_options.profile);
     defer profiler.deinit();
 
-    profiler.startPhase(Phase.VALIDATION);
-
     const path = cli_options.script_path.?; // Safe to unwrap since we validated it
 
     if (!stringEndsWith(path, DOXA_EXTENSION)) {
@@ -330,50 +334,36 @@ pub fn main() !void {
 
     const source = try std.fs.cwd().readFileAlloc(memoryManager.getAllocator(), path, MAX_FILE_SIZE);
     defer memoryManager.getAllocator().free(source);
-    profiler.stopPhase();
 
     profiler.startPhase(Phase.LEXIC_A);
-
-    var lexer = LexicalAnalyzer.init(memoryManager.getAllocator(), source, path, &reporter);
-    defer lexer.deinit();
-    try lexer.initKeywords();
-    const tokens = try lexer.lexTokens();
+    const lexedTokens = try lexicAnalysis(&memoryManager, source, path, &reporter);
+    defer lexedTokens.deinit();
     profiler.stopPhase();
 
     profiler.startPhase(Phase.PARSING);
-
-    var parser = Parser.init(memoryManager.getAllocator(), tokens.items, path, &reporter);
+    var parser = Parser.init(memoryManager.getAllocator(), lexedTokens.items, path, &reporter);
     defer parser.deinit();
-    const statements = try parser.execute();
-
-    const ast_path = try generateArtifactPath(&memoryManager, path, ".ast");
-    defer memoryManager.getAllocator().free(ast_path);
-    try ASTWriter.writeASTToFile(statements, ast_path);
+    const parsedStatements = try parser.execute();
     profiler.stopPhase();
 
     profiler.startPhase(Phase.SEMANTIC_A);
-
     var semantic_analyzer = SemanticAnalyzer.init(memoryManager.getAnalysisAllocator(), &reporter, &memoryManager, &parser);
     defer semantic_analyzer.deinit();
-    try semantic_analyzer.analyze(statements);
+    try semantic_analyzer.analyze(parsedStatements);
     profiler.stopPhase();
 
     profiler.startPhase(Phase.GENERATE_S);
 
+    // Generate the soxa path for intermediate files
     const soxa_path = try generateArtifactPath(&memoryManager, path, ".soxa");
     defer memoryManager.getAllocator().free(soxa_path);
 
-    std.fs.cwd().deleteFile(soxa_path) catch {};
-
-    var hir_program_for_bytecode: ?HIRProgram = null;
-    defer if (hir_program_for_bytecode) |*program| program.deinit();
-
-    hir_program_for_bytecode = try generateHIRProgram(&memoryManager, statements, &parser, &semantic_analyzer, path, soxa_path, &reporter);
+    const hir_program_for_bytecode = try generateHIRProgram(&memoryManager, parsedStatements, &parser, &semantic_analyzer, &reporter);
     profiler.stopPhase();
 
     profiler.startPhase(Phase.GENERATE_B);
 
-    const hir_program = hir_program_for_bytecode.?;
+    const hir_program = hir_program_for_bytecode;
     const artifact_stem = blk: {
         var filename_start: usize = 0;
         for (path, 0..) |c, i| {
