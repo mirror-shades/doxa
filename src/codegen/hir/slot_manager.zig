@@ -1,7 +1,6 @@
 const std = @import("std");
 const HIRType = @import("soxa_types.zig").HIRType;
 
-/// Manages slot allocation to prevent conflicts between regular variables and aliases
 pub const SlotManager = struct {
     allocator: std.mem.Allocator,
     next_regular_slot: u32,
@@ -9,7 +8,7 @@ pub const SlotManager = struct {
     slot_assignments: std.AutoHashMap(u32, SlotInfo),
     variable_slots: std.StringHashMap(u32),
     alias_slots: std.StringHashMap(u32),
-    
+
     pub const SlotInfo = struct {
         slot_id: u32,
         variable_name: []const u8,
@@ -45,7 +44,6 @@ pub const SlotManager = struct {
         self.alias_slots.deinit();
     }
 
-    /// Allocate a slot for a regular variable
     pub fn allocateRegularSlot(self: *SlotManager, variable_name: []const u8, hir_type: HIRType) !u32 {
         const slot_id = self.next_regular_slot;
         self.next_regular_slot += 1;
@@ -63,7 +61,6 @@ pub const SlotManager = struct {
         return slot_id;
     }
 
-    /// Allocate a slot for an alias
     pub fn allocateAliasSlot(self: *SlotManager, alias_name: []const u8, hir_type: HIRType) !u32 {
         const slot_id = self.next_alias_slot;
         self.next_alias_slot += 1;
@@ -81,7 +78,6 @@ pub const SlotManager = struct {
         return slot_id;
     }
 
-    /// Allocate a temporary slot (for intermediate calculations)
     pub fn allocateTemporarySlot(self: *SlotManager, hir_type: HIRType) !u32 {
         const slot_id = self.next_regular_slot;
         self.next_regular_slot += 1;
@@ -98,22 +94,18 @@ pub const SlotManager = struct {
         return slot_id;
     }
 
-    /// Get the slot ID for a variable
     pub fn getVariableSlot(self: *SlotManager, variable_name: []const u8) ?u32 {
         return self.variable_slots.get(variable_name);
     }
 
-    /// Get the slot ID for an alias
     pub fn getAliasSlot(self: *SlotManager, alias_name: []const u8) ?u32 {
         return self.alias_slots.get(alias_name);
     }
 
-    /// Get slot information by slot ID
     pub fn getSlotInfo(self: *SlotManager, slot_id: u32) ?SlotInfo {
         return self.slot_assignments.get(slot_id);
     }
 
-    /// Check if a slot is allocated
     pub fn isSlotAllocated(self: *SlotManager, slot_id: u32) bool {
         if (self.slot_assignments.get(slot_id)) |slot_info| {
             return slot_info.is_allocated;
@@ -121,26 +113,21 @@ pub const SlotManager = struct {
         return false;
     }
 
-    /// Check if a variable has a slot
     pub fn hasVariableSlot(self: *SlotManager, variable_name: []const u8) bool {
         return self.variable_slots.contains(variable_name);
     }
 
-    /// Check if an alias has a slot
     pub fn hasAliasSlot(self: *SlotManager, alias_name: []const u8) bool {
         return self.alias_slots.contains(alias_name);
     }
 
-    /// Deallocate a slot (for cleanup)
     pub fn deallocateSlot(self: *SlotManager, slot_id: u32) void {
         if (self.slot_assignments.getPtr(slot_id)) |slot_info| {
             slot_info.is_allocated = false;
-            // Note: We don't remove from the map to avoid reusing slot IDs
-            // This ensures that slot IDs remain unique throughout the program
+            // don't remove from the map to avoid reusing slot IDs
         }
     }
 
-    /// Clear all slot assignments (useful for function scope cleanup)
     pub fn clear(self: *SlotManager) void {
         var it = self.slot_assignments.iterator();
         while (it.next()) |entry| {
@@ -153,7 +140,6 @@ pub const SlotManager = struct {
         self.next_alias_slot = 1000;
     }
 
-    /// Get statistics about slot usage
     pub fn getStats(self: *SlotManager) SlotStats {
         var regular_count: u32 = 0;
         var alias_count: u32 = 0;
