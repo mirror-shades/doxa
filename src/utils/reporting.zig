@@ -18,7 +18,13 @@ pub const DiagnosticPhase = enum {
 pub const ReporterOptions = struct {
     max_diagnostics: i32 = 1000,
     warn_as_error: bool = false,
-    debug_mode: bool = false,
+    debug_verbose: bool = false,
+    debug_lexer: bool = false,
+    debug_parser: bool = false,
+    debug_semantic: bool = false,
+    debug_hir: bool = false,
+    debug_bytecode: bool = false,
+    debug_execution: bool = false,
     log_to_file: bool = true,
     log_file_path: []const u8 = "last_diagnostics.log",
     max_log_bytes: usize = 2 * 1024 * 1024, // 2MB cap, truncates when exceeded
@@ -52,7 +58,13 @@ pub const Reporter = struct {
     options: ReporterOptions,
     writer: *std.Io.Writer,
     allocator: std.mem.Allocator,
-    debug_mode: bool,
+    debug_verbose: bool,
+    debug_lexer: bool,
+    debug_parser: bool,
+    debug_semantic: bool,
+    debug_hir: bool,
+    debug_bytecode: bool,
+    debug_execution: bool,
     stderr_buffer: [1024]u8,
     stderr_writer: std.fs.File.Writer,
 
@@ -64,7 +76,13 @@ pub const Reporter = struct {
             .options = options,
             .writer = &stderr_writer.interface,
             .allocator = allocator,
-            .debug_mode = options.debug_mode,
+            .debug_verbose = options.debug_verbose,
+            .debug_lexer = options.debug_lexer,
+            .debug_parser = options.debug_parser,
+            .debug_semantic = options.debug_semantic,
+            .debug_hir = options.debug_hir,
+            .debug_bytecode = options.debug_bytecode,
+            .debug_execution = options.debug_execution,
             .stderr_buffer = stderr_buffer,
             .stderr_writer = stderr_writer,
         };
@@ -215,6 +233,36 @@ pub const Reporter = struct {
         }
     }
 
+    fn debugLexer(self: *Reporter, loc: ?Location, code: ?[]const u8, comptime fmt: []const u8, args: anytype) void {
+        if (!self.debug_lexer and !self.debug_verbose) return;
+        self.report(.Debug, .Hint, loc, code, fmt, args);
+    }
+
+    fn debugParser(self: *Reporter, loc: ?Location, code: ?[]const u8, comptime fmt: []const u8, args: anytype) void {
+        if (!self.debug_parser and !self.debug_verbose) return;
+        self.report(.Debug, .Hint, loc, code, fmt, args);
+    }
+
+    fn debugSemantic(self: *Reporter, loc: ?Location, code: ?[]const u8, comptime fmt: []const u8, args: anytype) void {
+        if (!self.debug_semantic and !self.debug_verbose) return;
+        self.report(.Debug, .Hint, loc, code, fmt, args);
+    }
+
+    fn debugHir(self: *Reporter, loc: ?Location, code: ?[]const u8, comptime fmt: []const u8, args: anytype) void {
+        if (!self.debug_hir and !self.debug_verbose) return;
+        self.report(.Debug, .Hint, loc, code, fmt, args);
+    }
+
+    fn debugBytecode(self: *Reporter, loc: ?Location, code: ?[]const u8, comptime fmt: []const u8, args: anytype) void {
+        if (!self.debug_bytecode and !self.debug_verbose) return;
+        self.report(.Debug, .Hint, loc, code, fmt, args);
+    }
+
+    fn debugExecution(self: *Reporter, loc: ?Location, code: ?[]const u8, comptime fmt: []const u8, args: anytype) void {
+        if (!self.debug_execution and !self.debug_verbose) return;
+        self.report(.Debug, .Hint, loc, code, fmt, args);
+    }
+
     ////////
     /// PRINTING FUNCTIONS
     ////////
@@ -241,16 +289,6 @@ pub const Reporter = struct {
         args: anytype,
         comptime src: std.builtin.SourceLocation,
     ) void {
-        self.reportInternal(fmt, args, src);
-    }
-
-    pub fn debug(
-        self: *Reporter,
-        comptime fmt: []const u8,
-        args: anytype,
-        comptime src: std.builtin.SourceLocation,
-    ) void {
-        if (!self.debug_mode) return;
         self.reportInternal(fmt, args, src);
     }
 

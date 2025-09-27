@@ -14,10 +14,6 @@ pub fn exec(vm: anytype, a: anytype) !void {
     const right = try vm.stack.pop();
     const left = try vm.stack.pop();
 
-    if (vm.reporter.debug_mode) {
-        vm.reporter.report(.Debug, .Hint, null, null, "Arith: {s} {s} {s}", .{ try vm.valueToString(left.value), @tagName(a.op), try vm.valueToString(right.value) });
-    }
-
     // Handle array arithmetic first
     if (a.operand_type == .Array) {
         if (a.op == .Add) {
@@ -128,10 +124,6 @@ pub fn exec(vm: anytype, a: anytype) !void {
             },
         }
 
-        if (vm.reporter.debug_mode) {
-            vm.reporter.report(.Debug, .Hint, null, null, "Arith result: {d}", .{result});
-        }
-
         try vm.stack.push(HIRFrame.initFloat(result));
         return;
     }
@@ -185,10 +177,6 @@ pub fn exec(vm: anytype, a: anytype) !void {
             },
         }
 
-        if (vm.reporter.debug_mode) {
-            vm.reporter.report(.Debug, .Hint, null, null, "Arith result: {d}", .{result});
-        }
-
         try vm.stack.push(HIRFrame.initFloat(result));
         return;
     }
@@ -231,10 +219,6 @@ pub fn exec(vm: anytype, a: anytype) !void {
                 const p: u32 = std.math.pow(u32, @as(u32, left_byte), @as(u32, right_byte));
                 byte_result = if (p > 255) 255 else @intCast(p);
             },
-        }
-
-        if (vm.reporter.debug_mode) {
-            vm.reporter.report(.Debug, .Hint, null, null, "Arith result: {d}", .{byte_result});
         }
 
         try vm.stack.push(HIRFrame.initByte(byte_result));
@@ -297,9 +281,6 @@ pub fn exec(vm: anytype, a: anytype) !void {
                 return ErrorList.DivisionByZero;
             }
             const result = left_float / right_float;
-            if (vm.reporter.debug_mode) {
-                vm.reporter.report(.Debug, .Hint, null, null, "Arith result: {d}", .{result});
-            }
             try vm.stack.push(HIRFrame.initFloat(result));
             return;
         },
@@ -307,10 +288,6 @@ pub fn exec(vm: anytype, a: anytype) !void {
         .Pow => {
             int_result = std.math.pow(i64, left_int, right_int);
         },
-    }
-
-    if (vm.reporter.debug_mode) {
-        vm.reporter.report(.Debug, .Hint, null, null, "Arith result: {d}", .{int_result});
     }
 
     // Preserve the original type when possible

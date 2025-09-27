@@ -29,6 +29,7 @@ const PrintOps = @import("calls/print.zig").PrintOps;
 const Errors = @import("../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
 const ErrorCode = Errors.ErrorCode;
+const Raylib = @import("../runtime/raylib.zig");
 
 const DeferAction = *const fn () void;
 
@@ -67,7 +68,7 @@ const VmError = error{
     OutOfMemory,
 } || ErrorList;
 
-pub const BytecodeVM = struct {
+pub const VM = struct {
     bytecode: *module.BytecodeModule,
     reporter: *Reporter,
     memory_manager: *MemoryManager, // Add memory manager integration
@@ -86,7 +87,7 @@ pub const BytecodeVM = struct {
     try_stack: Managed(usize),
     skip_next_enter_scope: bool = false,
 
-    pub fn init(allocator: std.mem.Allocator, bytecode: *module.BytecodeModule, reporter: *Reporter, memory_manager: *MemoryManager) !BytecodeVM {
+    pub fn init(allocator: std.mem.Allocator, bytecode: *module.BytecodeModule, reporter: *Reporter, memory_manager: *MemoryManager) !VM {
         const frame_list = Managed(runtime.Frame).init(allocator);
 
         const stack = try runtime.OperandStack.init(allocator, 1024 * 1024);
@@ -111,7 +112,7 @@ pub const BytecodeVM = struct {
         const string_interner = try allocator.create(StringInterner);
         string_interner.* = StringInterner.init(allocator);
 
-        var vm = BytecodeVM{
+        var vm = VM{
             .bytecode = bytecode,
             .reporter = reporter,
             .memory_manager = memory_manager,
@@ -134,15 +135,15 @@ pub const BytecodeVM = struct {
         return vm;
     }
 
-    pub fn bridgeTypesToVM(self: *BytecodeVM) !void {
+    pub fn bridgeTypesToVM(self: *VM) !void {
         _ = self; // Suppress unused parameter warning
-        // Bridge custom types from memory manager to BytecodeVM
-        // BytecodeVM implementation
+        // Bridge custom types from memory manager to VM
+        // VM implementation
         // For now, we'll copy the custom type registry from memory manager
-        // TODO: Implement proper type bridging for BytecodeVM
+        // TODO: Implement proper type bridging for VM
     }
 
-    pub fn deinit(self: *BytecodeVM) void {
+    pub fn deinit(self: *VM) void {
         while (self.frames.pop()) |frame_val| {
             var frame = frame_val;
             frame.deinit();
@@ -166,7 +167,7 @@ pub const BytecodeVM = struct {
         self.allocator.destroy(self.string_interner);
     }
 
-    pub fn reset(self: *BytecodeVM) void {
+    pub fn reset(self: *VM) void {
         self.ip = 0;
         self.running = false;
         self.stack.reset();
@@ -182,7 +183,7 @@ pub const BytecodeVM = struct {
         self.skip_next_enter_scope = false;
     }
 
-    pub fn run(self: *BytecodeVM) !void {
+    pub fn run(self: *VM) !void {
         try self.prepareEntryFrame();
         self.running = true;
 
@@ -196,15 +197,15 @@ pub const BytecodeVM = struct {
         }
     }
 
-    fn pushValue(self: *BytecodeVM, value: HIRValue) VmError!void {
+    fn pushValue(self: *VM, value: HIRValue) VmError!void {
         try self.stack.pushValue(value);
     }
 
-    fn popFrame(self: *BytecodeVM) VmError!HIRFrame {
+    fn popFrame(self: *VM) VmError!HIRFrame {
         return try self.stack.pop();
     }
 
-    fn popValue(self: *BytecodeVM) VmError!HIRValue {
+    fn popValue(self: *VM) VmError!HIRValue {
         if (self.stack.sp == 0) {
             std.debug.print("StackUnderflow: Attempting to pop from empty stack at IP {d}\n", .{self.ip});
             std.debug.print("Current instruction: {any}\n", .{self.bytecode.instructions[self.ip]});
@@ -212,7 +213,7 @@ pub const BytecodeVM = struct {
         }
         return try self.stack.popValue();
     }
-    pub fn execute(self: *BytecodeVM, inst: module.Instruction) VmError!void {
+    pub fn execute(self: *VM, inst: module.Instruction) VmError!void {
         switch (inst) {
             .PushConst => |payload| {
                 const value = self.bytecode.constants[payload.constant_index];
@@ -275,61 +276,15 @@ pub const BytecodeVM = struct {
                 const ptr = try self.resolveSlot(operand);
                 const value = ptr.load();
                 try self.stack.pushValue(value);
-
-                // Debug: Log slot loading with detailed type information
-                self.reporter.debug(">> LoadSlot: Loaded value of type '{any}' from slot {} (scope: {})", .{ @tagName(value), operand.slot, operand.kind }, @src());
-
-                // Additional struct protection logging
-                if (value == .struct_instance) {
-                    self.reporter.debug(">> LoadSlot: Struct instance loaded - type: '{s}', fields: {}", .{ value.struct_instance.type_name, value.struct_instance.fields.len }, @src());
-                }
             },
             .StoreSlot => |payload| {
                 const value = try self.popValue();
                 const ptr = try self.resolveSlot(payload.target);
-
-                // Struct protection: Check if we're about to overwrite a struct instance
-                const existing_value = ptr.load();
-                if (existing_value == .struct_instance and value != .struct_instance) {
-                    self.reporter.debug(">> StoreSlot: WARNING - Overwriting struct instance with '{any}' in slot {} (scope: {})", .{ @tagName(value), payload.target.slot, payload.target.kind }, @src());
-                    self.reporter.debug(">> StoreSlot: Existing struct: type: '{s}', fields: {}", .{ existing_value.struct_instance.type_name, existing_value.struct_instance.fields.len }, @src());
-
-                    // Prevent struct corruption by finding an alternative slot
-                    // This is a workaround for the compiler's slot allocation bug
-                    self.reporter.debug(">> StoreSlot: Preventing struct corruption - finding alternative slot", .{}, @src());
-
-                    // For now, let's just log the issue and continue
-                    // In a proper fix, we would need to implement slot reallocation
-                    self.reporter.debug(">> StoreSlot: Allowing overwrite to prevent crash, but this indicates a compiler bug", .{}, @src());
-                }
-
-                // Additional debugging for slot 1 specifically
-                if (payload.target.slot == 1 and payload.target.kind == .local) {
-                    self.reporter.debug(">> StoreSlot: Slot 1 operation - storing '{any}' (was: '{any}')", .{ @tagName(value), @tagName(existing_value) }, @src());
-                }
-
                 ptr.store(value);
-
-                // Debug: Log slot storage with detailed type information
-                self.reporter.debug(">> StoreSlot: Stored value of type '{any}' to slot {} (scope: {})", .{ @tagName(value), payload.target.slot, payload.target.kind }, @src());
-
-                // Additional struct protection logging
-                if (value == .struct_instance) {
-                    self.reporter.debug(">> StoreSlot: Struct instance stored - type: '{s}', fields: {}", .{ value.struct_instance.type_name, value.struct_instance.fields.len }, @src());
-                }
             },
             .StoreConstSlot => |operand| {
                 const value = try self.popValue();
                 const ptr = try self.resolveSlot(operand);
-
-                // Debug: Log const slot storage with detailed type information
-                self.reporter.debug(">> StoreConstSlot: Stored value of type '{any}' to slot {} (scope: {})", .{ @tagName(value), operand.slot, operand.kind }, @src());
-
-                // Additional struct protection logging
-                if (value == .struct_instance) {
-                    self.reporter.debug(">> StoreConstSlot: Struct instance stored - type: '{s}', fields: {}", .{ value.struct_instance.type_name, value.struct_instance.fields.len }, @src());
-                }
-
                 ptr.store(value);
             },
             .PushStorageRef => |operand| {
@@ -481,7 +436,6 @@ pub const BytecodeVM = struct {
                 }
             },
             .Call => |payload| {
-                self.reporter.debug(">> Executing Call instruction: fn:{any} qualified:{any} kind:{any} args:{any}", .{ payload.target.function_index, payload.target.qualified_name, @tagName(payload.target.call_kind), payload.arg_count }, @src());
                 try self.handleCall(payload);
             },
             .TailCall => |payload| {
@@ -583,7 +537,7 @@ pub const BytecodeVM = struct {
         }
     }
 
-    fn indexLabels(self: *BytecodeVM) void {
+    fn indexLabels(self: *VM) void {
         for (self.bytecode.instructions, 0..) |inst, idx| {
             if (inst == .Label) {
                 const id = inst.Label.id;
@@ -594,30 +548,30 @@ pub const BytecodeVM = struct {
         }
     }
 
-    fn clearScopeStack(self: *BytecodeVM) void {
+    fn clearScopeStack(self: *VM) void {
         while (self.scope_stack.pop()) |record_val| {
             var record = record_val;
             record.deinit();
         }
     }
 
-    fn currentFrame(self: *BytecodeVM) VmError!*runtime.Frame {
+    fn currentFrame(self: *VM) VmError!*runtime.Frame {
         if (self.frames.items.len == 0) return error.NoActiveFrame;
         return &self.frames.items[self.frames.items.len - 1];
     }
 
-    fn currentScope(self: *BytecodeVM) ?*ScopeRecord {
+    fn currentScope(self: *VM) ?*ScopeRecord {
         if (self.scope_stack.items.len == 0) return null;
         return &self.scope_stack.items[self.scope_stack.items.len - 1];
     }
 
-    fn resolveModuleState(self: *BytecodeVM, module_id: module.ModuleId) VmError!*runtime.ModuleState {
+    fn resolveModuleState(self: *VM, module_id: module.ModuleId) VmError!*runtime.ModuleState {
         const index: usize = @intCast(module_id);
         if (index >= self.module_state.len) return error.MissingModule;
         return &self.module_state[index];
     }
 
-    fn resolveSlot(self: *BytecodeVM, operand: module.SlotOperand) VmError!runtime.SlotPointer {
+    fn resolveSlot(self: *VM, operand: module.SlotOperand) VmError!runtime.SlotPointer {
         return switch (operand.kind) {
             .local => blk: {
                 const frame = try self.currentFrame();
@@ -629,9 +583,6 @@ pub const BytecodeVM = struct {
                 // The alias slot should contain a reference to the original slot
                 const alias_ptr = frame.pointer(operand.slot);
                 const alias_value = alias_ptr.load();
-
-                // Debug: Log alias resolution
-                self.reporter.debug(">> Alias: Resolving alias slot {} with value type '{any}'", .{ operand.slot, @tagName(alias_value) }, @src());
 
                 // Check if this is a storage reference
                 if (alias_value == .storage_id_ref) {
@@ -645,18 +596,9 @@ pub const BytecodeVM = struct {
                 // For now, let's look for the original slot by checking if this is a struct instance
                 if (alias_value == .struct_instance) {
                     // This is the actual struct instance, so we can use it directly
-                    self.reporter.debug(">> Alias: Found struct instance in alias slot {}", .{operand.slot}, @src());
                     break :blk alias_ptr;
                 }
 
-                // If it's not a struct instance, this might be a corrupted alias
-                // This indicates a compiler bug where the alias is pointing to the wrong slot
-                // Let's try to find the correct variable by searching for the expected type
-                self.reporter.debug(">> Alias: Alias slot contains non-struct value, searching for correct variable", .{}, @src());
-
-                // If we can't resolve the alias properly, fall back to using the alias slot directly
-                // This is a temporary workaround until the alias system is properly fixed
-                self.reporter.debug(">> Alias: Cannot resolve alias - using direct slot reference as fallback", .{}, @src());
                 break :blk alias_ptr;
             },
             .module_global, .imported_module => blk: {
@@ -668,14 +610,14 @@ pub const BytecodeVM = struct {
         };
     }
 
-    fn trackAlias(self: *BytecodeVM, slot: module.SlotIndex) VmError!void {
+    fn trackAlias(self: *VM, slot: module.SlotIndex) VmError!void {
         const scope = self.currentScope() orelse return;
         scope.recordAlias(slot) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
         };
     }
 
-    fn execEnterScope(self: *BytecodeVM, payload: anytype) VmError!void {
+    fn execEnterScope(self: *VM, payload: anytype) VmError!void {
         if (self.skip_next_enter_scope) {
             self.skip_next_enter_scope = false;
             return;
@@ -687,13 +629,11 @@ pub const BytecodeVM = struct {
         };
     }
 
-    fn runScopeCleanup(self: *BytecodeVM, record: *ScopeRecord) VmError!void {
-        self.reporter.debug(">> runScopeCleanup: Executing {} defer actions for scope {}", .{ record.defer_actions.items.len, record.id }, @src());
+    fn runScopeCleanup(self: *VM, record: *ScopeRecord) VmError!void {
         var d = record.defer_actions.items.len;
         while (d > 0) {
             d -= 1;
             const action = record.defer_actions.items[d];
-            self.reporter.debug(">> runScopeCleanup: Executing defer action {}", .{d}, @src());
             action();
         }
 
@@ -705,7 +645,7 @@ pub const BytecodeVM = struct {
         }
     }
 
-    fn execExitScope(self: *BytecodeVM, payload: anytype) VmError!void {
+    fn execExitScope(self: *VM, payload: anytype) VmError!void {
         if (self.scope_stack.items.len == 0) return;
 
         var idx: ?usize = null;
@@ -731,7 +671,7 @@ pub const BytecodeVM = struct {
         }
     }
 
-    fn unwindScopesForCatch(self: *BytecodeVM, target: usize) VmError!void {
+    fn unwindScopesForCatch(self: *VM, target: usize) VmError!void {
         while (self.scope_stack.pop()) |record_val| {
             var record = record_val;
             defer record.deinit();
@@ -742,7 +682,7 @@ pub const BytecodeVM = struct {
         }
     }
 
-    fn execTryBegin(self: *BytecodeVM, payload: anytype) VmError!void {
+    fn execTryBegin(self: *VM, payload: anytype) VmError!void {
         if (payload.label_id >= self.label_cache.len) return error.UnimplementedInstruction;
         const target = self.label_cache[payload.label_id];
         self.try_stack.append(target) catch |err| switch (err) {
@@ -753,7 +693,7 @@ pub const BytecodeVM = struct {
         }
     }
 
-    fn execTryCatch(self: *BytecodeVM, payload: anytype) VmError!void {
+    fn execTryCatch(self: *VM, payload: anytype) VmError!void {
         _ = payload;
         _ = self.try_stack.pop();
         if (self.currentScope()) |scope| {
@@ -761,7 +701,7 @@ pub const BytecodeVM = struct {
         }
     }
 
-    fn execThrow(self: *BytecodeVM, payload: anytype) VmError!void {
+    fn execThrow(self: *VM, payload: anytype) VmError!void {
         _ = payload;
         try self.stack.push(HIRFrame.initNothing());
 
@@ -775,13 +715,13 @@ pub const BytecodeVM = struct {
         self.jumpTo(target);
     }
 
-    fn execQuantifier(self: *BytecodeVM, is_exists: bool) VmError!void {
+    fn execQuantifier(self: *VM, is_exists: bool) VmError!void {
         const predicate_value = try self.popValue();
         const array_frame = try self.stack.pop();
         try self.evaluateQuantifier(array_frame, predicate_value, is_exists);
     }
 
-    fn evaluateQuantifier(self: *BytecodeVM, array_frame: HIRFrame, predicate: HIRValue, is_exists: bool) VmError!void {
+    fn evaluateQuantifier(self: *VM, array_frame: HIRFrame, predicate: HIRValue, is_exists: bool) VmError!void {
         switch (array_frame.value) {
             .array => |arr| {
                 var result = if (is_exists) false else true;
@@ -815,7 +755,7 @@ pub const BytecodeVM = struct {
         }
     }
 
-    fn evaluatePredicate(self: *BytecodeVM, predicate: HIRValue, argument: HIRValue) VmError!HIRValue {
+    fn evaluatePredicate(self: *VM, predicate: HIRValue, argument: HIRValue) VmError!HIRValue {
         return switch (predicate) {
             .int => |function_index| {
                 if (function_index < 0) {
@@ -835,7 +775,7 @@ pub const BytecodeVM = struct {
         };
     }
 
-    fn evalPredicateFunction(self: *BytecodeVM, function_index: usize, argument: HIRValue) VmError!HIRValue {
+    fn evalPredicateFunction(self: *VM, function_index: usize, argument: HIRValue) VmError!HIRValue {
         if (function_index >= self.bytecode.functions.len) return error.UnimplementedInstruction;
 
         const saved_ip = self.ip;
@@ -874,7 +814,7 @@ pub const BytecodeVM = struct {
         return result_value;
     }
 
-    fn execTailCall(self: *BytecodeVM, payload: anytype) VmError!void {
+    fn execTailCall(self: *VM, payload: anytype) VmError!void {
         switch (payload.target.call_kind) {
             .LocalFunction, .ModuleFunction => {
                 const function_index: usize = @intCast(payload.target.function_index);
@@ -915,7 +855,7 @@ pub const BytecodeVM = struct {
         }
     }
 
-    fn execBuiltin(self: *BytecodeVM, name: []const u8, arg_count_raw: u32) VmError!void {
+    fn execBuiltin(self: *VM, name: []const u8, arg_count_raw: u32) VmError!void {
         const arg_count: usize = @intCast(arg_count_raw);
 
         if (std.mem.eql(u8, name, "length")) {
@@ -1224,7 +1164,7 @@ pub const BytecodeVM = struct {
         return ErrorList.TypeError;
     }
 
-    fn execStructNew(self: *BytecodeVM, payload: anytype) VmError!void {
+    fn execStructNew(self: *VM, payload: anytype) VmError!void {
         var fields = try self.allocator.alloc(HIRStructField, payload.field_count);
         errdefer self.allocator.free(fields);
 
@@ -1261,7 +1201,7 @@ pub const BytecodeVM = struct {
         try self.stack.push(HIRFrame.initFromHIRValue(struct_value));
     }
 
-    fn execEnumNew(self: *BytecodeVM, payload: anytype) VmError!void {
+    fn execEnumNew(self: *VM, payload: anytype) VmError!void {
         const type_name_copy = try self.allocator.dupe(u8, payload.enum_name);
         errdefer self.allocator.free(type_name_copy);
         const variant_name_copy = try self.allocator.dupe(u8, payload.variant_name);
@@ -1277,7 +1217,7 @@ pub const BytecodeVM = struct {
         try self.stack.push(HIRFrame.initFromHIRValue(enum_value));
     }
 
-    fn execStoreFieldName(self: *BytecodeVM, payload: anytype) VmError!void {
+    fn execStoreFieldName(self: *VM, payload: anytype) VmError!void {
         const frame = try self.stack.pop();
 
         switch (frame.value) {
@@ -1313,13 +1253,9 @@ pub const BytecodeVM = struct {
         }
     }
 
-    fn execGetField(self: *BytecodeVM, payload: anytype) VmError!void {
+    fn execGetField(self: *VM, payload: anytype) VmError!void {
         const frame = try self.stack.pop();
 
-        // Debug: Log field access with detailed type information
-        self.reporter.debug(">> GetField: Attempting to access field '{any}' on value of type '{any}'", .{ payload.field_name, @tagName(frame.value) }, @src());
-
-        // Struct protection: Ensure we have a valid struct instance
         if (frame.value != .struct_instance) {
             return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot get field from non-struct value: {s}", .{@tagName(frame.value)});
         }
@@ -1327,14 +1263,9 @@ pub const BytecodeVM = struct {
         switch (frame.value) {
             .string => {
                 if (std.mem.startsWith(u8, frame.value.string, "graphics.")) {
-                    // Handle module constants like SKYBLUE
                     if (std.mem.eql(u8, frame.value.string, "graphics.raylib")) {
                         if (std.mem.eql(u8, payload.field_name, "SKYBLUE")) {
-                            self.reporter.debug(">> GetField: Resolving SKYBLUE constant", .{}, @src());
-                            const ray = @import("../runtime/raylib.zig");
-                            const skyblue_color = ray.SKYBLUE;
-                            self.reporter.debug(">> GetField: SKYBLUE color values: r={}, g={}, b={}, a={}", .{ skyblue_color.r, skyblue_color.g, skyblue_color.b, skyblue_color.a }, @src());
-                            // Convert raylib Color to DoxaColor struct
+                            const skyblue_color = Raylib.SKYBLUE;
                             const fields = try self.allocator.alloc(HIRStructField, 4);
                             fields[0] = .{ .name = "r", .value = HIRValue{ .byte = skyblue_color.r }, .field_type = .Byte };
                             fields[1] = .{ .name = "g", .value = HIRValue{ .byte = skyblue_color.g }, .field_type = .Byte };
@@ -1404,14 +1335,10 @@ pub const BytecodeVM = struct {
         }
     }
 
-    fn execSetField(self: *BytecodeVM, payload: anytype) VmError!void {
+    fn execSetField(self: *VM, payload: anytype) VmError!void {
         const value_frame = try self.stack.pop();
         const struct_frame = try self.stack.pop();
 
-        // Debug: Log field setting with detailed type information
-        self.reporter.debug(">> SetField: Attempting to set field '{any}' on value of type '{any}'", .{ payload.field_name, @tagName(struct_frame.value) }, @src());
-
-        // Struct protection: Ensure we have a valid struct instance
         if (struct_frame.value != .struct_instance) {
             return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot set field on non-struct value: {s}", .{@tagName(struct_frame.value)});
         }
@@ -1433,7 +1360,7 @@ pub const BytecodeVM = struct {
         }
     }
 
-    fn execMap(self: *BytecodeVM, payload: anytype) VmError!void {
+    fn execMap(self: *VM, payload: anytype) VmError!void {
         var entries = try self.allocator.alloc(HIRMapEntry, payload.entries.len);
         errdefer self.allocator.free(entries);
 
@@ -1465,7 +1392,7 @@ pub const BytecodeVM = struct {
         try self.stack.push(HIRFrame.initFromHIRValue(map_value));
     }
 
-    fn execMapGet(self: *BytecodeVM) VmError!void {
+    fn execMapGet(self: *VM) VmError!void {
         var key_frame = try self.stack.pop();
         switch (key_frame.value) {
             .string => |s| {
@@ -1506,7 +1433,7 @@ pub const BytecodeVM = struct {
         }
     }
 
-    fn execMapSet(self: *BytecodeVM, payload: anytype) VmError!void {
+    fn execMapSet(self: *VM, payload: anytype) VmError!void {
         const value_frame = try self.stack.pop();
         var key_frame = try self.stack.pop();
         switch (key_frame.value) {
@@ -1568,7 +1495,7 @@ pub const BytecodeVM = struct {
         }
     }
 
-    fn cacheSlotPointer(self: *BytecodeVM, pointer: runtime.SlotPointer) !u32 {
+    fn cacheSlotPointer(self: *VM, pointer: runtime.SlotPointer) !u32 {
         if (self.slot_refs.items.len >= std.math.maxInt(u32)) {
             return error.OutOfMemory;
         }
@@ -1576,13 +1503,13 @@ pub const BytecodeVM = struct {
         return @intCast(self.slot_refs.items.len - 1);
     }
 
-    fn slotRefFromId(self: *BytecodeVM, id: u32) !runtime.SlotPointer {
+    fn slotRefFromId(self: *VM, id: u32) !runtime.SlotPointer {
         const index: usize = @intCast(id);
         if (index >= self.slot_refs.items.len) return error.InvalidAliasReference;
         return self.slot_refs.items[index];
     }
 
-    fn jumpTo(self: *BytecodeVM, target: usize) void {
+    fn jumpTo(self: *VM, target: usize) void {
         if (target >= self.bytecode.instructions.len) {
             self.running = false;
             return;
@@ -1591,7 +1518,7 @@ pub const BytecodeVM = struct {
         self.skip_increment = true;
     }
 
-    fn isTruthy(self: *BytecodeVM, value: HIRValue) bool {
+    fn isTruthy(self: *VM, value: HIRValue) bool {
         _ = self;
         return switch (value) {
             .nothing => false,
@@ -1621,7 +1548,7 @@ pub const BytecodeVM = struct {
         };
     }
 
-    fn resolveFunctionIndex(self: *BytecodeVM, function_index: usize, qualified_name: []const u8) usize {
+    fn resolveFunctionIndex(self: *VM, function_index: usize, qualified_name: []const u8) usize {
         // First try the provided function_index
         if (function_index < self.bytecode.functions.len) {
             const func = &self.bytecode.functions[function_index];
@@ -1641,8 +1568,7 @@ pub const BytecodeVM = struct {
         return function_index;
     }
 
-    fn handleCall(self: *BytecodeVM, payload: anytype) VmError!void {
-        self.reporter.debug(">> handleCall: Processing call to '{any}' with {} arguments", .{ payload.target.qualified_name, payload.arg_count }, @src());
+    fn handleCall(self: *VM, payload: anytype) VmError!void {
         switch (payload.target.call_kind) {
             .LocalFunction, .ModuleFunction => {
                 // Check if this is a graphics module function that needs special handling
@@ -1661,7 +1587,6 @@ pub const BytecodeVM = struct {
                     // Graphics module bridging
                     const is_graphics = std.mem.eql(u8, module_alias, "graphics") or std.mem.eql(u8, module_alias, "g");
                     if (is_graphics) {
-                        const ray = @import("../runtime/raylib.zig");
                         // Submodule dispatch: doxa vs raylib passthrough
                         if (std.mem.eql(u8, sub_alias, "doxa")) {
                             if (std.mem.eql(u8, func_name, "Init")) {
@@ -1675,30 +1600,30 @@ pub const BytecodeVM = struct {
                                 const fps = try fps_frame.asInt();
                                 const name = try name_frame.asString();
 
-                                try ray.InitWindowDoxa(w, h, name);
-                                ray.SetTargetFPSDoxa(fps);
+                                try Raylib.InitWindowDoxa(w, h, name);
+                                Raylib.SetTargetFPSDoxa(fps);
 
                                 // Set up defer for CloseWindow at scope exit
                                 if (self.scope_stack.items.len > 0) {
                                     var scope = &self.scope_stack.items[self.scope_stack.items.len - 1];
-                                    try scope.defer_actions.append(&ray.CloseWindow);
+                                    try scope.defer_actions.append(&Raylib.CloseWindow);
                                 }
 
                                 // Init function doesn't return anything (void)
                                 return;
                             } else if (std.mem.eql(u8, func_name, "Draw")) {
-                                ray.BeginDrawing();
+                                Raylib.BeginDrawing();
 
                                 // Set up defer for EndDrawing at scope exit
                                 if (self.scope_stack.items.len > 0) {
                                     var scope = &self.scope_stack.items[self.scope_stack.items.len - 1];
-                                    try scope.defer_actions.append(&ray.EndDrawing);
+                                    try scope.defer_actions.append(&Raylib.EndDrawing);
                                 }
 
                                 return;
                             } else if (std.mem.eql(u8, func_name, "Running")) {
                                 // Return the negation of WindowShouldClose
-                                const should_close = ray.WindowShouldClose();
+                                const should_close = Raylib.WindowShouldClose();
                                 try self.stack.pushValue(HIRValue{ .tetra = if (should_close) 0 else 1 });
                                 return;
                             } else if (std.mem.eql(u8, func_name, "bytesToColor")) {
@@ -1729,7 +1654,7 @@ pub const BytecodeVM = struct {
                                     else => 0,
                                 };
 
-                                const color = ray.bytesToColor(r, g, b, a);
+                                const color = Raylib.bytesToColor(r, g, b, a);
                                 const fields = try self.allocator.alloc(HIRStructField, 4);
                                 fields[0] = .{ .name = "r", .value = HIRValue{ .byte = color.r }, .field_type = .Byte };
                                 fields[1] = .{ .name = "g", .value = HIRValue{ .byte = color.g }, .field_type = .Byte };
@@ -1747,8 +1672,6 @@ pub const BytecodeVM = struct {
                         } else if (std.mem.eql(u8, sub_alias, "raylib")) {
                             if (std.mem.eql(u8, func_name, "ClearBackground")) {
                                 const color_frame = try self.stack.pop();
-                                self.reporter.debug(">> ClearBackground: Color frame type: {s}", .{@tagName(color_frame.value)}, @src());
-                                // Extract color from struct
                                 switch (color_frame.value) {
                                     .struct_instance => |s| {
                                         var r: u8 = 0;
@@ -1784,65 +1707,59 @@ pub const BytecodeVM = struct {
                                             }
                                         }
 
-                                        self.reporter.debug(">> ClearBackground: Using color r={d}, g={d}, b={d}, a={d}", .{ r, g, b, a }, @src());
-                                        ray.ClearBackgroundDoxa(.{ .r = r, .g = g, .b = b, .a = a });
+                                        Raylib.ClearBackgroundDoxa(.{ .r = r, .g = g, .b = b, .a = a });
                                     },
                                     .string => |color_str| {
                                         // Handle string constants like "SKYBLUE" or "graphics.raylib.SKYBLUE"
-                                        var color: ?ray.Color = null;
+                                        var color: ?Raylib.Color = null;
 
                                         // Check for common raylib colors
                                         if (std.mem.eql(u8, color_str, "SKYBLUE") or std.mem.eql(u8, color_str, "graphics.raylib.SKYBLUE")) {
-                                            color = ray.SKYBLUE;
+                                            color = Raylib.SKYBLUE;
                                         } else if (std.mem.eql(u8, color_str, "RED") or std.mem.eql(u8, color_str, "graphics.raylib.RED")) {
-                                            color = @import("../utils/cimport.zig").RED;
+                                            color = Raylib.RED;
                                         } else if (std.mem.eql(u8, color_str, "GREEN") or std.mem.eql(u8, color_str, "graphics.raylib.GREEN")) {
-                                            color = @import("../utils/cimport.zig").GREEN;
+                                            color = Raylib.GREEN;
                                         } else if (std.mem.eql(u8, color_str, "BLUE") or std.mem.eql(u8, color_str, "graphics.raylib.BLUE")) {
-                                            color = @import("../utils/cimport.zig").BLUE;
+                                            color = Raylib.BLUE;
                                         } else if (std.mem.eql(u8, color_str, "YELLOW") or std.mem.eql(u8, color_str, "graphics.raylib.YELLOW")) {
-                                            color = @import("../utils/cimport.zig").YELLOW;
+                                            color = Raylib.YELLOW;
                                         } else if (std.mem.eql(u8, color_str, "PURPLE") or std.mem.eql(u8, color_str, "graphics.raylib.PURPLE")) {
-                                            color = @import("../utils/cimport.zig").PURPLE;
+                                            color = Raylib.PURPLE;
                                         } else if (std.mem.eql(u8, color_str, "PINK") or std.mem.eql(u8, color_str, "graphics.raylib.PINK")) {
-                                            color = @import("../utils/cimport.zig").PINK;
+                                            color = Raylib.PINK;
                                         } else if (std.mem.eql(u8, color_str, "ORANGE") or std.mem.eql(u8, color_str, "graphics.raylib.ORANGE")) {
-                                            color = @import("../utils/cimport.zig").ORANGE;
+                                            color = Raylib.ORANGE;
                                         } else if (std.mem.eql(u8, color_str, "WHITE") or std.mem.eql(u8, color_str, "graphics.raylib.WHITE")) {
-                                            color = @import("../utils/cimport.zig").WHITE;
+                                            color = Raylib.WHITE;
                                         } else if (std.mem.eql(u8, color_str, "BLACK") or std.mem.eql(u8, color_str, "graphics.raylib.BLACK")) {
-                                            color = @import("../utils/cimport.zig").BLACK;
+                                            color = Raylib.BLACK;
                                         } else if (std.mem.eql(u8, color_str, "GRAY") or std.mem.eql(u8, color_str, "graphics.raylib.GRAY")) {
-                                            color = @import("../utils/cimport.zig").GRAY;
+                                            color = Raylib.GRAY;
                                         } else if (std.mem.eql(u8, color_str, "LIGHTGRAY") or std.mem.eql(u8, color_str, "graphics.raylib.LIGHTGRAY")) {
-                                            color = @import("../utils/cimport.zig").LIGHTGRAY;
+                                            color = Raylib.LIGHTGRAY;
                                         } else if (std.mem.eql(u8, color_str, "DARKGRAY") or std.mem.eql(u8, color_str, "graphics.raylib.DARKGRAY")) {
-                                            color = @import("../utils/cimport.zig").DARKGRAY;
+                                            color = Raylib.DARKGRAY;
                                         } else if (std.mem.eql(u8, color_str, "GOLD") or std.mem.eql(u8, color_str, "graphics.raylib.GOLD")) {
-                                            color = @import("../utils/cimport.zig").GOLD;
+                                            color = Raylib.GOLD;
                                         } else if (std.mem.eql(u8, color_str, "LIME") or std.mem.eql(u8, color_str, "graphics.raylib.LIME")) {
-                                            color = @import("../utils/cimport.zig").LIME;
+                                            color = Raylib.LIME;
                                         } else if (std.mem.eql(u8, color_str, "VIOLET") or std.mem.eql(u8, color_str, "graphics.raylib.VIOLET")) {
-                                            color = @import("../utils/cimport.zig").VIOLET;
+                                            color = Raylib.VIOLET;
                                         } else if (std.mem.eql(u8, color_str, "BROWN") or std.mem.eql(u8, color_str, "graphics.raylib.BROWN")) {
-                                            color = @import("../utils/cimport.zig").BROWN;
+                                            color = Raylib.BROWN;
                                         } else if (std.mem.eql(u8, color_str, "BEIGE") or std.mem.eql(u8, color_str, "graphics.raylib.BEIGE")) {
-                                            color = @import("../utils/cimport.zig").BEIGE;
+                                            color = Raylib.BEIGE;
                                         }
 
                                         if (color) |c| {
-                                            self.reporter.debug(">> ClearBackground: Using {s} color r={d}, g={d}, b={d}, a={d}", .{ color_str, c.r, c.g, c.b, c.a }, @src());
-                                            ray.ClearBackgroundDoxa(.{ .r = c.r, .g = c.g, .b = c.b, .a = c.a });
+                                            Raylib.ClearBackgroundDoxa(.{ .r = c.r, .g = c.g, .b = c.b, .a = c.a });
                                         } else {
-                                            // Default to black for unknown string constants
-                                            self.reporter.debug(">> ClearBackground: Unknown string constant '{s}', using black", .{color_str}, @src());
-                                            ray.ClearBackgroundDoxa(.{ .r = 0, .g = 0, .b = 0, .a = 255 });
+                                            Raylib.ClearBackgroundDoxa(.{ .r = 0, .g = 0, .b = 0, .a = 255 });
                                         }
                                     },
                                     else => {
-                                        // Default to black if not a struct or string
-                                        self.reporter.debug(">> ClearBackground: Using default black color", .{}, @src());
-                                        ray.ClearBackgroundDoxa(.{ .r = 0, .g = 0, .b = 0, .a = 255 });
+                                        Raylib.ClearBackgroundDoxa(.{ .r = 0, .g = 0, .b = 0, .a = 255 });
                                     },
                                 }
                                 return;
@@ -1902,7 +1819,7 @@ pub const BytecodeVM = struct {
                                     else => {},
                                 }
 
-                                ray.DrawCircle(@intCast(x), @intCast(y), radius, .{ .r = r, .g = g, .b = b, .a = a });
+                                Raylib.DrawCircle(@intCast(x), @intCast(y), radius, .{ .r = r, .g = g, .b = b, .a = a });
                                 return;
                             } else if (std.mem.eql(u8, func_name, "InitWindow")) {
                                 // Handle InitWindow(width, height, title)
@@ -1914,21 +1831,20 @@ pub const BytecodeVM = struct {
                                 const height = try height_frame.asInt();
                                 const title = try title_frame.asString();
 
-                                try ray.InitWindowDoxa(width, height, title);
+                                try Raylib.InitWindowDoxa(width, height, title);
                                 return;
                             } else if (std.mem.eql(u8, func_name, "BeginDrawing")) {
-                                ray.BeginDrawing();
+                                Raylib.BeginDrawing();
                                 return;
                             } else if (std.mem.eql(u8, func_name, "EndDrawing")) {
-                                ray.EndDrawing();
+                                Raylib.EndDrawing();
                                 return;
                             } else if (std.mem.eql(u8, func_name, "WindowShouldClose")) {
-                                const should_close = ray.WindowShouldClose();
-                                self.reporter.debug(">> WindowShouldClose: should_close={}", .{should_close}, @src());
+                                const should_close = Raylib.WindowShouldClose();
                                 try self.stack.pushValue(HIRValue{ .tetra = if (should_close) 1 else 0 });
                                 return;
                             } else if (std.mem.eql(u8, func_name, "CloseWindow")) {
-                                ray.CloseWindow();
+                                Raylib.CloseWindow();
                                 return;
                             }
                         }
@@ -1959,7 +1875,7 @@ pub const BytecodeVM = struct {
         }
     }
 
-    fn handleReturn(self: *BytecodeVM, payload: anytype) VmError!void {
+    fn handleReturn(self: *VM, payload: anytype) VmError!void {
         var return_value: ?HIRValue = null;
         if (payload.has_value) {
             return_value = try self.popValue();
@@ -1996,7 +1912,7 @@ pub const BytecodeVM = struct {
         }
     }
 
-    fn invokeFunction(self: *BytecodeVM, function_index: usize, arg_count_raw: u32) VmError!void {
+    fn invokeFunction(self: *VM, function_index: usize, arg_count_raw: u32) VmError!void {
         if (function_index >= self.bytecode.functions.len) return error.UnimplementedInstruction;
         const func_ptr = &self.bytecode.functions[function_index];
         const arg_count: usize = @intCast(arg_count_raw);
@@ -2009,7 +1925,7 @@ pub const BytecodeVM = struct {
         self.skip_increment = true;
     }
 
-    fn pushFrame(self: *BytecodeVM, function_index: usize, stack_base: usize, return_ip: usize) VmError!*runtime.Frame {
+    fn pushFrame(self: *VM, function_index: usize, stack_base: usize, return_ip: usize) VmError!*runtime.Frame {
         const func_ptr = &self.bytecode.functions[function_index];
         var frame = try runtime.Frame.init(self.allocator, func_ptr, stack_base, self.slot_refs.items.len, return_ip);
         errdefer frame.deinit();
@@ -2036,7 +1952,7 @@ pub const BytecodeVM = struct {
         return &self.frames.items[self.frames.items.len - 1];
     }
 
-    fn prepareEntryFrame(self: *BytecodeVM) VmError!void {
+    fn prepareEntryFrame(self: *VM) VmError!void {
         if (self.frames.items.len != 0) return;
 
         // First, execute global initialization instructions (at the beginning of the instruction array)
@@ -2142,12 +2058,12 @@ pub const BytecodeVM = struct {
         return null;
     }
 
-    pub fn registerCustomType(self: *BytecodeVM, type_info: CustomTypeInfo) !void {
+    pub fn registerCustomType(self: *VM, type_info: CustomTypeInfo) !void {
         try self.custom_type_registry.put(type_info.name, type_info);
     }
 
     /// Coerce a value to match the expected type
-    pub fn coerceValue(self: *BytecodeVM, value: HIRValue, expected_type: ?hir_types.HIRType) HIRValue {
+    pub fn coerceValue(self: *VM, value: HIRValue, expected_type: ?hir_types.HIRType) HIRValue {
 
         // If no expected type, return value as-is
         if (expected_type == null) {
@@ -2214,7 +2130,7 @@ pub const BytecodeVM = struct {
         };
     }
 
-    pub fn valueToString(self: *BytecodeVM, value: HIRValue) ![]const u8 {
+    pub fn valueToString(self: *VM, value: HIRValue) ![]const u8 {
         return switch (value) {
             .int => |i| try std.fmt.allocPrint(self.allocator, "{}", .{i}),
             .byte => |u| try std.fmt.allocPrint(self.allocator, "0x{X:0>2}", .{u}),
