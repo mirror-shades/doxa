@@ -310,21 +310,33 @@ pub const TypeSystem = struct {
                 return .Unknown;
             },
             .Binary => |binary| {
-                // Simple type inference for binary operations
-                // For now, we don't use the types since HIRType comparisons are not supported
+                // Infer types for binary operations
+                const left_type = self.inferTypeFromExpression(binary.left.?, symbol_table);
+                const right_type = self.inferTypeFromExpression(binary.right.?, symbol_table);
+
                 return switch (binary.operator.type) {
                     .EQUALITY, .BANG_EQUAL, .LESS, .LESS_EQUAL, .GREATER, .GREATER_EQUAL => .Tetra,
                     .AND, .OR, .XOR => .Tetra, // Logical operations return tetra values
                     .PLUS, .MINUS, .ASTERISK, .SLASH, .MODULO => {
                         // Arithmetic operations - return the promoted type
-                        // For now, return Unknown for type comparisons since HIRType is a union
-                        // TODO: Implement proper HIRType comparison
-                        return .Unknown;
+                        // Type promotion rules: Float > Int > Byte
+                        if (left_type == .Float or right_type == .Float) {
+                            return .Float;
+                        } else if (left_type == .Int or right_type == .Int) {
+                            return .Int;
+                        } else if (left_type == .Byte or right_type == .Byte) {
+                            return .Byte;
+                        } else {
+                            return .Int; // Default to Int for arithmetic operations
+                        }
                     },
                     .POWER => {
-                        // For now, return Unknown since HIRType comparisons are not supported
-                        // TODO: Implement proper HIRType comparison
-                        return .Unknown;
+                        // Power operations typically return Float for non-integer exponents
+                        if (left_type == .Float or right_type == .Float) {
+                            return .Float;
+                        } else {
+                            return .Int;
+                        }
                     },
                     else => .Tetra, // Default to Tetra for any other binary operations
                 };
@@ -348,14 +360,9 @@ pub const TypeSystem = struct {
                 // Array/string indexing returns the element type
                 const container_type = self.inferTypeFromExpression(index.array, symbol_table);
                 return switch (container_type) {
-                    .Array => {
-                        // Check if we have tracked element type information for this array
-                        if (index.array.data == .Variable) {
-                            if (symbol_table.getTrackedArrayElementType(index.array.data.Variable.lexeme)) |elem_type| {
-                                return elem_type;
-                            }
-                        }
-                        return .Byte; // Fallback: Default to Byte for arrays (more common for tape-like structures)
+                    .Array => |element_type_ptr| {
+                        // We have the actual element type from the Array, use it
+                        return element_type_ptr.*;
                     },
                     .String => .String, // String indexing returns single character (still string in our system)
                     .Map => .Int, // Map values are integers in our test case
@@ -506,6 +513,12 @@ pub const TypeSystem = struct {
                 } else {
                     return .Nothing; // Empty grouping
                 }
+            },
+            .Range => {
+                // Range expressions always produce arrays of integers
+                const element_type = self.allocator.create(HIRType) catch return .Unknown;
+                element_type.* = .Int;
+                return HIRType{ .Array = element_type };
             },
             else => .String, // Default to String for any unhandled expression types to prevent Auto leakage
         };

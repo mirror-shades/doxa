@@ -1,7 +1,7 @@
 // Fibonacci Recursive Benchmark
 // Tests function call overhead, recursion, and basic arithmetic
 
-function fibonacci(n :: int) returns(int) {
+function fibonacci(n :: int) returns int {
     if n <= 1 then return n;
     return fibonacci(n - 1) + fibonacci(n - 2);
 }
@@ -9,14 +9,17 @@ function fibonacci(n :: int) returns(int) {
 function fibonacci_benchmark() {
     // Calculate fibonacci numbers up to 25
     // This creates significant recursive call overhead
-    var i is 1;
+    @print("Starting Fibonacci test...\n")
+    const startTime is @tick()
+    var i is 1
     while i <= 24 {
-        var result is fibonacci(i);
+        var result is fibonacci(i)
         // Uncomment the line below to see output (slows down benchmark)
-        result?;
-        i += 1;
+        result?
+        i += 1
     }
-    "Fibonacci benchmark completed"?;
+    const endTime is @tick()
+    @print("Fibonacci benchmark completed in {(endTime - startTime) / 1000000000}s\n")
 }
 
 fibonacci_benchmark();

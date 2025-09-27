@@ -6,16 +6,10 @@ const HIRFrame = Core.HIRFrame;
 const Errors = @import("../../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
 const ErrorCode = Errors.ErrorCode;
-const debug_print = @import("../calls/print.zig");
 
 // Execute the StringOp instruction. Accepts the VM as `anytype` to avoid import cycles.
 pub fn exec(vm: anytype, s: anytype) !void {
     const val = try vm.stack.pop();
-
-    if (vm.reporter.debug_mode) {
-        const t = debug_print.getTypeString(vm, val.value);
-        vm.reporter.report(.Debug, .Hint, null, null, "StringOp.{s} in_type='{s}'", .{ @tagName(s.op), t });
-    }
 
     // Fast-path for Length which is valid for both strings and arrays
     if (s.op == .Length) {

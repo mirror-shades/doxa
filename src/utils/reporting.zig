@@ -18,10 +18,16 @@ pub const DiagnosticPhase = enum {
 pub const ReporterOptions = struct {
     max_diagnostics: i32 = 1000,
     warn_as_error: bool = false,
-    debug_mode: bool = false,
+    debug_verbose: bool = false,
+    debug_lexer: bool = false,
+    debug_parser: bool = false,
+    debug_semantic: bool = false,
+    debug_hir: bool = false,
+    debug_bytecode: bool = false,
+    debug_execution: bool = false,
     log_to_file: bool = true,
     log_file_path: []const u8 = "last_diagnostics.log",
-    max_log_bytes: usize = 2 * 1024 * 1024, // 2MB cap, truncates when exceeded
+    max_log_bytes: usize = 2 * 1024 * 1024,
 };
 
 pub const Range = struct {
@@ -40,10 +46,10 @@ pub const Location = struct {
 pub const Diagnostic = struct {
     phase: DiagnosticPhase,
     severity: Severity,
-    message: []const u8, // heap-allocated
+    message: []const u8,
     loc: ?Location,
     code: ?[]const u8 = null,
-    related_info: ?[]const u8 = null, // TODO: related diagnostics
+    related_info: ?[]const u8 = null, // TODO: LSP diagnostics
     source: ?[]const u8 = "DoxVM",
 };
 
@@ -52,7 +58,13 @@ pub const Reporter = struct {
     options: ReporterOptions,
     writer: *std.Io.Writer,
     allocator: std.mem.Allocator,
-    debug_mode: bool,
+    debug_verbose: bool,
+    debug_lexer: bool,
+    debug_parser: bool,
+    debug_semantic: bool,
+    debug_hir: bool,
+    debug_bytecode: bool,
+    debug_execution: bool,
     stderr_buffer: [1024]u8,
     stderr_writer: std.fs.File.Writer,
 
@@ -64,7 +76,13 @@ pub const Reporter = struct {
             .options = options,
             .writer = &stderr_writer.interface,
             .allocator = allocator,
-            .debug_mode = options.debug_mode,
+            .debug_verbose = options.debug_verbose,
+            .debug_lexer = options.debug_lexer,
+            .debug_parser = options.debug_parser,
+            .debug_semantic = options.debug_semantic,
+            .debug_hir = options.debug_hir,
+            .debug_bytecode = options.debug_bytecode,
+            .debug_execution = options.debug_execution,
             .stderr_buffer = stderr_buffer,
             .stderr_writer = stderr_writer,
         };
@@ -100,14 +118,11 @@ pub const Reporter = struct {
         var buf = std.array_list.Managed(u8).init(self.allocator);
         defer buf.deinit();
 
-        // Handle formatting errors properly
         std.fmt.format(buf.writer(), fmt, args) catch |err| {
-            // Log the formatting error and provide a fallback message
             const fallback_msg = switch (err) {
                 else => "message formatting failed",
             };
             const msg_copy = self.allocator.dupe(u8, fallback_msg) catch {
-                // If even the fallback allocation fails, we have to skip the diagnostic
                 return;
             };
 
@@ -132,7 +147,6 @@ pub const Reporter = struct {
         };
 
         const msg_copy = buf.toOwnedSlice() catch {
-            // Provide a fallback message for out-of-memory situations
             const fallback_msg = "out of memory: diagnostic message lost";
             const fallback_copy = self.allocator.dupe(u8, fallback_msg) catch return;
 
@@ -170,7 +184,6 @@ pub const Reporter = struct {
             return;
         };
 
-        // Build a rich, single-line diagnostic with location and code
         var line_buf = std.array_list.Managed(u8).init(self.allocator);
         defer line_buf.deinit();
 
@@ -215,6 +228,36 @@ pub const Reporter = struct {
         }
     }
 
+    fn debugLexer(self: *Reporter, loc: ?Location, code: ?[]const u8, comptime fmt: []const u8, args: anytype) void {
+        if (!self.debug_lexer and !self.debug_verbose) return;
+        self.report(.Debug, .Hint, loc, code, fmt, args);
+    }
+
+    fn debugParser(self: *Reporter, loc: ?Location, code: ?[]const u8, comptime fmt: []const u8, args: anytype) void {
+        if (!self.debug_parser and !self.debug_verbose) return;
+        self.report(.Debug, .Hint, loc, code, fmt, args);
+    }
+
+    fn debugSemantic(self: *Reporter, loc: ?Location, code: ?[]const u8, comptime fmt: []const u8, args: anytype) void {
+        if (!self.debug_semantic and !self.debug_verbose) return;
+        self.report(.Debug, .Hint, loc, code, fmt, args);
+    }
+
+    fn debugHir(self: *Reporter, loc: ?Location, code: ?[]const u8, comptime fmt: []const u8, args: anytype) void {
+        if (!self.debug_hir and !self.debug_verbose) return;
+        self.report(.Debug, .Hint, loc, code, fmt, args);
+    }
+
+    fn debugBytecode(self: *Reporter, loc: ?Location, code: ?[]const u8, comptime fmt: []const u8, args: anytype) void {
+        if (!self.debug_bytecode and !self.debug_verbose) return;
+        self.report(.Debug, .Hint, loc, code, fmt, args);
+    }
+
+    fn debugExecution(self: *Reporter, loc: ?Location, code: ?[]const u8, comptime fmt: []const u8, args: anytype) void {
+        if (!self.debug_execution and !self.debug_verbose) return;
+        self.report(.Debug, .Hint, loc, code, fmt, args);
+    }
+
     ////////
     /// PRINTING FUNCTIONS
     ////////
@@ -241,16 +284,6 @@ pub const Reporter = struct {
         args: anytype,
         comptime src: std.builtin.SourceLocation,
     ) void {
-        self.reportInternal(fmt, args, src);
-    }
-
-    pub fn debug(
-        self: *Reporter,
-        comptime fmt: []const u8,
-        args: anytype,
-        comptime src: std.builtin.SourceLocation,
-    ) void {
-        if (!self.debug_mode) return;
         self.reportInternal(fmt, args, src);
     }
 
@@ -336,26 +369,21 @@ pub const Reporter = struct {
         return "[]";
     }
 
-    // Append a single line to the log file; truncate when exceeding max_log_bytes
     fn writeToLog(self: *Reporter, line: []const u8) !void {
         const opts = self.options;
         const cwd = std.fs.cwd();
-        // Try open existing to check size
         var file = cwd.createFile(opts.log_file_path, .{ .read = true, .truncate = false, .exclusive = false }) catch |e| switch (e) {
             error.PathAlreadyExists => try cwd.openFile(opts.log_file_path, .{ .mode = .read_write }),
             else => return e,
         };
         defer file.close();
 
-        // Determine current size; default to 0 on error
         const current_size = file.getEndPos() catch 0;
 
-        // Truncate if too large
         if (current_size >= opts.max_log_bytes) {
             try file.setEndPos(0);
         }
 
-        // Seek to end and append
         try file.seekFromEnd(0);
         try file.writeAll(line);
         try file.writeAll("\n");

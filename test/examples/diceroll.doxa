@@ -1,8 +1,8 @@
-const limit :: int is 10000;
+const limit :: int is 100_000;
 
 function diceRoll() returns int {
-    const random_float is @random() * 6 + 1
-    return @int(random_float) as int else -1 
+    const randomFloat is @random() * 6 + 1
+    return @int(randomFloat) as int else -1 
 }
 
 function add(a :: int, b :: int) returns int {
@@ -10,22 +10,22 @@ function add(a :: int, b :: int) returns int {
 }
 
 // Dice roll benchmark
-function dice_roll_benchmark() {
+function diceRollBenchmark() {
     var count is 0
-    var start_time is @tick()
+    var startTime is @tick()
     
     for i is 1 while i <= limit do i += 1 {
         const roll is diceRoll()
         count is count + roll  // Prevent optimization
     }
     
-    var end_time is @tick()
-    @print("Dice rolls: {count}, Time: {(end_time - start_time) / 1000000000 }s\n")
+    var endTime is @tick()
+    @print("Dice rolls: {count}, Time: {(endTime - startTime) / 1000000000 }s\n")
 }
 
 // FizzBuzz benchmark
-function fizzbuzz_benchmark() {
-    var start_time is @tick()
+function fizzbuzzBenchmark() {
+    var startTime is @tick()
     
     for i is 1 while i <= limit do i += 1 {
         if i % 15 == 0 then "FizzBuzz"
@@ -34,12 +34,12 @@ function fizzbuzz_benchmark() {
         else @string(i)
     }
     
-    var end_time is @tick()
-    @print("FizzBuzz time: {(end_time - start_time) / 1000000000 }s\n")
+    var endTime is @tick()
+    @print("FizzBuzz time: {(endTime - startTime) / 1000000000 }s\n")
 }
 
 // Arithmetic benchmark
-function arithmetic_benchmark() {
+function arithmeticBenchmark() {
     var sum is 0
     var start is @tick()
     
@@ -51,7 +51,7 @@ function arithmetic_benchmark() {
 }
 
 // Function call benchmark  
-function call_benchmark() {
+function callBenchmark() {
     var sum is 0
     var start is @tick()
     
@@ -64,10 +64,10 @@ function call_benchmark() {
 
 // Run all benchmarks
 @print("=== DOXA BENCHMARK SUITE ===\n")
-dice_roll_benchmark()
-fizzbuzz_benchmark()
-arithmetic_benchmark()
-call_benchmark()
+diceRollBenchmark()
+fizzbuzzBenchmark()
+arithmeticBenchmark()
+callBenchmark()
 
 
 

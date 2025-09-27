@@ -77,7 +77,7 @@ pub const TokenType = enum {
     RETURNS, // returns
     THIS, // this
 
-    // built-in methods (@methods)
+    // built-in methods
     // IMPLEMENTED AND TESTED
     TYPE, // @type        - get type name as string
     LENGTH, // @length      - get length of string/array
@@ -162,8 +162,6 @@ pub const TokenType = enum {
     LOGIC, // logic
     CUSTOM, // custom
 
-    // Type keywords
-
     EOF, // end of file
 };
 
@@ -173,7 +171,7 @@ pub const Token = struct {
     literal: TokenLiteral,
     line: usize,
     column: usize,
-    file: []const u8, // Add file path for better error reporting
+    file: []const u8,
 
     pub fn init(token_type: TokenType, lexeme: []const u8, literal: TokenLiteral, line: usize, column: usize) Token {
         return Token{
@@ -182,7 +180,7 @@ pub const Token = struct {
             .literal = literal,
             .line = line,
             .column = column,
-            .file = "", // Default to empty string, will be set by lexer
+            .file = "",
         };
     }
 
@@ -212,7 +210,6 @@ pub fn deinit(self: *TokenLiteral, allocator: std.mem.Allocator) void {
     }
 }
 
-// Add a helper function to convert TokenType to TypeInfo
 pub fn convertTokenTypeToTypeInfo(token_type: TokenType) ast.TypeInfo {
     return switch (token_type) {
         .INT => ast.TypeInfo{ .base = .Int, .is_mutable = true },

@@ -3,10 +3,12 @@ const ast = @import("../../../ast/ast.zig");
 const types = @import("../../../types/types.zig");
 const Location = @import("../../../utils/reporting.zig").Location;
 const HIRGenerator = @import("../soxa_generator.zig").HIRGenerator;
+const SoxaStatements = @import("../soxa_statements.zig");
 const HIRValue = @import("../soxa_values.zig").HIRValue;
 const HIRType = @import("../soxa_types.zig").HIRType;
 const ScopeKind = @import("../soxa_types.zig").ScopeKind;
 const HIRInstruction = @import("../soxa_instructions.zig").HIRInstruction;
+const ArithOp = @import("../soxa_instructions.zig").ArithOp;
 const CallKind = @import("../soxa_instructions.zig").CallKind;
 const ErrorCode = @import("../../../utils/errors.zig").ErrorCode;
 const ErrorList = @import("../../../utils/errors.zig").ErrorList;
@@ -267,44 +269,9 @@ pub const CallsHandler = struct {
         // Aggressive inlining: if this is a small, pure function with a single Return statement,
         // inline it at the call site to eliminate call/return overhead.
         if (call_kind == .LocalFunction) {
-            if (self.generator.findFunctionBody(function_name)) |func_body| {
-                // Inline only if function body is a single Return statement
-                if (func_body.statements.len == 1 and func_body.statements[0].data == .Return) {
-                    // Emit a new scope for the inlined call
-                    try self.generator.instructions.append(.{ .EnterScope = .{ .scope_id = self.generator.label_generator.label_count + 1000, .var_count = @intCast(func_body.function_info.arity) } });
-
-                    // Store parameters from the stack into local variables (reverse order)
-                    // ALL parameters must be processed in reverse order since they're all popped from the same stack
-                    var p_index: usize = func_body.function_params.len;
-                    while (p_index > 0) {
-                        p_index -= 1;
-                        const param = func_body.function_params[p_index];
-                        const expected_t = func_body.param_types[p_index];
-                        if (func_body.param_is_alias[p_index]) {
-                            // Alias parameter: the caller pushed a storage id reference
-                            // Use the actual parameter position (not the reverse index)
-                            const param_position = p_index + 1;
-                            try self.generator.instructions.append(.{ .StoreParamAlias = .{ .param_name = param.name.lexeme, .param_type = expected_t, .var_index = @intCast(param_position) } });
-                        } else {
-                            const var_idx_inline = try self.generator.getOrCreateVariable(param.name.lexeme);
-                            try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = var_idx_inline, .var_name = param.name.lexeme, .scope_kind = .Local, .module_context = null, .expected_type = expected_t } });
-                        }
-                    }
-
-                    // Generate the return expression inline
-                    const ret_stmt = func_body.statements[0];
-                    const ret_data = ret_stmt.data.Return;
-                    if (ret_data.value) |value_expr| {
-                        try self.generator.generateExpression(value_expr, true, true);
-                    } else {
-                        // No value; ensure consistency: do not push anything for .Nothing returns
-                    }
-
-                    // Exit the inlined scope
-                    try self.generator.instructions.append(.{ .ExitScope = .{ .scope_id = self.generator.label_generator.label_count + 1000 } });
-
-                    return; // Inlined successfully; skip emitting Call
-                }
+            // Enhanced inlining: handle both simple returns and simple arithmetic functions
+            if (try self.tryInlineFunction(function_name, call_kind)) {
+                return; // Inlined successfully; skip emitting Call
             }
         }
 
@@ -626,6 +593,13 @@ pub const CallsHandler = struct {
             // @random() -> returns random float from 0.0 to 1.0
             if (builtin_data.arguments.len != 0) return error.InvalidArgumentCount;
             try self.generator.instructions.append(.{ .Call = .{ .function_index = 0, .qualified_name = "random", .arg_count = 0, .call_kind = .BuiltinFunction, .target_module = null, .return_type = .Float } });
+        } else if (std.mem.eql(u8, name, "int")) {
+            // @int(value) -> converts value to int (direct type conversion, not string conversion)
+            if (builtin_data.arguments.len != 1) return error.InvalidArgumentCount;
+            // Evaluate the argument to get the value on the stack
+            try self.generator.generateExpression(builtin_data.arguments[0], true, false);
+            // Direct type conversion from float to int (truncate)
+            try self.generator.instructions.append(.{ .Convert = .{ .from_type = .Float, .to_type = .Int } });
         } else {
             // Fallback: no-op or error until implemented
             return error.NotImplemented;
@@ -686,6 +660,7 @@ pub const CallsHandler = struct {
     }
 
     // Private helper methods
+
     fn generateStructConstructorCall(self: *CallsHandler, type_name: []const u8, arguments: []ast.CallArgument) !void {
         if (self.generator.isCustomType(type_name)) |ct| {
             const fields_info = ct.struct_fields orelse &[_]@import("../type_system.zig").TypeSystem.CustomTypeInfo.StructField{};
@@ -728,5 +703,168 @@ pub const CallsHandler = struct {
                 .size_bytes = 0,
             } });
         }
+    }
+
+    fn tryInlineFunction(self: *CallsHandler, function_name: []const u8, call_kind: CallKind) !bool {
+        if (call_kind != .LocalFunction) return false;
+        const func_body = self.generator.findFunctionBody(function_name) orelse return false;
+        if (!self.shouldInlineFunction(func_body)) return false;
+
+        // Allocate a unique scope id for inlined body
+        const scope_id = self.generator.label_generator.label_count + 1000;
+        try self.generator.instructions.append(.{
+            .EnterScope = .{ .scope_id = scope_id, .var_count = @intCast(func_body.function_info.arity) },
+        });
+
+        // Bind parameters (always in reverse order because they're popped from stack)
+        var i: usize = func_body.function_params.len;
+        while (i > 0) {
+            i -= 1;
+            const param = func_body.function_params[i];
+            const expected_t = func_body.param_types[i];
+
+            if (func_body.param_is_alias[i]) {
+                try self.generator.instructions.append(.{
+                    .StoreParamAlias = .{
+                        .param_name = param.name.lexeme,
+                        .param_type = expected_t,
+                        .var_index = @intCast(i + 1),
+                    },
+                });
+            } else {
+                const var_idx = try self.generator.getOrCreateVariable(param.name.lexeme);
+                try self.generator.instructions.append(.{
+                    .StoreVar = .{
+                        .var_index = var_idx,
+                        .var_name = param.name.lexeme,
+                        .scope_kind = .Local,
+                        .module_context = null,
+                        .expected_type = expected_t,
+                    },
+                });
+            }
+        }
+
+        // Inline the body
+        try self.inlineBody(func_body);
+
+        // Exit scope
+        try self.generator.instructions.append(.{ .ExitScope = .{ .scope_id = scope_id } });
+
+        return true;
+    }
+
+    fn inlineBody(self: *CallsHandler, func_body: *const HIRGenerator.FunctionBody) !void {
+        if (func_body.statements.len == 1 and func_body.statements[0].data == .Return) {
+            // Single return
+            if (func_body.statements[0].data.Return.value) |val| {
+                try self.generator.generateExpression(val, true, true);
+            }
+            return;
+        }
+
+        if (func_body.statements.len == 2 and
+            func_body.statements[0].data == .Expression and
+            func_body.statements[1].data == .Return)
+        {
+            const expr = func_body.statements[0].data.Expression orelse return;
+            if (expr.data == .Binary) {
+                try self.inlineSimpleBinary(expr.data);
+                return;
+            } else {
+                try self.generator.generateExpression(expr, true, true);
+                return;
+            }
+        }
+
+        // Fallback: generate all statements normally
+        for (func_body.statements) |stmt| {
+            try SoxaStatements.generateStatement(self.generator, stmt);
+        }
+    }
+
+    fn inlineSimpleBinary(self: *CallsHandler, bin: ast.Expr.Data) !void {
+        if (bin != .Binary) return;
+
+        if (bin.Binary.left) |l| {
+            try self.loadVarIfSimple(l);
+        }
+        if (bin.Binary.right) |r| {
+            try self.loadVarIfSimple(r);
+        }
+
+        const op: ArithOp = switch (bin.Binary.operator.type) {
+            .PLUS => .Add,
+            .MINUS => .Sub,
+            .ASTERISK => .Mul,
+            .SLASH => .Div,
+            .MODULO => .Mod,
+            else => .Add,
+        };
+
+        try self.generator.instructions.append(.{ .Arith = .{ .op = op, .operand_type = .Int } });
+    }
+
+    fn loadVarIfSimple(self: *CallsHandler, expr: *ast.Expr) !void {
+        if (expr.data == .Variable) {
+            const v = expr.data.Variable;
+            const var_idx = try self.generator.getOrCreateVariable(v.lexeme);
+            try self.generator.instructions.append(.{
+                .LoadVar = .{
+                    .var_index = var_idx,
+                    .var_name = v.lexeme,
+                    .scope_kind = .Local,
+                    .module_context = null,
+                },
+            });
+        } else {
+            try self.generator.generateExpression(expr, true, true);
+        }
+    }
+
+    fn shouldInlineFunction(self: *CallsHandler, func_body: *const HIRGenerator.FunctionBody) bool {
+        // Check if function is simple enough to inline
+        if (func_body.statements.len > 3) return false; // Too complex
+
+        // Check for simple patterns:
+        // 1. Single return statement (like "return a + b")
+        if (func_body.statements.len == 1 and func_body.statements[0].data == .Return) {
+            return true;
+        }
+
+        // 2. Single expression statement (like "a + b" without explicit return)
+        if (func_body.statements.len == 1 and func_body.statements[0].data == .Expression) {
+            const expr = func_body.statements[0].data.Expression;
+            if (expr) |e| {
+                // Check if it's a simple binary operation
+                return self.isSimpleArithmeticExpression(e);
+            }
+        }
+
+        // 3. Expression + Return pattern (like "a + b; return")
+        if (func_body.statements.len == 2 and
+            func_body.statements[0].data == .Expression and
+            func_body.statements[1].data == .Return)
+        {
+            const expr = func_body.statements[0].data.Expression;
+            if (expr) |e| {
+                // Check if it's a simple binary operation
+                return self.isSimpleArithmeticExpression(e);
+            }
+        }
+
+        return false;
+    }
+
+    fn isSimpleArithmeticExpression(self: *CallsHandler, expr: *ast.Expr) bool {
+        _ = self; // Suppress unused parameter warning
+        if (expr.data == .Binary) {
+            const binary = expr.data.Binary;
+            // Check if both operands are simple variables
+            const left_is_var = if (binary.left) |l| l.data == .Variable else false;
+            const right_is_var = if (binary.right) |r| r.data == .Variable else false;
+            return left_is_var and right_is_var;
+        }
+        return false;
     }
 };

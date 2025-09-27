@@ -1,20 +1,18 @@
-// src/parser/symbol_table.zig
-
 const std = @import("std");
 const ast = @import("../ast/ast.zig");
 const token = @import("../types/token.zig");
 
 pub const SymbolState = enum {
-    Declared, // Forward declaration
-    Defined, // Full definition available
-    Imported, // From another module
+    Declared,
+    Defined,
+    Imported,
 };
 
 pub const Symbol = struct {
     name: []const u8,
     is_public: bool,
     declared_at: token.Token,
-    state: SymbolState, // Add this field
+    state: SymbolState,
     kind: union(enum) {
         Function: struct {
             params: []ast.Parameter,
@@ -37,7 +35,7 @@ pub const Symbol = struct {
         },
         Import: struct {
             module_path: []const u8,
-            imported_symbol: ?[]const u8, // null means whole module
+            imported_symbol: ?[]const u8,
         },
     },
 };
@@ -45,7 +43,7 @@ pub const Symbol = struct {
 pub const SymbolTable = struct {
     allocator: std.mem.Allocator,
     symbols: std.StringHashMap(Symbol),
-    imports: std.StringHashMap([]const u8), // module name -> path
+    imports: std.StringHashMap([]const u8),
     parent: ?*SymbolTable,
     scope_level: u32,
 
@@ -70,8 +68,8 @@ pub const SymbolTable = struct {
     pub fn addImport(self: *SymbolTable, name: []const u8, path: []const u8, specific_symbol: ?[]const u8) !void {
         try self.symbols.put(name, .{
             .name = name,
-            .is_public = false, // imports are always private to the module
-            .declared_at = undefined, // you might want to track this
+            .is_public = false,
+            .declared_at = undefined,
             .state = .Imported,
             .kind = .{
                 .Import = .{
@@ -98,16 +96,10 @@ pub const SymbolTable = struct {
         self.imports.deinit();
     }
 
-    pub fn validateNoCircularImports(self: *SymbolTable) !void {
-        _ = self;
-        // Implementation to detect circular imports
-    }
-
     pub fn validateAllDeclaredSymbolsAreDefined(self: *SymbolTable) !void {
         var it = self.symbols.iterator();
         while (it.next()) |entry| {
             if (entry.value_ptr.state == .Declared) {
-                // Error: symbol declared but never defined
                 return error.UndefinedSymbol;
             }
         }

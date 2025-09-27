@@ -109,6 +109,7 @@ pub const LexicalAnalyzer = struct {
         try self.keywords.put("await", .AWAIT);
         try self.keywords.put("entry", .ENTRY);
         try self.keywords.put("is", .ASSIGN);
+        try self.keywords.put("equals", .EQUALITY);
         try self.keywords.put("as", .AS);
         try self.keywords.put("from", .FROM);
         try self.keywords.put("to", .TO);
