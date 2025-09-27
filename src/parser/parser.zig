@@ -43,17 +43,15 @@ fn infix_call(self: *Parser, left: ?*ast.Expr, precedence: Precedence) ErrorList
 }
 
 fn array(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-    self.advance(); // First, consume the LEFT_BRACKET token!
+    self.advance();
 
     var elements = std.array_list.Managed(*ast.Expr).init(self.allocator);
     errdefer elements.deinit();
 
-    // Parse first element to establish the type
     if (self.peek().type != .RIGHT_BRACKET) {
         const first_element = try self.parsePrecedence(.NONE) orelse return error.ExpectedExpression;
         try elements.append(first_element);
 
-        // Get the type of the first element
         const first_type = switch (first_element.*) {
             .Literal => |lit| @as(token.TokenType, switch (lit) {
                 .int => .INT_TYPE,
@@ -67,17 +65,15 @@ fn array(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
                 .enum_variant => .ENUM_TYPE,
                 .map => .MAP_TYPE,
             }),
-            else => .IDENTIFIER, // Handle other expression types
+            else => .IDENTIFIER,
         };
 
-        // Parse remaining elements
         while (self.peek().type == .COMMA) {
-            self.advance(); // consume comma
+            self.advance();
             if (self.peek().type == .RIGHT_BRACKET) break;
 
             const element = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
 
-            // Check if the new element matches the type of the first element
             const element_type = switch (element.*) {
                 .Literal => |lit| @as(token.TokenType, switch (lit) {
                     .int => .INT_TYPE,
@@ -95,7 +91,6 @@ fn array(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
             };
 
             if (element_type != first_type) {
-                // Clean up the element we just created
                 element.deinit(self.allocator);
                 self.allocator.destroy(element);
                 return error.HeterogeneousArray;
@@ -108,7 +103,7 @@ fn array(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     if (self.peek().type != .RIGHT_BRACKET) {
         return error.ExpectedRightBracket;
     }
-    self.advance(); // consume ']'
+    self.advance();
 
     const array_expr = try self.allocator.create(ast.Expr);
     array_expr.* = .{ .Array = try elements.toOwnedSlice() };
@@ -116,27 +111,24 @@ fn array(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
 }
 
 fn parseForEach(self: *Parser) ErrorList!*ast.Expr {
-    self.advance(); // consume 'foreach'
+    self.advance();
 
     if (self.peek().type != .LEFT_PAREN) {
         return error.ExpectedLeftParen;
     }
     self.advance();
 
-    // Parse item name
     if (self.peek().type != .IDENTIFIER) {
         return error.ExpectedIdentifier;
     }
     _ = self.peek();
     self.advance();
 
-    // Parse 'in' keyword
     if (self.peek().type != .IN) {
         return error.ExpectedInKeyword;
     }
     self.advance();
 
-    // Parse array expression
     _ = try expression_parser.parseExpression(self);
 
     if (self.peek().type != .RIGHT_PAREN) {
@@ -144,20 +136,18 @@ fn parseForEach(self: *Parser) ErrorList!*ast.Expr {
     }
     self.advance();
 
-    // Parse body as a block
     if (self.peek().type != .LEFT_BRACE) {
         return error.ExpectedLeftBrace;
     }
     _ = try self.parseBlockStmt();
 
-    // Desugar to Loop handled in statement_parser (keep here for compatibility if needed)
     const foreach_expr = try self.allocator.create(ast.Expr);
     foreach_expr.* = .{ .DefaultArgPlaceholder = {} };
     return foreach_expr;
 }
 
 fn parseReturn(self: *Parser) ErrorList!ast.Stmt {
-    self.advance(); // consume 'return'
+    self.advance();
 
     var value: ?*ast.Expr = null;
     const type_info = ast.TypeInfo{ .base = .Nothing };
@@ -175,13 +165,11 @@ fn parseReturn(self: *Parser) ErrorList!ast.Stmt {
 }
 
 fn map(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-
-    // Consume the left brace
     self.advance();
 
-    var entries = std.array_list.Managed(ast.MapEntry).init(self.allocator); // Changed from *ast.MapEntry
+    var entries = std.array_list.Managed(ast.MapEntry).init(self.allocator);
     errdefer {
-        for (entries.items) |*entry| { // Changed to use pointer to entry
+        for (entries.items) |*entry| {
             entry.key.deinit(self.allocator);
             self.allocator.destroy(entry.key);
             entry.value.deinit(self.allocator);
@@ -190,38 +178,28 @@ fn map(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
         entries.deinit();
     }
 
-    // Parse entries until we hit a right brace
     while (self.peek().type != .RIGHT_BRACE and self.peek().type != .EOF) {
-        // Parse key
         const key = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
 
-        // Expect :
         if (self.peek().type != .WHERE_SYMBOL) {
-            // If we don't see a :, this might be a block instead
             if (entries.items.len == 0) {
-                // Clean up the key we just parsed
                 key.deinit(self.allocator);
                 self.allocator.destroy(key);
-                // Fall back to block parsing
                 return self.block(null, .NONE);
             }
             return error.ExpectedColon;
         }
-        self.advance(); // consume colon
+        self.advance();
 
-        // Parse value
         const value = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
 
-        // Create and append entry directly
         try entries.append(.{
             .key = key,
             .value = value,
         });
 
-        // Handle comma
         if (self.peek().type == .COMMA) {
             self.advance();
-            // Allow trailing comma
             if (self.peek().type == .RIGHT_BRACE) break;
         } else if (self.peek().type != .RIGHT_BRACE) {
             return error.ExpectedCommaOrBrace;
@@ -233,7 +211,5 @@ fn map(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     }
     self.advance();
 
-    // Map literals are now statements, not expressions
-    // This function should not be called for map literals anymore
     return error.MapLiteralsMustBeStatements;
 }

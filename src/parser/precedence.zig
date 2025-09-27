@@ -9,7 +9,6 @@ const Reporting = @import("../utils/reporting.zig");
 const Errors = @import("../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
 
-// Import all the parsing functions used in rules
 const unary = expr_parser.unary;
 const binary = expr_parser.binary;
 const literal = expr_parser.literal;
@@ -104,7 +103,6 @@ pub const rules = blk: {
     r.set(.POWER_EQUAL, .{ .infix = compound_assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
     r.set(.ASTERISK_EQUAL, .{ .infix = compound_assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
     r.set(.SLASH_EQUAL, .{ .infix = compound_assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
-    // r.set(.MODULO_EQUAL, .{ .infix = compound_assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
 
     // Comparison operators
     r.set(.EQUALITY, .{ .infix = binary, .precedence = .EQUALITY });
@@ -153,7 +151,7 @@ pub const rules = blk: {
 
     // Blocks
     r.set(.LEFT_BRACE, .{
-        .prefix = braceExpr, // New function that handles both blocks and maps
+        .prefix = braceExpr,
         .precedence = .NONE,
     });
 
@@ -314,7 +312,6 @@ pub fn parsePrecedence(self: *Parser, precedence_level: Precedence) ErrorList!?*
 fn compound_assignment(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     if (left == null) return error.InvalidAssignmentTarget;
 
-    // Verify left side is a valid assignment target
     const is_valid_target = switch (left.?.data) {
         .Variable => true,
         .Index => true,
@@ -329,7 +326,6 @@ fn compound_assignment(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList
     const operator = self.tokens[self.current - 1];
     const value = try parsePrecedence(self, .ASSIGNMENT) orelse return error.ExpectedExpression;
 
-    // Create compound assignment expression
     const compound_expr = try self.allocator.create(ast.Expr);
 
     compound_expr.* = switch (left.?.data) {
@@ -354,8 +350,6 @@ fn compound_assignment(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList
                     .array = idx.array,
                     .index = idx.index,
                     .value = blk: {
-                        // For compound assignments, create the proper binary expression
-                        // Convert += to + etc. (only for enabled compound operators)
                         const binary_op = switch (operator.type) {
                             .PLUS_EQUAL => token.TokenType.PLUS,
                             .MINUS_EQUAL => token.TokenType.MINUS,
@@ -365,7 +359,6 @@ fn compound_assignment(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList
                             else => unreachable,
                         };
 
-                        // Create array[index] expression for the left side
                         const array_access = try self.allocator.create(ast.Expr);
                         array_access.* = .{
                             .base = .{
@@ -378,7 +371,6 @@ fn compound_assignment(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList
                             } },
                         };
 
-                        // Create binary expression: array[index] + value
                         const binary_expr = try self.allocator.create(ast.Expr);
                         binary_expr.* = .{
                             .base = .{
@@ -414,7 +406,6 @@ fn compound_assignment(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList
                     .object = fa.object,
                     .field = fa.field,
                     .value = blk: {
-                        // Convert compound operator to binary operator
                         const binary_op = switch (operator.type) {
                             .PLUS_EQUAL => token.TokenType.PLUS,
                             .MINUS_EQUAL => token.TokenType.MINUS,
@@ -424,7 +415,6 @@ fn compound_assignment(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList
                             else => unreachable,
                         };
 
-                        // Recreate a FieldAccess expression for left side (object.field)
                         const field_left = try self.allocator.create(ast.Expr);
                         field_left.* = .{
                             .base = .{
@@ -434,7 +424,6 @@ fn compound_assignment(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList
                             .data = .{ .FieldAccess = .{ .object = fa.object, .field = fa.field } },
                         };
 
-                        // Build binary expression: (object.field) <op> value
                         const binary_expr = try self.allocator.create(ast.Expr);
                         binary_expr.* = .{
                             .base = .{
@@ -467,7 +456,7 @@ fn compound_assignment(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList
 }
 
 fn logical(self: *Parser, left: ?*ast.Expr, precedence: Precedence) ErrorList!?*ast.Expr {
-    const operator = self.tokens[self.current - 1]; // Get the operator token (AND/OR)
+    const operator = self.tokens[self.current - 1];
     const right = try parsePrecedence(self, precedence) orelse return error.ExpectedExpression;
     const logical_expr = try self.allocator.create(ast.Expr);
     logical_expr.* = .{
@@ -489,18 +478,13 @@ fn logical(self: *Parser, left: ?*ast.Expr, precedence: Precedence) ErrorList!?*
 fn peekValue(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     if (left == null) return error.ExpectedLeftOperand;
 
-    // Get the variable name if this is a variable expression
     var name_token: ?[]const u8 = null;
     if (left.?.data == .Variable) {
         name_token = left.?.data.Variable.lexeme;
     }
 
-    // Use the '?' token (previous) for accurate location info. After infix dispatch,
-    // parsePrecedence has already advanced past '?', so peek() would point at the next token
-    // (possibly EOF/newline) which may have empty file information.
     const qm_token = self.previous();
 
-    // Create the peekion expression
     const peek_expr = try self.allocator.create(ast.Expr);
     peek_expr.* = .{
         .base = .{
@@ -518,7 +502,6 @@ fn peekValue(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Exp
             },
         },
         .data = .{
-            // Use regular Peek for non-struct values
             .Peek = .{
                 .expr = left.?,
                 .location = .{
@@ -541,18 +524,13 @@ fn peekValue(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Exp
 fn printValue(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     if (left == null) return error.ExpectedLeftOperand;
 
-    // Get the variable name if this is a variable expression
     var name_token: ?[]const u8 = null;
     if (left.?.data == .Variable) {
         name_token = left.?.data.Variable.lexeme;
     }
 
-    // Use the '?' token (previous) for accurate location info. After infix dispatch,
-    // parsePrecedence has already advanced past '?', so peek() would point at the next token
-    // (possibly EOF/newline) which may have empty file information.
     const qm_token = self.previous();
 
-    // Create the print expression
     const print_expr = try self.allocator.create(ast.Expr);
     print_expr.* = .{
         .base = .{
@@ -570,7 +548,6 @@ fn printValue(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Ex
             },
         },
         .data = .{
-            // Use regular Print for non-struct values
             .Print = .{
                 .expr = left.?,
                 .format_template = null,
@@ -587,7 +564,7 @@ fn printValue(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Ex
 fn rangeExpr(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     if (left == null) return error.ExpectedLeftOperand;
 
-    const operator = self.tokens[self.current - 1]; // Get the 'to' token
+    const operator = self.tokens[self.current - 1];
     const right = try parsePrecedence(self, .TERM) orelse return error.ExpectedRightOperand;
 
     const range_expr = try self.allocator.create(ast.Expr);
