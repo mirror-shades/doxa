@@ -11,25 +11,21 @@ const expression_parser = @import("./expression_parser.zig");
 const precedence = @import("./precedence.zig");
 
 pub fn existentialQuantifier(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-    self.advance(); // consume 'exists'
+    self.advance();
 
-    // Parse the bound variable
     if (self.peek().type != .IDENTIFIER) {
         return error.ExpectedIdentifier;
     }
     const bound_variable = self.peek();
     self.advance();
 
-    // Parse 'in' keyword
     if (self.peek().type != .IN) {
         return error.ExpectedInKeyword;
     }
     self.advance();
 
-    // Parse array expression (can be identifier or array type)
     if (self.peek().type == .ARRAY_TYPE) {
-        // Create array type expression
-        self.advance(); // consume ARRAY_TYPE
+        self.advance();
         const array_expr = try self.allocator.create(ast.Expr);
         array_expr.* = .{
             .base = .{
@@ -48,7 +44,6 @@ pub fn existentialQuantifier(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorL
             },
         };
 
-        // Parse 'where' keyword
         if (self.peek().type != .WHERE) {
             array_expr.deinit(self.allocator);
             self.allocator.destroy(array_expr);
@@ -56,7 +51,6 @@ pub fn existentialQuantifier(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorL
         }
         self.advance();
 
-        // Parse the condition
         const condition = try expression_parser.parseExpression(self) orelse {
             array_expr.deinit(self.allocator);
             self.allocator.destroy(array_expr);
@@ -79,9 +73,7 @@ pub fn existentialQuantifier(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorL
         };
         return exists_expr;
     } else {
-        // Parse regular expression for array
         const array_expr = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
-        // Parse 'where' keyword
         if (self.peek().type != .WHERE) {
             array_expr.deinit(self.allocator);
             self.allocator.destroy(array_expr);
@@ -89,7 +81,6 @@ pub fn existentialQuantifier(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorL
         }
         self.advance();
 
-        // Parse the condition
         const condition = try expression_parser.parseExpression(self) orelse {
             array_expr.deinit(self.allocator);
             self.allocator.destroy(array_expr);
@@ -115,25 +106,21 @@ pub fn existentialQuantifier(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorL
 }
 
 pub fn universalQuantifier(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-    self.advance(); // consume 'forall'
+    self.advance();
 
-    // Parse the bound variable
     if (self.peek().type != .IDENTIFIER) {
         return error.ExpectedIdentifier;
     }
     const bound_variable = self.peek();
     self.advance();
 
-    // Parse 'in' keyword
     if (self.peek().type != .IN) {
         return error.ExpectedInKeyword;
     }
     self.advance();
 
-    // Parse array expression (can be identifier or array type)
     if (self.peek().type == .ARRAY_TYPE) {
-        // Create array type expression
-        self.advance(); // consume ARRAY_TYPE
+        self.advance();
         const array_expr = try self.allocator.create(ast.Expr);
         array_expr.* = .{
             .base = .{
@@ -152,7 +139,6 @@ pub fn universalQuantifier(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorLis
             },
         };
 
-        // Parse 'where' keyword
         if (self.peek().type != .WHERE) {
             array_expr.deinit(self.allocator);
             self.allocator.destroy(array_expr);
@@ -160,7 +146,6 @@ pub fn universalQuantifier(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorLis
         }
         self.advance();
 
-        // Parse the condition
         const condition = try expression_parser.parseExpression(self) orelse {
             array_expr.deinit(self.allocator);
             self.allocator.destroy(array_expr);
@@ -183,10 +168,8 @@ pub fn universalQuantifier(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorLis
         };
         return forall_expr;
     } else {
-        // Parse regular expression for array
         const array_expr = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
 
-        // Parse 'where' keyword
         if (self.peek().type != .WHERE) {
             array_expr.deinit(self.allocator);
             self.allocator.destroy(array_expr);
@@ -194,7 +177,6 @@ pub fn universalQuantifier(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorLis
         }
         self.advance();
 
-        // Parse the condition
         const condition = try expression_parser.parseExpression(self) orelse {
             array_expr.deinit(self.allocator);
             self.allocator.destroy(array_expr);
@@ -222,7 +204,6 @@ pub fn universalQuantifier(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorLis
 pub fn inOperator(self: *Parser, left: ?*ast.Expr, prec: Precedence) ErrorList!?*ast.Expr {
     if (left == null) return error.ExpectedLeftOperand;
 
-    // Parse the array expression
     const array_expr = try precedence.parsePrecedence(self, @enumFromInt(@intFromEnum(prec) + 1)) orelse {
         return error.ExpectedArrayExpression;
     };
@@ -231,16 +212,13 @@ pub fn inOperator(self: *Parser, left: ?*ast.Expr, prec: Precedence) ErrorList!?
         self.allocator.destroy(array_expr);
     }
 
-    // Parse 'where' keyword if it exists
     if (self.peek().type == .WHERE) {
         self.advance();
 
-        // Parse the condition
         const condition = try expression_parser.parseExpression(self) orelse {
             return error.ExpectedExpression;
         };
 
-        // Create exists expression
         const exists_expr = try self.allocator.create(ast.Expr);
         exists_expr.* = .{
             .base = .{
@@ -258,7 +236,6 @@ pub fn inOperator(self: *Parser, left: ?*ast.Expr, prec: Precedence) ErrorList!?
         return exists_expr;
     }
 
-    // If no 'where' keyword, create regular in expression
     const in_expr = try self.allocator.create(ast.Expr);
     in_expr.* = .{
         .base = .{

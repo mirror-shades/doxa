@@ -6,19 +6,15 @@ const Location = @import("../utils/reporting.zig").Location;
 const Reporter = @import("../utils/reporting.zig").Reporter;
 const HIRType = @import("../codegen/hir/soxa_types.zig").HIRType;
 
-/// Counter for generating unique node IDs
 var next_node_id: NodeId = 0;
 
-/// Unique identifier for AST nodes to help with HIR mapping and error tracking
 pub const NodeId = u32;
 
-/// Generate a new unique node ID
 pub fn generateNodeId() NodeId {
     defer next_node_id += 1;
     return next_node_id;
 }
 
-/// Tracks the exact source code location of an AST node
 pub const SourceSpan = struct {
     location: Location,
 
@@ -51,14 +47,10 @@ pub const SourceSpan = struct {
     }
 };
 
-//======================================================================
-// Struct Types
-//======================================================================
-
 pub const StructField = struct {
     name: Token,
     type_expr: *TypeExpr,
-    is_public: bool = false, // Fields are private by default
+    is_public: bool = false,
 
     pub fn deinit(self: *StructField, allocator: std.mem.Allocator) void {
         self.type_expr.deinit(allocator);
@@ -114,7 +106,7 @@ pub const StructMethod = struct {
     return_type_info: TypeInfo,
     body: []Stmt,
     is_public: bool = false,
-    is_static: bool = false, // Static methods don't have 'this' context
+    is_static: bool = false,
 
     pub fn deinit(self: *StructMethod, allocator: std.mem.Allocator) void {
         allocator.free(self.params);
@@ -128,7 +120,7 @@ pub const StructMethod = struct {
 pub const StructDecl = struct {
     name: Token,
     fields: []*StructField,
-    methods: []*StructMethod = &[_]*StructMethod{}, // Methods are optional
+    methods: []*StructMethod = &[_]*StructMethod{},
     is_public: bool = false,
 
     pub fn deinit(self: *StructDecl, allocator: std.mem.Allocator) void {
@@ -145,10 +137,6 @@ pub const StructDecl = struct {
         allocator.free(self.methods);
     }
 };
-
-//======================================================================
-// Function Types
-//======================================================================
 
 pub const FunctionParam = struct {
     name: Token,
@@ -183,31 +171,21 @@ pub const Parameter = struct {
 pub const FunctionType = struct {
     params: []TypeInfo,
     return_type: *TypeInfo,
-    param_aliases: ?[]bool = null, // Track which parameters are aliases
+    param_aliases: ?[]bool = null,
 };
 
-//======================================================================
-// Visitor Pattern
-//======================================================================
-
-/// Base interface for AST visitors
 pub const ASTVisitor = struct {
-    /// Visit an expression node
     visitExpr: fn (self: *ASTVisitor, expr: *Expr) anyerror!void,
-    /// Visit a statement node
     visitStmt: fn (self: *ASTVisitor, stmt: *Stmt) anyerror!void,
-    /// Visit a type expression
     visitTypeExpr: fn (self: *ASTVisitor, type_expr: *TypeExpr) anyerror!void,
 
-    /// Optional hooks for enter/exit of compound nodes
     enterScope: ?fn (self: *ASTVisitor) anyerror!void = null,
     exitScope: ?fn (self: *ASTVisitor) anyerror!void = null,
 };
 
-/// Common base for all AST nodes
 pub const Base = struct {
     id: NodeId,
-    span: ?SourceSpan, // Optional for synthetic nodes
+    span: ?SourceSpan,
 
     pub fn location(self: *const Base) Location {
         return if (self.span) |span| span.location else Location{
@@ -220,16 +198,6 @@ pub const Base = struct {
             },
         };
     }
-};
-
-//======================================================================
-// Statement Types
-//======================================================================
-
-pub const TryStmt = struct {
-    try_body: []Stmt,
-    catch_body: []Stmt,
-    error_var: ?Token,
 };
 
 pub const VarDecl = struct {
@@ -278,7 +246,6 @@ pub const Stmt = struct {
         },
         EnumDecl: EnumDecl,
         MapLiteral: []*MapEntry,
-        Try: TryStmt,
         Module: struct {
             name: Token,
             imports: []const ImportInfo,
@@ -358,16 +325,6 @@ pub const Stmt = struct {
                 }
                 allocator.free(entries);
             },
-            .Try => |*t| {
-                for (t.try_body) |*stmt| {
-                    stmt.deinit(allocator);
-                }
-                allocator.free(t.try_body);
-                for (t.catch_body) |*stmt| {
-                    stmt.deinit(allocator);
-                }
-                allocator.free(t.catch_body);
-            },
             .Assert => |*a| {
                 a.condition.deinit(allocator);
                 allocator.destroy(a.condition);
@@ -398,10 +355,6 @@ pub const Stmt = struct {
         }
     }
 };
-
-//======================================================================
-// Expression Types
-//======================================================================
 
 pub const Binary = struct {
     left: ?*Expr,
@@ -448,11 +401,6 @@ pub const Logical = struct {
     right: *Expr,
 };
 
-// Unified Loop node for all loop variants.
-// - var_decl: optional initialization/loop variable declaration (commonly i32)
-// - condition: optional boolean/tetra expression (when null, treated as true)
-// - step: optional expression or block executed after each iteration
-// - body: required expression (typically a Block)
 pub const Loop = struct {
     var_decl: ?*Stmt = null,
     condition: ?*Expr = null,
@@ -467,11 +415,8 @@ pub const PeekExpr = struct {
     field_name: ?[]const u8 = null,
 };
 
-/// Represents a format template for string interpolation
-/// Example: "Hello {name}, you are {@string(age)} years old!"
-/// Parts: ["Hello ", Expression(name), ", you are ", Expression(@string(age)), " years old!"]
 pub const FormatTemplate = struct {
-    parts: []FormatPart, // Array of format parts (strings + expressions)
+    parts: []FormatPart,
 
     pub fn deinit(self: *FormatTemplate, allocator: std.mem.Allocator) void {
         for (self.parts) |*part| {
@@ -481,15 +426,14 @@ pub const FormatTemplate = struct {
     }
 };
 
-/// A single part of a format template - either a literal string or an expression
 pub const FormatPart = union(enum) {
-    String: []const u8, // Literal string part (e.g., "Hello ")
-    Expression: *Expr, // Embedded expression (e.g., @length(word) - offset)
+    String: []const u8,
+    Expression: *Expr,
 
     pub fn deinit(self: *FormatPart, allocator: std.mem.Allocator) void {
         switch (self.*) {
             .String => |str| {
-                allocator.free(str); // Free the duplicated string
+                allocator.free(str);
             },
             .Expression => |expr| {
                 expr.deinit(allocator);
@@ -500,31 +444,25 @@ pub const FormatPart = union(enum) {
 };
 
 pub const PrintExpr = struct {
-    // For simple printing: just expr (e.g., print(variable))
     expr: ?*Expr,
 
-    // For structured interpolated printing: format template (e.g., @print("Hello {name}!"))
     format_template: ?*FormatTemplate,
 
-    // Legacy support for current implementation - will be phased out
-    format_parts: ?[]const []const u8, // String parts between placeholders
-    arguments: ?[]const *Expr, // Expressions to interpolate
-    placeholder_indices: ?[]const u32, // Maps placeholders to argument indices
+    format_parts: ?[]const []const u8,
+    arguments: ?[]const *Expr,
+    placeholder_indices: ?[]const u32,
 
     pub fn deinit(self: *PrintExpr, allocator: std.mem.Allocator) void {
-        // Clean up simple expr if present
         if (self.expr) |expr| {
             expr.deinit(allocator);
             allocator.destroy(expr);
         }
 
-        // Clean up new structured format template
         if (self.format_template) |template| {
             template.deinit(allocator);
             allocator.destroy(template);
         }
 
-        // Clean up legacy interpolation data if present
         if (self.format_parts) |parts| {
             for (parts) |part| {
                 allocator.free(part);
@@ -635,26 +573,19 @@ pub const Expr = struct {
         EnumMember: Token,
         DefaultArgPlaceholder: void,
 
-        // Unified built-in methods (from docs/methods.md):
-        // @length, @push, @pop, @insert, @remove, @clear, @find, @slice, @copy
-        // @string, @int, @float, @byte, @type
-        // @input, @syscall
         BuiltinCall: struct {
-            function: Token, // name token for the builtin (lexeme without '@')
-            arguments: []const *Expr, // expression arguments
+            function: Token,
+            arguments: []const *Expr,
         },
 
-        // Map literal (only in decl initializers)
         Map: []MapEntry,
 
-        // Instance-style internal calls: obj.method(args...)
         InternalCall: struct {
             receiver: *Expr,
             method: Token,
             arguments: []const *Expr,
         },
 
-        // Increment/Decrement
         Increment: *Expr,
         Decrement: *Expr,
 
@@ -875,9 +806,6 @@ pub const Expr = struct {
             },
             .EnumMember => {},
             .DefaultArgPlaceholder => {},
-            // .TypeOf removed: use BuiltinCall("type", ...)
-
-            // New unified built-in
             .BuiltinCall => |*bc| {
                 for (bc.arguments) |arg| {
                     arg.deinit(allocator);
@@ -904,15 +832,6 @@ pub const Expr = struct {
                 }
                 allocator.free(m.arguments);
             },
-
-            // Removed array/string-specific nodes, so their deinit cases are gone.
-
-            // Math nodes removed or migrated; handled elsewhere if present
-
-            // IO nodes removed or migrated; use BuiltinCall where applicable
-
-            // .Clone removed or migrated
-
             .CompoundAssign => |*ca| {
                 if (ca.value) |value| {
                     value.deinit(allocator);
@@ -989,10 +908,6 @@ pub const Expr = struct {
         }
     }
 };
-
-//======================================================================
-// Type System
-//======================================================================
 
 pub const Type = enum {
     Int,
@@ -1094,7 +1009,7 @@ pub const StructFieldType = struct {
 
 pub const UnionType = struct {
     types: []const *TypeInfo,
-    current_type_index: ?u32 = null, // Index into types array
+    current_type_index: ?u32 = null,
 
     pub fn getCurrentType(self: *const UnionType) ?*TypeInfo {
         return if (self.current_type_index) |idx| self.types[idx] else null;
@@ -1169,22 +1084,16 @@ pub const TypeExpr = struct {
     }
 };
 
-//======================================================================
-// Module System
-//======================================================================
-
 pub const ImportType = enum {
-    Module, // module math from "./math.doxa"
-    Specific, // import add from "./math.doxa"
+    Module,
+    Specific,
 };
 
 pub const ImportInfo = struct {
     import_type: ImportType,
     module_path: []const u8,
     namespace_alias: ?[]const u8 = null,
-    specific_symbols: ?[][]const u8 = null, // Support multiple symbols: import add, subtract from "./math.doxa"
-
-    // Legacy support for current parser
+    specific_symbols: ?[][]const u8 = null,
     specific_symbol: ?[]const u8 = null,
 };
 
@@ -1192,17 +1101,16 @@ pub const ModuleSymbol = struct {
     name: []const u8,
     kind: enum { Function, Variable, Struct, Enum },
     is_public: bool,
-    stmt_index: usize, // Index in the module's statements for quick lookup
+    stmt_index: usize,
 };
 
 pub const ModuleInfo = struct {
     name: []const u8,
     imports: []const ImportInfo,
-    ast: ?*Expr = null, // Store the module's AST for reference
-    file_path: []const u8, // Store the file path for detecting self-imports
-    symbols: ?std.StringHashMap(ModuleSymbol) = null, // All symbols defined in this module
+    ast: ?*Expr = null,
+    file_path: []const u8,
+    symbols: ?std.StringHashMap(ModuleSymbol) = null,
 
-    // Function to check if a symbol exists and is public
     pub fn hasPublicSymbol(self: *const ModuleInfo, symbol_name: []const u8) bool {
         if (self.symbols) |symbols| {
             if (symbols.get(symbol_name)) |symbol| {
@@ -1212,7 +1120,6 @@ pub const ModuleInfo = struct {
         return false;
     }
 
-    // Function to check if a symbol exists (regardless of visibility)
     pub fn hasSymbol(self: *const ModuleInfo, symbol_name: []const u8) bool {
         if (self.symbols) |symbols| {
             return symbols.contains(symbol_name);
@@ -1220,7 +1127,6 @@ pub const ModuleInfo = struct {
         return false;
     }
 
-    // Get a symbol by name
     pub fn getSymbol(self: *const ModuleInfo, symbol_name: []const u8) ?ModuleSymbol {
         if (self.symbols) |symbols| {
             return symbols.get(symbol_name);
@@ -1228,7 +1134,6 @@ pub const ModuleInfo = struct {
         return null;
     }
 
-    // Deinit the ModuleInfo
     pub fn deinit(self: *ModuleInfo, allocator: std.mem.Allocator) void {
         allocator.free(self.imports);
         if (self.symbols) |*symbols| {
@@ -1236,10 +1141,6 @@ pub const ModuleInfo = struct {
         }
     }
 };
-
-//======================================================================
-// Node Creation Utilities
-//======================================================================
 
 pub fn createExpr(allocator: std.mem.Allocator, data: Expr.Data, span: SourceSpan) !*Expr {
     const expr = try allocator.create(Expr);
@@ -1253,7 +1154,6 @@ pub fn createExpr(allocator: std.mem.Allocator, data: Expr.Data, span: SourceSpa
     return expr;
 }
 
-/// Create a FormatTemplate from a list of FormatParts
 pub fn createFormatTemplate(allocator: std.mem.Allocator, parts: []FormatPart) !*FormatTemplate {
     const template = try allocator.create(FormatTemplate);
     template.* = .{
@@ -1262,22 +1162,15 @@ pub fn createFormatTemplate(allocator: std.mem.Allocator, parts: []FormatPart) !
     return template;
 }
 
-/// Create a string FormatPart
 pub fn createStringPart(allocator: std.mem.Allocator, text: []const u8) !FormatPart {
     const owned_text = try allocator.dupe(u8, text);
     return FormatPart{ .String = owned_text };
 }
 
-/// Create an expression FormatPart
 pub fn createExpressionPart(expr: *Expr) FormatPart {
     return FormatPart{ .Expression = expr };
 }
 
-//======================================================================
-// Type System Utilities
-//======================================================================
-
-// Helper function to create TypeInfo from type expression
 pub fn typeInfoFromExpr(allocator: std.mem.Allocator, type_expr: ?*TypeExpr) !*TypeInfo {
     const type_info = try allocator.create(TypeInfo);
     errdefer allocator.destroy(type_info);
@@ -1299,13 +1192,12 @@ pub fn typeInfoFromExpr(allocator: std.mem.Allocator, type_expr: ?*TypeExpr) !*T
         .Array => |array| blk: {
             const element_type = try typeInfoFromExpr(allocator, array.element_type);
 
-            // Extract array size if present
             var array_size: ?usize = null;
             if (array.size) |size_expr| {
                 if (size_expr.data == .Literal) {
                     switch (size_expr.data.Literal) {
                         .int => |i| array_size = @intCast(i),
-                        else => {}, // Only integer literals are supported for array sizes
+                        else => {},
                     }
                 }
             }
@@ -1345,7 +1237,7 @@ pub fn typeInfoFromExpr(allocator: std.mem.Allocator, type_expr: ?*TypeExpr) !*T
             const union_type = try allocator.create(UnionType);
             union_type.* = .{
                 .types = union_types,
-                .current_type_index = 0, // Default to first type
+                .current_type_index = 0,
             };
 
             break :blk TypeInfo{
@@ -1358,7 +1250,6 @@ pub fn typeInfoFromExpr(allocator: std.mem.Allocator, type_expr: ?*TypeExpr) !*T
     return type_info;
 }
 
-// Helper function to create TypeInfo from HIR type
 pub fn typeInfoFromHIRType(allocator: std.mem.Allocator, hir_type: HIRType) !*TypeInfo {
     const type_info = try allocator.create(TypeInfo);
     errdefer allocator.destroy(type_info);
@@ -1377,27 +1268,23 @@ pub fn typeInfoFromHIRType(allocator: std.mem.Allocator, hir_type: HIRType) !*Ty
         },
 
         .Map => {
-            // FIX #1: keep Map as Map
             type_info.* = .{ .base = .Map };
         },
 
         .Struct => type_info.* = .{ .base = .Struct },
 
         .Enum => |_| {
-            // Create enum type info with the ID
             type_info.* = .{
                 .base = .Enum,
-                .custom_type = "ValueError", // TODO: Look up enum name by ID
+                .custom_type = "ValueError",
             };
         },
 
         .Function => {
-            // If you have parameter/return info in HIRType, rebuild here.
             type_info.* = .{ .base = .Function };
         },
 
         .Union => |member_ptrs| {
-            // FIX #3: actually rebuild member list (don't emit an empty union)
             var member_types = try allocator.alloc(*TypeInfo, member_ptrs.len);
             for (member_ptrs, 0..) |member_ptr, i| {
                 member_types[i] = try typeInfoFromHIRType(allocator, member_ptr.*);
@@ -1406,57 +1293,46 @@ pub fn typeInfoFromHIRType(allocator: std.mem.Allocator, hir_type: HIRType) !*Ty
             const ut = try allocator.create(UnionType);
             ut.* = .{
                 .types = member_types,
-                .current_type_index = null, // leave unset for type-level info
+                .current_type_index = null,
             };
 
             type_info.* = .{ .base = .Union, .union_type = ut };
         },
 
         .Unknown => type_info.* = .{ .base = .Nothing },
-        .Poison => type_info.* = .{ .base = .Nothing }, // Treat poison as nothing for now
+        .Poison => type_info.* = .{ .base = .Nothing },
     }
 
     return type_info;
 }
 
-//======================================================================
-// Semantic Context Structures (for HIR generation)
-//======================================================================
-
-/// Represents the resolution context of a variable reference
 pub const VariableRef = struct {
-    token: Token, // Original token (for error reporting)
-    module_context: ?[]const u8 = null, // Which module this variable belongs to ("math", "utils", etc.)
-    scope_depth: u32 = 0, // Local scope depth (0 = global, 1 = function, 2 = nested block)
+    token: Token,
+    module_context: ?[]const u8 = null,
+    scope_depth: u32 = 0,
     resolution_kind: ResolutionKind,
 
     pub const ResolutionKind = enum {
-        Local, // Local variable in current function
-        ModuleGlobal, // Global variable in current module
-        ImportedModule, // Imported module namespace (e.g., "math" in "math.add()")
-        ImportedSymbol, // Imported symbol from another module
-        Unresolved, // Not yet resolved (will be resolved in semantic analysis)
+        Local,
+        ModuleGlobal,
+        ImportedModule,
+        ImportedSymbol,
+        Unresolved,
     };
 };
 
-/// Represents the resolution context of a function call
 pub const FunctionCallRef = struct {
     name: []const u8,
     call_kind: CallKind,
-    target_module: ?[]const u8 = null, // For cross-module calls
+    target_module: ?[]const u8 = null,
 
     pub const CallKind = enum {
-        LocalFunction, // Function in current module
-        ModuleFunction, // Function in imported module (namespace.func)
-        Unresolved, // Not yet resolved
+        LocalFunction,
+        ModuleFunction,
+        Unresolved,
     };
 };
 
-//======================================================================
-// AST Node Creation Helpers (for backwards compatibility)
-//======================================================================
-
-/// Create a variable reference with basic token (defaults to Unresolved)
 pub fn createVariableRef(token: Token) VariableRef {
     return VariableRef{
         .token = token,
@@ -1464,7 +1340,6 @@ pub fn createVariableRef(token: Token) VariableRef {
     };
 }
 
-/// Create a resolved variable reference with full context
 pub fn createResolvedVariableRef(token: Token, module_context: ?[]const u8, scope_depth: u32, kind: VariableRef.ResolutionKind) VariableRef {
     return VariableRef{
         .token = token,
@@ -1474,7 +1349,6 @@ pub fn createResolvedVariableRef(token: Token, module_context: ?[]const u8, scop
     };
 }
 
-/// Create a function call context
 pub fn createFunctionCallRef(name: []const u8, kind: FunctionCallRef.CallKind, target_module: ?[]const u8) FunctionCallRef {
     return FunctionCallRef{
         .name = name,

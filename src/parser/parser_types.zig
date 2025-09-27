@@ -20,22 +20,18 @@ const Errors = @import("../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
 const ErrorCode = Errors.ErrorCode;
 
-//======================================================================
-
 const TokenStyle = enum {
     Keyword,
     Symbol,
     Undefined,
 };
 
-// Add module resolution status tracking
 pub const ModuleResolutionStatus = enum {
     NOT_STARTED,
     IN_PROGRESS,
     COMPLETED,
 };
 
-// Add import stack entry for tracking import chains
 pub const ImportStackEntry = struct {
     module_path: []const u8,
     imported_from: ?[]const u8,
@@ -72,7 +68,6 @@ pub const Parser = struct {
 
     declared_types: std.StringHashMap(void),
 
-    // Add circular import detection fields
     module_resolution_status: std.StringHashMap(ModuleResolutionStatus),
     import_stack: std.array_list.Managed(ImportStackEntry),
 
@@ -109,11 +104,9 @@ pub const Parser = struct {
 
     pub fn peek(self: *Parser) token.Token {
         var i = self.current;
-        // Skip over any semicolon tokens (non-semantic separators)
         while (i < self.tokens.len and self.tokens[i].type == .SEMICOLON) {
             i += 1;
         }
-        // Ensure we don't go out of bounds
         if (i >= self.tokens.len) {
             return self.tokens[self.tokens.len - 1];
         }
@@ -121,10 +114,8 @@ pub const Parser = struct {
     }
 
     pub fn peekAhead(self: *Parser, offset: usize) token.Token {
-        // Walk forward over tokens, skipping semicolons and counting only non-semicolons
         var i: usize = self.current;
         var remaining = offset;
-        // Ensure we start from a non-semicolon for offset 0 as well
         while (i < self.tokens.len and self.tokens[i].type == .SEMICOLON) {
             i += 1;
         }
@@ -137,7 +128,6 @@ pub const Parser = struct {
         if (i >= self.tokens.len) {
             return self.tokens[self.tokens.len - 1];
         }
-        // If we landed on a semicolon, skip to next non-semicolon or EOF
         while (i < self.tokens.len and self.tokens[i].type == .SEMICOLON) {
             i += 1;
         }
@@ -148,7 +138,6 @@ pub const Parser = struct {
     }
 
     pub fn advance(self: *Parser) void {
-        // Move to the next non-semicolon token
         if (self.current < self.tokens.len - 1) {
             self.current += 1;
             while (self.current < self.tokens.len - 1 and self.tokens[self.current].type == .SEMICOLON) {
@@ -158,8 +147,6 @@ pub const Parser = struct {
     }
 
     pub fn block(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-
-        // Consume {
         if (self.peek().type != .LEFT_BRACE) {
             return error.ExpectedLeftBrace;
         }
@@ -176,11 +163,9 @@ pub const Parser = struct {
         var last_expr: ?*ast.Expr = null;
 
         while (self.peek().type != .RIGHT_BRACE and self.peek().type != .EOF) {
-            // Parse any statement type
             const stmt = try statement_parser.parseStatement(self);
             try statements.append(stmt);
 
-            // Break after return statement
             if (stmt.data == .Return) break;
 
             if (self.peek().type == .RIGHT_BRACE) {
@@ -193,8 +178,6 @@ pub const Parser = struct {
         }
         self.advance();
 
-        // Determine the last expression in the block (if any) ONLY if it is the
-        // final statement. Do not skip control-flow statements that follow.
         if (statements.items.len > 0) {
             const last_idx = statements.items.len - 1;
             const last_stmt = statements.items[last_idx];
@@ -203,7 +186,6 @@ pub const Parser = struct {
                     if (maybe_expr) |e| {
                         last_expr = e;
                     }
-                    // Remove only the final expression statement
                     statements.items.len = last_idx;
                 },
                 else => {},
@@ -236,68 +218,50 @@ pub const Parser = struct {
             statements.deinit();
         }
 
-        // --- Pass 1: Imports and Modules (Process side effects, don't add to statements list yet) ---
-        // Keep track of the original position after imports are processed
+        // first pass: imports and modules
         var start_index_after_imports = self.current;
         while (self.tokens[start_index_after_imports].type == .IMPORT or self.tokens[start_index_after_imports].type == .MODULE) {
-            // Temporarily move parser to process the import/module
             const temp_current = self.current;
             self.current = start_index_after_imports;
 
-            // Call appropriate parser based on token type
             if (self.tokens[start_index_after_imports].type == .MODULE) {
                 _ = try import_parser.parseModuleStmt(self); // Call for side-effects (loading/registration)
             } else {
                 _ = try import_parser.parseImportStmt(self); // Call for side-effects (loading/registration)
             }
 
-            // Advance start_index_after_imports past the import/module statement
-            // parseImportStmt/parseModuleStmt should have advanced self.current appropriately
             start_index_after_imports = self.current;
 
-            // Restore original parser position if needed (though we'll reset below)
             self.current = temp_current;
         }
-        // Reset parser to position after imports for the main parsing pass
         self.current = start_index_after_imports;
 
-        // --- Pass 2: All other statements ---
+        // second pass: all other statements
         while (self.peek().type != .EOF) {
-            const loop_start_pos = self.current; // Track position for progress check
+            const loop_start_pos = self.current;
 
-            // --- Handle Modifiers ---
             var is_public = false;
             var is_entry = false;
 
-            // IMPORTANT: Check for entry first as it might appear before PUBLIC
             if (self.peek().type == .ENTRY) {
                 is_entry = true;
-                const entry_token = self.peek(); // Store token for later use if needed
-                self.advance(); // consume entry
-                // Store entry point location immediately if found
-                if (!self.has_entry_point) { // Only store the first one found
+                const entry_token = self.peek();
+                self.advance();
+                if (!self.has_entry_point) {
                     self.has_entry_point = true;
                     self.entry_point_location = entry_token;
                 }
             }
             if (self.peek().type == .PUBLIC) {
                 is_public = true;
-                self.advance(); // consume pub
+                self.advance();
             }
-            // --- End Handle Modifiers ---
 
-            // --- Parse Statement ---
-            // Use a general statement parser that handles declarations, expressions, control flow etc.
-            // Pass the detected modifiers to the statement parser if necessary,
-            // or apply them to the result afterwards.
-
-            // Use a specific parser based on the *next* token (after modifiers)
             const stmt_token_type = self.peek().type;
             switch (stmt_token_type) {
                 .VAR, .CONST => {
                     var decl = try declaration_parser.parseVarDecl(self);
                     decl.data.VarDecl.is_public = is_public; // Apply modifier
-                    // Cannot be entry point
                     if (is_entry) {
                         return error.InvalidEntryPoint;
                     }
@@ -308,12 +272,9 @@ pub const Parser = struct {
                     func.data.FunctionDecl.is_public = is_public; // Apply modifiers
                     func.data.FunctionDecl.is_entry = is_entry;
                     if (is_entry) {
-                        // Store entry point name if this function is the entry point
-                        // Check if location was already set by '->' token earlier
                         if (self.entry_point_location != null) {
                             self.entry_point_name = func.data.FunctionDecl.name.lexeme;
                         } else {
-                            // This case means func keyword without preceding '->', shouldn't happen if logic is correct
                             {
                                 return error.MultipleEntryPoints;
                             }
@@ -321,16 +282,13 @@ pub const Parser = struct {
                     }
                     try statements.append(func);
                 },
-                // Allow import/module statements anywhere (not only at top)
                 .IMPORT => {
-                    // Modifiers invalid with import
                     if (is_entry) {
                         return error.MisplacedEntryPoint;
                     }
                     if (is_public) {
                         return error.MisplacedPublicModifier;
                     }
-                    // Perform side-effects (load/register) and do not append as a normal statement
                     _ = try import_parser.parseImportStmt(self);
                 },
                 .MODULE => {
@@ -344,7 +302,6 @@ pub const Parser = struct {
                 },
                 .STRUCT_TYPE => {
                     const expr = try declaration_parser.parseStructDecl(self, null, .NONE);
-                    // Apply is_public to struct decl in AST
                     if (expr) |non_null_expr| {
                         switch (non_null_expr.data) {
                             .StructDecl => |*struct_decl| {
@@ -353,11 +310,9 @@ pub const Parser = struct {
                             else => {},
                         }
                     }
-                    // Cannot be entry point
                     if (is_entry) {
                         return error.InvalidEntryPoint;
                     }
-                    // Append only if expr is not null
                     if (expr) |e| {
                         try statements.append(.{
                             .base = .{
@@ -370,29 +325,13 @@ pub const Parser = struct {
                 },
                 .ENUM_TYPE => {
                     var enum_decl = try declaration_parser.parseEnumDecl(self);
-                    enum_decl.data.EnumDecl.is_public = is_public; // Apply modifier
-                    // Cannot be entry point
+                    enum_decl.data.EnumDecl.is_public = is_public;
                     if (is_entry) {
                         return error.InvalidEntryPoint;
                     }
                     try statements.append(enum_decl);
                 },
-                // Handle other statement types recognised by statement_parser
                 .IF, .WHILE, .RETURN, .LEFT_BRACE, .EACH => {
-                    // Modifiers likely invalid here
-                    if (is_entry) {
-                        return error.MisplacedEntryPoint;
-                    }
-                    if (is_public) {
-                        return error.MisplacedPublicModifier;
-                    }
-                    const parsed_stmt = try statement_parser.parseStatement(self);
-                    // Only append if it's not a null expression (e.g. from empty block)
-                    if (!(parsed_stmt.data == .Expression and parsed_stmt.data.Expression == null)) {
-                        try statements.append(parsed_stmt);
-                    }
-                },
-                .ASSERT => { // Add ASSERT case
                     if (is_entry) {
                         return error.MisplacedEntryPoint;
                     }
@@ -404,10 +343,19 @@ pub const Parser = struct {
                         try statements.append(parsed_stmt);
                     }
                 },
-                // Default to expression statement
+                .ASSERT => {
+                    if (is_entry) {
+                        return error.MisplacedEntryPoint;
+                    }
+                    if (is_public) {
+                        return error.MisplacedPublicModifier;
+                    }
+                    const parsed_stmt = try statement_parser.parseStatement(self);
+                    if (!(parsed_stmt.data == .Expression and parsed_stmt.data.Expression == null)) {
+                        try statements.append(parsed_stmt);
+                    }
+                },
                 else => {
-                    // Modifiers likely invalid here unless it's a top-level expression
-                    // that somehow should be public/entry? Revisit if needed.
                     if (is_entry) {
                         return error.MisplacedEntryPoint;
                     }
@@ -415,24 +363,27 @@ pub const Parser = struct {
                         return error.MisplacedPublicModifier;
                     }
                     const expr_stmt = try statement_parser.parseExpressionStmt(self);
-                    // Only append if it's not a null expression
                     if (!(expr_stmt.data == .Expression and expr_stmt.data.Expression == null)) {
                         try statements.append(expr_stmt);
                     }
                 },
             }
 
-            // --- Progress Check ---
-            // Ensure the parser advanced. If not, it means a sub-parser failed to consume tokens.
             if (self.current == loop_start_pos and self.peek().type != .EOF) {
-                // Log error, force advance, or return error? Returning error is safest.
+                self.reporter.reportCompileError(Location{
+                    .file = self.current_file,
+                    .range = .{
+                        .start_line = self.peek().line,
+                        .start_col = self.peek().column,
+                        .end_line = self.peek().line,
+                        .end_col = self.peek().column,
+                    },
+                }, ErrorCode.PARSER_DID_NOT_ADVANCE, "Parser did not advance", .{});
                 return error.ParserDidNotAdvance;
             }
         }
 
-        // Final check: If entry point marker '->' was found but no function followed
         if (self.has_entry_point and self.entry_point_name == null) {
-            // Report error using self.entry_point_location
             const loc = Location{
                 .file = self.current_file,
                 .range = .{
@@ -450,7 +401,6 @@ pub const Parser = struct {
     }
 
     pub fn hasReturnWithValue(self: *Parser) !bool {
-        // Find the opening brace of the function body
         var pos = self.current;
         while (pos < self.tokens.len and self.tokens[pos].type != .LEFT_BRACE) {
             pos += 1;
@@ -492,7 +442,7 @@ pub const Parser = struct {
     }
 
     pub fn call(self: *Parser, callee: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-        self.advance(); // consume (
+        self.advance();
 
         var arguments = std.array_list.Managed(ast.CallArgument).init(self.allocator);
         errdefer {
@@ -503,17 +453,12 @@ pub const Parser = struct {
             arguments.deinit();
         }
 
-        // Handle empty arglist as a degenerate case; still allow sugar rewrite
-        if (self.peek().type == .RIGHT_PAREN) {
-            // No args; fall through to common close+build logic
-        } else {
-            // Parse arguments
+        if (self.peek().type != .RIGHT_PAREN) {
             while (true) {
                 var arg_expr: *ast.Expr = undefined;
                 var is_alias = false;
                 if (self.peek().type == .TILDE) {
-                    // Handle default argument placeholder
-                    self.advance(); // consume ~
+                    self.advance();
                     const placeholder = try self.allocator.create(ast.Expr);
                     placeholder.* = .{
                         .base = .{
@@ -524,8 +469,7 @@ pub const Parser = struct {
                     };
                     arg_expr = placeholder;
                 } else if (self.peek().type == .CARET) {
-                    self.advance(); // consume ^
-                    // Parse the argument after ^
+                    self.advance();
                     arg_expr = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
                     is_alias = true;
                 } else {
@@ -535,17 +479,13 @@ pub const Parser = struct {
 
                 if (self.peek().type == .RIGHT_PAREN) break;
                 if (self.peek().type != .COMMA) return error.ExpectedComma;
-                self.advance(); // consume comma
+                self.advance();
             }
         }
-        // Expect closing parenthesis
         if (self.peek().type != .RIGHT_PAREN) {
             return error.ExpectedRightParen;
         }
-        self.advance(); // consume )
-
-        // Disallow dot-syntax for built-in methods to avoid ambiguity
-        // Allow user-defined struct methods to use dot-syntax
+        self.advance();
         if (callee.?.data == .FieldAccess) {
             const fa = callee.?.data.FieldAccess;
             if (Parser.methodNameToTokenType(fa.field.lexeme)) |_| {
@@ -553,10 +493,8 @@ pub const Parser = struct {
                 self.reporter.reportCompileError(loc, ErrorCode.UNKNOWN_METHOD, "Unknown field or method '{s}'. If this is a compiler method, use @{s}(...)", .{ fa.field.lexeme, fa.field.lexeme });
                 return error.UnknownFieldOrMethod;
             }
-            // For user-defined methods (not in methodNameToTokenType), allow the call to proceed
         }
 
-        // Fallback: regular function call
         const call_expr = try self.allocator.create(ast.Expr);
         call_expr.* = .{
             .base = .{
@@ -606,16 +544,12 @@ pub const Parser = struct {
         const start_pos = self.current;
         self.advance();
 
-        // Handle namespace.Symbol struct access
         if (self.peek().type == .DOT) {
-            // This could be a namespace.Struct initialization
             const namespace = struct_name.lexeme;
 
-            // Check if namespace exists
             if (self.module_namespaces.contains(namespace)) {
-                self.advance(); // consume dot
+                self.advance();
 
-                // Get the struct type name
                 if (self.peek().type != .IDENTIFIER) {
                     self.current = start_pos; // Reset position
                     return null;
@@ -624,14 +558,12 @@ pub const Parser = struct {
                 const type_name = self.peek();
                 self.advance();
 
-                // Check for opening brace
                 if (self.peek().type != .LEFT_BRACE) {
                     self.current = start_pos; // Reset position
                     return null;
                 }
 
-                // Parse struct initialization
-                self.advance(); // consume {
+                self.advance();
 
                 var fields = std.array_list.Managed(*ast.StructInstanceField).init(self.allocator);
                 errdefer {
@@ -643,23 +575,19 @@ pub const Parser = struct {
                 }
 
                 while (self.peek().type != .RIGHT_BRACE) {
-                    // Allow blank lines between fields
                     while (self.peek().type == .NEWLINE) self.advance();
 
-                    // Parse field name
                     if (self.peek().type != .IDENTIFIER) {
                         return error.ExpectedIdentifier;
                     }
                     const field_name = self.peek();
                     self.advance();
 
-                    // Expect equals
                     if (self.peek().type != .ASSIGN) {
                         return error.ExpectedAssignmentOperator;
                     }
                     self.advance();
 
-                    // Parse field value - try struct init first, then fall back to regular expression
                     var value: *ast.Expr = undefined;
                     if (self.peek().type == .IDENTIFIER) {
                         if (try parseStructInit(self)) |struct_init| {
@@ -671,7 +599,6 @@ pub const Parser = struct {
                         value = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
                     }
 
-                    // Create field
                     const field = try self.allocator.create(ast.StructInstanceField);
                     field.* = .{
                         .name = field_name,
@@ -679,17 +606,14 @@ pub const Parser = struct {
                     };
                     try fields.append(field);
 
-                    // Handle separators: comma and/or newline(s)
                     if (self.peek().type == .COMMA) {
                         self.advance();
                     }
                     while (self.peek().type == .NEWLINE) self.advance();
-                    // Allow trailing comma/newlines before closing brace
                 }
 
-                self.advance(); // consume }
+                self.advance();
 
-                // Create struct literal
                 const struct_init = try self.allocator.create(ast.Expr);
                 struct_init.* = .{
                     .base = .{
@@ -711,7 +635,7 @@ pub const Parser = struct {
             self.current = start_pos;
             return null;
         }
-        self.advance(); // consume {
+        self.advance();
 
         var fields = std.array_list.Managed(*ast.StructInstanceField).init(self.allocator);
         errdefer {
@@ -723,23 +647,19 @@ pub const Parser = struct {
         }
 
         while (self.peek().type != .RIGHT_BRACE) {
-            // Allow blank lines between fields
             while (self.peek().type == .NEWLINE) self.advance();
 
-            // Parse field name
             if (self.peek().type != .IDENTIFIER) {
                 return error.ExpectedIdentifier;
             }
             const field_name = self.peek();
             self.advance();
 
-            // Expect equals
             if (self.peek().type != .ASSIGN) {
                 return error.ExpectedAssignmentOperator;
             }
             self.advance();
 
-            // Parse field value - try struct init first, then fall back to regular expression
             var value: *ast.Expr = undefined;
             if (self.peek().type == .IDENTIFIER) {
                 if (try parseStructInit(self)) |struct_init| {
@@ -751,7 +671,6 @@ pub const Parser = struct {
                 value = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
             }
 
-            // Create field
             const field = try self.allocator.create(ast.StructInstanceField);
             field.* = .{
                 .name = field_name,
@@ -759,12 +678,10 @@ pub const Parser = struct {
             };
             try fields.append(field);
 
-            // Handle separators: comma and/or newline(s)
             if (self.peek().type == .COMMA) {
                 self.advance();
             }
             while (self.peek().type == .NEWLINE) self.advance();
-            // Allow trailing comma/newlines before closing brace
         }
 
         self.advance();
@@ -790,10 +707,8 @@ pub const Parser = struct {
             self.advance(); // consume [
         }
 
-        // Parse the index expression
         const index_expr = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
 
-        // Check for and consume the RIGHT_BRACKET
         if (self.peek().type != .RIGHT_BRACKET) {
             index_expr.deinit(self.allocator);
             self.allocator.destroy(index_expr);
@@ -801,7 +716,6 @@ pub const Parser = struct {
         }
         self.advance(); // consume ]
 
-        // Check if this is an assignment
         if (self.peek().type == .ASSIGN) {
             self.advance(); // consume is
             const value = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
@@ -837,7 +751,6 @@ pub const Parser = struct {
             },
         };
 
-        // Check for another index operation (for nested access)
         if (self.peek().type == .LEFT_BRACKET) {
             self.advance(); // consume [
             return self.index(expr, .NONE);
@@ -849,15 +762,12 @@ pub const Parser = struct {
     pub fn assignment(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
         if (left == null) return error.ExpectedExpression;
 
-        // Add check for equals sign
         if (self.previous().type != .ASSIGN) {
             return error.UseIsForAssignment;
         }
 
-        // Handle other expressions
         const value = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
 
-        // Check if left side is a valid assignment target
         switch (left.?.data) {
             .Variable => |name| {
                 const assign = try self.allocator.create(ast.Expr);
@@ -914,31 +824,24 @@ pub const Parser = struct {
     }
 
     pub fn fieldAccess(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-
-        // If we're still positioned at '.', consume it; in many Pratt paths the dot
-        // is already consumed before calling this function.
         if (self.peek().type == .DOT) {
             self.advance(); // consume '.'
         }
 
-        // Store current position and token (identifier after '.')
         const current_token = self.peek();
 
-        // Check if this is a method name - if so, error early
         if (Parser.methodNameToTokenType(current_token.lexeme)) |_| {
             const loc: Location = .{ .file = self.current_file, .range = .{ .start_line = current_token.line, .start_col = current_token.column, .end_line = current_token.line, .end_col = current_token.column } };
             self.reporter.reportCompileError(loc, ErrorCode.UNKNOWN_METHOD, "Unknown field or method '{s}'. If this is a compiler method, use @{s}(...)", .{ current_token.lexeme, current_token.lexeme });
             return error.UnknownFieldOrMethod;
         }
 
-        // Expect identifier or field access token
         if (current_token.type != .IDENTIFIER and current_token.type != .FIELD_ACCESS) {
             return error.ExpectedIdentifier;
         }
 
         self.advance(); // consume identifier
 
-        // Create field access expression
         const field_access = try self.allocator.create(ast.Expr);
         field_access.* = .{
             .base = .{
@@ -953,7 +856,6 @@ pub const Parser = struct {
             },
         };
 
-        // Handle array indexing if present
         if (self.peek().type == .LEFT_BRACKET) {
             self.advance(); // consume [
             return try self.index(field_access, .NONE);
@@ -962,8 +864,6 @@ pub const Parser = struct {
         return field_access;
     }
 
-    /// Parse a generic @method(...) call into a InternalCall expression.
-    /// Delegates to internal_call_parser.zig
     pub fn internalCallExpr(self: *Parser, left: ?*ast.Expr, prec: Precedence) ErrorList!?*ast.Expr {
         const internal_call_parser = @import("internal_call_parser.zig");
         return internal_call_parser.internalCallExpr(self, left, prec);
@@ -1004,11 +904,8 @@ pub const Parser = struct {
     }
 
     pub fn enumMember(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-
-        // We're already at the dot, so advance past it
         self.advance();
 
-        // Expect identifier after dot
         if (self.peek().type != .IDENTIFIER) {
             return error.ExpectedIdentifier;
         }
@@ -1016,18 +913,15 @@ pub const Parser = struct {
         const member = self.peek();
         self.advance();
 
-        // Look backwards through tokens to find the enum declaration
         var found_valid_variant = false;
         var i: usize = 0; // Start from the beginning
         while (i < self.tokens.len) : (i += 1) {
             if (self.tokens[i].type == .ENUM_TYPE) {
                 i += 2;
 
-                // Verify we're at the opening brace
                 if (self.tokens[i].type != .LEFT_BRACE) continue;
                 i += 1;
 
-                // Scan through variants
                 while (i < self.tokens.len and self.tokens[i].type != .RIGHT_BRACE) : (i += 1) {
                     if (self.tokens[i].type == .IDENTIFIER) {
                         if (std.mem.eql(u8, self.tokens[i].lexeme, member.lexeme)) {
@@ -1069,11 +963,8 @@ pub const Parser = struct {
             entries.deinit();
         }
 
-        // Parse entries until we hit a right brace
         while (self.peek().type != .RIGHT_BRACE and self.peek().type != .EOF) {
-            // Allow blank lines between entries
             while (self.peek().type == .NEWLINE) self.advance();
-            // Parse key as a primary expression only (no complex expressions like maps)
             const key = blk: {
                 const token_type = self.peek().type;
                 switch (token_type) {
@@ -1081,36 +972,30 @@ pub const Parser = struct {
                         break :blk try precedence.parsePrecedence(self, Precedence.PRIMARY) orelse return error.ExpectedExpression;
                     },
                     .DOT => {
-                        // Handle enum members like .SOME_VALUE
                         break :blk try precedence.parsePrecedence(self, Precedence.PRIMARY) orelse return error.ExpectedExpression;
                     },
                     else => return error.ExpectedMapKey,
                 }
             };
 
-            // Expect 'is' as separator between key and value
             if (self.peek().type != .ASSIGN) {
                 key.deinit(self.allocator);
                 self.allocator.destroy(key);
                 return error.UseIsForAssignment;
             }
-            self.advance(); // consume 'is'
+            self.advance();
 
-            // Parse value
             const value = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
 
-            // Create and append entry
             try entries.append(.{
                 .key = key,
                 .value = value,
             });
 
-            // Handle separators: comma and/or newline(s)
             if (self.peek().type == .COMMA) {
                 self.advance();
             }
             while (self.peek().type == .NEWLINE) self.advance();
-            // Allow trailing comma/newlines
         }
 
         if (self.peek().type != .RIGHT_BRACE) {
@@ -1118,7 +1003,6 @@ pub const Parser = struct {
         }
         self.advance();
 
-        // Build Expr.Map for use as an initializer only
         const expr = try self.allocator.create(ast.Expr);
         expr.* = .{
             .base = .{
@@ -1189,26 +1073,22 @@ pub const Parser = struct {
         };
     }
 
-    // Helper function to report circular import with full chain
     pub fn reportCircularImport(self: *Parser, current_module: []const u8) ErrorList!ast.ModuleInfo {
         var error_msg = std.array_list.Managed(u8).init(self.allocator);
         defer error_msg.deinit();
 
         try error_msg.appendSlice("Circular import detected:\n");
 
-        // Show the import chain
         for (self.import_stack.items) |entry| {
             try error_msg.appendSlice("  ");
             try error_msg.appendSlice(entry.module_path);
             try error_msg.appendSlice(" imports\n");
         }
 
-        // Show the circular dependency
         try error_msg.appendSlice("  ");
         try error_msg.appendSlice(current_module);
         try error_msg.appendSlice(" (circular dependency)\n");
 
-        // Report the error with correct format
         self.reporter.reportCompileError(null, null, "{s}", .{error_msg.items});
 
         return error.CircularImport;
@@ -1225,11 +1105,9 @@ pub const Parser = struct {
             clean_name = clean_name[2..];
         }
 
-        // Check if the module name already has an extension
         const has_doxa_ext = std.mem.endsWith(u8, clean_name, ".doxa");
         const has_extension = has_doxa_ext;
 
-        // Get the directory of the current file
         const current_dir = std.fs.path.dirname(self.current_file) orelse ".";
 
         const readFileContentsWithPath = struct {
@@ -1247,7 +1125,6 @@ pub const Parser = struct {
                     return error.IncompleteRead;
                 }
 
-                // Create a copy of the path for the resolved_path
                 const path_copy = try alloc.dupe(u8, file_path);
 
                 return ModuleData{
@@ -1257,10 +1134,8 @@ pub const Parser = struct {
             }
         }.read;
 
-        // Try several file locations in order
         var err: anyerror = error.FileNotFound;
 
-        // Prefer resolving relative to the current file first
         // 0a. Same directory as current file with potential existing extension
         if (has_extension) {
             var same_dir_exact_path_pre = std.array_list.Managed(u8).init(self.allocator);
@@ -1382,10 +1257,8 @@ pub const Parser = struct {
     pub fn arrayPush(self: *Parser, array: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
         if (array == null) return error.ExpectedExpression;
 
-        // Parse the element to push
         const element = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
 
-        // Create the array push expression
         const push_expr = try self.allocator.create(ast.Expr);
         push_expr.* = .{
             .base = .{
@@ -1419,7 +1292,6 @@ pub const Parser = struct {
         return empty_expr;
     }
 
-    /// Returns the previous token in the token list
     pub fn previous(self: *Parser) token.Token {
         if (self.current == 0) {
             return self.tokens[0];
@@ -1430,7 +1302,6 @@ pub const Parser = struct {
     pub fn arrayPop(self: *Parser, array: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
         if (array == null) return error.ExpectedExpression;
 
-        // Create the array pop expression
         const pop_expr = try self.allocator.create(ast.Expr);
         pop_expr.* = .{
             .base = .{
@@ -1450,10 +1321,8 @@ pub const Parser = struct {
     pub fn arrayConcat(self: *Parser, array: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
         if (array == null) return error.ExpectedExpression;
 
-        // Parse the second array expression
         const array2 = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
 
-        // Don't consume the right paren here - let fieldAccess handle it
         const concat_expr = try self.allocator.create(ast.Expr);
         concat_expr.* = .{
             .base = .{
@@ -1473,7 +1342,6 @@ pub const Parser = struct {
     pub fn arrayLength(self: *Parser, array: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
         if (array == null) return error.ExpectedExpression;
 
-        // Create the array length expression
         const length_expr = try self.allocator.create(ast.Expr);
         length_expr.* = .{
             .base = .{
@@ -1491,9 +1359,8 @@ pub const Parser = struct {
     }
 
     pub fn input(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-        self.advance(); // consume 'input' token
+        self.advance();
 
-        // Check if there's a prompt string (with or without parentheses)
         var prompt: token.Token = token.Token{
             .type = .STRING,
             .lexeme = "",
@@ -1502,7 +1369,6 @@ pub const Parser = struct {
             .column = 0,
             .file = "",
         };
-        // Handle both input("prompt") and input "prompt" syntax
         if (self.peek().type == .LEFT_PAREN) {
             self.advance(); // consume '('
 
@@ -1523,9 +1389,8 @@ pub const Parser = struct {
             }
         } else if (self.peek().type == .STRING) {
             prompt = self.peek();
-            self.advance(); // consume the string
+            self.advance();
         } else {
-            // Create an empty prompt if none provided
             prompt = token.Token{
                 .file = self.current_file,
                 .type = .STRING,
@@ -1561,39 +1426,28 @@ pub const Parser = struct {
         if (module_info.imports.len > 0) {
             for (module_info.imports) |import| {
                 if (import.namespace_alias) |alias| {
-                    // Don't create circular imports
                     if (std.mem.eql(u8, import.module_path, self.current_file)) continue;
 
-                    // Create a module-specific import reference
-                    // Instead of duplicating the import in the global namespace
                     const qualified_alias = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ namespace, alias });
                     defer self.allocator.free(qualified_alias);
 
-                    // Load the imported module only if not already loaded
                     if (!self.module_namespaces.contains(alias)) {
-                        // Check if the module is already in the cache
                         if (self.module_cache.contains(import.module_path)) {
-                            // Get it from cache and add to namespaces
                             const cached_module = self.module_cache.get(import.module_path).?;
                             try self.module_namespaces.put(alias, cached_module);
                         } else {
-                            // Ensure resolution is relative to the importing module's directory
                             const previous_current_file = self.current_file;
                             self.current_file = module_info.file_path;
                             defer self.current_file = previous_current_file;
-                            // Only try to load if not in cache either
                             try self.loadAndRegisterModule(import.module_path, alias, import.specific_symbol);
                         }
                     }
 
-                    // Record that this module has access to this import under this alias
-                    // This information will be used during symbol resolution
                     try module_resolver.recordModuleImport(self, module_path, alias, import.module_path);
                 }
             }
         }
 
-        // 4. Register this module's public symbols in a global symbol table
         if (module_info.ast != null and module_info.symbols != null) {
             var it = module_info.symbols.?.iterator();
             while (it.next()) |entry| {
@@ -1617,7 +1471,6 @@ pub const Parser = struct {
                             });
                         }
                     } else {
-                        // No specific symbol, register all public symbols
                         const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ namespace, symbol_name });
 
                         try self.imported_symbols.?.put(full_name, .{
@@ -1637,7 +1490,6 @@ pub const Parser = struct {
     }
 
     pub fn loadAndRegisterSpecificSymbol(self: *Parser, module_path: []const u8, symbol_name: []const u8) ErrorList!void {
-        // Helper to derive a default namespace alias from the module path (e.g. "test/misc/import.doxa" -> "import")
         const deriveAlias = struct {
             fn fromPath(allocator: std.mem.Allocator, path: []const u8) []const u8 {
                 var it = std.mem.splitSequence(u8, path, "/");
@@ -1650,39 +1502,31 @@ pub const Parser = struct {
             }
         };
 
-        // First check if module is already cached
         if (self.module_cache.get(module_path)) |module_info| {
-            // Ensure the module is registered in namespaces so downstream passes can discover its AST
             const alias = deriveAlias.fromPath(self.allocator, module_path);
             if (!self.module_namespaces.contains(alias)) {
                 try self.module_namespaces.put(alias, module_info);
             }
 
-            // Module already loaded, just register the symbol
             if (module_info.ast) |module_ast| {
                 try self.registerSpecificSymbol(module_ast, module_path, symbol_name);
             }
             return;
         }
 
-        // Not cached, resolve the module
         const module_info = try module_resolver.resolveModule(self, module_path);
 
-        // Ensure the module is registered in namespaces so downstream passes can discover its AST
         const alias = deriveAlias.fromPath(self.allocator, module_path);
         if (!self.module_namespaces.contains(alias)) {
             try self.module_namespaces.put(alias, module_info);
         }
 
-        // Register the specific symbol
         if (module_info.ast) |module_ast| {
             try self.registerSpecificSymbol(module_ast, module_path, symbol_name);
         }
     }
 
-    // Function to scan a module's AST and register a specific symbol
     fn registerSpecificSymbol(self: *Parser, module_ast: *ast.Expr, module_path: []const u8, symbol_name: []const u8) !void {
-        // Initialize symbol table for this module if needed
         if (self.imported_symbols == null) {
             self.imported_symbols = std.StringHashMap(import_parser.ImportedSymbol).init(self.allocator);
         }
@@ -1692,11 +1536,9 @@ pub const Parser = struct {
                 const statements = module_ast.data.Block.statements;
                 for (statements) |stmt| {
                     switch (stmt.data) {
-                        // Handle function declarations
                         .FunctionDecl => |func| {
                             const is_public = func.is_public;
                             if (is_public and std.mem.eql(u8, func.name.lexeme, symbol_name)) {
-                                // Extract parameter types
                                 var param_types: ?[]ast.TypeInfo = null;
                                 if (func.params.len > 0) {
                                     param_types = try self.allocator.alloc(ast.TypeInfo, func.params.len);
@@ -1711,7 +1553,6 @@ pub const Parser = struct {
                                     }
                                 }
 
-                                // Register the symbol directly (not with namespace prefix)
                                 try self.imported_symbols.?.put(symbol_name, .{
                                     .kind = .Function,
                                     .name = func.name.lexeme,
@@ -1721,27 +1562,23 @@ pub const Parser = struct {
                                     .param_types = param_types,
                                     .return_type_info = func.return_type_info,
                                 });
-                                return; // Found the symbol, we're done
+                                return;
                             }
                         },
-                        // Handle variable declarations
                         .VarDecl => |var_decl| {
                             const is_public = var_decl.is_public;
                             if (is_public and std.mem.eql(u8, var_decl.name.lexeme, symbol_name)) {
-                                // Register the symbol directly (not with namespace prefix)
                                 try self.imported_symbols.?.put(symbol_name, .{
                                     .kind = .Variable,
                                     .name = var_decl.name.lexeme,
                                     .original_module = module_path,
                                 });
-                                return; // Found the symbol, we're done
+                                return;
                             }
                         },
-                        // Handle enum declarations
                         .EnumDecl => |enum_decl| {
                             const is_public = enum_decl.is_public;
                             if (is_public and std.mem.eql(u8, enum_decl.name.lexeme, symbol_name)) {
-                                // Register the symbol directly (not with namespace prefix)
                                 try self.imported_symbols.?.put(symbol_name, .{
                                     .kind = .Enum,
                                     .name = enum_decl.name.lexeme,
@@ -1750,7 +1587,6 @@ pub const Parser = struct {
                                 return; // Found the symbol, we're done
                             }
                         },
-                        // Handle struct declarations
                         .Expression => |maybe_expr| {
                             if (maybe_expr) |expr| {
                                 if (expr.data == .StructDecl) {
@@ -1768,11 +1604,11 @@ pub const Parser = struct {
                                 }
                             }
                         },
-                        else => {}, // Skip other types of statements
+                        .Block, .MapDecl, .Return, .MapLiteral, .Module, .Import, .Path, .Continue, .Break, .Assert, .Cast => {},
                     }
                 }
             },
-            else => {}, // Skip other AST types
+            else => {},
         }
     }
 };
