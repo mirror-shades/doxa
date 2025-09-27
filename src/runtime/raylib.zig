@@ -1,9 +1,6 @@
 const std = @import("std");
 const rl = @import("../utils/cimport.zig");
 
-// Minimal raylib runtime wrapper. We'll expand and integrate with Doxa's
-// module system later. For now, expose just the requested API surface.
-
 pub const Color = rl.Color;
 pub const DoxaColor = rl.DoxaColor;
 pub const ColorName = rl.ColorName;
@@ -13,7 +10,6 @@ pub fn InitWindow(width: c_int, height: c_int, title: [*:0]const u8) void {
     rl.InitWindow(width, height, title);
 }
 
-// Doxa-friendly InitWindow: validates i64 dims and converts to C string
 pub fn InitWindowDoxa(width: i64, height: i64, title: []const u8) !void {
     if (width < 0 or height < 0) return error.InvalidArgument;
     if (width > std.math.maxInt(c_int) or height > std.math.maxInt(c_int)) return error.InvalidArgument;
@@ -63,15 +59,12 @@ pub const VIOLET: Color = rl.VIOLET;
 pub const BROWN: Color = rl.BROWN;
 pub const BEIGE: Color = rl.BEIGE;
 
-// Doxa-friendly ClearBackground accepting DoxaColor
 pub fn ClearBackgroundDoxa(color: DoxaColor) void {
     rl.ClearBackground(.{ .r = color.r, .g = color.g, .b = color.b, .a = color.a });
 }
 
-// Re-export the byte-based color creation functions
 pub const bytesToColor = rl.bytesToColor;
 
-// Clean internal aliases without "Doxa" in the name
 pub fn rgbToColor(r: u8, g: u8, b: u8) DoxaColor {
     return rl.rgbToColor(r, g, b);
 }
@@ -86,7 +79,6 @@ pub fn ClearBackground(color: Color) void {
     rl.ClearBackground(color);
 }
 
-// Drawing functions
 pub fn DrawCircle(centerX: i32, centerY: i32, radius: f32, color: Color) void {
     rl.DrawCircle(centerX, centerY, radius, color);
 }
@@ -108,7 +100,7 @@ pub fn GetTime() f64 {
 }
 
 pub fn DrawFPS(x: i32, y: i32, fps: i64) void {
-    _ = fps; // raylib DrawFPS ignores explicit fps; it shows measured FPS
+    _ = fps;
     rl.DrawFPS(x, y);
 }
 
@@ -131,6 +123,5 @@ pub const doxa_module = struct {
     };
     pub const constants = &.{};
 
-    // Simple array of all valid field names for validation
     pub const valid_fields = [_][]const u8{ "InitWindow", "CloseWindow", "WindowShouldClose", "BeginDrawing", "EndDrawing", "ClearBackground", "SetTargetFPS", "DrawCircle", "DrawCircleV", "DrawRectangle", "DrawRectangleV", "GetTime", "DrawFPS" };
 };

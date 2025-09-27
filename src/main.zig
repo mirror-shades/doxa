@@ -14,7 +14,6 @@ const TypesImport = @import("./types/types.zig");
 const TokenLiteral = TypesImport.TokenLiteral;
 const Environment = TypesImport.Environment;
 const env = @import("./interpreter/environment.zig");
-const ASTWriter = @import("./utils/ast_writer.zig");
 const ASTReader = @import("./utils/ast_reader.zig");
 const AST = @import("./ast/ast.zig");
 const ast = AST;
