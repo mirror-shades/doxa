@@ -29,11 +29,10 @@ const PrintOps = @import("calls/print.zig").PrintOps;
 const Errors = @import("../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
 const ErrorCode = Errors.ErrorCode;
-const Raylib = @import("../runtime/raylib.zig");
 
 const DeferAction = *const fn () void;
 
-const ScopeRecord = struct {
+pub const ScopeRecord = struct {
     id: u32,
     var_count: u32,
     alias_slots: Managed(module.SlotIndex),
@@ -86,6 +85,7 @@ pub const VM = struct {
     scope_stack: Managed(ScopeRecord),
     try_stack: Managed(usize),
     skip_next_enter_scope: bool = false,
+    graphics_runtime: runtime.GraphicsRuntime,
 
     pub fn init(allocator: std.mem.Allocator, bytecode: *module.BytecodeModule, reporter: *Reporter, memory_manager: *MemoryManager) !VM {
         const frame_list = Managed(runtime.Frame).init(allocator);
@@ -129,6 +129,7 @@ pub const VM = struct {
             .scope_stack = Managed(ScopeRecord).init(allocator),
             .try_stack = Managed(usize).init(allocator),
             .skip_next_enter_scope = false,
+            .graphics_runtime = runtime.GraphicsRuntime.init(allocator, reporter),
         };
 
         vm.indexLabels();
@@ -1260,32 +1261,13 @@ pub const VM = struct {
             return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot get field from non-struct value: {s}", .{@tagName(frame.value)});
         }
 
+        // Try to handle graphics field access
+        if (try self.graphics_runtime.handleGraphicsFieldAccess(frame, payload.field_name, &self.stack)) {
+            return;
+        }
+
         switch (frame.value) {
             .string => {
-                if (std.mem.startsWith(u8, frame.value.string, "graphics.")) {
-                    if (std.mem.eql(u8, frame.value.string, "graphics.raylib")) {
-                        if (std.mem.eql(u8, payload.field_name, "SKYBLUE")) {
-                            const skyblue_color = Raylib.SKYBLUE;
-                            const fields = try self.allocator.alloc(HIRStructField, 4);
-                            fields[0] = .{ .name = "r", .value = HIRValue{ .byte = skyblue_color.r }, .field_type = .Byte };
-                            fields[1] = .{ .name = "g", .value = HIRValue{ .byte = skyblue_color.g }, .field_type = .Byte };
-                            fields[2] = .{ .name = "b", .value = HIRValue{ .byte = skyblue_color.b }, .field_type = .Byte };
-                            fields[3] = .{ .name = "a", .value = HIRValue{ .byte = skyblue_color.a }, .field_type = .Byte };
-
-                            try self.stack.push(HIRFrame.initFromHIRValue(HIRValue{ .struct_instance = .{
-                                .type_name = "Color",
-                                .fields = fields,
-                                .field_name = null,
-                                .path = null,
-                            } }));
-                            return;
-                        }
-                    }
-                    const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ frame.value.string, payload.field_name });
-                    try self.stack.push(HIRFrame.initFromHIRValue(HIRValue{ .string = full_name }));
-                    return;
-                }
-
                 if (std.mem.eql(u8, payload.field_name, "length")) {
                     const result = try ops_strings.stringLength(self, frame);
                     try self.stack.push(result);
@@ -1549,7 +1531,6 @@ pub const VM = struct {
     }
 
     fn resolveFunctionIndex(self: *VM, function_index: usize, qualified_name: []const u8) usize {
-        // First try the provided function_index
         if (function_index < self.bytecode.functions.len) {
             const func = &self.bytecode.functions[function_index];
             if (std.mem.eql(u8, func.qualified_name, qualified_name)) {
@@ -1557,26 +1538,22 @@ pub const VM = struct {
             }
         }
 
-        // If function_index doesn't match, search by qualified name
         for (self.bytecode.functions, 0..) |func, idx| {
             if (std.mem.eql(u8, func.qualified_name, qualified_name)) {
                 return idx;
             }
         }
 
-        // Fallback to original function_index
         return function_index;
     }
 
     fn handleCall(self: *VM, payload: anytype) VmError!void {
         switch (payload.target.call_kind) {
             .LocalFunction, .ModuleFunction => {
-                // Check if this is a graphics module function that needs special handling
                 if (std.mem.indexOfScalar(u8, payload.target.qualified_name, '.')) |dot_idx| {
                     const module_alias = payload.target.qualified_name[0..dot_idx];
                     const remainder = payload.target.qualified_name[dot_idx + 1 ..];
 
-                    // Handle nested module namespaces: e.g., graphics.doxa.Draw
                     var sub_alias: []const u8 = remainder;
                     var func_name: []const u8 = remainder;
                     if (std.mem.indexOfScalar(u8, remainder, '.')) |sub_dot| {
@@ -1584,289 +1561,19 @@ pub const VM = struct {
                         func_name = remainder[sub_dot + 1 ..];
                     }
 
-                    // Graphics module bridging
-                    const is_graphics = std.mem.eql(u8, module_alias, "graphics") or std.mem.eql(u8, module_alias, "g");
-                    if (is_graphics) {
-                        // Submodule dispatch: doxa vs raylib passthrough
-                        if (std.mem.eql(u8, sub_alias, "doxa")) {
-                            if (std.mem.eql(u8, func_name, "Init")) {
-                                const name_frame = try self.stack.pop();
-                                const fps_frame = try self.stack.pop();
-                                const height_frame = try self.stack.pop();
-                                const width_frame = try self.stack.pop();
-
-                                const w = try width_frame.asInt();
-                                const h = try height_frame.asInt();
-                                const fps = try fps_frame.asInt();
-                                const name = try name_frame.asString();
-
-                                try Raylib.InitWindowDoxa(w, h, name);
-                                Raylib.SetTargetFPSDoxa(fps);
-
-                                // Set up defer for CloseWindow at scope exit
-                                if (self.scope_stack.items.len > 0) {
-                                    var scope = &self.scope_stack.items[self.scope_stack.items.len - 1];
-                                    try scope.defer_actions.append(&Raylib.CloseWindow);
-                                }
-
-                                // Init function doesn't return anything (void)
-                                return;
-                            } else if (std.mem.eql(u8, func_name, "Draw")) {
-                                Raylib.BeginDrawing();
-
-                                // Set up defer for EndDrawing at scope exit
-                                if (self.scope_stack.items.len > 0) {
-                                    var scope = &self.scope_stack.items[self.scope_stack.items.len - 1];
-                                    try scope.defer_actions.append(&Raylib.EndDrawing);
-                                }
-
-                                return;
-                            } else if (std.mem.eql(u8, func_name, "Running")) {
-                                // Return the negation of WindowShouldClose
-                                const should_close = Raylib.WindowShouldClose();
-                                try self.stack.pushValue(HIRValue{ .tetra = if (should_close) 0 else 1 });
-                                return;
-                            } else if (std.mem.eql(u8, func_name, "bytesToColor")) {
-                                // Handle bytesToColor(r, g, b, a) -> returns DoxaColor
-                                const a_frame = try self.stack.pop();
-                                const b_frame = try self.stack.pop();
-                                const g_frame = try self.stack.pop();
-                                const r_frame = try self.stack.pop();
-
-                                const r = switch (r_frame.value) {
-                                    .byte => |byte_val| byte_val,
-                                    .int => |i| if (i >= 0 and i <= 255) @as(u8, @intCast(i)) else 0,
-                                    else => 0,
-                                };
-                                const g = switch (g_frame.value) {
-                                    .byte => |byte_val| byte_val,
-                                    .int => |i| if (i >= 0 and i <= 255) @as(u8, @intCast(i)) else 0,
-                                    else => 0,
-                                };
-                                const b = switch (b_frame.value) {
-                                    .byte => |byte_val| byte_val,
-                                    .int => |i| if (i >= 0 and i <= 255) @as(u8, @intCast(i)) else 0,
-                                    else => 0,
-                                };
-                                const a = switch (a_frame.value) {
-                                    .byte => |byte_val| byte_val,
-                                    .int => |i| if (i >= 0 and i <= 255) @as(u8, @intCast(i)) else 0,
-                                    else => 0,
-                                };
-
-                                const color = Raylib.bytesToColor(r, g, b, a);
-                                const fields = try self.allocator.alloc(HIRStructField, 4);
-                                fields[0] = .{ .name = "r", .value = HIRValue{ .byte = color.r }, .field_type = .Byte };
-                                fields[1] = .{ .name = "g", .value = HIRValue{ .byte = color.g }, .field_type = .Byte };
-                                fields[2] = .{ .name = "b", .value = HIRValue{ .byte = color.b }, .field_type = .Byte };
-                                fields[3] = .{ .name = "a", .value = HIRValue{ .byte = color.a }, .field_type = .Byte };
-
-                                try self.stack.pushValue(HIRValue{ .struct_instance = .{
-                                    .type_name = "Color",
-                                    .fields = fields,
-                                    .field_name = null,
-                                    .path = null,
-                                } });
-                                return;
-                            }
-                        } else if (std.mem.eql(u8, sub_alias, "raylib")) {
-                            if (std.mem.eql(u8, func_name, "ClearBackground")) {
-                                const color_frame = try self.stack.pop();
-                                switch (color_frame.value) {
-                                    .struct_instance => |s| {
-                                        var r: u8 = 0;
-                                        var g: u8 = 0;
-                                        var b: u8 = 0;
-                                        var a: u8 = 255;
-
-                                        for (s.fields) |field| {
-                                            if (std.mem.eql(u8, field.name, "r")) {
-                                                r = switch (field.value) {
-                                                    .byte => |byte_val| byte_val,
-                                                    .int => |i| if (i >= 0 and i <= 255) @as(u8, @intCast(i)) else 0,
-                                                    else => 0,
-                                                };
-                                            } else if (std.mem.eql(u8, field.name, "g")) {
-                                                g = switch (field.value) {
-                                                    .byte => |byte_val| byte_val,
-                                                    .int => |i| if (i >= 0 and i <= 255) @as(u8, @intCast(i)) else 0,
-                                                    else => 0,
-                                                };
-                                            } else if (std.mem.eql(u8, field.name, "b")) {
-                                                b = switch (field.value) {
-                                                    .byte => |byte_val| byte_val,
-                                                    .int => |i| if (i >= 0 and i <= 255) @as(u8, @intCast(i)) else 0,
-                                                    else => 0,
-                                                };
-                                            } else if (std.mem.eql(u8, field.name, "a")) {
-                                                a = switch (field.value) {
-                                                    .byte => |byte_val| byte_val,
-                                                    .int => |i| if (i >= 0 and i <= 255) @as(u8, @intCast(i)) else 0,
-                                                    else => 255,
-                                                };
-                                            }
-                                        }
-
-                                        Raylib.ClearBackgroundDoxa(.{ .r = r, .g = g, .b = b, .a = a });
-                                    },
-                                    .string => |color_str| {
-                                        // Handle string constants like "SKYBLUE" or "graphics.raylib.SKYBLUE"
-                                        var color: ?Raylib.Color = null;
-
-                                        // Check for common raylib colors
-                                        if (std.mem.eql(u8, color_str, "SKYBLUE") or std.mem.eql(u8, color_str, "graphics.raylib.SKYBLUE")) {
-                                            color = Raylib.SKYBLUE;
-                                        } else if (std.mem.eql(u8, color_str, "RED") or std.mem.eql(u8, color_str, "graphics.raylib.RED")) {
-                                            color = Raylib.RED;
-                                        } else if (std.mem.eql(u8, color_str, "GREEN") or std.mem.eql(u8, color_str, "graphics.raylib.GREEN")) {
-                                            color = Raylib.GREEN;
-                                        } else if (std.mem.eql(u8, color_str, "BLUE") or std.mem.eql(u8, color_str, "graphics.raylib.BLUE")) {
-                                            color = Raylib.BLUE;
-                                        } else if (std.mem.eql(u8, color_str, "YELLOW") or std.mem.eql(u8, color_str, "graphics.raylib.YELLOW")) {
-                                            color = Raylib.YELLOW;
-                                        } else if (std.mem.eql(u8, color_str, "PURPLE") or std.mem.eql(u8, color_str, "graphics.raylib.PURPLE")) {
-                                            color = Raylib.PURPLE;
-                                        } else if (std.mem.eql(u8, color_str, "PINK") or std.mem.eql(u8, color_str, "graphics.raylib.PINK")) {
-                                            color = Raylib.PINK;
-                                        } else if (std.mem.eql(u8, color_str, "ORANGE") or std.mem.eql(u8, color_str, "graphics.raylib.ORANGE")) {
-                                            color = Raylib.ORANGE;
-                                        } else if (std.mem.eql(u8, color_str, "WHITE") or std.mem.eql(u8, color_str, "graphics.raylib.WHITE")) {
-                                            color = Raylib.WHITE;
-                                        } else if (std.mem.eql(u8, color_str, "BLACK") or std.mem.eql(u8, color_str, "graphics.raylib.BLACK")) {
-                                            color = Raylib.BLACK;
-                                        } else if (std.mem.eql(u8, color_str, "GRAY") or std.mem.eql(u8, color_str, "graphics.raylib.GRAY")) {
-                                            color = Raylib.GRAY;
-                                        } else if (std.mem.eql(u8, color_str, "LIGHTGRAY") or std.mem.eql(u8, color_str, "graphics.raylib.LIGHTGRAY")) {
-                                            color = Raylib.LIGHTGRAY;
-                                        } else if (std.mem.eql(u8, color_str, "DARKGRAY") or std.mem.eql(u8, color_str, "graphics.raylib.DARKGRAY")) {
-                                            color = Raylib.DARKGRAY;
-                                        } else if (std.mem.eql(u8, color_str, "GOLD") or std.mem.eql(u8, color_str, "graphics.raylib.GOLD")) {
-                                            color = Raylib.GOLD;
-                                        } else if (std.mem.eql(u8, color_str, "LIME") or std.mem.eql(u8, color_str, "graphics.raylib.LIME")) {
-                                            color = Raylib.LIME;
-                                        } else if (std.mem.eql(u8, color_str, "VIOLET") or std.mem.eql(u8, color_str, "graphics.raylib.VIOLET")) {
-                                            color = Raylib.VIOLET;
-                                        } else if (std.mem.eql(u8, color_str, "BROWN") or std.mem.eql(u8, color_str, "graphics.raylib.BROWN")) {
-                                            color = Raylib.BROWN;
-                                        } else if (std.mem.eql(u8, color_str, "BEIGE") or std.mem.eql(u8, color_str, "graphics.raylib.BEIGE")) {
-                                            color = Raylib.BEIGE;
-                                        }
-
-                                        if (color) |c| {
-                                            Raylib.ClearBackgroundDoxa(.{ .r = c.r, .g = c.g, .b = c.b, .a = c.a });
-                                        } else {
-                                            Raylib.ClearBackgroundDoxa(.{ .r = 0, .g = 0, .b = 0, .a = 255 });
-                                        }
-                                    },
-                                    else => {
-                                        Raylib.ClearBackgroundDoxa(.{ .r = 0, .g = 0, .b = 0, .a = 255 });
-                                    },
-                                }
-                                return;
-                            } else if (std.mem.eql(u8, func_name, "DrawCircle")) {
-                                // Arguments are pushed in order: x, y, radius, color
-                                // So we need to pop in reverse order: color, radius, y, x
-                                const color_frame = try self.stack.pop();
-                                const radius_frame = try self.stack.pop();
-                                const y_frame = try self.stack.pop();
-                                const x_frame = try self.stack.pop();
-
-                                const x = try x_frame.asInt();
-                                const y = try y_frame.asInt();
-                                const radius = switch (radius_frame.value) {
-                                    .int => |i| @as(f32, @floatFromInt(i)),
-                                    .float => |f| @as(f32, @floatCast(f)),
-                                    .byte => |b| @as(f32, @floatFromInt(b)),
-                                    else => 0.0,
-                                };
-
-                                // Extract color from struct
-                                var r: u8 = 0;
-                                var g: u8 = 0;
-                                var b: u8 = 0;
-                                var a: u8 = 255;
-
-                                switch (color_frame.value) {
-                                    .struct_instance => |s| {
-                                        for (s.fields) |field| {
-                                            if (std.mem.eql(u8, field.name, "r")) {
-                                                r = switch (field.value) {
-                                                    .byte => |byte_val| byte_val,
-                                                    .int => |i| if (i >= 0 and i <= 255) @as(u8, @intCast(i)) else 0,
-                                                    else => 0,
-                                                };
-                                            } else if (std.mem.eql(u8, field.name, "g")) {
-                                                g = switch (field.value) {
-                                                    .byte => |byte_val| byte_val,
-                                                    .int => |i| if (i >= 0 and i <= 255) @as(u8, @intCast(i)) else 0,
-                                                    else => 0,
-                                                };
-                                            } else if (std.mem.eql(u8, field.name, "b")) {
-                                                b = switch (field.value) {
-                                                    .byte => |byte_val| byte_val,
-                                                    .int => |i| if (i >= 0 and i <= 255) @as(u8, @intCast(i)) else 0,
-                                                    else => 0,
-                                                };
-                                            } else if (std.mem.eql(u8, field.name, "a")) {
-                                                a = switch (field.value) {
-                                                    .byte => |byte_val| byte_val,
-                                                    .int => |i| if (i >= 0 and i <= 255) @as(u8, @intCast(i)) else 0,
-                                                    else => 255,
-                                                };
-                                            }
-                                        }
-                                    },
-                                    else => {},
-                                }
-
-                                Raylib.DrawCircle(@intCast(x), @intCast(y), radius, .{ .r = r, .g = g, .b = b, .a = a });
-                                return;
-                            } else if (std.mem.eql(u8, func_name, "InitWindow")) {
-                                // Handle InitWindow(width, height, title)
-                                const title_frame = try self.stack.pop();
-                                const height_frame = try self.stack.pop();
-                                const width_frame = try self.stack.pop();
-
-                                const width = try width_frame.asInt();
-                                const height = try height_frame.asInt();
-                                const title = try title_frame.asString();
-
-                                try Raylib.InitWindowDoxa(width, height, title);
-                                return;
-                            } else if (std.mem.eql(u8, func_name, "BeginDrawing")) {
-                                Raylib.BeginDrawing();
-                                return;
-                            } else if (std.mem.eql(u8, func_name, "EndDrawing")) {
-                                Raylib.EndDrawing();
-                                return;
-                            } else if (std.mem.eql(u8, func_name, "WindowShouldClose")) {
-                                const should_close = Raylib.WindowShouldClose();
-                                try self.stack.pushValue(HIRValue{ .tetra = if (should_close) 1 else 0 });
-                                return;
-                            } else if (std.mem.eql(u8, func_name, "CloseWindow")) {
-                                Raylib.CloseWindow();
-                                return;
-                            }
-                        }
+                    if (try self.graphics_runtime.handleGraphicsCall(module_alias, sub_alias, func_name, &self.stack, &self.scope_stack)) {
+                        return;
                     }
                 }
 
-                // Try to resolve function by qualified name if function_index doesn't match
                 const function_index = self.resolveFunctionIndex(payload.target.function_index, payload.target.qualified_name);
-                // Create a function invocation that preserves storage references for alias parameters
                 const func_ptr = &self.bytecode.functions[function_index];
                 const return_ip = self.ip;
 
-                // For alias parameters, we need to preserve storage references on the stack
-                // Don't consume them - let the function handle them via BindAlias
                 const stack_base = self.stack.len();
 
-                // Push a new frame for the function call
                 _ = try self.pushFrame(function_index, stack_base, return_ip);
 
-                // Debug: Check what's on the stack before the call
-
-                // Jump to the function start
                 if (func_ptr.start_ip >= self.bytecode.instructions.len) return error.UnimplementedInstruction;
                 self.ip = func_ptr.start_ip;
                 self.skip_increment = true;
