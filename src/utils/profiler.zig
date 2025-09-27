@@ -2,7 +2,6 @@ const std = @import("std");
 
 pub const Phase = enum {
     NONE,
-    VALIDATION,
     LEXIC_A,
     PARSING,
     SEMANTIC_A,
