@@ -9,34 +9,13 @@ P ∧ ¬ P (both)
 ¬ ( P ∨ ¬ P ) (neither)
 ```
 
-See documentation for a more detailed explaination of how this works.
+Doxa is high level, statically typed, memory managed language. It has a highly readable and consistant syntax aimed at reducing cognative load, and producing code which is simple and aesthetic while remaining type safe. It features an extended logical value called a tetra, as well as a full suite of first order logic operators including existential and universal quantifers. 
 
-## Some cool stuff
-
-peek operator
-
-union types
-
-deterministic memory management
-
-## Components
-
-![Pipeline](./pipeline.svg)
-
-- **Lexer**: Tokenizes source code
-- **Parser**: Builds an AST from tokens
-- **Soxa** A stack based HIR for high level optimization
-- **VM**: Stack based, operates from Soxa IR
-- **LLVM IR** Code generator to turn Soxa into LLVM IR for native compilation
-
-## Memory management
-
-Memory is managed but not via garbage collection. Doxa uses an automated refence counter much like Swift but with some unique changes which leverage the power of the Zig language allocation system. Without getting overly technical, each scope is allocated as an arena which is cleaned up when that scope is exited. Combined with traditional refrence counting this provides an extremely robust and _predictable_ form of automatic memory management which avoids many of the pitfalls of garbage collection while remaining totally automatic.
 
 ## Usage
 
 ```bash
-doxa run ./path/to/file.doxa
+doxa ./path/to/file.doxa
 ```
 
 compile from source and run
@@ -50,21 +29,13 @@ zig build run -- [--debug] ./path/to/file.doxa
 compile from source and run tests
 
 ```bash
+zig build
 zig build test
 ```
 
-## Development Status
-
-VM pipeline is currently working as expected with almost all core features implemented. Expanding testing is a key concern, particularly edge cases and negative tests.
-
-TODO:
-
-- struct should use function/method better (method uses implict this, function is static)
-- standard lib
-- add key access via each loops over maps using `at`
-- SOXA to LLVMIR code gen
-
 ## Native Types
+
+Doxa is based upon a very small number of types with enums, structs, and type unions providing a huge degree of flexibility to how these core types can be used. Exhaustive match statements and union type narrowing allow for extremly simple yet powerful error handling patterns that takes the idea of errors as values very literally.
 
 ### Atomic
 
@@ -81,6 +52,23 @@ TODO:
 - struct
 - enum
 - union
+
+## Components
+
+![Pipeline](./pipeline.svg)
+
+- **Lexer**: Tokenizes source code
+- **Parser**: Builds an AST from tokens
+- **Soxa** A stack based HIR for high level optimization
+- **VM**: Stack based, operates from Soxa IR
+- **LLVM IR** Code generator to turn Soxa into LLVM IR for native compilation
+
+## TODO:
+
+- standard lib
+- add instrospective key access while using each loops over maps using `at`
+- finish the last few internal methods 
+- SOXA to LLVMIR code gen
 
 ## Example
 
