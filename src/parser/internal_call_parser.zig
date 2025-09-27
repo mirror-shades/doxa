@@ -15,48 +15,37 @@ const ErrorCode = Errors.ErrorCode;
 
 const Parser = @import("parser_types.zig").Parser;
 
-/// Parse a generic @method(...) call into a InternalCall expression.
-/// Expect current token to be the method token (e.g., PUSH, POP, SLICE, ...)
 pub fn internalCallExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     const method_tok = self.peek();
 
-    // Special handling for @print method with string interpolation
     if (method_tok.type == .PRINT) {
         return try parsePrintMethod(self);
     }
 
-    // Special handling for @exit method - treat as built-in call
     if (method_tok.type == .EXIT) {
         return try parseExitMethod(self);
     }
 
-    // Special handling for @sleep method - treat as built-in call
     if (method_tok.type == .SLEEP) {
         return try parseSleepMethod(self);
     }
 
-    // Special handling for @random method - treat as built-in call
     if (method_tok.type == .RANDOM) {
         return try parseRandomMethod(self);
     }
 
-    // Special handling for @time method - treat as built-in call
     if (method_tok.type == .TIME) {
         return try parseTimeMethod(self);
     }
 
-    // Special handling for @tick method - treat as built-in call
     if (method_tok.type == .TICK) {
         return try parseTickMethod(self);
     }
 
-    // consume method token
     self.advance();
-    // expect '('
     if (self.peek().type != .LEFT_PAREN) return error.ExpectedLeftParen;
     self.advance();
 
-    // Allow newlines after '('
     while (self.peek().type == .NEWLINE) self.advance();
 
     var args = std.array_list.Managed(*ast.Expr).init(self.allocator);
@@ -68,20 +57,15 @@ pub fn internalCallExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?
         args.deinit();
     }
 
-    // Parse zero or more comma-separated expressions until ')'
     if (self.peek().type != .RIGHT_PAREN) {
         while (true) {
-            // Allow leading newlines before each argument
             while (self.peek().type == .NEWLINE) self.advance();
             const expr = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
             try args.append(expr);
-            // Allow newlines before comma
             while (self.peek().type == .NEWLINE) self.advance();
             if (self.peek().type == .COMMA) {
                 self.advance();
-                // Allow newlines after comma
                 while (self.peek().type == .NEWLINE) self.advance();
-                // Allow trailing comma: if next is ')', stop parsing args
                 if (self.peek().type == .RIGHT_PAREN) {
                     break;
                 }
@@ -91,26 +75,21 @@ pub fn internalCallExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?
         }
     }
 
-    // Allow trailing newlines before ')'
     while (self.peek().type == .NEWLINE) self.advance();
     if (self.peek().type != .RIGHT_PAREN) return error.ExpectedRightParen;
     self.advance();
 
-    // For @methods that act on a receiver, we use first argument as receiver
-    // and keep remaining as method arguments. If no args, receiver is a dummy.
     var receiver_expr: *ast.Expr = undefined;
     var call_args = std.array_list.Managed(*ast.Expr).init(self.allocator);
     errdefer call_args.deinit();
 
     if (args.items.len > 0) {
         receiver_expr = args.items[0];
-        // move remaining args to call_args
         var i: usize = 1;
         while (i < args.items.len) : (i += 1) {
             try call_args.append(args.items[i]);
         }
     } else {
-        // Create a nothing literal as placeholder receiver to keep AST consistent
         receiver_expr = try self.allocator.create(ast.Expr);
         receiver_expr.* = .{
             .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(method_tok) },
@@ -131,31 +110,24 @@ pub fn internalCallExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?
     return method_expr;
 }
 
-/// Parse @print method with string interpolation support
-/// Supports: @print("Hello {name}!", name) with escaped braces \{ \}
 pub fn parsePrintMethod(self: *Parser) ErrorList!?*ast.Expr {
     const method_tok = self.peek();
-    self.advance(); // consume PRINT_METHOD token
+    self.advance();
 
-    // Expect opening parenthesis
     if (self.peek().type != .LEFT_PAREN) {
         return error.ExpectedLeftParen;
     }
     self.advance();
 
-    // Parse format string
     const format_expr = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
 
-    // Expect closing parenthesis
     if (self.peek().type != .RIGHT_PAREN) {
         return error.ExpectedRightParen;
     }
     self.advance();
 
-    // Parse string interpolation to get format template and expressions
     const interp_info = try parseStringInterpolation(self, format_expr);
 
-    // Use the placeholder expressions directly as arguments (for legacy compatibility)
     var arguments = std.array_list.Managed(*ast.Expr).init(self.allocator);
     errdefer {
         for (arguments.items) |arg| {
@@ -166,17 +138,14 @@ pub fn parsePrintMethod(self: *Parser) ErrorList!?*ast.Expr {
     }
 
     for (interp_info.placeholder_expressions) |placeholder_expr| {
-        // Use the placeholder expression directly - it's already parsed as an expression
         try arguments.append(placeholder_expr);
     }
 
-    // Create placeholder indices (each placeholder maps to its argument index)
     const placeholder_indices = try self.allocator.alloc(u32, interp_info.placeholder_expressions.len);
     for (0..interp_info.placeholder_expressions.len) |idx| {
         placeholder_indices[idx] = @intCast(idx);
     }
 
-    // Create the print expression with new FormatTemplate structure
     const print_expr = try self.allocator.create(ast.Expr);
     print_expr.* = .{
         .base = .{
@@ -197,17 +166,13 @@ pub fn parsePrintMethod(self: *Parser) ErrorList!?*ast.Expr {
     return print_expr;
 }
 
-/// Parse string interpolation from format string
-/// Returns a structured FormatTemplate with both strings and expressions
 const InterpolationInfo = struct {
     format_template: *ast.FormatTemplate, // NEW: Structured format template
-    // Legacy fields for backward compatibility during transition
     format_parts: []const []const u8, // String parts between placeholders
     placeholder_expressions: []*ast.Expr, // Expressions to interpolate
 };
 
 fn parseStringInterpolation(self: *Parser, format_expr: *ast.Expr) ErrorList!InterpolationInfo {
-    // Extract string literal from format expression
     const format_string = switch (format_expr.data) {
         .Literal => |lit| switch (lit) {
             .string => |s| s,
@@ -216,25 +181,21 @@ fn parseStringInterpolation(self: *Parser, format_expr: *ast.Expr) ErrorList!Int
         else => return error.ExpectedStringLiteral,
     };
 
-    // Build both new FormatTemplate structure and legacy compatibility fields
     var template_parts = std.array_list.Managed(ast.FormatPart).init(self.allocator);
     var legacy_format_parts = std.array_list.Managed([]const u8).init(self.allocator);
     var placeholder_expressions = std.array_list.Managed(*ast.Expr).init(self.allocator);
 
     errdefer {
-        // Clean up template parts
         for (template_parts.items) |*part| {
             part.deinit(self.allocator);
         }
         template_parts.deinit();
 
-        // Clean up legacy parts
         for (legacy_format_parts.items) |part| {
             self.allocator.free(part);
         }
         legacy_format_parts.deinit();
 
-        // Clean up expressions
         for (placeholder_expressions.items) |expr| {
             expr.deinit(self.allocator);
             self.allocator.destroy(expr);
@@ -247,24 +208,17 @@ fn parseStringInterpolation(self: *Parser, format_expr: *ast.Expr) ErrorList!Int
 
     while (i < format_string.len) {
         if (format_string[i] == '\\' and i + 1 < format_string.len) {
-            // Handle escaped characters
             if (format_string[i + 1] == '{' or format_string[i + 1] == '}') {
-                i += 2; // Skip escaped brace
+                i += 2;
                 continue;
             }
         } else if (format_string[i] == '{') {
-            // Found start of placeholder
-            // Add the string part before this placeholder
             const part = format_string[current_part_start..i];
-
-            // Add to new template structure
             const string_part = try ast.createStringPart(self.allocator, part);
             try template_parts.append(string_part);
 
-            // Add to legacy structure for backward compatibility
             try legacy_format_parts.append(try self.allocator.dupe(u8, part));
 
-            // Find the end of the placeholder
             var j = i + 1;
             while (j < format_string.len and format_string[j] != '}') {
                 j += 1;
@@ -274,20 +228,16 @@ fn parseStringInterpolation(self: *Parser, format_expr: *ast.Expr) ErrorList!Int
                 return error.UnmatchedOpenBrace;
             }
 
-            // Extract placeholder content and parse it as an expression
             const placeholder_content = format_string[i + 1 .. j];
 
-            // Parse the placeholder content as an expression
             const placeholder_expr = try parsePlaceholderExpression(self, placeholder_content);
 
-            // Add to new template structure
             const expr_part = ast.createExpressionPart(placeholder_expr);
             try template_parts.append(expr_part);
 
-            // Add to legacy structure for backward compatibility
             try placeholder_expressions.append(placeholder_expr);
 
-            i = j + 1; // Move past the '}'
+            i = j + 1;
             current_part_start = i;
         } else {
             i += 1;
@@ -314,25 +264,18 @@ fn parseStringInterpolation(self: *Parser, format_expr: *ast.Expr) ErrorList!Int
     };
 }
 
-/// Parse a placeholder expression from string content
-/// This handles cases like @string(number), @length(variable_name), etc.
 fn parsePlaceholderExpression(self: *Parser, content: []const u8) ErrorList!*ast.Expr {
-    // Create a temporary lexer for the placeholder content
     var temp_lexer = LexicalAnalyzer.init(self.allocator, content, self.current_file, self.reporter);
     defer temp_lexer.deinit();
 
-    // Initialize keywords and lex the content into tokens
     try temp_lexer.initKeywords();
     const tokens = try temp_lexer.lexTokens();
     defer tokens.deinit();
 
-    // Create a temporary parser for the tokens
     var temp_parser = Parser.init(self.allocator, tokens.items, self.current_file, self.reporter);
     defer temp_parser.deinit();
 
-    // Parse the expression
     const expr = try expression_parser.parseExpression(&temp_parser) orelse {
-        // If parsing fails, fall back to treating it as a variable name
         const var_token = token.Token{
             .type = .IDENTIFIER,
             .lexeme = content,
@@ -358,31 +301,25 @@ fn parsePlaceholderExpression(self: *Parser, content: []const u8) ErrorList!*ast
     return expr;
 }
 
-/// Parse @exit method - creates a BuiltinCall expression
 pub fn parseExitMethod(self: *Parser) ErrorList!?*ast.Expr {
     const method_tok = self.peek();
-    self.advance(); // consume EXIT token
+    self.advance();
 
-    // Expect opening parenthesis
     if (self.peek().type != .LEFT_PAREN) {
         return error.ExpectedLeftParen;
     }
     self.advance();
 
-    // Parse the exit code argument
     const exit_code_expr = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
 
-    // Expect closing parenthesis
     if (self.peek().type != .RIGHT_PAREN) {
         return error.ExpectedRightParen;
     }
     self.advance();
 
-    // Create arguments array
     const arguments = try self.allocator.alloc(*ast.Expr, 1);
     arguments[0] = exit_code_expr;
 
-    // Create BuiltinCall expression
     const exit_expr = try self.allocator.create(ast.Expr);
     exit_expr.* = .{
         .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(method_tok) },
@@ -395,31 +332,25 @@ pub fn parseExitMethod(self: *Parser) ErrorList!?*ast.Expr {
     return exit_expr;
 }
 
-/// Parse @sleep method - creates a BuiltinCall expression
 pub fn parseSleepMethod(self: *Parser) ErrorList!?*ast.Expr {
     const method_tok = self.peek();
-    self.advance(); // consume SLEEP token
+    self.advance();
 
-    // Expect opening parenthesis
     if (self.peek().type != .LEFT_PAREN) {
         return error.ExpectedLeftParen;
     }
     self.advance();
 
-    // Parse the sleep duration argument (in milliseconds)
     const duration_expr = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
 
-    // Expect closing parenthesis
     if (self.peek().type != .RIGHT_PAREN) {
         return error.ExpectedRightParen;
     }
     self.advance();
 
-    // Create arguments array
     const arguments = try self.allocator.alloc(*ast.Expr, 1);
     arguments[0] = duration_expr;
 
-    // Create BuiltinCall expression
     const sleep_expr = try self.allocator.create(ast.Expr);
     sleep_expr.* = .{
         .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(method_tok) },
@@ -432,24 +363,20 @@ pub fn parseSleepMethod(self: *Parser) ErrorList!?*ast.Expr {
     return sleep_expr;
 }
 
-/// Parse @random method - creates a BuiltinCall expression
 pub fn parseRandomMethod(self: *Parser) ErrorList!?*ast.Expr {
     const method_tok = self.peek();
     self.advance(); // consume RANDOM token
 
-    // Expect opening parenthesis
     if (self.peek().type != .LEFT_PAREN) {
         return error.ExpectedLeftParen;
     }
     self.advance();
 
-    // Expect closing parenthesis (no arguments)
     if (self.peek().type != .RIGHT_PAREN) {
         return error.ExpectedRightParen;
     }
     self.advance();
 
-    // Create BuiltinCall expression with no arguments
     const random_expr = try self.allocator.create(ast.Expr);
     random_expr.* = .{
         .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(method_tok) },
@@ -462,24 +389,20 @@ pub fn parseRandomMethod(self: *Parser) ErrorList!?*ast.Expr {
     return random_expr;
 }
 
-/// Parse @time method - creates a BuiltinCall expression
 pub fn parseTimeMethod(self: *Parser) ErrorList!?*ast.Expr {
     const method_tok = self.peek();
-    self.advance(); // consume TIME token
+    self.advance();
 
-    // Expect opening parenthesis
     if (self.peek().type != .LEFT_PAREN) {
         return error.ExpectedLeftParen;
     }
     self.advance();
 
-    // Expect closing parenthesis (no arguments for @time)
     if (self.peek().type != .RIGHT_PAREN) {
         return error.ExpectedRightParen;
     }
     self.advance();
 
-    // Create BuiltinCall expression with no arguments
     const time_expr = try self.allocator.create(ast.Expr);
     time_expr.* = .{
         .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(method_tok) },
@@ -492,24 +415,20 @@ pub fn parseTimeMethod(self: *Parser) ErrorList!?*ast.Expr {
     return time_expr;
 }
 
-/// Parse @tick method - creates a BuiltinCall expression
 pub fn parseTickMethod(self: *Parser) ErrorList!?*ast.Expr {
     const method_tok = self.peek();
-    self.advance(); // consume TICK token
+    self.advance();
 
-    // Expect opening parenthesis
     if (self.peek().type != .LEFT_PAREN) {
         return error.ExpectedLeftParen;
     }
     self.advance();
 
-    // Expect closing parenthesis (no arguments for @tick)
     if (self.peek().type != .RIGHT_PAREN) {
         return error.ExpectedRightParen;
     }
     self.advance();
 
-    // Create BuiltinCall expression with no arguments
     const tick_expr = try self.allocator.create(ast.Expr);
     tick_expr.* = .{
         .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(method_tok) },

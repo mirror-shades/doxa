@@ -10,23 +10,19 @@ const ErrorList = Errors.ErrorList;
 const ErrorCode = Errors.ErrorCode;
 const module_resolver = @import("module_resolver.zig");
 
-// Struct to track imported symbols
 pub const ImportedSymbol = struct {
     kind: enum { Function, Enum, Struct, Variable, Type, Import },
     name: []const u8,
     original_module: []const u8,
     namespace_alias: ?[]const u8 = null,
-    // Optional function metadata for accurate arity/typing
     param_count: ?u32 = null,
     param_types: ?[]ast.TypeInfo = null,
     return_type_info: ?ast.TypeInfo = null,
 };
 
-// New function to handle module imports: "module math from "./math.doxa";"
 pub fn parseModuleStmt(self: *Parser) !ast.Stmt {
-    self.advance(); // consume 'module'
+    self.advance();
 
-    // Parse namespace
     if (self.peek().type != .IDENTIFIER) {
         const current_token = self.peek();
         const location = Location{
@@ -44,7 +40,6 @@ pub fn parseModuleStmt(self: *Parser) !ast.Stmt {
     const namespace = self.peek().lexeme;
     self.advance();
 
-    // Must have 'from' keyword
     if (self.peek().type != .FROM) {
         const current_token = self.peek();
         const location = Location{
@@ -61,7 +56,6 @@ pub fn parseModuleStmt(self: *Parser) !ast.Stmt {
     }
     self.advance();
 
-    // Parse module path
     if (self.peek().type != .STRING) {
         const current_token = self.peek();
         const location = Location{
@@ -77,14 +71,12 @@ pub fn parseModuleStmt(self: *Parser) !ast.Stmt {
         return error.ExpectedModulePath;
     }
 
-    // Get the module path and strip the quotes
     var module_path = self.peek().lexeme;
     if (module_path.len >= 2 and module_path[0] == '"' and module_path[module_path.len - 1] == '"') {
         module_path = module_path[1 .. module_path.len - 1];
     }
     self.advance();
 
-    // Accept optional semicolon before required newline
     if (self.peek().type == .SEMICOLON) {
         self.advance();
     }
@@ -93,12 +85,8 @@ pub fn parseModuleStmt(self: *Parser) !ast.Stmt {
     }
     self.advance();
 
-    // Load and register the entire module as a namespace
     try self.loadAndRegisterModule(module_path, namespace, null);
 
-    // Record this module import so transitive imports are visible during
-    // module info extraction (since top-level imports are consumed in pass 1)
-    // This associates the current file with the imported path under the alias.
     // Safe to ignore errors here; symbol resolution will still attempt other paths.
     _ = module_resolver.recordModuleImport(self, self.current_file, namespace, module_path) catch {};
 
@@ -119,15 +107,12 @@ pub fn parseModuleStmt(self: *Parser) !ast.Stmt {
     };
 }
 
-// Updated function to handle specific imports: "import add from "./math.doxa";" or "import add, subtract from "./math.doxa";"
 pub fn parseImportStmt(self: *Parser) !ast.Stmt {
-    self.advance(); // consume 'import'
+    self.advance();
 
-    // Parse specific symbols (one or more)
     var symbols = std.array_list.Managed([]const u8).init(self.allocator);
     defer symbols.deinit();
 
-    // Parse first symbol
     if (self.peek().type != .IDENTIFIER) {
         const current_token = self.peek();
         const location = Location{
@@ -145,9 +130,8 @@ pub fn parseImportStmt(self: *Parser) !ast.Stmt {
     try symbols.append(self.peek().lexeme);
     self.advance();
 
-    // Parse additional symbols if comma-separated
     while (self.peek().type == .COMMA) {
-        self.advance(); // consume comma
+        self.advance();
 
         if (self.peek().type != .IDENTIFIER) {
             const current_token = self.peek();
@@ -167,7 +151,6 @@ pub fn parseImportStmt(self: *Parser) !ast.Stmt {
         self.advance();
     }
 
-    // Must have 'from' keyword
     if (self.peek().type != .FROM) {
         const current_token = self.peek();
         const location = Location{
@@ -184,7 +167,6 @@ pub fn parseImportStmt(self: *Parser) !ast.Stmt {
     }
     self.advance();
 
-    // Parse module path
     if (self.peek().type != .STRING) {
         const current_token = self.peek();
         const location = Location{
@@ -200,14 +182,12 @@ pub fn parseImportStmt(self: *Parser) !ast.Stmt {
         return error.ExpectedModulePath;
     }
 
-    // Get the module path and strip the quotes
     var module_path = self.peek().lexeme;
     if (module_path.len >= 2 and module_path[0] == '"' and module_path[module_path.len - 1] == '"') {
         module_path = module_path[1 .. module_path.len - 1];
     }
     self.advance();
 
-    // Accept optional semicolon before required newline
     if (self.peek().type == .SEMICOLON) {
         self.advance();
     }
@@ -216,10 +196,8 @@ pub fn parseImportStmt(self: *Parser) !ast.Stmt {
     }
     self.advance();
 
-    // Convert symbols to owned slice
     const owned_symbols = try self.allocator.dupe([]const u8, symbols.items);
 
-    // Load and register specific symbols from the module
     for (owned_symbols) |symbol| {
         try self.loadAndRegisterSpecificSymbol(module_path, symbol);
     }
@@ -235,42 +213,31 @@ pub fn parseImportStmt(self: *Parser) !ast.Stmt {
                 .module_path = module_path,
                 .namespace_alias = null,
                 .specific_symbols = owned_symbols,
-                .specific_symbol = if (owned_symbols.len == 1) owned_symbols[0] else null, // Legacy support
+                .specific_symbol = if (owned_symbols.len == 1) owned_symbols[0] else null,
             },
         },
     };
 }
 
-// New function to load and register a module's symbols
 pub fn loadAndRegisterModule(self: *Parser, module_path: []const u8, namespace: []const u8, specific_symbol: ?[]const u8) !void {
-    // Get module info - this will parse the module if not already cached
     const module_info = try module_resolver.resolveModule(self, module_path);
 
-    // Register the module in namespaces map
     try self.module_namespaces.put(namespace, module_info);
 
-    // If we have the full module AST available (from module_info),
-    // we can scan it for public symbols and register them
     if (module_info.ast) |module_ast| {
         try registerPublicSymbols(self, module_ast, module_path, namespace, specific_symbol);
     }
 }
 
-// New function to load and register specific symbols (for specific imports)
 pub fn loadAndRegisterSpecificSymbol(self: *Parser, module_path: []const u8, symbol_name: []const u8) !void {
-    // Get module info - this will parse the module if not already cached
     const module_info = try module_resolver.resolveModule(self, module_path);
 
-    // If we have the full module AST available (from module_info),
-    // we can scan it for the specific symbol and register it
     if (module_info.ast) |module_ast| {
         try registerSpecificSymbol(self, module_ast, module_path, symbol_name);
     }
 }
 
-// Function to scan a module's AST and register a specific symbol
 fn registerSpecificSymbol(self: *Parser, module_ast: *ast.Expr, module_path: []const u8, symbol_name: []const u8) !void {
-    // Initialize symbol table for this module if needed
     if (self.imported_symbols == null) {
         self.imported_symbols = std.StringHashMap(ImportedSymbol).init(self.allocator);
     }
@@ -280,11 +247,9 @@ fn registerSpecificSymbol(self: *Parser, module_ast: *ast.Expr, module_path: []c
             const statements = module_ast.Block.statements;
             for (statements) |stmt| {
                 switch (stmt.data) {
-                    // Handle function declarations
                     .FunctionDecl => |func| {
                         const is_public = func.is_public;
                         if (is_public and std.mem.eql(u8, func.name.lexeme, symbol_name)) {
-                            // Extract parameter types
                             var param_types: ?[]ast.TypeInfo = null;
                             if (func.params.len > 0) {
                                 param_types = try self.allocator.alloc(ast.TypeInfo, func.params.len);
@@ -298,8 +263,6 @@ fn registerSpecificSymbol(self: *Parser, module_ast: *ast.Expr, module_path: []c
                                     }
                                 }
                             }
-
-                            // Register the symbol directly (not with namespace prefix)
                             try self.imported_symbols.?.put(symbol_name, .{
                                 .kind = .Function,
                                 .name = func.name.lexeme,
@@ -308,56 +271,50 @@ fn registerSpecificSymbol(self: *Parser, module_ast: *ast.Expr, module_path: []c
                                 .param_types = param_types,
                                 .return_type_info = func.return_type_info,
                             });
-                            return; // Found the symbol, we're done
+                            return;
                         }
                     },
-                    // Handle variable declarations
                     .VarDecl => |var_decl| {
                         const is_public = var_decl.is_public;
                         if (is_public and std.mem.eql(u8, var_decl.name.lexeme, symbol_name)) {
-                            // Register the symbol directly (not with namespace prefix)
                             try self.imported_symbols.?.put(symbol_name, .{
                                 .kind = .Variable,
                                 .name = var_decl.name.lexeme,
                                 .original_module = module_path,
                             });
-                            return; // Found the symbol, we're done
+                            return;
                         }
                     },
-                    // Handle enum declarations
                     .EnumDecl => |enum_decl| {
                         const is_public = enum_decl.is_public;
                         if (is_public and std.mem.eql(u8, enum_decl.name.lexeme, symbol_name)) {
-                            // Register the symbol directly (not with namespace prefix)
                             try self.imported_symbols.?.put(symbol_name, .{
                                 .kind = .Enum,
                                 .name = enum_decl.name.lexeme,
                                 .original_module = module_path,
                             });
-                            return; // Found the symbol, we're done
+                            return;
                         }
                     },
-                    // Handle struct declarations
                     .Expression => |expr| {
                         if (expr.data == .StructDecl) {
                             const struct_decl = expr.StructDecl;
                             const is_public = struct_decl.is_public;
                             if (is_public and std.mem.eql(u8, struct_decl.name.lexeme, symbol_name)) {
-                                // Register the symbol directly (not with namespace prefix)
                                 try self.imported_symbols.?.put(symbol_name, .{
                                     .kind = .Struct,
                                     .name = struct_decl.name.lexeme,
                                     .original_module = module_path,
                                 });
-                                return; // Found the symbol, we're done
+                                return;
                             }
                         }
                     },
-                    else => {}, // Skip other types of statements
+                    else => {},
                 }
             }
         },
-        else => {}, // Skip other AST types
+        else => {},
     }
 }
 
@@ -369,24 +326,20 @@ pub fn findImportedSymbol(self: *Parser, name: []const u8) ?ImportedSymbol {
 }
 
 fn registerPublicSymbols(self: *Parser, module_ast: *ast.Expr, module_path: []const u8, namespace: []const u8, specific_symbol: ?[]const u8) !void {
-    // Initialize symbol table for this module if needed
     if (self.imported_symbols == null) {
         self.imported_symbols = std.StringHashMap(ImportedSymbol).init(self.allocator);
     }
-    // If this is a block, process its statements
     if (module_ast.data == .Block) {
         const statements = module_ast.data.Block.statements;
 
         for (statements) |stmt| {
             switch (stmt.data) {
-                // Handle enum declarations
                 .EnumDecl => |enum_decl| {
                     const is_public = enum_decl.is_public;
 
                     if (is_public) {
                         const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ namespace, enum_decl.name.lexeme });
 
-                        // Only register if we want all symbols or this specific one
                         if (specific_symbol) |specific| {
                             if (std.mem.eql(u8, specific, enum_decl.name.lexeme)) {
                                 try self.imported_symbols.?.put(full_name, .{
@@ -395,7 +348,6 @@ fn registerPublicSymbols(self: *Parser, module_ast: *ast.Expr, module_path: []co
                                     .original_module = module_path,
                                 });
 
-                                // Also register each enum variant for easy access
                                 for (enum_decl.variants) |variant| {
                                     const variant_full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ full_name, variant.lexeme });
                                     try self.imported_symbols.?.put(variant_full_name, .{
@@ -406,14 +358,12 @@ fn registerPublicSymbols(self: *Parser, module_ast: *ast.Expr, module_path: []co
                                 }
                             }
                         } else {
-                            // No specific symbol specified, register all
                             try self.imported_symbols.?.put(full_name, .{
                                 .kind = .Enum,
                                 .name = enum_decl.name.lexeme,
                                 .original_module = module_path,
                             });
 
-                            // Also register each enum variant for easy access
                             for (enum_decl.variants) |variant| {
                                 const variant_full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ full_name, variant.lexeme });
                                 try self.imported_symbols.?.put(variant_full_name, .{
@@ -425,7 +375,6 @@ fn registerPublicSymbols(self: *Parser, module_ast: *ast.Expr, module_path: []co
                         }
                     }
                 },
-                // Handle function declarations
                 .Function => |func| {
                     const is_public = func.is_public;
 
@@ -441,7 +390,6 @@ fn registerPublicSymbols(self: *Parser, module_ast: *ast.Expr, module_path: []co
                         }
                     }
                 },
-                // Handle struct declarations
                 .Expression => |expr_opt| {
                     if (expr_opt) |expr| {
                         if (expr.data == .StructDecl) {
@@ -466,7 +414,6 @@ fn registerPublicSymbols(self: *Parser, module_ast: *ast.Expr, module_path: []co
                     if (is_public) {
                         const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ namespace, var_decl.name.lexeme });
 
-                        // Only register if we want all symbols or this specific one
                         if (specific_symbol == null or std.mem.eql(u8, specific_symbol.?, var_decl.name.lexeme)) {
                             try self.imported_symbols.?.put(full_name, .{
                                 .kind = .Variable,
@@ -484,7 +431,7 @@ fn registerPublicSymbols(self: *Parser, module_ast: *ast.Expr, module_path: []co
                         .namespace_alias = import_info.namespace_alias,
                     });
                 },
-                else => {}, // Skip other types of statements
+                else => {},
             }
         }
     }

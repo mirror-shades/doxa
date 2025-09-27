@@ -9,7 +9,6 @@ const HIRInstruction = @import("../soxa_instructions.zig").HIRInstruction;
 const ErrorCode = @import("../../../utils/errors.zig").ErrorCode;
 const ErrorList = @import("../../../utils/errors.zig").ErrorList;
 
-/// Handle binary operations and arithmetic expressions
 pub const BinaryExpressionHandler = struct {
     generator: *HIRGenerator,
 
@@ -17,20 +16,12 @@ pub const BinaryExpressionHandler = struct {
         return .{ .generator = generator };
     }
 
-    /// Generate HIR for binary expressions (arithmetic, comparison)
     pub fn generateBinary(self: *BinaryExpressionHandler, bin: ast.Binary, should_pop_after_use: bool) ErrorList!void {
-        // Get the types of both operands
         const left_type = self.generator.inferTypeFromExpression(bin.left.?);
         const right_type = self.generator.inferTypeFromExpression(bin.right.?);
 
-        // Generate expressions for both operands first
         try self.generator.generateExpression(bin.left.?, true, should_pop_after_use);
         try self.generator.generateExpression(bin.right.?, true, should_pop_after_use);
-
-        // Centralized type promotion rules:
-        // 1. Float dominance: If either operand is Float or operator is division (/), promote to Float
-        // 2. Int fallback: If either operand is Int, promote to Int
-        // 3. No promotion: If neither is Float or Int, leave operands as-is (e.g., Byte)
 
         switch (bin.operator.type) {
             .PLUS => try self.handlePlusOperator(left_type, right_type, bin),
@@ -57,30 +48,25 @@ pub const BinaryExpressionHandler = struct {
         }
     }
 
-    /// Generate HIR for logical expressions (AND, OR, etc.)
     pub fn generateLogical(self: *BinaryExpressionHandler, log: ast.Logical, should_pop_after_use: bool) (std.mem.Allocator.Error || ErrorList)!void {
-        // For AND/OR, we need short-circuit evaluation
         if (log.operator.type == .AND) {
-            // Generate: left AND right with short-circuit
             try self.generator.generateExpression(log.left, true, should_pop_after_use);
-            try self.generator.instructions.append(.Dup); // Keep left value for potential short-circuit
+            try self.generator.instructions.append(.Dup);
 
             const short_circuit_label = try self.generator.generateLabel("and_short_circuit");
             const end_label = try self.generator.generateLabel("and_end");
 
-            // If left is false, short-circuit to end; if left is true, continue to evaluate right
             try self.generator.instructions.append(.{
                 .JumpCond = .{
                     .label_true = short_circuit_label,
                     .label_false = end_label,
-                    .vm_offset = 0, // Will be patched
+                    .vm_offset = 0,
                     .condition_type = .Tetra,
                 },
             });
 
-            // Evaluate right side
             try self.generator.instructions.append(.{ .Label = .{ .name = short_circuit_label, .vm_address = 0 } });
-            try self.generator.instructions.append(.Pop); // Remove the duplicated left value
+            try self.generator.instructions.append(.Pop);
             try self.generator.generateExpression(log.right, true, should_pop_after_use);
 
             try self.generator.instructions.append(.{ .Label = .{ .name = end_label, .vm_address = 0 } });
@@ -126,19 +112,14 @@ pub const BinaryExpressionHandler = struct {
         }
     }
 
-    /// Generate HIR for unary expressions
     pub fn generateUnary(self: *BinaryExpressionHandler, unary: ast.Unary) (std.mem.Allocator.Error || ErrorList)!void {
-        // Generate the operand first
         try self.generator.generateExpression(unary.right.?, true, false);
 
-        // Generate the unary operation
         switch (unary.operator.type) {
             .NOT => {
-                // Generate logical NOT operation using ultra-fast lookup table
                 try self.generator.instructions.append(.{ .LogicalOp = .{ .op = .Not } });
             },
             .MINUS => {
-                // Unary minus: 0 - operand
                 const operand_type = self.generator.inferTypeFromExpression(unary.right.?);
                 const zero_value = switch (operand_type) {
                     .Int => HIRValue{ .int = 0 },
@@ -180,21 +161,15 @@ pub const BinaryExpressionHandler = struct {
         }
     }
 
-    // Private helper methods for each operator type
     fn handlePlusOperator(self: *BinaryExpressionHandler, left_type: HIRType, right_type: HIRType, bin: ast.Binary) !void {
-        // Handle string concatenation and array concatenation
         if (left_type == .String and right_type == .String) {
             try self.generator.instructions.append(.Swap);
             try self.generator.instructions.append(.{ .StringOp = .{ .op = .Concat } });
         } else if (left_type == .Array and right_type == .Array) {
-            // Array concatenation
             try self.generator.instructions.append(.ArrayConcat);
         } else {
-            // For numeric types, use the promoted common type
             const common_type = self.generator.computeNumericCommonType(left_type, right_type, bin.operator.type);
             if (common_type != .Unknown) {
-                // Apply type promotion if needed
-                _ = try self.generator.applyTypePromotionIfNeeded(left_type, right_type, common_type);
                 try self.generator.instructions.append(.{ .Arith = .{ .op = .Add, .operand_type = common_type } });
             } else {
                 self.generator.reporter.reportCompileError(
@@ -211,7 +186,6 @@ pub const BinaryExpressionHandler = struct {
     fn handleMinusOperator(self: *BinaryExpressionHandler, left_type: HIRType, right_type: HIRType, bin: ast.Binary) !void {
         const common_type = self.generator.computeNumericCommonType(left_type, right_type, bin.operator.type);
         if (common_type != .Unknown) {
-            _ = try self.generator.applyTypePromotionIfNeeded(left_type, right_type, common_type);
             try self.generator.instructions.append(.{ .Arith = .{ .op = .Sub, .operand_type = common_type } });
         } else {
             self.generator.reporter.reportCompileError(
@@ -227,7 +201,6 @@ pub const BinaryExpressionHandler = struct {
     fn handleMultiplyOperator(self: *BinaryExpressionHandler, left_type: HIRType, right_type: HIRType, bin: ast.Binary) !void {
         const common_type = self.generator.computeNumericCommonType(left_type, right_type, bin.operator.type);
         if (common_type != .Unknown) {
-            _ = try self.generator.applyTypePromotionIfNeeded(left_type, right_type, common_type);
             try self.generator.instructions.append(.{ .Arith = .{ .op = .Mul, .operand_type = common_type } });
         } else {
             self.generator.reporter.reportCompileError(
@@ -243,7 +216,6 @@ pub const BinaryExpressionHandler = struct {
     fn handleDivideOperator(self: *BinaryExpressionHandler, left_type: HIRType, right_type: HIRType, bin: ast.Binary) !void {
         const common_type = self.generator.computeNumericCommonType(left_type, right_type, bin.operator.type);
         if (common_type != .Unknown) {
-            _ = try self.generator.applyTypePromotionIfNeeded(left_type, right_type, common_type);
             try self.generator.instructions.append(.{ .Arith = .{ .op = .Div, .operand_type = common_type } });
         } else {
             self.generator.reporter.reportCompileError(
@@ -259,7 +231,6 @@ pub const BinaryExpressionHandler = struct {
     fn handleModuloOperator(self: *BinaryExpressionHandler, left_type: HIRType, right_type: HIRType, bin: ast.Binary) !void {
         const common_type = self.generator.computeNumericCommonType(left_type, right_type, bin.operator.type);
         if (common_type != .Unknown) {
-            _ = try self.generator.applyTypePromotionIfNeeded(left_type, right_type, common_type);
             try self.generator.instructions.append(.{ .Arith = .{ .op = .Mod, .operand_type = common_type } });
         } else {
             self.generator.reporter.reportCompileError(
@@ -275,7 +246,6 @@ pub const BinaryExpressionHandler = struct {
     fn handlePowerOperator(self: *BinaryExpressionHandler, left_type: HIRType, right_type: HIRType, bin: ast.Binary) !void {
         const common_type = self.generator.computeNumericCommonType(left_type, right_type, bin.operator.type);
         if (common_type != .Unknown) {
-            _ = try self.generator.applyTypePromotionIfNeeded(left_type, right_type, common_type);
             try self.generator.instructions.append(.{ .Arith = .{ .op = .Pow, .operand_type = common_type } });
         } else {
             self.generator.reporter.reportCompileError(
