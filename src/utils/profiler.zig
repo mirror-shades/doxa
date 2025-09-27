@@ -67,12 +67,10 @@ pub const Profiler = struct {
     fn buildProfile(self: *Profiler) std.json.Value {
         var profile = std.json.Value{ .object = std.json.ObjectMap.init(self.allocator) };
 
-        // Iterate through all stored records
         var iterator = self.records.iterator();
         while (iterator.next()) |entry| {
             const record = entry.value_ptr.*;
 
-            // Convert Record to JSON
             var record_json = std.json.Value{ .object = std.json.ObjectMap.init(self.allocator) };
             record_json.object.put("phase", std.json.Value{ .string = @tagName(record.phase) }) catch {
                 std.debug.print("Failed to add phase to record\n", .{});
@@ -92,7 +90,6 @@ pub const Profiler = struct {
                 };
             }
 
-            // Use phase name as key in the profile
             profile.object.put(entry.key_ptr.*, record_json) catch {
                 std.debug.print("Failed to add record to profile\n", .{});
                 record_json.object.deinit();
@@ -155,19 +152,15 @@ pub const Profiler = struct {
         std.debug.print("==========================================\n", .{});
         std.debug.print("\n", .{});
 
-        // Direct iteration over records to avoid JSON object creation
         var itr = self.records.iterator();
         while (itr.next()) |entry| {
             const record = entry.value_ptr.*;
             const duration_ns = record.duration_ns;
             if (duration_ns >= 1_000_000) {
-                // Show in milliseconds
                 std.debug.print("{s}:\t {}ms\n", .{ entry.key_ptr.*, duration_ns / 1_000_000 });
             } else if (duration_ns >= 1_000) {
-                // Show in microseconds
                 std.debug.print("{s}:\t {}μs\n", .{ entry.key_ptr.*, duration_ns / 1_000 });
             } else {
-                // Show in nanoseconds
                 std.debug.print("{s}:\t {}ns\n", .{ entry.key_ptr.*, duration_ns });
             }
         }
