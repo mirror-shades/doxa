@@ -86,7 +86,7 @@ var ip :: int is 0
 function getInput() returns byte {
     @print("Input: ")
     var userInput :: string is @input()
-    var newByte :: byte is @byte(userInput[0])
+    var newByte :: byte is @byte(userInput[0]) as byte else 0x00
     return newByte
 }
 
@@ -129,7 +129,7 @@ function interpret(scan :: string) {
     var closedBrackets :: tetra is checkClosingBracket(scan)
     @assert(closedBrackets, "Unmatched brackets")
 
-    while(ip < scanLength) {
+    while(ip < scanLength) do ip += 1 {
         var currentInstruction is scan[ip]
         if(currentInstruction == ">") then tp += 1
         if(currentInstruction == "<") then tp -= 1
@@ -139,9 +139,7 @@ function interpret(scan :: string) {
         if(currentInstruction == ",") then tape[tp] is getInput()
         if(currentInstruction == "[") then startLoop()
         if(currentInstruction == "]") then endLoop()
-        ip += 1
     }
-    tape[tp]??
 }
 
 entry function main() {
