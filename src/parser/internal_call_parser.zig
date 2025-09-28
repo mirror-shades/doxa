@@ -154,11 +154,11 @@ pub fn parsePrintMethod(self: *Parser) ErrorList!?*ast.Expr {
         },
         .data = .{
             .Print = .{
-                .expr = null, // No simple expr for method calls
-                .format_template = interp_info.format_template, // NEW: Use structured format template
-                .format_parts = interp_info.format_parts, // Legacy compatibility
-                .arguments = try arguments.toOwnedSlice(), // Legacy compatibility
-                .placeholder_indices = placeholder_indices, // Legacy compatibility
+                .expr = null,
+                .format_template = interp_info.format_template,
+                .format_parts = interp_info.format_parts,
+                .arguments = try arguments.toOwnedSlice(),
+                .placeholder_indices = placeholder_indices,
             },
         },
     };
@@ -167,9 +167,9 @@ pub fn parsePrintMethod(self: *Parser) ErrorList!?*ast.Expr {
 }
 
 const InterpolationInfo = struct {
-    format_template: *ast.FormatTemplate, // NEW: Structured format template
-    format_parts: []const []const u8, // String parts between placeholders
-    placeholder_expressions: []*ast.Expr, // Expressions to interpolate
+    format_template: *ast.FormatTemplate,
+    format_parts: []const []const u8,
+    placeholder_expressions: []*ast.Expr,
 };
 
 fn parseStringInterpolation(self: *Parser, format_expr: *ast.Expr) ErrorList!InterpolationInfo {
@@ -244,17 +244,12 @@ fn parseStringInterpolation(self: *Parser, format_expr: *ast.Expr) ErrorList!Int
         }
     }
 
-    // Add the final string part
     const final_part = format_string[current_part_start..];
-
-    // Add to new template structure
     const final_string_part = try ast.createStringPart(self.allocator, final_part);
     try template_parts.append(final_string_part);
 
-    // Add to legacy structure
     try legacy_format_parts.append(try self.allocator.dupe(u8, final_part));
 
-    // Create the FormatTemplate
     const format_template = try ast.createFormatTemplate(self.allocator, try template_parts.toOwnedSlice());
 
     return InterpolationInfo{
@@ -365,7 +360,7 @@ pub fn parseSleepMethod(self: *Parser) ErrorList!?*ast.Expr {
 
 pub fn parseRandomMethod(self: *Parser) ErrorList!?*ast.Expr {
     const method_tok = self.peek();
-    self.advance(); // consume RANDOM token
+    self.advance();
 
     if (self.peek().type != .LEFT_PAREN) {
         return error.ExpectedLeftParen;

@@ -3,6 +3,7 @@ const module = @import("../codegen/bytecode/module.zig");
 const hir_types = @import("../codegen/hir/soxa_types.zig");
 const hir_instructions = @import("../codegen/hir/soxa_instructions.zig");
 const Reporting = @import("../utils/reporting.zig");
+const Location = Reporting.Location;
 const Reporter = Reporting.Reporter;
 const hir_values = @import("../codegen/hir/soxa_values.zig");
 const HIRValue = hir_values.HIRValue;
@@ -24,7 +25,6 @@ const ops_logical = @import("ops/logical.zig");
 const ops_strings = @import("ops/strings.zig");
 const ops_array = @import("ops/array.zig");
 const ops_type = @import("ops/type.zig");
-const ops_stack = @import("ops/stack.zig");
 const PrintOps = @import("calls/print.zig").PrintOps;
 const Errors = @import("../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
@@ -70,7 +70,7 @@ const VmError = error{
 pub const VM = struct {
     bytecode: *module.BytecodeModule,
     reporter: *Reporter,
-    memory_manager: *MemoryManager, // Add memory manager integration
+    memory_manager: *MemoryManager,
     allocator: std.mem.Allocator,
     stack: runtime.OperandStack,
     module_state: []runtime.ModuleState,
@@ -134,14 +134,6 @@ pub const VM = struct {
 
         vm.indexLabels();
         return vm;
-    }
-
-    pub fn bridgeTypesToVM(self: *VM) !void {
-        _ = self; // Suppress unused parameter warning
-        // Bridge custom types from memory manager to VM
-        // VM implementation
-        // For now, we'll copy the custom type registry from memory manager
-        // TODO: Implement proper type bridging for VM
     }
 
     pub fn deinit(self: *VM) void {
@@ -318,20 +310,27 @@ pub const VM = struct {
                 ptr.store(value);
             },
             .ResolveAlias => |payload| {
-                // Load value from the target slot and push it to the stack
                 const frame = try self.currentFrame();
                 const ptr = frame.pointer(payload.target_slot);
                 const value = ptr.load();
                 try self.stack.pushValue(value);
             },
             .Dup => {
-                try ops_stack.StackOps.execDup(self);
+                if (self.stack.sp == 0) {
+                    self.reporter.reportRuntimeError(null, ErrorCode.STACK_UNDERFLOW, "Attempting to dup from empty stack", .{});
+                    return ErrorList.StackUnderflow;
+                }
+                const value = try self.stack.peek();
+                try self.stack.push(HIRFrame.initFromHIRValue(value.value));
             },
             .Pop => {
-                try ops_stack.StackOps.execPop(self);
+                _ = try self.stack.pop();
             },
             .Swap => {
-                try ops_stack.StackOps.execSwap(self);
+                const top = try self.stack.pop();
+                const second = try self.stack.pop();
+                try self.stack.push(top);
+                try self.stack.push(second);
             },
             .ArrayNew => |payload| {
                 try ops_array.exec(self, .{ .ArrayNew = .{
@@ -378,7 +377,6 @@ pub const VM = struct {
                     .element_type = toHIRType(payload.element_type),
                 } });
             },
-            // Compound assignment operations
             .ArrayGetAndAdd => |payload| {
                 try ops_array.exec(self, .{ .ArrayGetAndAdd = .{
                     .bounds_check = payload.bounds_check,
@@ -493,9 +491,7 @@ pub const VM = struct {
                 self.running = false;
                 self.skip_increment = true;
             },
-            .Nop => {
-                // No operation - do nothing
-            },
+            .Nop => {},
             .AssertFail => |payload| {
                 const location_str = try std.fmt.allocPrint(self.allocator, "{s}:{}:{}", .{ payload.location.file, payload.location.range.start_line, payload.location.range.start_col });
                 defer self.allocator.free(location_str);
@@ -580,23 +576,16 @@ pub const VM = struct {
             },
             .alias => blk: {
                 const frame = try self.currentFrame();
-                // For aliases, we need to resolve to the original slot, not the alias slot
-                // The alias slot should contain a reference to the original slot
                 const alias_ptr = frame.pointer(operand.slot);
                 const alias_value = alias_ptr.load();
 
-                // Check if this is a storage reference
                 if (alias_value == .storage_id_ref) {
                     const ref_id = alias_value.storage_id_ref;
                     const original_ptr = self.slotRefFromId(ref_id) catch return error.InvalidAliasReference;
                     break :blk original_ptr;
                 }
 
-                // If it's not a storage reference, we need to find the original slot
-                // The alias slot should contain the actual value, but we need to find where it came from
-                // For now, let's look for the original slot by checking if this is a struct instance
                 if (alias_value == .struct_instance) {
-                    // This is the actual struct instance, so we can use it directly
                     break :blk alias_ptr;
                 }
 
@@ -839,8 +828,6 @@ pub const VM = struct {
                 }
                 self.stack.sp = dest_start + arg_count;
 
-                // Don't shrink slot_refs for alias references - they need to persist
-                // self.slot_refs.shrinkRetainingCapacity(slot_base);
                 var old_frame = self.frames.pop() orelse return error.NoActiveFrame;
                 old_frame.deinit();
 
@@ -1261,7 +1248,6 @@ pub const VM = struct {
             return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot get field from non-struct value: {s}", .{@tagName(frame.value)});
         }
 
-        // Try to handle graphics field access
         if (try self.graphics_runtime.handleGraphicsFieldAccess(frame, payload.field_name, &self.stack)) {
             return;
         }
@@ -1510,8 +1496,8 @@ pub const VM = struct {
             .tetra => |v| switch (v) {
                 0 => false, // false
                 1 => true, // true
-                2 => true, // both (contains true)
-                3 => false, // neither (contains no truth)
+                2 => true, // both (is true)
+                3 => false, // neither (is not true)
                 else => false,
             },
             .string => |v| v.len != 0,
@@ -1598,14 +1584,11 @@ pub const VM = struct {
         var frame = self.frames.pop() orelse return error.NoActiveFrame;
         defer frame.deinit();
 
-        // Don't shrink slot_refs for alias references - they need to persist
-        // self.slot_refs.shrinkRetainingCapacity(frame.getSlotRefBase());
         self.stack.truncate(frame.getStackBase());
 
         if (return_value) |val| {
             try self.stack.pushValue(val);
         } else {
-            // Push nothing value for functions that return without a value
             try self.stack.pushValue(HIRValue.nothing);
         }
 
@@ -1637,11 +1620,8 @@ pub const VM = struct {
         var frame = try runtime.Frame.init(self.allocator, func_ptr, stack_base, self.slot_refs.items.len, return_ip);
         errdefer frame.deinit();
 
-        // Ensure the frame has enough local variables for the bytecode
-        // The bytecode expects local variables, so we need to ensure all frames have enough slots
-        const required_locals = 1000; // Ensure we have enough local variables for the bytecode
+        const required_locals = 1000;
 
-        // Resize the frame to have enough local variables
         frame.allocator.free(frame.locals);
         frame.allocator.free(frame.alias_refs);
         frame.locals = try frame.allocator.alloc(HIRValue, required_locals);
@@ -1649,7 +1629,6 @@ pub const VM = struct {
         for (frame.locals) |*slot| slot.* = HIRValue.nothing;
         for (frame.alias_refs) |*entry| entry.* = null;
 
-        // Update the function's local_var_count to match our allocated locals
         frame.function.local_var_count = @intCast(required_locals);
 
         self.frames.append(frame) catch |err| {
@@ -1662,11 +1641,8 @@ pub const VM = struct {
     fn prepareEntryFrame(self: *VM) VmError!void {
         if (self.frames.items.len != 0) return;
 
-        // First, execute global initialization instructions (at the beginning of the instruction array)
-        // before jumping to the entry function
         self.ip = 0;
 
-        // Find the entry function to prepare the frame
         var entry_function_index: ?usize = null;
         for (self.bytecode.functions, 0..) |func, idx| {
             if (func.is_entry) {
@@ -1676,17 +1652,12 @@ pub const VM = struct {
         }
 
         if (entry_function_index) |entry_idx| {
-            // Prepare the entry function frame but don't jump to it yet
             _ = try self.pushFrame(entry_idx, self.stack.len(), 0);
         }
 
-        // If no entry function found, handle scripts without explicit functions
         if (self.bytecode.functions.len == 0) {
-            // For scripts without functions, start execution at instruction 0
-            // Create a minimal frame for global execution
-            const required_locals = 1000; // Ensure we have enough local variables for the bytecode
+            const required_locals = 1000;
 
-            // Create a dummy function structure for the frame
             var dummy_function = module.BytecodeFunction{
                 .name = "main",
                 .qualified_name = "main",
@@ -1705,7 +1676,6 @@ pub const VM = struct {
 
             var frame = try runtime.Frame.init(self.allocator, &dummy_function, self.stack.len(), self.slot_refs.items.len, 0);
 
-            // Resize the frame to have enough local variables
             frame.allocator.free(frame.locals);
             frame.allocator.free(frame.alias_refs);
             frame.locals = try frame.allocator.alloc(HIRValue, required_locals);
@@ -1721,10 +1691,8 @@ pub const VM = struct {
             return;
         }
 
-        // If we have functions but no entry function, use the first function
         var frame = try runtime.Frame.init(self.allocator, &self.bytecode.functions[0], self.stack.len(), self.slot_refs.items.len, 0);
-        // Resize the frame to have enough local variables
-        const required_locals = 1000; // Ensure we have enough local variables for the bytecode
+        const required_locals = 1000;
         frame.allocator.free(frame.locals);
         frame.allocator.free(frame.alias_refs);
         frame.locals = try frame.allocator.alloc(HIRValue, required_locals);
@@ -1732,7 +1700,6 @@ pub const VM = struct {
         for (frame.locals) |*slot| slot.* = HIRValue.nothing;
         for (frame.alias_refs) |*entry| entry.* = null;
 
-        // Update the function's local_var_count to match our allocated locals
         frame.function.local_var_count = @intCast(required_locals);
 
         self.frames.append(frame) catch |err| {
@@ -1769,37 +1736,30 @@ pub const VM = struct {
         try self.custom_type_registry.put(type_info.name, type_info);
     }
 
-    /// Coerce a value to match the expected type
     pub fn coerceValue(self: *VM, value: HIRValue, expected_type: ?hir_types.HIRType) HIRValue {
-
-        // If no expected type, return value as-is
         if (expected_type == null) {
             return value;
         }
 
         const target_type = expected_type.?;
 
-        // If types already match, return as-is
         if (std.meta.eql(value, target_type)) {
             return value;
         }
 
-        // Perform type coercion based on target type
         return switch (target_type) {
             .Int => switch (value) {
                 .int => value,
                 .byte => |b| HIRValue{ .int = @as(i64, b) },
                 .float => |f| HIRValue{ .int = @as(i64, @intFromFloat(f)) },
-                else => value, // Keep original if can't convert
+                else => value,
             },
             .Byte => switch (value) {
                 .byte => value,
                 .int => |i| blk: {
-                    // Only convert to byte if value fits in byte range (0-255)
                     if (i >= 0 and i <= 255) {
                         break :blk HIRValue{ .byte = @intCast(i) };
                     } else {
-                        // For values outside byte range, keep as int to avoid data loss
                         break :blk value;
                     }
                 },
@@ -1833,7 +1793,7 @@ pub const VM = struct {
                 .float => |f| HIRValue{ .tetra = if (f != 0.0) 1 else 0 },
                 else => value,
             },
-            else => value, // For complex types, return as-is
+            else => value,
         };
     }
 
@@ -1885,7 +1845,6 @@ pub const VM = struct {
                     try result.appendSlice(": ");
                     const field_str = try self.valueToString(field.value);
                     defer self.allocator.free(field_str);
-                    // Quote embedded string fields for clearer struct representation
                     switch (field.value) {
                         .string => {
                             try result.append('"');

@@ -5,7 +5,6 @@ const TokenType = token.TokenType;
 const TokenLiteral = @import("../types/types.zig").TokenLiteral;
 const Tetra = @import("../types/types.zig").Tetra;
 
-/// Constant folding optimizer that evaluates constant expressions at compile time
 pub const ConstantFolder = struct {
     allocator: std.mem.Allocator,
     optimizations_made: u32 = 0,
@@ -16,30 +15,24 @@ pub const ConstantFolder = struct {
         };
     }
 
-    /// Fold constants in an expression, returning a potentially optimized expression
     pub fn foldExpr(self: *ConstantFolder, expr: *ast.Expr) std.mem.Allocator.Error!*ast.Expr {
         switch (expr.data) {
             .Binary => |*binary| {
-                // First, recursively fold the operands
                 const folded_left = try self.foldExpr(binary.left.?);
                 const folded_right = try self.foldExpr(binary.right.?);
 
-                // Update the binary expression with folded operands
                 binary.left = folded_left;
                 binary.right = folded_right;
 
-                // Try to fold this binary operation if both operands are literals
                 if (folded_left.data == .Literal and folded_right.data == .Literal) {
                     if (self.foldBinaryOp(folded_left.data.Literal, binary.operator, folded_right.data.Literal)) |result| {
                         self.optimizations_made += 1;
 
-                        // Clean up the original expressions since we're replacing them
                         folded_left.deinit(self.allocator);
                         self.allocator.destroy(folded_left);
                         folded_right.deinit(self.allocator);
                         self.allocator.destroy(folded_right);
 
-                        // Create new literal expression with the folded result
                         const folded_expr = try self.allocator.create(ast.Expr);
                         folded_expr.* = .{
                             .base = expr.base,
@@ -49,38 +42,31 @@ pub const ConstantFolder = struct {
                     }
                 }
 
-                // Try to fold array literals for addition
                 if (binary.operator.type == .PLUS and
                     folded_left.data == .Array and
                     folded_right.data == .Array)
                 {
-
-                    // Array concatenation - create a new array with combined elements
                     const left_array = folded_left.data.Array;
                     const right_array = folded_right.data.Array;
                     const combined_size = left_array.len + right_array.len;
 
                     const combined_elements = try self.allocator.alloc(*ast.Expr, combined_size);
 
-                    // Copy elements from left array
                     for (0..left_array.len) |i| {
                         combined_elements[i] = left_array[i];
                     }
 
-                    // Copy elements from right array
                     for (0..right_array.len) |i| {
                         combined_elements[left_array.len + i] = right_array[i];
                     }
 
                     self.optimizations_made += 1;
 
-                    // Clean up the original expressions
                     folded_left.deinit(self.allocator);
                     self.allocator.destroy(folded_left);
                     folded_right.deinit(self.allocator);
                     self.allocator.destroy(folded_right);
 
-                    // Create new array expression with combined elements
                     const folded_expr = try self.allocator.create(ast.Expr);
                     folded_expr.* = .{
                         .base = expr.base,
@@ -92,20 +78,16 @@ pub const ConstantFolder = struct {
                 return expr;
             },
             .Unary => |*unary| {
-                // Recursively fold the operand
                 const folded_operand = try self.foldExpr(unary.right.?);
                 unary.right = folded_operand;
 
-                // Try to fold unary operation if operand is literal
                 if (folded_operand.data == .Literal) {
                     if (self.foldUnaryOp(unary.operator, folded_operand.data.Literal)) |result| {
                         self.optimizations_made += 1;
 
-                        // Clean up the original expression
                         folded_operand.deinit(self.allocator);
                         self.allocator.destroy(folded_operand);
 
-                        // Create new literal expression
                         const folded_expr = try self.allocator.create(ast.Expr);
                         folded_expr.* = .{
                             .base = expr.base,
@@ -124,27 +106,22 @@ pub const ConstantFolder = struct {
                 return expr;
             },
             .If => |*if_expr| {
-                // Fold condition
                 if (if_expr.condition) |condition| {
                     const folded_condition = try self.foldExpr(condition);
                     if_expr.condition = folded_condition;
 
-                    // If condition is a literal, we can potentially eliminate branches
                     if (folded_condition.data == .Literal) {
                         const is_truthy = self.isTruthy(folded_condition.data.Literal);
                         if (is_truthy) {
-                            // Condition is always true, return then_branch
                             if (if_expr.then_branch) |then_branch| {
                                 self.optimizations_made += 1;
                                 return try self.foldExpr(then_branch);
                             }
                         } else {
-                            // Condition is always false, return else_branch or nothing
                             if (if_expr.else_branch) |else_branch| {
                                 self.optimizations_made += 1;
                                 return try self.foldExpr(else_branch);
                             } else {
-                                // Return nothing literal
                                 self.optimizations_made += 1;
                                 const nothing_expr = try self.allocator.create(ast.Expr);
                                 nothing_expr.* = .{
@@ -157,7 +134,6 @@ pub const ConstantFolder = struct {
                     }
                 }
 
-                // Fold branches
                 if (if_expr.then_branch) |then_branch| {
                     if_expr.then_branch = try self.foldExpr(then_branch);
                 }
@@ -167,14 +143,12 @@ pub const ConstantFolder = struct {
                 return expr;
             },
             .Array => |elements| {
-                // Fold all array elements
                 for (elements) |element| {
                     _ = try self.foldExpr(element);
                 }
                 return expr;
             },
             .FunctionCall => |*call| {
-                // Fold function arguments
                 call.callee = try self.foldExpr(call.callee);
                 for (call.arguments) |*arg| {
                     arg.expr = try self.foldExpr(arg.expr);
@@ -182,7 +156,6 @@ pub const ConstantFolder = struct {
                 return expr;
             },
             .Block => |*block| {
-                // Fold block statements
                 for (block.statements) |*stmt| {
                     _ = try self.foldStmt(stmt);
                 }
@@ -192,13 +165,11 @@ pub const ConstantFolder = struct {
                 return expr;
             },
             else => {
-                // For expressions we don't handle yet, just return as-is
                 return expr;
             },
         }
     }
 
-    /// Fold constants in a statement
     pub fn foldStmt(self: *ConstantFolder, stmt: *ast.Stmt) std.mem.Allocator.Error!ast.Stmt {
         switch (stmt.data) {
             .Expression => |maybe_expr| {
@@ -232,14 +203,11 @@ pub const ConstantFolder = struct {
                     assert_stmt.message = try self.foldExpr(message);
                 }
             },
-            else => {
-                // Other statement types don't need folding
-            },
+            else => {},
         }
         return stmt.*;
     }
 
-    /// Fold a binary operation between two literals
     fn foldBinaryOp(self: *ConstantFolder, left: TokenLiteral, operator: token.Token, right: TokenLiteral) ?TokenLiteral {
         return switch (operator.type) {
             // Arithmetic operations
@@ -248,8 +216,7 @@ pub const ConstantFolder = struct {
             .ASTERISK => self.foldMul(left, right),
             .SLASH => self.foldDiv(left, right),
             .MODULO => self.foldMod(left, right),
-            // Disable constant folding for power operator to ensure consistent behavior during debugging
-            .POWER => null, // self.foldPow(left, right),
+            .POWER => null,
 
             // Comparison operations
             .LESS => self.foldLess(left, right),
@@ -272,7 +239,6 @@ pub const ConstantFolder = struct {
         };
     }
 
-    /// Fold a unary operation on a literal
     fn foldUnaryOp(self: *ConstantFolder, operator: token.Token, operand: TokenLiteral) ?TokenLiteral {
         _ = self;
 
@@ -295,7 +261,6 @@ pub const ConstantFolder = struct {
         };
     }
 
-    // Arithmetic operations
     fn foldAdd(self: *ConstantFolder, left: TokenLiteral, right: TokenLiteral) ?TokenLiteral {
         return switch (left) {
             .int => |l| switch (right) {
@@ -315,15 +280,12 @@ pub const ConstantFolder = struct {
             },
             .array => |l| switch (right) {
                 .array => |r| {
-                    // Array concatenation
                     const combined_elements = self.allocator.alloc(TokenLiteral, l.len + r.len) catch return null;
 
-                    // Copy elements from left array
                     for (0..l.len) |i| {
                         combined_elements[i] = l[i];
                     }
 
-                    // Copy elements from right array
                     for (0..r.len) |i| {
                         combined_elements[l.len + i] = r[i];
                     }
@@ -438,7 +400,6 @@ pub const ConstantFolder = struct {
         };
     }
 
-    // Comparison operations
     fn foldLess(self: *ConstantFolder, left: TokenLiteral, right: TokenLiteral) ?TokenLiteral {
         _ = self;
         return switch (left) {
@@ -565,7 +526,6 @@ pub const ConstantFolder = struct {
         return null;
     }
 
-    // Logical operations
     fn foldAnd(self: *ConstantFolder, left: TokenLiteral, right: TokenLiteral) ?TokenLiteral {
         _ = self;
         return switch (left) {
@@ -681,7 +641,6 @@ pub const ConstantFolder = struct {
     }
 
     fn foldNand(self: *ConstantFolder, left: TokenLiteral, right: TokenLiteral) ?TokenLiteral {
-        // NAND is NOT(AND)
         if (self.foldAnd(left, right)) |and_result| {
             return switch (and_result.tetra) {
                 .true => TokenLiteral{ .tetra = .false },
@@ -694,7 +653,6 @@ pub const ConstantFolder = struct {
     }
 
     fn foldNor(self: *ConstantFolder, left: TokenLiteral, right: TokenLiteral) ?TokenLiteral {
-        // NOR is NOT(OR)
         if (self.foldOr(left, right)) |or_result| {
             return switch (or_result.tetra) {
                 .true => TokenLiteral{ .tetra = .false },
@@ -732,7 +690,6 @@ pub const ConstantFolder = struct {
         };
     }
 
-    /// Check if a literal value is truthy
     fn isTruthy(self: *ConstantFolder, literal: TokenLiteral) bool {
         _ = self;
         return switch (literal) {
@@ -751,12 +708,10 @@ pub const ConstantFolder = struct {
         };
     }
 
-    /// Reset optimization counter
     pub fn resetCounter(self: *ConstantFolder) void {
         self.optimizations_made = 0;
     }
 
-    /// Get number of optimizations made
     pub fn getOptimizationCount(self: *ConstantFolder) u32 {
         return self.optimizations_made;
     }

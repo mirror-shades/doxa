@@ -2,29 +2,21 @@ const std = @import("std");
 const HIRType = @import("soxa_types.zig").HIRType;
 const ScopeKind = @import("soxa_types.zig").ScopeKind;
 
-/// Manages variable declarations, types, and metadata for HIR generation
 pub const SymbolTable = struct {
-    // Variable index mappings
-    variables: std.StringHashMap(u32), // Global scope: name -> index mapping
-    local_variables: std.StringHashMap(u32), // Function scope: name -> index mapping
+    variables: std.StringHashMap(u32),
+    local_variables: std.StringHashMap(u32),
     variable_count: u32,
     local_variable_count: u32,
 
-    // Type tracking
-    variable_types: std.StringHashMap(HIRType), // Track inferred types of variables
-    variable_custom_types: std.StringHashMap([]const u8), // Track custom type names for variables
+    variable_types: std.StringHashMap(HIRType),
+    variable_custom_types: std.StringHashMap([]const u8),
 
-    // Array element type tracking (for better index/peek typing)
     variable_array_element_types: std.StringHashMap(HIRType),
 
-    // Union member tracking (for union type variables)
-    variable_union_members: std.StringHashMap([][]const u8), // Legacy, may cause collisions across scopes
-    variable_union_members_by_index: std.AutoHashMap(u32, [][]const u8), // Index-based to avoid name collisions
+    variable_union_members_by_index: std.AutoHashMap(u32, [][]const u8),
 
-    // Alias parameter tracking
-    alias_parameters: std.StringHashMap(void), // Track which variables are alias parameters
+    alias_parameters: std.StringHashMap(void),
 
-    // Function context
     current_function: ?[]const u8,
 
     allocator: std.mem.Allocator,
@@ -38,7 +30,6 @@ pub const SymbolTable = struct {
             .variable_types = std.StringHashMap(HIRType).init(allocator),
             .variable_custom_types = std.StringHashMap([]const u8).init(allocator),
             .variable_array_element_types = std.StringHashMap(HIRType).init(allocator),
-            .variable_union_members = std.StringHashMap([][]const u8).init(allocator),
             .variable_union_members_by_index = std.AutoHashMap(u32, [][]const u8).init(allocator),
             .alias_parameters = std.StringHashMap(void).init(allocator),
             .current_function = null,
@@ -52,7 +43,6 @@ pub const SymbolTable = struct {
         self.variable_types.deinit();
         self.variable_custom_types.deinit();
         self.variable_array_element_types.deinit();
-        self.variable_union_members.deinit();
         self.variable_union_members_by_index.deinit();
         self.alias_parameters.deinit();
     }
@@ -207,15 +197,5 @@ pub const SymbolTable = struct {
     /// Get union members by variable index
     pub fn getUnionMembersByIndex(self: *SymbolTable, var_index: u32) ?[][]const u8 {
         return self.variable_union_members_by_index.get(var_index);
-    }
-
-    /// Track union member type names by variable name (legacy support)
-    pub fn trackVariableUnionMembers(self: *SymbolTable, var_name: []const u8, members: [][]const u8) !void {
-        try self.variable_union_members.put(var_name, members);
-    }
-
-    /// Get union members by variable name (legacy support)
-    pub fn getUnionMembersByName(self: *SymbolTable, var_name: []const u8) ?[][]const u8 {
-        return self.variable_union_members.get(var_name);
     }
 };

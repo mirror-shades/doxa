@@ -41,22 +41,15 @@ pub const ModuleState = struct {
 
     pub fn pointer(self: *ModuleState, slot: module.SlotIndex) SlotPointer {
         const idx: usize = @intCast(slot);
-        // Instead of asserting, expand the values array if needed
         if (idx >= self.values.len) {
-            // Resize to accommodate the requested slot
             const new_size = idx + 1;
             self.values = self.allocator.realloc(self.values, new_size) catch {
-                // If realloc fails, we need to handle this gracefully
-                // For now, we'll just return a pointer to the existing value if possible
                 if (self.values.len > 0) {
                     return SlotPointer{ .value = &self.values[0] };
                 } else {
-                    // This is a critical error - we can't allocate memory
-                    // We'll need to handle this at a higher level
                     unreachable;
                 }
             };
-            // Initialize new slots to nothing
             for (self.values[self.values.len..new_size]) |*value| {
                 value.* = HIRValue.nothing;
             }
@@ -101,31 +94,21 @@ pub const Frame = struct {
 
     pub fn pointer(self: *Frame, slot: module.SlotIndex) SlotPointer {
         const idx: usize = @intCast(slot);
-        // Instead of asserting, expand the arrays if needed
         if (idx >= self.locals.len or idx >= self.alias_refs.len) {
-            // Resize both arrays to accommodate the requested slot
             const new_size = idx + 1;
 
-            // Resize locals array
             self.locals = self.allocator.realloc(self.locals, new_size) catch {
-                // If realloc fails, we need to handle this gracefully
-                // For now, we'll just return a pointer to the existing value if possible
                 if (self.locals.len > 0) {
                     return SlotPointer{ .value = &self.locals[0] };
                 } else {
-                    // This is a critical error - we can't allocate memory
-                    // We'll need to handle this at a higher level
                     unreachable;
                 }
             };
 
-            // Resize alias_refs array
             self.alias_refs = self.allocator.realloc(self.alias_refs, new_size) catch {
-                // If realloc fails, return a pointer to the local value
                 return SlotPointer{ .value = &self.locals[idx] };
             };
 
-            // Initialize new slots
             for (self.locals[self.locals.len..new_size]) |*value| {
                 value.* = HIRValue.nothing;
             }
@@ -142,14 +125,12 @@ pub const Frame = struct {
 
     pub fn bindAlias(self: *Frame, slot: module.SlotIndex, target: SlotPointer) void {
         const idx: usize = @intCast(slot);
-        // Ensure the slot exists by calling pointer method which handles resizing
         _ = self.pointer(slot);
         self.alias_refs[idx] = target;
     }
 
     pub fn clearAlias(self: *Frame, slot: module.SlotIndex) void {
         const idx: usize = @intCast(slot);
-        // Ensure the slot exists by calling pointer method which handles resizing
         _ = self.pointer(slot);
         self.alias_refs[idx] = null;
     }
@@ -449,7 +430,7 @@ pub const GraphicsRuntime = struct {
     }
 
     fn handleClearBackground(self: *GraphicsRuntime, color_frame: HIRFrame) !void {
-        _ = self; // Currently unused but may be needed for future graphics features
+        _ = self;
         switch (color_frame.value) {
             .struct_instance => |s| {
                 var r: u8 = 0;
@@ -488,10 +469,8 @@ pub const GraphicsRuntime = struct {
                 Raylib.ClearBackgroundDoxa(.{ .r = r, .g = g, .b = b, .a = a });
             },
             .string => |color_str| {
-                // Handle string constants like "SKYBLUE" or "graphics.raylib.SKYBLUE"
                 var color: ?Raylib.Color = null;
 
-                // Check for common raylib colors
                 if (std.mem.eql(u8, color_str, "SKYBLUE") or std.mem.eql(u8, color_str, "graphics.raylib.SKYBLUE")) {
                     color = Raylib.SKYBLUE;
                 } else if (std.mem.eql(u8, color_str, "RED") or std.mem.eql(u8, color_str, "graphics.raylib.RED")) {

@@ -16,14 +16,12 @@ const internal_call_parser = @import("internal_call_parser.zig");
 const module_resolver = @import("module_resolver.zig");
 const Precedence = @import("./precedence.zig").Precedence;
 
-// Add module resolution status tracking
 pub const ModuleResolutionStatus = enum {
     NOT_STARTED,
     IN_PROGRESS,
     COMPLETED,
 };
 
-// Add import stack entry for tracking import chains
 pub const ImportStackEntry = struct {
     module_path: []const u8,
     imported_from: ?[]const u8,
@@ -60,7 +58,6 @@ pub const Parser = struct {
 
     declared_types: std.StringHashMap(void),
 
-    // Add circular import detection fields
     module_resolution_status: std.StringHashMap(ModuleResolutionStatus),
     import_stack: std.array_list.Managed(ImportStackEntry),
 
@@ -87,7 +84,6 @@ pub const Parser = struct {
 
     pub fn peek(self: *Parser) token.Token {
         var i = self.current;
-        // Skip over any semicolon tokens (non-semantic separators)
         while (i < self.tokens.len - 1 and self.tokens[i].type == .SEMICOLON) {
             i += 1;
         }
@@ -95,10 +91,8 @@ pub const Parser = struct {
     }
 
     pub fn peekAhead(self: *Parser, offset: usize) token.Token {
-        // Walk forward over tokens, skipping semicolons and counting only non-semicolons
         var i: usize = self.current;
         var remaining = offset;
-        // Ensure we start from a non-semicolon for offset 0 as well
         while (i < self.tokens.len - 1 and self.tokens[i].type == .SEMICOLON) {
             i += 1;
         }
@@ -110,7 +104,6 @@ pub const Parser = struct {
         if (i >= self.tokens.len) {
             return self.tokens[self.tokens.len - 1];
         }
-        // If we landed on a semicolon, skip to next non-semicolon or EOF
         while (i < self.tokens.len - 1 and self.tokens[i].type == .SEMICOLON) {
             i += 1;
         }
@@ -118,7 +111,6 @@ pub const Parser = struct {
     }
 
     pub fn advance(self: *Parser) void {
-        // Move to the next non-semicolon token
         if (self.current < self.tokens.len - 1) {
             self.current += 1;
             while (self.current < self.tokens.len - 1 and self.tokens[self.current].type == .SEMICOLON) {
@@ -127,7 +119,6 @@ pub const Parser = struct {
         }
     }
 
-    /// Returns the previous token in the token list
     pub fn previous(self: *Parser) token.Token {
         if (self.current == 0) {
             return self.tokens[0];
@@ -152,7 +143,6 @@ pub const Parser = struct {
         reporting.reportWarning("{s}", .{message});
     }
 
-    // Main parsing loop - moved from parser_types.zig
     pub fn execute(self: *Parser) ErrorList![]ast.Stmt {
         var statements = std.array_list.Managed(ast.Stmt).init(self.allocator);
         errdefer {
@@ -162,68 +152,50 @@ pub const Parser = struct {
             statements.deinit();
         }
 
-        // --- Pass 1: Imports and Modules (Process side effects, don't add to statements list yet) ---
-        // Keep track of the original position after imports are processed
+        // Pass 1: Imports and Modules (Process side effects, don't add to statements list yet)
         var start_index_after_imports = self.current;
         while (self.tokens[start_index_after_imports].type == .IMPORT or self.tokens[start_index_after_imports].type == .MODULE) {
-            // Temporarily move parser to process the import/module
             const temp_current = self.current;
             self.current = start_index_after_imports;
 
-            // Call appropriate parser based on token type
             if (self.tokens[start_index_after_imports].type == .MODULE) {
-                _ = try import_parser.parseModuleStmt(self); // Call for side-effects (loading/registration)
+                _ = try import_parser.parseModuleStmt(self);
             } else {
-                _ = try import_parser.parseImportStmt(self); // Call for side-effects (loading/registration)
+                _ = try import_parser.parseImportStmt(self);
             }
 
-            // Advance start_index_after_imports past the import/module statement
-            // parseImportStmt/parseModuleStmt should have advanced self.current appropriately
             start_index_after_imports = self.current;
 
-            // Restore original parser position if needed (though we'll reset below)
             self.current = temp_current;
         }
-        // Reset parser to position after imports for the main parsing pass
         self.current = start_index_after_imports;
 
-        // --- Pass 2: All other statements ---
+        // Pass 2: All other statements
         while (self.peek().type != .EOF) {
-            const loop_start_pos = self.current; // Track position for progress check
+            const loop_start_pos = self.current;
 
-            // --- Handle Modifiers ---
             var is_public = false;
             var is_entry = false;
 
-            // IMPORTANT: Check for entry first as it might appear before PUBLIC
             if (self.peek().type == .ENTRY) {
                 is_entry = true;
-                const entry_token = self.peek(); // Store token for later use if needed
-                self.advance(); // consume entry
-                // Store entry point location immediately if found
-                if (!self.has_entry_point) { // Only store the first one found
+                const entry_token = self.peek();
+                self.advance();
+                if (!self.has_entry_point) {
                     self.has_entry_point = true;
                     self.entry_point_location = entry_token;
                 }
             }
             if (self.peek().type == .PUBLIC) {
                 is_public = true;
-                self.advance(); // consume pub
+                self.advance();
             }
-            // --- End Handle Modifiers ---
 
-            // --- Parse Statement ---
-            // Use a general statement parser that handles declarations, expressions, control flow etc.
-            // Pass the detected modifiers to the statement parser if necessary,
-            // or apply them to the result afterwards.
-
-            // Use a specific parser based on the *next* token (after modifiers)
             const stmt_token_type = self.peek().type;
             switch (stmt_token_type) {
                 .VAR, .CONST => {
                     var decl = try declaration_parser.parseVarDecl(self);
-                    decl.data.VarDecl.is_public = is_public; // Apply modifier
-                    // Cannot be entry point
+                    decl.data.VarDecl.is_public = is_public;
                     if (is_entry) {
                         return error.InvalidEntryPoint;
                     }
@@ -231,32 +203,24 @@ pub const Parser = struct {
                 },
                 .FUNCTION => {
                     var func = try declaration_parser.parseFunctionDecl(self);
-                    func.data.FunctionDecl.is_public = is_public; // Apply modifiers
+                    func.data.FunctionDecl.is_public = is_public;
                     func.data.FunctionDecl.is_entry = is_entry;
                     if (is_entry) {
-                        // Store entry point name if this function is the entry point
-                        // Check if location was already set by '->' token earlier
                         if (self.entry_point_location != null) {
                             self.entry_point_name = func.data.FunctionDecl.name.lexeme;
                         } else {
-                            // This case means func keyword without preceding '->', shouldn't happen if logic is correct
-                            {
-                                return error.MultipleEntryPoints;
-                            }
+                            return error.MultipleEntryPoints;
                         }
                     }
                     try statements.append(func);
                 },
-                // Allow import/module statements anywhere (not only at top)
                 .IMPORT => {
-                    // Modifiers invalid with import
                     if (is_entry) {
                         return error.MisplacedEntryPoint;
                     }
                     if (is_public) {
                         return error.MisplacedPublicModifier;
                     }
-                    // Perform side-effects (load/register) and do not append as a normal statement
                     _ = try import_parser.parseImportStmt(self);
                 },
                 .MODULE => {
@@ -270,7 +234,6 @@ pub const Parser = struct {
                 },
                 .STRUCT_TYPE => {
                     const expr = try declaration_parser.parseStructDecl(self, null, .NONE);
-                    // Apply is_public to struct decl in AST
                     if (expr) |non_null_expr| {
                         switch (non_null_expr.data) {
                             .StructDecl => |*struct_decl| {
@@ -279,11 +242,9 @@ pub const Parser = struct {
                             else => {},
                         }
                     }
-                    // Cannot be entry point
                     if (is_entry) {
                         return error.InvalidEntryPoint;
                     }
-                    // Append only if expr is not null
                     if (expr) |e| {
                         try statements.append(.{
                             .base = .{
@@ -296,29 +257,13 @@ pub const Parser = struct {
                 },
                 .ENUM_TYPE => {
                     var enum_decl = try declaration_parser.parseEnumDecl(self);
-                    enum_decl.data.EnumDecl.is_public = is_public; // Apply modifier
-                    // Cannot be entry point
+                    enum_decl.data.EnumDecl.is_public = is_public;
                     if (is_entry) {
                         return error.InvalidEntryPoint;
                     }
                     try statements.append(enum_decl);
                 },
-                // Handle other statement types recognised by statement_parser
                 .IF, .WHILE, .RETURN, .LEFT_BRACE, .EACH => {
-                    // Modifiers likely invalid here
-                    if (is_entry) {
-                        return error.MisplacedEntryPoint;
-                    }
-                    if (is_public) {
-                        return error.MisplacedPublicModifier;
-                    }
-                    const parsed_stmt = try statement_parser.parseStatement(self);
-                    // Only append if it's not a null expression (e.g. from empty block)
-                    if (!(parsed_stmt.data == .Expression and parsed_stmt.data.Expression == null)) {
-                        try statements.append(parsed_stmt);
-                    }
-                },
-                .ASSERT => { // Add ASSERT case
                     if (is_entry) {
                         return error.MisplacedEntryPoint;
                     }
@@ -330,10 +275,19 @@ pub const Parser = struct {
                         try statements.append(parsed_stmt);
                     }
                 },
-                // Default to expression statement
+                .ASSERT => {
+                    if (is_entry) {
+                        return error.MisplacedEntryPoint;
+                    }
+                    if (is_public) {
+                        return error.MisplacedPublicModifier;
+                    }
+                    const parsed_stmt = try statement_parser.parseStatement(self);
+                    if (!(parsed_stmt.data == .Expression and parsed_stmt.data.Expression == null)) {
+                        try statements.append(parsed_stmt);
+                    }
+                },
                 else => {
-                    // Modifiers likely invalid here unless it's a top-level expression
-                    // that somehow should be public/entry? Revisit if needed.
                     if (is_entry) {
                         return error.MisplacedEntryPoint;
                     }
@@ -341,24 +295,18 @@ pub const Parser = struct {
                         return error.MisplacedPublicModifier;
                     }
                     const expr_stmt = try statement_parser.parseExpressionStmt(self);
-                    // Only append if it's not a null expression
                     if (!(expr_stmt.data == .Expression and expr_stmt.data.Expression == null)) {
                         try statements.append(expr_stmt);
                     }
                 },
             }
 
-            // --- Progress Check ---
-            // Ensure the parser advanced. If not, it means a sub-parser failed to consume tokens.
             if (self.current == loop_start_pos and self.peek().type != .EOF) {
-                // Log error, force advance, or return error? Returning error is safest.
                 return error.ParserDidNotAdvance;
             }
         }
 
-        // Final check: If entry point marker '->' was found but no function followed
         if (self.has_entry_point and self.entry_point_name == null) {
-            // Report error using self.entry_point_location
             const loc = Location{
                 .file = self.current_file,
                 .range = .{
@@ -375,9 +323,7 @@ pub const Parser = struct {
         return statements.toOwnedSlice();
     }
 
-    // Add the remaining utility functions that are still needed
     pub fn hasReturnWithValue(self: *Parser) !bool {
-        // Find the opening brace of the function body
         var pos = self.current;
         while (pos < self.tokens.len and self.tokens[pos].type != .LEFT_BRACE) {
             pos += 1;
@@ -400,7 +346,6 @@ pub const Parser = struct {
                     if (brace_count == 0) break;
                 },
                 .RETURN => {
-                    // Check next token
                     if (pos + 1 < self.tokens.len) {
                         const next_token = self.tokens[pos + 1];
                         if (next_token.type != .NEWLINE) {
@@ -416,68 +361,6 @@ pub const Parser = struct {
         }
 
         return found_return_value;
-    }
-
-    // Module resolution functions - moved from parser_types.zig
-    pub fn loadAndRegisterModule(self: *Parser, module_path: []const u8, namespace: []const u8, specific_symbol: ?[]const u8) !void {
-        _ = self;
-        _ = module_path;
-        _ = namespace;
-        _ = specific_symbol;
-        // TODO: Implement this properly by calling module_resolver functions
-    }
-
-    pub fn loadAndRegisterSpecificSymbol(self: *Parser, module_path: []const u8, symbol_name: []const u8) !void {
-        _ = self;
-        _ = module_path;
-        _ = symbol_name;
-        // TODO: Implement this properly
-    }
-
-    pub fn registerSpecificSymbol(self: *Parser, symbol_name: []const u8, symbol_info: ast.ModuleSymbol) !void {
-        _ = self;
-        _ = symbol_name;
-        _ = symbol_info;
-        // TODO: Implement this properly
-    }
-
-    pub fn recordModuleImport(self: *Parser, current_file: []const u8, namespace: []const u8, module_path: []const u8) !void {
-        _ = self;
-        _ = current_file;
-        _ = namespace;
-        _ = module_path;
-        // TODO: Implement this properly
-    }
-
-    pub fn registerPublicSymbols(self: *Parser, module_info: ModuleInfo) !void {
-        _ = self;
-        _ = module_info;
-        // TODO: Implement this properly
-    }
-
-    pub fn findImportedSymbol(self: *Parser, symbol_name: []const u8) ?ast.ModuleSymbol {
-        _ = self;
-        _ = symbol_name;
-        // TODO: Implement this properly
-        return null;
-    }
-
-    pub fn resolveModule(self: *Parser, module_path: []const u8) ![]const u8 {
-        _ = self;
-        // TODO: Implement this properly
-        return module_path;
-    }
-
-    pub fn normalizeModulePath(self: *Parser, module_path: []const u8) ![]const u8 {
-        _ = self;
-        // TODO: Implement this properly
-        return module_path;
-    }
-
-    pub fn reportCircularImport(self: *Parser, module_path: []const u8) void {
-        _ = self;
-        _ = module_path;
-        // TODO: Implement this properly
     }
 
     pub fn loadModuleSourceWithPath(self: *Parser, module_path: []const u8) ![]const u8 {
@@ -511,13 +394,11 @@ pub const Parser = struct {
     }
 
     pub fn input(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-        _ = left; // input doesn't use left operand
+        _ = left;
 
-        // Consume the INPUT token
         const input_token = self.peek();
         self.advance();
 
-        // Create an empty prompt token instead of using the INPUT token
         const empty_prompt = token.Token{
             .file = self.current_file,
             .type = .STRING,
@@ -527,7 +408,6 @@ pub const Parser = struct {
             .column = input_token.column,
         };
 
-        // Create the input expression
         const input_expr = try self.allocator.create(ast.Expr);
         input_expr.* = .{
             .base = .{
@@ -544,77 +424,22 @@ pub const Parser = struct {
         return input_expr;
     }
 
-    // Array operations - moved from parser_types.zig
-    pub fn arrayPush(self: *Parser, array: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-        _ = self;
-        _ = array;
-        // TODO: Implement this properly
-        return null;
-    }
-
-    pub fn arrayIsEmpty(self: *Parser, array: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-        _ = self;
-        _ = array;
-        // TODO: Implement this properly
-        return null;
-    }
-
-    pub fn arrayPop(self: *Parser, array: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-        _ = self;
-        _ = array;
-        // TODO: Implement this properly
-        return null;
-    }
-
-    pub fn arrayConcat(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-        _ = self;
-        _ = left;
-        // TODO: Implement this properly
-        return null;
-    }
-
-    pub fn arrayLength(self: *Parser, array: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-        _ = self;
-        _ = array;
-        // TODO: Implement this properly
-        return null;
-    }
-
-    // Internal call parsing - moved from parser_types.zig
     pub fn internalCallExpr(self: *Parser, left: ?*ast.Expr, precedence: Precedence) ErrorList!?*ast.Expr {
-        // Delegate to the actual implementation in internal_call_parser.zig
         return internal_call_parser.internalCallExpr(self, left, precedence);
     }
 
     pub fn parsePrintMethod(self: *Parser) ErrorList!?*ast.Expr {
-        // Delegate to the actual implementation in internal_call_parser.zig
         return internal_call_parser.parsePrintMethod(self);
-    }
-
-    // Expression parsing - moved from parser_types.zig
-    pub fn block(self: *Parser, _: anytype, _: anytype) ErrorList!?*ast.Expr {
-        _ = self;
-        // TODO: Implement this properly
-        return null;
-    }
-
-    pub fn parseStructInit(self: *Parser) ErrorList!?*ast.Expr {
-        _ = self;
-        // TODO: Implement this properly
-        return null;
     }
 
     pub fn index(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
         if (left == null) return error.ExpectedLeftOperand;
 
-        // Parse the index expression inside the brackets
         const index_expr = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
 
-        // Expect closing bracket
         if (self.peek().type != .RIGHT_BRACKET) return error.ExpectedRightBracket;
-        self.advance(); // consume ']'
+        self.advance();
 
-        // Create the index expression
         const index_node = try self.allocator.create(ast.Expr);
         index_node.* = .{
             .base = .{
@@ -635,10 +460,8 @@ pub const Parser = struct {
     pub fn assignment(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
         if (left == null) return error.ExpectedLeftOperand;
 
-        // Parse the right-hand side expression
         const right = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
 
-        // Create the assignment expression
         const assignment_node = try self.allocator.create(ast.Expr);
         assignment_node.* = .{
             .base = .{
@@ -647,7 +470,7 @@ pub const Parser = struct {
             },
             .data = .{
                 .Assignment = .{
-                    .name = self.previous(), // The variable name token
+                    .name = self.previous(),
                     .value = right,
                 },
             },
@@ -658,15 +481,10 @@ pub const Parser = struct {
 
     pub fn fieldAccess(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
         if (left == null) return error.ExpectedLeftOperand;
-
-        // Expect a field name after the dot
         if (self.peek().type != .IDENTIFIER) return error.ExpectedIdentifier;
         const field_name = self.peek();
         self.advance();
 
-        // Check if this is an enum member access by looking at the left operand
-        // For now, we'll assume it's a field access, but this could be enhanced
-        // to detect enum types and create EnumMember expressions instead
         const field_access_node = try self.allocator.create(ast.Expr);
         field_access_node.* = .{
             .base = .{
@@ -686,13 +504,10 @@ pub const Parser = struct {
 
     pub fn enumMember(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
         if (left == null) return error.ExpectedLeftOperand;
-
-        // Expect a field name after the dot
         if (self.peek().type != .IDENTIFIER) return error.ExpectedIdentifier;
         const member_name = self.peek();
         self.advance();
 
-        // Create the enum member expression
         const enum_member_node = try self.allocator.create(ast.Expr);
         enum_member_node.* = .{
             .base = .{
@@ -705,33 +520,5 @@ pub const Parser = struct {
         };
 
         return enum_member_node;
-    }
-
-    pub fn parseMap(self: *Parser) ErrorList!?*ast.Expr {
-        _ = self;
-        // TODO: Implement this properly
-        return null;
-    }
-
-    pub fn parseBlock(self: *Parser) ErrorList!?*ast.Expr {
-        _ = self;
-        // TODO: Implement this properly
-        return null;
-    }
-
-    // Additional functions referenced in precedence.zig
-    pub fn print(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-        _ = self;
-        _ = left;
-        // TODO: Implement this properly
-        return null;
-    }
-
-    // Utility functions - moved from parser_types.zig
-    pub fn methodNameToTokenType(self: *Parser, method_name: []const u8) token.TokenType {
-        _ = self;
-        _ = method_name;
-        // TODO: Implement this properly
-        return .IDENTIFIER;
     }
 };

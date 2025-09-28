@@ -14,12 +14,9 @@ const ErrorCode = Errors.ErrorCode;
 const printTemp = std.debug.print;
 
 pub fn parseExpression(self: *Parser) ErrorList!?*ast.Expr {
-
-    // Special handling for array type expressions
     if (self.peek().type == .ARRAY_TYPE) {
-        self.advance(); // consume 'array'
+        self.advance();
 
-        // Create array variable expression
         const array_expr = try self.allocator.create(ast.Expr);
         array_expr.* = .{
             .base = .{
@@ -31,27 +28,22 @@ pub fn parseExpression(self: *Parser) ErrorList!?*ast.Expr {
             },
         };
 
-        // Check if this is an array indexing operation
         if (self.peek().type == .LEFT_BRACKET) {
-            self.advance(); // consume '['
+            self.advance();
             return Parser.index(self, array_expr, .NONE);
         }
 
         return array_expr;
     }
 
-    // Start parsing at lowest precedence for other expressions
     return try precedence.parsePrecedence(self, Precedence.ASSIGNMENT);
 }
 
 pub fn binary(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     if (left == null) return error.ExpectedLeftOperand;
     const operator = self.tokens[self.current - 1];
-
-    // Get the precedence of the current operator
     const rule = precedence.getRule(operator.type);
 
-    // For left-associative operators, we want to bind more tightly to the right
     const precedence_level = if (rule.associativity == .RIGHT)
         rule.precedence
     else if (rule.precedence == .PRIMARY)
@@ -59,7 +51,6 @@ pub fn binary(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Ex
     else
         @as(Precedence, @enumFromInt(@intFromEnum(rule.precedence) + 2));
 
-    // Parse the right-hand side with the appropriate precedence
     const right = try precedence.parsePrecedence(self, precedence_level) orelse
         return error.ExpectedRightOperand;
 
@@ -81,29 +72,21 @@ pub fn binary(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Ex
 }
 
 pub fn braceExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-
-    // Consume the left brace
     self.advance();
 
-    // If this brace follows control keywords like 'then' or 'else', treat as a statement block
     if (self.current >= 2) {
         const prev_prev_tok = self.tokens[self.current - 2];
         const force_block = prev_prev_tok.type == .THEN or prev_prev_tok.type == .ELSE or prev_prev_tok.type == .DO or prev_prev_tok.type == .WHILE or prev_prev_tok.type == .FOR or prev_prev_tok.type == .FUNCTION;
         if (force_block) {
-            // Rewind one position so block() sees '{'
             self.current -= 1;
             return Parser.block(self, null, .NONE);
         }
     }
 
-    // Look ahead to see if this might be a map
-    // Skip any leading newlines after '{' before deciding
     var skipped: usize = 0;
     while (self.peek().type == .NEWLINE) : (skipped += 1) self.advance();
     const first_tok = self.peek().type;
     const sep1 = self.peekAhead(1).type;
-    // const sep2 = self.peekAhead(2).type; // no longer needed
-    // Avoid false-positives for statement blocks like "var name is ..." inside '{ }'
     const starts_like_statement = first_tok == .VAR or first_tok == .CONST or first_tok == .FUNCTION or
         first_tok == .IF or first_tok == .WHILE or first_tok == .FOR or first_tok == .RETURN or
         first_tok == .BREAK or first_tok == .CONTINUE or first_tok == .IMPORT;
@@ -113,8 +96,6 @@ pub fn braceExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Ex
         return self.parseMap();
     }
 
-    // Delegate to unified block parser so it can populate the last-expression value.
-    // Rewind tokens we may have skipped plus the '{' so Parser.block sees it to consume.
     var to_rewind: usize = skipped + 1;
     while (to_rewind > 0 and self.current > 0) : (to_rewind -= 1) {
         self.current -= 1;
@@ -123,19 +104,15 @@ pub fn braceExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Ex
 }
 
 pub fn typeofExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-    // We're already at 'typeof', advance to the next token
     self.advance();
 
-    // Expect opening parenthesis
     if (self.peek().type != .LEFT_PAREN) {
         return error.ExpectedLeftParen;
     }
     self.advance();
 
-    // Parse the expression whose type we want to check
     const expr = try parseExpression(self) orelse return error.ExpectedExpression;
 
-    // Expect closing parenthesis
     if (self.peek().type != .RIGHT_PAREN) {
         expr.deinit(self.allocator);
         self.allocator.destroy(expr);
@@ -157,17 +134,13 @@ pub fn typeofExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.E
 }
 
 pub fn lengthofExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-
-    // We're already at 'lengthof', advance to the next token
     self.advance();
 
-    // Allow optional parentheses around the target expression
     const has_parens = self.peek().type == .LEFT_PAREN;
     if (has_parens) {
-        self.advance(); // consume '('
+        self.advance();
     }
 
-    // Parse the expression whose length we want to check
     const expr = try precedence.parsePrecedence(self, .UNARY) orelse return error.ExpectedExpression;
 
     if (has_parens) {
@@ -176,7 +149,7 @@ pub fn lengthofExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast
             self.allocator.destroy(expr);
             return error.ExpectedRightParen;
         }
-        self.advance(); // consume ')'
+        self.advance();
     }
 
     const lengthof_expr = try self.allocator.create(ast.Expr);
@@ -193,15 +166,14 @@ pub fn lengthofExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast
 }
 
 pub fn parseMatchExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-    self.advance(); // consume 'match' keyword
+    self.advance();
 
-    // Parse the value to match on - parse as a simple variable expression to avoid recursion
     if (self.peek().type != .IDENTIFIER) {
         return error.ExpectedIdentifier;
     }
 
     const match_value = self.peek();
-    self.advance(); // consume identifier
+    self.advance();
 
     const value = try self.allocator.create(ast.Expr);
     value.* = .{
@@ -214,40 +186,31 @@ pub fn parseMatchExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*a
         },
     };
 
-    // Expect opening brace
     if (self.peek().type != .LEFT_BRACE) {
         return error.ExpectedLeftBrace;
     }
     self.advance();
 
-    // Parse match cases
     var cases = std.array_list.Managed(ast.MatchCase).init(self.allocator);
     errdefer cases.deinit();
 
     var has_else_case = false;
 
     while (self.peek().type != .RIGHT_BRACE) {
-        // Allow blank lines between match arms
         while (self.peek().type == .NEWLINE) self.advance();
-        // Tolerate stray commas between arms (e.g., trailing commas and blank lines)
         while (self.peek().type == .COMMA) self.advance();
-        // If skipping moved us to the closing brace, stop parsing arms
         if (self.peek().type == .RIGHT_BRACE) break;
         if (self.peek().type == .ELSE) {
-            // Handle else case
             self.advance();
             const else_token = self.previous();
 
-            // Parse body per hybrid rule: block (no required comma) or expression (requires comma)
             var body: *ast.Expr = undefined;
             if (self.peek().type == .LEFT_BRACE) {
                 const block_expr = try Parser.block(self, null, .NONE) orelse return error.ExpectedLeftBrace;
                 body = block_expr;
-                // Optional comma after a block arm
                 if (self.peek().type == .COMMA) self.advance();
             } else {
                 body = try parseExpression(self) orelse return error.ExpectedExpression;
-                // Expression arms must be followed by a comma (trailing comma allowed)
                 if (self.peek().type != .COMMA) {
                     return error.ExpectedCommaOrBrace;
                 }
@@ -255,53 +218,44 @@ pub fn parseMatchExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*a
             }
 
             try cases.append(.{
-                .pattern = else_token, // ensure codegen sees a real ELSE token
+                .pattern = else_token,
                 .body = body,
             });
 
             has_else_case = true;
 
-            // Handle optional comma
             if (self.peek().type == .COMMA) {
                 self.advance();
             }
             continue;
         }
 
-        // Parse pattern (enum variant, type, or custom type)
         const pattern = try parseMatchPattern(self) orelse return error.ExpectedPattern;
 
-        // Parse then
         if (self.peek().type != .THEN) {
             return error.ExpectedThen;
         }
         self.advance();
 
-        // Parse body per hybrid rule: block (no required comma) or expression (requires comma)
         var body: *ast.Expr = undefined;
         if (self.peek().type == .LEFT_BRACE) {
             const block_expr = try Parser.block(self, null, .NONE) orelse return error.ExpectedLeftBrace;
             body = block_expr;
-            // Optional comma after a block arm
             if (self.peek().type == .COMMA) self.advance();
         } else {
             body = try parseExpression(self) orelse return error.ExpectedExpression;
-            // After an expression arm, tolerate newlines and require either a comma or a closing brace.
             while (self.peek().type == .NEWLINE) self.advance();
             if (self.peek().type == .COMMA) {
                 self.advance();
-            } else if (self.peek().type == .RIGHT_BRACE) {
-                // No trailing comma before closing brace is allowed
-            } else {
+            } else if (self.peek().type != .RIGHT_BRACE) {
                 return error.ExpectedCommaOrBrace;
             }
         }
 
         try cases.append(.{ .pattern = pattern, .body = body });
     }
-    self.advance(); // consume right brace
+    self.advance();
 
-    // For enums, you may want to check all variants are covered. For unions, partial is fine.
     if (!has_else_case) {
         if (cases.items.len == 0) {
             return error.EmptyMatch;
@@ -325,23 +279,19 @@ pub fn parseMatchExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*a
 }
 
 pub fn doExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-    self.advance(); // consume 'do'
+    self.advance();
 
     var step_expr: ?*ast.Expr = null;
     var condition: ?*ast.Expr = null;
     var body: *ast.Expr = undefined;
 
-    // Case 1: Block immediately after 'do' => could be step block or body block
     if (self.peek().type == .LEFT_BRACE) {
-        // Parse the block expression first
         const first_block = try Parser.block(self, null, .NONE) orelse return error.ExpectedLeftBrace;
 
-        // If followed by 'while', the first block is the step block
         if (self.peek().type == .WHILE) {
             step_expr = first_block;
-            self.advance(); // consume 'while'
+            self.advance();
 
-            // Optional parentheses around condition
             const has_parens = self.peek().type == .LEFT_PAREN;
             if (has_parens) self.advance();
 
@@ -351,21 +301,17 @@ pub fn doExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr 
                 self.advance();
             }
 
-            // Parse loop body
             if (self.peek().type == .LEFT_BRACE) {
                 body = (try Parser.block(self, null, .NONE)) orelse return error.ExpectedLeftBrace;
             } else {
                 body = (try parseExpression(self)) orelse return error.ExpectedExpression;
             }
         } else {
-            // No while => this first block is the body of an infinite loop
             body = first_block;
         }
     } else if (self.peek().type == .WHILE) {
-        // do while <cond> { body }  (no explicit step)
-        self.advance(); // consume 'while'
+        self.advance();
 
-        // Optional parentheses around condition
         const has_parens = self.peek().type == .LEFT_PAREN;
         if (has_parens) self.advance();
 
@@ -375,20 +321,17 @@ pub fn doExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr 
             self.advance();
         }
 
-        // Body
         if (self.peek().type == .LEFT_BRACE) {
             body = (try Parser.block(self, null, .NONE)) orelse return error.ExpectedLeftBrace;
         } else {
             body = (try parseExpression(self)) orelse return error.ExpectedExpression;
         }
     } else {
-        // Parse a single-step expression, then optional while, then body
         step_expr = try parseExpression(self) orelse return error.ExpectedExpression;
 
         if (self.peek().type == .WHILE) {
-            self.advance(); // consume 'while'
+            self.advance();
 
-            // Optional parentheses around condition
             const has_parens = self.peek().type == .LEFT_PAREN;
             if (has_parens) self.advance();
 
@@ -399,7 +342,6 @@ pub fn doExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr 
             }
         }
 
-        // Body
         if (self.peek().type == .LEFT_BRACE) {
             body = (try Parser.block(self, null, .NONE)) orelse return error.ExpectedLeftBrace;
         } else {
@@ -424,9 +366,7 @@ pub fn doExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr 
 }
 
 pub fn whileExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-    self.advance(); // consume 'while'
-
-    // Optional parentheses around condition
+    self.advance();
     const has_parens = self.peek().type == .LEFT_PAREN;
     if (has_parens) {
         self.advance();
@@ -446,18 +386,15 @@ pub fn whileExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Ex
     var step_expr: ?*ast.Expr = null;
     var body: *ast.Expr = undefined;
 
-    // Check if this is a "while condition do step { body }" construct
     if (self.peek().type == .DO) {
-        self.advance(); // consume 'do'
+        self.advance();
 
-        // Parse the step block
         if (self.peek().type == .LEFT_BRACE) {
             step_expr = (try Parser.block(self, null, .NONE)) orelse return error.ExpectedLeftBrace;
         } else {
             step_expr = (try parseExpression(self)) orelse return error.ExpectedExpression;
         }
 
-        // Parse the loop body
         if (self.peek().type == .LEFT_BRACE) {
             const block_stmts = try statement_parser.parseBlockStmt(self);
             const block_expr = try self.allocator.create(ast.Expr);
@@ -469,7 +406,7 @@ pub fn whileExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Ex
                 .data = .{
                     .Block = .{
                         .statements = block_stmts,
-                        .value = null, // No final expression value for the block
+                        .value = null,
                     },
                 },
             };
@@ -486,7 +423,6 @@ pub fn whileExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Ex
             };
         }
     } else {
-        // Regular while loop: "while condition { body }"
         if (self.peek().type == .LEFT_BRACE) {
             const block_stmts = try statement_parser.parseBlockStmt(self);
             const block_expr = try self.allocator.create(ast.Expr);
@@ -498,7 +434,7 @@ pub fn whileExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Ex
                 .data = .{
                     .Block = .{
                         .statements = block_stmts,
-                        .value = null, // No final expression value for the block
+                        .value = null,
                     },
                 },
             };
@@ -529,26 +465,23 @@ pub fn whileExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Ex
 }
 
 pub fn forExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-    self.advance(); // consume 'for'
+    self.advance();
 
     var var_decl: ?*ast.Stmt = null;
     var condition: ?*ast.Expr = null;
     var step_expr: ?*ast.Expr = null;
     var body: *ast.Expr = undefined;
 
-    // Parse loop variable (required)
     if (self.peek().type != .IDENTIFIER) {
         return error.ExpectedIdentifier;
     }
     const var_name = self.peek();
     self.advance();
 
-    // Check for optional initializer: "for x is 10 ..."
     if (self.peek().type == .ASSIGN) {
-        self.advance(); // consume 'is'
+        self.advance();
         const initializer = (try parseExpression(self)) orelse return error.ExpectedExpression;
 
-        // Create variable declaration
         const var_decl_stmt = try self.allocator.create(ast.Stmt);
         var_decl_stmt.* = .{
             .base = .{
@@ -566,7 +499,6 @@ pub fn forExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr
         };
         var_decl = var_decl_stmt;
     } else {
-        // No initializer, create variable declaration with default value (0)
         const zero_expr = try self.allocator.create(ast.Expr);
         zero_expr.* = .{
             .base = .{
@@ -594,15 +526,13 @@ pub fn forExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr
         var_decl = var_decl_stmt;
     }
 
-    // Check for optional condition: "for x while condition ..."
     if (self.peek().type == .WHILE) {
-        self.advance(); // consume 'while'
+        self.advance();
         condition = (try parseExpression(self)) orelse return error.ExpectedExpression;
     }
 
-    // Check for step: "for x do step ..."
     if (self.peek().type == .DO) {
-        self.advance(); // consume 'do'
+        self.advance();
         if (self.peek().type == .LEFT_BRACE) {
             step_expr = (try Parser.block(self, null, .NONE)) orelse return error.ExpectedLeftBrace;
         } else {
@@ -610,7 +540,6 @@ pub fn forExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr
         }
     }
 
-    // Parse body
     if (self.peek().type == .LEFT_BRACE) {
         const block_stmts = try statement_parser.parseBlockStmt(self);
         const block_expr = try self.allocator.create(ast.Expr);
@@ -648,10 +577,10 @@ pub fn forExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr
 }
 
 pub fn prefixIncrement(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-    const operator = self.peek(); // Get the current token as operator
+    const operator = self.peek();
     const is_decrement = (operator.type == .DECREMENT);
 
-    self.advance(); // Move past the operator
+    self.advance();
     const expr = try parseExpression(self);
 
     const increment_expr = try self.allocator.create(ast.Expr);
@@ -666,8 +595,8 @@ pub fn prefixIncrement(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*
 }
 
 pub fn postfixIncrement(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-    const operator = self.previous(); // Get the ++ or -- token
-    const is_decrement = (operator.type == .DECREMENT); // or .MINUS_MINUS
+    const operator = self.previous();
+    const is_decrement = (operator.type == .DECREMENT);
 
     const increment_expr = try self.allocator.create(ast.Expr);
     increment_expr.* = .{
@@ -681,9 +610,9 @@ pub fn postfixIncrement(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorLis
 }
 
 pub fn prefixDecrement(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-    const operator = self.peek(); // Get the current token as operator
+    const operator = self.peek();
 
-    self.advance(); // Move past the operator
+    self.advance();
     const expr = try parseExpression(self);
 
     const decrement_expr = try self.allocator.create(ast.Expr);
@@ -695,7 +624,7 @@ pub fn prefixDecrement(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*
 }
 
 pub fn postfixDecrement(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-    const operator = self.previous(); // Get the -- token
+    const operator = self.previous();
 
     const decrement_expr = try self.allocator.create(ast.Expr);
     decrement_expr.* = .{
@@ -712,7 +641,6 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
     var base_type_expr: ?*ast.TypeExpr = null;
     var consumed_token = false;
 
-    // 1. Check for Basic Types
     const maybe_basic_type: ?ast.BasicType = blk: {
         switch (type_token.type) {
             .INT_TYPE => break :blk ast.BasicType.Integer,
@@ -722,7 +650,6 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
             .TETRA_TYPE => break :blk ast.BasicType.Tetra,
             .NOTHING_TYPE => break :blk ast.BasicType.Nothing,
             else => {
-                // For backward compatibility, also check lexemes
                 if (std.mem.eql(u8, type_name, "int")) break :blk ast.BasicType.Integer;
                 if (std.mem.eql(u8, type_name, "Int")) break :blk ast.BasicType.Integer;
                 if (std.mem.eql(u8, type_name, "byte")) break :blk ast.BasicType.Byte;
@@ -741,8 +668,7 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
     };
 
     if (maybe_basic_type) |basic| {
-        // It's a basic type
-        self.advance(); // Consume the basic type keyword token
+        self.advance();
         consumed_token = true;
         base_type_expr = try self.allocator.create(ast.TypeExpr);
         base_type_expr.?.* = .{
@@ -755,14 +681,12 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
             },
         };
     } else if (type_token.type == .ARRAY_TYPE) {
-        // 2. Check for Array Type Syntax
-        self.advance(); // consume 'array'
+        self.advance();
         consumed_token = true;
 
         if (self.peek().type != .LEFT_BRACKET) return error.ExpectedLeftBracket;
-        self.advance(); // consume [
+        self.advance();
 
-        // Check for optional size specification
         var size: ?*ast.Expr = null;
         if (self.peek().type == .INT) {
             const size_expr = try self.allocator.create(ast.Expr);
@@ -776,13 +700,12 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
                 },
             };
             size = size_expr;
-            self.advance(); // consume the integer
+            self.advance();
         }
 
         if (self.peek().type != .RIGHT_BRACKET) return error.ExpectedRightBracket;
-        self.advance(); // consume ]
+        self.advance();
 
-        // Parse element type (comes after the brackets)
         const element_type = try parseTypeExpr(self) orelse return error.ExpectedType;
 
         base_type_expr = try self.allocator.create(ast.TypeExpr);
@@ -794,17 +717,16 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
             .data = .{
                 .Array = .{
                     .element_type = element_type,
-                    .size = size, // Use the parsed size (null for dynamic arrays)
+                    .size = size,
                 },
             },
         };
     } else if (type_token.type == .STRUCT_TYPE) {
-        // 3. Check for Struct Type Syntax
-        self.advance(); // consume 'struct'
+        self.advance();
         consumed_token = true;
 
         if (self.peek().type != .LEFT_BRACE) return error.ExpectedLeftBrace;
-        self.advance(); // consume {
+        self.advance();
 
         var fields = std.array_list.Managed(*ast.StructField).init(self.allocator);
         errdefer {
@@ -816,20 +738,15 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
         }
 
         while (self.peek().type != .RIGHT_BRACE) {
-            // Parse field name
             if (self.peek().type != .IDENTIFIER) return error.ExpectedIdentifier;
             const field_name = self.peek();
             self.advance();
-            // Expect :
             if (self.peek().type != .WHERE) return error.ExpectedColon;
             self.advance();
-            // Parse field type
             const field_type = try parseTypeExpr(self) orelse return error.ExpectedType;
-            // Create field
             const field = try self.allocator.create(ast.StructField);
             field.* = .{ .name = field_name, .type_expr = field_type };
             try fields.append(field);
-            // Handle separator
             if (self.peek().type == .COMMA) {
                 self.advance();
                 if (self.peek().type == .RIGHT_BRACE) break;
@@ -838,8 +755,8 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
             }
         }
 
-        if (self.peek().type != .RIGHT_BRACE) return error.ExpectedRightBrace; // Should be caught by loop condition
-        self.advance(); // consume }
+        if (self.peek().type != .RIGHT_BRACE) return error.ExpectedRightBrace;
+        self.advance();
 
         base_type_expr = try self.allocator.create(ast.TypeExpr);
         base_type_expr.?.* = .{
@@ -852,7 +769,6 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
             },
         };
     } else if (type_token.type == .IDENTIFIER) {
-        // 4. Check for Declared or Imported Custom Types
         var is_known_custom = false;
         if (self.declared_types.contains(type_name)) {
             is_known_custom = true;
@@ -870,7 +786,7 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
         }
 
         if (is_known_custom) {
-            self.advance(); // Consume the identifier token
+            self.advance();
             consumed_token = true;
             base_type_expr = try self.allocator.create(ast.TypeExpr);
             base_type_expr.?.* = .{
@@ -889,17 +805,13 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
         return error.ExpectedType;
     }
 
-    // Make sure we consumed a token if we successfully identified a base type
     if (!consumed_token and base_type_expr != null) {
-        // This case should ideally not happen with the logic above
         return error.InternalParserError;
     }
-    // If base_type_expr is still null here, something went wrong or an error should have been returned
     if (base_type_expr == null) return error.ExpectedType;
 
-    // --- Check for Array Type ---
     while (self.peek().type == .LEFT_BRACKET) {
-        self.advance(); // consume [
+        self.advance();
 
         var size: ?*ast.Expr = null;
         if (self.peek().type == .INT) {
@@ -914,21 +826,19 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
                 },
             };
             size = size_expr;
-            self.advance(); // consume the integer
+            self.advance();
         }
 
         if (self.peek().type != .RIGHT_BRACKET) {
-            // Cleanup size expr if allocated
             if (size) |s| {
                 s.deinit(self.allocator);
                 self.allocator.destroy(s);
             }
-            // Cleanup base_type_expr
             base_type_expr.?.deinit(self.allocator);
             self.allocator.destroy(base_type_expr.?);
             return error.ExpectedRightBracket;
         }
-        self.advance(); // consume ]
+        self.advance();
 
         const array_type_expr = try self.allocator.create(ast.TypeExpr);
         array_type_expr.* = .{
@@ -938,7 +848,7 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
             },
             .data = .{
                 .Array = .{
-                    .element_type = base_type_expr.?, // We know it's non-null here
+                    .element_type = base_type_expr.?,
                     .size = size,
                 },
             },
@@ -946,9 +856,6 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
         base_type_expr = array_type_expr;
     }
 
-    // If no array brackets, return the base type expression
-
-    // --- Check for Union Type ---
     if (self.peek().type == .PIPE) {
         var types = std.array_list.Managed(*ast.TypeExpr).init(self.allocator);
         errdefer {
@@ -959,12 +866,10 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
             types.deinit();
         }
 
-        // Add the first type we already parsed
         try types.append(base_type_expr.?);
 
-        // Parse additional types separated by pipes
         while (self.peek().type == .PIPE) {
-            self.advance(); // consume |
+            self.advance();
             const next_type = try parseNonUnionTypeExpr(self) orelse return error.ExpectedType;
             try types.append(next_type);
         }
@@ -992,18 +897,15 @@ pub fn allocExpr(self: *Parser, expr: ast.Expr) ErrorList!*ast.Expr {
 }
 
 pub fn parseIfExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-    self.advance(); // consume 'if'
+    self.advance();
 
-    // Parse the condition expression without assuming parentheses wrap the whole thing
     const condition = (try parseExpression(self)) orelse return error.ExpectedExpression;
 
     var then_expr: *ast.Expr = undefined;
 
     if (self.peek().type == .THEN) {
-        // Traditional if-then-else expression syntax
-        self.advance(); // consume 'then'
+        self.advance();
 
-        // Allow control statements without braces by wrapping them in a block expression
         if (self.peek().type == .CONTINUE or self.peek().type == .BREAK or self.peek().type == .RETURN) {
             const stmt: ast.Stmt = switch (self.peek().type) {
                 .CONTINUE => try statement_parser.parseContinueStmt(self),
@@ -1020,7 +922,6 @@ pub fn parseIfExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
             };
             then_expr = block_expr;
         } else if (self.peek().type == .LEFT_BRACE) {
-            // Block-style then
             then_expr = (try braceExpr(self, null, .NONE)) orelse {
                 condition.deinit(self.allocator);
                 self.allocator.destroy(condition);
@@ -1034,7 +935,6 @@ pub fn parseIfExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
             };
         }
     } else if (self.peek().type == .LEFT_BRACE) {
-        // Block-style if statement syntax: if condition { statements }
         then_expr = (try braceExpr(self, null, .NONE)) orelse {
             condition.deinit(self.allocator);
             self.allocator.destroy(condition);
@@ -1056,22 +956,17 @@ pub fn parseIfExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
         return error.ExpectedThen;
     }
 
-    // Handle else branch
     var else_expr: ?*ast.Expr = null;
 
-    // Check for else after newline (if-else-if chain syntax)
     if (self.peek().type == .NEWLINE and self.peekAhead(1).type == .ELSE) {
-        self.advance(); // consume newline
+        self.advance();
     }
 
     if (self.peek().type == .ELSE) {
-        self.advance(); // consume 'else'
-
-        // Check if this is an else-if
+        self.advance();
         if (self.peek().type == .IF) {
             else_expr = try parseIfExpr(self, null, .NONE);
         } else if (self.peek().type == .LEFT_BRACE) {
-            // Special handling for block expressions
             else_expr = try braceExpr(self, null, .NONE);
         } else {
             else_expr = try precedence.parsePrecedence(self, .NONE);
@@ -1085,7 +980,6 @@ pub fn parseIfExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
             return error.ExpectedExpression;
         }
     } else {
-        // Create implicit nothing for else branch
         else_expr = try self.allocator.create(ast.Expr);
         else_expr.?.* = .{
             .base = .{
@@ -1116,11 +1010,10 @@ pub fn parseIfExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
 }
 
 pub fn returnExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-    self.advance(); // consume 'return'
+    self.advance();
 
     var value: ?*ast.Expr = null;
 
-    // Check if there's a value to return
     if (self.peek().type != .NEWLINE and
         self.peek().type != .ELSE and
         self.peek().type != .RIGHT_BRACE and
@@ -1145,7 +1038,7 @@ pub fn returnExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.E
 }
 
 pub fn parseBreakExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-    self.advance(); // consume 'break'
+    self.advance();
 
     const break_expr = try self.allocator.create(ast.Expr);
     break_expr.* = .{
@@ -1178,7 +1071,6 @@ pub fn literal(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr
             break :blk new_expr;
         },
         .STRING => blk: {
-            // Make a copy of the string data
             const string_copy = try self.allocator.dupe(u8, current.literal.string);
             const new_expr = try self.allocator.create(ast.Expr);
             new_expr.* = .{
@@ -1204,18 +1096,12 @@ pub fn literal(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr
 pub fn castExpr(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     if (left == null) return error.ExpectedLeftOperand;
 
-    // The 'as' token has already been consumed by the precedence parser
-    // We should now be at the target type token
-
-    // Parse the target type
     const target_type = try parseTypeExpr(self) orelse return error.ExpectedType;
 
-    // Optional then-branch: "as Type then <expr|{...}>"
     var then_branch: ?*ast.Expr = null;
     if (self.peek().type == .THEN) {
-        self.advance(); // consume 'then'
+        self.advance();
         if (self.peek().type == .LEFT_BRACE) {
-            // Block-style then
             const block_expr = try braceExpr(self, null, .NONE) orelse return error.ExpectedLeftBrace;
             then_branch = block_expr;
         } else {
@@ -1223,20 +1109,16 @@ pub fn castExpr(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
         }
     }
 
-    // Optional else-branch: "else <expr|{...}>"
     var else_branch: ?*ast.Expr = null;
 
-    // Allow newlines between end of then-branch and else keyword
     while (self.peek().type == .NEWLINE) self.advance();
 
     if (self.peek().type == .ELSE) {
-        self.advance(); // consume 'else'
+        self.advance();
 
-        // Allow newlines before else-branch body
         while (self.peek().type == .NEWLINE) self.advance();
 
         if (self.peek().type == .LEFT_BRACE) {
-            // Block-style else
             const block_expr = try braceExpr(self, null, .NONE) orelse return error.ExpectedLeftBrace;
             else_branch = block_expr;
         } else {
@@ -1263,26 +1145,22 @@ pub fn castExpr(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
 }
 
 pub fn grouping(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-    self.advance(); // consume (
+    self.advance();
 
-    // If we have a left expression, this is a function call
     if (left != null) {
         return self.call(left, .NONE);
     }
 
-    // Allow optional newlines after '('
     while (self.peek().type == .NEWLINE) self.advance();
 
-    // Otherwise it's just a grouped expression
     const expr = try parseExpression(self) orelse return error.ExpectedExpression;
 
-    // Allow optional newlines before ')'
     while (self.peek().type == .NEWLINE) self.advance();
 
     if (self.peek().type != .RIGHT_PAREN) {
         return error.ExpectedRightParen;
     }
-    self.advance(); // consume )
+    self.advance();
 
     const grouping_expr = try self.allocator.create(ast.Expr);
     grouping_expr.* = .{
@@ -1298,8 +1176,8 @@ pub fn grouping(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
 }
 
 pub fn unary(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-    const operator = self.peek(); // Get the current token as operator
-    self.advance(); // Move past the operator
+    const operator = self.peek();
+    self.advance();
 
     const right = try precedence.parsePrecedence(self, .UNARY) orelse return error.ExpectedExpression;
 
@@ -1323,7 +1201,6 @@ pub fn variable(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Exp
     const name = self.peek();
     self.advance();
 
-    // Handle 'this' keyword
     if (name.type == .THIS) {
         const this_expr = try self.allocator.create(ast.Expr);
         this_expr.* = .{
@@ -1336,17 +1213,12 @@ pub fn variable(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Exp
         return this_expr;
     }
 
-    // Check if this is an imported symbol with namespace prefix
     if (self.peek().type == .DOT) {
-        // This could be a namespace access (module.symbol)
         const namespace = name.lexeme;
 
-        // If we have a namespace registered
         if (self.module_namespaces.contains(namespace)) {
-            // This is a module access - consume the dot
             self.advance();
 
-            // Get the symbol name
             if (self.peek().type != .IDENTIFIER) {
                 return error.ExpectedIdentifier;
             }
@@ -1354,7 +1226,6 @@ pub fn variable(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Exp
             const symbol_name = self.peek();
             self.advance();
 
-            // Create a namespace object as variable
             const namespace_var = try self.allocator.create(ast.Expr);
             namespace_var.* = .{
                 .base = .{
@@ -1366,7 +1237,6 @@ pub fn variable(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Exp
                 },
             };
 
-            // Create a FieldAccess expression instead of just Variable
             const field_access = try self.allocator.create(ast.Expr);
             field_access.* = .{
                 .base = .{
@@ -1381,9 +1251,8 @@ pub fn variable(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Exp
                 },
             };
 
-            // Check for indexing operation
             if (self.peek().type == .LEFT_BRACKET) {
-                self.advance(); // consume '['
+                self.advance();
                 return self.index(field_access, .NONE);
             }
 
@@ -1391,12 +1260,8 @@ pub fn variable(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Exp
         }
     }
 
-    // Note: Struct literal parsing is handled separately to avoid conflicts with match expressions
-
-    // Create variable expression or enum member expression
     const var_expr = try self.allocator.create(ast.Expr);
     if (name.type == .FIELD_ACCESS) {
-        // This is an enum member (e.g., .Red, .Green)
         var_expr.* = .{
             .base = .{
                 .id = ast.generateNodeId(),
@@ -1407,7 +1272,6 @@ pub fn variable(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Exp
             },
         };
     } else {
-        // This is a regular variable
         var_expr.* = .{
             .base = .{
                 .id = ast.generateNodeId(),
@@ -1419,9 +1283,8 @@ pub fn variable(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Exp
         };
     }
 
-    // Check for indexing operation
     if (self.peek().type == .LEFT_BRACKET) {
-        self.advance(); // consume '['
+        self.advance();
         return self.index(var_expr, .NONE);
     }
 
@@ -1429,7 +1292,6 @@ pub fn variable(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Exp
 }
 
 pub fn arrayType(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-    // Create a basic type expression for the element type
     const element_type = try self.allocator.create(ast.TypeExpr);
     element_type.* = .{
         .base = .{
@@ -1457,9 +1319,8 @@ pub fn arrayType(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Ex
 }
 
 pub fn parseArrayLiteral(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-    self.advance(); // consume '['
+    self.advance();
 
-    // Skip optional newlines after '['
     while (self.peek().type == .NEWLINE) self.advance();
 
     var elements = std.array_list.Managed(*ast.Expr).init(self.allocator);
@@ -1471,15 +1332,12 @@ pub fn parseArrayLiteral(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!
         elements.deinit();
     }
 
-    // Parse first element to establish the type
     if (self.peek().type != .RIGHT_BRACKET) {
         const first_element = try parseExpression(self) orelse return error.ExpectedExpression;
         try elements.append(first_element);
 
-        // Parse remaining elements without type checking
         while (self.peek().type == .COMMA) {
-            self.advance(); // consume comma
-            // Skip optional newlines after comma
+            self.advance();
             while (self.peek().type == .NEWLINE) self.advance();
             if (self.peek().type == .RIGHT_BRACKET) break;
 
@@ -1488,13 +1346,12 @@ pub fn parseArrayLiteral(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!
         }
     }
 
-    // Allow trailing newlines before closing bracket
     while (self.peek().type == .NEWLINE) self.advance();
 
     if (self.peek().type != .RIGHT_BRACKET) {
         return error.ExpectedRightBracket;
     }
-    self.advance(); // consume ']'
+    self.advance();
 
     const array_expr = try self.allocator.create(ast.Expr);
     array_expr.* = .{
@@ -1516,7 +1373,6 @@ fn parseNonUnionTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
     var base_type_expr: ?*ast.TypeExpr = null;
     var consumed_token = false;
 
-    // 1. Check for Basic Types
     const maybe_basic_type: ?ast.BasicType = blk: {
         switch (type_token.type) {
             .INT_TYPE => break :blk ast.BasicType.Integer,
@@ -1526,7 +1382,6 @@ fn parseNonUnionTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
             .TETRA_TYPE => break :blk ast.BasicType.Tetra,
             .NOTHING_TYPE => break :blk ast.BasicType.Nothing,
             else => {
-                // For backward compatibility, also check lexemes
                 if (std.mem.eql(u8, type_name, "int")) break :blk ast.BasicType.Integer;
                 if (std.mem.eql(u8, type_name, "Int")) break :blk ast.BasicType.Integer;
                 if (std.mem.eql(u8, type_name, "byte")) break :blk ast.BasicType.Byte;
@@ -1545,7 +1400,7 @@ fn parseNonUnionTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
     };
 
     if (maybe_basic_type) |basic_type| {
-        self.advance(); // consume type token
+        self.advance();
         consumed_token = true;
 
         const type_expr = try self.allocator.create(ast.TypeExpr);
@@ -1560,9 +1415,8 @@ fn parseNonUnionTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
         };
         base_type_expr = type_expr;
     } else {
-        // 2. Check for Custom Types (identifiers that aren't basic types)
         if (type_token.type == .IDENTIFIER) {
-            self.advance(); // consume identifier
+            self.advance();
             consumed_token = true;
 
             const type_expr = try self.allocator.create(ast.TypeExpr);
@@ -1583,12 +1437,10 @@ fn parseNonUnionTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
         return null;
     }
 
-    // 3. Check for Array Type
     if (self.peek().type == .LEFT_BRACKET) {
-        self.advance(); // consume [
+        self.advance();
         consumed_token = true;
 
-        // Check for array size
         var array_size: ?*ast.Expr = null;
         if (self.peek().type != .RIGHT_BRACKET) {
             array_size = try parseExpression(self) orelse return error.ExpectedExpression;
@@ -1597,7 +1449,7 @@ fn parseNonUnionTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
         if (self.peek().type != .RIGHT_BRACKET) {
             return error.ExpectedRightBracket;
         }
-        self.advance(); // consume ]
+        self.advance();
 
         const element_type = try parseNonUnionTypeExpr(self) orelse return error.ExpectedType;
 
@@ -1617,7 +1469,6 @@ fn parseNonUnionTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
         base_type_expr = array_type_expr;
     }
 
-    // If no array brackets, return the base type expression
     return base_type_expr;
 }
 
@@ -1633,7 +1484,7 @@ fn parseBasicType(self: *Parser) ErrorList!?*ast.TypeExpr {
         else => return null,
     };
 
-    self.advance(); // consume type token
+    self.advance();
 
     const type_expr = try self.allocator.create(ast.TypeExpr);
     type_expr.* = .{
@@ -1666,17 +1517,19 @@ pub fn inferType(expr: *ast.Expr) !ast.TypeInfo {
             }
         },
         .Array => return .{ .base = .Array, .is_mutable = false },
-        // Map literals are now statements, not expressions
-        .StructLiteral => |struct_lit| return .{ .base = .Custom, .custom_type = struct_lit.name.lexeme, .is_mutable = false },
+        .StructLiteral => |struct_lit| return .{
+            .base = .Custom,
+            .custom_type = struct_lit.name.lexeme,
+            .is_mutable = false,
+        },
         .Cast => return .{ .base = .Nothing, .is_mutable = false },
         .Print => |print| {
-            // Infer types of all interpolation arguments if they exist
             if (print.arguments) |args| {
                 for (args) |arg| {
                     _ = try inferType(arg);
                 }
             }
-            return .{ .base = .Nothing, .is_mutable = false }; // Print returns nothing
+            return .{ .base = .Nothing, .is_mutable = false };
         },
         .Increment => |operand| {
             return try inferType(operand);
@@ -1688,109 +1541,82 @@ pub fn inferType(expr: *ast.Expr) !ast.TypeInfo {
     }
 }
 
-// Conditionally parse either a variable (default) or a struct literal / match
-// when an identifier is immediately followed by a '{'. This avoids hijacking
-// simple identifiers like `limit` inside expressions such as `1 to limit`.
-pub fn identifierOrStructLiteral(self: *Parser, left: ?*ast.Expr, precedence_level: Precedence) ErrorList!?*ast.Expr {
-    _ = left;
-    _ = precedence_level;
-
+pub fn identifierOrStructLiteral(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     const start_pos = self.current;
 
-    // We expect IDENTIFIER at this point (rule-based dispatch). Consume it to look ahead.
     if (self.peek().type != .IDENTIFIER) return null;
     self.advance();
 
-    // If next token is a '{', this could be a struct literal or match expression.
     if (self.peek().type == .LEFT_BRACE) {
-        // Rewind and delegate to the dedicated handler which distinguishes
-        // between struct literal and match based on brace contents.
         self.current = start_pos;
         return parseStructOrMatch(self, null, .NONE);
     }
 
-    // Otherwise, it's a regular variable reference. Rewind so `variable` consumes it.
     self.current = start_pos;
     return variable(self, null, .NONE);
 }
 
 pub fn parseStructOrMatch(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-    // We should be at an identifier
     if (self.peek().type != .IDENTIFIER) {
         return null;
     }
 
     const start_pos = self.current;
-    self.advance(); // consume identifier
+    self.advance();
 
-    // Check if next token is a brace
     if (self.peek().type != .LEFT_BRACE) {
-        // Not a struct literal or match expression, reset and fall back to variable parser
         self.current = start_pos;
         return variable(self, null, .NONE);
     }
 
-    self.advance(); // consume '{'
+    self.advance();
 
-    // Skip any NEWLINEs immediately after '{' so decisions aren't tripped by formatting
     while (self.peek().type == .NEWLINE) self.advance();
 
-    // Check the first token after the brace (after skipping newlines)
     const first_token_after_brace = self.peek();
 
-    // Check if this looks like a match expression pattern
-    const is_match_pattern = (first_token_after_brace.type == .DOT) or // .Red
-        (first_token_after_brace.type == .INT_TYPE) or // int
-        (first_token_after_brace.type == .FLOAT_TYPE) or // float
-        (first_token_after_brace.type == .STRING_TYPE) or // string
-        (first_token_after_brace.type == .BYTE_TYPE) or // byte
-        (first_token_after_brace.type == .TETRA_TYPE) or // tetra
-        (first_token_after_brace.type == .NOTHING_TYPE) or // nothing
-        (first_token_after_brace.type == .INT) or // 0, 1, 2, etc.
-        (first_token_after_brace.type == .ELSE) or // else
+    const is_match_pattern = (first_token_after_brace.type == .DOT) or
+        (first_token_after_brace.type == .INT_TYPE) or
+        (first_token_after_brace.type == .FLOAT_TYPE) or
+        (first_token_after_brace.type == .STRING_TYPE) or
+        (first_token_after_brace.type == .BYTE_TYPE) or
+        (first_token_after_brace.type == .TETRA_TYPE) or
+        (first_token_after_brace.type == .NOTHING_TYPE) or
+        (first_token_after_brace.type == .INT) or
+        (first_token_after_brace.type == .ELSE) or
         (first_token_after_brace.type == .IDENTIFIER and self.declared_types.contains(first_token_after_brace.lexeme));
 
     if (is_match_pattern) {
-        // This is a match expression - parse it directly without recursion
-        self.current = start_pos; // Reset to before identifier
+        self.current = start_pos;
 
-        // We should be at an identifier (the match value)
         if (self.peek().type != .IDENTIFIER) {
             return null;
         }
 
         const match_value = self.peek();
-        self.advance(); // consume identifier
+        self.advance();
 
-        // Expect opening brace
         if (self.peek().type != .LEFT_BRACE) {
             return error.ExpectedLeftBrace;
         }
         self.advance();
 
-        // Parse match cases
         var cases = std.array_list.Managed(ast.MatchCase).init(self.allocator);
         errdefer cases.deinit();
 
         var has_else_case = false;
 
         while (self.peek().type != .RIGHT_BRACE) {
-            // Allow blank lines between match arms
             while (self.peek().type == .NEWLINE) self.advance();
-            // Tolerate stray commas between arms
             while (self.peek().type == .COMMA) self.advance();
             if (self.peek().type == .RIGHT_BRACE) break;
             if (self.peek().type == .ELSE) {
-                // Handle else case
                 self.advance();
                 const else_token = self.previous();
-
-                // Parse body per hybrid rule: block (no required comma) or expression (requires comma)
                 var body: *ast.Expr = undefined;
                 if (self.peek().type == .LEFT_BRACE) {
                     const block_expr = try Parser.block(self, null, .NONE) orelse return error.ExpectedLeftBrace;
                     body = block_expr;
-                    // Optional comma after a block arm
                     if (self.peek().type == .COMMA) {
                         self.advance();
                     }
@@ -1811,21 +1637,17 @@ pub fn parseStructOrMatch(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList
                 continue;
             }
 
-            // Parse pattern (enum variant, type, or custom type)
             const pattern = try parseMatchPattern(self) orelse return error.ExpectedPattern;
 
-            // Parse then
             if (self.peek().type != .THEN) {
                 return error.ExpectedThen;
             }
             self.advance();
 
-            // Parse body per hybrid rule: block (no required comma) or expression (requires comma)
             var body: *ast.Expr = undefined;
             if (self.peek().type == .LEFT_BRACE) {
                 const block_expr = try Parser.block(self, null, .NONE) orelse return error.ExpectedLeftBrace;
                 body = block_expr;
-                // Optional comma after a block arm
                 if (self.peek().type == .COMMA) {
                     self.advance();
                 }
@@ -1842,16 +1664,14 @@ pub fn parseStructOrMatch(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList
                 .body = body,
             });
         }
-        self.advance(); // consume right brace
+        self.advance();
 
-        // For enums, you may want to check all variants are covered. For unions, partial is fine.
         if (!has_else_case) {
             if (cases.items.len == 0) {
                 return error.EmptyMatch;
             }
         }
 
-        // Create variable expression for the match value
         const value_expr = try self.allocator.create(ast.Expr);
         value_expr.* = .{
             .base = .{
@@ -1878,31 +1698,26 @@ pub fn parseStructOrMatch(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList
         };
         return match_expr;
     } else if (first_token_after_brace.type == .IDENTIFIER and self.peekAhead(1).type == .ASSIGN) {
-        // This is a struct literal only if it starts with `identifier is ...`
-        self.current = start_pos; // Reset to before identifier
+        self.current = start_pos;
         return Parser.parseStructInit(self);
     } else {
-        // This might be something else, reset and fall back to variable parser
         self.current = start_pos;
         return variable(self, null, .NONE);
     }
 }
 
 fn parseMatchPattern(self: *Parser) ErrorList!?token.Token {
-    // Skip any leading newlines before a pattern
     while (self.peek().type == .NEWLINE or self.peek().type == .COMMA) self.advance();
     const current = self.peek();
 
     switch (current.type) {
         .FIELD_ACCESS => {
-            // Allow tokens that represent a field/enum member (e.g., .Red) directly
             const fa = self.peek();
             self.advance();
             return fa;
         },
         .DOT => {
-            // Enum variant pattern: .Red
-            self.advance(); // consume '.'
+            self.advance();
             if (self.peek().type != .IDENTIFIER) {
                 return error.ExpectedIdentifier;
             }
@@ -1911,37 +1726,30 @@ fn parseMatchPattern(self: *Parser) ErrorList!?token.Token {
             return variant;
         },
         .INT => {
-            // Integer literal pattern: 0, 1, 2, etc.
             const int_token = self.peek();
             self.advance();
             return int_token;
         },
         .STRING, .FLOAT, .BYTE, .TETRA, .LOGIC => {
-            // Support literal patterns for common literal token types
             const lit_token = self.peek();
             self.advance();
             return lit_token;
         },
         .INT_TYPE, .FLOAT_TYPE, .STRING_TYPE, .BYTE_TYPE, .TETRA_TYPE, .NOTHING_TYPE, .NOTHING => {
-            // Type patterns for union matching: int, float, string, etc.
-            // Also handle .NOTHING for the literal 'nothing' when used as a type pattern
             const type_token = self.peek();
             self.advance();
             return type_token;
         },
         .IDENTIFIER => {
-            // Treat any identifier (except 'else') as a valid pattern token.
             if (std.mem.eql(u8, current.lexeme, "else")) {
                 self.advance();
                 return current;
             }
-            // Handle qualified enum variant: Type.Identifier
             if (self.peekAhead(1).type == .DOT and self.peekAhead(2).type == .IDENTIFIER) {
-                self.advance(); // consume type identifier
-                self.advance(); // dot
+                self.advance();
+                self.advance();
                 const variant_ident = self.peek();
-                self.advance(); // variant
-                // Return the variant identifier as the pattern token (codegen/semantics can use both)
+                self.advance();
                 return variant_ident;
             }
             const ident_tok = self.peek();
@@ -1949,7 +1757,6 @@ fn parseMatchPattern(self: *Parser) ErrorList!?token.Token {
             return ident_tok;
         },
         else => {
-            // Permissive fallback: accept any non-separator token as a pattern token
             if (current.type == .THEN or current.type == .RIGHT_BRACE or current.type == .COMMA or current.type == .NEWLINE) {
                 return null;
             }

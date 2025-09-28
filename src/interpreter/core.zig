@@ -4,7 +4,6 @@ const ErrorList = @import("../utils/errors.zig").ErrorList;
 
 const STACK_SIZE: u32 = 1024 * 1024;
 
-/// Hot variable cache entry for ultra-fast variable lookup
 pub const HotVar = struct {
     name: []const u8,
     storage_id: u32,
@@ -16,9 +15,8 @@ pub const HotVar = struct {
 pub const HIRFrame = struct {
     value: HIRValue,
     field_name: ?[]const u8 = null,
-    scope_refs: u32 = 0, // Add reference counter for scopes
+    scope_refs: u32 = 0,
 
-    // Helper constructors
     pub fn initInt(x: i64) HIRFrame {
         return HIRFrame{ .value = HIRValue{ .int = x } };
     }
@@ -102,17 +100,14 @@ pub const HIRFrame = struct {
     }
 };
 
-/// HIR-based Stack - uses heap allocation to avoid system stack overflow
 pub const HIRStack = struct {
     data: []HIRFrame,
     sp: i64 = 0,
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) !HIRStack {
-        // Allocate stack on heap to avoid system stack overflow
         const data = try allocator.alloc(HIRFrame, STACK_SIZE);
 
-        // Initialize all frames to NOTHING
         for (data) |*frame| {
             frame.* = HIRFrame.initNothing();
         }
@@ -129,9 +124,7 @@ pub const HIRStack = struct {
         self.sp = 0;
     }
 
-    // PERFORMANCE: Inline stack operations for maximum speed
     pub inline fn push(self: *HIRStack, value: HIRFrame) !void {
-        // FAST MODE: Skip bounds check in release builds for maximum performance
         if (std.debug.runtime_safety and self.sp >= STACK_SIZE) {
             std.debug.print("Stack overflow: Attempted to push at sp={}\n", .{self.sp});
             return ErrorList.StackOverflow;
@@ -141,7 +134,6 @@ pub const HIRStack = struct {
     }
 
     pub inline fn pop(self: *HIRStack) !HIRFrame {
-        // FAST MODE: Skip bounds check in release builds for maximum performance
         if (std.debug.runtime_safety and self.sp <= 0) {
             std.debug.print("Stack underflow: Attempted to pop at sp={}\n", .{self.sp});
             return ErrorList.StackUnderflow;
@@ -175,22 +167,19 @@ pub const HIRStack = struct {
     }
 };
 
-/// Call frame for function call stack management
 pub const CallFrame = struct {
-    return_ip: u32, // IP to return to after function call
-    function_name: []const u8, // For debugging
-    arg_count: u32 = 0, // Number of arguments to clean up from stack
-    saved_sp: i64, // Operand stack pointer before the call
+    return_ip: u32,
+    function_name: []const u8,
+    arg_count: u32 = 0,
+    saved_sp: i64,
 };
 
-/// Call stack for proper function return handling
 pub const CallStack = struct {
     frames: []CallFrame,
     sp: u32 = 0,
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) !CallStack {
-        // Start with reasonable size, will grow dynamically if needed
         const frames = try allocator.alloc(CallFrame, 1024);
         return CallStack{
             .frames = frames,
@@ -204,9 +193,8 @@ pub const CallStack = struct {
     }
 
     pub fn push(self: *CallStack, frame: CallFrame) !void {
-        // Grow the call stack dynamically if needed (like the old interpreter)
         if (self.sp >= self.frames.len) {
-            const new_size = self.frames.len * 2; // Double the size
+            const new_size = self.frames.len * 2;
             const new_frames = try self.allocator.realloc(self.frames, new_size);
             self.frames = new_frames;
         }

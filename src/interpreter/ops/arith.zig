@@ -6,7 +6,6 @@ const Errors = @import("../../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
 const ErrorCode = Errors.ErrorCode;
 
-// Execute the Arith instruction. Accepts the VM as `anytype` to avoid import cycles.
 pub fn exec(vm: anytype, a: anytype) !void {
     if (vm.stack.sp < 2) {
         return ErrorList.StackUnderflow;
@@ -14,15 +13,12 @@ pub fn exec(vm: anytype, a: anytype) !void {
     const right = try vm.stack.pop();
     const left = try vm.stack.pop();
 
-    // Handle array arithmetic first
     if (a.operand_type == .Array) {
         if (a.op == .Add) {
-            // Array concatenation
             switch (left.value) {
                 .array => |arr_a| {
                     switch (right.value) {
                         .array => |arr_b| {
-                            // Calculate lengths
                             var len_a: u32 = 0;
                             for (arr_a.elements) |elem| {
                                 if (std.meta.eql(elem, HIRValue.nothing)) break;
@@ -35,15 +31,12 @@ pub fn exec(vm: anytype, a: anytype) !void {
                                 len_b += 1;
                             }
 
-                            // Create new array with combined elements
                             const new_elements = try vm.allocator.alloc(HIRValue, len_a + len_b);
 
-                            // Copy elements from first array
                             for (0..len_a) |i| {
                                 new_elements[i] = arr_a.elements[i];
                             }
 
-                            // Copy elements from second array
                             for (0..len_b) |i| {
                                 new_elements[len_a + i] = arr_b.elements[i];
                             }
@@ -73,27 +66,23 @@ pub fn exec(vm: anytype, a: anytype) !void {
         }
     }
 
-    // Implement proper type promotion: float > int > byte
-    // Determine the highest type among operands
     const left_type_rank: u8 = switch (left.value) {
-        .float => 3, // highest
+        .float => 3,
         .int => 2,
-        .byte => 1, // lowest
+        .byte => 1,
         else => 0,
     };
 
     const right_type_rank: u8 = switch (right.value) {
-        .float => 3, // highest
+        .float => 3,
         .int => 2,
-        .byte => 1, // lowest
+        .byte => 1,
         else => 0,
     };
 
     const target_rank = @max(left_type_rank, right_type_rank);
 
-    // Perform arithmetic in the promoted type
     if (target_rank == 3) {
-        // Float arithmetic: promote both operands to float
         const left_float = switch (left.value) {
             .float => |f| f,
             .int => |i| @as(f64, @floatFromInt(i)),
@@ -128,9 +117,7 @@ pub fn exec(vm: anytype, a: anytype) !void {
         return;
     }
 
-    // This section is now handled by the type promotion logic above
     if (false) {
-        // Convert both operands to float and perform float arithmetic
         const left_float = switch (left.value) {
             .int => |i| @as(f64, @floatFromInt(i)),
             .byte => |u| @as(f64, @floatFromInt(u)),
@@ -181,7 +168,6 @@ pub fn exec(vm: anytype, a: anytype) !void {
         return;
     }
 
-    // Byte arithmetic: both operands are bytes (target_rank == 1)
     if (target_rank == 1) {
         const left_byte = switch (left.value) {
             .byte => |u| u,
@@ -195,7 +181,6 @@ pub fn exec(vm: anytype, a: anytype) !void {
 
         var byte_result: u8 = undefined;
         switch (a.op) {
-            // Saturating byte arithmetic (no wrap)
             .Add => {
                 const sum: u16 = @as(u16, left_byte) + @as(u16, right_byte);
                 byte_result = if (sum > 255) 255 else @intCast(sum);
@@ -215,7 +200,6 @@ pub fn exec(vm: anytype, a: anytype) !void {
             },
             .Mod => byte_result = @as(u8, @intCast(@mod(left_byte, right_byte))),
             .Pow => {
-                // Compute in wider type and clamp
                 const p: u32 = std.math.pow(u32, @as(u32, left_byte), @as(u32, right_byte));
                 byte_result = if (p > 255) 255 else @intCast(p);
             },
@@ -225,10 +209,9 @@ pub fn exec(vm: anytype, a: anytype) !void {
         return;
     }
 
-    // Integer arithmetic: promote both operands to int (target_rank == 2)
     const left_int = switch (left.value) {
         .int => |i| i,
-        .byte => |u| @as(i64, u), // Promote byte to int
+        .byte => |u| @as(i64, u),
         .tetra => |t| @as(i64, t),
         .string => |s| blk: {
             const parsed = std.fmt.parseInt(i64, s, 10) catch {
@@ -246,7 +229,7 @@ pub fn exec(vm: anytype, a: anytype) !void {
 
     const right_int = switch (right.value) {
         .int => |i| i,
-        .byte => |u| @as(i64, u), // Promote byte to int
+        .byte => |u| @as(i64, u),
         .tetra => |t| @as(i64, t),
         .string => |s| blk: {
             const parsed = std.fmt.parseInt(i64, s, 10) catch {
@@ -274,7 +257,6 @@ pub fn exec(vm: anytype, a: anytype) !void {
             return vm.reporter.reportRuntimeError(null, ErrorCode.ARITHMETIC_OVERFLOW, "Integer multiplication overflow", .{});
         },
         .Div => {
-            // Division always promotes to float
             const left_float = @as(f64, @floatFromInt(left_int));
             const right_float = @as(f64, @floatFromInt(right_int));
             if (right_float == 0.0) {
@@ -290,25 +272,11 @@ pub fn exec(vm: anytype, a: anytype) !void {
         },
     }
 
-    // Preserve the original type when possible
     if (left.value == .byte and right.value == .byte and int_result >= 0 and int_result <= 255) {
         try vm.stack.push(HIRFrame.initByte(@intCast(int_result)));
     } else {
         try vm.stack.push(HIRFrame.initInt(int_result));
     }
-}
-
-// Helpers kept close to arithmetic ops
-pub fn intAdd(_: anytype, a: i64, b: i64) !i64 {
-    return std.math.add(i64, a, b) catch |err| err;
-}
-
-pub fn intSub(_: anytype, a: i64, b: i64) !i64 {
-    return std.math.sub(i64, a, b) catch |err| err;
-}
-
-pub fn intMul(_: anytype, a: i64, b: i64) !i64 {
-    return std.math.mul(i64, a, b) catch |err| err;
 }
 
 pub fn intDiv(_: anytype, a: i64, b: i64) !i64 {
