@@ -12,10 +12,8 @@ const Parser = @import("core_parser.zig").Parser;
 pub fn arrayPush(self: *Parser, array: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     if (array == null) return error.ExpectedExpression;
 
-    // Parse the element to push
     const element = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
 
-    // Create the array push expression
     const push_expr = try self.allocator.create(ast.Expr);
     push_expr.* = .{
         .base = .{
@@ -52,7 +50,6 @@ pub fn arrayIsEmpty(self: *Parser, array: ?*ast.Expr, _: Precedence) ErrorList!?
 pub fn arrayPop(self: *Parser, array: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     if (array == null) return error.ExpectedExpression;
 
-    // Create the array pop expression
     const pop_expr = try self.allocator.create(ast.Expr);
     pop_expr.* = .{
         .base = .{
@@ -72,10 +69,8 @@ pub fn arrayPop(self: *Parser, array: ?*ast.Expr, _: Precedence) ErrorList!?*ast
 pub fn arrayConcat(self: *Parser, array: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     if (array == null) return error.ExpectedExpression;
 
-    // Parse the second array expression
     const array2 = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
 
-    // Don't consume the right paren here - let fieldAccess handle it
     const concat_expr = try self.allocator.create(ast.Expr);
     concat_expr.* = .{
         .base = .{
@@ -95,7 +90,6 @@ pub fn arrayConcat(self: *Parser, array: ?*ast.Expr, _: Precedence) ErrorList!?*
 pub fn arrayLength(self: *Parser, array: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     if (array == null) return error.ExpectedExpression;
 
-    // Create the array length expression
     const length_expr = try self.allocator.create(ast.Expr);
     length_expr.* = .{
         .base = .{

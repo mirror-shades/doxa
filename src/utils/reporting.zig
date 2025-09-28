@@ -95,10 +95,6 @@ pub const Reporter = struct {
         self.diagnostics.deinit();
     }
 
-    ////////
-    /// CORE REPORT FUNCTION
-    ////////
-
     pub fn report(
         self: *Reporter,
         phase: DiagnosticPhase,
@@ -258,10 +254,6 @@ pub const Reporter = struct {
         self.report(.Debug, .Hint, loc, code, fmt, args);
     }
 
-    ////////
-    /// PRINTING FUNCTIONS
-    ////////
-
     pub fn reportCompileError(self: *Reporter, loc: ?Location, code: ?[]const u8, comptime fmt: []const u8, args: anytype) void {
         self.report(.CompileTime, .Error, loc, code, fmt, args);
     }
@@ -288,7 +280,6 @@ pub const Reporter = struct {
     }
 
     pub fn reportInternal(self: *Reporter, comptime fmt: []const u8, args: anytype, comptime src: std.builtin.SourceLocation) void {
-        // Use the main reporting system for consistency
         const loc = Location{
             .file = src.file,
             .range = .{
@@ -301,10 +292,6 @@ pub const Reporter = struct {
 
         self.report(.Debug, .Hint, loc, null, fmt, args);
     }
-
-    ////////
-    /// HELPERS
-    ////////
 
     pub fn hasErrors(self: *Reporter) bool {
         for (self.diagnostics.items) |diag| {
@@ -338,10 +325,6 @@ pub const Reporter = struct {
         }
         return false;
     }
-
-    ////////
-    /// BATCHING (TODO:for eventual LSP support)
-    ///////
 
     pub fn reportBatch(self: *Reporter, diags: []const Diagnostic) void {
         _ = self;

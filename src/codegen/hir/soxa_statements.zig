@@ -72,16 +72,7 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                     .Byte => .Byte,
                     .Array => .Unknown,
                     .Union => blk: {
-                        if (decl.type_info.union_type) |ut| {
-                            const list = try self.collectUnionMemberNames(ut);
-
-                            try self.symbol_table.trackVariableUnionMembers(decl.name.lexeme, list);
-                            var maybe_index: ?u32 = null;
-                            maybe_index = self.symbol_table.getVariable(decl.name.lexeme);
-                            if (maybe_index) |var_index| {
-                                try self.symbol_table.trackVariableUnionMembersByIndex(var_index, list);
-                            }
-
+                        if (decl.type_info.union_type) |_| {
                             break :blk .Unknown;
                         }
                         break :blk .Nothing;
@@ -213,8 +204,6 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                                 else => "unknown",
                             };
                         }
-
-                        try self.symbol_table.trackVariableUnionMembers(decl.name.lexeme, member_names);
 
                         const var_index = try self.getOrCreateVariable(decl.name.lexeme);
                         try self.symbol_table.trackVariableUnionMembersByIndex(var_index, member_names);
@@ -350,14 +339,6 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                         .expected_type = var_type,
                     } });
                 }
-
-                if (self.current_function == null) {
-                    if (self.symbol_table.getUnionMembersByName(decl.name.lexeme)) |members0| {
-                        if (self.symbol_table.getVariable(decl.name.lexeme)) |idx| {
-                            try self.symbol_table.trackVariableUnionMembersByIndex(idx, members0);
-                        }
-                    }
-                }
             }
 
             try self.trackVariableType(decl.name.lexeme, var_type);
@@ -367,6 +348,14 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
             }
 
             const var_idx = try self.symbol_table.createVariable(decl.name.lexeme);
+
+            if (decl.type_info.base == .Union) {
+                if (decl.type_info.union_type) |ut| {
+                    const list = try self.collectUnionMemberNames(ut);
+                    try self.symbol_table.trackVariableUnionMembersByIndex(var_idx, list);
+                }
+            }
+
             if (self.current_function == null) {
                 try self.instructions.append(.Dup);
             }
@@ -395,12 +384,6 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                 } });
                 if (self.current_function == null) {
                     try self.instructions.append(.Pop);
-                }
-            }
-
-            if (decl.type_info.base == .Union) {
-                if (self.symbol_table.getUnionMembersByName(decl.name.lexeme)) |members_for_var| {
-                    _ = try self.symbol_table.trackVariableUnionMembersByIndex(var_idx, members_for_var);
                 }
             }
 

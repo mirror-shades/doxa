@@ -225,9 +225,9 @@ pub const Parser = struct {
             self.current = start_index_after_imports;
 
             if (self.tokens[start_index_after_imports].type == .MODULE) {
-                _ = try import_parser.parseModuleStmt(self); // Call for side-effects (loading/registration)
+                _ = try import_parser.parseModuleStmt(self);
             } else {
-                _ = try import_parser.parseImportStmt(self); // Call for side-effects (loading/registration)
+                _ = try import_parser.parseImportStmt(self);
             }
 
             start_index_after_imports = self.current;
@@ -261,7 +261,7 @@ pub const Parser = struct {
             switch (stmt_token_type) {
                 .VAR, .CONST => {
                     var decl = try declaration_parser.parseVarDecl(self);
-                    decl.data.VarDecl.is_public = is_public; // Apply modifier
+                    decl.data.VarDecl.is_public = is_public;
                     if (is_entry) {
                         return error.InvalidEntryPoint;
                     }
@@ -269,7 +269,7 @@ pub const Parser = struct {
                 },
                 .FUNCTION => {
                     var func = try declaration_parser.parseFunctionDecl(self);
-                    func.data.FunctionDecl.is_public = is_public; // Apply modifiers
+                    func.data.FunctionDecl.is_public = is_public;
                     func.data.FunctionDecl.is_entry = is_entry;
                     if (is_entry) {
                         if (self.entry_point_location != null) {
@@ -423,7 +423,6 @@ pub const Parser = struct {
                     if (brace_count == 0) break;
                 },
                 .RETURN => {
-                    // Check next token
                     if (pos + 1 < self.tokens.len) {
                         const next_token = self.tokens[pos + 1];
                         if (next_token.type != .NEWLINE) {
@@ -551,7 +550,7 @@ pub const Parser = struct {
                 self.advance();
 
                 if (self.peek().type != .IDENTIFIER) {
-                    self.current = start_pos; // Reset position
+                    self.current = start_pos;
                     return null;
                 }
 
@@ -559,7 +558,7 @@ pub const Parser = struct {
                 self.advance();
 
                 if (self.peek().type != .LEFT_BRACE) {
-                    self.current = start_pos; // Reset position
+                    self.current = start_pos;
                     return null;
                 }
 
@@ -704,7 +703,7 @@ pub const Parser = struct {
 
     pub fn index(self: *Parser, array_expr: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
         if (self.peek().type == .LEFT_BRACKET) {
-            self.advance(); // consume [
+            self.advance();
         }
 
         const index_expr = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
@@ -714,10 +713,10 @@ pub const Parser = struct {
             self.allocator.destroy(index_expr);
             return error.ExpectedRightBracket;
         }
-        self.advance(); // consume ]
+        self.advance();
 
         if (self.peek().type == .ASSIGN) {
-            self.advance(); // consume is
+            self.advance();
             const value = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
 
             const expr = try self.allocator.create(ast.Expr);
@@ -752,7 +751,7 @@ pub const Parser = struct {
         };
 
         if (self.peek().type == .LEFT_BRACKET) {
-            self.advance(); // consume [
+            self.advance();
             return self.index(expr, .NONE);
         }
 
@@ -825,7 +824,7 @@ pub const Parser = struct {
 
     pub fn fieldAccess(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
         if (self.peek().type == .DOT) {
-            self.advance(); // consume '.'
+            self.advance();
         }
 
         const current_token = self.peek();
@@ -840,7 +839,7 @@ pub const Parser = struct {
             return error.ExpectedIdentifier;
         }
 
-        self.advance(); // consume identifier
+        self.advance();
 
         const field_access = try self.allocator.create(ast.Expr);
         field_access.* = .{
@@ -857,7 +856,7 @@ pub const Parser = struct {
         };
 
         if (self.peek().type == .LEFT_BRACKET) {
-            self.advance(); // consume [
+            self.advance();
             return try self.index(field_access, .NONE);
         }
 
@@ -914,7 +913,7 @@ pub const Parser = struct {
         self.advance();
 
         var found_valid_variant = false;
-        var i: usize = 0; // Start from the beginning
+        var i: usize = 0;
         while (i < self.tokens.len) : (i += 1) {
             if (self.tokens[i].type == .ENUM_TYPE) {
                 i += 2;
@@ -1048,7 +1047,7 @@ pub const Parser = struct {
             .data = .{
                 .Block = .{
                     .statements = try statements.toOwnedSlice(),
-                    .value = null, // Last expression value
+                    .value = null,
                 },
             },
         };
@@ -1370,20 +1369,17 @@ pub const Parser = struct {
             .file = "",
         };
         if (self.peek().type == .LEFT_PAREN) {
-            self.advance(); // consume '('
+            self.advance();
 
             if (self.peek().type == .RIGHT_PAREN) {
-                // Empty parentheses => no prompt
-                self.advance(); // consume ')'
+                self.advance();
             } else if (self.peek().type == .STRING) {
                 prompt = self.peek();
-                self.advance(); // consume the string
-
-                // Expect closing parenthesis
+                self.advance();
                 if (self.peek().type != .RIGHT_PAREN) {
                     return error.ExpectedRightParen;
                 }
-                self.advance(); // consume ')'
+                self.advance();
             } else {
                 return error.ExpectedString;
             }
@@ -1401,7 +1397,6 @@ pub const Parser = struct {
             };
         }
 
-        // Create the input expression
         const input_expr = try self.allocator.create(ast.Expr);
         input_expr.* = .{
             .base = .{
@@ -1584,7 +1579,7 @@ pub const Parser = struct {
                                     .name = enum_decl.name.lexeme,
                                     .original_module = module_path,
                                 });
-                                return; // Found the symbol, we're done
+                                return;
                             }
                         },
                         .Expression => |maybe_expr| {
@@ -1593,13 +1588,12 @@ pub const Parser = struct {
                                     const struct_decl = expr.data.StructDecl;
                                     const is_public = struct_decl.is_public;
                                     if (is_public and std.mem.eql(u8, struct_decl.name.lexeme, symbol_name)) {
-                                        // Register the symbol directly (not with namespace prefix)
                                         try self.imported_symbols.?.put(symbol_name, .{
                                             .kind = .Struct,
                                             .name = struct_decl.name.lexeme,
                                             .original_module = module_path,
                                         });
-                                        return; // Found the symbol, we're done
+                                        return;
                                     }
                                 }
                             }

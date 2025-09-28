@@ -1,6 +1,5 @@
 const std = @import("std");
 
-/// VM OpCode enumeration - matches the opcodes used in your VM
 pub const OpCode = enum(u8) {
     // Core execution
     OP_HALT,
@@ -84,7 +83,6 @@ pub const OpCode = enum(u8) {
     OP_END_TRY,
 };
 
-/// Value types for the VM
 pub const ValueType = enum {
     INT,
     FLOAT,
@@ -96,7 +94,6 @@ pub const ValueType = enum {
     NOTHING,
 };
 
-/// Union for different value data types
 pub const ValueData = union(ValueType) {
     INT: void,
     FLOAT: void,
@@ -177,7 +174,6 @@ pub const Value = struct {
         if (self.type != .BOOL) return error.TypeError;
         return self.data.tetra;
     }
-
     /// Check if two values are equal
     pub fn equals(self: Value, other: Value) bool {
         if (self.nothing != other.nothing) return false;

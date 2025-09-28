@@ -433,6 +433,7 @@ pub const ErrorCode = struct {
     pub const INTERNAL_ERROR = "E8001";
     pub const NOT_IMPLEMENTED = "E8002";
     pub const PARSER_DID_NOT_ADVANCE = "E8003";
+    pub const STACK_UNDERFLOW = "E8004";
 
     // 9xxx - I/O Operations
     pub const INVALID_FILE_PATH_TYPE = "E9001";

@@ -7,30 +7,19 @@ const Errors = @import("../../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
 const debug_print = @import("../calls/print.zig");
 
-/// Execute type operations (TypeCheck, Convert, TypeOf)
 pub const TypeOps = struct {
-    /// Type checking for union types and as expressions
     pub fn execTypeCheck(vm: anytype, tc: anytype) !void {
         const value = try vm.stack.pop();
-
-        // Get the runtime type of the value
         const runtime_type = debug_print.getTypeString(vm, value.value);
-
-        // Compare with target type
         const type_match = std.mem.eql(u8, runtime_type, tc.target_type);
-
-        // Push result as tetra (1 for match, 0 for no match)
         try vm.stack.push(HIRFrame.initTetra(if (type_match) 1 else 0));
     }
 
-    /// Type conversion between different HIR types
     pub fn execConvert(vm: anytype, c: anytype) !void {
-        // Pop the value to convert, perform conversion, and push result
         const frame = try vm.stack.pop();
         var out: HIRValue = frame.value;
         switch (c.to_type) {
             .Float => {
-                // Convert ints/bytes to float; leave float as-is
                 out = switch (frame.value) {
                     .int => |i| HIRValue{ .float = @as(f64, @floatFromInt(i)) },
                     .byte => |u| HIRValue{ .float = @as(f64, @floatFromInt(u)) },
@@ -58,25 +47,17 @@ pub const TypeOps = struct {
                 };
             },
             else => {
-                // Other conversions not needed for current arithmetic paths
                 out = frame.value;
             },
         }
-
         try vm.stack.push(HIRFrame.initFromHIRValue(out));
     }
 
-    /// Type reflection operation - returns the type of the top stack value
     pub fn execTypeOf(vm: anytype, t: anytype) !void {
-        _ = t; // We don't need the type parameter for this operation
+        _ = t;
 
-        // Pop the value from the stack
         const value = try vm.stack.pop();
-
-        // Get the runtime type string
         const type_string = debug_print.getTypeString(vm, value.value);
-
-        // Push the type string back to the stack
         try vm.stack.push(HIRFrame.initString(type_string));
     }
 };

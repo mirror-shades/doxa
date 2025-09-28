@@ -15,39 +15,31 @@ const declaration_parser = @import("./declaration_parser.zig");
 const ErrorCode = @import("../utils/errors.zig").ErrorCode;
 
 pub fn parseEnumDecl(self: *Parser) ErrorList!ast.Stmt {
-    // Check for public keyword
     var is_public = false;
     if (self.peek().type == .PUBLIC) {
         is_public = true;
-        self.advance(); // consume 'public'
+        self.advance();
     }
 
-    // Consume 'enum' keyword
     self.advance();
 
-    // Parse enum name
     if (self.peek().type != .IDENTIFIER) {
         return error.ExpectedIdentifier;
     }
     const name = self.peek();
 
-    // Register the enum type name before advancing
     try self.declared_types.put(name.lexeme, {});
 
     self.advance();
-
-    // Expect opening brace
     if (self.peek().type != .LEFT_BRACE) {
         return error.ExpectedLeftBrace;
     }
     self.advance();
 
-    // Parse variants
     var variants = std.array_list.Managed(token.Token).init(self.allocator);
     errdefer variants.deinit();
 
     while (self.peek().type != .RIGHT_BRACE) {
-        // Allow blank lines between variants
         if (self.peek().type == .NEWLINE) {
             self.advance();
             continue;
@@ -58,12 +50,10 @@ pub fn parseEnumDecl(self: *Parser) ErrorList!ast.Stmt {
         const variant_token = self.peek();
         try variants.append(variant_token);
 
-        // Register each enum variant in declared_types for type resolution
         try self.declared_types.put(variant_token.lexeme, {});
 
         self.advance();
 
-        // Optional separator: comma and/or newline(s)
         if (self.peek().type == .COMMA) {
             self.advance();
         }
@@ -71,9 +61,8 @@ pub fn parseEnumDecl(self: *Parser) ErrorList!ast.Stmt {
             self.advance();
         }
     }
-    self.advance(); // consume right brace
+    self.advance();
 
-    // Create source span from name token to closing brace
     const span = ast.SourceSpan{
         .location = .{
             .file = name.file,
@@ -105,30 +94,25 @@ pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*
     var is_public = false;
     if (self.peek().type == .PUBLIC) {
         is_public = true;
-        self.advance(); // consume 'public'
+        self.advance();
     }
 
-    // Consume 'struct' keyword
     self.advance();
 
-    // Parse struct name
     if (self.peek().type != .IDENTIFIER) {
         return error.ExpectedIdentifier;
     }
     const name = self.peek();
 
-    // Register the struct type name before advancing
     try self.declared_types.put(name.lexeme, {});
 
-    self.advance(); // Now advance past the identifier
+    self.advance();
 
-    // Expect opening brace
     if (self.peek().type != .LEFT_BRACE) {
         return error.ExpectedLeftBrace;
     }
     self.advance();
 
-    // Parse fields and methods
     var fields = std.array_list.Managed(*ast.StructField).init(self.allocator);
     var methods = std.array_list.Managed(*ast.StructMethod).init(self.allocator);
     errdefer {
@@ -145,34 +129,26 @@ pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*
     }
 
     while (self.peek().type != .RIGHT_BRACE) {
-        // Allow blank lines between members
         while (self.peek().type == .NEWLINE) self.advance();
 
-        // Check for public keyword
         var is_public_method = false;
         if (self.peek().type == .PUBLIC) {
             is_public_method = true;
-            self.advance(); // consume 'pub'
+            self.advance();
         }
 
-        // Check if this is a function/method or a field
-
         if (self.peek().type == .METHOD or self.peek().type == .FUNCTION) {
-            // Parse method or function
             const is_function = self.peek().type == .FUNCTION;
-            self.advance(); // consume 'method' or 'function'
+            self.advance();
 
-            // Parse method/function name
             if (self.peek().type != .IDENTIFIER) {
                 return error.ExpectedIdentifier;
             }
             const method_name = self.peek();
             self.advance();
 
-            // Functions are always static, methods are always instance
             const method_is_static: bool = is_function;
 
-            // Parse parameters
             var params = std.array_list.Managed(ast.FunctionParam).init(self.allocator);
             errdefer {
                 for (params.items) |*param| {
@@ -182,23 +158,20 @@ pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*
             }
 
             if (self.peek().type == .LEFT_PAREN) {
-                self.advance(); // consume '('
+                self.advance();
 
                 while (self.peek().type != .RIGHT_PAREN) {
-                    // Allow blank lines between parameters
                     while (self.peek().type == .NEWLINE) self.advance();
 
-                    // Parse parameter name
                     if (self.peek().type != .IDENTIFIER) {
                         return error.ExpectedIdentifier;
                     }
                     const param_name = self.peek();
                     self.advance();
 
-                    // Parse parameter type
                     var param_type: ?*ast.TypeExpr = null;
                     if (self.peek().type == .TYPE_SYMBOL) {
-                        self.advance(); // consume '::'
+                        self.advance();
                         param_type = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
                     }
 
@@ -210,19 +183,17 @@ pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*
                     };
                     try params.append(param);
 
-                    // Handle parameter separators
                     if (self.peek().type == .COMMA) {
                         self.advance();
                     }
                     while (self.peek().type == .NEWLINE) self.advance();
                 }
-                self.advance(); // consume ')'
+                self.advance();
             }
 
-            // Parse return type (optional)
             var return_type_info = ast.TypeInfo{ .base = .Nothing };
             if (self.peek().type == .RETURNS) {
-                self.advance(); // consume 'returns'
+                self.advance();
                 const return_type_expr = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
                 const return_type_ptr = try ast.typeInfoFromExpr(self.allocator, return_type_expr);
                 return_type_info = return_type_ptr.*;
@@ -231,11 +202,10 @@ pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*
 
             while (self.peek().type == .NEWLINE) self.advance();
 
-            // Parse method body
             if (self.peek().type != .LEFT_BRACE) {
                 return error.ExpectedLeftBrace;
             }
-            self.advance(); // consume '{'
+            self.advance();
 
             var body = std.array_list.Managed(ast.Stmt).init(self.allocator);
             errdefer {
@@ -250,9 +220,8 @@ pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*
                 const stmt = try statement_parser.parseStatement(self);
                 try body.append(stmt);
             }
-            self.advance(); // consume '}'
+            self.advance();
 
-            // Create method
             const method = try self.allocator.create(ast.StructMethod);
             method.* = .{
                 .name = method_name,
@@ -264,23 +233,19 @@ pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*
             };
             try methods.append(method);
         } else {
-            // Parse field
             if (self.peek().type != .IDENTIFIER) {
                 return error.ExpectedIdentifier;
             }
             const field_name = self.peek();
             self.advance();
 
-            // Expect ::
             if (self.peek().type != .TYPE_SYMBOL) {
                 return error.ExpectedTypeAnnotation;
             }
             self.advance();
 
-            // Parse field type
             const type_expr = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
 
-            // Create field
             const field = try self.allocator.create(ast.StructField);
             field.* = .{
                 .name = field_name,
@@ -290,16 +255,14 @@ pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*
             try fields.append(field);
         }
 
-        // Handle separators: comma and/or newline(s)
         if (self.peek().type == .COMMA) {
             self.advance();
         }
         while (self.peek().type == .NEWLINE) self.advance();
     }
 
-    self.advance(); // consume right brace
+    self.advance();
 
-    // Create source span from name token to closing brace
     const span = ast.SourceSpan{
         .location = .{
             .file = name.file,
@@ -335,51 +298,43 @@ pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
     var is_entry = false;
     var is_public = false;
 
-    // Check for public keyword
     if (self.peek().type == .PUBLIC) {
         is_public = true;
-        self.advance(); // consume 'public'
+        self.advance();
     }
 
-    // Check for entry point marker
     if (self.peek().type == .ENTRY) {
         is_entry = true;
 
-        // Check if we already have an entry point
         if (self.has_entry_point) {
             return error.MultipleEntryPoints;
         }
 
         self.has_entry_point = true;
         self.entry_point_location = self.peek();
-        self.advance(); // consume entry
+        self.advance();
     }
 
-    // Expect function keyword
     if (self.peek().type != .FUNCTION) {
         return error.ExpectedFunction;
     }
-    self.advance(); // consume function keyword
+    self.advance();
 
-    // Parse function name
     if (self.peek().type != .IDENTIFIER) {
         return error.ExpectedIdentifier;
     }
     const function_name = self.peek();
-    self.advance(); // consume function name
+    self.advance();
 
-    // If this is an entry point, store the function name
     if (is_entry) {
         self.entry_point_name = function_name.lexeme;
     }
 
-    // Parse parameter list
     if (self.peek().type != .LEFT_PAREN) {
         return error.ExpectedLeftParen;
     }
-    self.advance(); // consume '('
+    self.advance();
 
-    // Parse parameters
     var params = std.array_list.Managed(ast.FunctionParam).init(self.allocator);
     errdefer params.deinit();
 
@@ -387,27 +342,25 @@ pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
         while (true) {
             var is_alias = false;
             if (self.peek().type == .CARET) {
-                self.advance(); // consume '^'
+                self.advance();
                 is_alias = true;
             }
             if (self.peek().type != .IDENTIFIER) {
                 return error.ExpectedIdentifier;
             }
             const param_name = self.peek();
-            self.advance(); // consume parameter name
+            self.advance();
 
-            // Parse type annotation
             if (self.peek().type != .TYPE_SYMBOL) {
                 return error.ExpectedTypeAnnotation;
             }
-            self.advance(); // consume ::
+            self.advance();
 
             const type_expr = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
 
-            // Parse default value if present
             var default_value: ?*ast.Expr = null;
             if (self.peek().type == .ASSIGN) {
-                self.advance(); // consume 'is'
+                self.advance();
                 default_value = try expression_parser.parseExpression(self);
             }
 
@@ -422,27 +375,25 @@ pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
             if (self.peek().type != .COMMA) {
                 return error.ExpectedCommaOrParen;
             }
-            self.advance(); // consume comma
+            self.advance();
         }
     }
-    self.advance(); // consume ')'
+    self.advance();
 
-    // Parse return type if present
-    var return_type = ast.TypeInfo{ .base = .Nothing }; // Default to Nothing type
+    var return_type = ast.TypeInfo{ .base = .Nothing };
     if (self.peek().type == .RETURNS) {
-        self.advance(); // consume '->'
+        self.advance();
 
         const type_expr = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
         const type_info_ptr = try ast.typeInfoFromExpr(self.allocator, type_expr);
         return_type = type_info_ptr.*;
-        self.allocator.destroy(type_info_ptr); // Free the pointer since we copied the struct
+        self.allocator.destroy(type_info_ptr);
     }
 
-    // Parse function body
     if (self.peek().type != .LEFT_BRACE) {
         return error.ExpectedLeftBrace;
     }
-    self.advance(); // consume '{'
+    self.advance();
 
     var body_statements = std.array_list.Managed(ast.Stmt).init(self.allocator);
     errdefer {
@@ -460,7 +411,7 @@ pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
     if (self.peek().type != .RIGHT_BRACE) {
         return error.ExpectedRightBrace;
     }
-    self.advance(); // consume '}'
+    self.advance();
 
     return ast.Stmt{
         .base = .{
@@ -485,33 +436,28 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
         (self.previous().type == .PUBLIC and
             (self.peek().type == .VAR or self.peek().type == .CONST));
     var is_const = false;
-    // Check if this is a var or const declaration
     if (self.peek().type == .VAR or self.peek().type == .CONST) {
         is_const = self.peek().type == .CONST;
-        self.advance(); // consume 'var' or 'const'
+        self.advance();
     } else {
         return error.ExpectedVarOrConst;
     }
 
-    // Initialize with default Nothing type
     var type_info = ast.TypeInfo{ .base = .Nothing, .is_mutable = !is_const };
 
-    // Check for explicit type annotation
     if (self.peek().type == .TYPE_SYMBOL) {
-        self.advance(); // consume ::
+        self.advance();
         const type_expr = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
         const type_info_ptr = try ast.typeInfoFromExpr(self.allocator, type_expr);
         type_info = type_info_ptr.*;
-        self.allocator.destroy(type_info_ptr); // Free the pointer since we copied the struct
-        type_info.is_mutable = !is_const; // Preserve mutability
+        self.allocator.destroy(type_info_ptr);
+        type_info.is_mutable = !is_const;
     }
 
-    // Special handling for array type declarations
     if (self.peek().type == .ARRAY_TYPE) {
         type_info.base = .Array;
-        self.advance(); // consume 'array'
+        self.advance();
 
-        // Create implicit name for array
         const name = token.Token.initWithFile(.IDENTIFIER, "array", .{ .nothing = {} }, 0, 0, self.current_file);
 
         var initializer: ?*ast.Expr = null;
@@ -555,43 +501,32 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
         };
     }
 
-    // Special-case: map type declaration with inline initializer using 'map' keyword
     if (self.peek().type == .MAP_TYPE) {
-        self.advance(); // consume 'map'
+        self.advance();
 
-        // Expect identifier for variable name
         if (self.peek().type != .IDENTIFIER) return error.ExpectedIdentifier;
         const map_name = self.peek();
         self.advance();
 
-        // Optional explicit type annotation: ':: KeyType returns ValueType' or 'returns ValueType'
         if (self.peek().type == .TYPE_SYMBOL) {
-            // For Phase 1 we accept and skip parsing of explicit map types to unblock syntax
-            // Future phases will build full TypeInfo for maps
-            self.advance(); // consume '::'
-            // Consume key type expression (best-effort)
+            self.advance();
             _ = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
-            // Optional 'returns' value type
             if (self.peek().type == .RETURNS) {
                 self.advance();
                 _ = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
             }
         } else if (self.peek().type == .RETURNS) {
-            // Handle 'returns ValueType' without key type annotation
-            self.advance(); // consume 'returns'
+            self.advance();
             _ = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
         }
 
-        // Expect initializer block: '{ ... }'
         if (self.peek().type != .LEFT_BRACE) return error.ExpectedLeftBrace;
-        self.advance(); // consume '{'
+        self.advance();
         const map_expr = try self.parseMap() orelse return error.ExpectedExpression;
 
-        // Defer type inference to semantic phase; only set mutability here
         var inferred: ast.TypeInfo = .{ .base = .Nothing };
         inferred.is_mutable = !is_const;
 
-        // Optional newline
         if (self.peek().type == .NEWLINE) self.advance();
 
         return ast.Stmt{
@@ -600,7 +535,6 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
         };
     }
 
-    // Original variable declaration parsing logic
     const name = if (self.peek().type != .IDENTIFIER) {
         return error.ExpectedIdentifier;
     } else blk: {
@@ -623,39 +557,29 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
         return error.ExpectedTypeAnnotation;
     }
 
-    // Handle type annotation (only if not already parsed above)
     if (self.peek().type == .TYPE_SYMBOL and type_info.base == .Nothing) {
-        self.advance(); // consume ::
+        self.advance();
 
-        // Always delegate to parseTypeExpr which already supports unions (int | float | ...)
         const type_expr = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
 
-        // Convert TypeExpr to TypeInfo (handles basic, arrays, structs, unions, etc.)
         const type_info_ptr = try ast.typeInfoFromExpr(self.allocator, type_expr);
         type_info = type_info_ptr.*;
-        self.allocator.destroy(type_info_ptr); // Free the pointer since we copied the struct
+        self.allocator.destroy(type_info_ptr);
 
-        // Preserve mutability from our original declaration
         type_info.is_mutable = !is_const;
     }
 
     var initializer: ?*ast.Expr = null;
 
-    // Check if the next token is INPUT, which is a special case
     if (self.peek().type == .INPUT) {
-
-        // Handle input expression directly without requiring an assignment operator
         initializer = try Parser.input(self, null, .NONE);
         if (initializer == null) return error.ExpectedExpression;
     } else if (self.peek().type == .ASSIGN) {
         self.advance();
 
-        // Parse regular initializer expression
         if (self.peek().type == .INPUT) {
-            // Handle input expression
             initializer = try Parser.input(self, null, .NONE);
         } else if (self.peek().type == .IDENTIFIER) {
-            // Try struct initialization
             if (try Parser.parseStructInit(self)) |struct_init| {
                 initializer = struct_init;
             } else {
@@ -670,7 +594,6 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
         }
     }
 
-    // Validate that const declarations must have initializers
     if (is_const and initializer == null) {
         const location = Location{
             .file = self.current_file,
@@ -685,12 +608,10 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
         return error.ConstMustHaveInitializer;
     }
 
-    // Make newlines optional - consume if present, but don't require them
     if (self.peek().type == .NEWLINE) {
-        self.advance(); // Consume the newline if present
+        self.advance();
     }
 
-    // CRITICAL: Reject variable declarations with no type annotation and no initializer
     if (type_info.base == .Nothing and initializer == null) {
         const location = Location{
             .file = self.current_file,
@@ -701,17 +622,17 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
                 .end_col = name.column,
             },
         };
-        self.reporter.reportCompileError(location, ErrorCode.EXPECTED_TYPE_ANNOTATION, "Expected type annotation", .{});
+        self.reporter.reportCompileError(
+            location,
+            ErrorCode.EXPECTED_TYPE_ANNOTATION,
+            "Expected type annotation",
+            .{},
+        );
         return error.ExpectedTypeAnnotationOrInitializer;
     }
 
-    // Handle type inference (defer union member resolution to semantic analysis)
-    if (type_info.base == .Union and initializer != null) {
-        // Do not attempt to resolve which union member at parse time; semantic analysis will handle it.
-    } else if (type_info.base == .Nothing and initializer != null) {
-        // infer type from initializer for non-union types
+    if (type_info.base == .Union and initializer != null) {} else if (type_info.base == .Nothing and initializer != null) {
         const inferred_type = try expression_parser.inferType(initializer.?);
-        // Preserve mutability from the original declaration (var vs const)
         const original_mutability = type_info.is_mutable;
         type_info = inferred_type;
         type_info.is_mutable = original_mutability;
@@ -737,7 +658,6 @@ pub fn enumDeclPrefix(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*a
     const enum_stmt = try declaration_parser.parseEnumDecl(self);
     const expr = try self.allocator.create(ast.Expr);
 
-    // Create a mutable copy of the variants array
     const variants = try self.allocator.alloc(token.Token, enum_stmt.data.EnumDecl.variants.len);
     @memcpy(variants, enum_stmt.data.EnumDecl.variants);
 

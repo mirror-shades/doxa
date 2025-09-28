@@ -9,7 +9,6 @@ const Errors = @import("../../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
 const ErrorCode = Errors.ErrorCode;
 
-// Execute array operations. Accepts the VM as `anytype` to avoid import cycles.
 pub fn exec(vm: anytype, instruction: anytype) !void {
     if (@hasField(@TypeOf(instruction), "ArrayNew")) {
         try arrayNew(vm, instruction.ArrayNew);
@@ -36,28 +35,24 @@ pub fn exec(vm: anytype, instruction: anytype) !void {
     } else if (@hasField(@TypeOf(instruction), "ArrayGetAndAdd")) {
         try arrayGetAndAdd(vm, instruction.ArrayGetAndAdd);
     } else if (@hasField(@TypeOf(instruction), "ArrayGetAndSub")) {
-        try arrayGetAndSub(vm, instruction.ArrayGetAndSub);
+        return vm.reporter.reportRuntimeError(null, ErrorCode.NOT_IMPLEMENTED, "ArrayGetAndSub is not implemented", .{});
     } else if (@hasField(@TypeOf(instruction), "ArrayGetAndMul")) {
-        try arrayGetAndMul(vm, instruction.ArrayGetAndMul);
+        return vm.reporter.reportRuntimeError(null, ErrorCode.NOT_IMPLEMENTED, "ArrayGetAndMul is not implemented", .{});
     } else if (@hasField(@TypeOf(instruction), "ArrayGetAndDiv")) {
-        try arrayGetAndDiv(vm, instruction.ArrayGetAndDiv);
+        return vm.reporter.reportRuntimeError(null, ErrorCode.NOT_IMPLEMENTED, "ArrayGetAndDiv is not implemented", .{});
     } else if (@hasField(@TypeOf(instruction), "ArrayGetAndMod")) {
-        try arrayGetAndMod(vm, instruction.ArrayGetAndMod);
+        return vm.reporter.reportRuntimeError(null, ErrorCode.NOT_IMPLEMENTED, "ArrayGetAndMod is not implemented", .{});
     } else if (@hasField(@TypeOf(instruction), "ArrayGetAndPow")) {
-        try arrayGetAndPow(vm, instruction.ArrayGetAndPow);
+        return vm.reporter.reportRuntimeError(null, ErrorCode.NOT_IMPLEMENTED, "ArrayGetAndPow is not implemented", .{});
     } else {
         unreachable;
     }
 }
 
-/// Create new array with specified size
 fn arrayNew(vm: anytype, a: anytype) !void {
-
-    // CRITICAL FIX: For empty arrays (size=0), allocate minimum capacity for growth
-    const initial_capacity = if (a.size == 0) 8 else a.size; // Start with capacity 8 for empty arrays
+    const initial_capacity = if (a.size == 0) 8 else a.size;
     const elements = try vm.allocator.alloc(HIRValue, initial_capacity);
 
-    // Initialize elements: first 'size' with type default, remainder with 'nothing'
     const default_value = getDefaultValue(a.element_type);
 
     var i: usize = 0;
@@ -80,24 +75,22 @@ fn arrayNew(vm: anytype, a: anytype) !void {
     try vm.stack.push(HIRFrame.initFromHIRValue(new_array));
 }
 
-/// Get array element by index: array[index]
 fn arrayGet(vm: anytype, a: anytype) !void {
     if (vm.stack.sp < 2) {
         return ErrorList.StackUnderflow;
     }
-    const index = try vm.stack.pop(); // Index
-    const array = try vm.stack.pop(); // Array
+    const index = try vm.stack.pop();
+    const array = try vm.stack.pop();
 
     const index_val = switch (index.value) {
         .int => |i| if (i < 0) {
             return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index cannot be negative: {}", .{i});
         } else @as(u32, @intCast(i)),
         .byte => |u| @as(u32, u),
-        .tetra => |t| @as(u32, t), // Allow tetra values as indices
+        .tetra => |t| @as(u32, t),
         .string => |s| blk: {
-            // GRACEFUL: Try to parse string as integer
             const parsed = std.fmt.parseInt(i64, s, 10) catch {
-                try vm.stack.push(array); // Push original array back
+                try vm.stack.push(array);
                 return;
             };
             if (parsed < 0) {
@@ -106,7 +99,6 @@ fn arrayGet(vm: anytype, a: anytype) !void {
             break :blk @as(u32, @intCast(parsed));
         },
         .array => |arr| blk: {
-            // Handle array as index - use first element if it's an integer
             if (arr.elements.len > 0) {
                 break :blk switch (arr.elements[0]) {
                     .int => |i| if (i < 0) {
@@ -115,28 +107,27 @@ fn arrayGet(vm: anytype, a: anytype) !void {
                     .byte => |u| @as(u32, u),
                     .tetra => |t| @as(u32, t),
                     else => {
-                        try vm.stack.push(array); // Push original array back
+                        try vm.stack.push(array);
                         return;
                     },
                 };
             } else {
-                try vm.stack.push(array); // Push original array back
+                try vm.stack.push(array);
                 return;
             }
         },
         .nothing => {
-            try vm.stack.push(array); // Push original array back
+            try vm.stack.push(array);
             return;
         },
         else => {
-            try vm.stack.push(array); // Push original array back
+            try vm.stack.push(array);
             return;
         },
     };
 
     switch (array.value) {
         .array => |arr| {
-            // Calculate actual length (stop at first nothing element)
             var actual_length: u32 = 0;
             for (arr.elements) |elem| {
                 if (std.meta.eql(elem, HIRValue.nothing)) break;
@@ -147,10 +138,8 @@ fn arrayGet(vm: anytype, a: anytype) !void {
                 return ErrorList.IndexOutOfBounds;
             }
 
-            // Get the element (or default value if out of bounds)
             const element = if (index_val < actual_length) arr.elements[index_val] else getDefaultValue(arr.element_type);
 
-            // Special case: if the element is nothing but we have a valid element type, return default
             if (std.meta.eql(element, HIRValue.nothing) and arr.element_type != .Nothing and arr.element_type != .Unknown) {
                 try vm.stack.push(HIRFrame.initFromHIRValue(getDefaultValue(arr.element_type)));
                 return;
@@ -158,7 +147,6 @@ fn arrayGet(vm: anytype, a: anytype) !void {
             try vm.stack.push(HIRFrame.initFromHIRValue(element));
         },
         .string => |s| {
-            // GRACEFUL: Allow string indexing (return character as string)
             if (index_val >= s.len) {
                 try vm.stack.push(HIRFrame.initFromHIRValue(HIRValue.nothing));
                 return;
@@ -167,7 +155,6 @@ fn arrayGet(vm: anytype, a: anytype) !void {
             try vm.stack.push(HIRFrame.initFromHIRValue(HIRValue{ .string = char_str }));
         },
         .nothing => {
-            // GRACEFUL: Treat 'nothing' as empty array - any index returns nothing
             try vm.stack.push(HIRFrame.initFromHIRValue(HIRValue.nothing));
         },
         else => {
@@ -176,16 +163,14 @@ fn arrayGet(vm: anytype, a: anytype) !void {
     }
 }
 
-/// Set array element by index
 fn arraySet(vm: anytype, a: anytype) !void {
     _ = a;
     if (vm.stack.sp < 3) {
         return ErrorList.StackUnderflow;
     }
-    // Stack order (top to bottom): value, index, array
-    const value = try vm.stack.pop(); // Value to set
-    const index = try vm.stack.pop(); // Index
-    const array_frame = try vm.stack.pop(); // Array
+    const value = try vm.stack.pop();
+    const index = try vm.stack.pop();
+    const array_frame = try vm.stack.pop();
 
     const index_val = switch (index.value) {
         .int => |i| if (i < 0) {
@@ -213,26 +198,21 @@ fn arraySet(vm: anytype, a: anytype) !void {
 
     switch (array_frame.value) {
         .array => |arr| {
-            // Create a mutable copy of the array
             var mutable_arr = arr;
 
-            // Ensure we have enough capacity
             if (index_val >= mutable_arr.capacity) {
                 const new_capacity = @max(mutable_arr.capacity * 2, index_val + 1);
                 const new_elements = try vm.allocator.realloc(mutable_arr.elements, new_capacity);
                 mutable_arr.elements = new_elements;
                 mutable_arr.capacity = new_capacity;
 
-                // Initialize new elements with nothing
                 for (mutable_arr.elements[arr.capacity..new_capacity]) |*element| {
                     element.* = HIRValue.nothing;
                 }
             }
 
-            // Set the element
             mutable_arr.elements[index_val] = value.value;
 
-            // Update the array in the frame
             const updated_array = HIRValue{ .array = mutable_arr };
             try vm.stack.push(HIRFrame.initFromHIRValue(updated_array));
         },
@@ -242,23 +222,18 @@ fn arraySet(vm: anytype, a: anytype) !void {
     }
 }
 
-/// Push element to end of array
 fn arrayPush(vm: anytype) !void {
     const value = try vm.stack.pop();
     try handleArrayPush(vm, value.value);
 }
 
-/// Pop element from end of array
 fn arrayPop(vm: anytype) !void {
-    // Pop element from end of array
     const array = try vm.stack.pop();
 
     switch (array.value) {
         .array => |arr| {
-            // Create a mutable copy of the array
             var mutable_arr = arr;
 
-            // Find the last non-nothing element
             var last_index: ?u32 = null;
             for (arr.elements, 0..) |elem, i| {
                 if (std.meta.eql(elem, HIRValue.nothing)) break;
@@ -266,52 +241,41 @@ fn arrayPop(vm: anytype) !void {
             }
 
             if (last_index) |idx| {
-                // Get the last element
                 const last_element = arr.elements[idx];
 
-                // Set that position to nothing
                 mutable_arr.elements[idx] = HIRValue.nothing;
 
-                // Push the updated array back first (like original VM)
                 const updated_array = HIRValue{ .array = mutable_arr };
                 try vm.stack.push(HIRFrame.initFromHIRValue(updated_array));
 
-                // Then push the popped element
                 try vm.stack.push(HIRFrame.initFromHIRValue(last_element));
             } else {
-                // Array is empty, return error like original VM
                 return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot pop from empty array", .{});
             }
         },
         .string => |s_val| {
-            // GRACEFUL: Handle string pop (delegate to string operations)
             if (s_val.len == 0) {
                 return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot pop from empty string", .{});
             }
 
-            // Find the start of the last UTF-8 character
             var last_char_start: usize = s_val.len;
             var i: usize = s_val.len;
             while (i > 0) {
                 i -= 1;
                 const byte = s_val[i];
-                // Check if this is the start of a UTF-8 sequence
                 if ((byte & 0x80) == 0) {
-                    // ASCII character
                     last_char_start = i;
                     break;
                 } else if ((byte & 0xC0) == 0xC0) {
-                    // Start of a multi-byte sequence
+                    // this is to handle multi-byte sequences
                     last_char_start = i;
                     break;
                 }
-                // Otherwise, this is a continuation byte, keep going
             }
 
             const last_char = s_val[last_char_start..s_val.len];
             const remaining = s_val[0..last_char_start];
 
-            // Push updated string first, then popped char to mirror ArrayPop order
             try vm.stack.push(HIRFrame.initString(remaining));
             try vm.stack.push(HIRFrame.initString(last_char));
         },
@@ -341,7 +305,6 @@ fn arrayInsert(vm: anytype) !void {
     const index_frame = try vm.stack.pop();
     const container = try vm.stack.pop();
 
-    // Coerce/validate index - use same pattern as arrayGet/arraySet
     const index_val = switch (index_frame.value) {
         .int => |i| if (i < 0) {
             return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index cannot be negative: {}", .{i});
@@ -358,7 +321,7 @@ fn arrayInsert(vm: anytype) !void {
             break :blk @as(u32, @intCast(parsed));
         },
         .nothing => {
-            try vm.stack.push(container); // Push original array back
+            try vm.stack.push(container);
             return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index cannot be nothing", .{});
         },
         else => {
@@ -368,7 +331,6 @@ fn arrayInsert(vm: anytype) !void {
 
     switch (container.value) {
         .array => |arr| {
-            // Determine logical length
             var logical_len: u32 = 0;
             for (arr.elements) |elem| {
                 if (std.meta.eql(elem, HIRValue.nothing)) break;
@@ -381,7 +343,6 @@ fn arrayInsert(vm: anytype) !void {
 
             var mutable_arr = arr;
 
-            // Infer element type if unknown
             if (mutable_arr.element_type == .Unknown or mutable_arr.element_type == .Nothing) {
                 mutable_arr.element_type = switch (value.value) {
                     .int => .Int,
@@ -395,17 +356,14 @@ fn arrayInsert(vm: anytype) !void {
                 };
             }
 
-            // Ensure capacity for one more element
             if (logical_len >= mutable_arr.capacity) {
                 const new_capacity = @max(mutable_arr.capacity * 2, logical_len + 1);
                 const new_elements = try vm.allocator.realloc(mutable_arr.elements, new_capacity);
-                // Initialize new tail with nothing
                 for (new_elements[mutable_arr.capacity..new_capacity]) |*e| e.* = HIRValue.nothing;
                 mutable_arr.elements = new_elements;
                 mutable_arr.capacity = new_capacity;
             }
 
-            // Shift right from end to index
             var i: i32 = @as(i32, @intCast(logical_len));
             while (i >= @as(i32, @intCast(index_val))) : (i -= 1) {
                 const from_idx: usize = @intCast(i);
@@ -413,10 +371,8 @@ fn arrayInsert(vm: anytype) !void {
                 mutable_arr.elements[to_idx] = if (from_idx < mutable_arr.capacity) mutable_arr.elements[from_idx] else HIRValue.nothing;
             }
 
-            // Insert value
             mutable_arr.elements[index_val] = value.value;
 
-            // Push updated container
             try vm.stack.push(HIRFrame.initFromHIRValue(HIRValue{ .array = mutable_arr }));
         },
         .string => |s| {
@@ -447,7 +403,6 @@ fn arrayRemove(vm: anytype) !void {
     const index_frame = try vm.stack.pop();
     const container = try vm.stack.pop();
 
-    // Coerce/validate index - use same pattern as arrayGet/arraySet
     const index_val = switch (index_frame.value) {
         .int => |i| if (i < 0) {
             return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index cannot be negative: {}", .{i});
@@ -484,12 +439,10 @@ fn arrayRemove(vm: anytype) !void {
             }
             var mutable_arr = arr;
             const removed_elem = mutable_arr.elements[index_val];
-            // Shift left from index+1 to end
             var i: u32 = index_val;
             while (i + 1 < mutable_arr.capacity and i + 1 < logical_len) : (i += 1) {
                 mutable_arr.elements[i] = mutable_arr.elements[i + 1];
             }
-            // Set new last occupied to nothing
             mutable_arr.elements[logical_len - 1] = HIRValue.nothing;
 
             try vm.stack.push(HIRFrame.initFromHIRValue(HIRValue{ .array = mutable_arr }));
@@ -514,13 +467,11 @@ fn arrayRemove(vm: anytype) !void {
     }
 }
 
-/// Slice array or string
 fn arraySlice(vm: anytype) !void {
     const length_frame = try vm.stack.pop();
     const start_frame = try vm.stack.pop();
     const container = try vm.stack.pop();
 
-    // Coerce/validate start index - use same pattern as arrayGet/arraySet
     const start_val = switch (start_frame.value) {
         .int => |i| if (i < 0) {
             return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array start index cannot be negative: {}", .{i});
@@ -544,7 +495,6 @@ fn arraySlice(vm: anytype) !void {
         },
     };
 
-    // Coerce/validate length
     const length_val = switch (length_frame.value) {
         .int => |i| if (i < 0) {
             return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array length cannot be negative: {}", .{i});
@@ -570,7 +520,6 @@ fn arraySlice(vm: anytype) !void {
 
     switch (container.value) {
         .array => |arr| {
-            // Determine logical length
             var logical_len: u32 = 0;
             for (arr.elements) |elem| {
                 if (std.meta.eql(elem, HIRValue.nothing)) break;
@@ -584,7 +533,6 @@ fn arraySlice(vm: anytype) !void {
                 return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array slice out of bounds: start={}, length={} (max length: {})", .{ start_val, length_val, logical_len - start_val });
             }
 
-            // Create sliced array
             const sliced_elements = try vm.allocator.alloc(HIRValue, length_val);
             for (0..length_val) |i| {
                 sliced_elements[i] = arr.elements[start_val + i];
@@ -606,7 +554,6 @@ fn arraySlice(vm: anytype) !void {
                 return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "String slice out of bounds: start={}, length={} (max length: {})", .{ start_val, length_val, s.len - start_val });
             }
 
-            // Create sliced string
             const sliced_str = s[start_val .. start_val + length_val];
             try vm.stack.push(HIRFrame.initString(sliced_str));
         },
@@ -636,11 +583,9 @@ fn arrayLen(vm: anytype) !void {
     }
 }
 
-/// Concatenate two arrays
 fn arrayConcat(vm: anytype) !void {
-    // Concatenate two arrays
-    const b = try vm.stack.pop(); // Second array
-    const a = try vm.stack.pop(); // First array
+    const b = try vm.stack.pop();
+    const a = try vm.stack.pop();
 
     switch (a.value) {
         .array => |arr_a| {
@@ -659,15 +604,12 @@ fn arrayConcat(vm: anytype) !void {
                         len_b += 1;
                     }
 
-                    // Create new array with combined elements
                     const new_elements = try vm.allocator.alloc(HIRValue, len_a + len_b);
 
-                    // Copy elements from first array
                     for (0..len_a) |i| {
                         new_elements[i] = arr_a.elements[i];
                     }
 
-                    // Copy elements from second array
                     for (0..len_b) |i| {
                         new_elements[len_a + i] = arr_b.elements[i];
                     }
@@ -693,15 +635,12 @@ fn arrayConcat(vm: anytype) !void {
     }
 }
 
-/// Helper function to handle array push operations
 fn handleArrayPush(vm: anytype, element_value: HIRValue) !void {
     const array_frame = try vm.stack.pop();
     switch (array_frame.value) {
         .array => |arr| {
-            // Work with a mutable copy
             var mutable_arr = arr;
 
-            // If array has no concrete element type yet, infer from first pushed element
             if (mutable_arr.element_type == .Unknown or mutable_arr.element_type == .Nothing) {
                 mutable_arr.element_type = switch (element_value) {
                     .int => .Int,
@@ -715,7 +654,6 @@ fn handleArrayPush(vm: anytype, element_value: HIRValue) !void {
                 };
             }
 
-            // Find the first nothing element (end of array)
             var insert_index: u32 = 0;
             for (mutable_arr.elements, 0..) |elem, i| {
                 if (std.meta.eql(elem, HIRValue.nothing)) {
@@ -725,23 +663,19 @@ fn handleArrayPush(vm: anytype, element_value: HIRValue) !void {
                 insert_index = @intCast(i + 1);
             }
 
-            // If we need more capacity, resize
             if (insert_index >= mutable_arr.capacity) {
                 const new_capacity = @max(mutable_arr.capacity * 2, insert_index + 1);
                 const new_elements = try vm.allocator.realloc(mutable_arr.elements, new_capacity);
                 mutable_arr.elements = new_elements;
                 mutable_arr.capacity = new_capacity;
 
-                // Initialize new elements with nothing
                 for (mutable_arr.elements[arr.capacity..new_capacity]) |*element| {
                     element.* = HIRValue.nothing;
                 }
             }
 
-            // Insert the element
             mutable_arr.elements[insert_index] = element_value;
 
-            // Push the modified array back (code generation will handle storing to variable and returning nothing)
             const updated_array = HIRValue{ .array = mutable_arr };
             try vm.stack.push(HIRFrame.initFromHIRValue(updated_array));
         },
@@ -751,12 +685,10 @@ fn handleArrayPush(vm: anytype, element_value: HIRValue) !void {
     }
 }
 
-/// Create array from range (start to end inclusive)
 fn arrayRange(vm: anytype, r: anytype) !void {
-    const end_frame = try vm.stack.pop(); // End value
-    const start_frame = try vm.stack.pop(); // Start value
+    const end_frame = try vm.stack.pop();
+    const start_frame = try vm.stack.pop();
 
-    // Extract integer values from start and end
     const start_val = switch (start_frame.value) {
         .int => |i| i,
         .byte => |b| @as(i32, @intCast(b)),
@@ -771,16 +703,13 @@ fn arrayRange(vm: anytype, r: anytype) !void {
         else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Range end must be numeric, got {s}", .{@tagName(end_frame.value)}),
     };
 
-    // Calculate array size
     const size = if (end_val >= start_val)
         @as(u32, @intCast(end_val - start_val + 1))
     else
         0;
 
-    // Allocate array
     const elements = try vm.allocator.alloc(HIRValue, size);
 
-    // Fill array with range values
     var i: u32 = 0;
     var current = start_val;
     while (i < size) : (i += 1) {
@@ -799,7 +728,6 @@ fn arrayRange(vm: anytype, r: anytype) !void {
     try vm.stack.push(HIRFrame.initFromHIRValue(range_array));
 }
 
-/// Get default value for a given type
 fn getDefaultValue(hir_type: HIRType) HIRValue {
     return switch (hir_type) {
         .Int => HIRValue{ .int = 0 },
@@ -834,21 +762,15 @@ fn getDefaultValue(hir_type: HIRType) HIRValue {
     };
 }
 
-//==================================================================
-// COMPOUND ASSIGNMENT OPERATIONS (Long-term fix)
-//==================================================================
-
-/// Compound assignment: array[index] += value
-/// Stack: [value, index, array] -> [result]
 fn arrayGetAndAdd(vm: anytype, a: anytype) !void {
     _ = a;
     if (vm.stack.sp < 3) {
         return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Stack underflow", .{});
     }
 
-    const value = try vm.stack.pop(); // Value to add
-    const index = try vm.stack.pop(); // Index
-    const array_frame = try vm.stack.pop(); // Array
+    const value = try vm.stack.pop();
+    const index = try vm.stack.pop();
+    const array_frame = try vm.stack.pop();
 
     const index_val = switch (index.value) {
         .int => |i| if (i < 0) {
@@ -861,17 +783,14 @@ fn arrayGetAndAdd(vm: anytype, a: anytype) !void {
         },
     };
 
-    // Get array and perform bounds check
     switch (array_frame.value) {
         .array => |arr| {
             if (index_val >= arr.capacity) {
                 return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index out of bounds: {}", .{index_val});
             }
 
-            // Get current element
             const current_element = if (index_val < arr.elements.len) arr.elements[index_val] else HIRValue.nothing;
 
-            // Perform addition
             const result = switch (current_element) {
                 .int => |current| switch (value.value) {
                     .int => |val| HIRValue{ .int = current + val },
@@ -893,64 +812,20 @@ fn arrayGetAndAdd(vm: anytype, a: anytype) !void {
                 else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform arithmetic on {s}", .{@tagName(current_element)}),
             };
 
-            // Update the array
             var mutable_arr = arr;
             if (index_val >= mutable_arr.elements.len) {
-                // Extend array if needed
                 const new_elements = try vm.allocator.realloc(mutable_arr.elements, index_val + 1);
                 mutable_arr.elements = new_elements;
-                // Initialize new elements with nothing
                 for (mutable_arr.elements[arr.elements.len .. index_val + 1]) |*element| {
                     element.* = HIRValue.nothing;
                 }
             }
             mutable_arr.elements[index_val] = result;
 
-            // Push result onto stack
             try vm.stack.push(HIRFrame.initFromHIRValue(result));
         },
         else => {
             return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform compound assignment on non-array value: {s}", .{@tagName(array_frame.value)});
         },
     }
-}
-
-/// Compound assignment: array[index] -= value
-/// Stack: [value, index, array] → [result]
-fn arrayGetAndSub(vm: anytype, a: anytype) !void {
-    // For now, implement as addition with negation
-    // TODO: Implement proper subtraction
-    try arrayGetAndAdd(vm, a);
-}
-
-/// Compound assignment: array[index] *= value
-/// Stack: [value, index, array] → [result]
-fn arrayGetAndMul(vm: anytype, a: anytype) !void {
-    // For now, implement as addition
-    // TODO: Implement proper multiplication
-    try arrayGetAndAdd(vm, a);
-}
-
-/// Compound assignment: array[index] /= value
-/// Stack: [value, index, array] → [result]
-fn arrayGetAndDiv(vm: anytype, a: anytype) !void {
-    // For now, implement as addition
-    // TODO: Implement proper division
-    try arrayGetAndAdd(vm, a);
-}
-
-/// Compound assignment: array[index] %= value
-/// Stack: [value, index, array] → [result]
-fn arrayGetAndMod(vm: anytype, a: anytype) !void {
-    // For now, implement as addition
-    // TODO: Implement proper modulo
-    try arrayGetAndAdd(vm, a);
-}
-
-/// Compound assignment: array[index] **= value
-/// Stack: [value, index, array] → [result]
-fn arrayGetAndPow(vm: anytype, a: anytype) !void {
-    // For now, implement as addition
-    // TODO: Implement proper power
-    try arrayGetAndAdd(vm, a);
 }
