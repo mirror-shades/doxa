@@ -519,8 +519,58 @@ pub const SemanticAnalyzer = struct {
                             // For explicit parameter types, use the declared type directly
                             // Don't call resolveTypeInfo which might trigger type inference
                             param_types[i] = param_type_ptr.*;
+
+                            // Semantic validation for alias parameter types (caught early)
+                            if (param.is_alias) {
+                                const base = param_types[i].base;
+                                const loc = getLocationFromBase(stmt.base);
+                                const is_disallowed = switch (base) {
+                                    .Union, .Map, .Function, .Array, .Struct, .Enum => true,
+                                    else => false,
+                                };
+                                if (is_disallowed) {
+                                    self.reporter.reportCompileError(
+                                        loc,
+                                        ErrorCode.INVALID_ALIAS_PARAMETER,
+                                        "Alias parameter '{s}' cannot have type {s}; use a named custom type (e.g., Person) or a primitive",
+                                        .{ param.name.lexeme, @tagName(base) },
+                                    );
+                                    self.fatal_error = true;
+                                } else if (base == .Custom) {
+                                    if (param_types[i].custom_type) |ct_name| {
+                                        if (!self.custom_types.contains(ct_name)) {
+                                            self.reporter.reportCompileError(
+                                                loc,
+                                                ErrorCode.UNKNOWN_TYPE,
+                                                "Unknown alias type '{s}' for parameter '{s}'",
+                                                .{ ct_name, param.name.lexeme },
+                                            );
+                                            self.fatal_error = true;
+                                        }
+                                    } else {
+                                        self.reporter.reportCompileError(
+                                            loc,
+                                            ErrorCode.INVALID_ALIAS_PARAMETER,
+                                            "Alias parameter '{s}' must use a concrete type name",
+                                            .{param.name.lexeme},
+                                        );
+                                        self.fatal_error = true;
+                                    }
+                                }
+                            }
                         } else {
+                            // No explicit type provided
                             param_types[i] = .{ .base = .Nothing };
+                            if (param.is_alias) {
+                                const loc = getLocationFromBase(stmt.base);
+                                self.reporter.reportCompileError(
+                                    loc,
+                                    ErrorCode.ALIAS_PARAMETER_REQUIRED,
+                                    "Alias parameter '{s}' requires an explicit type annotation",
+                                    .{param.name.lexeme},
+                                );
+                                self.fatal_error = true;
+                            }
                         }
                     }
 

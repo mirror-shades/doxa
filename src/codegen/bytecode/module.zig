@@ -38,10 +38,11 @@ pub const BytecodeType = enum(u8) {
     Struct,
     Map,
     Enum,
-    Any,
+    Function,
+    Union,
 };
 
-pub fn typeFromHIR(hir_type: hir_types.HIRType) BytecodeType {
+pub fn typeFromHIR(hir_type: hir_types.HIRType) !BytecodeType {
     return switch (hir_type) {
         .Int => .Int,
         .Byte => .Byte,
@@ -53,7 +54,16 @@ pub fn typeFromHIR(hir_type: hir_types.HIRType) BytecodeType {
         .Struct => .Struct,
         .Map => .Map,
         .Enum => .Enum,
-        else => .Any,
+        .Function => .Function,
+        .Union => .Union,
+        .Unknown => {
+            std.debug.print("Unknown type: {}\n", .{hir_type});
+            return error.UnknownType;
+        },
+        .Poison => {
+            std.debug.print("Poison type: {}\n", .{hir_type});
+            return error.PoisonType;
+        },
     };
 }
 

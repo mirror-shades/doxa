@@ -482,7 +482,13 @@ pub const SoxaTextParser = struct {
                 ScopeKind.Builtin
             else
                 ScopeKind.Local;
-            try self.instructions.append(HIRInstruction{ .StoreVar = .{ .var_index = var_index, .var_name = var_name, .scope_kind = scope_kind, .module_context = null, .expected_type = .Unknown } });
+            // Optional trailing type token; default to Int if absent/unknown
+            const maybe_type = tokens.next();
+            const expected_type: HIRType = if (maybe_type) |t|
+                (if (std.mem.eql(u8, t, "Int")) .Int else if (std.mem.eql(u8, t, "Byte")) .Byte else if (std.mem.eql(u8, t, "Float")) .Float else if (std.mem.eql(u8, t, "String")) .String else if (std.mem.eql(u8, t, "Tetra")) .Tetra else if (std.mem.eql(u8, t, "Nothing")) .Nothing else .Int)
+            else
+                .Int;
+            try self.instructions.append(HIRInstruction{ .StoreVar = .{ .var_index = var_index, .var_name = var_name, .scope_kind = scope_kind, .module_context = null, .expected_type = expected_type } });
         } else if (std.mem.eql(u8, op, "LoadAlias")) {
             const idx_str = tokens.next() orelse return;
             const slot_index = std.fmt.parseInt(u32, idx_str, 10) catch return;
@@ -495,8 +501,8 @@ pub const SoxaTextParser = struct {
             const name_quoted = tokens.next() orelse return;
             const var_name = try self.parseQuotedString(name_quoted);
             const type_str = tokens.next() orelse return;
-            _ = if (std.mem.eql(u8, type_str, "Int")) HIRType.Int else if (std.mem.eql(u8, type_str, "String")) HIRType.String else if (std.mem.eql(u8, type_str, "Float")) HIRType.Float else HIRType.Nothing;
-            try self.instructions.append(HIRInstruction{ .StoreAlias = .{ .slot_index = slot_index, .var_name = var_name, .expected_type = HIRType.Nothing } });
+            const expected_type: HIRType = if (std.mem.eql(u8, type_str, "Int")) .Int else if (std.mem.eql(u8, type_str, "Byte")) .Byte else if (std.mem.eql(u8, type_str, "Float")) .Float else if (std.mem.eql(u8, type_str, "String")) .String else if (std.mem.eql(u8, type_str, "Tetra")) .Tetra else if (std.mem.eql(u8, type_str, "Nothing")) .Nothing else .Int;
+            try self.instructions.append(HIRInstruction{ .StoreAlias = .{ .slot_index = slot_index, .var_name = var_name, .expected_type = expected_type } });
         } else if (std.mem.eql(u8, op, "StoreConst")) {
             const idx_str = tokens.next() orelse return;
             const var_index = std.fmt.parseInt(u32, idx_str, 10) catch return;
@@ -517,7 +523,13 @@ pub const SoxaTextParser = struct {
             const param_name = try self.parseQuotedString(name_quoted);
             const idx_str = tokens.next() orelse return;
             const var_index = std.fmt.parseInt(u32, idx_str, 10) catch return;
-            try self.instructions.append(HIRInstruction{ .StoreParamAlias = .{ .param_name = param_name, .param_type = .Unknown, .var_index = var_index } });
+            // Optional trailing type token for alias param
+            const maybe_type = tokens.next();
+            const param_type: HIRType = if (maybe_type) |t|
+                (if (std.mem.eql(u8, t, "Int")) .Int else if (std.mem.eql(u8, t, "Byte")) .Byte else if (std.mem.eql(u8, t, "Float")) .Float else if (std.mem.eql(u8, t, "String")) .String else if (std.mem.eql(u8, t, "Tetra")) .Tetra else if (std.mem.eql(u8, t, "Nothing")) .Nothing else .Int)
+            else
+                .Int;
+            try self.instructions.append(HIRInstruction{ .StoreParamAlias = .{ .param_name = param_name, .param_type = param_type, .var_index = var_index } });
         } else if (std.mem.eql(u8, op, "PushStorageId")) {
             const idx_str = tokens.next() orelse return;
             const var_index = std.fmt.parseInt(u32, idx_str, 10) catch return;

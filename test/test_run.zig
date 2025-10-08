@@ -611,10 +611,29 @@ fn runDoxaCommandEx(allocator: std.mem.Allocator, path: []const u8, input: ?[]co
     }
     const term = try child.wait();
 
-    if (term.Exited != 0) {
-        std.debug.print("Command failed with exit code {}:\n", .{term.Exited});
-        std.debug.print("stderr: {s}\n", .{stderr.items});
-        return error.CommandFailed;
+    switch (term) {
+        .Exited => |exit_code| {
+            if (exit_code != 0) {
+                std.debug.print("Command failed with exit code {}:\n", .{exit_code});
+                std.debug.print("stderr: {s}\n", .{stderr.items});
+                return error.CommandFailed;
+            }
+        },
+        .Signal => |signal| {
+            std.debug.print("Command terminated with signal {}:\n", .{signal});
+            std.debug.print("stderr: {s}\n", .{stderr.items});
+            return error.CommandFailed;
+        },
+        .Stopped => |signal| {
+            std.debug.print("Command stopped with signal {}:\n", .{signal});
+            std.debug.print("stderr: {s}\n", .{stderr.items});
+            return error.CommandFailed;
+        },
+        .Unknown => {
+            std.debug.print("Command failed with unknown error:\n", .{});
+            std.debug.print("stderr: {s}\n", .{stderr.items});
+            return error.CommandFailed;
+        },
     }
 
     return try allocator.dupe(u8, stdout.items);

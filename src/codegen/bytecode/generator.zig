@@ -94,8 +94,24 @@ pub const BytecodeGenerator = struct {
                 const slot_str = trimmed[0..space_pos];
                 const slot = std.fmt.parseInt(u32, slot_str, 10) catch continue;
 
+                // Parse the type part: find the last space and extract the type
+                const last_space = std.mem.lastIndexOf(u8, trimmed, " ") orelse continue;
+                const type_str = trimmed[last_space + 1 ..];
+
+                // Convert type string to BytecodeType
+                // Accept only concrete primitive bytecode types here. For custom
+                // structs/enums, this field will be declared by name elsewhere,
+                // so seeing the literal words "Struct"/"Enum" is invalid.
+                const type_tag = if (std.mem.eql(u8, type_str, "Int")) .Int else if (std.mem.eql(u8, type_str, "Byte")) .Byte else if (std.mem.eql(u8, type_str, "Float")) .Float else if (std.mem.eql(u8, type_str, "String")) .String else if (std.mem.eql(u8, type_str, "Tetra")) .Tetra else if (std.mem.eql(u8, type_str, "Nothing")) .Nothing else if (std.mem.eql(u8, type_str, "Union") or std.mem.eql(u8, type_str, "Map") or std.mem.eql(u8, type_str, "Function") or std.mem.eql(u8, type_str, "Array")) {
+                    std.debug.print("Unsupported alias type in StoreAlias: '{s}' (disallowed here)\n", .{type_str});
+                    continue; // Disallow complex/aggregate types for alias tag parsing here
+                } else if (std.mem.eql(u8, type_str, "Struct") or std.mem.eql(u8, type_str, "Enum")) {
+                    std.debug.print("Invalid generic type token in StoreAlias: '{s}'. Use a concrete type name (e.g. 'Person').\n", .{type_str});
+                    continue; // Must be a concrete custom type name
+                } else .Struct; // relies on this being validated earlier in semantic analysis
+
                 // Generate StoreSlot with kind:alias
-                ctx.instructions.append(self.allocator, .{ .StoreSlot = .{ .target = .{ .slot = slot, .kind = .alias, .module_id = null }, .type_tag = .Any } }) catch continue;
+                ctx.instructions.append(self.allocator, .{ .StoreSlot = .{ .target = .{ .slot = slot, .kind = .alias, .module_id = null }, .type_tag = type_tag } }) catch continue;
             }
         }
     }
@@ -150,7 +166,10 @@ pub const BytecodeGenerator = struct {
                 .qualified_name = fn_info.qualified_name,
                 .module_id = module_id,
                 .arity = fn_info.arity,
-                .return_type = module.typeFromHIR(fn_info.return_type),
+                .return_type = try module.typeFromHIR(switch (fn_info.return_type) {
+                    .Unknown => .Nothing,
+                    else => fn_info.return_type,
+                }),
                 .start_label = fn_info.start_label,
                 .body_label = fn_info.body_label,
                 .start_ip = start_ip,
@@ -168,7 +187,7 @@ pub const BytecodeGenerator = struct {
     fn copyParamTypes(self: *BytecodeGenerator, hir_params: []const hir_types.HIRType) ![]module.BytecodeType {
         const out = try self.allocator.alloc(module.BytecodeType, hir_params.len);
         for (hir_params, 0..) |hir_type, idx| {
-            out[idx] = module.typeFromHIR(hir_type);
+            out[idx] = try module.typeFromHIR(hir_type);
         }
         return out;
     }
@@ -370,7 +389,11 @@ pub const BytecodeGenerator = struct {
                 },
                 .StoreVar => |payload| {
                     const operand = try self.makeSlotOperand(payload.scope_kind, payload.var_index, payload.module_context);
-                    try self.instructions.append(self.allocator, .{ .StoreSlot = .{ .target = operand, .type_tag = module.typeFromHIR(payload.expected_type) } });
+                    const safe_hir_type = switch (payload.expected_type) {
+                        .Unknown => .Int,
+                        else => payload.expected_type,
+                    };
+                    try self.instructions.append(self.allocator, .{ .StoreSlot = .{ .target = operand, .type_tag = try module.typeFromHIR(safe_hir_type) } });
                 },
                 .StoreConst => |payload| {
                     const operand = try self.makeSlotOperand(payload.scope_kind, payload.var_index, payload.module_context);
@@ -391,7 +414,7 @@ pub const BytecodeGenerator = struct {
                 .StoreParamAlias => |payload| {
                     const alias_slot: module.SlotIndex = payload.var_index;
                     try self.alias_slots.put(alias_slot, {});
-                    try self.instructions.append(self.allocator, .{ .BindAlias = .{ .alias_slot = alias_slot, .type_tag = module.typeFromHIR(payload.param_type) } });
+                    try self.instructions.append(self.allocator, .{ .BindAlias = .{ .alias_slot = alias_slot, .type_tag = try module.typeFromHIR(payload.param_type) } });
                 },
                 .LoadAlias => |payload| {
                     // For alias parameters, we need to load from the alias slot
@@ -401,7 +424,7 @@ pub const BytecodeGenerator = struct {
                 .StoreAlias => |payload| {
                     // For alias parameters, we need to store to the alias slot
                     // This will be handled by the VM using the alias reference
-                    try self.instructions.append(self.allocator, .{ .StoreAlias = .{ .slot_index = payload.slot_index, .type_tag = module.typeFromHIR(payload.expected_type) } });
+                    try self.instructions.append(self.allocator, .{ .StoreAlias = .{ .slot_index = payload.slot_index, .type_tag = try module.typeFromHIR(payload.expected_type) } });
                 },
                 .ResolveAlias => |payload| {
                     // Resolve an alias to its target slot
@@ -411,11 +434,11 @@ pub const BytecodeGenerator = struct {
                     // Bind an alias to its target variable
                     const alias_slot: module.SlotIndex = payload.alias_slot;
                     try self.alias_slots.put(alias_slot, {});
-                    try self.instructions.append(self.allocator, .{ .BindAlias = .{ .alias_slot = alias_slot, .type_tag = module.typeFromHIR(payload.target_type) } });
+                    try self.instructions.append(self.allocator, .{ .BindAlias = .{ .alias_slot = alias_slot, .type_tag = try module.typeFromHIR(payload.target_type) } });
                 },
-                .Arith => |payload| try self.instructions.append(self.allocator, .{ .Arith = .{ .op = payload.op, .type_tag = module.typeFromHIR(payload.operand_type) } }),
-                .Convert => |payload| try self.instructions.append(self.allocator, .{ .Convert = .{ .from = module.typeFromHIR(payload.from_type), .to = module.typeFromHIR(payload.to_type) } }),
-                .Compare => |payload| try self.instructions.append(self.allocator, .{ .Compare = .{ .op = payload.op, .type_tag = module.typeFromHIR(payload.operand_type) } }),
+                .Arith => |payload| try self.instructions.append(self.allocator, .{ .Arith = .{ .op = payload.op, .type_tag = try module.typeFromHIR(payload.operand_type) } }),
+                .Convert => |payload| try self.instructions.append(self.allocator, .{ .Convert = .{ .from = try module.typeFromHIR(payload.from_type), .to = try module.typeFromHIR(payload.to_type) } }),
+                .Compare => |payload| try self.instructions.append(self.allocator, .{ .Compare = .{ .op = payload.op, .type_tag = try module.typeFromHIR(payload.operand_type) } }),
                 .TypeCheck => |payload| try self.instructions.append(self.allocator, .{ .TypeCheck = .{ .type_name = payload.target_type } }),
                 .LogicalOp => |payload| try self.instructions.append(self.allocator, .{ .LogicalOp = .{ .op = payload.op } }),
                 .StringOp => |payload| try self.instructions.append(self.allocator, .{ .StringOp = .{ .op = payload.op } }),
@@ -426,7 +449,7 @@ pub const BytecodeGenerator = struct {
                 .JumpCond => |payload| {
                     const true_id = try self.ensureLabelId(payload.label_true);
                     const false_id = try self.ensureLabelId(payload.label_false);
-                    const cond_type = module.typeFromHIR(payload.condition_type);
+                    const cond_type = try module.typeFromHIR(payload.condition_type);
 
                     // Special handling for tetra values
                     if (payload.condition_type == .Tetra) {
@@ -463,7 +486,10 @@ pub const BytecodeGenerator = struct {
                         .target_module_id = try self.resolveCallModuleId(payload.call_kind, payload.target_module),
                     },
                     .arg_count = payload.arg_count,
-                    .return_type = module.typeFromHIR(payload.return_type),
+                    .return_type = try module.typeFromHIR(switch (payload.return_type) {
+                        .Unknown => .Nothing,
+                        else => payload.return_type,
+                    }),
                 } }),
                 .TailCall => |payload| try self.instructions.append(self.allocator, .{ .TailCall = .{
                     .target = .{
@@ -474,28 +500,46 @@ pub const BytecodeGenerator = struct {
                         .target_module_id = try self.resolveCallModuleId(payload.call_kind, payload.target_module),
                     },
                     .arg_count = payload.arg_count,
-                    .return_type = module.typeFromHIR(payload.return_type),
+                    .return_type = try module.typeFromHIR(switch (payload.return_type) {
+                        .Unknown => .Nothing,
+                        else => payload.return_type,
+                    }),
                 } }),
-                .Return => |payload| try self.instructions.append(self.allocator, .{ .Return = .{ .has_value = payload.has_value, .return_type = module.typeFromHIR(payload.return_type) } }),
-                .TypeOf => |payload| try self.instructions.append(self.allocator, .{ .TypeOf = .{ .value_type = module.typeFromHIR(payload.value_type) } }),
-                .GetField => |payload| try self.instructions.append(self.allocator, .{ .GetField = .{ .field_name = payload.field_name, .container_type = module.typeFromHIR(payload.container_type), .field_index = payload.field_index } }),
-                .SetField => |payload| try self.instructions.append(self.allocator, .{ .SetField = .{ .field_name = payload.field_name, .container_type = module.typeFromHIR(payload.container_type), .field_index = payload.field_index } }),
+                .Return => |payload| try self.instructions.append(self.allocator, .{ .Return = .{ .has_value = payload.has_value, .return_type = try module.typeFromHIR(switch (payload.return_type) {
+                    .Unknown => .Nothing,
+                    else => payload.return_type,
+                }) } }),
+                .TypeOf => |payload| try self.instructions.append(self.allocator, .{ .TypeOf = .{ .value_type = try module.typeFromHIR(switch (payload.value_type) {
+                    .Unknown => .Nothing,
+                    else => payload.value_type,
+                }) } }),
+                .GetField => |payload| try self.instructions.append(self.allocator, .{ .GetField = .{ .field_name = payload.field_name, .container_type = try module.typeFromHIR(switch (payload.container_type) {
+                    .Unknown => .Nothing,
+                    else => payload.container_type,
+                }), .field_index = payload.field_index } }),
+                .SetField => |payload| try self.instructions.append(self.allocator, .{ .SetField = .{ .field_name = payload.field_name, .container_type = try module.typeFromHIR(switch (payload.container_type) {
+                    .Unknown => .Nothing,
+                    else => payload.container_type,
+                }), .field_index = payload.field_index } }),
                 .StoreFieldName => |payload| try self.instructions.append(self.allocator, .{ .StoreFieldName = .{ .field_name = payload.field_name } }),
                 .TryBegin => |payload| {
                     const id = try self.ensureLabelId(payload.catch_label);
                     try self.instructions.append(self.allocator, .{ .TryBegin = .{ .label_id = id } });
                 },
                 .TryCatch => |payload| {
-                    const exc_type = if (payload.exception_type) |t| module.typeFromHIR(t) else null;
+                    const exc_type = if (payload.exception_type) |t| module.typeFromHIR(t) catch return error.UnknownType else null;
                     try self.instructions.append(self.allocator, .{ .TryCatch = .{ .exception_type = exc_type } });
                 },
-                .Throw => |payload| try self.instructions.append(self.allocator, .{ .Throw = .{ .exception_type = module.typeFromHIR(payload.exception_type) } }),
+                .Throw => |payload| try self.instructions.append(self.allocator, .{ .Throw = .{ .exception_type = try module.typeFromHIR(payload.exception_type) } }),
                 .EnterScope => |payload| try self.instructions.append(self.allocator, .{ .EnterScope = .{ .scope_id = payload.scope_id, .var_count = payload.var_count } }),
                 .ExitScope => |payload| try self.instructions.append(self.allocator, .{ .ExitScope = .{ .scope_id = payload.scope_id } }),
                 .ArrayNew => |payload| try self.instructions.append(self.allocator, .{ .ArrayNew = .{
-                    .element_type = module.typeFromHIR(payload.element_type),
+                    .element_type = try module.typeFromHIR(switch (payload.element_type) {
+                        .Unknown => .Nothing,
+                        else => payload.element_type,
+                    }),
                     .static_size = payload.size,
-                    .nested_element_type = if (payload.nested_element_type) |nested| module.typeFromHIR(nested) else null,
+                    .nested_element_type = if (payload.nested_element_type) |nested| module.typeFromHIR(nested) catch return error.UnknownType else null,
                 } }),
                 .ArrayGet => |payload| try self.instructions.append(self.allocator, .{ .ArrayGet = .{ .bounds_check = payload.bounds_check } }),
                 .ArraySet => |payload| try self.instructions.append(self.allocator, .{ .ArraySet = .{ .bounds_check = payload.bounds_check } }),
@@ -506,9 +550,9 @@ pub const BytecodeGenerator = struct {
                 .ArraySlice => try self.instructions.append(self.allocator, .ArraySlice),
                 .ArrayLen => try self.instructions.append(self.allocator, .ArrayLen),
                 .ArrayConcat => try self.instructions.append(self.allocator, .ArrayConcat),
-                .Range => |payload| try self.instructions.append(self.allocator, .{ .Range = .{ .element_type = module.typeFromHIR(payload.element_type) } }),
-                .Exists => |payload| try self.instructions.append(self.allocator, .{ .Exists = .{ .predicate_type = module.typeFromHIR(payload.predicate_type) } }),
-                .Forall => |payload| try self.instructions.append(self.allocator, .{ .Forall = .{ .predicate_type = module.typeFromHIR(payload.predicate_type) } }),
+                .Range => |payload| try self.instructions.append(self.allocator, .{ .Range = .{ .element_type = try module.typeFromHIR(payload.element_type) } }),
+                .Exists => |payload| try self.instructions.append(self.allocator, .{ .Exists = .{ .predicate_type = try module.typeFromHIR(payload.predicate_type) } }),
+                .Forall => |payload| try self.instructions.append(self.allocator, .{ .Forall = .{ .predicate_type = try module.typeFromHIR(payload.predicate_type) } }),
                 // Compound assignment operations
                 .ArrayGetAndAdd => |payload| {
                     try self.instructions.append(self.allocator, .{ .ArrayGetAndAdd = .{ .bounds_check = payload.bounds_check } });
@@ -538,7 +582,10 @@ pub const BytecodeGenerator = struct {
                 } }),
                 .Peek => |payload| try self.instructions.append(self.allocator, .{ .Peek = .{
                     .name = payload.name,
-                    .value_type = module.typeFromHIR(payload.value_type),
+                    .value_type = try module.typeFromHIR(switch (payload.value_type) {
+                        .Unknown => .Nothing,
+                        else => payload.value_type,
+                    }),
                     .location = payload.location,
                     .union_members = payload.union_members,
                 } }),
@@ -560,11 +607,23 @@ pub const BytecodeGenerator = struct {
                 } }),
                 .Map => |payload| try self.instructions.append(self.allocator, .{ .Map = .{
                     .entries = payload.entries,
-                    .key_type = module.typeFromHIR(payload.key_type),
-                    .value_type = module.typeFromHIR(payload.value_type),
+                    .key_type = try module.typeFromHIR(switch (payload.key_type) {
+                        .Unknown => .Nothing,
+                        else => payload.key_type,
+                    }),
+                    .value_type = try module.typeFromHIR(switch (payload.value_type) {
+                        .Unknown => .Nothing,
+                        else => payload.value_type,
+                    }),
                 } }),
-                .MapGet => |payload| try self.instructions.append(self.allocator, .{ .MapGet = .{ .key_type = module.typeFromHIR(payload.key_type) } }),
-                .MapSet => |payload| try self.instructions.append(self.allocator, .{ .MapSet = .{ .key_type = module.typeFromHIR(payload.key_type) } }),
+                .MapGet => |payload| try self.instructions.append(self.allocator, .{ .MapGet = .{ .key_type = try module.typeFromHIR(switch (payload.key_type) {
+                    .Unknown => .Nothing,
+                    else => payload.key_type,
+                }) } }),
+                .MapSet => |payload| try self.instructions.append(self.allocator, .{ .MapSet = .{ .key_type = try module.typeFromHIR(switch (payload.key_type) {
+                    .Unknown => .Nothing,
+                    else => payload.key_type,
+                }) } }),
                 .AssertFail => |payload| try self.instructions.append(self.allocator, .{ .AssertFail = .{ .location = payload.location, .has_message = payload.has_message } }),
                 .Halt => try self.instructions.append(self.allocator, .Halt),
             }

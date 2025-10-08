@@ -334,7 +334,7 @@ pub const VM = struct {
             },
             .ArrayNew => |payload| {
                 try ops_array.exec(self, .{ .ArrayNew = .{
-                    .element_type = toHIRType(payload.element_type),
+                    .element_type = toHIRTypeWithNested(self, payload.element_type, payload.nested_element_type),
                     .size = payload.static_size,
                     .nested_element_type = toOptionalHIRType(payload.nested_element_type),
                 } });
@@ -457,7 +457,7 @@ pub const VM = struct {
             .Peek => |payload| {
                 try PrintOps.execPeek(self, .{
                     .name = payload.name,
-                    .value_type = toHIRType(payload.value_type),
+                    .value_type = payload.value_type,
                     .location = payload.location,
                     .union_members = payload.union_members,
                 });
@@ -1451,7 +1451,7 @@ pub const VM = struct {
                 const new_map = HIRValue{ .map = HIRMap{
                     .entries = entries,
                     .key_type = toHIRType(payload.key_type),
-                    .value_type = .Unknown,
+                    .value_type = orig.value_type,
                     .path = null,
                 } };
 
@@ -1717,12 +1717,29 @@ pub const VM = struct {
             .String => .String,
             .Tetra => .Tetra,
             .Nothing => .Nothing,
-            .Array => .Unknown,
-            .Struct => .Unknown,
-            .Map => .Unknown,
-            .Enum => .Unknown,
-            .Any => .Unknown,
+            // Complex bytecode tags are not standalone HIR types; callers should
+            // construct full HIR types with the required nested info where needed.
+            // Array requires payload; callers must use toHIRTypeWithNested
+            .Array => unreachable,
+            // Use placeholder IDs for nominal types; actual IDs resolved elsewhere
+            .Struct => hir_types.HIRType{ .Struct = 0 },
+            // Map/Function/Union require payload; construct at use sites
+            .Map => unreachable,
+            .Enum => hir_types.HIRType{ .Enum = 0 },
+            .Function => unreachable,
+            .Union => unreachable,
         };
+    }
+
+    fn toHIRTypeWithNested(self: *VM, base: module.BytecodeType, nested: ?module.BytecodeType) hir_types.HIRType {
+        // Currently only arrays use nested metadata from bytecode
+        if (base == .Array) {
+            const element_hir = if (nested) |n| toHIRType(n) else .Nothing;
+            const elem_ptr = self.allocator.create(hir_types.HIRType) catch return element_hir;
+            elem_ptr.* = element_hir;
+            return hir_types.HIRType{ .Array = elem_ptr };
+        }
+        return toHIRType(base);
     }
 
     fn toOptionalHIRType(type_tag: ?module.BytecodeType) ?hir_types.HIRType {
