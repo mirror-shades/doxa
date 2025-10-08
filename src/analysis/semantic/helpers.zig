@@ -782,6 +782,12 @@ pub fn registerStructType(self: *SemanticAnalyzer, struct_name: []const u8, fiel
             .struct_fields = struct_fields,
         };
         try self.custom_types.put(struct_name, custom_type);
+    } else {
+        // Update existing placeholder with concrete struct fields and kind
+        if (self.custom_types.getPtr(struct_name)) |ct_ptr| {
+            ct_ptr.kind = .Struct;
+            ct_ptr.struct_fields = struct_fields;
+        }
     }
 
     // Runtime memory registration with proper HIR lowering

@@ -490,6 +490,27 @@ pub const SemanticAnalyzer = struct {
     }
 
     fn collectDeclarations(self: *SemanticAnalyzer, statements: []ast.Stmt, scope: *Scope) ErrorList!void {
+        // Pre-pass A: pre-register all local struct declarations in custom_types so parameter
+        // type annotations referring to these structs (including alias params) can be validated.
+        for (statements) |stmt| {
+            if (stmt.data == .Expression) {
+                if (stmt.data.Expression) |expr| {
+                    if (expr.data == .StructDecl) {
+                        const struct_decl = expr.data.StructDecl;
+
+                        // Lower field types from AST and register as a custom type
+                        const struct_fields = try self.allocator.alloc(ast.StructFieldType, struct_decl.fields.len);
+                        for (struct_decl.fields, struct_fields) |field, *sf| {
+                            const field_type_info = try ast.typeInfoFromExpr(self.allocator, field.type_expr);
+                            sf.* = .{ .name = field.name.lexeme, .type_info = field_type_info };
+                        }
+                        // Register only in custom_types (avoid scope insertion here to prevent duplicates)
+                        try helpers.registerStructType(self, struct_decl.name.lexeme, struct_fields);
+                    }
+                }
+            }
+        }
+
         // First pass: pre-register all function declarations so calls can see them
         for (statements) |stmt| {
             switch (stmt.data) {
