@@ -369,6 +369,7 @@ pub const ErrorCode = struct {
     pub const EXPECTED_ELSE = "E2022";
     pub const EXPECTED_NEWLINE = "E2023";
     pub const INVALID_ARGUMENT_COUNT = "E2024";
+    pub const UNKNOWN_TYPE = "E2025";
 
     // 3xxx - Memory & Ownership
     pub const MEMORY_ERROR = "E3001";

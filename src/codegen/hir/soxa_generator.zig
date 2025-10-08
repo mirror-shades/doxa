@@ -252,6 +252,12 @@ pub const HIRGenerator = struct {
                     for (func.params, 0..) |param, i| {
                         param_is_alias[i] = param.is_alias;
                         param_types[i] = if (param.type_expr) |type_expr| self.convertTypeInfo((try ast.typeInfoFromExpr(self.allocator, type_expr)).*) else .Int;
+                        // Sanitize param types: keep only simple primitives/markers for signature
+                        param_types[i] = switch (param_types[i]) {
+                            .Int, .Byte, .Float, .String, .Tetra, .Nothing => param_types[i],
+                            .Struct, .Enum => param_types[i],
+                            else => .Int,
+                        };
                     }
 
                     const function_info = FunctionInfo{
@@ -306,6 +312,12 @@ pub const HIRGenerator = struct {
                                 for (method.params, 0..) |param, i| {
                                     param_is_alias[i] = param.is_alias;
                                     param_types[i] = if (param.type_expr) |type_expr| self.convertTypeInfo((try ast.typeInfoFromExpr(self.allocator, type_expr)).*) else .Int;
+                                    // Sanitize param types: keep only simple primitives/markers for signature
+                                    param_types[i] = switch (param_types[i]) {
+                                        .Int, .Byte, .Float, .String, .Tetra, .Nothing => param_types[i],
+                                        .Struct, .Enum => param_types[i],
+                                        else => .Int,
+                                    };
                                 }
 
                                 var arity: u32 = @intCast(method.params.len);
@@ -364,7 +376,17 @@ pub const HIRGenerator = struct {
                                 var param_types_imported = try self.allocator.alloc(HIRType, func.params.len);
                                 for (func.params, 0..) |param, i| {
                                     param_is_alias_imported[i] = param.is_alias;
-                                    param_types_imported[i] = if (param.type_expr) |type_expr| self.convertTypeInfo((try ast.typeInfoFromExpr(self.allocator, type_expr)).*) else .Int;
+                                    var pt: HIRType = if (param.type_expr) |type_expr|
+                                        self.convertTypeInfo((try ast.typeInfoFromExpr(self.allocator, type_expr)).*)
+                                    else
+                                        .Int;
+                                    // Sanitize for signature table
+                                    pt = switch (pt) {
+                                        .Int, .Byte, .Float, .String, .Tetra, .Nothing => pt,
+                                        .Struct, .Enum => pt,
+                                        else => .Int,
+                                    };
+                                    param_types_imported[i] = pt;
                                 }
 
                                 const function_info = FunctionInfo{
@@ -443,6 +465,21 @@ pub const HIRGenerator = struct {
                             };
 
                             if (!self.function_signatures.contains(sym_name)) {
+                                // Initialize parameter metadata for imported symbol
+                                for (func_params, 0..) |p, i| {
+                                    function_info2.param_is_alias[i] = p.is_alias;
+                                    var pt2: HIRType = if (p.type_expr) |te|
+                                        self.convertTypeInfo((try ast.typeInfoFromExpr(self.allocator, te)).*)
+                                    else
+                                        .Int;
+                                    pt2 = switch (pt2) {
+                                        .Int, .Byte, .Float, .String, .Tetra, .Nothing => pt2,
+                                        .Struct, .Enum => pt2,
+                                        else => .Int,
+                                    };
+                                    function_info2.param_types[i] = pt2;
+                                }
+
                                 try self.function_signatures.put(sym_name, function_info2);
                                 try self.function_bodies.append(FunctionBody{
                                     .function_info = function_info2,
@@ -491,6 +528,24 @@ pub const HIRGenerator = struct {
                         const type_info_ptr = try ast.typeInfoFromExpr(self.allocator, type_expr);
                         defer self.allocator.destroy(type_info_ptr);
                         param_type = self.convertTypeInfo(type_info_ptr.*);
+
+                        // Semantic validation for alias parameter types
+                        // Disallow aggregate/complex types as alias types here
+                        switch (param_type) {
+                            .Union, .Map, .Function => return error.InvalidAliasType,
+                            .Array => return error.InvalidAliasType,
+                            else => {},
+                        }
+
+                        // For structs/enums, require a concrete custom type name rather than generic tokens
+                        switch (type_info_ptr.base) {
+                            .Struct, .Enum => {
+                                if (type_info_ptr.custom_type == null) {
+                                    return error.InvalidAliasType;
+                                }
+                            },
+                            else => {},
+                        }
                     } else {
                         param_type = self.inferParameterType(param.name.lexeme, function_body.statements, function_body.function_name) catch .Int;
                     }
@@ -505,11 +560,15 @@ pub const HIRGenerator = struct {
                                 try self.trackVariableCustomType(param.name.lexeme, struct_type_name_for_param);
                                 try self.trackVariableType(param.name.lexeme, HIRType{ .Struct = 0 });
                             }
+                            // If generic Struct token without a name, reject
+                            if (type_info_for_custom.custom_type == null) return error.InvalidAliasType;
                         } else if (type_info_for_custom.base == .Enum) {
                             if (type_info_for_custom.custom_type) |enum_type_name_for_param| {
                                 try self.trackVariableCustomType(param.name.lexeme, enum_type_name_for_param);
                                 try self.trackVariableType(param.name.lexeme, HIRType{ .Enum = 0 });
                             }
+                            // If generic Enum token without a name, reject
+                            if (type_info_for_custom.custom_type == null) return error.InvalidAliasType;
                         } else if (type_info_for_custom.base == .Custom) {
                             if (type_info_for_custom.custom_type) |custom_type_name_for_param| {
                                 if (self.isCustomType(custom_type_name_for_param)) |ct| {
