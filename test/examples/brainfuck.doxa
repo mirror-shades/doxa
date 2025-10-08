@@ -60,7 +60,7 @@ function interpret(scan :: string) {
         if(currentInstruction == "<") then tp -= 1
         if(currentInstruction == "+") then tape[tp] += 0x01
         if(currentInstruction == "-") then tape[tp] -= 0x01
-        if(currentInstruction == ".") then {@print("Output: {tape[tp]}\n")}
+        if(currentInstruction == ".") then @print("Output: {tape[tp]}\n")
         if(currentInstruction == ",") then tape[tp] is getInput()
         if(currentInstruction == "[") then startLoop()
         if(currentInstruction == "]") then endLoop()
