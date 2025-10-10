@@ -240,7 +240,7 @@ pub const MemoryManager = struct {
 
     pub fn resetExecutionMemory(self: *MemoryManager) void {
         self.execution_arena.deinit();
-        self.execution_arena = std.heap.ArenaAllocator.init(self.analysis_arena.child_allocator);
+        self.execution_arena = std.heap.ArenaAllocator.init(self.allocator);
 
         self.custom_type_instances.clearRetainingCapacity();
         self.next_instance_id = 0;

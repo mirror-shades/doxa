@@ -60,6 +60,7 @@ pub const ModuleState = struct {
 
 pub const Frame = struct {
     allocator: std.mem.Allocator,
+    arena: std.heap.ArenaAllocator,
     function: *module.BytecodeFunction,
     return_ip: usize,
     stack_base: usize,
@@ -68,14 +69,18 @@ pub const Frame = struct {
     alias_refs: []?SlotPointer,
 
     pub fn init(allocator: std.mem.Allocator, function: *module.BytecodeFunction, stack_base: usize, slot_ref_base: usize, return_ip: usize) !Frame {
-        const locals = try allocator.alloc(HIRValue, function.local_var_count);
+        var arena = std.heap.ArenaAllocator.init(allocator);
+        const frame_alloc = arena.allocator();
+
+        const locals = try frame_alloc.alloc(HIRValue, function.local_var_count);
         for (locals) |*slot| slot.* = HIRValue.nothing;
 
-        const aliases = try allocator.alloc(?SlotPointer, function.local_var_count);
+        const aliases = try frame_alloc.alloc(?SlotPointer, function.local_var_count);
         for (aliases) |*entry| entry.* = null;
 
         return Frame{
             .allocator = allocator,
+            .arena = arena,
             .function = function,
             .return_ip = return_ip,
             .stack_base = stack_base,
@@ -86,8 +91,7 @@ pub const Frame = struct {
     }
 
     pub fn deinit(self: *Frame) void {
-        self.allocator.free(self.locals);
-        self.allocator.free(self.alias_refs);
+        self.arena.deinit();
         self.locals = &[_]HIRValue{};
         self.alias_refs = &[_]?SlotPointer{};
     }
