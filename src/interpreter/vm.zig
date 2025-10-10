@@ -31,7 +31,7 @@ const ErrorList = Errors.ErrorList;
 const ErrorCode = Errors.ErrorCode;
 
 const DeferAction = *const fn () void;
-const DEFAULT_STACK_CAPACITY: usize = 128 * 1024; // Tunable operand stack capacity
+const DEFAULT_STACK_CAPACITY: usize = 1024 * 1024; // 1M frames initial capacity, grows dynamically
 
 pub const ScopeRecord = struct {
     id: u32,
