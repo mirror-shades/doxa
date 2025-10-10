@@ -1,4 +1,4 @@
-const limit :: int is 100_000;
+const limit :: int is 2_000_000;
 
 function diceRoll() returns int {
     const randomFloat is @random() * 6 + 1

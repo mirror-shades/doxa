@@ -178,7 +178,14 @@ pub const OperandStack = struct {
     }
 
     pub fn push(self: *OperandStack, frame: HIRFrame) ErrorList!void {
-        if (self.sp >= self.values.len) return ErrorList.StackOverflow;
+        if (self.sp >= self.values.len) {
+            // Dynamic stack growth - double capacity
+            const new_capacity = self.values.len * 2;
+            const new_values = self.allocator.realloc(self.values, new_capacity) catch {
+                return ErrorList.StackOverflow;
+            };
+            self.values = new_values;
+        }
         self.values[self.sp] = frame;
         self.sp += 1;
     }
