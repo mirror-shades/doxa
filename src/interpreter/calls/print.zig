@@ -14,10 +14,11 @@ pub const formatHIRValueRaw = PrintOps.formatHIRValueRaw;
 pub const printHIRValue = PrintOps.printHIRValue;
 
 fn printToStdout(comptime format: []const u8, args: anytype) !void {
-    const stdout_file = std.fs.File.stdout();
-    const formatted = try std.fmt.allocPrint(std.heap.page_allocator, format, args);
-    defer std.heap.page_allocator.free(formatted);
-    _ = try stdout_file.write(formatted);
+    var stdout_buffer: [1024]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    const stdout = &stdout_writer.interface;
+    try stdout.print(format, args);
+    try stdout.flush();
 }
 
 pub const PrintOps = struct {
