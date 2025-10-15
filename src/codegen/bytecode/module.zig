@@ -135,6 +135,12 @@ pub const Instruction = union(enum) {
     EnterScope: struct { scope_id: u32, var_count: u32 },
     ExitScope: struct { scope_id: u32 },
     Print,
+    // Streaming print ops
+    PrintBegin,
+    PrintStr: struct { const_id: ConstIndex },
+    PrintVal,
+    PrintNewline,
+    PrintEnd,
     PrintInterpolated: struct {
         format_parts: []const []const u8,
         placeholder_indices: []const u32,

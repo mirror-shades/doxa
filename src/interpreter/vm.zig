@@ -463,6 +463,27 @@ pub const VM = struct {
             .Print => {
                 try PrintOps.execPrint(self);
             },
+            .PrintBegin => {
+                // no-op for now (future: buffering)
+            },
+            .PrintStr => |payload| {
+                if (payload.const_id >= self.bytecode.constants.len) return error.UnimplementedInstruction;
+                const val = self.bytecode.constants[payload.const_id];
+                switch (val) {
+                    .string => |s| try PrintOps.printRaw(self, s),
+                    else => {},
+                }
+            },
+            .PrintVal => {
+                const top = try self.popValue();
+                try PrintOps.formatHIRValueRaw(self, top);
+            },
+            .PrintNewline => {
+                try PrintOps.printRaw(self, "\n");
+            },
+            .PrintEnd => {
+                // no-op for now (future: flush)
+            },
             .PrintInterpolated => |payload| {
                 try PrintOps.execPrintInterpolated(self, .{
                     .format_parts = payload.format_parts,

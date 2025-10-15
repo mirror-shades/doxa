@@ -525,6 +525,31 @@ pub const HIRInstruction = union(enum) {
     /// LLVM: Generate printf calls with format strings
     Print: struct {},
 
+    /// Streaming print: begin sequence
+    /// VM: no-op (placeholder for future buffered output)
+    /// LLVM: no-op
+    PrintBegin: struct {},
+
+    /// Streaming print: print a string literal by constant id
+    /// VM: write bytes to stdout
+    /// LLVM: emit printf("%s", str_ptr)
+    PrintStr: struct {
+        const_id: u32,
+    },
+
+    /// Streaming print: print top-of-stack value using ToString rules, then pop
+    /// VM: stringify and write; pop value
+    /// LLVM: type-specific printf
+    PrintVal: struct {},
+
+    /// Streaming print: explicit newline
+    /// VM/LLVM: emit "\n"
+    PrintNewline: struct {},
+
+    /// Streaming print: end sequence (no-op for now)
+    /// VM/LLVM: no-op
+    PrintEnd: struct {},
+
     /// Print with string interpolation
     /// VM: Format string with interpolated values
     /// LLVM: Generate printf calls with format strings
