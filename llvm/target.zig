@@ -111,48 +111,48 @@ pub extern fn LLVMInitializeWebAssemblyDisassembler() void;
 pub extern fn LLVMInitializeX86Disassembler() void;
 pub extern fn LLVMInitializeXCoreDisassembler() void;
 
-pub fn LLVMInitializeAllTargetInfos() callconv(.C) void {
+pub fn LLVMInitializeAllTargetInfos() void {
     LLVMInitializeX86TargetInfo();
 }
 
-pub fn LLVMInitializeAllTargets() callconv(.C) void {
+pub fn LLVMInitializeAllTargets() void {
     LLVMInitializeX86Target();
 }
 
-pub fn LLVMInitializeAllTargetMCs() callconv(.C) void {
+pub fn LLVMInitializeAllTargetMCs() void {
     LLVMInitializeX86TargetMC();
 }
 
-pub fn LLVMInitializeAllAsmPrinters() callconv(.C) void {
+pub fn LLVMInitializeAllAsmPrinters() void {
     LLVMInitializeX86AsmPrinter();
 }
 
-pub fn LLVMInitializeAllAsmParsers() callconv(.C) void {
+pub fn LLVMInitializeAllAsmParsers() void {
     LLVMInitializeX86AsmParser();
 }
 
-pub fn LLVMInitializeAllDisassemblers() callconv(.C) void {
+pub fn LLVMInitializeAllDisassemblers() void {
     LLVMInitializeX86Disassembler();
 }
 
-pub fn LLVMInitializeNativeTarget() callconv(.C) LLVMtype.LLVMBool {
+pub fn LLVMInitializeNativeTarget() LLVMtype.LLVMBool {
     LLVMInitializeX86TargetInfo();
     LLVMInitializeX86Target();
     LLVMInitializeX86TargetMC();
     return 0;
 }
 
-pub fn LLVMInitializeNativeAsmParser() callconv(.C) LLVMtype.LLVMBool {
+pub fn LLVMInitializeNativeAsmParser() LLVMtype.LLVMBool {
     LLVMInitializeX86AsmParser();
     return 0;
 }
 
-pub fn LLVMInitializeNativeAsmPrinter() callconv(.C) LLVMtype.LLVMBool {
+pub fn LLVMInitializeNativeAsmPrinter() LLVMtype.LLVMBool {
     LLVMInitializeX86AsmPrinter();
     return 0;
 }
 
-pub fn LLVMInitializeNativeDisassembler() callconv(.C) LLVMtype.LLVMBool {
+pub fn LLVMInitializeNativeDisassembler() LLVMtype.LLVMBool {
     LLVMInitializeX86Disassembler();
     return 0;
 }
