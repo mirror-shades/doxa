@@ -110,6 +110,7 @@ pub const TokenType = enum {
 
     READ, // @read        - read file
     WRITE, // @write       - write file
+    BUILD, // @build       - compile doxa file to executable
 
     // keywords with alternate tokens
     AND, // and ∧

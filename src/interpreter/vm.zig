@@ -1114,6 +1114,91 @@ pub const VM = struct {
             return;
         }
 
+        if (std.mem.eql(u8, name, "build")) {
+            if (arg_count != 2) return error.UnimplementedInstruction;
+            const out_path_frame = try self.stack.pop();
+            const src_path_frame = try self.stack.pop();
+
+            const src_path = switch (src_path_frame.value) {
+                .string => |s| s,
+                else => return self.reporter.reportRuntimeError(null, ErrorCode.TYPE_MISMATCH, "build: first argument must be string", .{}),
+            };
+            const out_path = switch (out_path_frame.value) {
+                .string => |s| s,
+                else => return self.reporter.reportRuntimeError(null, ErrorCode.TYPE_MISMATCH, "build: second argument must be string", .{}),
+            };
+
+            // Step 1: run `doxa compile <src>`
+            var arena = std.heap.ArenaAllocator.init(self.allocator);
+            defer arena.deinit();
+            const a = arena.allocator();
+
+            // Resolve doxa executable path: DOXA_EXE env -> ./zig-out/bin/doxa -> PATH "doxa"
+            var doxa_path: []const u8 = "doxa";
+            const env_path_opt: ?[]const u8 = std.process.getEnvVarOwned(a, "DOXA_EXE") catch null;
+            if (env_path_opt) |env_path| {
+                doxa_path = env_path;
+            } else {
+                const candidate = try std.fs.path.join(a, &[_][]const u8{ ".", "zig-out", "bin", "doxa" });
+                const f = std.fs.cwd().openFile(candidate, .{}) catch null;
+                if (f) |fh| {
+                    fh.close();
+                    doxa_path = candidate;
+                }
+            }
+
+            var child1 = std.process.Child.init(&[_][]const u8{ doxa_path, "compile", src_path }, a);
+            child1.cwd = ".";
+            const term1 = child1.spawnAndWait() catch {
+                try self.stack.push(HIRFrame.initInt(1));
+                return;
+            };
+            switch (term1) {
+                .Exited => |code| if (code != 0) {
+                    try self.stack.push(HIRFrame.initInt(@intCast(code)));
+                    return;
+                },
+                else => {
+                    try self.stack.push(HIRFrame.initInt(1));
+                    return;
+                },
+            }
+
+            // Derive object file path from src: out/<stem>.o
+            const stem: []const u8 = blk: {
+                var last_slash: usize = 0;
+                for (src_path, 0..) |c, i| {
+                    if (c == '/' or c == '\\') last_slash = i + 1;
+                }
+                const fname = src_path[last_slash..];
+                if (std.mem.lastIndexOfScalar(u8, fname, '.')) |dot| break :blk fname[0..dot];
+                break :blk fname;
+            };
+            var obj_buf: [512]u8 = undefined;
+            const obj_path = std.fmt.bufPrint(&obj_buf, "out/{s}.o", .{stem}) catch {
+                try self.stack.push(HIRFrame.initInt(1));
+                return;
+            };
+
+            // Step 2: run `zig cc <obj> -o <out>`
+            var child2 = std.process.Child.init(&[_][]const u8{ "zig", "cc", obj_path, "-o", out_path }, a);
+            child2.cwd = ".";
+            const term2 = child2.spawnAndWait() catch {
+                try self.stack.push(HIRFrame.initInt(1));
+                return;
+            };
+            switch (term2) {
+                .Exited => |code| {
+                    try self.stack.push(HIRFrame.initInt(@intCast(code)));
+                    return;
+                },
+                else => {
+                    try self.stack.push(HIRFrame.initInt(1));
+                    return;
+                },
+            }
+        }
+
         if (std.mem.eql(u8, name, "exit")) {
             if (arg_count > 1) return error.UnimplementedInstruction;
             var exit_code: i64 = 0;
