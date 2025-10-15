@@ -43,7 +43,14 @@ var compile_file: bool = false;
 var is_safe_repl: bool = false;
 var output_file: ?[]const u8 = null;
 
+const Mode = enum {
+    UNDEFINED,
+    RUN,
+    COMPILE,
+};
+
 const CLI = struct {
+    mode: Mode,
     reporter_options: ReporterOptions,
     script_path: ?[]const u8,
     profile: bool,
@@ -86,8 +93,8 @@ fn generateArtifactPath(memoryManager: *MemoryManager, source_path: []const u8, 
     }
 
     std.fs.cwd().makeDir("out") catch |err| switch (err) {
-        error.PathAlreadyExists => {}, // Directory already exists, that's fine
-        else => return err, // Other errors should be propagated
+        error.PathAlreadyExists => {},
+        else => return err,
     };
 
     if (last_dot) |dot| {
@@ -197,15 +204,31 @@ fn parseArgs(allocator: std.mem.Allocator) !CLI {
             .debug_execution = false,
             .debug_verbose = false,
         },
+        .mode = .UNDEFINED,
         .script_path = null,
         .profile = false,
     };
 
-    var i: usize = 1;
+    // Handle the mode argument (run or compile)
+    if (stringEquals(args[1], "run")) {
+        options.mode = .RUN;
+    } else if (stringEquals(args[1], "compile")) {
+        options.mode = .COMPILE;
+    } else {
+        std.debug.print("Error: specify `run` or `compile`\n", .{});
+        printUsage();
+        std.process.exit(EXIT_CODE_USAGE);
+    }
 
-    while (i < args.len) : (i += 1) {
-        const arg: [:0]u8 = args[i];
+    var options_list = std.array_list.Managed([]const u8).init(allocator);
+    defer options_list.deinit();
 
+    // Process remaining arguments starting from index 2
+    for (args[2..]) |arg| {
+        try options_list.append(arg);
+    }
+
+    for (options_list.items) |arg| {
         if (stringEquals(arg, "--debug-verbose")) {
             options.reporter_options.debug_verbose = true;
             continue;
@@ -235,7 +258,6 @@ fn parseArgs(allocator: std.mem.Allocator) !CLI {
             std.process.exit(0);
         } else if (stringEndsWith(arg, DOXA_EXTENSION)) {
             options.script_path = try allocator.dupe(u8, arg);
-            i += 1;
             break;
         } else {
             std.debug.print("Error: Unknown command or invalid file: '{s}'\n", .{arg});
@@ -244,13 +266,19 @@ fn parseArgs(allocator: std.mem.Allocator) !CLI {
         }
     }
 
+    if (options.script_path == null) {
+        std.debug.print("Error: No file specified\n", .{});
+        printUsage();
+        std.process.exit(EXIT_CODE_USAGE);
+    }
+
     return options;
 }
 
 fn printUsage() void {
     std.debug.print("Doxa Programming Language\n", .{});
     std.debug.print("\nUsage:\n", .{});
-    std.debug.print("  doxa [options] <file.doxa>        # Execute with HIR VM (explicit)\n", .{});
+    std.debug.print("  doxa [run | compile] [options] <file.doxa>        # Execute with HIR VM (explicit)\n", .{});
     std.debug.print("\nOptions:\n", .{});
     std.debug.print("  --debug-[stage]                   # Enable debug output for [stage]\n", .{});
     std.debug.print("                                    # lexer, parser, semantic, hir, bytecode, execution\n", .{});
@@ -359,34 +387,40 @@ pub fn main() !void {
     const hir_program_for_bytecode = try generateHIRProgram(&memoryManager, parsedStatements, &parser, &semantic_analyzer, &reporter);
     profiler.stopPhase();
 
-    profiler.startPhase(Phase.GENERATE_B);
+    if (cli_options.mode == .RUN) {
+        profiler.startPhase(Phase.GENERATE_B);
 
-    const hir_program = hir_program_for_bytecode;
-    const artifact_stem = blk: {
-        var filename_start: usize = 0;
-        for (path, 0..) |c, i| {
-            if (c == '/' or c == '\\') filename_start = i + 1;
+        const hir_program = hir_program_for_bytecode;
+        const artifact_stem = blk: {
+            var filename_start: usize = 0;
+            for (path, 0..) |c, i| {
+                if (c == '/' or c == '\\') filename_start = i + 1;
+            }
+            const filename = path[filename_start..];
+            if (std.mem.lastIndexOfScalar(u8, filename, '.')) |dot| {
+                break :blk filename[0..dot];
+            }
+            break :blk filename;
+        };
+
+        var bytecode_generator = BytecodeGenerator.init(memoryManager.getExecutionAllocator(), "out", artifact_stem);
+        var bytecode_module = try bytecode_generator.generate(&hir_program);
+        defer bytecode_module.deinit();
+
+        if (bytecode_module.artifact_path) |bc_path| {
+            try writeBytecodeArtifact(&bytecode_module, bc_path);
         }
-        const filename = path[filename_start..];
-        if (std.mem.lastIndexOfScalar(u8, filename, '.')) |dot| {
-            break :blk filename[0..dot];
-        }
-        break :blk filename;
-    };
+        profiler.stopPhase();
 
-    var bytecode_generator = BytecodeGenerator.init(memoryManager.getExecutionAllocator(), "out", artifact_stem);
-    var bytecode_module = try bytecode_generator.generate(&hir_program);
-    defer bytecode_module.deinit();
+        profiler.startPhase(Phase.EXECUTION);
 
-    if (bytecode_module.artifact_path) |bc_path| {
-        try writeBytecodeArtifact(&bytecode_module, bc_path);
+        try runBytecodeModule(&memoryManager, &bytecode_module, &reporter);
+
+        profiler.stopPhase();
+        try profiler.dump();
     }
-    profiler.stopPhase();
 
-    profiler.startPhase(Phase.EXECUTION);
-
-    try runBytecodeModule(&memoryManager, &bytecode_module, &reporter);
-
-    profiler.stopPhase();
-    try profiler.dump();
+    if (cli_options.mode == .COMPILE) {
+        profiler.startPhase(Phase.GENERATE_L);
+    }
 }
