@@ -1187,6 +1187,19 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 if (bc.arguments.len != 0) return type_info;
                 type_info.* = .{ .base = .Int };
                 return type_info;
+            } else if (std.mem.eql(u8, fname, "build")) {
+                // @build(source_path: string, output_path: string) -> int
+                requireArity.check(self, expr, bc.arguments.len, 2, fname);
+                if (bc.arguments.len != 2) return type_info;
+                // Optional: ensure both are strings
+                const a0 = try infer_type.inferTypeFromExpr(self, bc.arguments[0]);
+                const a1 = try infer_type.inferTypeFromExpr(self, bc.arguments[1]);
+                if (a0.base != .String or a1.base != .String) {
+                    self.reporter.reportCompileError(getLocationFromBase(expr.base), ErrorCode.TYPE_MISMATCH, "@build expects (string, string)", .{});
+                    self.fatal_error = true;
+                }
+                type_info.* = .{ .base = .Int };
+                return type_info;
             }
 
             self.reporter.reportCompileError(getLocationFromBase(expr.base), ErrorCode.NOT_IMPLEMENTED, "Unknown builtin '@{s}'", .{fname});
@@ -1198,6 +1211,17 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
             const method_name = method_call.method.lexeme;
 
             switch (method_call.method.type) {
+                .BUILD => {                    const argc = method_call.arguments.len;
+                    if (argc != 2) {
+                        self.reporter.reportCompileError(getLocationFromBase(expr.base), ErrorCode.ARGUMENT_COUNT_MISMATCH, "@build expects 2 arguments, got {}", .{argc});
+                        self.fatal_error = true;
+                        type_info.base = .Nothing;
+                        return type_info;
+                    }
+                    // We could validate both args are strings; for now set return type to Int
+                    type_info.base = .Int;
+                    return type_info;
+                },
                 .PUSH,
                 .POP,
                 .INSERT,

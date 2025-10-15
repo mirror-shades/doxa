@@ -42,6 +42,10 @@ pub fn internalCallExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?
         return try parseTickMethod(self);
     }
 
+    if (method_tok.type == .BUILD) {
+        return try parseBuildMethod(self);
+    }
+
     self.advance();
     if (self.peek().type != .LEFT_PAREN) return error.ExpectedLeftParen;
     self.advance();
@@ -434,4 +438,44 @@ pub fn parseTickMethod(self: *Parser) ErrorList!?*ast.Expr {
     };
 
     return tick_expr;
+}
+
+pub fn parseBuildMethod(self: *Parser) ErrorList!?*ast.Expr {
+    const method_tok = self.peek();
+    self.advance();
+
+    if (self.peek().type != .LEFT_PAREN) {
+        return error.ExpectedLeftParen;
+    }
+    self.advance();
+
+    // Expect two expressions: source_path, output_path
+    const src_expr = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
+
+    if (self.peek().type != .COMMA) {
+        return error.ExpectedComma;
+    }
+    self.advance();
+
+    const out_expr = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
+
+    if (self.peek().type != .RIGHT_PAREN) {
+        return error.ExpectedRightParen;
+    }
+    self.advance();
+
+    const arguments = try self.allocator.alloc(*ast.Expr, 2);
+    arguments[0] = src_expr;
+    arguments[1] = out_expr;
+
+    const build_expr = try self.allocator.create(ast.Expr);
+    build_expr.* = .{
+        .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(method_tok) },
+        .data = .{ .BuiltinCall = .{
+            .function = method_tok,
+            .arguments = arguments,
+        } },
+    };
+
+    return build_expr;
 }
