@@ -5,7 +5,7 @@ const HIRType = @import("soxa_types.zig").HIRType;
 pub const AliasTracker = struct {
     allocator: std.mem.Allocator,
     alias_map: std.StringHashMap(AliasInfo),
-    
+
     pub const AliasInfo = struct {
         alias_name: []const u8,
         target_variable_name: []const u8,
@@ -41,7 +41,7 @@ pub const AliasTracker = struct {
             .target_type = target_type,
             .is_bound = false,
         };
-        
+
         try self.alias_map.put(alias_name, alias_info);
     }
 

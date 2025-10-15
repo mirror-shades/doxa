@@ -6,6 +6,8 @@ const LLVMCore = llvm.core;
 const LLVMTypes = llvm.types;
 const LLVMTargetMachine = llvm.target_machine;
 const LLVMTarget = llvm.target;
+const LLVMAnalysis = llvm.analysis;
+const LLVMTransform = llvm.transform;
 
 pub const LLVMGenError = error{
     UnsupportedExpressionType,
@@ -65,6 +67,7 @@ pub const LLVMGenerator = struct {
     // Symbol tables for tracking variables and types
     variables: std.StringHashMap(LLVMTypes.LLVMValueRef),
     types: std.StringHashMap(LLVMTypes.LLVMTypeRef),
+    externs: std.StringHashMap(LLVMTypes.LLVMValueRef),
     allocator: std.mem.Allocator,
 
     // Current function being generated
@@ -152,6 +155,7 @@ pub const LLVMGenerator = struct {
             .target_machine = target_machine,
             .variables = std.StringHashMap(LLVMTypes.LLVMValueRef).init(allocator),
             .types = std.StringHashMap(LLVMTypes.LLVMTypeRef).init(allocator),
+            .externs = std.StringHashMap(LLVMTypes.LLVMValueRef).init(allocator),
             .allocator = allocator,
             .current_function = null,
         };
@@ -162,6 +166,7 @@ pub const LLVMGenerator = struct {
     pub fn deinit(self: *LLVMGenerator) void {
         self.variables.deinit();
         self.types.deinit();
+        self.externs.deinit();
         LLVMCore.LLVMDisposeBuilder(self.builder);
         LLVMCore.LLVMDisposeModule(self.module);
         LLVMCore.LLVMContextDispose(self.context);
@@ -175,6 +180,12 @@ pub const LLVMGenerator = struct {
     }
 
     pub fn emitLLVMIR(self: *LLVMGenerator, output_path: []const u8) LLVMGenError![]u8 {
+        // Verify module before emission
+        try self.verify();
+        // Run optimization pipeline
+        self.optimize();
+        // Verify again after optimization
+        try self.verify();
         const ir_string = LLVMCore.LLVMPrintModuleToString(self.module);
         if (ir_string == null) {
             return LLVMGenError.IRGenerationFailed;
@@ -198,6 +209,7 @@ pub const LLVMGenerator = struct {
             "x86_64-w64-mingw32"
         else
             LLVMTargetMachine.LLVMGetDefaultTargetTriple();
+        defer if (@import("builtin").os.tag != .windows) LLVMCore.LLVMDisposeMessage(target_triple);
 
         LLVMCore.LLVMSetTarget(self.module, target_triple);
 
@@ -207,12 +219,21 @@ pub const LLVMGenerator = struct {
         defer LLVMCore.LLVMDisposeMessage(data_layout_str);
         LLVMCore.LLVMSetDataLayout(self.module, data_layout_str);
 
+        // Verify and optimize before object emission
+        try self.verify();
+        self.optimize();
+        try self.verify();
+
+        // Ensure output path is NUL-terminated
+        var path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        const zpath = std.fmt.bufPrintZ(&path_buf, "{s}", .{output_path}) catch return LLVMGenError.InvalidArgument;
+
         // Emit the object code
         var error_message: [*c]u8 = undefined;
         if (LLVMTargetMachine.LLVMTargetMachineEmitToFile(
             self.target_machine,
             self.module,
-            output_path.ptr,
+            zpath.ptr,
             LLVMTypes.LLVMCodeGenFileType.LLVMObjectFile,
             &error_message,
         ) != 0) {
@@ -230,14 +251,27 @@ pub const LLVMGenerator = struct {
                 return switch (lit) {
                     .int => |i| {
                         std.debug.print("Generating integer literal: {}\n", .{i});
-                        return LLVMCore.LLVMConstInt(LLVMCore.LLVMInt32TypeInContext(self.context), @intCast(i), @intFromBool(true));
+                        return LLVMCore.LLVMConstInt(LLVMCore.LLVMInt64TypeInContext(self.context), @intCast(i), @intFromBool(true));
+                    },
+                    .float => |f| {
+                        return LLVMCore.LLVMConstReal(LLVMCore.LLVMDoubleTypeInContext(self.context), f);
+                    },
+                    .tetra => |t| {
+                        const ty_i2 = LLVMCore.LLVMIntTypeInContext(self.context, 2);
+                        const enc: u64 = switch (t) {
+                            .true => 1, // 01
+                            .false => 2, // 10
+                            .both => 3, // 11
+                            .neither => 0, // 00
+                        };
+                        return LLVMCore.LLVMConstInt(ty_i2, enc, @intFromBool(false));
                     },
                     .string => |s| {
                         std.debug.print("Generating string literal: {s}\n", .{s});
                         return try self.createStringConstant(s);
                     },
-                    .u8 => |b| {
-                        std.debug.print("Generating u8 literal: {}\n", .{b});
+                    .byte => |b| {
+                        std.debug.print("Generating byte literal: {}\n", .{b});
                         return LLVMCore.LLVMConstInt(LLVMCore.LLVMInt8TypeInContext(self.context), b, @intFromBool(false));
                     },
                     else => error.UnsupportedLiteralType,
@@ -253,22 +287,9 @@ pub const LLVMGenerator = struct {
                     .MINUS => LLVMCore.LLVMBuildSub(self.builder, lhs, rhs, "sub"),
                     .ASTERISK => LLVMCore.LLVMBuildMul(self.builder, lhs, rhs, "mul"),
                     .SLASH => blk: {
-                        // Promote to double if needed and perform floating division
-                        var L = lhs;
-                        var R = rhs;
-                        const doubleTy = LLVMCore.LLVMDoubleTypeInContext(self.context);
-                        const lhsTy = LLVMCore.LLVMTypeOf(L);
-                        const rhsTy = LLVMCore.LLVMTypeOf(R);
-                        if (LLVMCore.LLVMGetTypeKind(lhsTy) == LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind) {
-                            L = LLVMCore.LLVMBuildSIToFP(self.builder, L, doubleTy, "si2fp.lhs");
-                        } else if (LLVMCore.LLVMGetTypeKind(lhsTy) == LLVMTypes.LLVMTypeKind.LLVMFloatTypeKind) {
-                            L = LLVMCore.LLVMBuildFPExt(self.builder, L, doubleTy, "fpext.lhs");
-                        }
-                        if (LLVMCore.LLVMGetTypeKind(rhsTy) == LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind) {
-                            R = LLVMCore.LLVMBuildSIToFP(self.builder, R, doubleTy, "si2fp.rhs");
-                        } else if (LLVMCore.LLVMGetTypeKind(rhsTy) == LLVMTypes.LLVMTypeKind.LLVMFloatTypeKind) {
-                            R = LLVMCore.LLVMBuildFPExt(self.builder, R, doubleTy, "fpext.rhs");
-                        }
+                        // Promote both operands to f64; perform floating division only
+                        const L = try self.toF64(lhs);
+                        const R = try self.toF64(rhs);
                         break :blk LLVMCore.LLVMBuildFDiv(self.builder, L, R, "fdiv");
                     },
                     .MODULO => LLVMCore.LLVMBuildSRem(self.builder, lhs, rhs, "mod"),
@@ -276,19 +297,81 @@ pub const LLVMGenerator = struct {
                 };
             },
 
+            .Unary => |un| {
+                const operand = try self.generateExpr(un.right.?);
+                switch (un.operator.type) {
+                    .NOT => {
+                        const ty = LLVMCore.LLVMTypeOf(operand);
+                        if (LLVMCore.LLVMGetTypeKind(ty) == LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind and LLVMCore.LLVMGetIntTypeWidth(ty) == 2) {
+                            // Tetra NOT: swap low/high bits, preserve both/neither
+                            const one2 = LLVMCore.LLVMConstInt(ty, 1, @intFromBool(false));
+                            const two2 = LLVMCore.LLVMConstInt(ty, 2, @intFromBool(false));
+                            const low = LLVMCore.LLVMBuildAnd(self.builder, operand, one2, "tetra.low");
+                            const high = LLVMCore.LLVMBuildAnd(self.builder, operand, two2, "tetra.high");
+                            const low_to_high = LLVMCore.LLVMBuildShl(self.builder, low, LLVMCore.LLVMConstInt(ty, 1, @intFromBool(false)), "tetra.l2h");
+                            const high_to_low = LLVMCore.LLVMBuildLShr(self.builder, high, LLVMCore.LLVMConstInt(ty, 1, @intFromBool(false)), "tetra.h2l");
+                            return LLVMCore.LLVMBuildOr(self.builder, low_to_high, high_to_low, "tetra.not");
+                        }
+                        return error.UnsupportedLogicalOperator;
+                    },
+                    else => return error.UnsupportedLogicalOperator,
+                }
+            },
+
             .Logical => |logical| {
                 const lhs = try self.generateExpr(logical.left);
-                const rhs = try self.generateExpr(logical.right);
 
+                // Short-circuit logical operators with boolean i1 semantics
                 return switch (logical.operator.type) {
-                    .AND => LLVMCore.LLVMBuildAnd(self.builder, lhs, rhs, "and"),
-                    .OR => LLVMCore.LLVMBuildOr(self.builder, lhs, rhs, "or"),
+                    .AND => blk_and: {
+                        const start_block = LLVMCore.LLVMGetInsertBlock(self.builder);
+                        const lhs_i1 = try self.toBoolI1(lhs);
+                        const rhs_block = LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "and.rhs");
+                        const end_block = LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "and.end");
+                        _ = LLVMCore.LLVMBuildCondBr(self.builder, lhs_i1, rhs_block, end_block);
+
+                        LLVMCore.LLVMPositionBuilderAtEnd(self.builder, rhs_block);
+                        const rhs_val_raw = try self.generateExpr(logical.right);
+                        const rhs_i1 = try self.toBoolI1(rhs_val_raw);
+                        _ = LLVMCore.LLVMBuildBr(self.builder, end_block);
+
+                        LLVMCore.LLVMPositionBuilderAtEnd(self.builder, end_block);
+                        const bool_ty = LLVMCore.LLVMInt1TypeInContext(self.context);
+                        const phi = LLVMCore.LLVMBuildPhi(self.builder, bool_ty, "and.result");
+                        const false_const = LLVMCore.LLVMConstInt(bool_ty, 0, @intFromBool(false));
+                        var incoming_vals = [_]LLVMTypes.LLVMValueRef{ rhs_i1, false_const };
+                        var incoming_blocks = [_]LLVMTypes.LLVMBasicBlockRef{ rhs_block, start_block };
+                        LLVMCore.LLVMAddIncoming(phi, &incoming_vals, &incoming_blocks, 2);
+                        break :blk_and phi;
+                    },
+                    .OR => blk_or: {
+                        const start_block = LLVMCore.LLVMGetInsertBlock(self.builder);
+                        const lhs_i1 = try self.toBoolI1(lhs);
+                        const rhs_block = LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "or.rhs");
+                        const end_block = LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "or.end");
+                        _ = LLVMCore.LLVMBuildCondBr(self.builder, lhs_i1, end_block, rhs_block);
+
+                        LLVMCore.LLVMPositionBuilderAtEnd(self.builder, rhs_block);
+                        const rhs_val_raw = try self.generateExpr(logical.right);
+                        const rhs_i1 = try self.toBoolI1(rhs_val_raw);
+                        _ = LLVMCore.LLVMBuildBr(self.builder, end_block);
+
+                        LLVMCore.LLVMPositionBuilderAtEnd(self.builder, end_block);
+                        const bool_ty = LLVMCore.LLVMInt1TypeInContext(self.context);
+                        const phi = LLVMCore.LLVMBuildPhi(self.builder, bool_ty, "or.result");
+                        const true_const = LLVMCore.LLVMConstInt(bool_ty, 1, @intFromBool(false));
+                        var incoming_vals = [_]LLVMTypes.LLVMValueRef{ true_const, rhs_i1 };
+                        var incoming_blocks = [_]LLVMTypes.LLVMBasicBlockRef{ start_block, rhs_block };
+                        LLVMCore.LLVMAddIncoming(phi, &incoming_vals, &incoming_blocks, 2);
+                        break :blk_or phi;
+                    },
                     else => error.UnsupportedLogicalOperator,
                 };
             },
 
             .If => |if_expr| {
-                const condition = try self.generateExpr(if_expr.condition.?);
+                var condition = try self.generateExpr(if_expr.condition.?);
+                condition = try self.toBoolI1(condition);
 
                 // Create basic blocks
                 const then_block = LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "then");
@@ -325,30 +408,39 @@ pub const LLVMGenerator = struct {
             },
 
             .Match => |match_expr| {
-                const value = try self.generateExpr(match_expr.value);
+                var cond_val = try self.generateExpr(match_expr.value);
+                const cond_ty = LLVMCore.LLVMTypeOf(cond_val);
+                if (LLVMCore.LLVMGetTypeKind(cond_ty) != LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind) {
+                    return error.UnsupportedExpressionType;
+                }
+                // Normalize to i64 for switch lowering if possible (including i2 tetra)
+                if (LLVMCore.LLVMGetIntTypeWidth(cond_ty) < 64) {
+                    const i64_ty = LLVMCore.LLVMInt64TypeInContext(self.context);
+                    cond_val = LLVMCore.LLVMBuildZExt(self.builder, cond_val, i64_ty, "match.zext");
+                } else if (LLVMCore.LLVMGetIntTypeWidth(cond_ty) > 64) {
+                    const i64_ty = LLVMCore.LLVMInt64TypeInContext(self.context);
+                    cond_val = LLVMCore.LLVMBuildTrunc(self.builder, cond_val, i64_ty, "match.trunc");
+                }
 
-                // Create basic blocks for each case
-                var case_blocks = std.array_list.Managed(LLVMTypes.LLVMBasicBlockRef).init(self.allocator);
-                defer case_blocks.deinit();
-
+                const default_block = LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "match.default");
                 const merge_block = LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "match.merge");
+
+                const switch_inst = LLVMCore.LLVMBuildSwitch(self.builder, cond_val, default_block, @intCast(match_expr.cases.len));
 
                 // Generate code for each case
                 for (match_expr.cases) |case| {
                     const case_block = LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "match.case");
-                    try case_blocks.append(case_block);
-
-                    // Generate pattern comparison
                     const pattern_value = try self.generatePatternValue(case.pattern);
-                    const cmp = LLVMCore.LLVMBuildICmp(self.builder, LLVMTypes.LLVMIntPredicate.LLVMIntEQ, value, pattern_value, "match.cmp");
+                    LLVMCore.LLVMAddCase(switch_inst, pattern_value, case_block);
 
-                    _ = LLVMCore.LLVMBuildCondBr(self.builder, cmp, case_block, merge_block);
-
-                    // Generate case body
                     LLVMCore.LLVMPositionBuilderAtEnd(self.builder, case_block);
                     _ = try self.generateExpr(case.body);
                     _ = LLVMCore.LLVMBuildBr(self.builder, merge_block);
                 }
+
+                // Default path just goes to merge
+                LLVMCore.LLVMPositionBuilderAtEnd(self.builder, default_block);
+                _ = LLVMCore.LLVMBuildBr(self.builder, merge_block);
 
                 LLVMCore.LLVMPositionBuilderAtEnd(self.builder, merge_block);
                 return null;
@@ -394,6 +486,12 @@ pub const LLVMGenerator = struct {
                     try self.generateStmt(&stmt);
                 }
 
+                // If function returns Nothing (void) and current block has no terminator, add implicit ret void
+                const insert_block = LLVMCore.LLVMGetInsertBlock(self.builder);
+                if (insert_block != null and LLVMCore.LLVMGetTypeKind(return_type) == LLVMTypes.LLVMTypeKind.LLVMVoidTypeKind and LLVMCore.LLVMGetBasicBlockTerminator(insert_block) == null) {
+                    _ = LLVMCore.LLVMBuildRetVoid(self.builder);
+                }
+
                 return function;
             },
 
@@ -436,9 +534,13 @@ pub const LLVMGenerator = struct {
 
                 // Call appropriate print function based on type
                 switch (type_kind) {
-                    LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind => {
+                    LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind => blk: {
+                        const ty = LLVMCore.LLVMTypeOf(value);
+                        if (LLVMCore.LLVMGetIntTypeWidth(ty) == 2) {
+                            return self.buildPrintTetra(value);
+                        }
                         std.debug.print("Calling print int\n", .{});
-                        return self.buildPrintInt(value);
+                        break :blk self.buildPrintInt(value);
                     },
                     LLVMTypes.LLVMTypeKind.LLVMPointerTypeKind => {
                         std.debug.print("Calling print string\n", .{});
@@ -482,7 +584,7 @@ pub const LLVMGenerator = struct {
                 const var_type = try self.getLLVMTypeFromTypeInfo(var_decl.type_info);
                 var name_buffer: [256]u8 = undefined;
                 const name_with_null = std.fmt.bufPrintZ(&name_buffer, "{s}", .{var_decl.name.lexeme}) catch return error.NameTooLong;
-                const alloca = LLVMCore.LLVMBuildAlloca(self.builder, var_type, name_with_null.ptr);
+                const alloca = self.createEntryAlloca(LLVMCore.LLVMGetInsertBlock(self.builder), var_type, name_with_null.ptr);
 
                 _ = LLVMCore.LLVMBuildStore(self.builder, value, alloca);
                 try self.variables.put(var_decl.name.lexeme, alloca);
@@ -503,10 +605,11 @@ pub const LLVMGenerator = struct {
 
     fn getLLVMTypeFromTypeInfo(self: *LLVMGenerator, type_info: ast.TypeInfo) LLVMGenError!LLVMTypes.LLVMTypeRef {
         return switch (type_info.base) {
-            .Int => LLVMCore.LLVMInt32TypeInContext(self.context),
-            .U8 => LLVMCore.LLVMInt8TypeInContext(self.context),
+            .Int => LLVMCore.LLVMInt64TypeInContext(self.context),
+            .Byte => LLVMCore.LLVMInt8TypeInContext(self.context),
             .Float => LLVMCore.LLVMDoubleTypeInContext(self.context),
             .String => LLVMCore.LLVMPointerType(LLVMCore.LLVMInt8TypeInContext(self.context), 0),
+            .Tetra => LLVMCore.LLVMIntTypeInContext(self.context, 2),
             .Nothing => LLVMCore.LLVMVoidTypeInContext(self.context),
             else => error.UnsupportedType,
         };
@@ -517,14 +620,129 @@ pub const LLVMGenerator = struct {
         return LLVMCore.LLVMConstNull(llvm_type);
     }
 
+    fn toF64(self: *LLVMGenerator, v: LLVMTypes.LLVMValueRef) LLVMGenError!LLVMTypes.LLVMValueRef {
+        const ty = LLVMCore.LLVMTypeOf(v);
+        const kind = LLVMCore.LLVMGetTypeKind(ty);
+        switch (kind) {
+            LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind => {
+                const double_ty = LLVMCore.LLVMDoubleTypeInContext(self.context);
+                return LLVMCore.LLVMBuildSIToFP(self.builder, v, double_ty, "si2fp");
+            },
+            LLVMTypes.LLVMTypeKind.LLVMFloatTypeKind => {
+                const double_ty = LLVMCore.LLVMDoubleTypeInContext(self.context);
+                return LLVMCore.LLVMBuildFPExt(self.builder, v, double_ty, "fpext");
+            },
+            LLVMTypes.LLVMTypeKind.LLVMDoubleTypeKind => return v,
+            else => return LLVMGenError.UnsupportedBinaryOperator,
+        }
+    }
+
+    fn createEntryAlloca(self: *LLVMGenerator, current_block: LLVMTypes.LLVMBasicBlockRef, ty: LLVMTypes.LLVMTypeRef, name: [*:0]const u8) LLVMTypes.LLVMValueRef {
+        const function = LLVMCore.LLVMGetBasicBlockParent(current_block);
+        const entry = LLVMCore.LLVMGetEntryBasicBlock(function);
+        const first_inst = LLVMCore.LLVMGetFirstInstruction(entry);
+        if (first_inst != null) {
+            const tmp_builder = LLVMCore.LLVMCreateBuilderInContext(self.context);
+            defer LLVMCore.LLVMDisposeBuilder(tmp_builder);
+            LLVMCore.LLVMPositionBuilderBefore(tmp_builder, first_inst);
+            return LLVMCore.LLVMBuildAlloca(tmp_builder, ty, name);
+        } else {
+            const tmp_builder = LLVMCore.LLVMCreateBuilderInContext(self.context);
+            defer LLVMCore.LLVMDisposeBuilder(tmp_builder);
+            LLVMCore.LLVMPositionBuilderAtEnd(tmp_builder, entry);
+            return LLVMCore.LLVMBuildAlloca(tmp_builder, ty, name);
+        }
+    }
+
+    fn toBoolI1(self: *LLVMGenerator, v: LLVMTypes.LLVMValueRef) LLVMGenError!LLVMTypes.LLVMValueRef {
+        const ty = LLVMCore.LLVMTypeOf(v);
+        const kind = LLVMCore.LLVMGetTypeKind(ty);
+        switch (kind) {
+            LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind => {
+                const width = LLVMCore.LLVMGetIntTypeWidth(ty);
+                if (width == 1) return v;
+                if (width == 2) {
+                    // Tetra: then-branch triggers when low bit is set
+                    const ty_i2 = ty;
+                    const one = LLVMCore.LLVMConstInt(ty_i2, 1, @intFromBool(false));
+                    const andv = LLVMCore.LLVMBuildAnd(self.builder, v, one, "tetra.lowbit");
+                    const ty_i1 = LLVMCore.LLVMInt1TypeInContext(self.context);
+                    const zero1 = LLVMCore.LLVMConstInt(ty_i1, 0, @intFromBool(false));
+                    return LLVMCore.LLVMBuildICmp(self.builder, LLVMTypes.LLVMIntPredicate.LLVMIntNE, LLVMCore.LLVMBuildTrunc(self.builder, andv, ty_i1, "tetra.bit"), zero1, "tobool.tetra");
+                }
+                const zero = LLVMCore.LLVMConstNull(ty);
+                return LLVMCore.LLVMBuildICmp(self.builder, LLVMTypes.LLVMIntPredicate.LLVMIntNE, v, zero, "tobool");
+            },
+            LLVMTypes.LLVMTypeKind.LLVMPointerTypeKind => {
+                const null_ptr = LLVMCore.LLVMConstNull(ty);
+                return LLVMCore.LLVMBuildICmp(self.builder, LLVMTypes.LLVMIntPredicate.LLVMIntNE, v, null_ptr, "tobool.ptr");
+            },
+            LLVMTypes.LLVMTypeKind.LLVMFloatTypeKind, LLVMTypes.LLVMTypeKind.LLVMDoubleTypeKind => {
+                const zero = if (kind == LLVMTypes.LLVMTypeKind.LLVMFloatTypeKind)
+                    LLVMCore.LLVMConstReal(ty, 0.0)
+                else
+                    LLVMCore.LLVMConstReal(ty, 0.0);
+                return LLVMCore.LLVMBuildFCmp(self.builder, LLVMTypes.LLVMRealPredicate.LLVMRealONE, v, zero, "tobool.fp");
+            },
+            else => return LLVMGenError.UnsupportedLogicalOperator,
+        }
+    }
+
+    pub fn verify(self: *LLVMGenerator) LLVMGenError!void {
+        var msg: [*c]u8 = null;
+        const failed = LLVMAnalysis.LLVMVerifyModule(self.module, LLVMAnalysis.LLVMReturnStatusAction, &msg);
+        if (failed != 0) {
+            if (msg != null) {
+                std.debug.print("IR verification failed: {s}\n", .{msg});
+                LLVMCore.LLVMDisposeMessage(msg);
+            }
+            return LLVMGenError.IRGenerationFailed;
+        }
+        if (msg != null) LLVMCore.LLVMDisposeMessage(msg);
+    }
+
+    fn optimize(self: *LLVMGenerator) void {
+        // Function-level passes
+        const fpm = LLVMCore.LLVMCreateFunctionPassManagerForModule(self.module);
+        defer LLVMCore.LLVMDisposePassManager(fpm);
+
+        LLVMTransform.LLVMAddPromoteMemoryToRegisterPass(fpm);
+        LLVMTransform.LLVMAddSLPVectorizePass(fpm);
+        LLVMTransform.LLVMAddLowerSwitchPass(fpm);
+
+        _ = LLVMCore.LLVMInitializeFunctionPassManager(fpm);
+        var cur_fn = LLVMCore.LLVMGetFirstFunction(self.module);
+        while (cur_fn != null) : (cur_fn = LLVMCore.LLVMGetNextFunction(cur_fn)) {
+            _ = LLVMCore.LLVMRunFunctionPassManager(fpm, cur_fn);
+        }
+        _ = LLVMCore.LLVMFinalizeFunctionPassManager(fpm);
+
+        // Module-level passes
+        const mpm = LLVMCore.LLVMCreatePassManager();
+        defer LLVMCore.LLVMDisposePassManager(mpm);
+
+        LLVMTransform.LLVMAddConstantMergePass(mpm);
+        LLVMTransform.LLVMAddIPSCCPPass(mpm);
+        LLVMTransform.LLVMAddGlobalOptimizerPass(mpm);
+        LLVMTransform.LLVMAddGlobalDCEPass(mpm);
+        LLVMTransform.LLVMAddMergeFunctionsPass(mpm);
+        LLVMTransform.LLVMAddCalledValuePropagationPass(mpm);
+        LLVMTransform.LLVMAddDeadArgEliminationPass(mpm);
+        LLVMTransform.LLVMAddFunctionAttrsPass(mpm);
+        LLVMTransform.LLVMAddAlwaysInlinerPass(mpm);
+        LLVMTransform.LLVMAddStripDeadPrototypesPass(mpm);
+
+        _ = LLVMCore.LLVMRunPassManager(mpm, self.module);
+    }
+
     fn generatePatternValue(self: *LLVMGenerator, pattern: Token) LLVMGenError!LLVMTypes.LLVMValueRef {
-        // For now, assume patterns are just enum variants stored as integers
-        return LLVMCore.LLVMConstInt(LLVMCore.LLVMInt32TypeInContext(self.context), @intFromEnum(pattern.type), @intFromBool(false));
+        // For now, assume patterns are just enum variants stored as integers (i64 for consistency)
+        return LLVMCore.LLVMConstInt(LLVMCore.LLVMInt64TypeInContext(self.context), @intFromEnum(pattern.type), @intFromBool(false));
     }
 
     fn buildPrintInt(self: *LLVMGenerator, value: LLVMTypes.LLVMValueRef) !LLVMTypes.LLVMValueRef {
         // Create printf function if not already created
-        const printf_fn = if (self.variables.get("printf")) |fn_val|
+        const printf_fn = if (self.externs.get("printf")) |fn_val|
             fn_val
         else blk: {
             const i8_ptr_type = LLVMCore.LLVMPointerType(LLVMCore.LLVMInt8TypeInContext(self.context), 0);
@@ -537,7 +755,7 @@ pub const LLVMGenerator = struct {
             );
             const fn_val = LLVMCore.LLVMAddFunction(self.module, "printf", printf_type);
             LLVMCore.LLVMSetLinkage(fn_val, LLVMTypes.LLVMLinkage.LLVMExternalLinkage);
-            try self.variables.put("printf", fn_val);
+            try self.externs.put("printf", fn_val);
             break :blk fn_val;
         };
 
@@ -567,7 +785,7 @@ pub const LLVMGenerator = struct {
         std.debug.print("Input value type: {}\n", .{value_type_kind});
 
         // Create puts function if not already created
-        const puts_fn = if (self.variables.get("puts")) |fn_val| blk: {
+        const puts_fn = if (self.externs.get("puts")) |fn_val| blk: {
             std.debug.print("Using existing puts function\n", .{});
             break :blk fn_val;
         } else blk: {
@@ -582,7 +800,7 @@ pub const LLVMGenerator = struct {
             );
             const fn_val = LLVMCore.LLVMAddFunction(self.module, "puts", puts_type);
             LLVMCore.LLVMSetLinkage(fn_val, LLVMTypes.LLVMLinkage.LLVMExternalLinkage);
-            try self.variables.put("puts", fn_val);
+            try self.externs.put("puts", fn_val);
 
             // Debug puts function
             const fn_type = LLVMCore.LLVMTypeOf(fn_val);
@@ -630,6 +848,89 @@ pub const LLVMGenerator = struct {
 
         std.debug.print("=== Print String Call Done ===\n\n", .{});
         return result;
+    }
+
+    fn buildPrintTetra(self: *LLVMGenerator, value: LLVMTypes.LLVMValueRef) !LLVMTypes.LLVMValueRef {
+        // Map i2 to string labels via small switch: 0->"neither", 1->"true", 2->"false", 3->"both"
+        const i64_ty = LLVMCore.LLVMInt64TypeInContext(self.context);
+        const casted = LLVMCore.LLVMBuildZExt(self.builder, value, i64_ty, "tetra.zext");
+
+        const default_block = LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "tetra.default");
+        const merge_block = LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "tetra.merge");
+
+        const switch_inst = LLVMCore.LLVMBuildSwitch(self.builder, casted, default_block, 4);
+
+        const str_neither = try self.createStringConstant("neither\n");
+        const str_true = try self.createStringConstant("true\n");
+        const str_false = try self.createStringConstant("false\n");
+        const str_both = try self.createStringConstant("both\n");
+
+        const case0 = LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "tetra.case0");
+        const case1 = LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "tetra.case1");
+        const case2 = LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "tetra.case2");
+        const case3 = LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "tetra.case3");
+
+        LLVMCore.LLVMAddCase(switch_inst, LLVMCore.LLVMConstInt(i64_ty, 0, @intFromBool(false)), case0);
+        LLVMCore.LLVMAddCase(switch_inst, LLVMCore.LLVMConstInt(i64_ty, 1, @intFromBool(false)), case1);
+        LLVMCore.LLVMAddCase(switch_inst, LLVMCore.LLVMConstInt(i64_ty, 2, @intFromBool(false)), case2);
+        LLVMCore.LLVMAddCase(switch_inst, LLVMCore.LLVMConstInt(i64_ty, 3, @intFromBool(false)), case3);
+
+        // printf("%s", str)
+        const printf_fn = if (self.externs.get("printf")) |fn_val|
+            fn_val
+        else blk: {
+            const i8_ptr_type = LLVMCore.LLVMPointerType(LLVMCore.LLVMInt8TypeInContext(self.context), 0);
+            var param_types = [_]LLVMTypes.LLVMTypeRef{i8_ptr_type};
+            const printf_type = LLVMCore.LLVMFunctionType(
+                LLVMCore.LLVMInt32TypeInContext(self.context),
+                &param_types,
+                1,
+                @intFromBool(true),
+            );
+            const fn_val = LLVMCore.LLVMAddFunction(self.module, "printf", printf_type);
+            LLVMCore.LLVMSetLinkage(fn_val, LLVMTypes.LLVMLinkage.LLVMExternalLinkage);
+            try self.externs.put("printf", fn_val);
+            break :blk fn_val;
+        };
+        const i8_ptr_type = LLVMCore.LLVMPointerType(LLVMCore.LLVMInt8TypeInContext(self.context), 0);
+        var fparam_types = [_]LLVMTypes.LLVMTypeRef{i8_ptr_type};
+        const printf_type = LLVMCore.LLVMFunctionType(
+            LLVMCore.LLVMInt32TypeInContext(self.context),
+            &fparam_types,
+            1,
+            @intFromBool(true),
+        );
+
+        // case 0
+        LLVMCore.LLVMPositionBuilderAtEnd(self.builder, case0);
+        var args0 = [_]LLVMTypes.LLVMValueRef{str_neither};
+        _ = LLVMCore.LLVMBuildCall2(self.builder, printf_type, printf_fn, &args0, 1, "");
+        _ = LLVMCore.LLVMBuildBr(self.builder, merge_block);
+
+        // case 1
+        LLVMCore.LLVMPositionBuilderAtEnd(self.builder, case1);
+        var args1 = [_]LLVMTypes.LLVMValueRef{str_true};
+        _ = LLVMCore.LLVMBuildCall2(self.builder, printf_type, printf_fn, &args1, 1, "");
+        _ = LLVMCore.LLVMBuildBr(self.builder, merge_block);
+
+        // case 2
+        LLVMCore.LLVMPositionBuilderAtEnd(self.builder, case2);
+        var args2 = [_]LLVMTypes.LLVMValueRef{str_false};
+        _ = LLVMCore.LLVMBuildCall2(self.builder, printf_type, printf_fn, &args2, 1, "");
+        _ = LLVMCore.LLVMBuildBr(self.builder, merge_block);
+
+        // case 3
+        LLVMCore.LLVMPositionBuilderAtEnd(self.builder, case3);
+        var args3 = [_]LLVMTypes.LLVMValueRef{str_both};
+        _ = LLVMCore.LLVMBuildCall2(self.builder, printf_type, printf_fn, &args3, 1, "");
+        _ = LLVMCore.LLVMBuildBr(self.builder, merge_block);
+
+        // default
+        LLVMCore.LLVMPositionBuilderAtEnd(self.builder, default_block);
+        _ = LLVMCore.LLVMBuildBr(self.builder, merge_block);
+
+        LLVMCore.LLVMPositionBuilderAtEnd(self.builder, merge_block);
+        return null;
     }
 
     fn createStringConstant(self: *LLVMGenerator, string: []const u8) !LLVMTypes.LLVMValueRef {

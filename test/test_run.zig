@@ -567,7 +567,7 @@ fn runDoxaCommandEx(allocator: std.mem.Allocator, path: []const u8, input: ?[]co
     const exe_path = try fs.path.join(allocator, &[_][]const u8{ "zig-out", "bin", "doxa" });
     defer allocator.free(exe_path);
 
-    var child = process.Child.init(&[_][]const u8{ exe_path, path }, child_allocator);
+    var child = process.Child.init(&[_][]const u8{ exe_path, "run", path }, child_allocator);
     child.cwd = ".";
     child.stdout_behavior = .Pipe;
     child.stderr_behavior = .Pipe;
