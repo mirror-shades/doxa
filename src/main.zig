@@ -32,6 +32,8 @@ const BytecodeGenerator = @import("./codegen/bytecode/generator.zig").BytecodeGe
 const BytecodeWriter = @import("./codegen/bytecode/writer.zig");
 const BytecodeModule = @import("./codegen/bytecode/module.zig").BytecodeModule;
 const StructMethodInfo = @import("./analysis/semantic/semantic.zig").StructMethodInfo;
+const LLVMGen = @import("./codegen/llvmir/llvm.zig");
+const toLLVM = @import("./codegen/llvmir/soxa_to_LLVM.zig");
 
 const EXIT_CODE_USAGE = 64;
 const EXIT_CODE_ERROR = 65;
@@ -422,5 +424,42 @@ pub fn main() !void {
 
     if (cli_options.mode == .COMPILE) {
         profiler.startPhase(Phase.GENERATE_L);
+
+        var llvm_gen = try LLVMGen.LLVMGenerator.init(memoryManager.getExecutionAllocator());
+        defer llvm_gen.deinit();
+
+        // Lower HIR to LLVM IR (prototype translator builds a minimal main)
+        try toLLVM.translateToLLVM(&hir_program_for_bytecode, llvm_gen);
+
+        // Derive artifact stem
+        const artifact_stem = blk: {
+            var filename_start: usize = 0;
+            for (path, 0..) |c, i| {
+                if (c == '/' or c == '\\') filename_start = i + 1;
+            }
+            const filename = path[filename_start..];
+            if (std.mem.lastIndexOfScalar(u8, filename, '.')) |dot| {
+                break :blk filename[0..dot];
+            }
+            break :blk filename;
+        };
+
+        // Ensure out/ exists
+        std.fs.cwd().makeDir("out") catch |err| switch (err) {
+            error.PathAlreadyExists => {},
+            else => return err,
+        };
+
+        // Emit LLVM IR and object file
+        var ir_path_buf: [256]u8 = undefined;
+        const ir_path = try std.fmt.bufPrint(&ir_path_buf, "out/{s}.ll", .{artifact_stem});
+        _ = try llvm_gen.emitLLVMIR(ir_path);
+
+        var obj_path_buf: [256]u8 = undefined;
+        const obj_path = try std.fmt.bufPrint(&obj_path_buf, "out/{s}.o", .{artifact_stem});
+        try llvm_gen.emitObjectCode(obj_path);
+
+        profiler.stopPhase();
+        try profiler.dump();
     }
 }

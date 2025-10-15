@@ -58,26 +58,43 @@ pub const IOHandler = struct {
                 }
             }
 
-            // Second pass: evaluate expressions in encounter order (left-to-right)
-            // VM will reverse-pop to restore original order
-            for (expressions.items) |expr_item| {
-                try self.generator.generateExpression(expr_item, true, false);
-            }
+            // If there are no placeholders, emit a simple Const + Print for the full string
+            if (arg_count == 0) {
+                var total_len: usize = 0;
+                for (format_parts.items) |part| total_len += part.len;
 
-            // Store format parts as constants and get their IDs
-            var format_part_ids = try self.generator.allocator.alloc(u32, format_parts.items.len);
-            for (format_parts.items, 0..) |part, i| {
-                const constant_id = try self.generator.addConstant(.{ .string = part });
-                format_part_ids[i] = constant_id;
-            }
+                var full = try self.generator.allocator.alloc(u8, total_len);
+                var offset: usize = 0;
+                for (format_parts.items) |part| {
+                    @memcpy(full[offset..(offset + part.len)], part);
+                    offset += part.len;
+                }
 
-            // Generate interpolated print instruction
-            try self.generator.instructions.append(.{ .PrintInterpolated = .{
-                .format_parts = try format_parts.toOwnedSlice(),
-                .placeholder_indices = try placeholder_indices.toOwnedSlice(),
-                .argument_count = arg_count,
-                .format_part_ids = format_part_ids,
-            } });
+                const const_id = try self.generator.addConstant(.{ .string = full });
+                try self.generator.instructions.append(.{ .Const = .{ .value = .{ .string = full }, .constant_id = const_id } });
+                try self.generator.instructions.append(.{ .Print = .{} });
+            } else {
+                // Second pass: evaluate expressions in encounter order (left-to-right)
+                // VM will reverse-pop to restore original order
+                for (expressions.items) |expr_item| {
+                    try self.generator.generateExpression(expr_item, true, false);
+                }
+
+                // Store format parts as constants and get their IDs
+                var format_part_ids = try self.generator.allocator.alloc(u32, format_parts.items.len);
+                for (format_parts.items, 0..) |part, i| {
+                    const constant_id = try self.generator.addConstant(.{ .string = part });
+                    format_part_ids[i] = constant_id;
+                }
+
+                // Generate interpolated print instruction
+                try self.generator.instructions.append(.{ .PrintInterpolated = .{
+                    .format_parts = try format_parts.toOwnedSlice(),
+                    .placeholder_indices = try placeholder_indices.toOwnedSlice(),
+                    .argument_count = arg_count,
+                    .format_part_ids = format_part_ids,
+                } });
+            }
         } else if (print.arguments) |args| {
             if (args.len == 0) {
                 // No interpolation - need to push the format string literal
