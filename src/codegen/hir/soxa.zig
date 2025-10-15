@@ -562,6 +562,22 @@ fn writeHIRInstruction(writer: anytype, instruction: HIRInstruction, allocator: 
             try writer.writeInt(u32, @as(u32, @intCast(l.name.len)), .little);
             try writer.writeAll(l.name);
         },
+        .PrintBegin => {
+            try writer.writeByte(32); // Instruction tag
+        },
+        .PrintStr => |p| {
+            try writer.writeByte(33); // Instruction tag
+            try writer.writeInt(u32, p.const_id, .little);
+        },
+        .PrintVal => {
+            try writer.writeByte(34); // Instruction tag
+        },
+        .PrintNewline => {
+            try writer.writeByte(35); // Instruction tag
+        },
+        .PrintEnd => {
+            try writer.writeByte(36); // Instruction tag
+        },
         .Halt => {
             try writer.writeByte(12); // Instruction tag
         },
@@ -761,6 +777,14 @@ fn readHIRInstruction(reader: anytype, allocator: std.mem.Allocator) !HIRInstruc
             _ = try reader.readAll(name);
             return HIRInstruction{ .Label = .{ .name = name, .vm_address = 0 } };
         },
+        32 => HIRInstruction.PrintBegin,
+        33 => blk: {
+            const cid = try reader.readInt(u32, .little);
+            break :blk HIRInstruction{ .PrintStr = .{ .const_id = cid } };
+        },
+        34 => HIRInstruction.PrintVal,
+        35 => HIRInstruction.PrintNewline,
+        36 => HIRInstruction.PrintEnd,
         12 => HIRInstruction.Halt,
         13 => { // Peek
             const has_name = (try reader.readByte()) != 0;
@@ -994,6 +1018,21 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
 
         .Print => {
             try writer.print("    Print         ; Print value\n", .{});
+        },
+        .PrintBegin => {
+            try writer.print("    PrintBegin         ; Streaming print begin\n", .{});
+        },
+        .PrintStr => |i| {
+            try writer.print("    PrintStr {}         ; Streaming print string const id\n", .{i.const_id});
+        },
+        .PrintVal => {
+            try writer.print("    PrintVal         ; Streaming print value\n", .{});
+        },
+        .PrintNewline => {
+            try writer.print("    PrintNewline         ; Streaming print newline\n", .{});
+        },
+        .PrintEnd => {
+            try writer.print("    PrintEnd         ; Streaming print end\n", .{});
         },
 
         .PrintInterpolated => |i| {

@@ -22,6 +22,10 @@ fn printToStdout(comptime format: []const u8, args: anytype) !void {
 }
 
 pub const PrintOps = struct {
+    pub fn printRaw(vm: anytype, s: []const u8) !void {
+        _ = vm; // unused for now
+        try printToStdout("{s}", .{s});
+    }
     fn getVmConstant(vm: anytype, id: usize) ?HIRValue {
         const vm_type = @TypeOf(vm);
         const info = @typeInfo(vm_type);

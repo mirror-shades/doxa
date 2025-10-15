@@ -107,6 +107,46 @@ pub fn translateToLLVM(hir: *const HIR.HIRProgram, generator: *LLVMGenerator) !v
                     _ = LLVMCore.LLVMBuildCall2(generator.builder, printf_ty, printf_fn, &args, 2, "printf");
                 }
             },
+            .PrintBegin => {},
+            .PrintStr => |p| {
+                if (p.const_id < hir.constant_pool.len) {
+                    const hv = hir.constant_pool[p.const_id];
+                    if (hv == .string) {
+                        const str_ptr = try createStringPtr(generator, hv.string);
+                        const printf_fn = getOrCreatePrintf(generator);
+                        const fmt = try createStringPtr(generator, "%s");
+                        var args = [_]LLVMTypes.LLVMValueRef{ fmt, str_ptr };
+                        const i8_ptr_ty = LLVMCore.LLVMPointerType(LLVMCore.LLVMInt8TypeInContext(generator.context), 0);
+                        var printf_param_types = [_]LLVMTypes.LLVMTypeRef{i8_ptr_ty};
+                        const printf_ty = LLVMCore.LLVMFunctionType(i32_ty, &printf_param_types, 1, @intFromBool(true));
+                        _ = LLVMCore.LLVMBuildCall2(generator.builder, printf_ty, printf_fn, &args, 2, "printf");
+                    }
+                }
+            },
+            .PrintVal => {
+                if (stack.items.len > 0) {
+                    const val = stack.items[stack.items.len - 1];
+                    stack.items.len -= 1;
+                    const printf_fn = getOrCreatePrintf(generator);
+                    const fmt = try createStringPtr(generator, "%s");
+                    // Currently, only strings are supported; future: numeric formats
+                    var args = [_]LLVMTypes.LLVMValueRef{ fmt, val };
+                    const i8_ptr_ty = LLVMCore.LLVMPointerType(LLVMCore.LLVMInt8TypeInContext(generator.context), 0);
+                    var printf_param_types = [_]LLVMTypes.LLVMTypeRef{i8_ptr_ty};
+                    const printf_ty = LLVMCore.LLVMFunctionType(i32_ty, &printf_param_types, 1, @intFromBool(true));
+                    _ = LLVMCore.LLVMBuildCall2(generator.builder, printf_ty, printf_fn, &args, 2, "printf");
+                }
+            },
+            .PrintNewline => {
+                const printf_fn = getOrCreatePrintf(generator);
+                const nl = try createStringPtr(generator, "\n");
+                var args = [_]LLVMTypes.LLVMValueRef{nl};
+                const i8_ptr_ty = LLVMCore.LLVMPointerType(LLVMCore.LLVMInt8TypeInContext(generator.context), 0);
+                var printf_param_types = [_]LLVMTypes.LLVMTypeRef{i8_ptr_ty};
+                const printf_ty = LLVMCore.LLVMFunctionType(i32_ty, &printf_param_types, 1, @intFromBool(true));
+                _ = LLVMCore.LLVMBuildCall2(generator.builder, printf_ty, printf_fn, &args, 1, "printf");
+            },
+            .PrintEnd => {},
             .Halt => {
                 const zero_ret = LLVMCore.LLVMConstInt(i32_ty, 0, @intFromBool(false));
                 _ = LLVMCore.LLVMBuildRet(generator.builder, zero_ret);

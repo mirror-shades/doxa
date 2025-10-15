@@ -574,6 +574,11 @@ pub const BytecodeGenerator = struct {
                     .variant_index = payload.variant_index,
                 } }),
                 .Print => try self.instructions.append(self.allocator, .Print),
+                .PrintBegin => try self.instructions.append(self.allocator, .PrintBegin),
+                .PrintStr => |payload| try self.instructions.append(self.allocator, .{ .PrintStr = .{ .const_id = payload.const_id } }),
+                .PrintVal => try self.instructions.append(self.allocator, .PrintVal),
+                .PrintNewline => try self.instructions.append(self.allocator, .PrintNewline),
+                .PrintEnd => try self.instructions.append(self.allocator, .PrintEnd),
                 .PrintInterpolated => |payload| try self.instructions.append(self.allocator, .{ .PrintInterpolated = .{
                     .format_parts = payload.format_parts,
                     .placeholder_indices = payload.placeholder_indices,
