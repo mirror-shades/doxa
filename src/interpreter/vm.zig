@@ -439,14 +439,16 @@ pub const VM = struct {
             },
             .JumpIfFalse => |payload| {
                 const condition = try self.popValue();
-                if (!self.isTruthy(condition)) {
+                const truthy = try self.isTruthy(condition);
+                if (!truthy) {
                     const target = self.label_cache[payload.label_id];
                     self.jumpTo(target);
                 }
             },
             .JumpIfTrue => |payload| {
                 const condition = try self.popValue();
-                if (self.isTruthy(condition)) {
+                const truthy = try self.isTruthy(condition);
+                if (truthy) {
                     const target = self.label_cache[payload.label_id];
                     self.jumpTo(target);
                 }
@@ -764,7 +766,7 @@ pub const VM = struct {
                 for (arr.elements) |element| {
                     if (std.meta.eql(element, HIRValue.nothing)) break;
                     const predicate_value = try self.evaluatePredicate(predicate, element);
-                    const truthy = self.isTruthy(predicate_value);
+                    const truthy = try self.isTruthy(predicate_value);
                     if (is_exists) {
                         if (truthy) {
                             result = true;
@@ -1627,10 +1629,8 @@ pub const VM = struct {
         self.skip_increment = true;
     }
 
-    fn isTruthy(self: *VM, value: HIRValue) bool {
-        _ = self;
+    fn isTruthy(self: *VM, value: HIRValue) !bool {
         return switch (value) {
-            .nothing => false,
             .int => |v| v != 0,
             .byte => |v| v != 0,
             .float => |v| v != 0,
@@ -1641,19 +1641,10 @@ pub const VM = struct {
                 3 => false, // neither (is not true)
                 else => false,
             },
-            .string => |v| v.len != 0,
-            .array => |v| blk: {
-                var count: usize = 0;
-                for (v.elements) |elem| {
-                    if (std.meta.eql(elem, HIRValue.nothing)) break;
-                    count += 1;
-                }
-                break :blk count != 0;
+            else => {
+                self.reporter.reportRuntimeError(null, ErrorCode.NOT_TRUTHY, "Truthy value cannot be determined for value: {s}", .{@tagName(value)});
+                return ErrorList.TypeError;
             },
-            .struct_instance => true,
-            .map => |v| v.entries.len != 0,
-            .enum_variant => true,
-            .storage_id_ref => true,
         };
     }
 
