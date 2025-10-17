@@ -190,6 +190,7 @@ fn parseArgs(allocator: std.mem.Allocator) !CLI {
     defer std.process.argsFree(allocator, args);
 
     if (args.len < 2) {
+        std.debug.print("Error: No arguments provided\n", .{});
         printUsage();
         std.process.exit(EXIT_CODE_USAGE);
     }
