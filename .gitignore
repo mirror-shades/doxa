@@ -5,6 +5,8 @@ venv
 .github
 site
 test.doxa
+build.doxa
+built
 instructions.md
 pipeline.dot
 notes.md

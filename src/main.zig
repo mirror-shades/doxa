@@ -260,7 +260,7 @@ fn parseArgs(allocator: std.mem.Allocator) !CLI {
             std.process.exit(0);
         } else if (stringEndsWith(arg, DOXA_EXTENSION)) {
             options.script_path = try allocator.dupe(u8, arg);
-            break;
+            continue;
         } else {
             std.debug.print("Error: Unknown command or invalid file: '{s}'\n", .{arg});
             printUsage();

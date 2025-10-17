@@ -28,22 +28,19 @@ Now let's create some conditional logic to understand how a tetra works. Here is
 
 ```
 function living(alive :: tetra) {
-    if alive then "I am alive"?
-    if not alive then "I am dead"?
+    if alive then @print(" is alive")
+    if not alive then @print(" is dead")
+    @print("\n")
 }
 ```
 
 Notice that if this function was in another language and was using a boolean, there would only be two possible branches when executed. If you would like to follow along, here is how I ran the values through the function:
 
 ```
-"Bob"?
-living(Bob)
-"Shakespere"?
-living(Shakespere)
-"zombie"?
-living(zombie)
-"angel"?
-living(angel)
+@print("Bob{living(Bob)}\n")
+@print("Shakespere{living(Shakespere)}\n")
+@print("zombie{living(zombie)}\n")
+@print("angel"{living(angel)}\n")
 ```
 
 And here is the output I received:
@@ -101,4 +98,25 @@ living(angel)
 [C:\dev\zig\doxa\test.doxa:11:8] value = "angel"
 [C:\dev\zig\doxa\test.doxa:5:55] value = "I am not alive"
 [C:\dev\zig\doxa\test.doxa:6:57] value = "I am not dead"
+```
+
+A potential real world use case. Here we are fetching data which we are unsure of. We will use the tetra as follows: 
+true mean the data was valid
+false means the data was invalid
+both means the data was ambigous, possibly valid, possibly not
+neither means no data was returned
+
+This approach lets us handle ambigous data without using flags or nested if statements. Remember, a both value triggers all conditionals, a neither will never trigger a conditional.
+
+```
+struct Call {
+    data :: string
+    valid :: tetra
+}
+
+const result :: Call is apiCall()
+
+if not result.valid then log(result) // if the result is false or both it is logged 
+if result.valid then serveData(result) // if the result is true or both it is served
+// if neither, the conditionals do not trigger and the result is ignored
 ```
