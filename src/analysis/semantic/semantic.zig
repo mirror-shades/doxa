@@ -1838,6 +1838,27 @@ pub const SemanticAnalyzer = struct {
             self.fatal_error = true;
         }
 
+        // If the function's declared return type does not include Nothing, ensure
+        // every control-flow path returns. Otherwise, this implies an implicit
+        // 'nothing' on some paths which is incompatible with non-union/non-Nothing
+        // return types.
+        if (expected_return_type.base != .Nothing) {
+            const guarantees = try self.guaranteesReturnInStatements(body, expected_return_type, func_span);
+            if (!guarantees) {
+                // Allow missing returns only if the declared return type is a union that includes Nothing
+                const nothing_ok = expected_return_type.base == .Union and helpers.unionContainsNothing(self, expected_return_type);
+                if (!nothing_ok) {
+                    self.reporter.reportCompileError(
+                        func_span.location,
+                        ErrorCode.MISSING_RETURN_VALUE,
+                        "Function may return 'nothing' on some paths; declare a union return type (e.g., T | nothing) or return a value on all paths",
+                        .{},
+                    );
+                    self.fatal_error = true;
+                }
+            }
+        }
+
         return has_return;
     }
 
@@ -1858,6 +1879,38 @@ pub const SemanticAnalyzer = struct {
 
         // Both branches must return for the if to guarantee a return
         return then_returns and else_returns;
+    }
+
+    // Determine whether a sequence of statements guarantees a return on all control-flow paths
+    fn guaranteesReturnInStatements(self: *SemanticAnalyzer, body: []ast.Stmt, expected_return_type: ast.TypeInfo, func_span: ast.SourceSpan) ErrorList!bool {
+        for (body, 0..) |stmt, idx| {
+            switch (stmt.data) {
+                .Return => {
+                    // Unconditional return guarantees a return; subsequent statements are unreachable
+                    return true;
+                },
+                .Block => |block_stmts| {
+                    if (try self.guaranteesReturnInStatements(block_stmts, expected_return_type, func_span)) return true;
+                },
+                .Expression => |maybe_expr| {
+                    if (maybe_expr) |expr| {
+                        // If this expression guarantees return (e.g., an if with both branches returning),
+                        // treat it as guaranteeing a return from this point forward
+                        if (try self.validateExpressionReturns(expr, expected_return_type, func_span)) return true;
+
+                        // Special case: if it's an if-expression without an else and this is the last
+                        // statement, fallthrough is possible => no guarantee; continue loop otherwise.
+                        if (expr.data == .If and idx == body.len - 1) {
+                            // No else or not both branches returning implies no guarantee
+                            // The earlier validateIfExpressionReturns would have caught the positive case
+                        }
+                    }
+                },
+                else => {},
+            }
+        }
+
+        return false;
     }
 
     fn isLoopScope(self: *SemanticAnalyzer) bool {

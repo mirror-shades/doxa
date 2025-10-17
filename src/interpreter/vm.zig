@@ -1154,22 +1154,29 @@ pub const VM = struct {
             defer arena.deinit();
             const a = arena.allocator();
 
-            // Resolve doxa executable path: DOXA_EXE env -> ./zig-out/bin/doxa -> PATH "doxa"
+            // Resolve doxa executable path: self-exe -> DOXA_EXE env -> ./zig-out/bin/doxa -> PATH "doxa"
             var doxa_path: []const u8 = "doxa";
-            const env_path_opt: ?[]const u8 = std.process.getEnvVarOwned(a, "DOXA_EXE") catch null;
-            if (env_path_opt) |env_path| {
-                doxa_path = env_path;
+            const self_path_opt = std.fs.selfExePathAlloc(a) catch null;
+            if (self_path_opt) |self_path| {
+                doxa_path = self_path;
             } else {
-                const candidate = try std.fs.path.join(a, &[_][]const u8{ ".", "zig-out", "bin", "doxa" });
-                const f = std.fs.cwd().openFile(candidate, .{}) catch null;
-                if (f) |fh| {
-                    fh.close();
-                    doxa_path = candidate;
+                const env_path_opt: ?[]const u8 = std.process.getEnvVarOwned(a, "DOXA_EXE") catch null;
+                if (env_path_opt) |env_path| {
+                    doxa_path = env_path;
+                } else {
+                    const candidate = try std.fs.path.join(a, &[_][]const u8{ ".", "zig-out", "bin", "doxa" });
+                    const f = std.fs.cwd().openFile(candidate, .{}) catch null;
+                    if (f) |fh| {
+                        fh.close();
+                        doxa_path = candidate;
+                    }
                 }
             }
 
             var child1 = std.process.Child.init(&[_][]const u8{ doxa_path, "compile", src_path }, a);
             child1.cwd = ".";
+            child1.stdout_behavior = .Inherit;
+            child1.stderr_behavior = .Inherit;
             const term1 = child1.spawnAndWait() catch {
                 try self.stack.push(HIRFrame.initInt(1));
                 return;
@@ -1204,6 +1211,8 @@ pub const VM = struct {
             // Step 2: run `zig cc <obj> -o <out>`
             var child2 = std.process.Child.init(&[_][]const u8{ "zig", "cc", obj_path, "-o", out_path }, a);
             child2.cwd = ".";
+            child2.stdout_behavior = .Inherit;
+            child2.stderr_behavior = .Inherit;
             const term2 = child2.spawnAndWait() catch {
                 try self.stack.push(HIRFrame.initInt(1));
                 return;

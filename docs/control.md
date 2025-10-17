@@ -10,9 +10,9 @@ Examples:
 
 ```doxa
 if x > 10 then {
-    "x is greater than 10"?
+    @print("x is greater than 10/n")
 } else {
-    "x is 10 or less"?
+    @print("x is 10 or less/n")
 }
 
 var condition is if true then "true" else "false"
@@ -21,10 +21,10 @@ var condition is if true then "true" else "false"
 Chaining and statement-style:
 
 ```doxa
-if current % 3 equals 0 and current % 5 equals 0 then "fizzbuzz"?
-else if current % 3 equals 0 then "fizz"?
-else if current % 5 equals 0 then "buzz"?
-else current?
+if current % 3 equals 0 and current % 5 equals 0 then @print("fizzbuzz/n")
+else if current % 3 equals 0 then @print("fizz/n")
+else if current % 5 equals 0 then @print("buzz/n")
+else @print(current)
 ```
 
 ### as / then / else (type narrowing)
@@ -40,7 +40,7 @@ const n_or_zero is value as int else 0
 
 // Block failure case
 value as int else {
-    "value is not an int"?
+    @print("value is not an int/n")
 }
 
 // Explicit success block
@@ -66,7 +66,7 @@ Examples
 
 ```
 // IF: Truth-driven
-if x > 10 then "big"? else "small"?
+if x > 10 then @print("big/n") else @print("small/n")
 
 // AS: Fallback-driven
 value as int else 0         // If not int, use 0
@@ -74,7 +74,7 @@ value as int then 20 else 0  // If int, use 20  else 0
 
 // Both in action
 if isReady then start() else wait()
-data as string then parse(data) else log("Bad data")
+data as string then parse(data) else log("Bad data/n")
 ```
 
 ### match (values and union types)
@@ -95,8 +95,8 @@ Match on union types:
 ```doxa
 fn kind(value :: int | float) returns(string) {
     return match value {
-        int then "integer"?
-        float then "float"?
+        int then @print("integer/n")
+        float then @print("float/n")
     }
 }
 ```
@@ -132,9 +132,9 @@ Block arms in match:
 ```doxa
 var msg is match color {
     // semicolons can be used to represent line breaks
-    .Red then { "stop"? "red"}
-    .Green then "green"
-    else { "caution"? "yellowish"}
+    .Red then { @print("stop/n"); "red"}
+    .Green then { @print("go/n"); "green"
+    else { @print("caution/n"); "yellowish"}
 }
 ```
 
