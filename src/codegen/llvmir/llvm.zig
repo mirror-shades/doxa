@@ -189,6 +189,18 @@ pub const LLVMGenerator = struct {
     }
 
     pub fn emitLLVMIR(self: *LLVMGenerator, output_path: []const u8) LLVMGenError![]u8 {
+        // Dump IR before verification to help diagnose verifier failures
+        const pre_ir = LLVMCore.LLVMPrintModuleToString(self.module);
+        if (pre_ir != null) {
+            defer LLVMCore.LLVMDisposeMessage(pre_ir);
+            const pre_path = "out/ir_before.ll";
+            const pre_file = std.fs.cwd().createFile(pre_path, .{}) catch null;
+            if (pre_file) |f| {
+                defer f.close();
+                _ = f.writeAll(std.mem.span(pre_ir)) catch {};
+            }
+        }
+
         // Verify module before emission
         try self.verify();
         // Run optimization pipeline

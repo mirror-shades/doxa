@@ -457,8 +457,8 @@ pub const BytecodeGenerator = struct {
                         // The logic is:
                         // - if condition is false (0) -> jump to false
                         // - if condition is true (1) -> jump to true
-                        // - if condition is both (2) -> execute both branches
-                        // - if condition is neither (3) -> skip both branches
+                        // - if condition is both (2) -> jump to true
+                        // - if condition is neither (3) -> jump to false
 
                         // Check if condition is false (0) -> jump to false (pops condition)
                         try self.instructions.append(self.allocator, .{ .JumpIfFalse = .{ .label_id = false_id, .condition_type = cond_type } });

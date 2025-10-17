@@ -4,7 +4,7 @@
 
 ### Type overview
 
-A tetra is a type which represents four cornered logic as opposed to Booles binary logic. You can think of a tetra a bit like an extended boolean type. Where bools can only exist in only two states, true or false, tetras can exist in four. The four states which tetras can exist in are:
+A tetra is a type which represents four cornered logic as opposed to binary boolean logic. You can think of a tetra a bit like an extended boolean type. Where bools can exist in only two states, true or false, tetras can exist in four. The four states which tetras can exist in are:
 
 `true` - These first two values should be familiar  
 `false`  
@@ -13,94 +13,62 @@ A tetra is a type which represents four cornered logic as opposed to Booles bina
 
 ### An Example
 
-Let's start with a condition, in this case, the condition of being alive. In traditional boolean logic there would be only two states for this condition, true or false, or in term of the condition, alive or dead. But a tetra can represent logical conditions outside of this true/false, alive/dead binary.
+Let's start with a condition, in this case, the condition of being alive. In traditional boolean logic there would be only two states for this condition, true or false, or in terms of the condition, alive or dead. But a tetra can represent logical conditions outside of this true/false, alive/dead binary.
 
 Here are four values to represent the four possible states or corners of a tetra:
 
 ```
 const Bob is true
-const Shakespere is false
+const Shakespeare is false
 const zombie is both
 const angel is neither
 ```
 
-Now let's create some conditional logic to understand how a tetra works. Here is a function to discover whether something is alive or not:
+Now let's create some conditional logic to understand how a tetra works. Here is a function to discover whether something is alive or not. It takes a single tetra for input then decides if something is alive or not based on whether it is true or false. it then compared the two flags, isAlive and isDead to determine the state.
 
 ```
-function living(alive :: tetra) {
-    if alive then @print(" is alive")
-    if not alive then @print(" is dead")
-    @print("\n")
+function living(alive :: tetra) returns string {
+    var isAlive is false
+    var isDead is false
+
+    if alive then isAlive is true
+    if not alive then isDead is true
+
+    if isAlive and isDead then return "is alive and dead"
+    if isAlive then return "is alive"
+    if isDead then return "is dead"
+    return "neither alive or dead"
 }
 ```
 
-Notice that if this function was in another language and was using a boolean, there would only be two possible branches when executed. If you would like to follow along, here is how I ran the values through the function:
+Notice that if this function could be written without the flags, by comparing the state of the tetra itself. We are using flags here to deconstruct it the way we would have to using traditional boolean logic. Here is an execution of the function:
 
 ```
-@print("Bob{living(Bob)}\n")
-@print("Shakespere{living(Shakespere)}\n")
-@print("zombie{living(zombie)}\n")
-@print("angel"{living(angel)}\n")
+@print("Bob {living(Bob)}\n")
+@print("Shakespeare {living(Shakespeare)}\n")
+@print("zombie {living(zombie)}\n")
+@print("angel {living(angel)}\n")
 ```
 
 And here is the output I received:
 
 ```
-[C:\dev\zig\doxa\test.doxa:11:6] value = "Bob"
-[C:\dev\zig\doxa\test.doxa:7:31] value = "I am alive"
-[C:\dev\zig\doxa\test.doxa:13:13] value = "Shakespere"
-[C:\dev\zig\doxa\test.doxa:8:34] value = "I am dead"
-[C:\dev\zig\doxa\test.doxa:15:9] value = "zombie"
-[C:\dev\zig\doxa\test.doxa:7:31] value = "I am alive"
-[C:\dev\zig\doxa\test.doxa:8:34] value = "I am dead"
-[C:\dev\zig\doxa\test.doxa:17:8] value = "angel"
+Bob is alive
+Shakespeare is dead
+zombie is alive and dead
+angel neither alive or dead
 ```
 
-The output here might seems strange but the logic behind it is very simple. True only triggers conditions which are true. False only triggers conditions which are false. Both will trigger both the condition regardless if it is true or false. Neither will never trigger a condition.
+When deconstructed like this we can see the logic is relatively simple. True only triggers conditions which are true. False only triggers conditions which are false. Both will trigger conditions even when negated. Neither will not trigger a condition even when negated.
 
-This means zombie triggers both the `alive` condition and its negation `not alive`.
+Keep in mind, a tetra is a value. It doesn't alter the logical flow of conditionals, rather it triggers those conditionals in a paradoxical fashion.
 
-```
-[C:\dev\zig\doxa\test.doxa:15:9] value = "zombie"
-[C:\dev\zig\doxa\test.doxa:7:31] value = "I am alive"
-[C:\dev\zig\doxa\test.doxa:8:34] value = "I am dead"
-```
+Special attention should (not) be paid to the else clause. The else clause is exactly what it sounds like: "if a condition is met, then do x, OR ELSE, do y". Since both will always trigger a condition, and neither will never trigger a condition, else blocks work as you would assume, both will never trigger the else clause, and neither will always trigger the else clause.
 
-Angel triggers neither and so we see no output from either branch.
+### A use case
 
-```
-[C:\dev\zig\doxa\test.doxa:17:8] value = "angel"
-```
+Where a tetra really excels is dealing with fuzzy or ambigious data. Take a common example of ambigous data, API calls. Here we are fetching data from an API whose validity we may not be sure of. The call will be stored in a struct which uses a tetra called valid: 
 
-Keep in mind, a tetra is a value. It doesn't actually alter the logic flow of your program, it's purpose is simply to follow the logic flow in ways basic true and false cannot.
-
-Special attention should (not) be paid to the else clause. The else clause is exactly what it sounds like - "if a condition is met, then do x, OR ELSE, do y". As we now know, both will always trigger a condition, and neither will never trigger a condition. The effect with else blocks is then as you would assume, both with never trigger an else clause, and neither will always trigger an else clause.
-
-```
-const zombie is both
-const angel is neither
-
-function living(alive :: tetra) {
-    if alive then "I am alive"? else "I am not alive"?
-    if not alive then "I am dead"? else "I am not dead"?
-}
-
-"zombie"?
-living(zombie)
-"angel"?
-living(angel)
-```
-
-```
-[C:\dev\zig\doxa\test.doxa:9:9] value = "zombie"
-[C:\dev\zig\doxa\test.doxa:5:31] value = "I am alive"
-[C:\dev\zig\doxa\test.doxa:6:34] value = "I am dead"
-[C:\dev\zig\doxa\test.doxa:11:8] value = "angel"
-[C:\dev\zig\doxa\test.doxa:5:55] value = "I am not alive"
-[C:\dev\zig\doxa\test.doxa:6:57] value = "I am not dead"
-```
-
-A potential real world use case. Here we are fetching data which we are unsure of. We will use the tetra as follows: 
 true mean the data was valid
 false means the data was invalid
 both means the data was ambigous, possibly valid, possibly not
@@ -116,7 +84,7 @@ struct Call {
 
 const result :: Call is apiCall()
 
-if not result.valid then log(result) // if the result is false or both it is logged 
-if result.valid then serveData(result) // if the result is true or both it is served
-// if neither, the conditionals do not trigger and the result is ignored
+if not result.valid then log(result) // if the result is not valid or ambigous it is logged 
+if result.valid then serveData(result) // if the result is valid or ambigous it is served
+// if no data the conditionals do not trigger and the result falls through
 ```
