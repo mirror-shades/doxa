@@ -73,6 +73,9 @@ pub const LLVMGenerator = struct {
     // Current function being generated
     current_function: ?LLVMTypes.LLVMValueRef,
 
+    // Debug controls
+    debug_peek: bool,
+
     pub fn init(allocator: std.mem.Allocator) !*LLVMGenerator {
         // Ensure targets are registered before querying triple
         // Initialize native target and also register all targets/printers for portability
@@ -167,6 +170,7 @@ pub const LLVMGenerator = struct {
             .externs = std.StringHashMap(LLVMTypes.LLVMValueRef).init(allocator),
             .allocator = allocator,
             .current_function = null,
+            .debug_peek = false,
         };
 
         return generator;

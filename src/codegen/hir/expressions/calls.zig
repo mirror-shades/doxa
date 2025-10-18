@@ -507,11 +507,14 @@ pub const CallsHandler = struct {
             if (builtin_data.arguments.len != 0) return error.InvalidArgumentCount;
             try self.generator.instructions.append(.{ .Call = .{ .function_index = 0, .qualified_name = "random", .arg_count = 0, .call_kind = .BuiltinFunction, .target_module = null, .return_type = .Float } });
         } else if (std.mem.eql(u8, name, "build")) {
-            if (builtin_data.arguments.len != 2) return error.InvalidArgumentCount;
-            // Evaluate arguments in order: source_path, output_path
+            if (builtin_data.arguments.len != 5) return error.InvalidArgumentCount;
+            // Evaluate arguments in order: src, out, arch, os, debug
             try self.generator.generateExpression(builtin_data.arguments[0], true, false);
             try self.generator.generateExpression(builtin_data.arguments[1], true, false);
-            try self.generator.instructions.append(.{ .Call = .{ .function_index = 0, .qualified_name = "build", .arg_count = 2, .call_kind = .BuiltinFunction, .target_module = null, .return_type = .Int } });
+            try self.generator.generateExpression(builtin_data.arguments[2], true, false);
+            try self.generator.generateExpression(builtin_data.arguments[3], true, false);
+            try self.generator.generateExpression(builtin_data.arguments[4], true, false);
+            try self.generator.instructions.append(.{ .Call = .{ .function_index = 0, .qualified_name = "build", .arg_count = 5, .call_kind = .BuiltinFunction, .target_module = null, .return_type = .Int } });
         } else if (std.mem.eql(u8, name, "int")) {
             if (builtin_data.arguments.len != 1) return error.InvalidArgumentCount;
             try self.generator.generateExpression(builtin_data.arguments[0], true, false);

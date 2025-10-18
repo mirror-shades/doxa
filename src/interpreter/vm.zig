@@ -1138,7 +1138,11 @@ pub const VM = struct {
         }
 
         if (std.mem.eql(u8, name, "build")) {
-            if (arg_count != 2) return error.UnimplementedInstruction;
+            // New signature: @build(src: string, out: string, arch: string, os: string, debug: tetra)
+            if (arg_count != 5) return error.UnimplementedInstruction;
+            const debug_frame = try self.stack.pop();
+            const os_frame = try self.stack.pop();
+            const arch_frame = try self.stack.pop();
             const out_path_frame = try self.stack.pop();
             const src_path_frame = try self.stack.pop();
 
@@ -1149,6 +1153,18 @@ pub const VM = struct {
             const out_path = switch (out_path_frame.value) {
                 .string => |s| s,
                 else => return self.reporter.reportRuntimeError(null, ErrorCode.TYPE_MISMATCH, "build: second argument must be string", .{}),
+            };
+            _ = switch (arch_frame.value) {
+                .string => |s| s,
+                else => return self.reporter.reportRuntimeError(null, ErrorCode.TYPE_MISMATCH, "build: third argument (arch) must be string", .{}),
+            };
+            _ = switch (os_frame.value) {
+                .string => |s| s,
+                else => return self.reporter.reportRuntimeError(null, ErrorCode.TYPE_MISMATCH, "build: fourth argument (os) must be string", .{}),
+            };
+            const debug_on: bool = switch (debug_frame.value) {
+                .tetra => |t| t == 1 or t == 2,
+                else => false,
             };
 
             // Step 1: run `doxa compile <src>`
@@ -1175,10 +1191,15 @@ pub const VM = struct {
                 }
             }
 
-            var child1 = std.process.Child.init(&[_][]const u8{ doxa_path, "compile", src_path }, a);
+            // Invoke compiler; if debug requested, pass a CLI flag to enable peek lowering
+            var child1 = if (debug_on)
+                std.process.Child.init(&[_][]const u8{ doxa_path, "compile", src_path, "--debug-execution" }, a)
+            else
+                std.process.Child.init(&[_][]const u8{ doxa_path, "compile", src_path }, a);
             child1.cwd = ".";
             child1.stdout_behavior = .Inherit;
             child1.stderr_behavior = .Inherit;
+            // Optionally pass arch/os to downstream build in future
             const term1 = child1.spawnAndWait() catch {
                 try self.stack.push(HIRFrame.initInt(1));
                 return;
@@ -1631,9 +1652,6 @@ pub const VM = struct {
 
     fn isTruthy(self: *VM, value: HIRValue) !bool {
         return switch (value) {
-            .int => |v| v != 0,
-            .byte => |v| v != 0,
-            .float => |v| v != 0,
             .tetra => |v| switch (v) {
                 0 => false, // false
                 1 => true, // true
@@ -1642,7 +1660,7 @@ pub const VM = struct {
                 else => false,
             },
             else => {
-                self.reporter.reportRuntimeError(null, ErrorCode.NOT_TRUTHY, "Truthy value cannot be determined for value: {s}", .{@tagName(value)});
+                self.reporter.reportRuntimeError(null, ErrorCode.NOT_TRUTHY, "Truthy value cannot be determined for value: {s}, use a tetra instead", .{@tagName(value)});
                 return ErrorList.TypeError;
             },
         };

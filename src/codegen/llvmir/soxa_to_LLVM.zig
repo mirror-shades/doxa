@@ -581,6 +581,80 @@ pub fn translateToLLVM(hir: *const HIR.HIRProgram, generator: *LLVMGenerator) !v
                     }
                 }
             },
+            .Peek => |pk| {
+                // In release, drop peek entirely
+                if (!generator.debug_peek) {
+                    if (stack.items.len > 0) {
+                        // Pop the peeked value and push it back to preserve semantics
+                        const v = stack.items[stack.items.len - 1];
+                        stack.items.len -= 1;
+                        try stack.append(v);
+                    }
+                    break;
+                }
+                if (stack.items.len > 0) {
+                    // Pop value to peek and print with prefix: [file:line:col] name :: type is value
+                    const v = stack.items[stack.items.len - 1];
+                    stack.items.len -= 1;
+
+                    // Build prefix
+                    var prefix_buf: [256]u8 = undefined;
+                    var fbs = std.io.fixedBufferStream(&prefix_buf);
+                    var w = fbs.writer();
+                    if (pk.location) |loc| {
+                        const file = loc.file;
+                        const line = loc.range.start_line;
+                        const col = loc.range.start_col;
+                        try w.print("[{s}:{d}:{d}] ", .{ file, line, col });
+                    }
+                    if (pk.name) |nm| {
+                        try w.print("{s} :: ", .{nm});
+                    }
+
+                    // Determine type tag for display
+                    const kind = LLVMCore.LLVMGetTypeKind(LLVMCore.LLVMTypeOf(v));
+                    const type_tag = switch (kind) {
+                        LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind => "int",
+                        LLVMTypes.LLVMTypeKind.LLVMDoubleTypeKind, LLVMTypes.LLVMTypeKind.LLVMFloatTypeKind => "float",
+                        LLVMTypes.LLVMTypeKind.LLVMPointerTypeKind => "string",
+                        else => "value",
+                    };
+                    try w.print("{s} is ", .{type_tag});
+                    const prefix_len = fbs.pos;
+                    const prefix_slice = prefix_buf[0..prefix_len];
+
+                    // Print prefix
+                    const printf_fn = getOrCreatePrintf(generator);
+                    var args0 = [_]LLVMTypes.LLVMValueRef{try createStringPtr(generator, prefix_slice)};
+                    const i8_ptr_ty = LLVMCore.LLVMPointerType(LLVMCore.LLVMInt8TypeInContext(generator.context), 0);
+                    var printf_param_types = [_]LLVMTypes.LLVMTypeRef{i8_ptr_ty};
+                    const printf_ty = LLVMCore.LLVMFunctionType(i32_ty, &printf_param_types, 1, @intFromBool(true));
+                    _ = LLVMCore.LLVMBuildCall2(generator.builder, printf_ty, printf_fn, &args0, 1, "printf");
+
+                    // Then print the value according to kind
+                    if (kind == LLVMTypes.LLVMTypeKind.LLVMPointerTypeKind) {
+                        var args = [_]LLVMTypes.LLVMValueRef{ try createStringPtr(generator, "%s"), v };
+                        _ = LLVMCore.LLVMBuildCall2(generator.builder, printf_ty, printf_fn, &args, 2, "printf");
+                    } else if (kind == LLVMTypes.LLVMTypeKind.LLVMDoubleTypeKind or kind == LLVMTypes.LLVMTypeKind.LLVMFloatTypeKind) {
+                        const vf = ensureF64(generator, v);
+                        var args = [_]LLVMTypes.LLVMValueRef{ try createStringPtr(generator, "%g"), vf };
+                        _ = LLVMCore.LLVMBuildCall2(generator.builder, printf_ty, printf_fn, &args, 2, "printf");
+                    } else if (kind == LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind) {
+                        const vi = ensureI64(generator, v);
+                        var args = [_]LLVMTypes.LLVMValueRef{ try createStringPtr(generator, "%ld"), vi };
+                        _ = LLVMCore.LLVMBuildCall2(generator.builder, printf_ty, printf_fn, &args, 2, "printf");
+                    } else {
+                        // Fallback do nothing
+                    }
+
+                    // Trailing newline
+                    var args_nl = [_]LLVMTypes.LLVMValueRef{try createStringPtr(generator, "\n")};
+                    _ = LLVMCore.LLVMBuildCall2(generator.builder, printf_ty, printf_fn, &args_nl, 1, "printf");
+
+                    // Push original value back on the stack
+                    try stack.append(v);
+                }
+            },
             .PrintNewline => {
                 const printf_fn = getOrCreatePrintf(generator);
                 const nl = try createStringPtr(generator, "\n");

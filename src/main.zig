@@ -427,6 +427,13 @@ pub fn main() !void {
         profiler.startPhase(Phase.GENERATE_L);
 
         var llvm_gen = try LLVMGen.LLVMGenerator.init(memoryManager.getExecutionAllocator());
+        // Propagate debug mode to LLVM generator for peek lowering
+        var debug_peek_env: bool = false;
+        if (std.process.getEnvVarOwned(memoryManager.getExecutionAllocator(), "DOXA_DEBUG_PEEK")) |val| {
+            defer memoryManager.getExecutionAllocator().free(val);
+            debug_peek_env = std.mem.eql(u8, val, "1") or std.ascii.eqlIgnoreCase(val, "true");
+        } else |_| {}
+        llvm_gen.debug_peek = debug_peek_env or reporter.debug_hir or reporter.debug_execution or reporter.debug_verbose;
         defer llvm_gen.deinit();
 
         // Lower HIR to LLVM IR (prototype translator builds a minimal main)
