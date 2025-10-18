@@ -8,6 +8,8 @@ const LLVMTargetMachine = llvm.target_machine;
 const LLVMTarget = llvm.target;
 const LLVMAnalysis = llvm.analysis;
 const LLVMTransform = llvm.transform;
+const externs = @import("common/externs.zig");
+const strings = @import("common/strings.zig");
 
 pub const LLVMGenError = error{
     UnsupportedExpressionType,
@@ -57,6 +59,8 @@ pub const LLVMGenError = error{
     ProcessNotFound,
     FunctionTypeNotFound,
 };
+
+var next_string_id: usize = 0;
 
 pub const LLVMGenerator = struct {
     context: LLVMTypes.LLVMContextRef,
@@ -341,7 +345,7 @@ pub const LLVMGenerator = struct {
                     },
                     .string => |s| {
                         std.debug.print("Generating string literal: {s}\n", .{s});
-                        return try self.createStringConstant(s);
+                        return try strings.createStringPtr(self, s, &next_string_id);
                     },
                     .byte => |b| {
                         std.debug.print("Generating byte literal: {}\n", .{b});
@@ -785,113 +789,19 @@ pub const LLVMGenerator = struct {
     }
 
     fn buildPrintInt(self: *LLVMGenerator, value: LLVMTypes.LLVMValueRef) !LLVMTypes.LLVMValueRef {
-        // Create printf function if not already created
-        const printf_fn = if (self.externs.get("printf")) |fn_val|
-            fn_val
-        else blk: {
-            const i8_ptr_type = LLVMCore.LLVMPointerType(LLVMCore.LLVMInt8TypeInContext(self.context), 0);
-            var param_types = [_]LLVMTypes.LLVMTypeRef{i8_ptr_type};
-            const printf_type = LLVMCore.LLVMFunctionType(
-                LLVMCore.LLVMInt32TypeInContext(self.context),
-                &param_types,
-                1,
-                @intFromBool(true),
-            );
-            const fn_val = LLVMCore.LLVMAddFunction(self.module, "printf", printf_type);
-            LLVMCore.LLVMSetLinkage(fn_val, LLVMTypes.LLVMLinkage.LLVMExternalLinkage);
-            try self.externs.put("printf", fn_val);
-            break :blk fn_val;
-        };
-
-        // Create format string
-        const format_str = try self.createStringConstant("%d\n");
+        const printf_fn = externs.getOrCreatePrintf(self);
+        const format_str = try strings.createStringPtr(self, "%d\n", &next_string_id);
 
         // Create arguments array
         var args = [_]LLVMTypes.LLVMValueRef{ format_str, value };
 
-        return LLVMCore.LLVMBuildCall2(
-            self.builder,
-            LLVMCore.LLVMTypeOf(printf_fn),
-            printf_fn,
-            &args,
-            2,
-            "",
-        );
+        return LLVMCore.LLVMBuildCall2(self.builder, LLVMCore.LLVMTypeOf(printf_fn), printf_fn, &args, 2, "");
     }
 
     fn buildPrintString(self: *LLVMGenerator, value: LLVMTypes.LLVMValueRef) !LLVMTypes.LLVMValueRef {
-        std.debug.print("\n=== Building Print String Call ===\n", .{});
-
-        // Debug input value
-        const value_type = LLVMCore.LLVMTypeOf(value);
-        const value_type_kind = LLVMCore.LLVMGetTypeKind(value_type);
-        std.debug.print("Input value: {*}\n", .{value});
-        std.debug.print("Input value type: {}\n", .{value_type_kind});
-
-        // Create puts function if not already created
-        const puts_fn = if (self.externs.get("puts")) |fn_val| blk: {
-            std.debug.print("Using existing puts function\n", .{});
-            break :blk fn_val;
-        } else blk: {
-            std.debug.print("Creating new puts function\n", .{});
-            const i8_ptr_type = LLVMCore.LLVMPointerType(LLVMCore.LLVMInt8TypeInContext(self.context), 0);
-            var param_types = [_]LLVMTypes.LLVMTypeRef{i8_ptr_type};
-            const puts_type = LLVMCore.LLVMFunctionType(
-                LLVMCore.LLVMInt32TypeInContext(self.context),
-                &param_types,
-                1,
-                @intFromBool(false),
-            );
-            const fn_val = LLVMCore.LLVMAddFunction(self.module, "puts", puts_type);
-            LLVMCore.LLVMSetLinkage(fn_val, LLVMTypes.LLVMLinkage.LLVMExternalLinkage);
-            try self.externs.put("puts", fn_val);
-
-            // Debug puts function
-            const fn_type = LLVMCore.LLVMTypeOf(fn_val);
-            const fn_type_kind = LLVMCore.LLVMGetTypeKind(fn_type);
-            std.debug.print("Puts function: {*}\n", .{fn_val});
-            std.debug.print("Puts type: {}\n", .{fn_type_kind});
-            break :blk fn_val;
-        };
-
-        // Debug arguments
-        std.debug.print("\nPreparing call arguments...\n", .{});
+        const puts_fn = externs.getOrCreatePuts(self);
         var args = [_]LLVMTypes.LLVMValueRef{value};
-        std.debug.print("Argument (string): {*}\n", .{args[0]});
-
-        // Create the function type for the call
-        const i8_ptr_type = LLVMCore.LLVMPointerType(LLVMCore.LLVMInt8TypeInContext(self.context), 0);
-        var param_types = [_]LLVMTypes.LLVMTypeRef{i8_ptr_type};
-        const puts_type = LLVMCore.LLVMFunctionType(
-            LLVMCore.LLVMInt32TypeInContext(self.context),
-            &param_types,
-            1,
-            @intFromBool(false),
-        );
-
-        // Make the call
-        std.debug.print("\nMaking puts call...\n", .{});
-        const result = LLVMCore.LLVMBuildCall2(
-            self.builder,
-            puts_type,
-            puts_fn,
-            &args,
-            1,
-            "",
-        );
-
-        // Debug result
-        if (result != null) {
-            std.debug.print("Call instruction created successfully\n", .{});
-            const result_type = LLVMCore.LLVMTypeOf(result);
-            const result_type_kind = LLVMCore.LLVMGetTypeKind(result_type);
-            std.debug.print("Call result type: {}\n", .{result_type_kind});
-        } else {
-            std.debug.print("Call instruction creation failed\n", .{});
-        }
-
-        std.debug.print("=== Print String Call Done ===\n\n", .{});
-        return result;
+        return LLVMCore.LLVMBuildCall2(self.builder, LLVMCore.LLVMTypeOf(puts_fn), puts_fn, &args, 1, "");
     }
 
     fn buildPrintTetra(self: *LLVMGenerator, value: LLVMTypes.LLVMValueRef) !LLVMTypes.LLVMValueRef {
@@ -904,10 +814,10 @@ pub const LLVMGenerator = struct {
 
         const switch_inst = LLVMCore.LLVMBuildSwitch(self.builder, casted, default_block, 4);
 
-        const str_neither = try self.createStringConstant("neither\n");
-        const str_true = try self.createStringConstant("true\n");
-        const str_false = try self.createStringConstant("false\n");
-        const str_both = try self.createStringConstant("both\n");
+        const str_neither = try strings.createStringPtr(self, "neither\n", &next_string_id);
+        const str_true = try strings.createStringPtr(self, "true\n", &next_string_id);
+        const str_false = try strings.createStringPtr(self, "false\n", &next_string_id);
+        const str_both = try strings.createStringPtr(self, "both\n", &next_string_id);
 
         const case0 = LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "tetra.case0");
         const case1 = LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "tetra.case1");
@@ -920,30 +830,8 @@ pub const LLVMGenerator = struct {
         LLVMCore.LLVMAddCase(switch_inst, LLVMCore.LLVMConstInt(i64_ty, 3, @intFromBool(false)), case3);
 
         // printf("%s", str)
-        const printf_fn = if (self.externs.get("printf")) |fn_val|
-            fn_val
-        else blk: {
-            const i8_ptr_type = LLVMCore.LLVMPointerType(LLVMCore.LLVMInt8TypeInContext(self.context), 0);
-            var param_types = [_]LLVMTypes.LLVMTypeRef{i8_ptr_type};
-            const printf_type = LLVMCore.LLVMFunctionType(
-                LLVMCore.LLVMInt32TypeInContext(self.context),
-                &param_types,
-                1,
-                @intFromBool(true),
-            );
-            const fn_val = LLVMCore.LLVMAddFunction(self.module, "printf", printf_type);
-            LLVMCore.LLVMSetLinkage(fn_val, LLVMTypes.LLVMLinkage.LLVMExternalLinkage);
-            try self.externs.put("printf", fn_val);
-            break :blk fn_val;
-        };
-        const i8_ptr_type = LLVMCore.LLVMPointerType(LLVMCore.LLVMInt8TypeInContext(self.context), 0);
-        var fparam_types = [_]LLVMTypes.LLVMTypeRef{i8_ptr_type};
-        const printf_type = LLVMCore.LLVMFunctionType(
-            LLVMCore.LLVMInt32TypeInContext(self.context),
-            &fparam_types,
-            1,
-            @intFromBool(true),
-        );
+        const printf_fn = externs.getOrCreatePrintf(self);
+        const printf_type = LLVMCore.LLVMTypeOf(printf_fn);
 
         // case 0
         LLVMCore.LLVMPositionBuilderAtEnd(self.builder, case0);
@@ -977,59 +865,5 @@ pub const LLVMGenerator = struct {
         return null;
     }
 
-    fn createStringConstant(self: *LLVMGenerator, string: []const u8) !LLVMTypes.LLVMValueRef {
-        std.debug.print("\n=== Creating String Constant ===\n", .{});
-        std.debug.print("Input string: '{s}'\n", .{string});
-
-        // Create a null-terminated copy of the string
-        var buffer = try self.allocator.alloc(u8, string.len + 1);
-        defer self.allocator.free(buffer);
-        @memcpy(buffer[0..string.len], string);
-        buffer[string.len] = 0;
-
-        // Create a global string constant
-        const str_val = LLVMCore.LLVMConstStringInContext(
-            self.context,
-            @ptrCast(buffer.ptr),
-            @intCast(buffer.len),
-            @intFromBool(false), // Don't add another null terminator
-        );
-        std.debug.print("String constant created: {*}\n", .{str_val});
-
-        // Create a unique name for the global
-        var name_buffer: [32]u8 = undefined;
-        const unique_name = std.fmt.bufPrintZ(&name_buffer, "str.{d}", .{@intFromPtr(string.ptr)}) catch "str";
-
-        // Create a global constant
-        const global_str = LLVMCore.LLVMAddGlobal(
-            self.module,
-            LLVMCore.LLVMTypeOf(str_val),
-            unique_name.ptr,
-        );
-        LLVMCore.LLVMSetInitializer(global_str, str_val);
-        LLVMCore.LLVMSetGlobalConstant(global_str, @intFromBool(true));
-        LLVMCore.LLVMSetLinkage(global_str, LLVMTypes.LLVMLinkage.LLVMPrivateLinkage);
-        std.debug.print("Global variable created: {*}\n", .{global_str});
-
-        // Get pointer to first element using GEP
-        const zero = LLVMCore.LLVMConstInt(LLVMCore.LLVMInt32TypeInContext(self.context), 0, @intFromBool(false));
-        var indices = [_]LLVMTypes.LLVMValueRef{ zero, zero };
-        const ptr = LLVMCore.LLVMBuildGEP2(
-            self.builder,
-            LLVMCore.LLVMTypeOf(str_val),
-            global_str,
-            &indices,
-            2,
-            "str_ptr",
-        );
-        std.debug.print("GEP result: {*}\n", .{ptr});
-
-        // Cast to i8*
-        const i8_ptr_type = LLVMCore.LLVMPointerType(LLVMCore.LLVMInt8TypeInContext(self.context), 0);
-        const result = LLVMCore.LLVMBuildBitCast(self.builder, ptr, i8_ptr_type, "str_ptr_cast");
-        std.debug.print("Final string pointer: {*}\n", .{result});
-
-        std.debug.print("=== String Constant Creation Done ===\n\n", .{});
-        return result;
-    }
+    // createStringConstant removed in favor of common/strings.createStringPtr
 };
