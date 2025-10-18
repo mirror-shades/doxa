@@ -7,103 +7,19 @@ const HIR = @import("../hir/soxa_types.zig");
 const HIRValue = @import("../hir/soxa_values.zig").HIRValue;
 const HIRInstruction = @import("../hir/soxa_instructions.zig").HIRInstruction;
 const LLVMGenerator = @import("llvm.zig").LLVMGenerator;
+const cast = @import("common/cast.zig");
+const externs = @import("common/externs.zig");
+const strings = @import("common/strings.zig");
+const type_map = @import("common/types.zig");
 
 var next_string_id: usize = 0; // unique IDs for string globals within this module
 var next_block_id: usize = 0; // unique IDs for synthetic continuation blocks
 
-fn mapHIRTypeToLLVM(gen: *LLVMGenerator, ty: HIR.HIRType) LLVMTypes.LLVMTypeRef {
-    return switch (ty) {
-        .Int => LLVMCore.LLVMInt64TypeInContext(gen.context),
-        .Byte => LLVMCore.LLVMInt8TypeInContext(gen.context),
-        .Float => LLVMCore.LLVMDoubleTypeInContext(gen.context),
-        .String => LLVMCore.LLVMPointerType(LLVMCore.LLVMInt8TypeInContext(gen.context), 0),
-        .Tetra => LLVMCore.LLVMIntTypeInContext(gen.context, 2),
-        .Nothing => LLVMCore.LLVMVoidTypeInContext(gen.context),
-        else => LLVMCore.LLVMInt64TypeInContext(gen.context),
-    };
-}
-
-fn getOrCreatePuts(gen: *LLVMGenerator) LLVMTypes.LLVMValueRef {
-    const i32_ty = LLVMCore.LLVMInt32TypeInContext(gen.context);
-    const i8_ptr_ty = LLVMCore.LLVMPointerType(LLVMCore.LLVMInt8TypeInContext(gen.context), 0);
-    const existing = LLVMCore.LLVMGetNamedFunction(gen.module, "puts");
-    if (existing != null) return existing;
-    var params = [_]LLVMTypes.LLVMTypeRef{i8_ptr_ty};
-    const puts_ty = LLVMCore.LLVMFunctionType(i32_ty, &params, 1, @intFromBool(false));
-    return LLVMCore.LLVMAddFunction(gen.module, "puts", puts_ty);
-}
-
-fn getOrCreatePrintf(gen: *LLVMGenerator) LLVMTypes.LLVMValueRef {
-    const i32_ty = LLVMCore.LLVMInt32TypeInContext(gen.context);
-    const i8_ptr_ty = LLVMCore.LLVMPointerType(LLVMCore.LLVMInt8TypeInContext(gen.context), 0);
-    const existing = LLVMCore.LLVMGetNamedFunction(gen.module, "printf");
-    if (existing != null) return existing;
-    var params = [_]LLVMTypes.LLVMTypeRef{i8_ptr_ty};
-    const printf_ty = LLVMCore.LLVMFunctionType(i32_ty, &params, 1, @intFromBool(true));
-    return LLVMCore.LLVMAddFunction(gen.module, "printf", printf_ty);
-}
-
-fn getOrCreatePow(gen: *LLVMGenerator) LLVMTypes.LLVMValueRef {
-    const existing = LLVMCore.LLVMGetNamedFunction(gen.module, "pow");
-    if (existing != null) return existing;
-    const f64_ty = LLVMCore.LLVMDoubleTypeInContext(gen.context);
-    var params = [_]LLVMTypes.LLVMTypeRef{ f64_ty, f64_ty };
-    const pow_ty = LLVMCore.LLVMFunctionType(f64_ty, &params, 2, @intFromBool(false));
-    return LLVMCore.LLVMAddFunction(gen.module, "pow", pow_ty);
-}
-
-fn ensureI64(gen: *LLVMGenerator, v: LLVMTypes.LLVMValueRef) LLVMTypes.LLVMValueRef {
-    const ty = LLVMCore.LLVMTypeOf(v);
-    if (LLVMCore.LLVMGetTypeKind(ty) == LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind) {
-        const width = LLVMCore.LLVMGetIntTypeWidth(ty);
-        if (width == 64) return v;
-        if (width < 64) {
-            // Treat smaller integers as unsigned for widening (byte semantics)
-            return LLVMCore.LLVMBuildZExt(gen.builder, v, LLVMCore.LLVMInt64TypeInContext(gen.context), "zext.i64");
-        }
-        // Wider than 64 not expected; truncate defensively
-        return LLVMCore.LLVMBuildTrunc(gen.builder, v, LLVMCore.LLVMInt64TypeInContext(gen.context), "trunc.i64");
-    }
-    if (LLVMCore.LLVMGetTypeKind(ty) == LLVMTypes.LLVMTypeKind.LLVMDoubleTypeKind) {
-        return LLVMCore.LLVMBuildFPToSI(gen.builder, v, LLVMCore.LLVMInt64TypeInContext(gen.context), "fp2si.i64");
-    }
-    return v;
-}
-
-fn ensureF64(gen: *LLVMGenerator, v: LLVMTypes.LLVMValueRef) LLVMTypes.LLVMValueRef {
-    const ty = LLVMCore.LLVMTypeOf(v);
-    const kind = LLVMCore.LLVMGetTypeKind(ty);
-    if (kind == LLVMTypes.LLVMTypeKind.LLVMDoubleTypeKind) return v;
-    if (kind == LLVMTypes.LLVMTypeKind.LLVMFloatTypeKind) {
-        return LLVMCore.LLVMBuildFPExt(gen.builder, v, LLVMCore.LLVMDoubleTypeInContext(gen.context), "fpext.f64");
-    }
-    if (kind == LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind) {
-        return LLVMCore.LLVMBuildSIToFP(gen.builder, v, LLVMCore.LLVMDoubleTypeInContext(gen.context), "si2fp.f64");
-    }
-    return v;
-}
-
-fn ensureI8(gen: *LLVMGenerator, v: LLVMTypes.LLVMValueRef) LLVMTypes.LLVMValueRef {
-    const ty = LLVMCore.LLVMTypeOf(v);
-    if (LLVMCore.LLVMGetTypeKind(ty) == LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind and LLVMCore.LLVMGetIntTypeWidth(ty) == 8) {
-        return v;
-    }
-    const i8_ty = LLVMCore.LLVMInt8TypeInContext(gen.context);
-    const kind = LLVMCore.LLVMGetTypeKind(ty);
-    if (kind == LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind) {
-        return LLVMCore.LLVMBuildTrunc(gen.builder, v, i8_ty, "trunc.i8");
-    }
-    if (kind == LLVMTypes.LLVMTypeKind.LLVMDoubleTypeKind or kind == LLVMTypes.LLVMTypeKind.LLVMFloatTypeKind) {
-        return LLVMCore.LLVMBuildFPToUI(gen.builder, v, i8_ty, "fp2ui.i8");
-    }
-    return v;
-}
-
 fn byteSaturatingAdd(gen: *LLVMGenerator, a: LLVMTypes.LLVMValueRef, b: LLVMTypes.LLVMValueRef) LLVMTypes.LLVMValueRef {
     const i8_ty = LLVMCore.LLVMInt8TypeInContext(gen.context);
     const i16_ty = LLVMCore.LLVMInt16TypeInContext(gen.context);
-    const a16 = LLVMCore.LLVMBuildZExt(gen.builder, ensureI8(gen, a), i16_ty, "a.z16");
-    const b16 = LLVMCore.LLVMBuildZExt(gen.builder, ensureI8(gen, b), i16_ty, "b.z16");
+    const a16 = LLVMCore.LLVMBuildZExt(gen.builder, cast.ensureI8(gen, a), i16_ty, "a.z16");
+    const b16 = LLVMCore.LLVMBuildZExt(gen.builder, cast.ensureI8(gen, b), i16_ty, "b.z16");
     const sum16 = LLVMCore.LLVMBuildAdd(gen.builder, a16, b16, "add16");
     const max255 = LLVMCore.LLVMConstInt(i16_ty, 255, @intFromBool(false));
     const gt = LLVMCore.LLVMBuildICmp(gen.builder, LLVMTypes.LLVMIntPredicate.LLVMIntUGT, sum16, max255, "gt255");
@@ -113,8 +29,8 @@ fn byteSaturatingAdd(gen: *LLVMGenerator, a: LLVMTypes.LLVMValueRef, b: LLVMType
 
 fn byteSaturatingSub(gen: *LLVMGenerator, a: LLVMTypes.LLVMValueRef, b: LLVMTypes.LLVMValueRef) LLVMTypes.LLVMValueRef {
     const i8_ty = LLVMCore.LLVMInt8TypeInContext(gen.context);
-    const a8 = ensureI8(gen, a);
-    const b8 = ensureI8(gen, b);
+    const a8 = cast.ensureI8(gen, a);
+    const b8 = cast.ensureI8(gen, b);
     const ge = LLVMCore.LLVMBuildICmp(gen.builder, LLVMTypes.LLVMIntPredicate.LLVMIntUGE, a8, b8, "ge");
     const diff = LLVMCore.LLVMBuildSub(gen.builder, a8, b8, "sub8");
     const zero = LLVMCore.LLVMConstInt(i8_ty, 0, @intFromBool(false));
@@ -124,65 +40,14 @@ fn byteSaturatingSub(gen: *LLVMGenerator, a: LLVMTypes.LLVMValueRef, b: LLVMType
 fn byteSaturatingMul(gen: *LLVMGenerator, a: LLVMTypes.LLVMValueRef, b: LLVMTypes.LLVMValueRef) LLVMTypes.LLVMValueRef {
     const i8_ty = LLVMCore.LLVMInt8TypeInContext(gen.context);
     const i32_ty = LLVMCore.LLVMInt32TypeInContext(gen.context);
-    const a32 = LLVMCore.LLVMBuildZExt(gen.builder, ensureI8(gen, a), i32_ty, "a.z32");
-    const b32 = LLVMCore.LLVMBuildZExt(gen.builder, ensureI8(gen, b), i32_ty, "b.z32");
+    const a32 = LLVMCore.LLVMBuildZExt(gen.builder, cast.ensureI8(gen, a), i32_ty, "a.z32");
+    const b32 = LLVMCore.LLVMBuildZExt(gen.builder, cast.ensureI8(gen, b), i32_ty, "b.z32");
     const prod32 = LLVMCore.LLVMBuildMul(gen.builder, a32, b32, "mul32");
     const max255 = LLVMCore.LLVMConstInt(i32_ty, 255, @intFromBool(false));
     const gt = LLVMCore.LLVMBuildICmp(gen.builder, LLVMTypes.LLVMIntPredicate.LLVMIntUGT, prod32, max255, "gt255");
     const sel = LLVMCore.LLVMBuildSelect(gen.builder, gt, max255, prod32, "sel");
     const trunc = LLVMCore.LLVMBuildTrunc(gen.builder, sel, i8_ty, "to.i8");
     return trunc;
-}
-
-fn createStringPtr(gen: *LLVMGenerator, s: []const u8) !LLVMTypes.LLVMValueRef {
-    // Create a null-terminated copy to satisfy [*:0]const u8
-    var buf = try gen.allocator.alloc(u8, s.len + 1);
-    defer gen.allocator.free(buf);
-    @memcpy(buf[0..s.len], s);
-    buf[s.len] = 0;
-
-    const str_val = LLVMCore.LLVMConstStringInContext(gen.context, @ptrCast(buf.ptr), @intCast(buf.len), @intFromBool(false));
-
-    // Generate a unique name per call to avoid collisions between multiple literals
-    var name_buf: [32]u8 = undefined;
-    const id = next_string_id;
-    next_string_id += 1;
-    const zname = std.fmt.bufPrintZ(&name_buf, "str.lit.{d}", .{id}) catch "str.lit";
-
-    const global = LLVMCore.LLVMAddGlobal(gen.module, LLVMCore.LLVMTypeOf(str_val), zname.ptr);
-    LLVMCore.LLVMSetInitializer(global, str_val);
-    LLVMCore.LLVMSetGlobalConstant(global, @intFromBool(true));
-    LLVMCore.LLVMSetLinkage(global, LLVMTypes.LLVMLinkage.LLVMPrivateLinkage);
-    const i32_ty = LLVMCore.LLVMInt32TypeInContext(gen.context);
-    const zero = LLVMCore.LLVMConstInt(i32_ty, 0, @intFromBool(false));
-    var idx = [_]LLVMTypes.LLVMValueRef{ zero, zero };
-    const gep = LLVMCore.LLVMBuildGEP2(gen.builder, LLVMCore.LLVMTypeOf(str_val), global, &idx, 2, "str.gep");
-    const i8_ptr_ty = LLVMCore.LLVMPointerType(LLVMCore.LLVMInt8TypeInContext(gen.context), 0);
-    return LLVMCore.LLVMBuildBitCast(gen.builder, gep, i8_ptr_ty, "str.cast");
-}
-
-fn ensureI1(gen: *LLVMGenerator, v: LLVMTypes.LLVMValueRef) LLVMTypes.LLVMValueRef {
-    const ty = LLVMCore.LLVMTypeOf(v);
-    const kind = LLVMCore.LLVMGetTypeKind(ty);
-    const i1_ty = LLVMCore.LLVMInt1TypeInContext(gen.context);
-    switch (kind) {
-        LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind => {
-            const width = LLVMCore.LLVMGetIntTypeWidth(ty);
-            if (width == 1) return v;
-            const zero = LLVMCore.LLVMConstInt(ty, 0, @intFromBool(false));
-            return LLVMCore.LLVMBuildICmp(gen.builder, LLVMTypes.LLVMIntPredicate.LLVMIntNE, v, zero, "to.i1");
-        },
-        LLVMTypes.LLVMTypeKind.LLVMDoubleTypeKind, LLVMTypes.LLVMTypeKind.LLVMFloatTypeKind => {
-            const f = ensureF64(gen, v);
-            const zero = LLVMCore.LLVMConstReal(LLVMCore.LLVMDoubleTypeInContext(gen.context), 0);
-            return LLVMCore.LLVMBuildFCmp(gen.builder, LLVMTypes.LLVMRealPredicate.LLVMRealONE, f, zero, "to.i1");
-        },
-        LLVMTypes.LLVMTypeKind.LLVMPointerTypeKind => {
-            const null_ptr = LLVMCore.LLVMConstNull(ty);
-            return LLVMCore.LLVMBuildICmp(gen.builder, LLVMTypes.LLVMIntPredicate.LLVMIntNE, v, null_ptr, "to.i1");
-        },
-        else => return LLVMCore.LLVMConstInt(i1_ty, 0, @intFromBool(false)),
-    }
 }
 
 pub fn translateToLLVM(hir: *const HIR.HIRProgram, generator: *LLVMGenerator) !void {
@@ -213,7 +78,7 @@ pub fn translateToLLVM(hir: *const HIR.HIRProgram, generator: *LLVMGenerator) !v
                 const hv = hir.constant_pool[idx];
                 switch (hv) {
                     .string => |s| {
-                        const ptr = try createStringPtr(generator, s);
+                        const ptr = try strings.createStringPtr(generator, s, &next_string_id);
                         try stack.append(ptr);
                     },
                     .int => |i| {
@@ -244,8 +109,8 @@ pub fn translateToLLVM(hir: *const HIR.HIRProgram, generator: *LLVMGenerator) !v
                 var result: LLVMTypes.LLVMValueRef = null;
                 switch (a.operand_type) {
                     .Float => {
-                        const lf = ensureF64(generator, left);
-                        const rf = ensureF64(generator, right);
+                        const lf = cast.ensureF64(generator, left);
+                        const rf = cast.ensureF64(generator, right);
                         result = switch (a.op) {
                             .Add => LLVMCore.LLVMBuildFAdd(generator.builder, lf, rf, "fadd"),
                             .Sub => LLVMCore.LLVMBuildFSub(generator.builder, lf, rf, "fsub"),
@@ -253,7 +118,7 @@ pub fn translateToLLVM(hir: *const HIR.HIRProgram, generator: *LLVMGenerator) !v
                             .Div => LLVMCore.LLVMBuildFDiv(generator.builder, lf, rf, "fdiv"),
                             .Mod => LLVMCore.LLVMBuildFRem(generator.builder, lf, rf, "frem"),
                             .Pow => blk: {
-                                const pow_fn = getOrCreatePow(generator);
+                                const pow_fn = externs.getOrCreatePow(generator);
                                 var args = [_]LLVMTypes.LLVMValueRef{ lf, rf };
                                 const f64_ty = LLVMCore.LLVMDoubleTypeInContext(generator.context);
                                 var ptys = [_]LLVMTypes.LLVMTypeRef{ f64_ty, f64_ty };
@@ -263,22 +128,22 @@ pub fn translateToLLVM(hir: *const HIR.HIRProgram, generator: *LLVMGenerator) !v
                         };
                     },
                     .Int => {
-                        const li64 = ensureI64(generator, left);
-                        const ri64 = ensureI64(generator, right);
+                        const li64 = cast.ensureI64(generator, left);
+                        const ri64 = cast.ensureI64(generator, right);
                         result = switch (a.op) {
                             .Add => LLVMCore.LLVMBuildAdd(generator.builder, li64, ri64, "add"),
                             .Sub => LLVMCore.LLVMBuildSub(generator.builder, li64, ri64, "sub"),
                             .Mul => LLVMCore.LLVMBuildMul(generator.builder, li64, ri64, "mul"),
                             .Div => blk_div: {
-                                const lf = ensureF64(generator, li64);
-                                const rf = ensureF64(generator, ri64);
+                                const lf = cast.ensureF64(generator, li64);
+                                const rf = cast.ensureF64(generator, ri64);
                                 break :blk_div LLVMCore.LLVMBuildFDiv(generator.builder, lf, rf, "idiv.f");
                             },
                             .Mod => LLVMCore.LLVMBuildSRem(generator.builder, li64, ri64, "srem"),
                             .Pow => blk_pow: {
-                                const lf = ensureF64(generator, li64);
-                                const rf = ensureF64(generator, ri64);
-                                const pow_fn = getOrCreatePow(generator);
+                                const lf = cast.ensureF64(generator, li64);
+                                const rf = cast.ensureF64(generator, ri64);
+                                const pow_fn = externs.getOrCreatePow(generator);
                                 var args = [_]LLVMTypes.LLVMValueRef{ lf, rf };
                                 const f64_ty = LLVMCore.LLVMDoubleTypeInContext(generator.context);
                                 var ptys = [_]LLVMTypes.LLVMTypeRef{ f64_ty, f64_ty };
@@ -295,16 +160,16 @@ pub fn translateToLLVM(hir: *const HIR.HIRProgram, generator: *LLVMGenerator) !v
                             .Sub => byteSaturatingSub(generator, left, right),
                             .Mul => byteSaturatingMul(generator, left, right),
                             .Div => blk_bdiv: {
-                                const a8 = ensureI8(generator, left);
-                                const b8 = ensureI8(generator, right);
+                                const a8 = cast.ensureI8(generator, left);
+                                const b8 = cast.ensureI8(generator, right);
                                 const zero8 = LLVMCore.LLVMConstInt(LLVMCore.LLVMInt8TypeInContext(generator.context), 0, @intFromBool(false));
                                 const is_zero = LLVMCore.LLVMBuildICmp(generator.builder, LLVMTypes.LLVMIntPredicate.LLVMIntEQ, b8, zero8, "is0");
                                 const quot = LLVMCore.LLVMBuildUDiv(generator.builder, a8, b8, "udiv8");
                                 break :blk_bdiv LLVMCore.LLVMBuildSelect(generator.builder, is_zero, zero8, quot, "sel");
                             },
                             .Mod => blk_bmod: {
-                                const a8 = ensureI8(generator, left);
-                                const b8 = ensureI8(generator, right);
+                                const a8 = cast.ensureI8(generator, left);
+                                const b8 = cast.ensureI8(generator, right);
                                 const zero8 = LLVMCore.LLVMConstInt(LLVMCore.LLVMInt8TypeInContext(generator.context), 0, @intFromBool(false));
                                 const is_zero = LLVMCore.LLVMBuildICmp(generator.builder, LLVMTypes.LLVMIntPredicate.LLVMIntEQ, b8, zero8, "is0");
                                 const rem = LLVMCore.LLVMBuildURem(generator.builder, a8, b8, "urem8");
@@ -312,9 +177,9 @@ pub fn translateToLLVM(hir: *const HIR.HIRProgram, generator: *LLVMGenerator) !v
                             },
                             .Pow => blk_bpow: {
                                 const f64_ty = LLVMCore.LLVMDoubleTypeInContext(generator.context);
-                                const a_f = ensureF64(generator, ensureI8(generator, left));
-                                const b_f = ensureF64(generator, ensureI8(generator, right));
-                                const pow_fn = getOrCreatePow(generator);
+                                const a_f = cast.ensureF64(generator, cast.ensureI8(generator, left));
+                                const b_f = cast.ensureF64(generator, cast.ensureI8(generator, right));
+                                const pow_fn = externs.getOrCreatePow(generator);
                                 var args = [_]LLVMTypes.LLVMValueRef{ a_f, b_f };
                                 var ptys = [_]LLVMTypes.LLVMTypeRef{ f64_ty, f64_ty };
                                 const pty = LLVMCore.LLVMFunctionType(f64_ty, &ptys, 2, @intFromBool(false));
@@ -346,15 +211,15 @@ pub fn translateToLLVM(hir: *const HIR.HIRProgram, generator: *LLVMGenerator) !v
                     .Int => {
                         switch (conv.from_type) {
                             .Int => {
-                                out = ensureI64(generator, v);
+                                out = cast.ensureI64(generator, v);
                             },
                             .Byte => {
                                 const i64_ty = LLVMCore.LLVMInt64TypeInContext(generator.context);
-                                out = LLVMCore.LLVMBuildZExt(generator.builder, ensureI8(generator, v), i64_ty, "zext.i64");
+                                out = LLVMCore.LLVMBuildZExt(generator.builder, cast.ensureI8(generator, v), i64_ty, "zext.i64");
                             },
                             .Float => {
                                 const i64_ty = LLVMCore.LLVMInt64TypeInContext(generator.context);
-                                out = LLVMCore.LLVMBuildFPToSI(generator.builder, ensureF64(generator, v), i64_ty, "fp2si.i64");
+                                out = LLVMCore.LLVMBuildFPToSI(generator.builder, cast.ensureF64(generator, v), i64_ty, "fp2si.i64");
                             },
                             else => {},
                         }
@@ -363,13 +228,13 @@ pub fn translateToLLVM(hir: *const HIR.HIRProgram, generator: *LLVMGenerator) !v
                         const i8_ty = LLVMCore.LLVMInt8TypeInContext(generator.context);
                         switch (conv.from_type) {
                             .Int => {
-                                out = LLVMCore.LLVMBuildTrunc(generator.builder, ensureI64(generator, v), i8_ty, "trunc.i8");
+                                out = LLVMCore.LLVMBuildTrunc(generator.builder, cast.ensureI64(generator, v), i8_ty, "trunc.i8");
                             },
                             .Byte => {
-                                out = ensureI8(generator, v);
+                                out = cast.ensureI8(generator, v);
                             },
                             .Float => {
-                                out = LLVMCore.LLVMBuildFPToUI(generator.builder, ensureF64(generator, v), i8_ty, "fp2ui.i8");
+                                out = LLVMCore.LLVMBuildFPToUI(generator.builder, cast.ensureF64(generator, v), i8_ty, "fp2ui.i8");
                             },
                             else => {},
                         }
@@ -378,14 +243,14 @@ pub fn translateToLLVM(hir: *const HIR.HIRProgram, generator: *LLVMGenerator) !v
                         const f64_ty = LLVMCore.LLVMDoubleTypeInContext(generator.context);
                         switch (conv.from_type) {
                             .Int => {
-                                out = LLVMCore.LLVMBuildSIToFP(generator.builder, ensureI64(generator, v), f64_ty, "si2fp.f64");
+                                out = LLVMCore.LLVMBuildSIToFP(generator.builder, cast.ensureI64(generator, v), f64_ty, "si2fp.f64");
                             },
                             .Byte => {
-                                const i8v = ensureI8(generator, v);
+                                const i8v = cast.ensureI8(generator, v);
                                 out = LLVMCore.LLVMBuildUIToFP(generator.builder, i8v, f64_ty, "ui2fp.f64");
                             },
                             .Float => {
-                                out = ensureF64(generator, v);
+                                out = cast.ensureF64(generator, v);
                             },
                             else => {},
                         }
@@ -404,8 +269,8 @@ pub fn translateToLLVM(hir: *const HIR.HIRProgram, generator: *LLVMGenerator) !v
                 var result: LLVMTypes.LLVMValueRef = null;
                 switch (cmp.operand_type) {
                     .Int => {
-                        const li = ensureI64(generator, left);
-                        const ri = ensureI64(generator, right);
+                        const li = cast.ensureI64(generator, left);
+                        const ri = cast.ensureI64(generator, right);
                         const pred = switch (cmp.op) {
                             .Eq => LLVMTypes.LLVMIntPredicate.LLVMIntEQ,
                             .Ne => LLVMTypes.LLVMIntPredicate.LLVMIntNE,
@@ -417,8 +282,8 @@ pub fn translateToLLVM(hir: *const HIR.HIRProgram, generator: *LLVMGenerator) !v
                         result = LLVMCore.LLVMBuildICmp(generator.builder, pred, li, ri, "icmp");
                     },
                     .Byte => {
-                        const li8 = ensureI8(generator, left);
-                        const ri8 = ensureI8(generator, right);
+                        const li8 = cast.ensureI8(generator, left);
+                        const ri8 = cast.ensureI8(generator, right);
                         const pred = switch (cmp.op) {
                             .Eq => LLVMTypes.LLVMIntPredicate.LLVMIntEQ,
                             .Ne => LLVMTypes.LLVMIntPredicate.LLVMIntNE,
@@ -430,8 +295,8 @@ pub fn translateToLLVM(hir: *const HIR.HIRProgram, generator: *LLVMGenerator) !v
                         result = LLVMCore.LLVMBuildICmp(generator.builder, pred, li8, ri8, "icmp");
                     },
                     .Float => {
-                        const lf = ensureF64(generator, left);
-                        const rf = ensureF64(generator, right);
+                        const lf = cast.ensureF64(generator, left);
+                        const rf = cast.ensureF64(generator, right);
                         const pred = switch (cmp.op) {
                             .Eq => LLVMTypes.LLVMRealPredicate.LLVMRealOEQ,
                             .Ne => LLVMTypes.LLVMRealPredicate.LLVMRealONE,
@@ -474,37 +339,37 @@ pub fn translateToLLVM(hir: *const HIR.HIRProgram, generator: *LLVMGenerator) !v
                     stack.items.len -= 1;
                     const ty = LLVMCore.LLVMTypeOf(v);
                     const kind = LLVMCore.LLVMGetTypeKind(ty);
-                    const printf_fn = getOrCreatePrintf(generator);
+                    const printf_fn = externs.getOrCreatePrintf(generator);
                     const i8_ptr_ty = LLVMCore.LLVMPointerType(LLVMCore.LLVMInt8TypeInContext(generator.context), 0);
                     var printf_param_types = [_]LLVMTypes.LLVMTypeRef{i8_ptr_ty};
                     const printf_ty = LLVMCore.LLVMFunctionType(i32_ty, &printf_param_types, 1, @intFromBool(true));
 
                     if (kind == LLVMTypes.LLVMTypeKind.LLVMPointerTypeKind) {
-                        const fmt = try createStringPtr(generator, "%s");
+                        const fmt = try strings.createStringPtr(generator, "%s", &next_string_id);
                         var args = [_]LLVMTypes.LLVMValueRef{ fmt, v };
                         _ = LLVMCore.LLVMBuildCall2(generator.builder, printf_ty, printf_fn, &args, 2, "printf");
                     } else if (kind == LLVMTypes.LLVMTypeKind.LLVMDoubleTypeKind or kind == LLVMTypes.LLVMTypeKind.LLVMFloatTypeKind) {
-                        const fmt = try createStringPtr(generator, "%g");
-                        const vf = ensureF64(generator, v);
+                        const fmt = try strings.createStringPtr(generator, "%g", &next_string_id);
+                        const vf = cast.ensureF64(generator, v);
                         var args = [_]LLVMTypes.LLVMValueRef{ fmt, vf };
                         _ = LLVMCore.LLVMBuildCall2(generator.builder, printf_ty, printf_fn, &args, 2, "printf");
                     } else if (kind == LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind) {
                         const width = LLVMCore.LLVMGetIntTypeWidth(ty);
                         if (width == 1) {
-                            const fmt = try createStringPtr(generator, "%d");
+                            const fmt = try strings.createStringPtr(generator, "%d", &next_string_id);
                             const i32_ty2 = LLVMCore.LLVMInt32TypeInContext(generator.context);
                             const v32 = LLVMCore.LLVMBuildZExt(generator.builder, v, i32_ty2, "zext.i32");
                             var args = [_]LLVMTypes.LLVMValueRef{ fmt, v32 };
                             _ = LLVMCore.LLVMBuildCall2(generator.builder, printf_ty, printf_fn, &args, 2, "printf");
                         } else if (width == 8) {
                             // Print byte as unsigned
-                            const fmt = try createStringPtr(generator, "%u");
+                            const fmt = try strings.createStringPtr(generator, "%u", &next_string_id);
                             const i32_ty2 = LLVMCore.LLVMInt32TypeInContext(generator.context);
                             const v32 = LLVMCore.LLVMBuildZExt(generator.builder, v, i32_ty2, "zext.i32");
                             var args = [_]LLVMTypes.LLVMValueRef{ fmt, v32 };
                             _ = LLVMCore.LLVMBuildCall2(generator.builder, printf_ty, printf_fn, &args, 2, "printf");
                         } else {
-                            const fmt = try createStringPtr(generator, "%ld");
+                            const fmt = try strings.createStringPtr(generator, "%ld", &next_string_id);
                             const v64 = LLVMCore.LLVMBuildSExt(generator.builder, v, LLVMCore.LLVMInt64TypeInContext(generator.context), "sext.i64");
                             var args = [_]LLVMTypes.LLVMValueRef{ fmt, v64 };
                             _ = LLVMCore.LLVMBuildCall2(generator.builder, printf_ty, printf_fn, &args, 2, "printf");
@@ -519,9 +384,9 @@ pub fn translateToLLVM(hir: *const HIR.HIRProgram, generator: *LLVMGenerator) !v
                 if (p.const_id < hir.constant_pool.len) {
                     const hv = hir.constant_pool[p.const_id];
                     if (hv == .string) {
-                        const str_ptr = try createStringPtr(generator, hv.string);
-                        const printf_fn = getOrCreatePrintf(generator);
-                        const fmt = try createStringPtr(generator, "%s");
+                        const str_ptr = try strings.createStringPtr(generator, hv.string, &next_string_id);
+                        const printf_fn = externs.getOrCreatePrintf(generator);
+                        const fmt = try strings.createStringPtr(generator, "%s", &next_string_id);
                         var args = [_]LLVMTypes.LLVMValueRef{ fmt, str_ptr };
                         const i8_ptr_ty = LLVMCore.LLVMPointerType(LLVMCore.LLVMInt8TypeInContext(generator.context), 0);
                         var printf_param_types = [_]LLVMTypes.LLVMTypeRef{i8_ptr_ty};
@@ -536,42 +401,42 @@ pub fn translateToLLVM(hir: *const HIR.HIRProgram, generator: *LLVMGenerator) !v
                     stack.items.len -= 1;
                     const ty = LLVMCore.LLVMTypeOf(v);
                     const kind = LLVMCore.LLVMGetTypeKind(ty);
-                    const printf_fn = getOrCreatePrintf(generator);
+                    const printf_fn = externs.getOrCreatePrintf(generator);
                     const i8_ptr_ty = LLVMCore.LLVMPointerType(LLVMCore.LLVMInt8TypeInContext(generator.context), 0);
                     var printf_param_types = [_]LLVMTypes.LLVMTypeRef{i8_ptr_ty};
                     const printf_ty = LLVMCore.LLVMFunctionType(i32_ty, &printf_param_types, 1, @intFromBool(true));
 
                     if (kind == LLVMTypes.LLVMTypeKind.LLVMPointerTypeKind) {
-                        const fmt = try createStringPtr(generator, "%s");
+                        const fmt = try strings.createStringPtr(generator, "%s", &next_string_id);
                         var args = [_]LLVMTypes.LLVMValueRef{ fmt, v };
                         _ = LLVMCore.LLVMBuildCall2(generator.builder, printf_ty, printf_fn, &args, 2, "printf");
                     } else if (kind == LLVMTypes.LLVMTypeKind.LLVMDoubleTypeKind or kind == LLVMTypes.LLVMTypeKind.LLVMFloatTypeKind) {
-                        const fmt = try createStringPtr(generator, "%g");
-                        const vf = ensureF64(generator, v);
+                        const fmt = try strings.createStringPtr(generator, "%g", &next_string_id);
+                        const vf = cast.ensureF64(generator, v);
                         var args = [_]LLVMTypes.LLVMValueRef{ fmt, vf };
                         _ = LLVMCore.LLVMBuildCall2(generator.builder, printf_ty, printf_fn, &args, 2, "printf");
                     } else if (kind == LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind) {
                         const width = LLVMCore.LLVMGetIntTypeWidth(ty);
                         if (width == 1) {
-                            const fmt = try createStringPtr(generator, "%d");
+                            const fmt = try strings.createStringPtr(generator, "%d", &next_string_id);
                             const i32_ty2 = LLVMCore.LLVMInt32TypeInContext(generator.context);
                             const v32 = LLVMCore.LLVMBuildZExt(generator.builder, v, i32_ty2, "zext.i32");
                             var args = [_]LLVMTypes.LLVMValueRef{ fmt, v32 };
                             _ = LLVMCore.LLVMBuildCall2(generator.builder, printf_ty, printf_fn, &args, 2, "printf");
                         } else if (width == 8) {
-                            const fmt = try createStringPtr(generator, "%u");
+                            const fmt = try strings.createStringPtr(generator, "%u", &next_string_id);
                             const i32_ty2 = LLVMCore.LLVMInt32TypeInContext(generator.context);
                             const v32 = LLVMCore.LLVMBuildZExt(generator.builder, v, i32_ty2, "zext.i32");
                             var args = [_]LLVMTypes.LLVMValueRef{ fmt, v32 };
                             _ = LLVMCore.LLVMBuildCall2(generator.builder, printf_ty, printf_fn, &args, 2, "printf");
                         } else if (width == 2) {
                             // Print tetra as integer 0..3 for simplicity
-                            const fmt = try createStringPtr(generator, "%ld");
+                            const fmt = try strings.createStringPtr(generator, "%ld", &next_string_id);
                             const v64 = LLVMCore.LLVMBuildZExt(generator.builder, v, LLVMCore.LLVMInt64TypeInContext(generator.context), "zext.i64");
                             var args = [_]LLVMTypes.LLVMValueRef{ fmt, v64 };
                             _ = LLVMCore.LLVMBuildCall2(generator.builder, printf_ty, printf_fn, &args, 2, "printf");
                         } else {
-                            const fmt = try createStringPtr(generator, "%ld");
+                            const fmt = try strings.createStringPtr(generator, "%ld", &next_string_id);
                             const v64 = LLVMCore.LLVMBuildSExt(generator.builder, v, LLVMCore.LLVMInt64TypeInContext(generator.context), "sext.i64");
                             var args = [_]LLVMTypes.LLVMValueRef{ fmt, v64 };
                             _ = LLVMCore.LLVMBuildCall2(generator.builder, printf_ty, printf_fn, &args, 2, "printf");
@@ -590,7 +455,7 @@ pub fn translateToLLVM(hir: *const HIR.HIRProgram, generator: *LLVMGenerator) !v
                         stack.items.len -= 1;
                         try stack.append(v);
                     }
-                    break;
+                    continue; // Skip emitting peek but keep translating subsequent instructions
                 }
                 if (stack.items.len > 0) {
                     // Pop value to peek and print with prefix: [file:line:col] name :: type is value
@@ -624,8 +489,8 @@ pub fn translateToLLVM(hir: *const HIR.HIRProgram, generator: *LLVMGenerator) !v
                     const prefix_slice = prefix_buf[0..prefix_len];
 
                     // Print prefix
-                    const printf_fn = getOrCreatePrintf(generator);
-                    var args0 = [_]LLVMTypes.LLVMValueRef{try createStringPtr(generator, prefix_slice)};
+                    const printf_fn = externs.getOrCreatePrintf(generator);
+                    var args0 = [_]LLVMTypes.LLVMValueRef{try strings.createStringPtr(generator, prefix_slice, &next_string_id)};
                     const i8_ptr_ty = LLVMCore.LLVMPointerType(LLVMCore.LLVMInt8TypeInContext(generator.context), 0);
                     var printf_param_types = [_]LLVMTypes.LLVMTypeRef{i8_ptr_ty};
                     const printf_ty = LLVMCore.LLVMFunctionType(i32_ty, &printf_param_types, 1, @intFromBool(true));
@@ -633,22 +498,22 @@ pub fn translateToLLVM(hir: *const HIR.HIRProgram, generator: *LLVMGenerator) !v
 
                     // Then print the value according to kind
                     if (kind == LLVMTypes.LLVMTypeKind.LLVMPointerTypeKind) {
-                        var args = [_]LLVMTypes.LLVMValueRef{ try createStringPtr(generator, "%s"), v };
+                        var args = [_]LLVMTypes.LLVMValueRef{ try strings.createStringPtr(generator, "%s", &next_string_id), v };
                         _ = LLVMCore.LLVMBuildCall2(generator.builder, printf_ty, printf_fn, &args, 2, "printf");
                     } else if (kind == LLVMTypes.LLVMTypeKind.LLVMDoubleTypeKind or kind == LLVMTypes.LLVMTypeKind.LLVMFloatTypeKind) {
-                        const vf = ensureF64(generator, v);
-                        var args = [_]LLVMTypes.LLVMValueRef{ try createStringPtr(generator, "%g"), vf };
+                        const vf = cast.ensureF64(generator, v);
+                        var args = [_]LLVMTypes.LLVMValueRef{ try strings.createStringPtr(generator, "%g", &next_string_id), vf };
                         _ = LLVMCore.LLVMBuildCall2(generator.builder, printf_ty, printf_fn, &args, 2, "printf");
                     } else if (kind == LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind) {
-                        const vi = ensureI64(generator, v);
-                        var args = [_]LLVMTypes.LLVMValueRef{ try createStringPtr(generator, "%ld"), vi };
+                        const vi = cast.ensureI64(generator, v);
+                        var args = [_]LLVMTypes.LLVMValueRef{ try strings.createStringPtr(generator, "%ld", &next_string_id), vi };
                         _ = LLVMCore.LLVMBuildCall2(generator.builder, printf_ty, printf_fn, &args, 2, "printf");
                     } else {
                         // Fallback do nothing
                     }
 
                     // Trailing newline
-                    var args_nl = [_]LLVMTypes.LLVMValueRef{try createStringPtr(generator, "\n")};
+                    var args_nl = [_]LLVMTypes.LLVMValueRef{try strings.createStringPtr(generator, "\n", &next_string_id)};
                     _ = LLVMCore.LLVMBuildCall2(generator.builder, printf_ty, printf_fn, &args_nl, 1, "printf");
 
                     // Push original value back on the stack
@@ -656,8 +521,8 @@ pub fn translateToLLVM(hir: *const HIR.HIRProgram, generator: *LLVMGenerator) !v
                 }
             },
             .PrintNewline => {
-                const printf_fn = getOrCreatePrintf(generator);
-                const nl = try createStringPtr(generator, "\n");
+                const printf_fn = externs.getOrCreatePrintf(generator);
+                const nl = try strings.createStringPtr(generator, "\n", &next_string_id);
                 var args = [_]LLVMTypes.LLVMValueRef{nl};
                 const i8_ptr_ty = LLVMCore.LLVMPointerType(LLVMCore.LLVMInt8TypeInContext(generator.context), 0);
                 var printf_param_types = [_]LLVMTypes.LLVMTypeRef{i8_ptr_ty};
@@ -713,7 +578,7 @@ pub fn translateToLLVM(hir: *const HIR.HIRProgram, generator: *LLVMGenerator) !v
                 if (stack.items.len < 1) continue;
                 const cond_v = stack.items[stack.items.len - 1];
                 stack.items.len -= 1;
-                const cond_i1 = ensureI1(generator, cond_v);
+                const cond_i1 = cast.ensureI1(generator, cond_v);
 
                 const true_bb = block_map.get(jc.label_true) orelse blk: {
                     const zname = try generator.allocator.dupeZ(u8, jc.label_true);
@@ -751,14 +616,14 @@ pub fn translateToLLVM(hir: *const HIR.HIRProgram, generator: *LLVMGenerator) !v
                     else => try std.fmt.allocPrint(generator.allocator, "u:{s}", .{sv.var_name}),
                 };
 
-                const target_ty = mapHIRTypeToLLVM(generator, sv.expected_type);
+                const target_ty = type_map.mapHIRTypeToLLVM(generator, sv.expected_type);
                 const target_kind = LLVMCore.LLVMGetTypeKind(target_ty);
                 // Coerce v to target_ty for basic numeric types
                 if (target_kind == LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind) {
                     const w = LLVMCore.LLVMGetIntTypeWidth(target_ty);
-                    if (w == 64) v = ensureI64(generator, v) else if (w == 8) v = ensureI8(generator, v) else if (w == 1) v = ensureI1(generator, v) else {}
+                    if (w == 64) v = cast.ensureI64(generator, v) else if (w == 8) v = cast.ensureI8(generator, v) else if (w == 1) v = cast.ensureI1(generator, v) else {}
                 } else if (target_kind == LLVMTypes.LLVMTypeKind.LLVMDoubleTypeKind) {
-                    v = ensureF64(generator, v);
+                    v = cast.ensureF64(generator, v);
                 }
 
                 if (sv.scope_kind == HIR.ScopeKind.Local) {
