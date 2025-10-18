@@ -388,6 +388,8 @@ pub fn main() !void {
     defer memoryManager.getExecutionAllocator().free(soxa_path);
 
     const hir_program_for_bytecode = try generateHIRProgram(&memoryManager, parsedStatements, &parser, &semantic_analyzer, &reporter);
+    // Emit textual HIR (.soxa) for debugging/inspection
+    try SoxaCompiler.writeSoxaFile(&hir_program_for_bytecode, soxa_path, path, memoryManager.getExecutionAllocator());
     profiler.stopPhase();
 
     if (cli_options.mode == .RUN) {
