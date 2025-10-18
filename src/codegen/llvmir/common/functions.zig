@@ -3,20 +3,40 @@ const llvm = @import("llvm");
 const LLVMCore = llvm.core;
 const LLVMTypes = llvm.types;
 
-const HIR = @import("../hir/soxa_types.zig");
-const HIRValue = @import("../hir/soxa_values.zig").HIRValue;
-const HIRInstruction = @import("../hir/soxa_instructions.zig").HIRInstruction;
-const LLVMGenerator = @import("llvm.zig").LLVMGenerator;
-const cast = @import("common/cast.zig");
-const externs = @import("common/externs.zig");
-const strings = @import("common/strings.zig");
-const type_map = @import("common/types.zig");
-const blocks = @import("common/blocks.zig");
-const vars = @import("common/vars.zig");
-const fn_common = @import("common/functions.zig");
+const HIR = @import("../../hir/soxa_types.zig");
+const HIRInstruction = @import("../../hir/soxa_instructions.zig").HIRInstruction;
+const LLVMGenerator = @import("../llvm.zig").LLVMGenerator;
 
-var next_string_id: usize = 0; // unique IDs for string globals within this module
-var next_block_id: usize = 0; // unique IDs for synthetic continuation blocks
+const type_map = @import("types.zig");
+const blocks = @import("blocks.zig");
+const vars = @import("vars.zig");
+const cast = @import("cast.zig");
+const externs = @import("externs.zig");
+const strings = @import("strings.zig");
+const print = @import("print.zig");
+
+var next_string_id: usize = 0;
+
+fn findLabelIndex(hir: *const HIR.HIRProgram, label: []const u8) ?usize {
+    for (hir.instructions, 0..) |inst, idx| {
+        if (inst == .Label and std.mem.eql(u8, inst.Label.name, label)) return idx;
+    }
+    return null;
+}
+
+fn coerceToType(gen: *LLVMGenerator, v: LLVMTypes.LLVMValueRef, target_ty: LLVMTypes.LLVMTypeRef) LLVMTypes.LLVMValueRef {
+    const kind = LLVMCore.LLVMGetTypeKind(target_ty);
+    switch (kind) {
+        LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind => {
+            const w = LLVMCore.LLVMGetIntTypeWidth(target_ty);
+            if (w == 1) return cast.ensureI1(gen, v);
+            if (w == 8) return cast.ensureI8(gen, v);
+            return cast.ensureI64(gen, v);
+        },
+        LLVMTypes.LLVMTypeKind.LLVMDoubleTypeKind => return cast.ensureF64(gen, v),
+        else => return v,
+    }
+}
 
 fn byteSaturatingAdd(gen: *LLVMGenerator, a: LLVMTypes.LLVMValueRef, b: LLVMTypes.LLVMValueRef) LLVMTypes.LLVMValueRef {
     const i8_ty = LLVMCore.LLVMInt8TypeInContext(gen.context);
@@ -49,62 +69,77 @@ fn byteSaturatingMul(gen: *LLVMGenerator, a: LLVMTypes.LLVMValueRef, b: LLVMType
     const max255 = LLVMCore.LLVMConstInt(i32_ty, 255, @intFromBool(false));
     const gt = LLVMCore.LLVMBuildICmp(gen.builder, LLVMTypes.LLVMIntPredicate.LLVMIntUGT, prod32, max255, "gt255");
     const sel = LLVMCore.LLVMBuildSelect(gen.builder, gt, max255, prod32, "sel");
-    const trunc = LLVMCore.LLVMBuildTrunc(gen.builder, sel, i8_ty, "to.i8");
-    return trunc;
+    return LLVMCore.LLVMBuildTrunc(gen.builder, sel, i8_ty, "to.i8");
 }
 
-fn findLabelIndex(hir: *const HIR.HIRProgram, label: []const u8) ?usize {
+pub fn predeclareFunctions(hir: *const HIR.HIRProgram, generator: *LLVMGenerator, function_map: *std.StringHashMap(LLVMTypes.LLVMValueRef), func_start_labels: *std.StringHashMap(bool)) !void {
+    for (hir.function_table) |f| {
+        const ret_ty = type_map.mapHIRTypeToLLVM(generator, f.return_type);
+        var pbuf = try generator.allocator.alloc(LLVMTypes.LLVMTypeRef, f.param_types.len);
+        defer generator.allocator.free(pbuf);
+        for (f.param_types, 0..) |pt, i| {
+            const base = type_map.mapHIRTypeToLLVM(generator, pt);
+            pbuf[i] = if (f.param_is_alias[i]) LLVMCore.LLVMPointerType(base, 0) else base;
+        }
+        const fnty = LLVMCore.LLVMFunctionType(ret_ty, if (pbuf.len == 0) null else pbuf.ptr, @intCast(pbuf.len), @intFromBool(false));
+        const zname = try generator.allocator.dupeZ(u8, f.qualified_name);
+        const fnref = LLVMCore.LLVMAddFunction(generator.module, zname.ptr, fnty);
+        try function_map.put(f.qualified_name, fnref);
+        try func_start_labels.put(f.start_label, true);
+    }
+}
+
+pub fn findFunctionsSectionStart(hir: *const HIR.HIRProgram, func_start_labels: *std.StringHashMap(bool)) usize {
     for (hir.instructions, 0..) |inst, idx| {
-        if (inst == .Label and std.mem.eql(u8, inst.Label.name, label)) return idx;
+        if (inst == .Label) {
+            const lbl = inst.Label.name;
+            if (func_start_labels.get(lbl) != null) return idx;
+        }
     }
-    return null;
+    return hir.instructions.len;
 }
 
-fn coerceToType(gen: *LLVMGenerator, v: LLVMTypes.LLVMValueRef, target_ty: LLVMTypes.LLVMTypeRef) LLVMTypes.LLVMValueRef {
-    const kind = LLVMCore.LLVMGetTypeKind(target_ty);
-    switch (kind) {
-        LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind => {
-            const w = LLVMCore.LLVMGetIntTypeWidth(target_ty);
-            if (w == 1) return cast.ensureI1(gen, v);
-            if (w == 8) return cast.ensureI8(gen, v);
-            return cast.ensureI64(gen, v);
-        },
-        LLVMTypes.LLVMTypeKind.LLVMDoubleTypeKind => return cast.ensureF64(gen, v),
-        else => return v,
-    }
-}
-
-// Function body emission moved to common/functions.zig
-
-pub fn translateToLLVM(hir: *const HIR.HIRProgram, generator: *LLVMGenerator) !void {
-    const i32_ty = LLVMCore.LLVMInt32TypeInContext(generator.context);
-    const fn_ty = LLVMCore.LLVMFunctionType(i32_ty, null, 0, @intFromBool(false));
-    const main_fn = LLVMCore.LLVMAddFunction(generator.module, "main", fn_ty);
-    const entry = LLVMCore.LLVMAppendBasicBlockInContext(generator.context, main_fn, "entry");
-    LLVMCore.LLVMPositionBuilderAtEnd(generator.builder, entry);
+pub fn emitFunctionBody(hir: *const HIR.HIRProgram, generator: *LLVMGenerator, function_map: *std.StringHashMap(LLVMTypes.LLVMValueRef), func: HIR.HIRProgram.HIRFunction, func_start_labels: *std.StringHashMap(bool), next_block_id_ptr: *usize) !void {
+    const f_opt = function_map.get(func.qualified_name) orelse return;
+    const fnref = f_opt.?;
+    const fn_entry = LLVMCore.LLVMAppendBasicBlockInContext(generator.context, fnref, "entry");
+    LLVMCore.LLVMPositionBuilderAtEnd(generator.builder, fn_entry);
 
     var stack = std.array_list.Managed(LLVMTypes.LLVMValueRef).init(generator.allocator);
     defer stack.deinit();
 
-    var bm = blocks.BlockManager.init(generator.allocator, generator, main_fn, &next_block_id);
+    var bm = blocks.BlockManager.init(generator.allocator, generator, fnref, next_block_id_ptr);
     defer bm.deinit();
 
-    var var_store = vars.VarStore.init(generator.allocator, generator, entry);
+    var var_store = vars.VarStore.init(generator.allocator, generator, fn_entry);
     defer var_store.deinit();
 
-    // Predeclare all functions with correct param/return types (alias => pointer)
-    var function_map = std.StringHashMap(LLVMTypes.LLVMValueRef).init(generator.allocator);
-    defer function_map.deinit();
+    const AliasEntry = struct { ptr: LLVMTypes.LLVMValueRef, elem_ty: LLVMTypes.LLVMTypeRef };
+    var alias_slots = std.AutoHashMap(u32, AliasEntry).init(generator.allocator);
+    defer alias_slots.deinit();
 
-    var func_start_labels = std.StringHashMap(bool).init(generator.allocator);
-    defer func_start_labels.deinit();
+    const param_count: u32 = LLVMCore.LLVMCountParams(fnref);
+    var p: u32 = 0;
+    while (p < param_count) : (p += 1) {
+        const pv = LLVMCore.LLVMGetParam(fnref, @intCast(p));
+        try stack.append(pv);
+    }
 
-    try fn_common.predeclareFunctions(hir, generator, &function_map, &func_start_labels);
+    const start_idx_opt = findLabelIndex(hir, func.start_label) orelse return;
+    var end_idx: usize = hir.instructions.len;
+    var i: usize = start_idx_opt + 1;
+    while (i < hir.instructions.len) : (i += 1) {
+        const ins = hir.instructions[i];
+        if (ins == .Label) {
+            const name = ins.Label.name;
+            if (func_start_labels.get(name) != null) {
+                end_idx = i;
+                break;
+            }
+        }
+    }
 
-    // Determine where functions begin; only emit top-level before that
-    const func_section_start: usize = fn_common.findFunctionsSectionStart(hir, &func_start_labels);
-
-    for (hir.instructions[0..func_section_start]) |inst| {
+    for (hir.instructions[start_idx_opt..end_idx]) |inst| {
         switch (inst) {
             .Const => |c| {
                 const idx = c.constant_id;
@@ -115,8 +150,8 @@ pub fn translateToLLVM(hir: *const HIR.HIRProgram, generator: *LLVMGenerator) !v
                         const ptr = try strings.createStringPtr(generator, s, &next_string_id);
                         try stack.append(ptr);
                     },
-                    .int => |i| {
-                        const v = LLVMCore.LLVMConstInt(LLVMCore.LLVMInt64TypeInContext(generator.context), @intCast(i), @intFromBool(true));
+                    .int => |ival| {
+                        const v = LLVMCore.LLVMConstInt(LLVMCore.LLVMInt64TypeInContext(generator.context), @intCast(ival), @intFromBool(true));
                         try stack.append(v);
                     },
                     .byte => |b| {
@@ -139,7 +174,6 @@ pub fn translateToLLVM(hir: *const HIR.HIRProgram, generator: *LLVMGenerator) !v
                 const right = stack.items[stack.items.len - 1];
                 const left = stack.items[stack.items.len - 2];
                 stack.items.len -= 2;
-
                 var result: LLVMTypes.LLVMValueRef = null;
                 switch (a.operand_type) {
                     .Float => {
@@ -188,7 +222,6 @@ pub fn translateToLLVM(hir: *const HIR.HIRProgram, generator: *LLVMGenerator) !v
                         };
                     },
                     .Byte => {
-                        // Byte semantics are saturating for + and *; clamp for pow; 0 on div/mod by zero
                         result = switch (a.op) {
                             .Add => byteSaturatingAdd(generator, left, right),
                             .Sub => byteSaturatingSub(generator, left, right),
@@ -218,8 +251,8 @@ pub fn translateToLLVM(hir: *const HIR.HIRProgram, generator: *LLVMGenerator) !v
                                 var ptys = [_]LLVMTypes.LLVMTypeRef{ f64_ty, f64_ty };
                                 const pty = LLVMCore.LLVMFunctionType(f64_ty, &ptys, 2, @intFromBool(false));
                                 const dres = LLVMCore.LLVMBuildCall2(generator.builder, pty, pow_fn, &args, 2, "pow");
-                                const as_u32 = LLVMCore.LLVMBuildFPToUI(generator.builder, dres, i32_ty, "fp2u32");
-                                const max255 = LLVMCore.LLVMConstInt(i32_ty, 255, @intFromBool(false));
+                                const as_u32 = LLVMCore.LLVMBuildFPToUI(generator.builder, dres, LLVMCore.LLVMInt32TypeInContext(generator.context), "fp2u32");
+                                const max255 = LLVMCore.LLVMConstInt(LLVMCore.LLVMInt32TypeInContext(generator.context), 255, @intFromBool(false));
                                 const gt = LLVMCore.LLVMBuildICmp(generator.builder, LLVMTypes.LLVMIntPredicate.LLVMIntUGT, as_u32, max255, "gt255");
                                 const sel = LLVMCore.LLVMBuildSelect(generator.builder, gt, max255, as_u32, "sel");
                                 const i8_ty = LLVMCore.LLVMInt8TypeInContext(generator.context);
@@ -228,78 +261,16 @@ pub fn translateToLLVM(hir: *const HIR.HIRProgram, generator: *LLVMGenerator) !v
                         };
                     },
                     else => {
-                        // Unsupported operand type for this simple translator; push back left to avoid stack underflow in later ops
                         result = left;
                     },
                 }
-
                 try stack.append(result);
-            },
-            .Convert => |conv| {
-                if (stack.items.len < 1) continue;
-                const v = stack.items[stack.items.len - 1];
-                stack.items.len -= 1;
-
-                var out: LLVMTypes.LLVMValueRef = v;
-                switch (conv.to_type) {
-                    .Int => {
-                        switch (conv.from_type) {
-                            .Int => {
-                                out = cast.ensureI64(generator, v);
-                            },
-                            .Byte => {
-                                const i64_ty = LLVMCore.LLVMInt64TypeInContext(generator.context);
-                                out = LLVMCore.LLVMBuildZExt(generator.builder, cast.ensureI8(generator, v), i64_ty, "zext.i64");
-                            },
-                            .Float => {
-                                const i64_ty = LLVMCore.LLVMInt64TypeInContext(generator.context);
-                                out = LLVMCore.LLVMBuildFPToSI(generator.builder, cast.ensureF64(generator, v), i64_ty, "fp2si.i64");
-                            },
-                            else => {},
-                        }
-                    },
-                    .Byte => {
-                        const i8_ty = LLVMCore.LLVMInt8TypeInContext(generator.context);
-                        switch (conv.from_type) {
-                            .Int => {
-                                out = LLVMCore.LLVMBuildTrunc(generator.builder, cast.ensureI64(generator, v), i8_ty, "trunc.i8");
-                            },
-                            .Byte => {
-                                out = cast.ensureI8(generator, v);
-                            },
-                            .Float => {
-                                out = LLVMCore.LLVMBuildFPToUI(generator.builder, cast.ensureF64(generator, v), i8_ty, "fp2ui.i8");
-                            },
-                            else => {},
-                        }
-                    },
-                    .Float => {
-                        const f64_ty = LLVMCore.LLVMDoubleTypeInContext(generator.context);
-                        switch (conv.from_type) {
-                            .Int => {
-                                out = LLVMCore.LLVMBuildSIToFP(generator.builder, cast.ensureI64(generator, v), f64_ty, "si2fp.f64");
-                            },
-                            .Byte => {
-                                const i8v = cast.ensureI8(generator, v);
-                                out = LLVMCore.LLVMBuildUIToFP(generator.builder, i8v, f64_ty, "ui2fp.f64");
-                            },
-                            .Float => {
-                                out = cast.ensureF64(generator, v);
-                            },
-                            else => {},
-                        }
-                    },
-                    else => {},
-                }
-
-                try stack.append(out);
             },
             .Compare => |cmp| {
                 if (stack.items.len < 2) continue;
                 const right = stack.items[stack.items.len - 1];
                 const left = stack.items[stack.items.len - 2];
                 stack.items.len -= 2;
-
                 var result: LLVMTypes.LLVMValueRef = null;
                 switch (cmp.operand_type) {
                     .Int => {
@@ -342,11 +313,9 @@ pub fn translateToLLVM(hir: *const HIR.HIRProgram, generator: *LLVMGenerator) !v
                         result = LLVMCore.LLVMBuildFCmp(generator.builder, pred, lf, rf, "fcmp");
                     },
                     else => {
-                        // Fallback: equality for pointers (e.g., strings) if needed in future
                         result = LLVMCore.LLVMConstInt(LLVMCore.LLVMInt1TypeInContext(generator.context), 0, @intFromBool(false));
                     },
                 }
-
                 try stack.append(result);
             },
             .Dup => {
@@ -371,15 +340,15 @@ pub fn translateToLLVM(hir: *const HIR.HIRProgram, generator: *LLVMGenerator) !v
                 if (stack.items.len > 0) {
                     const v = stack.items[stack.items.len - 1];
                     stack.items.len -= 1;
-                    @import("common/print.zig").printValue(generator, v, &next_string_id);
+                    print.printValue(generator, v, &next_string_id);
                 }
             },
             .PrintBegin => {},
-            .PrintStr => |p| {
-                if (p.const_id < hir.constant_pool.len) {
-                    const hv = hir.constant_pool[p.const_id];
+            .PrintStr => |pstr| {
+                if (pstr.const_id < hir.constant_pool.len) {
+                    const hv = hir.constant_pool[pstr.const_id];
                     if (hv == .string) {
-                        @import("common/print.zig").printLiteralString(generator, hv.string, &next_string_id);
+                        print.printLiteralString(generator, hv.string, &next_string_id);
                     }
                 }
             },
@@ -387,67 +356,12 @@ pub fn translateToLLVM(hir: *const HIR.HIRProgram, generator: *LLVMGenerator) !v
                 if (stack.items.len > 0) {
                     const v = stack.items[stack.items.len - 1];
                     stack.items.len -= 1;
-                    @import("common/print.zig").printValue(generator, v, &next_string_id);
+                    print.printValue(generator, v, &next_string_id);
                 }
             },
-            .Peek => |pk| {
-                // In release, drop peek entirely
-                if (!generator.debug_peek) {
-                    if (stack.items.len > 0) {
-                        // Pop the peeked value and push it back to preserve semantics
-                        const v = stack.items[stack.items.len - 1];
-                        stack.items.len -= 1;
-                        try stack.append(v);
-                    }
-                    continue; // Skip emitting peek but keep translating subsequent instructions
-                }
-                if (stack.items.len > 0) {
-                    // Pop value to peek and print with prefix: [file:line:col] name :: type is value
-                    const v = stack.items[stack.items.len - 1];
-                    stack.items.len -= 1;
-
-                    // Build prefix
-                    var prefix_buf: [256]u8 = undefined;
-                    var fbs = std.io.fixedBufferStream(&prefix_buf);
-                    var w = fbs.writer();
-                    if (pk.location) |loc| {
-                        const file = loc.file;
-                        const line = loc.range.start_line;
-                        const col = loc.range.start_col;
-                        try w.print("[{s}:{d}:{d}] ", .{ file, line, col });
-                    }
-                    if (pk.name) |nm| {
-                        try w.print("{s} :: ", .{nm});
-                    }
-
-                    // Determine type tag for display
-                    const kind = LLVMCore.LLVMGetTypeKind(LLVMCore.LLVMTypeOf(v));
-                    const type_tag = switch (kind) {
-                        LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind => "int",
-                        LLVMTypes.LLVMTypeKind.LLVMDoubleTypeKind, LLVMTypes.LLVMTypeKind.LLVMFloatTypeKind => "float",
-                        LLVMTypes.LLVMTypeKind.LLVMPointerTypeKind => "string",
-                        else => "value",
-                    };
-                    try w.print("{s} is ", .{type_tag});
-                    const prefix_len = fbs.pos;
-                    const prefix_slice = prefix_buf[0..prefix_len];
-
-                    @import("common/print.zig").printLiteralString(generator, prefix_slice, &next_string_id);
-                    @import("common/print.zig").printValue(generator, v, &next_string_id);
-                    @import("common/print.zig").printNewline(generator, &next_string_id);
-
-                    // Push original value back on the stack
-                    try stack.append(v);
-                }
-            },
+            .Peek => {},
             .PrintNewline => {
-                @import("common/print.zig").printNewline(generator, &next_string_id);
-            },
-            .PrintEnd => {},
-            .Halt => {
-                const zero_ret = LLVMCore.LLVMConstInt(i32_ty, 0, @intFromBool(false));
-                _ = LLVMCore.LLVMBuildRet(generator.builder, zero_ret);
-                break;
+                print.printNewline(generator, &next_string_id);
             },
             .Label => |lbl| {
                 try bm.enterLabel(lbl.name);
@@ -466,40 +380,29 @@ pub fn translateToLLVM(hir: *const HIR.HIRProgram, generator: *LLVMGenerator) !v
                 if (stack.items.len < 1) continue;
                 var v = stack.items[stack.items.len - 1];
                 stack.items.len -= 1;
-
                 const key = switch (sv.scope_kind) {
-                    HIR.ScopeKind.Local => try std.fmt.allocPrint(generator.allocator, "l:{s}", .{sv.var_name}),
-                    HIR.ScopeKind.GlobalLocal => try std.fmt.allocPrint(generator.allocator, "g:{s}", .{sv.var_name}),
-                    HIR.ScopeKind.ModuleGlobal => blk: {
+                    .Local => try std.fmt.allocPrint(generator.allocator, "l:{s}", .{sv.var_name}),
+                    .GlobalLocal => try std.fmt.allocPrint(generator.allocator, "g:{s}", .{sv.var_name}),
+                    .ModuleGlobal => blk: {
                         const mod = sv.module_context orelse "";
                         break :blk try std.fmt.allocPrint(generator.allocator, "m:{s}.{s}", .{ mod, sv.var_name });
                     },
                     else => try std.fmt.allocPrint(generator.allocator, "u:{s}", .{sv.var_name}),
                 };
-
                 const target_ty = type_map.mapHIRTypeToLLVM(generator, sv.expected_type);
-                const target_kind = LLVMCore.LLVMGetTypeKind(target_ty);
-                // Coerce v to target_ty for basic numeric types
-                if (target_kind == LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind) {
-                    const w = LLVMCore.LLVMGetIntTypeWidth(target_ty);
-                    if (w == 64) v = cast.ensureI64(generator, v) else if (w == 8) v = cast.ensureI8(generator, v) else if (w == 1) v = cast.ensureI1(generator, v) else {}
-                } else if (target_kind == LLVMTypes.LLVMTypeKind.LLVMDoubleTypeKind) {
-                    v = cast.ensureF64(generator, v);
-                }
-
+                v = coerceToType(generator, v, target_ty);
                 try var_store.store(key, v, target_ty, sv.scope_kind == HIR.ScopeKind.Local, sv.var_name);
             },
             .LoadVar => |lv| {
                 const key = switch (lv.scope_kind) {
-                    HIR.ScopeKind.Local => try std.fmt.allocPrint(generator.allocator, "l:{s}", .{lv.var_name}),
-                    HIR.ScopeKind.GlobalLocal => try std.fmt.allocPrint(generator.allocator, "g:{s}", .{lv.var_name}),
-                    HIR.ScopeKind.ModuleGlobal => blk: {
+                    .Local => try std.fmt.allocPrint(generator.allocator, "l:{s}", .{lv.var_name}),
+                    .GlobalLocal => try std.fmt.allocPrint(generator.allocator, "g:{s}", .{lv.var_name}),
+                    .ModuleGlobal => blk: {
                         const mod = lv.module_context orelse "";
                         break :blk try std.fmt.allocPrint(generator.allocator, "m:{s}.{s}", .{ mod, lv.var_name });
                     },
                     else => try std.fmt.allocPrint(generator.allocator, "u:{s}", .{lv.var_name}),
                 };
-
                 const target_ty = LLVMCore.LLVMInt64TypeInContext(generator.context);
                 const loaded = try var_store.load(key, target_ty, lv.var_name);
                 try stack.append(loaded);
@@ -508,17 +411,51 @@ pub fn translateToLLVM(hir: *const HIR.HIRProgram, generator: *LLVMGenerator) !v
                 if (stack.items.len < 1) continue;
                 const v = stack.items[stack.items.len - 1];
                 stack.items.len -= 1;
-
                 const key = switch (sc.scope_kind) {
-                    HIR.ScopeKind.GlobalLocal => try std.fmt.allocPrint(generator.allocator, "g:{s}", .{sc.var_name}),
-                    HIR.ScopeKind.ModuleGlobal => blk: {
+                    .GlobalLocal => try std.fmt.allocPrint(generator.allocator, "g:{s}", .{sc.var_name}),
+                    .ModuleGlobal => blk: {
                         const mod = sc.module_context orelse "";
                         break :blk try std.fmt.allocPrint(generator.allocator, "m:{s}.{s}", .{ mod, sc.var_name });
                     },
                     else => try std.fmt.allocPrint(generator.allocator, "g:{s}", .{sc.var_name}),
                 };
-
                 try var_store.defineConstGlobal(key, v);
+            },
+            .PushStorageId => |pstid| {
+                const key = switch (pstid.scope_kind) {
+                    .Local => try std.fmt.allocPrint(generator.allocator, "l:{s}", .{pstid.var_name}),
+                    .GlobalLocal => try std.fmt.allocPrint(generator.allocator, "g:{s}", .{pstid.var_name}),
+                    .ModuleGlobal => blk: {
+                        const mod = "";
+                        break :blk try std.fmt.allocPrint(generator.allocator, "m:{s}.{s}", .{ mod, pstid.var_name });
+                    },
+                    else => try std.fmt.allocPrint(generator.allocator, "u:{s}", .{pstid.var_name}),
+                };
+                const default_ty = LLVMCore.LLVMInt64TypeInContext(generator.context);
+                const entry_ptr = try var_store.getOrCreatePtr(key, default_ty, pstid.scope_kind == HIR.ScopeKind.Local, pstid.var_name);
+                try stack.append(entry_ptr.ptr);
+            },
+            .StoreParamAlias => |spa| {
+                if (stack.items.len < 1) continue;
+                const raw_ptr = stack.items[stack.items.len - 1];
+                stack.items.len -= 1;
+                const elem = type_map.mapHIRTypeToLLVM(generator, spa.param_type);
+                const want_ptr_ty = LLVMCore.LLVMPointerType(elem, 0);
+                const cast_ptr = if (LLVMCore.LLVMTypeOf(raw_ptr) == want_ptr_ty) raw_ptr else LLVMCore.LLVMBuildBitCast(generator.builder, raw_ptr, want_ptr_ty, "alias.ptr.cast");
+                try alias_slots.put(spa.var_index, .{ .ptr = cast_ptr, .elem_ty = elem });
+            },
+            .LoadAlias => |la| {
+                const entry = alias_slots.get(la.slot_index) orelse continue;
+                const loaded = LLVMCore.LLVMBuildLoad2(generator.builder, entry.elem_ty, entry.ptr, "alias.load");
+                try stack.append(loaded);
+            },
+            .StoreAlias => |sa| {
+                if (stack.items.len < 1) continue;
+                var v = stack.items[stack.items.len - 1];
+                stack.items.len -= 1;
+                const entry = alias_slots.get(sa.slot_index) orelse continue;
+                v = coerceToType(generator, v, entry.elem_ty);
+                _ = LLVMCore.LLVMBuildStore(generator.builder, v, entry.ptr);
             },
             .Call => |c| {
                 const f_entry = function_map.get(c.qualified_name) orelse null;
@@ -534,24 +471,80 @@ pub fn translateToLLVM(hir: *const HIR.HIRProgram, generator: *LLVMGenerator) !v
                     stack.items.len -= 1;
                     args[argc - 1 - ai] = v2;
                 }
+                var callee_info: ?HIR.HIRProgram.HIRFunction = null;
+                for (hir.function_table) |finfo| {
+                    if (std.mem.eql(u8, finfo.qualified_name, c.qualified_name)) {
+                        callee_info = finfo;
+                        break;
+                    }
+                }
+                if (callee_info) |fi| {
+                    var idx: usize = 0;
+                    while (idx < args.len and idx < fi.param_types.len) : (idx += 1) {
+                        const pt = fi.param_types[idx];
+                        if (fi.param_is_alias[idx]) {
+                            const elem = type_map.mapHIRTypeToLLVM(generator, pt);
+                            const want_ptr_ty = LLVMCore.LLVMPointerType(elem, 0);
+                            if (LLVMCore.LLVMTypeOf(args[idx]) != want_ptr_ty) args[idx] = LLVMCore.LLVMBuildBitCast(generator.builder, args[idx], want_ptr_ty, "arg.ptr.cast");
+                        } else {
+                            const tgt = type_map.mapHIRTypeToLLVM(generator, pt);
+                            args[idx] = coerceToType(generator, args[idx], tgt);
+                        }
+                    }
+                }
                 const fnty = LLVMCore.LLVMTypeOf(callee);
                 const res = LLVMCore.LLVMBuildCall2(generator.builder, fnty, callee, args.ptr, @intCast(argc), "");
                 if (c.return_type != .Nothing) {
                     try stack.append(res);
                 }
             },
+            .TailCall => |tc| {
+                const f_entry = function_map.get(tc.qualified_name) orelse null;
+                if (f_entry == null) continue;
+                const callee = f_entry.?;
+                const argc: usize = @intCast(tc.arg_count);
+                if (stack.items.len < argc) continue;
+                var args = try generator.allocator.alloc(LLVMTypes.LLVMValueRef, argc);
+                defer generator.allocator.free(args);
+                var ai: usize = 0;
+                while (ai < argc) : (ai += 1) {
+                    const v = stack.items[stack.items.len - 1];
+                    stack.items.len -= 1;
+                    args[argc - 1 - ai] = v;
+                }
+                const fnty = LLVMCore.LLVMTypeOf(callee);
+                const res = LLVMCore.LLVMBuildCall2(generator.builder, fnty, callee, args.ptr, @intCast(argc), "");
+                const rt = type_map.mapHIRTypeToLLVM(generator, func.return_type);
+                if (LLVMCore.LLVMGetTypeKind(rt) == LLVMTypes.LLVMTypeKind.LLVMVoidTypeKind) {
+                    _ = LLVMCore.LLVMBuildRetVoid(generator.builder);
+                } else {
+                    const coerced = coerceToType(generator, res, rt);
+                    _ = LLVMCore.LLVMBuildRet(generator.builder, coerced);
+                }
+            },
+            .Return => |r| {
+                const rt = type_map.mapHIRTypeToLLVM(generator, func.return_type);
+                if (r.has_value and stack.items.len > 0) {
+                    var v = stack.items[stack.items.len - 1];
+                    stack.items.len -= 1;
+                    v = coerceToType(generator, v, rt);
+                    _ = LLVMCore.LLVMBuildRet(generator.builder, v);
+                } else {
+                    _ = LLVMCore.LLVMBuildRetVoid(generator.builder);
+                }
+            },
+            .EnterScope, .ExitScope => {},
             else => {},
         }
     }
 
-    // Emit function bodies
-    for (hir.function_table) |f| {
-        try fn_common.emitFunctionBody(hir, generator, &function_map, f, &func_start_labels, &next_block_id);
-    }
-
     const insert_block = LLVMCore.LLVMGetInsertBlock(generator.builder);
+    const rt = type_map.mapHIRTypeToLLVM(generator, func.return_type);
     if (insert_block != null and LLVMCore.LLVMGetBasicBlockTerminator(insert_block) == null) {
-        const zero_ret = LLVMCore.LLVMConstInt(i32_ty, 0, @intFromBool(false));
-        _ = LLVMCore.LLVMBuildRet(generator.builder, zero_ret);
+        if (LLVMCore.LLVMGetTypeKind(rt) == LLVMTypes.LLVMTypeKind.LLVMVoidTypeKind) {
+            _ = LLVMCore.LLVMBuildRetVoid(generator.builder);
+        } else {
+            _ = LLVMCore.LLVMBuildRet(generator.builder, LLVMCore.LLVMConstNull(rt));
+        }
     }
 }

@@ -80,4 +80,26 @@ pub const VarStore = struct {
         }
         try self.map.put(key, .{ .ptr = g, .elem_ty = val_ty });
     }
+
+    pub fn getOrCreatePtr(self: *VarStore, key: []const u8, elem_ty: LLVMTypes.LLVMTypeRef, is_local: bool, var_name: []const u8) !VarPtrEntry {
+        if (self.map.get(key)) |e| return e;
+
+        if (is_local) {
+            const curr_bb = LLVMCore.LLVMGetInsertBlock(self.gen.builder);
+            LLVMCore.LLVMPositionBuilderAtEnd(self.gen.builder, self.entry_block);
+            const ptr = LLVMCore.LLVMBuildAlloca(self.gen.builder, elem_ty, (try self.gen.allocator.dupeZ(u8, var_name)).ptr);
+            LLVMCore.LLVMPositionBuilderAtEnd(self.gen.builder, curr_bb);
+            const e = VarPtrEntry{ .ptr = ptr, .elem_ty = elem_ty };
+            try self.map.put(key, e);
+            return e;
+        } else {
+            const zsym = try self.gen.allocator.dupeZ(u8, key);
+            const g = LLVMCore.LLVMAddGlobal(self.gen.module, elem_ty, zsym.ptr);
+            LLVMCore.LLVMSetLinkage(g, LLVMTypes.LLVMLinkage.LLVMExternalLinkage);
+            _ = LLVMCore.LLVMSetInitializer(g, LLVMCore.LLVMConstNull(elem_ty));
+            const e = VarPtrEntry{ .ptr = g, .elem_ty = elem_ty };
+            try self.map.put(key, e);
+            return e;
+        }
+    }
 };
