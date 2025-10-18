@@ -269,7 +269,7 @@ pub fn validateSoxaCache(soxa_path: []const u8, source_path: []const u8, allocat
     return false; // No hash found = old format = invalid
 }
 
-pub fn writeSoxaFile(program: *HIRProgram, file_path: []const u8, source_path: []const u8, allocator: std.mem.Allocator) !void {
+pub fn writeSoxaFile(program: *const HIRProgram, file_path: []const u8, source_path: []const u8, allocator: std.mem.Allocator) !void {
     const file = std.fs.cwd().createFile(file_path, .{}) catch |err| switch (err) {
         error.AccessDenied => return ErrorList.AccessDenied,
         error.FileNotFound => return ErrorList.FileNotFound,
