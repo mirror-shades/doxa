@@ -427,8 +427,8 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                         if (function_call.arguments.len > expected_arg_count) {
                             self.reporter.reportCompileError(
                                 getLocationFromBase(expr.base),
-                                ErrorCode.ARGUMENT_COUNT_MISMATCH,
-                                "Argument count mismatch: expected at most {}, got {}",
+                                ErrorCode.TOO_MANY_ARGUMENTS,
+                                "Too many arguments: expected at most {}, got {}",
                                 .{ expected_arg_count, function_call.arguments.len },
                             );
                             self.fatal_error = true;
@@ -439,8 +439,8 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                         if (provided_arg_count < expected_arg_count and !has_placeholders) {
                             self.reporter.reportCompileError(
                                 getLocationFromBase(expr.base),
-                                ErrorCode.ARGUMENT_COUNT_MISMATCH,
-                                "Argument count mismatch: expected {}, got {} (use ~ to explicitly skip parameters)",
+                                ErrorCode.TOO_FEW_ARGUMENTS,
+                                "Too few arguments: expected {}, got {} (use ~ to explicitly skip parameters)",
                                 .{ expected_arg_count, provided_arg_count },
                             );
                             self.fatal_error = true;
@@ -968,15 +968,23 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
 
             const requireArity = struct {
                 fn check(sem: *SemanticAnalyzer, e: *ast.Expr, got: usize, expect: usize, name: []const u8) void {
-                    if (got != expect) {
+                    if (got == expect) return;
+                    if (got < expect) {
                         sem.reporter.reportCompileError(
                             getLocationFromBase(e.base),
-                            ErrorCode.INVALID_ARGUMENT_COUNT,
-                            "@{s} requires exactly {d} argument(s)",
-                            .{ name, expect },
+                            ErrorCode.TOO_FEW_ARGUMENTS,
+                            "Too few arguments to @{s}: expected {d}, got {d}",
+                            .{ name, expect, got },
                         );
-                        sem.fatal_error = true;
+                    } else {
+                        sem.reporter.reportCompileError(
+                            getLocationFromBase(e.base),
+                            ErrorCode.TOO_MANY_ARGUMENTS,
+                            "Too many arguments to @{s}: expected {d}, got {d}",
+                            .{ name, expect, got },
+                        );
                     }
+                    sem.fatal_error = true;
                 }
             };
 
@@ -1188,14 +1196,29 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 type_info.* = .{ .base = .Int };
                 return type_info;
             } else if (std.mem.eql(u8, fname, "build")) {
-                // @build(source_path: string, output_path: string) -> int
-                requireArity.check(self, expr, bc.arguments.len, 2, fname);
-                if (bc.arguments.len != 2) return type_info;
-                // Optional: ensure both are strings
-                const a0 = try infer_type.inferTypeFromExpr(self, bc.arguments[0]);
-                const a1 = try infer_type.inferTypeFromExpr(self, bc.arguments[1]);
-                if (a0.base != .String or a1.base != .String) {
-                    self.reporter.reportCompileError(getLocationFromBase(expr.base), ErrorCode.TYPE_MISMATCH, "@build expects (string, string)", .{});
+                // @build(source_path: string, output_path: string, arch: string, os: string, debug: tetra) -> int
+                requireArity.check(self, expr, bc.arguments.len, 5, fname);
+                if (bc.arguments.len != 5) return type_info;
+                const src_t = try infer_type.inferTypeFromExpr(self, bc.arguments[0]);
+                const out_t = try infer_type.inferTypeFromExpr(self, bc.arguments[1]);
+                const arch_t = try infer_type.inferTypeFromExpr(self, bc.arguments[2]);
+                const os_t = try infer_type.inferTypeFromExpr(self, bc.arguments[3]);
+                const dbg_t = try infer_type.inferTypeFromExpr(self, bc.arguments[4]);
+
+                if (src_t.base != .String or out_t.base != .String) {
+                    self.reporter.reportCompileError(getLocationFromBase(expr.base), ErrorCode.TYPE_MISMATCH, "@build expects first two arguments to be strings (source, output)", .{});
+                    self.fatal_error = true;
+                }
+                if (arch_t.base != .String) {
+                    self.reporter.reportCompileError(getLocationFromBase(bc.arguments[2].base), ErrorCode.TYPE_MISMATCH, "@build arch must be string", .{});
+                    self.fatal_error = true;
+                }
+                if (os_t.base != .String) {
+                    self.reporter.reportCompileError(getLocationFromBase(bc.arguments[3].base), ErrorCode.TYPE_MISMATCH, "@build os must be string", .{});
+                    self.fatal_error = true;
+                }
+                if (dbg_t.base != .Tetra) {
+                    self.reporter.reportCompileError(getLocationFromBase(bc.arguments[4].base), ErrorCode.TYPE_MISMATCH, "@build debug must be tetra", .{});
                     self.fatal_error = true;
                 }
                 type_info.* = .{ .base = .Int };
@@ -1211,14 +1234,49 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
             const method_name = method_call.method.lexeme;
 
             switch (method_call.method.type) {
-                .BUILD => {                    const argc = method_call.arguments.len;
-                    if (argc != 2) {
-                        self.reporter.reportCompileError(getLocationFromBase(expr.base), ErrorCode.ARGUMENT_COUNT_MISMATCH, "@build expects 2 arguments, got {}", .{argc});
+                .BUILD => {
+                    const argc = method_call.arguments.len;
+                    if (argc != 5) {
+                        if (argc < 5) {
+                            self.reporter.reportCompileError(
+                                getLocationFromBase(expr.base),
+                                ErrorCode.TOO_FEW_ARGUMENTS,
+                                "Too few arguments to @build: expected 5, got {d}",
+                                .{argc},
+                            );
+                        } else {
+                            self.reporter.reportCompileError(
+                                getLocationFromBase(expr.base),
+                                ErrorCode.TOO_MANY_ARGUMENTS,
+                                "Too many arguments to @build: expected 5, got {d}",
+                                .{argc},
+                            );
+                        }
                         self.fatal_error = true;
                         type_info.base = .Nothing;
                         return type_info;
                     }
-                    // We could validate both args are strings; for now set return type to Int
+
+                    // Basic type validation: src/out/arch/os strings; debug tetra
+                    const arch_expr = method_call.arguments[2];
+                    const os_expr = method_call.arguments[3];
+                    const debug_expr = method_call.arguments[4];
+
+                    const arch_t = try infer_type.inferTypeFromExpr(self, arch_expr);
+                    const os_t = try infer_type.inferTypeFromExpr(self, os_expr);
+                    const dbg_t = try infer_type.inferTypeFromExpr(self, debug_expr);
+
+                    if (arch_t.base != .String) {
+                        self.reporter.reportCompileError(getLocationFromBase(arch_expr.base), ErrorCode.TYPE_MISMATCH, "@build arch must be string", .{});
+                    }
+                    if (os_t.base != .String) {
+                        self.reporter.reportCompileError(getLocationFromBase(os_expr.base), ErrorCode.TYPE_MISMATCH, "@build os must be string", .{});
+                    }
+                    if (dbg_t.base != .Tetra) {
+                        self.reporter.reportCompileError(getLocationFromBase(debug_expr.base), ErrorCode.TYPE_MISMATCH, "@build debug must be tetra", .{});
+                    }
+
+                    // Return int status code
                     type_info.base = .Int;
                     return type_info;
                 },

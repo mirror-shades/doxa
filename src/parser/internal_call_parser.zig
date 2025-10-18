@@ -449,24 +449,38 @@ pub fn parseBuildMethod(self: *Parser) ErrorList!?*ast.Expr {
     }
     self.advance();
 
-    // Expect two expressions: source_path, output_path
+    // Require exactly 5 args: src, out, arch, os, debug
     const src_expr = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
 
-    if (self.peek().type != .COMMA) {
-        return error.ExpectedComma;
-    }
+    if (self.peek().type == .RIGHT_PAREN) return error.TooFewArguments;
+    if (self.peek().type != .COMMA) return error.ExpectedComma;
     self.advance();
-
     const out_expr = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
 
-    if (self.peek().type != .RIGHT_PAREN) {
-        return error.ExpectedRightParen;
-    }
+    if (self.peek().type == .RIGHT_PAREN) return error.TooFewArguments;
+    if (self.peek().type != .COMMA) return error.ExpectedComma;
+    self.advance();
+    const arch_expr = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
+
+    if (self.peek().type == .RIGHT_PAREN) return error.TooFewArguments;
+    if (self.peek().type != .COMMA) return error.ExpectedComma;
+    self.advance();
+    const os_expr = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
+
+    if (self.peek().type == .RIGHT_PAREN) return error.TooFewArguments;
+    if (self.peek().type != .COMMA) return error.ExpectedComma;
+    self.advance();
+    const debug_expr = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
+
+    if (self.peek().type != .RIGHT_PAREN) return error.ExpectedRightParen;
     self.advance();
 
-    const arguments = try self.allocator.alloc(*ast.Expr, 2);
+    const arguments = try self.allocator.alloc(*ast.Expr, 5);
     arguments[0] = src_expr;
     arguments[1] = out_expr;
+    arguments[2] = arch_expr;
+    arguments[3] = os_expr;
+    arguments[4] = debug_expr;
 
     const build_expr = try self.allocator.create(ast.Expr);
     build_expr.* = .{
