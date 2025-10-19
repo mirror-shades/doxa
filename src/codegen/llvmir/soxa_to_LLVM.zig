@@ -116,7 +116,8 @@ pub fn translateToLLVM(hir: *const HIR.HIRProgram, generator: *LLVMGenerator) !v
                         try stack.append(ptr);
                     },
                     .int => |i| {
-                        const v = LLVMCore.LLVMConstInt(LLVMCore.LLVMInt64TypeInContext(generator.context), @intCast(i), @intFromBool(true));
+                        const as_u64: u64 = @bitCast(i);
+                        const v = LLVMCore.LLVMConstInt(LLVMCore.LLVMInt64TypeInContext(generator.context), as_u64, @intFromBool(true));
                         try stack.append(v);
                     },
                     .byte => |b| {

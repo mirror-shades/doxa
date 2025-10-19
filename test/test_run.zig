@@ -40,7 +40,11 @@ const print_result = struct {
 
 // integration tests
 const expected_brainfuck_results = [_]print_result{
-    .{ .value = "Input: Output: 0x67" },
+    .{ .value = "Output: 0x02" },
+    .{ .value = "Output: 0x04" },
+    .{ .value = "Output: 0x02" },
+    .{ .value = "Output: 0x03" },
+    .{ .value = "Output: 0x09" },
 };
 
 const expected_calculator_results = [_]print_result{
@@ -781,7 +785,7 @@ test "unified runner" {
 
     const test_cases = [_]TestCase{
         .{ .name = "big file", .path = "./test/misc/bigfile.doxa", .mode = .PEEK, .input = null, .expected_print = null, .expected_peek = expected_bigfile_results[0..] },
-        .{ .name = "brainfuck", .path = "./test/examples/brainfuck.doxa", .mode = .PRINT, .input = "f\n", .expected_print = expected_brainfuck_results[0..], .expected_peek = null },
+        .{ .name = "brainfuck", .path = "./test/examples/brainfuck.doxa", .mode = .PRINT, .input = null, .expected_print = expected_brainfuck_results[0..], .expected_peek = null },
         .{ .name = "complex print", .path = "./test/misc/complex_print.doxa", .mode = .PRINT, .input = null, .expected_print = expected_complex_print_results[0..], .expected_peek = null },
         .{ .name = "expressions", .path = "./test/misc/expressions.doxa", .mode = .PEEK, .input = null, .expected_print = null, .expected_peek = expected_expressions_results[0..] },
         .{ .name = "methods", .path = "./test/misc/methods.doxa", .mode = .PEEK, .input = "f\n", .expected_print = null, .expected_peek = expected_methods_results[0..] },

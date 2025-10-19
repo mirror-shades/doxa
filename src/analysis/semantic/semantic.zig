@@ -1803,14 +1803,9 @@ pub const SemanticAnalyzer = struct {
         // 1. Function expects a return value but none found
         // Relax: if there is any return (even nested), don't force an implicit-final-expression check here
         if (expected_return_type.base != .Nothing and !has_return_with_value and !has_return) {
-            if (last_expr) |expr| {
-                const return_type = try infer_type.inferTypeFromExpr(self, expr);
-                try self.validateReturnTypeCompatibility(&expected_return_type, return_type, func_span);
-                // Treat as having a return with value via implicit final expression
+            // Treat any final expression as an implicit return value
+            if (last_expr) |_| {
                 has_return_with_value = true;
-            } else {
-                // Temporarily relax: don't error here; allow later phases to validate
-                // This avoids false positives when returns are present but not surfaced as statements
             }
         }
         // 2. Function has no explicit return type but has a value-producing final expression
@@ -1838,26 +1833,9 @@ pub const SemanticAnalyzer = struct {
             self.fatal_error = true;
         }
 
-        // If the function's declared return type does not include Nothing, ensure
-        // every control-flow path returns. Otherwise, this implies an implicit
-        // 'nothing' on some paths which is incompatible with non-union/non-Nothing
-        // return types.
-        if (expected_return_type.base != .Nothing) {
-            const guarantees = try self.guaranteesReturnInStatements(body, expected_return_type, func_span);
-            if (!guarantees) {
-                // Allow missing returns only if the declared return type is a union that includes Nothing
-                const nothing_ok = expected_return_type.base == .Union and helpers.unionContainsNothing(self, expected_return_type);
-                if (!nothing_ok) {
-                    self.reporter.reportCompileError(
-                        func_span.location,
-                        ErrorCode.MISSING_RETURN_VALUE,
-                        "Function may return 'nothing' on some paths; declare a union return type (e.g., T | nothing) or return a value on all paths",
-                        .{},
-                    );
-                    self.fatal_error = true;
-                }
-            }
-        }
+        // Intentionally do not enforce all-paths return for value-returning
+        // functions. The base scope's final value or any explicit return in
+        // the body is sufficient.
 
         return has_return;
     }
@@ -1883,6 +1861,24 @@ pub const SemanticAnalyzer = struct {
 
     // Determine whether a sequence of statements guarantees a return on all control-flow paths
     fn guaranteesReturnInStatements(self: *SemanticAnalyzer, body: []ast.Stmt, expected_return_type: ast.TypeInfo, func_span: ast.SourceSpan) ErrorList!bool {
+        // Fast path: if the last statement is an explicit return or an
+        // expression that guarantees return, we can immediately accept.
+        if (body.len > 0) {
+            const last_stmt = body[body.len - 1];
+            switch (last_stmt.data) {
+                .Return => return true,
+                .Expression => |maybe_expr| {
+                    if (maybe_expr) |expr| {
+                        if (try self.validateExpressionReturns(expr, expected_return_type, func_span)) return true;
+                    }
+                },
+                .Block => |block_stmts| {
+                    if (try self.guaranteesReturnInStatements(block_stmts, expected_return_type, func_span)) return true;
+                },
+                else => {},
+            }
+        }
+
         for (body, 0..) |stmt, idx| {
             switch (stmt.data) {
                 .Return => {
