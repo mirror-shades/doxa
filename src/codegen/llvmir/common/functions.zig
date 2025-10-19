@@ -125,7 +125,15 @@ pub fn emitFunctionBody(hir: *const HIR.HIRProgram, generator: *LLVMGenerator, f
         try stack.append(pv);
     }
 
-    const start_idx_opt = findLabelIndex(hir, func.start_label) orelse return;
+    const start_idx_opt = findLabelIndex(hir, func.start_label) orelse {
+        const rt_missing = type_map.mapHIRTypeToLLVM(generator, func.return_type);
+        if (LLVMCore.LLVMGetTypeKind(rt_missing) == LLVMTypes.LLVMTypeKind.LLVMVoidTypeKind) {
+            _ = LLVMCore.LLVMBuildRetVoid(generator.builder);
+        } else {
+            _ = LLVMCore.LLVMBuildRet(generator.builder, LLVMCore.LLVMConstNull(rt_missing));
+        }
+        return;
+    };
     var end_idx: usize = hir.instructions.len;
     var i: usize = start_idx_opt + 1;
     while (i < hir.instructions.len) : (i += 1) {
@@ -139,7 +147,22 @@ pub fn emitFunctionBody(hir: *const HIR.HIRProgram, generator: *LLVMGenerator, f
         }
     }
 
+    // Bind entry block to start label name (so entering start label reuses it)
+    try bm.bind(func.start_label, fn_entry);
+    // We are already positioned at the start label block
+    var pre_entered_start: bool = false;
+
+    var in_dead_code: bool = false;
     for (hir.instructions[start_idx_opt..end_idx]) |inst| {
+        if (in_dead_code) {
+            switch (inst) {
+                .Label => |lbl_dc| {
+                    try bm.enterLabel(lbl_dc.name);
+                    in_dead_code = false;
+                },
+                else => continue,
+            }
+        }
         switch (inst) {
             .Const => |c| {
                 const idx = c.constant_id;
@@ -364,7 +387,12 @@ pub fn emitFunctionBody(hir: *const HIR.HIRProgram, generator: *LLVMGenerator, f
                 print.printNewline(generator, &next_string_id);
             },
             .Label => |lbl| {
-                try bm.enterLabel(lbl.name);
+                if (pre_entered_start and std.mem.eql(u8, lbl.name, func.start_label)) {
+                    // Already positioned at start label; do not create a self-branch
+                    pre_entered_start = false;
+                } else {
+                    try bm.enterLabel(lbl.name);
+                }
             },
             .Jump => |j| {
                 try bm.branchTo(j.label);
@@ -521,17 +549,23 @@ pub fn emitFunctionBody(hir: *const HIR.HIRProgram, generator: *LLVMGenerator, f
                     const coerced = coerceToType(generator, res, rt);
                     _ = LLVMCore.LLVMBuildRet(generator.builder, coerced);
                 }
+                in_dead_code = true;
             },
             .Return => |r| {
                 const rt = type_map.mapHIRTypeToLLVM(generator, func.return_type);
-                if (r.has_value and stack.items.len > 0) {
-                    var v = stack.items[stack.items.len - 1];
-                    stack.items.len -= 1;
-                    v = coerceToType(generator, v, rt);
+                const is_void = LLVMCore.LLVMGetTypeKind(rt) == LLVMTypes.LLVMTypeKind.LLVMVoidTypeKind;
+                if (!is_void) {
+                    var v: LLVMTypes.LLVMValueRef = LLVMCore.LLVMConstNull(rt);
+                    if (r.has_value and stack.items.len > 0) {
+                        v = stack.items[stack.items.len - 1];
+                        stack.items.len -= 1;
+                        v = coerceToType(generator, v, rt);
+                    }
                     _ = LLVMCore.LLVMBuildRet(generator.builder, v);
                 } else {
                     _ = LLVMCore.LLVMBuildRetVoid(generator.builder);
                 }
+                in_dead_code = true;
             },
             .EnterScope, .ExitScope => {},
             else => {},
