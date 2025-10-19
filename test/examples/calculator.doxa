@@ -31,8 +31,7 @@ function precedence(op :: string) returns int {
 
 
 
-entry function main() {
-    const input is @input();
+function calculate(input :: string) {
     const splitInput is split(input)
     @assert(verifyParens(splitInput), "parens don't match")
     const tokens is tokenize(splitInput)
@@ -240,4 +239,9 @@ function shunt(tokens :: Token[]) returns Token[] | Error {
     }
 
     return output
+}
+
+entry function main() {
+    const expr is @input()
+    calculate(expr)
 }

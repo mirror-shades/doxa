@@ -65,8 +65,22 @@ function interpret(scan :: string) {
         if(currentInstruction == "[") then startLoop()
         if(currentInstruction == "]") then endLoop()
     }
+    reset()
+}
+
+function reset() {
+    for i while i < @length(tape) do i += 1 {
+        tape[i] is 0x00
+    }
+    loops is 0
+    loopSpot is []
+    tp is 0 
+    ip is 0  
 }
 
 entry function main() {
-    interpret(",+.")
+    interpret("++.")
+    interpret("++++.")
+    interpret("++.>+++.")
+    interpret("+++[>+++<-]>.")
 }

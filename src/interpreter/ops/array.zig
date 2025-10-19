@@ -35,7 +35,7 @@ pub fn exec(vm: anytype, instruction: anytype) !void {
     } else if (@hasField(@TypeOf(instruction), "ArrayGetAndAdd")) {
         try arrayGetAndAdd(vm, instruction.ArrayGetAndAdd);
     } else if (@hasField(@TypeOf(instruction), "ArrayGetAndSub")) {
-        return vm.reporter.reportRuntimeError(null, ErrorCode.NOT_IMPLEMENTED, "ArrayGetAndSub is not implemented", .{});
+        try arrayGetAndSub(vm, instruction.ArrayGetAndSub);
     } else if (@hasField(@TypeOf(instruction), "ArrayGetAndMul")) {
         return vm.reporter.reportRuntimeError(null, ErrorCode.NOT_IMPLEMENTED, "ArrayGetAndMul is not implemented", .{});
     } else if (@hasField(@TypeOf(instruction), "ArrayGetAndDiv")) {
@@ -808,6 +808,74 @@ fn arrayGetAndAdd(vm: anytype, a: anytype) !void {
                     .byte => |val| HIRValue{ .float = current + @as(f64, @floatFromInt(val)) },
                     .float => |val| HIRValue{ .float = current + val },
                     else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot add {s} to float", .{@tagName(value.value)}),
+                },
+                else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform arithmetic on {s}", .{@tagName(current_element)}),
+            };
+
+            var mutable_arr = arr;
+            if (index_val >= mutable_arr.elements.len) {
+                const new_elements = try vm.allocator.realloc(mutable_arr.elements, index_val + 1);
+                mutable_arr.elements = new_elements;
+                for (mutable_arr.elements[arr.elements.len .. index_val + 1]) |*element| {
+                    element.* = HIRValue.nothing;
+                }
+            }
+            mutable_arr.elements[index_val] = result;
+
+            try vm.stack.push(HIRFrame.initFromHIRValue(result));
+        },
+        else => {
+            return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform compound assignment on non-array value: {s}", .{@tagName(array_frame.value)});
+        },
+    }
+}
+
+fn arrayGetAndSub(vm: anytype, a: anytype) !void {
+    _ = a;
+    if (vm.stack.sp < 3) {
+        return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Stack underflow", .{});
+    }
+
+    const value = try vm.stack.pop();
+    const index = try vm.stack.pop();
+    const array_frame = try vm.stack.pop();
+
+    const index_val = switch (index.value) {
+        .int => |i| if (i < 0) {
+            return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index cannot be negative: {}", .{i});
+        } else @as(u32, @intCast(i)),
+        .byte => |u| @as(u32, u),
+        .tetra => |t| @as(u32, t),
+        else => {
+            return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid array index type: {s}", .{@tagName(index.value)});
+        },
+    };
+
+    switch (array_frame.value) {
+        .array => |arr| {
+            if (index_val >= arr.capacity) {
+                return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index out of bounds: {}", .{index_val});
+            }
+
+            const current_element = if (index_val < arr.elements.len) arr.elements[index_val] else HIRValue.nothing;
+
+            const result = switch (current_element) {
+                .int => |current| switch (value.value) {
+                    .int => |val| HIRValue{ .int = current - val },
+                    .byte => |val| HIRValue{ .int = current - val },
+                    .float => |val| HIRValue{ .int = current - @as(i64, @intFromFloat(val)) },
+                    else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot subtract {s} from int", .{@tagName(value.value)}),
+                },
+                .byte => |current| switch (value.value) {
+                    .int => |val| HIRValue{ .byte = @as(u8, @intCast((current - @as(u8, @intCast(val))) & 0xFF)) },
+                    .byte => |val| HIRValue{ .byte = @as(u8, @intCast((current - val) & 0xFF)) },
+                    else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot subtract {s} from byte", .{@tagName(value.value)}),
+                },
+                .float => |current| switch (value.value) {
+                    .int => |val| HIRValue{ .float = current - @as(f64, @floatFromInt(val)) },
+                    .byte => |val| HIRValue{ .float = current - @as(f64, @floatFromInt(val)) },
+                    .float => |val| HIRValue{ .float = current - val },
+                    else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot subtract {s} from float", .{@tagName(value.value)}),
                 },
                 else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform arithmetic on {s}", .{@tagName(current_element)}),
             };

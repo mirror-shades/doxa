@@ -174,7 +174,8 @@ pub fn emitFunctionBody(hir: *const HIR.HIRProgram, generator: *LLVMGenerator, f
                         try stack.append(ptr);
                     },
                     .int => |ival| {
-                        const v = LLVMCore.LLVMConstInt(LLVMCore.LLVMInt64TypeInContext(generator.context), @intCast(ival), @intFromBool(true));
+                        const as_u64: u64 = @bitCast(ival);
+                        const v = LLVMCore.LLVMConstInt(LLVMCore.LLVMInt64TypeInContext(generator.context), as_u64, @intFromBool(true));
                         try stack.append(v);
                     },
                     .byte => |b| {
