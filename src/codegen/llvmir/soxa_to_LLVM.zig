@@ -349,6 +349,66 @@ pub fn translateToLLVM(hir: *const HIR.HIRProgram, generator: *LLVMGenerator) !v
 
                 try stack.append(result);
             },
+            .LogicalOp => |lop| {
+                const i2_ty = LLVMCore.LLVMIntTypeInContext(generator.context, 2);
+                switch (lop.op) {
+                    .Not => {
+                        if (stack.items.len < 1) continue;
+                        const a = stack.items[stack.items.len - 1];
+                        stack.items.len -= 1;
+                        const a2 = LLVMCore.LLVMBuildTrunc(generator.builder, cast.ensureI64(generator, a), i2_ty, "to.i2");
+                        const one = LLVMCore.LLVMConstInt(i2_ty, 1, @intFromBool(false));
+                        const two = LLVMCore.LLVMConstInt(i2_ty, 2, @intFromBool(false));
+                        const low = LLVMCore.LLVMBuildAnd(generator.builder, a2, one, "tetra.low");
+                        const high = LLVMCore.LLVMBuildAnd(generator.builder, a2, two, "tetra.high");
+                        const low_to_high = LLVMCore.LLVMBuildShl(generator.builder, low, one, "tetra.l2h");
+                        const high_to_low = LLVMCore.LLVMBuildLShr(generator.builder, high, one, "tetra.h2l");
+                        const res = LLVMCore.LLVMBuildOr(generator.builder, low_to_high, high_to_low, "tetra.not");
+                        try stack.append(res);
+                    },
+                    else => {
+                        if (stack.items.len < 2) continue;
+                        const b = stack.items[stack.items.len - 1];
+                        const a = stack.items[stack.items.len - 2];
+                        stack.items.len -= 2;
+                        const a2 = LLVMCore.LLVMBuildTrunc(generator.builder, cast.ensureI64(generator, a), i2_ty, "a.i2");
+                        const b2 = LLVMCore.LLVMBuildTrunc(generator.builder, cast.ensureI64(generator, b), i2_ty, "b.i2");
+                        const one = LLVMCore.LLVMConstInt(i2_ty, 1, @intFromBool(false));
+                        const two = LLVMCore.LLVMConstInt(i2_ty, 2, @intFromBool(false));
+                        const i1_ty = LLVMCore.LLVMInt1TypeInContext(generator.context);
+                        const a_is_true = blk_a: {
+                            const is_one = LLVMCore.LLVMBuildICmp(generator.builder, LLVMTypes.LLVMIntPredicate.LLVMIntEQ, a2, one, "a.eq1");
+                            const is_two = LLVMCore.LLVMBuildICmp(generator.builder, LLVMTypes.LLVMIntPredicate.LLVMIntEQ, a2, two, "a.eq2");
+                            break :blk_a LLVMCore.LLVMBuildOr(generator.builder, is_one, is_two, "a.true");
+                        };
+                        const b_is_true = blk_b: {
+                            const is_one = LLVMCore.LLVMBuildICmp(generator.builder, LLVMTypes.LLVMIntPredicate.LLVMIntEQ, b2, one, "b.eq1");
+                            const is_two = LLVMCore.LLVMBuildICmp(generator.builder, LLVMTypes.LLVMIntPredicate.LLVMIntEQ, b2, two, "b.eq2");
+                            break :blk_b LLVMCore.LLVMBuildOr(generator.builder, is_one, is_two, "b.true");
+                        };
+                        const and_i1 = LLVMCore.LLVMBuildAnd(generator.builder, a_is_true, b_is_true, "and");
+                        const or_i1 = LLVMCore.LLVMBuildOr(generator.builder, a_is_true, b_is_true, "or");
+                        const xor_i1 = LLVMCore.LLVMBuildXor(generator.builder, a_is_true, b_is_true, "xor");
+                        const not_b = LLVMCore.LLVMBuildXor(generator.builder, b_is_true, LLVMCore.LLVMConstInt(i1_ty, 1, @intFromBool(false)), "not.b");
+                        const implies_i1 = LLVMCore.LLVMBuildOr(generator.builder, not_b, a_is_true, "impl");
+                        const iff_i1 = LLVMCore.LLVMBuildXor(generator.builder, xor_i1, LLVMCore.LLVMConstInt(i1_ty, 1, @intFromBool(false)), "iff");
+                        const nand_i1 = LLVMCore.LLVMBuildXor(generator.builder, and_i1, LLVMCore.LLVMConstInt(i1_ty, 1, @intFromBool(false)), "nand");
+                        const nor_i1 = LLVMCore.LLVMBuildXor(generator.builder, or_i1, LLVMCore.LLVMConstInt(i1_ty, 1, @intFromBool(false)), "nor");
+                        const sel_i1 = switch (lop.op) {
+                            .And => and_i1,
+                            .Or => or_i1,
+                            .Xor => xor_i1,
+                            .Iff => iff_i1,
+                            .Nand => nand_i1,
+                            .Nor => nor_i1,
+                            .Implies => implies_i1,
+                            else => LLVMCore.LLVMConstInt(i1_ty, 0, @intFromBool(false)),
+                        };
+                        const out_i2 = LLVMCore.LLVMBuildZExt(generator.builder, sel_i1, i2_ty, "i1.to.i2");
+                        try stack.append(out_i2);
+                    },
+                }
+            },
             .Dup => {
                 if (stack.items.len < 1) continue;
                 const v = stack.items[stack.items.len - 1];
@@ -478,14 +538,7 @@ pub fn translateToLLVM(hir: *const HIR.HIRProgram, generator: *LLVMGenerator) !v
                 };
 
                 const target_ty = type_map.mapHIRTypeToLLVM(generator, sv.expected_type);
-                const target_kind = LLVMCore.LLVMGetTypeKind(target_ty);
-                // Coerce v to target_ty for basic numeric types
-                if (target_kind == LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind) {
-                    const w = LLVMCore.LLVMGetIntTypeWidth(target_ty);
-                    if (w == 64) v = cast.ensureI64(generator, v) else if (w == 8) v = cast.ensureI8(generator, v) else if (w == 1) v = cast.ensureI1(generator, v) else {}
-                } else if (target_kind == LLVMTypes.LLVMTypeKind.LLVMDoubleTypeKind) {
-                    v = cast.ensureF64(generator, v);
-                }
+                v = coerceToType(generator, v, target_ty);
 
                 try var_store.store(key, v, target_ty, sv.scope_kind == HIR.ScopeKind.Local, sv.var_name);
             },
@@ -520,6 +573,14 @@ pub fn translateToLLVM(hir: *const HIR.HIRProgram, generator: *LLVMGenerator) !v
 
                 try var_store.defineConstGlobal(key, v);
             },
+            .PushStorageId => |pstid| {
+                // Top-level alias arguments should reference the actual variable storage.
+                // Prefer GlobalLocal for script-level variables.
+                const key = try std.fmt.allocPrint(generator.allocator, "g:{s}", .{pstid.var_name});
+                const default_ty = LLVMCore.LLVMInt64TypeInContext(generator.context);
+                const entry_ptr = try var_store.getOrCreatePtr(key, default_ty, false, pstid.var_name);
+                try stack.append(entry_ptr.ptr);
+            },
             .Call => |c| {
                 const f_entry = function_map.get(c.qualified_name) orelse null;
                 if (f_entry == null) continue;
@@ -549,8 +610,21 @@ pub fn translateToLLVM(hir: *const HIR.HIRProgram, generator: *LLVMGenerator) !v
                         if (fi.param_is_alias[idx]) {
                             const elem = type_map.mapHIRTypeToLLVM(generator, pt);
                             const want_ptr_ty = LLVMCore.LLVMPointerType(elem, 0);
-                            if (LLVMCore.LLVMTypeOf(args[idx]) != want_ptr_ty) {
-                                args[idx] = LLVMCore.LLVMBuildBitCast(generator.builder, args[idx], want_ptr_ty, "arg.ptr.cast");
+                            const arg_ty = LLVMCore.LLVMTypeOf(args[idx]);
+                            if (LLVMCore.LLVMGetTypeKind(arg_ty) == LLVMTypes.LLVMTypeKind.LLVMPointerTypeKind) {
+                                if (arg_ty != want_ptr_ty) {
+                                    args[idx] = LLVMCore.LLVMBuildBitCast(generator.builder, args[idx], want_ptr_ty, "arg.ptr.cast");
+                                }
+                            } else {
+                                // If value not a pointer, allocate a local and pass its pointer
+                                const entry_block = LLVMCore.LLVMGetInsertBlock(generator.builder);
+                                // Create an alloca in entry for stable address
+                                LLVMCore.LLVMPositionBuilderAtEnd(generator.builder, entry);
+                                const ptr = LLVMCore.LLVMBuildAlloca(generator.builder, elem, "alias.arg.alloca");
+                                LLVMCore.LLVMPositionBuilderAtEnd(generator.builder, entry_block);
+                                const coerced = coerceToType(generator, args[idx], elem);
+                                _ = LLVMCore.LLVMBuildStore(generator.builder, coerced, ptr);
+                                args[idx] = ptr;
                             }
                         } else {
                             const tgt = type_map.mapHIRTypeToLLVM(generator, pt);
@@ -569,10 +643,10 @@ pub fn translateToLLVM(hir: *const HIR.HIRProgram, generator: *LLVMGenerator) !v
                     }
                     fnty = LLVMCore.LLVMFunctionType(ret_ty, if (pbuf.len == 0) null else pbuf.ptr, @intCast(pbuf.len), @intFromBool(false));
                 } else {
-                    // Fallback (should not happen): best-effort
+                    // Best-effort fallback
                     fnty = LLVMCore.LLVMFunctionType(LLVMCore.LLVMVoidTypeInContext(generator.context), null, 0, @intFromBool(false));
                 }
-                const res = LLVMCore.LLVMBuildCall2(generator.builder, fnty, callee, args.ptr, @intCast(argc), "");
+                const res = LLVMCore.LLVMBuildCall2(generator.builder, fnty, callee, if (argc == 0) null else args.ptr, @intCast(argc), "");
                 if (c.return_type != .Nothing) {
                     try stack.append(res);
                 }
