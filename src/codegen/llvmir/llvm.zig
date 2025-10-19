@@ -795,13 +795,15 @@ pub const LLVMGenerator = struct {
         // Create arguments array
         var args = [_]LLVMTypes.LLVMValueRef{ format_str, value };
 
-        return LLVMCore.LLVMBuildCall2(self.builder, LLVMCore.LLVMTypeOf(printf_fn), printf_fn, &args, 2, "");
+        const fnty = LLVMCore.LLVMGetElementType(LLVMCore.LLVMTypeOf(printf_fn));
+        return LLVMCore.LLVMBuildCall2(self.builder, fnty, printf_fn, &args, 2, "");
     }
 
     fn buildPrintString(self: *LLVMGenerator, value: LLVMTypes.LLVMValueRef) !LLVMTypes.LLVMValueRef {
         const puts_fn = externs.getOrCreatePuts(self);
         var args = [_]LLVMTypes.LLVMValueRef{value};
-        return LLVMCore.LLVMBuildCall2(self.builder, LLVMCore.LLVMTypeOf(puts_fn), puts_fn, &args, 1, "");
+        const fnty = LLVMCore.LLVMGetElementType(LLVMCore.LLVMTypeOf(puts_fn));
+        return LLVMCore.LLVMBuildCall2(self.builder, fnty, puts_fn, &args, 1, "");
     }
 
     fn buildPrintTetra(self: *LLVMGenerator, value: LLVMTypes.LLVMValueRef) !LLVMTypes.LLVMValueRef {

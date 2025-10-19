@@ -140,7 +140,7 @@ pub const BytecodeGenerator = struct {
             }
         }
 
-        const file_name = try std.fmt.allocPrint(self.allocator, "{s}.bytecode", .{sanitized});
+        const file_name = try std.fmt.allocPrint(self.allocator, "{s}.boxa", .{sanitized});
         defer self.allocator.free(file_name);
 
         return try std.fs.path.join(self.allocator, &.{ self.artifact_dir, file_name });
