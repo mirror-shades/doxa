@@ -31,6 +31,10 @@ pub const BlockManager = struct {
         return bb;
     }
 
+    pub fn bind(self: *BlockManager, name: []const u8, bb: LLVMTypes.LLVMBasicBlockRef) !void {
+        try self.map.put(name, bb);
+    }
+
     pub fn branchTo(self: *BlockManager, label: []const u8) !void {
         const target = try self.getOrCreate(label);
         _ = LLVMCore.LLVMBuildBr(self.gen.builder, target);
@@ -46,14 +50,9 @@ pub const BlockManager = struct {
 
     pub fn enterLabel(self: *BlockManager, label: []const u8) !void {
         const insert_block = LLVMCore.LLVMGetInsertBlock(self.gen.builder);
-        var need_branch: bool = false;
-        if (insert_block != null and LLVMCore.LLVMGetBasicBlockTerminator(insert_block) == null) {
-            need_branch = true;
-        }
         const bb = try self.getOrCreate(label);
-        if (need_branch) {
-            _ = LLVMCore.LLVMBuildBr(self.gen.builder, bb);
-        }
+        const need_branch = insert_block != null and insert_block != bb and LLVMCore.LLVMGetBasicBlockTerminator(insert_block) == null;
+        if (need_branch) _ = LLVMCore.LLVMBuildBr(self.gen.builder, bb);
         LLVMCore.LLVMPositionBuilderAtEnd(self.gen.builder, bb);
     }
 

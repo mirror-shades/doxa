@@ -534,7 +534,44 @@ pub fn translateToLLVM(hir: *const HIR.HIRProgram, generator: *LLVMGenerator) !v
                     stack.items.len -= 1;
                     args[argc - 1 - ai] = v2;
                 }
-                const fnty = LLVMCore.LLVMTypeOf(callee);
+                // Coerce/cast arguments to match callee parameter types (including alias-as-pointer)
+                var callee_info: ?HIR.HIRProgram.HIRFunction = null;
+                for (hir.function_table) |finfo| {
+                    if (std.mem.eql(u8, finfo.qualified_name, c.qualified_name)) {
+                        callee_info = finfo;
+                        break;
+                    }
+                }
+                if (callee_info) |fi| {
+                    var idx: usize = 0;
+                    while (idx < args.len and idx < fi.param_types.len) : (idx += 1) {
+                        const pt = fi.param_types[idx];
+                        if (fi.param_is_alias[idx]) {
+                            const elem = type_map.mapHIRTypeToLLVM(generator, pt);
+                            const want_ptr_ty = LLVMCore.LLVMPointerType(elem, 0);
+                            if (LLVMCore.LLVMTypeOf(args[idx]) != want_ptr_ty) {
+                                args[idx] = LLVMCore.LLVMBuildBitCast(generator.builder, args[idx], want_ptr_ty, "arg.ptr.cast");
+                            }
+                        } else {
+                            const tgt = type_map.mapHIRTypeToLLVM(generator, pt);
+                            args[idx] = coerceToType(generator, args[idx], tgt);
+                        }
+                    }
+                }
+                var fnty: LLVMTypes.LLVMTypeRef = undefined;
+                if (callee_info) |fi2| {
+                    const ret_ty = type_map.mapHIRTypeToLLVM(generator, fi2.return_type);
+                    var pbuf = try generator.allocator.alloc(LLVMTypes.LLVMTypeRef, fi2.param_types.len);
+                    defer generator.allocator.free(pbuf);
+                    for (fi2.param_types, 0..) |pt, pi| {
+                        const base = type_map.mapHIRTypeToLLVM(generator, pt);
+                        pbuf[pi] = if (fi2.param_is_alias[pi]) LLVMCore.LLVMPointerType(base, 0) else base;
+                    }
+                    fnty = LLVMCore.LLVMFunctionType(ret_ty, if (pbuf.len == 0) null else pbuf.ptr, @intCast(pbuf.len), @intFromBool(false));
+                } else {
+                    // Fallback (should not happen): best-effort
+                    fnty = LLVMCore.LLVMFunctionType(LLVMCore.LLVMVoidTypeInContext(generator.context), null, 0, @intFromBool(false));
+                }
                 const res = LLVMCore.LLVMBuildCall2(generator.builder, fnty, callee, args.ptr, @intCast(argc), "");
                 if (c.return_type != .Nothing) {
                     try stack.append(res);
