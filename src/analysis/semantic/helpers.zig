@@ -512,65 +512,6 @@ pub fn handleModuleFieldAccess(self: *SemanticAnalyzer, module_name: []const u8,
             root_alias = module_name[0..dot_idx];
             subpath = module_name[dot_idx + 1 ..];
         }
-        // Resolve root module actual name
-        var root_is_graphics = false;
-        if (parser.module_namespaces.get(root_alias)) |mi| {
-            root_is_graphics = std.mem.eql(u8, mi.name, "graphics") or std.mem.eql(u8, mi.file_path, "graphics");
-        } else {
-            // Also allow direct use of actual name "graphics"
-            root_is_graphics = std.mem.eql(u8, root_alias, "graphics");
-        }
-        if (root_is_graphics) {
-            // If accessing first-level submodule from root (e.g., rl.raylib / graphics.raylib)
-            if (subpath == null and (std.mem.eql(u8, field_name, "raylib") or std.mem.eql(u8, field_name, "doxa"))) {
-                // Return a Custom type representing the nested namespace (canonicalized with actual name)
-                const nested_name = try std.fmt.allocPrint(self.allocator, "graphics.{s}", .{field_name});
-                type_info.* = ast.TypeInfo{ .base = .Custom, .custom_type = nested_name, .is_mutable = false };
-                return type_info;
-            }
-            // If already within a nested graphics namespace (graphics.raylib.*), validate the field exists
-            if (subpath) |sub| {
-                if (std.mem.eql(u8, sub, "raylib")) {
-                    // Import the raylib module to get its valid fields array
-                    const ray = @import("../../runtime/raylib.zig");
-
-                    var field_valid = false;
-                    for (ray.doxa_module.valid_fields) |field| {
-                        if (std.mem.eql(u8, field, field_name)) {
-                            field_valid = true;
-                            break;
-                        }
-                    }
-
-                    if (!field_valid) {
-                        self.reporter.reportCompileError(
-                            span.location,
-                            ErrorCode.UNDEFINED_FIELD,
-                            "Field '{s}' does not exist on graphics.raylib",
-                            .{field_name},
-                        );
-                        self.fatal_error = true;
-                        type_info.* = ast.TypeInfo{ .base = .Nothing };
-                        return type_info;
-                    }
-                    // Return a Custom type with the fully-qualified nested namespace name
-                    const nested_name2 = try std.fmt.allocPrint(self.allocator, "graphics.{s}", .{sub});
-                    type_info.* = ast.TypeInfo{ .base = .Custom, .custom_type = nested_name2, .is_mutable = false };
-                    return type_info;
-                } else if (std.mem.eql(u8, sub, "doxa")) {
-                    // graphics.doxa has no properties - only functions
-                    self.reporter.reportCompileError(
-                        span.location,
-                        ErrorCode.UNDEFINED_FIELD,
-                        "Field '{s}' does not exist on graphics.doxa",
-                        .{field_name},
-                    );
-                    self.fatal_error = true;
-                    type_info.* = ast.TypeInfo{ .base = .Nothing };
-                    return type_info;
-                }
-            }
-        }
 
         // Look for the field in the module's imported symbols
         if (parser.imported_symbols) |imported_symbols| {
