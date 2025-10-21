@@ -1,31 +1,60 @@
+Since Doxa has a tightly limited number of types, structs are useful for modeling more complex data. Structs are based off composition to avoid pitfalls inherent to inheretance. Variables, functions, and methods are all private unless marked pub.
+
+### Real world example
+
 struct Point {  
- x :: int, // unless marked, values are private
-y :: int,
+    x :: int, // unless marked pub, values are private
+    y :: int,
 
     pub id :: int,
 
-    pub method New(x :: int, y :: int) { // methods must be marked pub as well
+    pub function New(x :: int, y :: int) { // fucntions and methods are private unless marked pub as well
         return Point {
             x is x,
             y is y,
         }
     }
 
-    method safeSub(a :: int, b :: int) returns int { // functions without the "this" parameter are static
+    function safeSub(a :: int, b :: int) returns int { // normal functions within structs are static
         result is a - b
         if result > 255 or result < 0 then return -1
         return result
     }
 
-    pub method get(this) { // when `this` is included, it becomes an instance method. this will be infered this as Point
+    pub method get() { // the `method` keyword lets you access 
         return Point {
             this.x,
             this.y
         }
     }
 
-    pub method getDelta(this :: Point) returns int { // this can be typed explicitly if you want
+    pub method getDelta() returns int {
         return Point.safeSub(this.x, this.y) // static methods can be called within instance methods
     }
 
 }
+
+### Basic Composition Example
+
+```doxa
+struct Animal {
+    name: string
+}
+
+struct Dog {
+    // Composition instead of inheritance
+    animal: Animal,
+    breed: string,
+
+    fn bark(self) {
+        print(animal.name + " says woof!")
+    }
+}
+
+var dog is Dog {
+    animal: Animal {
+        name: "Spot"
+        },
+    breed: "Labrador"
+}
+```

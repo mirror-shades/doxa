@@ -4,18 +4,21 @@
 
 ### Primitive Types
 
-Types in Doxa are grouped in three ways, atomic, molecular, and meta. All together there are 14 of these primitive types to represent data in Doxa.
+Doxa has two general catagory of types, atomic and molecular:
 
 ### Atomic
 
-Atomic types are the most basic units of data. Currently Doxa has 3 default number types, with plans for optional dynamic number sizing in the future.
+Atomic types are the most basic units of data. Currently Doxa has 3 default number types. Types listed reflect their Zig equivilent. Bigint may be added in the future for increased flexibility.
 
 int - i64
 float - f64
-byte - u8 hex literal
-string
-tetra - logical value, see page on tetras for more info
-nothing - empty type
+byte - u8 hex
+string - []const u8
+tetra - i2
+nothing - void
+
+The `tetra` type represents a four cornered value with the possible states: `true`, `false`, `both`, and `neither`. For additional information see the tetra page.
+
 
 ### Molecular
 
@@ -24,47 +27,7 @@ Molecular types are constructed out of atomic types. They are
 array - must be homogenous
 struct - no classes, no inheretance, only composition
 enum
-map
-function - user functions, library functions, etc
-union - can be handled with the collapse operator, see page on unions for more info
-
-### Basic Composition Example
-
-```doxa
-struct Animal {
-    name: string
-}
-
-struct Dog {
-    // Composition instead of inheritance
-    animal: Animal,
-    breed: string,
-
-    fn bark(self) {
-        print(animal.name + " says woof!")
-    }
-}
-
-var dog is Dog {
-    animal: Animal {
-        name: "Spot"
-        },
-    breed: "Labrador"
-}
-```
-
-## Data Types
-
-### Basic Types
-
-Standard types include:
-
-- `int`: Integer numbers
-- `float`: Floating point numbers
-- `string`: Text strings
-- `tetra`: Four-valued logic system
-
-The `tetra` type represents a four cornered value with the possible states: `true`, `false`, `both`, and `neither`. For additional information see the tetra page.
+union - can be handled with switch statements and type narrowing, see page on unions for more info
 
 ````
 
@@ -78,29 +41,17 @@ var strs is ["a", "b"]            // Inferred as string[]
 
 // Invalid operations
 var mixed is [1, "two", true]     // Error: mixed types
-nums.push("four")                // Error: type mismatch
+@push(nums, "four")                // Error: type mismatch
 ````
-
-### Tuples
-
-Fixed-size collections supporting heterogenus types:
-
-```doxa
-var point is (: 10, "hello", true :)         // Simple tuple
-var nested is (: (: 1, "hello" :), (: 3, true :) :)    // Nested tuple
-
-point[0]                         // Access first element
-nested[1][0]                     // Access nested element
-```
 
 ### Maps
 
 String-keyed dictionaries:
 
 ```doxa
-var scores is {
-    "alice": 100,
-    "bob": 85
+map scores {
+    "alice" is 100,
+    "bob" is 85
 }
 scores["alice"]                  // Access value
 ```
@@ -119,17 +70,35 @@ var result is match status {
 }
 ```
 
-!!! warning
 Match expressions must be exhaustive or include an `else` clause.
 
 ### Error Handling
 
+Errors are best handled with custom enum and type unions.
+
 ```doxa
-try {
-    riskyOperation()
-} catch {
-    handleError()
+enum Error {
+    TOO_BIG,
+    TOO_SMALL,
 }
+
+const res is intOrError()
+res as int then {
+    intsOnly(res) // narrowed to int
+} else {
+    match res { // else blocks do not narrow
+        Error.TOO_BIG then {
+            @print("result was too big")
+        }
+        Error.TOO_SMALL then {
+            @print("result was too small")
+        }
+        else { // we know this will never be reached
+            @panic("unreachable")
+        }
+    }
+}
+
 ```
 
 ## Special Operators
@@ -140,16 +109,21 @@ try {
 var x is computeValue()
 x?                              // Prints value with location, name, and type
 ```
+```
+[./test.doxa:2:2] x :: int is 62
+```
+### Range (`to`)
 
-### Type Information
+Ranges are arrays which can be declared between two ints or bytes
 
-```doxa
-typeof(42)                      // "int"
-typeof("hello")                 // "string"
-typeof([1,2,3])                 // "array"
+```
+const range is 10 to 15
+@print("{range}") // [10, 11, 12, 13, 14, 15]
 ```
 
 ### Collection Quantifiers
+
+As with all formal logic operations, both symbolic notation and keyword notations are supported.
 
 ```doxa
 (∃x ∈ numbers : x > 10) // Logical notation
@@ -160,7 +134,7 @@ typeof([1,2,3])                 // "array"
 
 ## Conditional Expressions
 
-All conditionals are expressions and return values:
+All conditionals can be used as expressions to assign values:
 
 ```doxa
 var result is if condition then {
@@ -170,35 +144,30 @@ var result is if condition then {
 }
 ```
 
-!!! note
-Expressions without a value return `nothing`:
-`doxa
+Be aware assigning an expression without a value will assign `nothing`:
+```doxa
     var x is if (false) { y is 1 }  // x becomes nothing
-    `
+```
 
 ### Function Return Types
 
-Functions can specify return types using either `->` or `returns` syntax:
+Functions can specify return types using the `returns` syntax. Any type can be returned, including molecular types, but only one type at a time. This is one of the places where type unions can come in handy.
 
 ```doxa
-fn add(a: int, b: int) -> int {
-    return a + b
-}
-
-// Alternative syntax
-fn add(a: int, b: int) returns(int) {
+fn add(a: int, b: int) returns int {
     return a + b
 }
 ```
 
-return types are optional and inferred by default:
+Return types are optional and inferred by default:
 
 ```doxa
-// Normal Mode - Valid
-fn add(a, b) {
-    return a + b
+fn add(a :: int, b :: int) {
+    return a + b // inferred as returning an int
 }
 ```
+
+Explicit typing is encouraged as unions will be inferred if more than one type is returned.
 
 ## Logic
 
@@ -268,9 +237,9 @@ const arr :: int[] = [1, 2, 3, 4, 5]
 not (forall x in arr where x > 3) // true
 ```
 
-### Trancendental logic
+### Paradoxical logic
 
-There are currently two trancendental operators, `and` and `not`. These can be represented by the following truth tables:
+There are currently two paradoxical operators, `and` and `not`. These can be represented by the following truth tables:
 
 | ^     | T   | F   | B   | N   |
 | ----- | --- | --- | --- | --- |

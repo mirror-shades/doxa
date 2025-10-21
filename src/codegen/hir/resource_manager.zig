@@ -35,16 +35,27 @@ pub const ConstantManager = struct {
         self.constants.deinit();
         self.constant_map.deinit();
     }
-    /// TODO: Implement deduplication for identical constants
     pub fn addConstant(self: *ConstantManager, value: HIRValue) std.mem.Allocator.Error!u32 {
+        if (self.getConstantIndex(value)) |existing| {
+            return existing;
+        }
+
         const index = @as(u32, @intCast(self.constants.items.len));
         try self.constants.append(value);
+
+        if (makeKey(self.allocator, value)) |key| {
+            // Store key -> index; keep key allocated for map lifetime
+            _ = try self.constant_map.put(key, index);
+        } else |_| {}
+
         return index;
     }
 
     pub fn getConstantIndex(self: *ConstantManager, value: HIRValue) ?u32 {
-        _ = self; // TODO: Implement deduplication lookup
-        _ = value; // TODO: Implement deduplication lookup
+        if (makeKey(self.allocator, value)) |key| {
+            defer self.allocator.free(key);
+            if (self.constant_map.get(key)) |idx| return idx;
+        } else |_| {}
         return null;
     }
 
@@ -56,3 +67,17 @@ pub const ConstantManager = struct {
         return self.constants.toOwnedSlice();
     }
 };
+
+fn makeKey(alloc: std.mem.Allocator, value: HIRValue) ![]u8 {
+    return switch (value) {
+        .int => |i| try std.fmt.allocPrint(alloc, "i:{d}", .{i}),
+        .byte => |b| try std.fmt.allocPrint(alloc, "b:{d}", .{b}),
+        .float => |f| blk: {
+            const bits: u64 = @bitCast(f);
+            break :blk try std.fmt.allocPrint(alloc, "f:{x}", .{bits});
+        },
+        .string => |s| try std.fmt.allocPrint(alloc, "s:{s}", .{s}),
+        .tetra => |t| try std.fmt.allocPrint(alloc, "t:{d}", .{t}),
+        else => error.Unsupported, // Skip dedup for complex values
+    };
+}

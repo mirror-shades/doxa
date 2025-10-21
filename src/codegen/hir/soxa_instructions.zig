@@ -96,6 +96,18 @@ pub const HIRInstruction = union(enum) {
         module_context: ?[]const u8,
     },
 
+    /// Store variable declaration (var/const with initializer)
+    /// VM: OP_SET_VAR with declaration context
+    /// LLVM: LLVMAddGlobal with proper type inference
+    StoreDecl: struct {
+        var_index: u32,
+        var_name: []const u8,
+        scope_kind: ScopeKind,
+        module_context: ?[]const u8,
+        declared_type: HIRType, // The type from declaration (not inferred)
+        is_const: bool,
+    },
+
     /// This is used for passing alias arguments by reference
     PushStorageId: struct {
         var_index: u32,

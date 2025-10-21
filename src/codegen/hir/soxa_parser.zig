@@ -518,6 +518,27 @@ pub const SoxaTextParser = struct {
             else
                 ScopeKind.Local;
             try self.instructions.append(HIRInstruction{ .StoreConst = .{ .var_index = var_index, .var_name = var_name, .scope_kind = scope_kind, .module_context = null } });
+        } else if (std.mem.eql(u8, op, "StoreDecl")) {
+            const idx_str = tokens.next() orelse return;
+            const var_index = std.fmt.parseInt(u32, idx_str, 10) catch return;
+            const name_quoted = tokens.next() orelse return;
+            const var_name = try self.parseQuotedString(name_quoted);
+            const scope_str = tokens.next() orelse "Local";
+            const scope_kind = if (std.mem.eql(u8, scope_str, "ModuleGlobal"))
+                ScopeKind.ModuleGlobal
+            else if (std.mem.eql(u8, scope_str, "ImportedModule"))
+                ScopeKind.ImportedModule
+            else if (std.mem.eql(u8, scope_str, "Builtin"))
+                ScopeKind.Builtin
+            else
+                ScopeKind.Local;
+            // Parse declared type
+            const type_str = tokens.next() orelse "Int";
+            const declared_type: HIRType = if (std.mem.eql(u8, type_str, "Int")) .Int else if (std.mem.eql(u8, type_str, "Byte")) .Byte else if (std.mem.eql(u8, type_str, "Float")) .Float else if (std.mem.eql(u8, type_str, "String")) .String else if (std.mem.eql(u8, type_str, "Tetra")) .Tetra else if (std.mem.eql(u8, type_str, "Nothing")) .Nothing else if (std.mem.eql(u8, type_str, "Array")) .Array else .Int;
+            // Parse is_const flag
+            const const_str = tokens.next() orelse "false";
+            const is_const = std.mem.eql(u8, const_str, "true");
+            try self.instructions.append(HIRInstruction{ .StoreDecl = .{ .var_index = var_index, .var_name = var_name, .scope_kind = scope_kind, .module_context = null, .declared_type = declared_type, .is_const = is_const } });
         } else if (std.mem.eql(u8, op, "StoreParamAlias")) {
             const name_quoted = tokens.next() orelse return;
             const param_name = try self.parseQuotedString(name_quoted);

@@ -14,6 +14,7 @@ const type_map = @import("common/types.zig");
 const blocks = @import("common/blocks.zig");
 const vars = @import("common/vars.zig");
 const fn_common = @import("common/functions.zig");
+const arrays = @import("common/arrays.zig");
 
 var next_string_id: usize = 0; // unique IDs for string globals within this module
 var next_block_id: usize = 0; // unique IDs for synthetic continuation blocks
@@ -65,9 +66,17 @@ fn coerceToType(gen: *LLVMGenerator, v: LLVMTypes.LLVMValueRef, target_ty: LLVMT
     switch (kind) {
         LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind => {
             const w = LLVMCore.LLVMGetIntTypeWidth(target_ty);
-            if (w == 1) return cast.ensureI1(gen, v);
-            if (w == 8) return cast.ensureI8(gen, v);
-            return cast.ensureI64(gen, v);
+            const src_ty = LLVMCore.LLVMTypeOf(v);
+            if (LLVMCore.LLVMGetTypeKind(src_ty) == LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind) {
+                const sw = LLVMCore.LLVMGetIntTypeWidth(src_ty);
+                if (sw == w) return v;
+                if (sw > w) return LLVMCore.LLVMBuildTrunc(gen.builder, v, target_ty, "trunc.int");
+                return LLVMCore.LLVMBuildZExt(gen.builder, v, target_ty, "zext.int");
+            }
+            // Fallback via i64 then adjust
+            const as64 = cast.ensureI64(gen, v);
+            if (w == 64) return as64;
+            return LLVMCore.LLVMBuildTrunc(gen.builder, as64, target_ty, "trunc.from.i64");
         },
         LLVMTypes.LLVMTypeKind.LLVMDoubleTypeKind => return cast.ensureF64(gen, v),
         else => return v,
@@ -106,6 +115,66 @@ pub fn translateToLLVM(hir: *const HIR.HIRProgram, generator: *LLVMGenerator) !v
 
     for (hir.instructions[0..func_section_start]) |inst| {
         switch (inst) {
+            .ArrayNew => |a| {
+                const new_fn = externs.getOrCreateDoxaArrayNew(generator);
+                const elem_sz = arrays.elemSizeConst(generator, a.element_type);
+                const tag_val = arrays.elemTagConst(generator, a.element_type);
+                const i64_ty = LLVMCore.LLVMInt64TypeInContext(generator.context);
+                const init_len = LLVMCore.LLVMConstInt(i64_ty, a.size, @intFromBool(false));
+                var params = [_]LLVMTypes.LLVMValueRef{ elem_sz, tag_val, init_len };
+                const ret_ptr = arrays.getArrayHeaderPtrType(generator);
+                var ptys = [_]LLVMTypes.LLVMTypeRef{ i64_ty, i64_ty, i64_ty };
+                const fnty = LLVMCore.LLVMFunctionType(ret_ptr, &ptys, 3, @intFromBool(false));
+                const hdr = LLVMCore.LLVMBuildCall2(generator.builder, fnty, new_fn, &params, 3, "arr.new");
+                try stack.append(hdr);
+            },
+            .ArrayLen => {
+                if (stack.items.len < 1) continue;
+                const arr_hdr = stack.items[stack.items.len - 1];
+                stack.items.len -= 1;
+                const len_fn = externs.getOrCreateDoxaArrayLen(generator);
+                var params = [_]LLVMTypes.LLVMValueRef{arr_hdr};
+                const i64_ty = LLVMCore.LLVMInt64TypeInContext(generator.context);
+                const single_param = arrays.getArrayHeaderPtrType(generator);
+                var ptys = [_]LLVMTypes.LLVMTypeRef{single_param};
+                const fnty = LLVMCore.LLVMFunctionType(i64_ty, &ptys, 1, @intFromBool(false));
+                const len_val = LLVMCore.LLVMBuildCall2(generator.builder, fnty, len_fn, &params, 1, "arr.len");
+                try stack.append(len_val);
+            },
+            .ArrayGet => |ag| {
+                _ = ag;
+                if (stack.items.len < 2) continue;
+                const idx_v = stack.items[stack.items.len - 1];
+                const hdr = stack.items[stack.items.len - 2];
+                stack.items.len -= 2;
+                const get_fn = externs.getOrCreateDoxaArrayGetI64(generator);
+                const idx64 = cast.ensureI64(generator, idx_v);
+                var params = [_]LLVMTypes.LLVMValueRef{ hdr, idx64 };
+                const i64_ty = LLVMCore.LLVMInt64TypeInContext(generator.context);
+                const p0 = arrays.getArrayHeaderPtrType(generator);
+                var ptys = [_]LLVMTypes.LLVMTypeRef{ p0, i64_ty };
+                const fnty = LLVMCore.LLVMFunctionType(i64_ty, &ptys, 2, @intFromBool(false));
+                const val = LLVMCore.LLVMBuildCall2(generator.builder, fnty, get_fn, &params, 2, "arr.get.i64");
+                try stack.append(val);
+            },
+            .ArraySet => |as| {
+                _ = as;
+                if (stack.items.len < 3) continue;
+                const val = stack.items[stack.items.len - 1];
+                const idx_v = stack.items[stack.items.len - 2];
+                const hdr = stack.items[stack.items.len - 3];
+                stack.items.len -= 3;
+                const set_fn = externs.getOrCreateDoxaArraySetI64(generator);
+                const i64_ty = LLVMCore.LLVMInt64TypeInContext(generator.context);
+                const idx64 = cast.ensureI64(generator, idx_v);
+                const v64 = cast.ensureI64(generator, val);
+                var params = [_]LLVMTypes.LLVMValueRef{ hdr, idx64, v64 };
+                const p0 = arrays.getArrayHeaderPtrType(generator);
+                var ptys = [_]LLVMTypes.LLVMTypeRef{ p0, i64_ty, i64_ty };
+                const fnty = LLVMCore.LLVMFunctionType(LLVMCore.LLVMVoidTypeInContext(generator.context), &ptys, 3, @intFromBool(false));
+                _ = LLVMCore.LLVMBuildCall2(generator.builder, fnty, set_fn, &params, 3, "");
+                try stack.append(hdr);
+            },
             .Const => |c| {
                 const idx = c.constant_id;
                 if (idx >= hir.constant_pool.len) continue;
@@ -543,6 +612,44 @@ pub fn translateToLLVM(hir: *const HIR.HIRProgram, generator: *LLVMGenerator) !v
 
                 try var_store.store(key, v, target_ty, sv.scope_kind == HIR.ScopeKind.Local, sv.var_name);
             },
+            .StoreDecl => |sd| {
+                if (stack.items.len < 1) continue;
+                var v = stack.items[stack.items.len - 1];
+                stack.items.len -= 1;
+
+                const key = switch (sd.scope_kind) {
+                    HIR.ScopeKind.Local => try std.fmt.allocPrint(generator.allocator, "l:{s}", .{sd.var_name}),
+                    HIR.ScopeKind.GlobalLocal => try std.fmt.allocPrint(generator.allocator, "g:{s}", .{sd.var_name}),
+                    HIR.ScopeKind.ModuleGlobal => blk: {
+                        const mod = sd.module_context orelse "";
+                        break :blk try std.fmt.allocPrint(generator.allocator, "m:{s}.{s}", .{ mod, sd.var_name });
+                    },
+                    else => try std.fmt.allocPrint(generator.allocator, "u:{s}", .{sd.var_name}),
+                };
+
+                const target_ty = type_map.mapHIRTypeToLLVM(generator, sd.declared_type);
+                if (LLVMCore.LLVMGetTypeKind(target_ty) == LLVMTypes.LLVMTypeKind.LLVMPointerTypeKind) {
+                    // If top isn't a pointer, scan downwards for the nearest pointer
+                    if (LLVMCore.LLVMGetTypeKind(LLVMCore.LLVMTypeOf(v)) != LLVMTypes.LLVMTypeKind.LLVMPointerTypeKind) {
+                        var idx: isize = @as(isize, @intCast(stack.items.len)) - 1;
+                        while (idx >= 0) : (idx -= 1) {
+                            const cand = stack.items[@intCast(idx)];
+                            if (LLVMCore.LLVMGetTypeKind(LLVMCore.LLVMTypeOf(cand)) == LLVMTypes.LLVMTypeKind.LLVMPointerTypeKind) {
+                                v = cand;
+                                break;
+                            }
+                        }
+                        if (LLVMCore.LLVMGetTypeKind(LLVMCore.LLVMTypeOf(v)) != LLVMTypes.LLVMTypeKind.LLVMPointerTypeKind) {
+                            std.debug.print("ERROR: StoreDecl {s} expected pointer; skipping store\n", .{sd.var_name});
+                            continue;
+                        }
+                    }
+                    if (LLVMCore.LLVMTypeOf(v) != target_ty) {
+                        v = LLVMCore.LLVMBuildBitCast(generator.builder, v, target_ty, "decl.ptr.cast");
+                    }
+                }
+                try var_store.store(key, v, target_ty, sd.scope_kind == HIR.ScopeKind.Local, sd.var_name);
+            },
             .LoadVar => |lv| {
                 const key = switch (lv.scope_kind) {
                     HIR.ScopeKind.Local => try std.fmt.allocPrint(generator.allocator, "l:{s}", .{lv.var_name}),
@@ -554,7 +661,7 @@ pub fn translateToLLVM(hir: *const HIR.HIRProgram, generator: *LLVMGenerator) !v
                     else => try std.fmt.allocPrint(generator.allocator, "u:{s}", .{lv.var_name}),
                 };
 
-                const target_ty = LLVMCore.LLVMInt64TypeInContext(generator.context);
+                const target_ty = if (var_store.map.get(key)) |e| e.elem_ty else LLVMCore.LLVMInt64TypeInContext(generator.context);
                 const loaded = try var_store.load(key, target_ty, lv.var_name);
                 try stack.append(loaded);
             },

@@ -29,7 +29,7 @@ Dict[2] is "second"
 If types cannot be inferred from the first entry or for empty maps, explicit key and/or value types are required. The syntax mirrors function declarations:
 
 ```doxa
-var map PlayerToData :: Player returns Data {
+const map PlayerToData :: Player returns Data {
     .Main is mainData
 }
 ```
@@ -39,7 +39,7 @@ var map PlayerToData :: Player returns Data {
 Return types can be return unions for more flexibility on value storage.
 
 ```doxa
-const map CarSeats returns string | nothing {
+var map CarSeats returns string | nothing {
     1 is "Bob",
     2 is nothing,
     3 is "Sam"
@@ -63,6 +63,4 @@ Key type is inferred from the first entry if not explicitly declared.
 
 Value type is encouraged to be explicit (returns <ValueType>).
 
-Empty maps must have both key and value types declared.
-
-op
+Empty maps cannot be inferred and must have both key and value types declared.

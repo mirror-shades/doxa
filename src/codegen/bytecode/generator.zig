@@ -402,6 +402,17 @@ pub const BytecodeGenerator = struct {
                     }
                     try self.instructions.append(self.allocator, .{ .StoreConstSlot = operand });
                 },
+                .StoreDecl => |payload| {
+                    const operand = try self.makeSlotOperand(payload.scope_kind, payload.var_index, payload.module_context);
+                    if (self.slot_cache.get(payload.var_index) == null) {
+                        try self.slot_cache.put(payload.var_index, operand);
+                    }
+                    const safe_hir_type = switch (payload.declared_type) {
+                        .Unknown => .Int,
+                        else => payload.declared_type,
+                    };
+                    try self.instructions.append(self.allocator, .{ .StoreSlot = .{ .target = operand, .type_tag = try module.typeFromHIR(safe_hir_type) } });
+                },
                 .PushStorageId => |payload| {
                     const operand = self.slotFromCache(payload.var_index) orelse blk: {
                         switch (payload.scope_kind) {

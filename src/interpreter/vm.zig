@@ -25,7 +25,7 @@ const ops_logical = @import("ops/logical.zig");
 const ops_strings = @import("ops/strings.zig");
 const ops_array = @import("ops/array.zig");
 const ops_type = @import("ops/type.zig");
-const PrintOps = @import("calls/print.zig").PrintOps;
+const PrintOps = @import("../runtime/print.zig").PrintOps;
 const Errors = @import("../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
 const ErrorCode = Errors.ErrorCode;
@@ -1231,8 +1231,36 @@ pub const VM = struct {
                 return;
             };
 
-            // Step 2: run `zig cc <obj> -o <out>`
-            var child2 = std.process.Child.init(&[_][]const u8{ "zig", "cc", obj_path, "-o", out_path }, a);
+            // Step 2a: build runtime print object to resolve external symbols
+            var rt_lib_buf: [512]u8 = undefined;
+            const rt_lib_path = std.fmt.bufPrint(&rt_lib_buf, "out/rt_array_print.o", .{}) catch {
+                try self.stack.push(HIRFrame.initInt(1));
+                return;
+            };
+            std.fs.cwd().makeDir("out") catch {};
+            var child_rt = std.process.Child.init(&[_][]const u8{
+                "zig", "build-obj", "src/runtime/rt_array_print.zig", try std.fmt.allocPrint(a, "-femit-bin={s}", .{rt_lib_path}),
+            }, a);
+            child_rt.cwd = ".";
+            child_rt.stdout_behavior = .Inherit;
+            child_rt.stderr_behavior = .Inherit;
+            const term_rt = child_rt.spawnAndWait() catch {
+                try self.stack.push(HIRFrame.initInt(1));
+                return;
+            };
+            switch (term_rt) {
+                .Exited => |code| if (code != 0) {
+                    try self.stack.push(HIRFrame.initInt(@intCast(code)));
+                    return;
+                },
+                else => {
+                    try self.stack.push(HIRFrame.initInt(1));
+                    return;
+                },
+            }
+
+            // Step 2b: run `zig cc <obj> <rt_lib> -o <out>`
+            var child2 = std.process.Child.init(&[_][]const u8{ "zig", "cc", obj_path, rt_lib_path, "-o", out_path }, a);
             child2.cwd = ".";
             child2.stdout_behavior = .Inherit;
             child2.stderr_behavior = .Inherit;
