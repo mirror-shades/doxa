@@ -89,7 +89,6 @@ pub const VM = struct {
     scope_stack: Managed(ScopeRecord),
     try_stack: Managed(usize),
     skip_next_enter_scope: bool = false,
-    graphics_runtime: runtime.GraphicsRuntime,
 
     pub fn init(allocator: std.mem.Allocator, bytecode: *module.BytecodeModule, reporter: *Reporter, memory_manager: *MemoryManager) !VM {
         const frame_list = Managed(runtime.Frame).init(allocator);
@@ -133,7 +132,6 @@ pub const VM = struct {
             .scope_stack = Managed(ScopeRecord).init(allocator),
             .try_stack = Managed(usize).init(allocator),
             .skip_next_enter_scope = false,
-            .graphics_runtime = runtime.GraphicsRuntime.init(allocator, reporter),
         };
 
         vm.indexLabels();
@@ -1439,58 +1437,26 @@ pub const VM = struct {
             return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot get field from non-struct value: {s}", .{@tagName(frame.value)});
         }
 
-        if (try self.graphics_runtime.handleGraphicsFieldAccess(frame, payload.field_name, &self.stack)) {
-            return;
-        }
+        const interned_name = try self.string_interner.intern(payload.field_name);
 
-        switch (frame.value) {
-            .string => {
-                if (std.mem.eql(u8, payload.field_name, "length")) {
-                    const result = try ops_strings.stringLength(self, frame);
-                    try self.stack.push(result);
-                    return;
-                } else if (std.mem.eql(u8, payload.field_name, "bytes")) {
-                    const result = try ops_strings.stringBytes(self, frame);
-                    try self.stack.push(result);
-                    return;
-                } else {
-                    if (std.fmt.parseInt(i64, payload.field_name, 10)) |index| {
-                        const start_frame = HIRFrame.initInt(index);
-                        const len_frame = HIRFrame.initInt(1);
-                        const result = try ops_strings.stringSubstring(self, frame, start_frame, len_frame);
-                        try self.stack.push(result);
-                        return;
-                    } else |_| {
-                        return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid string operation: {s}", .{payload.field_name});
-                    }
-                }
-            },
-            .struct_instance => |struct_inst| {
-                const interned_name = try self.string_interner.intern(payload.field_name);
-
-                for (struct_inst.fields) |field| {
-                    if ((field.name.ptr == interned_name.ptr and field.name.len == interned_name.len) or std.mem.eql(u8, field.name, interned_name)) {
-                        var field_value = field.value;
-                        if (field_value == .struct_instance) {
-                            const path_or_type: []const u8 = if (struct_inst.path) |p| p else struct_inst.type_name;
-                            const scope_alloc = self.scopeAllocator();
-                            const tmp = try std.fmt.allocPrint(scope_alloc, "{s}.{s}", .{ path_or_type, field.name });
-                            const interned = try self.string_interner.intern(tmp);
-                            scope_alloc.free(tmp);
-                            field_value.struct_instance.path = interned;
-                        }
-
-                        try self.stack.push(HIRFrame{ .value = field_value });
-                        return;
-                    }
+        for (frame.value.struct_instance.fields) |field| {
+            if ((field.name.ptr == interned_name.ptr and field.name.len == interned_name.len) or std.mem.eql(u8, field.name, interned_name)) {
+                var field_value = field.value;
+                if (field_value == .struct_instance) {
+                    const path_or_type: []const u8 = if (frame.value.struct_instance.path) |p| p else frame.value.struct_instance.type_name;
+                    const scope_alloc = self.scopeAllocator();
+                    const tmp = try std.fmt.allocPrint(scope_alloc, "{s}.{s}", .{ path_or_type, field.name });
+                    const interned = try self.string_interner.intern(tmp);
+                    scope_alloc.free(tmp);
+                    field_value.struct_instance.path = interned;
                 }
 
-                return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Field '{s}' not found in struct '{s}'", .{ payload.field_name, struct_inst.type_name });
-            },
-            else => {
-                return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot get field from non-struct value: {s}", .{@tagName(frame.value)});
-            },
+                try self.stack.push(HIRFrame{ .value = field_value });
+                return;
+            }
         }
+
+        return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot get field from non-struct value: {s}", .{@tagName(frame.value)});
     }
 
     fn execSetField(self: *VM, payload: anytype) VmError!void {
@@ -1714,22 +1680,6 @@ pub const VM = struct {
     fn handleCall(self: *VM, payload: anytype) VmError!void {
         switch (payload.target.call_kind) {
             .LocalFunction, .ModuleFunction => {
-                if (std.mem.indexOfScalar(u8, payload.target.qualified_name, '.')) |dot_idx| {
-                    const module_alias = payload.target.qualified_name[0..dot_idx];
-                    const remainder = payload.target.qualified_name[dot_idx + 1 ..];
-
-                    var sub_alias: []const u8 = remainder;
-                    var func_name: []const u8 = remainder;
-                    if (std.mem.indexOfScalar(u8, remainder, '.')) |sub_dot| {
-                        sub_alias = remainder[0..sub_dot];
-                        func_name = remainder[sub_dot + 1 ..];
-                    }
-
-                    if (try self.graphics_runtime.handleGraphicsCall(module_alias, sub_alias, func_name, &self.stack, &self.scope_stack)) {
-                        return;
-                    }
-                }
-
                 const function_index = self.resolveFunctionIndex(payload.target.function_index, payload.target.qualified_name);
                 const func_ptr = &self.bytecode.functions[function_index];
                 const return_ip = self.ip;
