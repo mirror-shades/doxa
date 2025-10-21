@@ -62,7 +62,6 @@ pub fn translateToVMBytecode(program: *HIRProgram, allocator: std.mem.Allocator,
         switch (instruction) {
             .Label => |label| {
                 try label_addresses.put(label.name, address);
-                // Labels don't generate bytecode
             },
             else => {
                 address += getBytecodeSize(instruction);
@@ -90,19 +89,19 @@ pub fn translateToVMBytecode(program: *HIRProgram, allocator: std.mem.Allocator,
                 try bytecode.append(@intCast(v.var_index));
             },
             .PushStorageId => |p| {
-                try bytecode.append(@intFromEnum(instructions.OpCode.OP_CONST)); // Use OP_CONST for now
+                try bytecode.append(@intFromEnum(instructions.OpCode.OP_CONST));
                 try bytecode.append(@intCast(p.var_index));
             },
             .StoreParamAlias => |_| {
-                try bytecode.append(@intFromEnum(instructions.OpCode.OP_SET_VAR)); // Use OP_SET_VAR for now
-                try bytecode.append(0); // Placeholder index
+                try bytecode.append(@intFromEnum(instructions.OpCode.OP_SET_VAR));
+                try bytecode.append(0);
             },
             .IntArith => |a| {
                 const opcode = switch (a.op) {
                     .Add => instructions.OpCode.OP_IADD,
                     .Sub => instructions.OpCode.OP_ISUB,
                     .Mul => instructions.OpCode.OP_IMUL,
-                    .Div => unreachable, // Division never maps to IntArith
+                    .Div => unreachable,
                     .Mod => instructions.OpCode.OP_IADD, // TODO: Add OP_IMOD to your VM
                 };
                 try bytecode.append(@intFromEnum(opcode));
@@ -152,21 +151,15 @@ pub fn translateToVMBytecode(program: *HIRProgram, allocator: std.mem.Allocator,
                 try bytecode.append(@intFromEnum(instructions.OpCode.OP_POP));
             },
             .Peek => |_| {
-                // For peek, we can use existing VM peekion mechanism
-                // The VM will handle the printing based on the top stack value
-                try bytecode.append(@intFromEnum(instructions.OpCode.OP_DUP)); // Keep value on stack
-                // Note: Your VM's peek handling is in the main execution loop
+                try bytecode.append(@intFromEnum(instructions.OpCode.OP_DUP));
             },
             .AssertFail => |_| {
-                // Generate proper AssertFail bytecode
                 try bytecode.append(@intFromEnum(instructions.OpCode.OP_ASSERT_FAIL));
             },
             .Halt => {
                 try bytecode.append(@intFromEnum(instructions.OpCode.OP_HALT));
             },
-            .Label => {
-                // Labels don't generate bytecode - already handled in first pass
-            },
+            .Label => {},
             else => {
                 reporter.reportError("Unhandled HIR instruction for VM translation: {}", .{instruction});
                 return ErrorList.UnsupportedStatement;
@@ -180,10 +173,10 @@ pub fn translateToVMBytecode(program: *HIRProgram, allocator: std.mem.Allocator,
 
 fn getBytecodeSize(instruction: HIRInstruction) u32 {
     return switch (instruction) {
-        .Const, .LoadVar, .StoreVar, .StoreConst, .Jump, .JumpCond, .Call, .TailCall => 2, // opcode + operand
-        .IntArith, .FloatArith, .Convert, .Compare, .Return, .Dup, .Pop, .Swap, .Peek, .Halt, .AssertFail => 1, // opcode only
-        .Label => 0, // No bytecode generated
-        else => 1, // Default to 1 byte
+        .Const, .LoadVar, .StoreVar, .StoreConst, .Jump, .JumpCond, .Call, .TailCall => 2,
+        .IntArith, .FloatArith, .Convert, .Compare, .Return, .Dup, .Pop, .Swap, .Peek, .Halt, .AssertFail => 1,
+        .Label => 0,
+        else => 1,
     };
 }
 
@@ -197,7 +190,7 @@ pub fn convertHIRConstants(hir_constants: []HIRValue, allocator: std.mem.Allocat
             .float => |f| instructions.Value{ .type = .FLOAT, .nothing = false, .data = .{ .float = f } },
             .string => |s| instructions.Value{ .type = .STRING, .nothing = false, .data = .{ .string = s } },
             .tetra => |t| instructions.Value{ .type = .INT, .nothing = false, .data = .{ .int = @as(i32, t) } },
-            .byte => |u| instructions.Value{ .type = .INT, .nothing = false, .data = .{ .int = @as(i32, u) } }, // Convert u8 to int
+            .byte => |u| instructions.Value{ .type = .INT, .nothing = false, .data = .{ .int = @as(i32, u) } },
             .nothing => instructions.Value{ .type = .INT, .nothing = true, .data = .{ .int = 0 } },
         };
         try vm_constants.append(vm_value);
@@ -215,32 +208,25 @@ pub const SoxaHeader = struct {
     instruction_count: u32,
     constant_count: u32,
     string_count: u32,
-    reserved: [6]u8 = [_]u8{0} ** 6, // For future expansion
+    reserved: [6]u8 = [_]u8{0} ** 6,
 };
 
 /// Computes a cache key for source file validation
 /// TODO: this might be better handled earlier in the pipeline
 /// possibly even in some sort of precompiler build step
 fn computeCacheKey(source_path: []const u8, allocator: std.mem.Allocator) ![]u8 {
-    // Read source file content
-    const source_content = try std.fs.cwd().readFileAlloc(allocator, source_path, 1024 * 1024); // 1MB max
+    const source_content = try std.fs.cwd().readFileAlloc(allocator, source_path, 1024 * 1024);
     defer allocator.free(source_content);
 
-    // Create hasher
     var hasher = std.crypto.hash.Blake3.init(.{});
     hasher.update(source_content);
 
-    // Include compiler version to invalidate cache when compiler changes
     hasher.update("doxa-0.1.0-dev");
-
-    // Include build configuration
     hasher.update("debug-mode");
 
-    // Generate hash
     var hash: [32]u8 = undefined;
     hasher.final(&hash);
 
-    // Return first 16 hex chars (8 bytes) as string
     return std.fmt.allocPrint(allocator, "{x}", .{hash[0..8]});
 }
 
@@ -252,10 +238,8 @@ pub fn validateSoxaCache(soxa_path: []const u8, source_path: []const u8, allocat
     var file_reader = file.reader(&reader_buffer);
     const reader = &file_reader.interface;
 
-    // Skip first line ("; SOXA HIR v0.1.0")
     _ = reader.takeDelimiterExclusive('\n') catch return false;
 
-    // Read second line looking for Source-Hash
     const line = reader.takeDelimiterExclusive('\n') catch return false;
     if (std.mem.indexOf(u8, line, "Source-Hash: ")) |start| {
         const cached_hash = std.mem.trim(u8, line[start + 13 ..], " \n\r");
@@ -266,7 +250,7 @@ pub fn validateSoxaCache(soxa_path: []const u8, source_path: []const u8, allocat
         return is_valid;
     }
 
-    return false; // No hash found = old format = invalid
+    return false;
 }
 
 pub fn writeSoxaFile(program: *HIRProgram, file_path: []const u8, source_path: []const u8, allocator: std.mem.Allocator) !void {
@@ -281,18 +265,14 @@ pub fn writeSoxaFile(program: *HIRProgram, file_path: []const u8, source_path: [
     var file_writer = file.writer(&writer_buffer);
     const writer = &file_writer.interface;
 
-    // Compute cache key for validation
     const cache_key = try computeCacheKey(source_path, allocator);
     defer allocator.free(cache_key);
-
-    // Write enhanced header with cache validation
     try writer.print("; SOXA HIR v0.1.0\n", .{});
     try writer.print("; Source-Hash: {s}\n", .{cache_key});
     try writer.print("; Compiler-Version: 0.1.0-dev\n", .{});
     try writer.print("; Build-Flags: debug\n", .{});
     try writer.print("; Generated with {} instructions, {} constants, {} functions\n\n", .{ program.instructions.len, program.constant_pool.len, program.function_table.len });
 
-    // Write constants section
     if (program.constant_pool.len > 0) {
         try writer.print(".constants\n", .{});
         for (program.constant_pool, 0..) |constant, i| {
@@ -303,7 +283,6 @@ pub fn writeSoxaFile(program: *HIRProgram, file_path: []const u8, source_path: [
         try writer.print("\n", .{});
     }
 
-    // Write functions section
     if (program.function_table.len > 0) {
         try writer.print(".functions\n", .{});
         for (program.function_table) |func| {
@@ -323,13 +302,11 @@ pub fn writeSoxaFile(program: *HIRProgram, file_path: []const u8, source_path: [
         try writer.print("\n", .{});
     }
 
-    // Write instructions section
     try writer.print(".code\n", .{});
     for (program.instructions) |instruction| {
         try writeHIRInstructionText(writer, instruction);
     }
 
-    // Flush the writer to ensure all data is written
     try writer.flush();
 }
 
@@ -341,7 +318,7 @@ pub fn readSoxaFile(file_path: []const u8, allocator: std.mem.Allocator) !HIRPro
     };
     defer file.close();
 
-    const source = try file.readToEndAlloc(allocator, 1024 * 1024); // 1MB max
+    const source = try file.readToEndAlloc(allocator, 1024 * 1024);
     defer allocator.free(source);
 
     var parser = SoxaTextParser.init(allocator, source);
@@ -355,48 +332,45 @@ pub fn readSoxaFile(file_path: []const u8, allocator: std.mem.Allocator) !HIRPro
 fn writeHIRValue(writer: anytype, value: HIRValue) !void {
     switch (value) {
         .int => |i| {
-            try writer.writeByte(0); // Type tag
+            try writer.writeByte(0);
             try writer.writeInt(i32, i, .little);
         },
         .float => |f| {
-            try writer.writeByte(1); // Type tag
+            try writer.writeByte(1);
             try writer.writeInt(u64, @bitCast(f), .little);
         },
         .string => |s| {
-            try writer.writeByte(2); // Type tag
+            try writer.writeByte(2);
             try writer.writeInt(u32, @as(u32, @intCast(s.len)), .little);
             try writer.writeAll(s);
         },
         .tetra => |t| {
-            try writer.writeByte(3); // Type tag
+            try writer.writeByte(3);
             try writer.writeByte(t);
         },
         .byte => |u| {
-            try writer.writeByte(4); // Type tag
+            try writer.writeByte(4);
             try writer.writeByte(u);
         },
         .nothing => {
-            try writer.writeByte(5); // Type tag
+            try writer.writeByte(5);
         },
         .array => |arr| {
-            try writer.writeByte(6); // Type tag for array
+            try writer.writeByte(6);
             try writer.writeInt(u32, @as(u32, @intCast(arr.elements.len)), .little);
-            try writer.writeInt(u32, arr.capacity, .little); // CRITICAL FIX: Save capacity!
-            try writer.writeByte(@intFromEnum(arr.element_type)); // Element type
-            // For now, we'll serialize basic array structure
-            // Full recursive serialization would require more complex handling
+            try writer.writeInt(u32, arr.capacity, .little);
+            try writer.writeByte(@intFromEnum(arr.element_type));
         },
         .struct_instance => {
-            try writer.writeByte(7); // Type tag for struct
+            try writer.writeByte(7);
             // TODO: Implement struct serialization when needed
         },
         .map => {
-            try writer.writeByte(9); // Type tag for map
+            try writer.writeByte(9);
             // TODO: Implement map serialization when needed
         },
         .enum_variant => |variant| {
-            try writer.writeByte(10); // Type tag for enum
-            // Serialize enum variant information
+            try writer.writeByte(10);
             try writer.writeInt(u32, @as(u32, @intCast(variant.type_name.len)), .little);
             try writer.writeAll(variant.type_name);
             try writer.writeInt(u32, @as(u32, @intCast(variant.variant_name.len)), .little);
@@ -423,18 +397,16 @@ fn readHIRValue(reader: anytype, allocator: std.mem.Allocator) !HIRValue {
         4 => HIRValue{ .byte = try reader.readByte() },
         5 => HIRValue.nothing,
         6 => {
-            // Array deserialization (basic structure)
             const array_len = try reader.readInt(u32, .little);
-            const capacity = try reader.readInt(u32, .little); // CRITICAL FIX: Read capacity!
+            const capacity = try reader.readInt(u32, .little);
             const element_type_byte = try reader.readByte();
             const element_type = @as(HIRType, @enumFromInt(element_type_byte));
 
-            // Create array with proper capacity (allocate capacity, but slice to actual length)
             const backing_memory = try allocator.alloc(HIRValue, capacity);
             for (backing_memory) |*element| {
                 element.* = HIRValue.nothing;
             }
-            const elements = backing_memory[0..array_len]; // Slice to actual length
+            const elements = backing_memory[0..array_len];
 
             return HIRValue{ .array = HIRArray{
                 .elements = elements,
@@ -443,15 +415,12 @@ fn readHIRValue(reader: anytype, allocator: std.mem.Allocator) !HIRValue {
             } };
         },
         7 => {
-            // Struct instance - return placeholder for now
             return HIRValue.nothing; // TODO: Implement proper struct deserialization
         },
         8 => {
-            // Map - return placeholder for now
             return HIRValue.nothing; // TODO: Implement proper map deserialization
         },
         9 => {
-            // Enum variant deserialization
             const type_name_len = try reader.readInt(u32, .little);
             const type_name = try allocator.alloc(u8, type_name_len);
             _ = try reader.readAll(type_name);
@@ -479,114 +448,108 @@ fn readHIRValue(reader: anytype, allocator: std.mem.Allocator) !HIRValue {
 
 /// Serializes a single HIR instruction to binary format
 fn writeHIRInstruction(writer: anytype, instruction: HIRInstruction, allocator: std.mem.Allocator) !void {
-    _ = allocator; // May be needed for complex instructions
+    _ = allocator;
 
     switch (instruction) {
         .Const => |c| {
-            try writer.writeByte(0); // Instruction tag
+            try writer.writeByte(0);
             try writer.writeInt(u32, c.constant_id, .little);
         },
         .LoadVar => |v| {
-            try writer.writeByte(1); // Instruction tag
+            try writer.writeByte(1);
             try writer.writeInt(u32, v.var_index, .little);
             try writer.writeInt(u32, @as(u32, @intCast(v.var_name.len)), .little);
             try writer.writeAll(v.var_name);
         },
         .StoreVar => |v| {
-            try writer.writeByte(2); // Instruction tag
+            try writer.writeByte(2);
             try writer.writeInt(u32, v.var_index, .little);
             try writer.writeInt(u32, @as(u32, @intCast(v.var_name.len)), .little);
             try writer.writeAll(v.var_name);
         },
         .StoreConst => |v| {
-            try writer.writeByte(23); // Instruction tag (new)
+            try writer.writeByte(23);
             try writer.writeInt(u32, v.var_index, .little);
             try writer.writeInt(u32, @as(u32, @intCast(v.var_name.len)), .little);
             try writer.writeAll(v.var_name);
         },
         .PushStorageId => |p| {
-            try writer.writeByte(24); // Instruction tag (new)
+            try writer.writeByte(24);
             try writer.writeInt(u32, p.var_index, .little);
             try writer.writeInt(u32, @as(u32, @intCast(p.var_name.len)), .little);
             try writer.writeAll(p.var_name);
         },
         .StoreParamAlias => |s| {
-            try writer.writeByte(25); // Instruction tag (new)
+            try writer.writeByte(25);
             try writer.writeInt(u32, @as(u32, @intCast(s.param_name.len)), .little);
             try writer.writeAll(s.param_name);
         },
         .IntArith => |a| {
-            try writer.writeByte(3); // Instruction tag
+            try writer.writeByte(3);
             try writer.writeByte(@intFromEnum(a.op));
         },
         .Compare => |c| {
-            try writer.writeByte(4); // Instruction tag
+            try writer.writeByte(4);
             try writer.writeByte(@intFromEnum(c.op));
-            // Serialize operand_type to preserve intended comparison semantics (Int/Float/String/Enum/...)
             try writer.writeByte(@intFromEnum(c.operand_type));
         },
         .Jump => |j| {
-            try writer.writeByte(5); // Instruction tag
+            try writer.writeByte(5);
             try writer.writeInt(u32, @as(u32, @intCast(j.label.len)), .little);
             try writer.writeAll(j.label);
         },
         .JumpCond => |j| {
-            try writer.writeByte(6); // Instruction tag
+            try writer.writeByte(6);
             try writer.writeInt(u32, @as(u32, @intCast(j.label_true.len)), .little);
             try writer.writeAll(j.label_true);
             try writer.writeInt(u32, @as(u32, @intCast(j.label_false.len)), .little);
             try writer.writeAll(j.label_false);
         },
         .Call => |c| {
-            try writer.writeByte(7); // Instruction tag
+            try writer.writeByte(7);
             try writer.writeInt(u32, c.function_index, .little);
             try writer.writeInt(u32, c.arg_count, .little);
-            // Serialize qualified_name
             try writer.writeInt(u32, @as(u32, @intCast(c.qualified_name.len)), .little);
             try writer.writeAll(c.qualified_name);
-            // CRITICAL FIX: Save call_kind!
             try writer.writeByte(@intFromEnum(c.call_kind));
         },
         .Return => |r| {
-            try writer.writeByte(8); // Instruction tag
+            try writer.writeByte(8);
             try writer.writeByte(if (r.has_value) 1 else 0);
         },
         .Dup => {
-            try writer.writeByte(9); // Instruction tag
+            try writer.writeByte(9);
         },
         .Pop => {
-            try writer.writeByte(10); // Instruction tag
+            try writer.writeByte(10);
         },
         .Label => |l| {
-            try writer.writeByte(11); // Instruction tag
+            try writer.writeByte(11);
             try writer.writeInt(u32, @as(u32, @intCast(l.name.len)), .little);
             try writer.writeAll(l.name);
         },
         .Halt => {
-            try writer.writeByte(12); // Instruction tag
+            try writer.writeByte(12);
         },
         .Peek => |i| {
-            try writer.writeByte(13); // Instruction tag
-            // Write whether name is present
+            try writer.writeByte(13);
             if (i.name) |name| {
-                try writer.writeByte(1); // Has name
+                try writer.writeByte(1);
                 try writer.writeInt(u32, @as(u32, @intCast(name.len)), .little);
                 try writer.writeAll(name);
             } else {
-                try writer.writeByte(0); // No name
+                try writer.writeByte(0);
             }
             try writer.writeByte(@intFromEnum(i.value_type));
-            // Write whether location is present
             if (i.location) |location| {
-                try writer.writeByte(1); // Has location
+                try writer.writeByte(1);
                 try writer.writeInt(u32, @as(u32, @intCast(location.file.len)), .little);
                 try writer.writeAll(location.file);
                 try writer.writeInt(u32, location.line, .little);
                 try writer.writeInt(u32, location.column, .little);
             } else {
-                try writer.writeByte(0); // No location
+                try writer.writeByte(0);
             }
-            // Write union members if present
             if (i.union_members) |members| {
                 try writer.writeByte(1);
                 try writer.writeInt(u32, @as(u32, @intCast(members.len)), .little);
@@ -599,68 +562,65 @@ fn writeHIRInstruction(writer: anytype, instruction: HIRInstruction, allocator: 
             }
         },
 
-        // Array operations (Phase 1)
         .ArrayNew => |a| {
-            try writer.writeByte(14); // Instruction tag
+            try writer.writeByte(14);
             try writer.writeByte(@intFromEnum(a.element_type));
             try writer.writeInt(u32, a.size, .little);
         },
         .ArrayGet => |a| {
-            try writer.writeByte(15); // Instruction tag
+            try writer.writeByte(15);
             try writer.writeByte(if (a.bounds_check) 1 else 0);
         },
         .ArraySet => |a| {
-            try writer.writeByte(16); // Instruction tag
+            try writer.writeByte(16);
             try writer.writeByte(if (a.bounds_check) 1 else 0);
         },
         .ArrayPush => |a| {
-            try writer.writeByte(17); // Instruction tag
+            try writer.writeByte(17);
             try writer.writeByte(@intFromEnum(a.resize_behavior));
         },
         .ArrayPop => {
-            try writer.writeByte(18); // Instruction tag
+            try writer.writeByte(18);
         },
         .ArrayLen => {
-            try writer.writeByte(19); // Instruction tag
+            try writer.writeByte(19);
         },
         .ArrayConcat => {
-            try writer.writeByte(20); // Instruction tag
+            try writer.writeByte(20);
         },
 
-        // Scope management
         .EnterScope => |s| {
-            try writer.writeByte(21); // Instruction tag
+            try writer.writeByte(21);
             try writer.writeInt(u32, s.scope_id, .little);
             try writer.writeInt(u32, s.var_count, .little);
         },
         .ExitScope => |s| {
-            try writer.writeByte(22); // Instruction tag
+            try writer.writeByte(22);
             try writer.writeInt(u32, s.scope_id, .little);
         },
 
-        // Compound assignment operations
         .ArrayGetAndAdd => |a| {
-            try writer.writeByte(26); // Instruction tag
+            try writer.writeByte(26);
             try writer.writeByte(if (a.bounds_check) 1 else 0);
         },
         .ArrayGetAndSub => |a| {
-            try writer.writeByte(27); // Instruction tag
+            try writer.writeByte(27);
             try writer.writeByte(if (a.bounds_check) 1 else 0);
         },
         .ArrayGetAndMul => |a| {
-            try writer.writeByte(28); // Instruction tag
+            try writer.writeByte(28);
             try writer.writeByte(if (a.bounds_check) 1 else 0);
         },
         .ArrayGetAndDiv => |a| {
-            try writer.writeByte(29); // Instruction tag
+            try writer.writeByte(29);
             try writer.writeByte(if (a.bounds_check) 1 else 0);
         },
         .ArrayGetAndMod => |a| {
-            try writer.writeByte(30); // Instruction tag
+            try writer.writeByte(30);
             try writer.writeByte(if (a.bounds_check) 1 else 0);
         },
         .ArrayGetAndPow => |a| {
-            try writer.writeByte(31); // Instruction tag
+            try writer.writeByte(31);
             try writer.writeByte(if (a.bounds_check) 1 else 0);
         },
 
@@ -675,51 +635,50 @@ fn readHIRInstruction(reader: anytype, allocator: std.mem.Allocator) !HIRInstruc
     const instruction_tag = try reader.readByte();
 
     return switch (instruction_tag) {
-        0 => { // Const
+        0 => {
             const constant_id = try reader.readInt(u32, .little);
-            return HIRInstruction{ .Const = .{ .value = HIRValue.nothing, .constant_id = constant_id } }; // Value will be resolved from constant pool
+            return HIRInstruction{ .Const = .{ .value = HIRValue.nothing, .constant_id = constant_id } };
         },
-        1 => { // LoadVar
+        1 => {
             const var_index = try reader.readInt(u32, .little);
             const name_len = try reader.readInt(u32, .little);
             const name = try allocator.alloc(u8, name_len);
             _ = try reader.readAll(name);
             return HIRInstruction{ .LoadVar = .{ .var_index = var_index, .var_name = name, .scope_kind = .Local, .module_context = null } };
         },
-        2 => { // StoreVar
+        2 => {
             const var_index = try reader.readInt(u32, .little);
             const name_len = try reader.readInt(u32, .little);
             const name = try allocator.alloc(u8, name_len);
             _ = try reader.readAll(name);
             return HIRInstruction{ .StoreVar = .{ .var_index = var_index, .var_name = name, .scope_kind = .Local, .module_context = null, .expected_type = .Auto } };
         },
-        23 => { // StoreConst
+        23 => {
             const var_index = try reader.readInt(u32, .little);
             const name_len = try reader.readInt(u32, .little);
             const name = try allocator.alloc(u8, name_len);
             _ = try reader.readAll(name);
             return HIRInstruction{ .StoreConst = .{ .var_index = var_index, .var_name = name } };
         },
-        3 => { // IntArith
+        3 => {
             const op_byte = try reader.readByte();
             const op = @as(ArithOp, @enumFromInt(op_byte));
             return HIRInstruction{ .IntArith = .{ .op = op, .overflow_behavior = .Wrap } };
         },
-        4 => { // Compare
+        4 => {
             const op_byte = try reader.readByte();
             const op = @as(CompareOp, @enumFromInt(op_byte));
-            // Read operand_type that was serialized with Compare
             const type_byte = try reader.readByte();
             const operand_type = @as(HIRType, @enumFromInt(type_byte));
             return HIRInstruction{ .Compare = .{ .op = op, .operand_type = operand_type } };
         },
-        5 => { // Jump
+        5 => {
             const label_len = try reader.readInt(u32, .little);
             const label = try allocator.alloc(u8, label_len);
             _ = try reader.readAll(label);
             return HIRInstruction{ .Jump = .{ .label = label, .vm_offset = 0 } };
         },
-        6 => { // JumpCond
+        6 => {
             const true_len = try reader.readInt(u32, .little);
             const label_true = try allocator.alloc(u8, true_len);
             _ = try reader.readAll(label_true);
@@ -730,14 +689,12 @@ fn readHIRInstruction(reader: anytype, allocator: std.mem.Allocator) !HIRInstruc
 
             return HIRInstruction{ .JumpCond = .{ .label_true = label_true, .label_false = label_false, .vm_offset = 0, .condition_type = .Tetra } };
         },
-        7 => { // Call
+        7 => {
             const function_index = try reader.readInt(u32, .little);
             const arg_count = try reader.readInt(u32, .little);
-            // Deserialize qualified_name
             const name_len = try reader.readInt(u32, .little);
             const qualified_name = try allocator.alloc(u8, name_len);
             _ = try reader.readAll(qualified_name);
-            // CRITICAL FIX: Read call_kind!
             const call_kind_byte = try reader.readByte();
             const call_kind = @as(CallKind, @enumFromInt(call_kind_byte));
             return HIRInstruction{ .Call = .{
@@ -749,20 +706,20 @@ fn readHIRInstruction(reader: anytype, allocator: std.mem.Allocator) !HIRInstruc
                 .return_type = .Auto,
             } };
         },
-        8 => { // Return
+        8 => {
             const has_value = (try reader.readByte()) != 0;
-            return HIRInstruction{ .Return = .{ .has_value = has_value, .return_type = .Nothing } }; // Default to Nothing to prevent Auto leakage
+            return HIRInstruction{ .Return = .{ .has_value = has_value, .return_type = .Nothing } };
         },
         9 => HIRInstruction.Dup,
         10 => HIRInstruction.Pop,
-        11 => { // Label
+        11 => {
             const name_len = try reader.readInt(u32, .little);
             const name = try allocator.alloc(u8, name_len);
             _ = try reader.readAll(name);
             return HIRInstruction{ .Label = .{ .name = name, .vm_address = 0 } };
         },
         12 => HIRInstruction.Halt,
-        13 => { // Peek
+        13 => {
             const has_name = (try reader.readByte()) != 0;
             const name = if (has_name) blk: {
                 const name_len = try reader.readInt(u32, .little);
@@ -774,7 +731,6 @@ fn readHIRInstruction(reader: anytype, allocator: std.mem.Allocator) !HIRInstruc
             const value_type_byte = try reader.readByte();
             const value_type = @as(HIRType, @enumFromInt(value_type_byte));
 
-            // Read whether location is present
             const has_location = (try reader.readByte()) != 0;
             const location = if (has_location) blk: {
                 const file_len = try reader.readInt(u32, .little);
@@ -789,7 +745,6 @@ fn readHIRInstruction(reader: anytype, allocator: std.mem.Allocator) !HIRInstruc
                 };
             } else null;
 
-            // Read union members if present
             const has_union = (try reader.readByte()) != 0;
             var union_members: ?[][]const u8 = null;
             if (has_union) {
@@ -807,22 +762,21 @@ fn readHIRInstruction(reader: anytype, allocator: std.mem.Allocator) !HIRInstruc
             return HIRInstruction{ .Peek = .{ .name = name, .value_type = value_type, .location = location, .union_members = union_members } };
         },
 
-        // Array operations (Phase 1)
-        14 => { // ArrayNew
+        14 => {
             const element_type_byte = try reader.readByte();
             const element_type = @as(HIRType, @enumFromInt(element_type_byte));
             const size = try reader.readInt(u32, .little);
             return HIRInstruction{ .ArrayNew = .{ .element_type = element_type, .size = size } };
         },
-        15 => { // ArrayGet
+        15 => {
             const bounds_check = (try reader.readByte()) != 0;
             return HIRInstruction{ .ArrayGet = .{ .bounds_check = bounds_check } };
         },
-        16 => { // ArraySet
+        16 => {
             const bounds_check = (try reader.readByte()) != 0;
             return HIRInstruction{ .ArraySet = .{ .bounds_check = bounds_check } };
         },
-        17 => { // ArrayPush
+        17 => {
             const resize_behavior_byte = try reader.readByte();
             const resize_behavior = @as(ResizeBehavior, @enumFromInt(resize_behavior_byte));
             return HIRInstruction{ .ArrayPush = .{ .resize_behavior = resize_behavior } };
@@ -831,40 +785,37 @@ fn readHIRInstruction(reader: anytype, allocator: std.mem.Allocator) !HIRInstruc
         19 => HIRInstruction.ArrayLen,
         20 => HIRInstruction.ArrayConcat,
 
-        // Scope management
-        21 => { // EnterScope
+        21 => {
             const scope_id = try reader.readInt(u32, .little);
             const var_count = try reader.readInt(u32, .little);
             return HIRInstruction{ .EnterScope = .{ .scope_id = scope_id, .var_count = var_count } };
         },
-        22 => { // ExitScope
+        22 => {
             const scope_id = try reader.readInt(u32, .little);
             return HIRInstruction{ .ExitScope = .{ .scope_id = scope_id } };
         },
 
-        // Compound assignment operations
-        26 => { // ArrayGetAndAdd
+        26 => {
             const bounds_check = (try reader.readByte()) != 0;
-            std.debug.print("HIR DESERIALIZER: Deserializing ArrayGetAndAdd instruction\n", .{});
             return HIRInstruction{ .ArrayGetAndAdd = .{ .bounds_check = bounds_check } };
         },
-        27 => { // ArrayGetAndSub
+        27 => {
             const bounds_check = (try reader.readByte()) != 0;
             return HIRInstruction{ .ArrayGetAndSub = .{ .bounds_check = bounds_check } };
         },
-        28 => { // ArrayGetAndMul
+        28 => {
             const bounds_check = (try reader.readByte()) != 0;
             return HIRInstruction{ .ArrayGetAndMul = .{ .bounds_check = bounds_check } };
         },
-        29 => { // ArrayGetAndDiv
+        29 => {
             const bounds_check = (try reader.readByte()) != 0;
             return HIRInstruction{ .ArrayGetAndDiv = .{ .bounds_check = bounds_check } };
         },
-        30 => { // ArrayGetAndMod
+        30 => {
             const bounds_check = (try reader.readByte()) != 0;
             return HIRInstruction{ .ArrayGetAndMod = .{ .bounds_check = bounds_check } };
         },
-        31 => { // ArrayGetAndPow
+        31 => {
             const bounds_check = (try reader.readByte()) != 0;
             return HIRInstruction{ .ArrayGetAndPow = .{ .bounds_check = bounds_check } };
         },
@@ -881,7 +832,6 @@ fn writeHIRValueText(writer: anytype, value: HIRValue) !void {
         .float => |f| try writer.print("float {d}", .{f}),
         .string => |s| {
             try writer.print("string \"", .{});
-            // Escape special characters when writing to HIR text format
             for (s) |c| {
                 switch (c) {
                     '\n' => try writer.print("\\n", .{}),
@@ -961,9 +911,7 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
                     try writer.print("    Peek {s}", .{@tagName(i.value_type)});
                 }
             }
-            // Optionally include union member list in text form for debugging
             if (i.union_members) |members| {
-                // Print as ; union [a,b,c]
                 try writer.print(" ; union [", .{});
                 for (members, 0..) |m, idx| {
                     try writer.print("{s}", .{m});
@@ -1011,7 +959,6 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
 
         .Halt => try writer.print("    Halt                        ; Program termination\n", .{}),
 
-        // Array operations
         .ArrayNew => |a| try writer.print("    ArrayNew {s} {}             ; Create array\n", .{ @tagName(a.element_type), a.size }),
         .ArrayGet => |a| try writer.print("    ArrayGet {}                 ; Get array element\n", .{a.bounds_check}),
         .ArrayGetAndAdd => |a| try writer.print("    ArrayGetAndAdd {}           ; Compound assignment: array[index] += value\n", .{a.bounds_check}),
@@ -1033,13 +980,11 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
         .MapGet => |m| try writer.print("    MapGet {s}                   ; Get map value by key\n", .{@tagName(m.key_type)}),
         .MapSet => |m| try writer.print("    MapSet {s}                   ; Set map value by key\n", .{@tagName(m.key_type)}),
 
-        // Struct operations
         .StructNew => |s| try writer.print("    StructNew \"{s}\" {}          ; Create struct with {} fields\n", .{ s.type_name, s.field_count, s.field_count }),
         .GetField => |f| try writer.print("    GetField \"{s}\"               ; Get field from struct\n", .{f.field_name}),
         .SetField => |f| try writer.print("    SetField \"{s}\" {s} {}        ; Set field in struct\n", .{ f.field_name, @tagName(f.container_type), f.field_index }),
         .StoreFieldName => |s| try writer.print("    StoreFieldName \"{s}\"          ; Store field name for struct\n", .{s.field_name}),
 
-        // Scope management
         .EnterScope => |s| try writer.print("    EnterScope {} {}            ; Enter new scope\n", .{ s.scope_id, s.var_count }),
         .ExitScope => |s| try writer.print("    ExitScope {}                ; Exit scope\n", .{s.scope_id}),
 
