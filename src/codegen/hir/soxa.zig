@@ -103,7 +103,7 @@ pub fn translateToVMBytecode(program: *HIRProgram, allocator: std.mem.Allocator,
                     .Sub => instructions.OpCode.OP_ISUB,
                     .Mul => instructions.OpCode.OP_IMUL,
                     .Div => unreachable, // Division never maps to IntArith
-                    .Mod => instructions.OpCode.OP_IADD, // TODO: Add OP_IMOD to your VM
+                    .Mod => instructions.OpCode.OP_IADD, // Legacy path; VM bytecode flow superseded
                 };
                 try bytecode.append(@intFromEnum(opcode));
             },
@@ -113,8 +113,8 @@ pub fn translateToVMBytecode(program: *HIRProgram, allocator: std.mem.Allocator,
                     .Ne => instructions.OpCode.OP_NOTEQUAL,
                     .Lt => instructions.OpCode.OP_LESS,
                     .Gt => instructions.OpCode.OP_GREATER,
-                    .Le => instructions.OpCode.OP_LESS, // TODO: Add OP_LESS_EQUAL
-                    .Ge => instructions.OpCode.OP_GREATER, // TODO: Add OP_GREATER_EQUAL
+                    .Le => instructions.OpCode.OP_LESS, // Legacy path; VM bytecode flow superseded
+                    .Ge => instructions.OpCode.OP_GREATER, // Legacy path; VM bytecode flow superseded
                 };
                 try bytecode.append(@intFromEnum(opcode));
             },
@@ -935,6 +935,7 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
         .LoadVar => |v| try writer.print("    LoadVar {} \"{s}\" {s}           ; Load variable\n", .{ v.var_index, v.var_name, @tagName(v.scope_kind) }),
 
         .StoreVar => |v| try writer.print("    StoreVar {} \"{s}\" {s}          ; Store variable\n", .{ v.var_index, v.var_name, @tagName(v.scope_kind) }),
+        .StoreDecl => |d| try writer.print("    StoreDecl {} \"{s}\" {s} {s} {s} ; Store declaration\n", .{ d.var_index, d.var_name, @tagName(d.scope_kind), @tagName(d.declared_type), if (d.is_const) "true" else "false" }),
         .StoreConst => |v| try writer.print("    StoreConst {} \"{s}\" {s}        ; Store constant\n", .{ v.var_index, v.var_name, @tagName(v.scope_kind) }),
         .PushStorageId => |p| try writer.print("    PushStorageId {} \"{s}\"     ; Push storage ID for alias\n", .{ p.var_index, p.var_name }),
         .StoreParamAlias => |s| try writer.print("    StoreParamAlias \"{s}\" {}      ; Store alias parameter\n", .{ s.param_name, s.var_index }),

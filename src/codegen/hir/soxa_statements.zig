@@ -70,7 +70,13 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                     .String => .String,
                     .Tetra => .Tetra,
                     .Byte => .Byte,
-                    .Array => .Unknown,
+                    .Array => blk: {
+                        // For now, create a simple array type with Int element type
+                        // This should be improved to infer the actual element type
+                        const element_type = self.allocator.create(HIRType) catch return;
+                        element_type.* = .Int;
+                        break :blk HIRType{ .Array = element_type };
+                    },
                     .Union => blk: {
                         if (decl.type_info.union_type) |_| {
                             break :blk .Unknown;
@@ -114,9 +120,9 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                             if (std.mem.eql(u8, fa.field.lexeme, "raylib") or std.mem.eql(u8, fa.field.lexeme, "doxa")) {
                                 if (self.module_namespaces.get(root_alias)) |_| {
                                     const nested_name = if (std.mem.eql(u8, fa.field.lexeme, "raylib")) "graphics.raylib" else "graphics.doxa";
-                                    const nested_info: @import("../../ast/ast.zig").ModuleInfo = .{
+                                    const nested_info: ast.ModuleInfo = .{
                                         .name = nested_name,
-                                        .imports = &[_]@import("../../ast/ast.zig").ImportInfo{},
+                                        .imports = &[_]ast.ImportInfo{},
                                         .ast = null,
                                         .file_path = nested_name,
                                         .symbols = null,
@@ -179,6 +185,12 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                                 var_type = HIRType.Nothing;
                             }
                         }
+                    } else {
+                        // Non-empty array - the expression has already been generated
+                        // Just set the var_type to Array
+                        const element_type = self.allocator.create(HIRType) catch return;
+                        element_type.* = .Int; // For now, assume Int elements
+                        var_type = HIRType{ .Array = element_type };
                     }
                 }
 
@@ -311,8 +323,6 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                                 else => .Nothing,
                             } else .Nothing;
 
-                            std.debug.print("DEBUG: Generating ArrayNew for {any} with size={any}, element_type={any}\n", .{ decl.name.lexeme, size, @tagName(element_type) });
-
                             try self.instructions.append(.{ .ArrayNew = .{
                                 .element_type = element_type,
                                 .size = size,
@@ -326,18 +336,6 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                             try self.instructions.append(.{ .Const = .{ .value = default_value, .constant_id = const_idx } });
                         },
                     }
-                }
-
-                if (self.current_function == null) {
-                    const var_idx2 = try self.symbol_table.createVariable(decl.name.lexeme);
-                    try self.instructions.append(.Dup);
-                    try self.instructions.append(.{ .StoreVar = .{
-                        .var_index = var_idx2,
-                        .var_name = decl.name.lexeme,
-                        .scope_kind = if (self.current_function == null or self.is_global_init_phase) .ModuleGlobal else .Local,
-                        .module_context = null,
-                        .expected_type = var_type,
-                    } });
                 }
             }
 
@@ -375,12 +373,13 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
             } else {
                 const scope_kind = self.symbol_table.determineVariableScope(decl.name.lexeme);
 
-                try self.instructions.append(.{ .StoreVar = .{
+                try self.instructions.append(.{ .StoreDecl = .{
                     .var_index = var_idx,
                     .var_name = decl.name.lexeme,
                     .scope_kind = scope_kind,
                     .module_context = null,
-                    .expected_type = var_type,
+                    .declared_type = var_type,
+                    .is_const = !decl.type_info.is_mutable,
                 } });
                 if (self.current_function == null) {
                     try self.instructions.append(.Pop);

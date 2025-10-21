@@ -1,8 +1,10 @@
+const std = @import("std");
 const llvm = @import("llvm");
 const LLVMCore = llvm.core;
 const LLVMTypes = llvm.types;
 const HIR = @import("../../hir/soxa_types.zig");
 const LLVMGenerator = @import("../llvm.zig").LLVMGenerator;
+const arrays = @import("arrays.zig");
 
 pub fn mapHIRTypeToLLVM(gen: *LLVMGenerator, ty: HIR.HIRType) LLVMTypes.LLVMTypeRef {
     return switch (ty) {
@@ -12,6 +14,11 @@ pub fn mapHIRTypeToLLVM(gen: *LLVMGenerator, ty: HIR.HIRType) LLVMTypes.LLVMType
         .String => LLVMCore.LLVMPointerType(LLVMCore.LLVMInt8TypeInContext(gen.context), 0),
         .Tetra => LLVMCore.LLVMIntTypeInContext(gen.context, 2),
         .Nothing => LLVMCore.LLVMVoidTypeInContext(gen.context),
-        else => LLVMCore.LLVMInt64TypeInContext(gen.context),
+        .Array => {
+            return arrays.getArrayHeaderPtrType(gen);
+        },
+        else => {
+            return LLVMCore.LLVMInt64TypeInContext(gen.context);
+        },
     };
 }

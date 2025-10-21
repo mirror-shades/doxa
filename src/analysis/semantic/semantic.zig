@@ -1991,7 +1991,7 @@ pub const SemanticAnalyzer = struct {
         // so that method resolution works across modules (dot-methods like obj.method()).
         if (self.parser) |pconst| {
             const ParserType = @TypeOf(pconst.*);
-            var p: *ParserType = @constCast(pconst);
+            const p: *ParserType = @constCast(pconst);
 
             // Try to get module info from cache; fall back to resolving
             var mod_info: ?ast.ModuleInfo = null;
@@ -2085,22 +2085,61 @@ pub const SemanticAnalyzer = struct {
         }
     }
 
-    fn checkModuleExists(_: *SemanticAnalyzer, _: []const u8) bool {
-        // TODO: Implement actual file system check
-        // For now, assume all modules exist (they should be validated during parsing)
-        return true;
-    }
+    fn checkModuleExists(self: *SemanticAnalyzer, module_path: []const u8) bool {
+        if (self.parser) |pconst| {
+            const ParserType = @TypeOf(pconst.*);
+            const p: *ParserType = @constCast(pconst);
+            const module_resolver = @import("../../parser/module_resolver.zig");
 
-    fn isCircularImport(_: *SemanticAnalyzer, _: []const u8) bool {
-        // TODO: Implement circular import detection
-        // This would require tracking the import chain
+            // Try direct file loading via resolver helpers without erroring
+            const data = module_resolver.loadModuleSourceWithPath(p, module_path) catch return false;
+            // Basic sanity: resolved_path must not be empty
+            return data.resolved_path.len > 0 and data.source.len > 0;
+        }
         return false;
     }
 
-    fn checkSymbolExists(_: *SemanticAnalyzer, _: []const u8, _: []const u8) bool {
-        // TODO: Implement symbol existence check
-        // This would require loading the module and checking its public symbols
-        return true;
+    fn isCircularImport(self: *SemanticAnalyzer, module_path: []const u8) bool {
+        if (self.parser) |pconst| {
+            const ParserType = @TypeOf(pconst.*);
+            const p: *ParserType = @constCast(pconst);
+
+            // If the module is already in-progress in the parser's resolution map, it's circular
+            if (p.module_resolution_status.get(module_path)) |status| {
+                return status == .IN_PROGRESS;
+            }
+
+            // Also check the active import stack for a re-entry
+            for (p.import_stack.items) |entry| {
+                if (std.mem.eql(u8, entry.module_path, module_path)) return true;
+            }
+        }
+        return false;
+    }
+
+    fn checkSymbolExists(self: *SemanticAnalyzer, module_path: []const u8, symbol: []const u8) bool {
+        if (self.parser) |pconst| {
+            const ParserType = @TypeOf(pconst.*);
+            var p: *ParserType = @constCast(pconst);
+            const module_resolver = @import("../../parser/module_resolver.zig");
+
+            // Get ModuleInfo (cached or resolve now)
+            var mod_info: ?ast.ModuleInfo = null;
+            if (p.module_cache.get(module_path)) |mi| {
+                mod_info = mi;
+            } else {
+                mod_info = module_resolver.resolveModule(p, module_path) catch null;
+            }
+            if (mod_info == null) return false;
+
+            const info = mod_info.?;
+            if (info.symbols) |map| {
+                if (map.get(symbol)) |sym| {
+                    return sym.is_public;
+                }
+            }
+        }
+        return false;
     }
 
     fn inferFunctionReturnType(self: *SemanticAnalyzer, func: anytype) ErrorList!*ast.TypeInfo {

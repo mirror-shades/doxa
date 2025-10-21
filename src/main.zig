@@ -469,6 +469,55 @@ pub fn main() !void {
         const obj_path = try std.fmt.bufPrint(&obj_path_buf, "out/{s}.o", .{artifact_stem});
         try llvm_gen.emitObjectCode(obj_path);
 
+        // Link final executable with runtime helpers
+        var exe_path_buf: [256]u8 = undefined;
+        const exe_path = try std.fmt.bufPrint(&exe_path_buf, "out/{s}", .{artifact_stem});
+
+        // Build runtime print object (relocatable) to avoid archive format issues
+        var rt_obj_buf: [256]u8 = undefined;
+        const rt_obj = try std.fmt.bufPrint(&rt_obj_buf, "out/rt_array_print.o", .{});
+        {
+            std.fs.cwd().makeDir("out") catch {};
+            const emit_flag = try std.fmt.allocPrint(std.heap.page_allocator, "-femit-bin={s}", .{rt_obj});
+            defer std.heap.page_allocator.free(emit_flag);
+            var child_rt = std.process.Child.init(&[_][]const u8{
+                "zig", "build-obj", "src/runtime/rt_array_print.zig", emit_flag,
+            }, std.heap.page_allocator);
+            child_rt.cwd = ".";
+            child_rt.stdout_behavior = .Inherit;
+            child_rt.stderr_behavior = .Inherit;
+            const term = try child_rt.spawnAndWait();
+            switch (term) {
+                .Exited => |code| if (code != 0) {
+                    std.debug.print("runtime build failed\n", .{});
+                    return;
+                },
+                else => {
+                    std.debug.print("runtime build failed\n", .{});
+                    return;
+                },
+            }
+        }
+
+        // Link using zig cc (+ static runtime lib)
+        {
+            var child_ln = std.process.Child.init(&[_][]const u8{ "zig", "cc", obj_path, rt_obj, "-o", exe_path }, std.heap.page_allocator);
+            child_ln.cwd = ".";
+            child_ln.stdout_behavior = .Inherit;
+            child_ln.stderr_behavior = .Inherit;
+            const term2 = try child_ln.spawnAndWait();
+            switch (term2) {
+                .Exited => |code| if (code != 0) {
+                    std.debug.print("link failed\n", .{});
+                    return;
+                },
+                else => {
+                    std.debug.print("link failed\n", .{});
+                    return;
+                },
+            }
+        }
+
         profiler.stopPhase();
         try profiler.dump();
     }

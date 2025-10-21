@@ -10,7 +10,7 @@ This is Lord Buddha’s teaching.
     Verses on the Middle Way (2nd–3rd century CE)
 ```
 
-Doxa is a simple to write, highly readible language based on four corned logic inspired by the logic of Nagarjuna. In Doxa there are no booleans. Doxa instead uses a four cournered logical unit called a tetra. Tetras can represent true and false, which act as you would expect them to in a traditional programing language.
+Doxa is a simple to write, highly readible language based on four corned logical values inspired by the logic of Nagarjuna. In Doxa there are no booleans. Doxa instead uses a four cournered logical unit called a tetra. Tetras can represent true and false, which act as you would expect them to in a traditional programing language.
 
 ## Documentation
 

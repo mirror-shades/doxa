@@ -2,6 +2,7 @@ const llvm = @import("llvm");
 const LLVMCore = llvm.core;
 const LLVMTypes = llvm.types;
 const LLVMGenerator = @import("../llvm.zig").LLVMGenerator;
+const arrays = @import("arrays.zig");
 
 pub fn getOrCreatePrintf(gen: *LLVMGenerator) LLVMTypes.LLVMValueRef {
     const existing = LLVMCore.LLVMGetNamedFunction(gen.module, "printf");
@@ -11,6 +12,55 @@ pub fn getOrCreatePrintf(gen: *LLVMGenerator) LLVMTypes.LLVMValueRef {
     var params = [_]LLVMTypes.LLVMTypeRef{i8_ptr_ty};
     const printf_ty = LLVMCore.LLVMFunctionType(i32_ty, &params, 1, @intFromBool(true));
     return LLVMCore.LLVMAddFunction(gen.module, "printf", printf_ty);
+}
+
+pub fn getOrCreateDoxaPrintArray(gen: *LLVMGenerator) LLVMTypes.LLVMValueRef {
+    const existing = LLVMCore.LLVMGetNamedFunction(gen.module, "doxa_print_array_hdr");
+    if (existing != null) return existing;
+    const hdr_ptr = arrays.getArrayHeaderPtrType(gen);
+    var params = [_]LLVMTypes.LLVMTypeRef{hdr_ptr};
+    const fn_ty = LLVMCore.LLVMFunctionType(LLVMCore.LLVMVoidTypeInContext(gen.context), &params, 1, @intFromBool(false));
+    return LLVMCore.LLVMAddFunction(gen.module, "doxa_print_array_hdr", fn_ty);
+}
+
+pub fn getOrCreateDoxaArrayNew(gen: *LLVMGenerator) LLVMTypes.LLVMValueRef {
+    const existing = LLVMCore.LLVMGetNamedFunction(gen.module, "doxa_array_new");
+    if (existing != null) return existing;
+    const i64_ty = LLVMCore.LLVMInt64TypeInContext(gen.context);
+    const hdr_ptr = arrays.getArrayHeaderPtrType(gen);
+    var params = [_]LLVMTypes.LLVMTypeRef{ i64_ty, i64_ty, i64_ty };
+    const fn_ty = LLVMCore.LLVMFunctionType(hdr_ptr, &params, 3, @intFromBool(false));
+    return LLVMCore.LLVMAddFunction(gen.module, "doxa_array_new", fn_ty);
+}
+
+pub fn getOrCreateDoxaArrayLen(gen: *LLVMGenerator) LLVMTypes.LLVMValueRef {
+    const existing = LLVMCore.LLVMGetNamedFunction(gen.module, "doxa_array_len");
+    if (existing != null) return existing;
+    const hdr_ptr = arrays.getArrayHeaderPtrType(gen);
+    const i64_ty = LLVMCore.LLVMInt64TypeInContext(gen.context);
+    var params = [_]LLVMTypes.LLVMTypeRef{hdr_ptr};
+    const fn_ty = LLVMCore.LLVMFunctionType(i64_ty, &params, 1, @intFromBool(false));
+    return LLVMCore.LLVMAddFunction(gen.module, "doxa_array_len", fn_ty);
+}
+
+pub fn getOrCreateDoxaArrayGetI64(gen: *LLVMGenerator) LLVMTypes.LLVMValueRef {
+    const existing = LLVMCore.LLVMGetNamedFunction(gen.module, "doxa_array_get_i64");
+    if (existing != null) return existing;
+    const hdr_ptr = arrays.getArrayHeaderPtrType(gen);
+    const i64_ty = LLVMCore.LLVMInt64TypeInContext(gen.context);
+    var params = [_]LLVMTypes.LLVMTypeRef{ hdr_ptr, i64_ty };
+    const fn_ty = LLVMCore.LLVMFunctionType(i64_ty, &params, 2, @intFromBool(false));
+    return LLVMCore.LLVMAddFunction(gen.module, "doxa_array_get_i64", fn_ty);
+}
+
+pub fn getOrCreateDoxaArraySetI64(gen: *LLVMGenerator) LLVMTypes.LLVMValueRef {
+    const existing = LLVMCore.LLVMGetNamedFunction(gen.module, "doxa_array_set_i64");
+    if (existing != null) return existing;
+    const hdr_ptr = arrays.getArrayHeaderPtrType(gen);
+    const i64_ty = LLVMCore.LLVMInt64TypeInContext(gen.context);
+    var params = [_]LLVMTypes.LLVMTypeRef{ hdr_ptr, i64_ty, i64_ty };
+    const fn_ty = LLVMCore.LLVMFunctionType(LLVMCore.LLVMVoidTypeInContext(gen.context), &params, 3, @intFromBool(false));
+    return LLVMCore.LLVMAddFunction(gen.module, "doxa_array_set_i64", fn_ty);
 }
 
 pub fn getOrCreatePuts(gen: *LLVMGenerator) LLVMTypes.LLVMValueRef {
@@ -30,4 +80,64 @@ pub fn getOrCreatePow(gen: *LLVMGenerator) LLVMTypes.LLVMValueRef {
     var params = [_]LLVMTypes.LLVMTypeRef{ f64_ty, f64_ty };
     const pow_ty = LLVMCore.LLVMFunctionType(f64_ty, &params, 2, @intFromBool(false));
     return LLVMCore.LLVMAddFunction(gen.module, "pow", pow_ty);
+}
+
+pub fn getOrCreateMalloc(gen: *LLVMGenerator) LLVMTypes.LLVMValueRef {
+    const existing = LLVMCore.LLVMGetNamedFunction(gen.module, "malloc");
+    if (existing != null) return existing;
+    const i8_ptr = LLVMCore.LLVMPointerType(LLVMCore.LLVMInt8TypeInContext(gen.context), 0);
+    const usize_ty = LLVMCore.LLVMInt64TypeInContext(gen.context); // assume 64-bit for now
+    var params = [_]LLVMTypes.LLVMTypeRef{usize_ty};
+    const fn_ty = LLVMCore.LLVMFunctionType(i8_ptr, &params, 1, @intFromBool(false));
+    return LLVMCore.LLVMAddFunction(gen.module, "malloc", fn_ty);
+}
+
+pub fn getOrCreateRealloc(gen: *LLVMGenerator) LLVMTypes.LLVMValueRef {
+    const existing = LLVMCore.LLVMGetNamedFunction(gen.module, "realloc");
+    if (existing != null) return existing;
+    const i8_ptr = LLVMCore.LLVMPointerType(LLVMCore.LLVMInt8TypeInContext(gen.context), 0);
+    const usize_ty = LLVMCore.LLVMInt64TypeInContext(gen.context);
+    var params = [_]LLVMTypes.LLVMTypeRef{ i8_ptr, usize_ty };
+    const fn_ty = LLVMCore.LLVMFunctionType(i8_ptr, &params, 2, @intFromBool(false));
+    return LLVMCore.LLVMAddFunction(gen.module, "realloc", fn_ty);
+}
+
+pub fn getOrCreateFree(gen: *LLVMGenerator) LLVMTypes.LLVMValueRef {
+    const existing = LLVMCore.LLVMGetNamedFunction(gen.module, "free");
+    if (existing != null) return existing;
+    const i8_ptr = LLVMCore.LLVMPointerType(LLVMCore.LLVMInt8TypeInContext(gen.context), 0);
+    var params = [_]LLVMTypes.LLVMTypeRef{i8_ptr};
+    const fn_ty = LLVMCore.LLVMFunctionType(LLVMCore.LLVMVoidTypeInContext(gen.context), &params, 1, @intFromBool(false));
+    return LLVMCore.LLVMAddFunction(gen.module, "free", fn_ty);
+}
+
+pub fn getOrCreateMemcpy(gen: *LLVMGenerator) LLVMTypes.LLVMValueRef {
+    const existing = LLVMCore.LLVMGetNamedFunction(gen.module, "memcpy");
+    if (existing != null) return existing;
+    const void_ptr = LLVMCore.LLVMPointerType(LLVMCore.LLVMInt8TypeInContext(gen.context), 0);
+    const usize_ty = LLVMCore.LLVMInt64TypeInContext(gen.context);
+    var params = [_]LLVMTypes.LLVMTypeRef{ void_ptr, void_ptr, usize_ty };
+    const fn_ty = LLVMCore.LLVMFunctionType(void_ptr, &params, 3, @intFromBool(false));
+    return LLVMCore.LLVMAddFunction(gen.module, "memcpy", fn_ty);
+}
+
+pub fn getOrCreateMemmove(gen: *LLVMGenerator) LLVMTypes.LLVMValueRef {
+    const existing = LLVMCore.LLVMGetNamedFunction(gen.module, "memmove");
+    if (existing != null) return existing;
+    const void_ptr = LLVMCore.LLVMPointerType(LLVMCore.LLVMInt8TypeInContext(gen.context), 0);
+    const usize_ty = LLVMCore.LLVMInt64TypeInContext(gen.context);
+    var params = [_]LLVMTypes.LLVMTypeRef{ void_ptr, void_ptr, usize_ty };
+    const fn_ty = LLVMCore.LLVMFunctionType(void_ptr, &params, 3, @intFromBool(false));
+    return LLVMCore.LLVMAddFunction(gen.module, "memmove", fn_ty);
+}
+
+pub fn getOrCreateMemset(gen: *LLVMGenerator) LLVMTypes.LLVMValueRef {
+    const existing = LLVMCore.LLVMGetNamedFunction(gen.module, "memset");
+    if (existing != null) return existing;
+    const void_ptr = LLVMCore.LLVMPointerType(LLVMCore.LLVMInt8TypeInContext(gen.context), 0);
+    const i32_ty = LLVMCore.LLVMInt32TypeInContext(gen.context);
+    const usize_ty = LLVMCore.LLVMInt64TypeInContext(gen.context);
+    var params = [_]LLVMTypes.LLVMTypeRef{ void_ptr, i32_ty, usize_ty };
+    const fn_ty = LLVMCore.LLVMFunctionType(void_ptr, &params, 3, @intFromBool(false));
+    return LLVMCore.LLVMAddFunction(gen.module, "memset", fn_ty);
 }

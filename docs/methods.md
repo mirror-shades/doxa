@@ -40,6 +40,7 @@ Doxa provides built-in methods prefixed with `@` for core operations.
 | LENGTH   | int    |
 | OS       | string |
 | ARCH     | string |
+| ABI      | string |
 | TIME     | int    |
 | RANDOM   | float  |
 | ALIVE    | tetra  |

@@ -9,20 +9,28 @@ pub const VarPtrEntry = struct {
     elem_ty: LLVMTypes.LLVMTypeRef,
 };
 
+const HIR = @import("../../hir/soxa_types.zig");
+
 pub const VarStore = struct {
     gen: *LLVMGenerator,
     entry_block: LLVMTypes.LLVMBasicBlockRef,
     map: std.StringHashMap(VarPtrEntry),
+    type_map: std.StringHashMap(HIR.HIRType),
 
     pub fn init(allocator: std.mem.Allocator, gen: *LLVMGenerator, entry_block: LLVMTypes.LLVMBasicBlockRef) VarStore {
-        return .{ .gen = gen, .entry_block = entry_block, .map = std.StringHashMap(VarPtrEntry).init(allocator) };
+        return .{ .gen = gen, .entry_block = entry_block, .map = std.StringHashMap(VarPtrEntry).init(allocator), .type_map = std.StringHashMap(HIR.HIRType).init(allocator) };
     }
 
     pub fn deinit(self: *VarStore) void {
         self.map.deinit();
+        self.type_map.deinit();
     }
 
     pub fn store(self: *VarStore, key: []const u8, value: LLVMTypes.LLVMValueRef, elem_ty: LLVMTypes.LLVMTypeRef, is_local: bool, var_name: []const u8) !void {
+        // Track the variable type based on the element type
+        const var_type = self.inferHIRTypeFromLLVMType(elem_ty);
+        try self.type_map.put(key, var_type);
+
         if (is_local) {
             const existing = self.map.get(key);
             const entry: VarPtrEntry = blk: {
@@ -35,7 +43,11 @@ pub const VarStore = struct {
                 try self.map.put(key, e);
                 break :blk e;
             };
-            _ = LLVMCore.LLVMBuildStore(self.gen.builder, value, entry.ptr);
+            // Avoid corrupting pointer-typed variables with integer stores
+            const val_kind = LLVMCore.LLVMGetTypeKind(LLVMCore.LLVMTypeOf(value));
+            const elem_kind = LLVMCore.LLVMGetTypeKind(elem_ty);
+            if (!(elem_kind == LLVMTypes.LLVMTypeKind.LLVMPointerTypeKind and val_kind != LLVMTypes.LLVMTypeKind.LLVMPointerTypeKind))
+                _ = LLVMCore.LLVMBuildStore(self.gen.builder, value, entry.ptr);
         } else {
             const existing = self.map.get(key);
             const entry: VarPtrEntry = blk2: {
@@ -48,7 +60,11 @@ pub const VarStore = struct {
                 try self.map.put(key, e);
                 break :blk2 e;
             };
-            _ = LLVMCore.LLVMBuildStore(self.gen.builder, value, entry.ptr);
+            // Avoid corrupting pointer-typed globals with integer stores
+            const val_kind = LLVMCore.LLVMGetTypeKind(LLVMCore.LLVMTypeOf(value));
+            const elem_kind = LLVMCore.LLVMGetTypeKind(elem_ty);
+            if (!(elem_kind == LLVMTypes.LLVMTypeKind.LLVMPointerTypeKind and val_kind != LLVMTypes.LLVMTypeKind.LLVMPointerTypeKind))
+                _ = LLVMCore.LLVMBuildStore(self.gen.builder, value, entry.ptr);
         }
     }
 
@@ -101,5 +117,31 @@ pub const VarStore = struct {
             try self.map.put(key, e);
             return e;
         }
+    }
+
+    pub fn getVariableType(self: *VarStore, key: []const u8) ?HIR.HIRType {
+        return self.type_map.get(key);
+    }
+
+    fn inferHIRTypeFromLLVMType(self: *VarStore, llvm_type: LLVMTypes.LLVMTypeRef) HIR.HIRType {
+        const type_kind = LLVMCore.LLVMGetTypeKind(llvm_type);
+        return switch (type_kind) {
+            LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind => {
+                const bit_width = LLVMCore.LLVMGetIntTypeWidth(llvm_type);
+                return if (bit_width == 8) .Byte else if (bit_width == 64) .Int else .Int;
+            },
+            LLVMTypes.LLVMTypeKind.LLVMDoubleTypeKind => .Float,
+            LLVMTypes.LLVMTypeKind.LLVMPointerTypeKind => {
+                // Check if it's an ArrayHeader pointer
+                const arrays = @import("arrays.zig");
+                const hdr_ty = arrays.ensureArrayHeaderBody(self.gen);
+                if (LLVMCore.LLVMGetElementType(llvm_type) == hdr_ty) {
+                    // For now, return a special marker - we'll handle this in LoadVar
+                    return .Int; // This will be overridden in LoadVar for arrays
+                }
+                return .String; // Assume string for other pointers
+            },
+            else => .Unknown,
+        };
     }
 };

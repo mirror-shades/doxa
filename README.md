@@ -64,6 +64,7 @@ Doxa is based upon a very small number of types with enums, structs, and type un
 - array (homogeneous)
 - struct
 - enum
+- map
 - union
 
 ## Components

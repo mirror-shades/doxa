@@ -13,6 +13,7 @@ const vars = @import("vars.zig");
 const cast = @import("cast.zig");
 const externs = @import("externs.zig");
 const strings = @import("strings.zig");
+const arrays = @import("arrays.zig");
 const print = @import("print.zig");
 
 var next_string_id: usize = 0;
@@ -29,11 +30,34 @@ fn coerceToType(gen: *LLVMGenerator, v: LLVMTypes.LLVMValueRef, target_ty: LLVMT
     switch (kind) {
         LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind => {
             const w = LLVMCore.LLVMGetIntTypeWidth(target_ty);
-            if (w == 1) return cast.ensureI1(gen, v);
-            if (w == 8) return cast.ensureI8(gen, v);
-            return cast.ensureI64(gen, v);
+            const src_ty = LLVMCore.LLVMTypeOf(v);
+            if (LLVMCore.LLVMGetTypeKind(src_ty) == LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind) {
+                const sw = LLVMCore.LLVMGetIntTypeWidth(src_ty);
+                if (sw == w) return v;
+                if (sw > w) return LLVMCore.LLVMBuildTrunc(gen.builder, v, target_ty, "trunc.int");
+                return LLVMCore.LLVMBuildZExt(gen.builder, v, target_ty, "zext.int");
+            }
+            // Don't coerce pointers to integers - this is likely an error
+            if (LLVMCore.LLVMGetTypeKind(src_ty) == LLVMTypes.LLVMTypeKind.LLVMPointerTypeKind) {
+                return v; // Return as-is, let the type system handle it
+            }
+            const as64 = cast.ensureI64(gen, v);
+            if (w == 64) return as64;
+            return LLVMCore.LLVMBuildTrunc(gen.builder, as64, target_ty, "trunc.from.i64");
         },
         LLVMTypes.LLVMTypeKind.LLVMDoubleTypeKind => return cast.ensureF64(gen, v),
+        LLVMTypes.LLVMTypeKind.LLVMPointerTypeKind => {
+            const src_ty = LLVMCore.LLVMTypeOf(v);
+            if (LLVMCore.LLVMGetTypeKind(src_ty) == LLVMTypes.LLVMTypeKind.LLVMPointerTypeKind) {
+                // Both are pointers - check if they're the same type
+                if (LLVMCore.LLVMTypeOf(v) == target_ty) {
+                    return v;
+                }
+                // Different pointer types - perform bitcast
+                return LLVMCore.LLVMBuildBitCast(gen.builder, v, target_ty, "bitcast.ptr");
+            }
+            return v; // Can't coerce non-pointer to pointer
+        },
         else => return v,
     }
 }
@@ -164,6 +188,156 @@ pub fn emitFunctionBody(hir: *const HIR.HIRProgram, generator: *LLVMGenerator, f
             }
         }
         switch (inst) {
+            .ArrayGet => |ag| {
+                _ = ag;
+                if (stack.items.len < 2) continue;
+                const idx_v = stack.items[stack.items.len - 1];
+                const hdr = stack.items[stack.items.len - 2];
+                stack.items.len -= 2;
+                const i64_ty = LLVMCore.LLVMInt64TypeInContext(generator.context);
+                const i8_ty = LLVMCore.LLVMInt8TypeInContext(generator.context);
+                const i8_ptr = LLVMCore.LLVMPointerType(i8_ty, 0);
+                const hdr_ty = arrays.ensureArrayHeaderBody(generator);
+                const zero = LLVMCore.LLVMConstInt(i64_ty, 0, 0);
+                const idx_data = LLVMCore.LLVMConstInt(i64_ty, arrays.ArrayFields.data, 0);
+                const idx_len = LLVMCore.LLVMConstInt(i64_ty, arrays.ArrayFields.len, 0);
+                const idx_es = LLVMCore.LLVMConstInt(i64_ty, arrays.ArrayFields.elem_size, 0);
+
+                var gep_params = [_]LLVMTypes.LLVMValueRef{ zero, idx_len };
+                const len_ptr = LLVMCore.LLVMBuildInBoundsGEP2(generator.builder, hdr_ty, hdr, &gep_params, 2, "hdr.len");
+                _ = len_ptr; // length unused here yet (bounds check TBD)
+                gep_params[1] = idx_es;
+                const es_ptr = LLVMCore.LLVMBuildInBoundsGEP2(generator.builder, hdr_ty, hdr, &gep_params, 2, "hdr.es");
+                const es_val = LLVMCore.LLVMBuildLoad2(generator.builder, i64_ty, es_ptr, "elem_size");
+
+                const idx64 = cast.ensureI64(generator, idx_v);
+                gep_params[1] = idx_data;
+                const data_ptr_ptr = LLVMCore.LLVMBuildInBoundsGEP2(generator.builder, hdr_ty, hdr, &gep_params, 2, "hdr.data.ptr");
+                const data_ptr = LLVMCore.LLVMBuildLoad2(generator.builder, i8_ptr, data_ptr_ptr, "data.ptr");
+
+                const byte_off = LLVMCore.LLVMBuildMul(generator.builder, idx64, es_val, "byte.off");
+                var idxs = [_]LLVMTypes.LLVMValueRef{byte_off};
+                const elem_ptr_i8 = LLVMCore.LLVMBuildInBoundsGEP2(generator.builder, i8_ty, data_ptr, &idxs, 1, "elem.i8p");
+                const is_one = LLVMCore.LLVMBuildICmp(generator.builder, LLVMTypes.LLVMIntPredicate.LLVMIntEQ, es_val, LLVMCore.LLVMConstInt(i64_ty, 1, 0), "es.is1");
+                const i64_ptr = LLVMCore.LLVMPointerType(i64_ty, 0);
+                const elem_ptr_i64 = LLVMCore.LLVMBuildBitCast(generator.builder, elem_ptr_i8, i64_ptr, "elem.i64p");
+                const load_i64 = LLVMCore.LLVMBuildLoad2(generator.builder, i64_ty, elem_ptr_i64, "ld.i64");
+                const load_i8 = LLVMCore.LLVMBuildLoad2(generator.builder, i8_ty, elem_ptr_i8, "ld.i8");
+                const load_i8_z = LLVMCore.LLVMBuildZExt(generator.builder, load_i8, i64_ty, "i8.zext.i64");
+                const sel = LLVMCore.LLVMBuildSelect(generator.builder, is_one, load_i8_z, load_i64, "elem.sel");
+                try stack.append(sel);
+            },
+            .ArraySet => |as| {
+                _ = as;
+                if (stack.items.len < 3) continue;
+                const val = stack.items[stack.items.len - 1];
+                const idx_v = stack.items[stack.items.len - 2];
+                const hdr = stack.items[stack.items.len - 3];
+                stack.items.len -= 3;
+                const i64_ty = LLVMCore.LLVMInt64TypeInContext(generator.context);
+                const i8_ty = LLVMCore.LLVMInt8TypeInContext(generator.context);
+                const i8_ptr = LLVMCore.LLVMPointerType(i8_ty, 0);
+                const hdr_ty = arrays.ensureArrayHeaderBody(generator);
+                const zero = LLVMCore.LLVMConstInt(i64_ty, 0, 0);
+                const one = LLVMCore.LLVMConstInt(i64_ty, 1, 0);
+                const idx_data = LLVMCore.LLVMConstInt(i64_ty, arrays.ArrayFields.data, 0);
+                const idx_len = LLVMCore.LLVMConstInt(i64_ty, arrays.ArrayFields.len, 0);
+                const idx_es = LLVMCore.LLVMConstInt(i64_ty, arrays.ArrayFields.elem_size, 0);
+                const idx_cap = LLVMCore.LLVMConstInt(i64_ty, arrays.ArrayFields.cap, 0);
+
+                var gep_params = [_]LLVMTypes.LLVMValueRef{ zero, idx_len };
+                const len_ptr = LLVMCore.LLVMBuildInBoundsGEP2(generator.builder, hdr_ty, hdr, &gep_params, 2, "hdr.len");
+                const curr_len = LLVMCore.LLVMBuildLoad2(generator.builder, i64_ty, len_ptr, "len");
+                gep_params[1] = idx_es;
+                const es_ptr = LLVMCore.LLVMBuildInBoundsGEP2(generator.builder, hdr_ty, hdr, &gep_params, 2, "hdr.es");
+                const es_val = LLVMCore.LLVMBuildLoad2(generator.builder, i64_ty, es_ptr, "elem_size");
+                gep_params[1] = idx_cap;
+                const cap_ptr = LLVMCore.LLVMBuildInBoundsGEP2(generator.builder, hdr_ty, hdr, &gep_params, 2, "hdr.cap");
+                _ = cap_ptr; // capacity unused (resize TBD)
+
+                const idx64 = cast.ensureI64(generator, idx_v);
+                gep_params[1] = idx_data;
+                const data_ptr_ptr = LLVMCore.LLVMBuildInBoundsGEP2(generator.builder, hdr_ty, hdr, &gep_params, 2, "hdr.data.ptr");
+                const data_ptr = LLVMCore.LLVMBuildLoad2(generator.builder, i8_ptr, data_ptr_ptr, "data.ptr");
+
+                const byte_off = LLVMCore.LLVMBuildMul(generator.builder, idx64, es_val, "byte.off");
+                var idxs = [_]LLVMTypes.LLVMValueRef{byte_off};
+                const elem_ptr_i8 = LLVMCore.LLVMBuildInBoundsGEP2(generator.builder, i8_ty, data_ptr, &idxs, 1, "elem.i8p");
+                _ = LLVMCore.LLVMBuildICmp(generator.builder, LLVMTypes.LLVMIntPredicate.LLVMIntEQ, es_val, LLVMCore.LLVMConstInt(i64_ty, 1, 0), "es.is1");
+                const i64_ptr = LLVMCore.LLVMPointerType(i64_ty, 0);
+                const elem_ptr_i64 = LLVMCore.LLVMBuildBitCast(generator.builder, elem_ptr_i8, i64_ptr, "elem.i64p");
+                const val64 = cast.ensureI64(generator, val);
+                const val8 = LLVMCore.LLVMBuildTrunc(generator.builder, val64, i8_ty, "val.trunc.i8");
+                _ = LLVMCore.LLVMBuildStore(generator.builder, val8, elem_ptr_i8);
+                _ = LLVMCore.LLVMBuildStore(generator.builder, val64, elem_ptr_i64);
+
+                const ge_len = LLVMCore.LLVMBuildICmp(generator.builder, LLVMTypes.LLVMIntPredicate.LLVMIntSGE, idx64, curr_len, "ge.len");
+                const idxp1 = LLVMCore.LLVMBuildAdd(generator.builder, idx64, one, "idx.plus1");
+                const new_len = LLVMCore.LLVMBuildSelect(generator.builder, ge_len, idxp1, curr_len, "len.sel");
+                _ = LLVMCore.LLVMBuildStore(generator.builder, new_len, len_ptr);
+
+                try stack.append(hdr);
+            },
+            .ArrayNew => |a| {
+                const hdr_ptr_ty = arrays.getArrayHeaderPtrType(generator);
+                const i64_ty = LLVMCore.LLVMInt64TypeInContext(generator.context);
+                // i8_ptr not needed directly here; keep allocation via malloc
+                const malloc_fn = externs.getOrCreateMalloc(generator);
+                var m_params = [_]LLVMTypes.LLVMValueRef{arrays.headerSizeConst(generator)};
+                const raw_hdr = LLVMCore.LLVMBuildCall2(generator.builder, LLVMCore.LLVMTypeOf(malloc_fn), malloc_fn, &m_params, 1, "malloc");
+                const hdr = LLVMCore.LLVMBuildBitCast(generator.builder, raw_hdr, hdr_ptr_ty, "hdr");
+
+                const cap_const = LLVMCore.LLVMConstInt(i64_ty, if (a.size == 0) 8 else a.size, @intFromBool(false));
+                const len_const = LLVMCore.LLVMConstInt(i64_ty, if (a.size == 0) 0 else a.size, @intFromBool(false));
+                const elem_sz = arrays.elemSizeConst(generator, a.element_type);
+                const data_bytes = LLVMCore.LLVMBuildMul(generator.builder, cap_const, elem_sz, "data.bytes");
+                var d_params = [_]LLVMTypes.LLVMValueRef{data_bytes};
+                const raw_data = LLVMCore.LLVMBuildCall2(generator.builder, LLVMCore.LLVMTypeOf(malloc_fn), malloc_fn, &d_params, 1, "malloc");
+
+                const zero = LLVMCore.LLVMConstInt(i64_ty, 0, @intFromBool(false));
+                const idx_data = LLVMCore.LLVMConstInt(i64_ty, arrays.ArrayFields.data, @intFromBool(false));
+                const idx_len = LLVMCore.LLVMConstInt(i64_ty, arrays.ArrayFields.len, @intFromBool(false));
+                const idx_cap = LLVMCore.LLVMConstInt(i64_ty, arrays.ArrayFields.cap, @intFromBool(false));
+                const idx_es = LLVMCore.LLVMConstInt(i64_ty, arrays.ArrayFields.elem_size, @intFromBool(false));
+                const idx_tag = LLVMCore.LLVMConstInt(i64_ty, arrays.ArrayFields.elm_type, @intFromBool(false));
+                const hdr_ty = arrays.ensureArrayHeaderBody(generator);
+
+                var gep_params = [_]LLVMTypes.LLVMValueRef{ zero, idx_data };
+                const data_ptr_ptr = LLVMCore.LLVMBuildInBoundsGEP2(generator.builder, hdr_ty, hdr, &gep_params, 2, "hdr.data.ptr");
+                _ = LLVMCore.LLVMBuildStore(generator.builder, raw_data, data_ptr_ptr);
+                gep_params[1] = idx_len;
+                const len_ptr = LLVMCore.LLVMBuildInBoundsGEP2(generator.builder, hdr_ty, hdr, &gep_params, 2, "hdr.len");
+                _ = LLVMCore.LLVMBuildStore(generator.builder, len_const, len_ptr);
+                gep_params[1] = idx_cap;
+                const cap_ptr = LLVMCore.LLVMBuildInBoundsGEP2(generator.builder, hdr_ty, hdr, &gep_params, 2, "hdr.cap");
+                _ = LLVMCore.LLVMBuildStore(generator.builder, cap_const, cap_ptr);
+                gep_params[1] = idx_es;
+                const es_ptr = LLVMCore.LLVMBuildInBoundsGEP2(generator.builder, hdr_ty, hdr, &gep_params, 2, "hdr.es");
+                _ = LLVMCore.LLVMBuildStore(generator.builder, elem_sz, es_ptr);
+
+                // Store element tag
+                gep_params[1] = idx_tag;
+                const tag_ptr = LLVMCore.LLVMBuildInBoundsGEP2(generator.builder, hdr_ty, hdr, &gep_params, 2, "hdr.tag");
+                const tag_val = arrays.elemTagConst(generator, a.element_type);
+                _ = LLVMCore.LLVMBuildStore(generator.builder, tag_val, tag_ptr);
+
+                try stack.append(hdr);
+                // Also keep the header pointer on stack for immediate StoreDecl following var initialization
+                try stack.append(hdr);
+            },
+            .ArrayLen => {
+                if (stack.items.len < 1) continue;
+                const arr_hdr = stack.items[stack.items.len - 1];
+                stack.items.len -= 1;
+                const i64_ty = LLVMCore.LLVMInt64TypeInContext(generator.context);
+                const zero = LLVMCore.LLVMConstInt(i64_ty, 0, @intFromBool(false));
+                const idx_len = LLVMCore.LLVMConstInt(i64_ty, arrays.ArrayFields.len, @intFromBool(false));
+                const hdr_ty = arrays.ensureArrayHeaderBody(generator);
+                var gep_params = [_]LLVMTypes.LLVMValueRef{ zero, idx_len };
+                const len_ptr = LLVMCore.LLVMBuildInBoundsGEP2(generator.builder, hdr_ty, arr_hdr, &gep_params, 2, "hdr.len");
+                const len_val = LLVMCore.LLVMBuildLoad2(generator.builder, i64_ty, len_ptr, "len");
+                try stack.append(len_val);
+            },
             .Const => |c| {
                 const idx = c.constant_id;
                 if (idx >= hir.constant_pool.len) continue;
@@ -410,14 +584,17 @@ pub fn emitFunctionBody(hir: *const HIR.HIRProgram, generator: *LLVMGenerator, f
                         const a = stack.items[stack.items.len - 1];
                         stack.items.len -= 1;
                         const a2 = LLVMCore.LLVMBuildTrunc(generator.builder, cast.ensureI64(generator, a), i2_ty, "to.i2");
-                        const one = LLVMCore.LLVMConstInt(i2_ty, 1, @intFromBool(false));
-                        const two = LLVMCore.LLVMConstInt(i2_ty, 2, @intFromBool(false));
-                        const low = LLVMCore.LLVMBuildAnd(generator.builder, a2, one, "tetra.low");
-                        const high = LLVMCore.LLVMBuildAnd(generator.builder, a2, two, "tetra.high");
-                        const low_to_high = LLVMCore.LLVMBuildShl(generator.builder, low, one, "tetra.l2h");
-                        const high_to_low = LLVMCore.LLVMBuildLShr(generator.builder, high, one, "tetra.h2l");
-                        const res = LLVMCore.LLVMBuildOr(generator.builder, low_to_high, high_to_low, "tetra.not");
-                        try stack.append(res);
+                        const zero = LLVMCore.LLVMConstInt(i2_ty, 0, 0);
+                        const one = LLVMCore.LLVMConstInt(i2_ty, 1, 0);
+                        const both = LLVMCore.LLVMConstInt(i2_ty, 2, 0);
+                        const neither = LLVMCore.LLVMConstInt(i2_ty, 3, 0);
+                        const is_true = LLVMCore.LLVMBuildICmp(generator.builder, LLVMTypes.LLVMIntPredicate.LLVMIntEQ, a2, one, "is.true");
+                        const is_both = LLVMCore.LLVMBuildICmp(generator.builder, LLVMTypes.LLVMIntPredicate.LLVMIntEQ, a2, both, "is.both");
+                        const is_neither = LLVMCore.LLVMBuildICmp(generator.builder, LLVMTypes.LLVMIntPredicate.LLVMIntEQ, a2, neither, "is.neither");
+                        const sel_tf = LLVMCore.LLVMBuildSelect(generator.builder, is_true, zero, one, "not.t_or_f");
+                        const sel_both = LLVMCore.LLVMBuildSelect(generator.builder, is_both, both, sel_tf, "not.both");
+                        const out = LLVMCore.LLVMBuildSelect(generator.builder, is_neither, neither, sel_both, "not.out");
+                        try stack.append(out);
                     },
                     else => {
                         if (stack.items.len < 2) continue;
@@ -427,9 +604,10 @@ pub fn emitFunctionBody(hir: *const HIR.HIRProgram, generator: *LLVMGenerator, f
                         const a2 = LLVMCore.LLVMBuildTrunc(generator.builder, cast.ensureI64(generator, a), i2_ty, "a.i2");
                         const b2 = LLVMCore.LLVMBuildTrunc(generator.builder, cast.ensureI64(generator, b), i2_ty, "b.i2");
                         const one = LLVMCore.LLVMConstInt(i2_ty, 1, @intFromBool(false));
-                        const two = LLVMCore.LLVMConstInt(i2_ty, 2, @intFromBool(false));
+                        _ = LLVMCore.LLVMConstInt(i2_ty, 2, @intFromBool(false));
                         // classical truth: true if low bit set (1 or both(2->10b has no low bit), we need (val==1 or val==2)
                         // Represent classical bit as i1 then zext back to i2 {00,false} or {01,true}
+                        const two = LLVMCore.LLVMConstInt(i2_ty, 2, @intFromBool(false));
                         const a_is_true = blk_a: {
                             const is_one = LLVMCore.LLVMBuildICmp(generator.builder, LLVMTypes.LLVMIntPredicate.LLVMIntEQ, a2, one, "a.eq1");
                             const is_two = LLVMCore.LLVMBuildICmp(generator.builder, LLVMTypes.LLVMIntPredicate.LLVMIntEQ, a2, two, "a.eq2");
@@ -568,7 +746,15 @@ pub fn emitFunctionBody(hir: *const HIR.HIRProgram, generator: *LLVMGenerator, f
                 if (stack.items.len < 1) continue;
                 const cond_v = stack.items[stack.items.len - 1];
                 stack.items.len -= 1;
-                const cond_i1 = cast.ensureI1(generator, cond_v);
+                var cond_i1 = cast.ensureI1(generator, cond_v);
+                // Use HIR type when available: tetra truth (1 and 2 => true)
+                if (jc.condition_type == .Tetra) {
+                    const i64_ty = LLVMCore.LLVMInt64TypeInContext(generator.context);
+                    const c64 = cast.ensureI64(generator, cond_v);
+                    const eq1 = LLVMCore.LLVMBuildICmp(generator.builder, LLVMTypes.LLVMIntPredicate.LLVMIntEQ, c64, LLVMCore.LLVMConstInt(i64_ty, 1, 0), "eq1");
+                    const eq2 = LLVMCore.LLVMBuildICmp(generator.builder, LLVMTypes.LLVMIntPredicate.LLVMIntEQ, c64, LLVMCore.LLVMConstInt(i64_ty, 2, 0), "eq2");
+                    cond_i1 = LLVMCore.LLVMBuildOr(generator.builder, eq1, eq2, "tetra.true");
+                }
                 try bm.branchCond(cond_i1, jc.label_true, jc.label_false);
             },
             .StoreVar => |sv| {
@@ -598,7 +784,18 @@ pub fn emitFunctionBody(hir: *const HIR.HIRProgram, generator: *LLVMGenerator, f
                     },
                     else => try std.fmt.allocPrint(generator.allocator, "u:{s}", .{lv.var_name}),
                 };
-                const target_ty = LLVMCore.LLVMInt64TypeInContext(generator.context);
+
+                // Determine the correct type to load by checking the stored variable type
+                const target_ty = if (var_store.map.get(key)) |entry| blk: {
+                    // Check if it's an ArrayHeader pointer
+                    const arrays_mod = @import("arrays.zig");
+                    if (entry.elem_ty == arrays_mod.getArrayHeaderPtrType(generator)) {
+                        break :blk arrays_mod.getArrayHeaderPtrType(generator);
+                    }
+                    // For other types, use the stored element type
+                    break :blk entry.elem_ty;
+                } else LLVMCore.LLVMInt64TypeInContext(generator.context);
+
                 const loaded = try var_store.load(key, target_ty, lv.var_name);
                 try stack.append(loaded);
             },
@@ -615,6 +812,49 @@ pub fn emitFunctionBody(hir: *const HIR.HIRProgram, generator: *LLVMGenerator, f
                     else => try std.fmt.allocPrint(generator.allocator, "g:{s}", .{sc.var_name}),
                 };
                 try var_store.defineConstGlobal(key, v);
+            },
+            .StoreDecl => |sd| {
+                if (stack.items.len < 1) continue;
+                var v = stack.items[stack.items.len - 1];
+                stack.items.len -= 1;
+                const key = switch (sd.scope_kind) {
+                    .Local => try std.fmt.allocPrint(generator.allocator, "l:{s}", .{sd.var_name}),
+                    .GlobalLocal => try std.fmt.allocPrint(generator.allocator, "g:{s}", .{sd.var_name}),
+                    .ModuleGlobal => blk: {
+                        const mod = sd.module_context orelse "";
+                        break :blk try std.fmt.allocPrint(generator.allocator, "m:{s}.{s}", .{ mod, sd.var_name });
+                    },
+                    else => try std.fmt.allocPrint(generator.allocator, "u:{s}", .{sd.var_name}),
+                };
+                const target_ty = type_map.mapHIRTypeToLLVM(generator, sd.declared_type);
+                // If expecting a pointer (e.g., ArrayHeader*) but we accidentally have a non-pointer on top,
+                // try to use the previous stack item if it is a pointer (common after ArrayNew patterns).
+                if (LLVMCore.LLVMGetTypeKind(target_ty) == LLVMTypes.LLVMTypeKind.LLVMPointerTypeKind) {
+                    const v_kind = LLVMCore.LLVMGetTypeKind(LLVMCore.LLVMTypeOf(v));
+                    if (v_kind != LLVMTypes.LLVMTypeKind.LLVMPointerTypeKind) {
+                        if (stack.items.len > 0) {
+                            const alt = stack.items[stack.items.len - 1];
+                            const alt_kind = LLVMCore.LLVMGetTypeKind(LLVMCore.LLVMTypeOf(alt));
+                            if (alt_kind == LLVMTypes.LLVMTypeKind.LLVMPointerTypeKind) {
+                                // Use previous pointer value for the declaration
+                                v = alt;
+                                stack.items.len -= 1; // consume the pointer we just used
+                                std.debug.print("WARN: StoreDecl {s} used previous stack item pointer due to non-pointer on top\n", .{sd.var_name});
+                            } else {
+                                std.debug.print("ERROR: StoreDecl for {s} expected pointer, got {s}\n", .{ sd.var_name, @tagName(v_kind) });
+                                continue;
+                            }
+                        } else {
+                            std.debug.print("ERROR: StoreDecl for {s} expected pointer, stack empty after non-pointer top\n", .{sd.var_name});
+                            continue;
+                        }
+                    }
+                    if (LLVMCore.LLVMTypeOf(v) != target_ty) {
+                        v = LLVMCore.LLVMBuildBitCast(generator.builder, v, target_ty, "decl.ptr.cast");
+                    }
+                }
+                // For declarations, we don't coerce scalars; types should match or be handled above
+                try var_store.store(key, v, target_ty, sd.scope_kind == HIR.ScopeKind.Local, sd.var_name);
             },
             .PushStorageId => |pstid| {
                 const key = switch (pstid.scope_kind) {

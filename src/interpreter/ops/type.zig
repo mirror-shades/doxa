@@ -5,7 +5,7 @@ const Core = @import("../core.zig");
 const HIRFrame = Core.HIRFrame;
 const Errors = @import("../../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
-const debug_print = @import("../calls/print.zig");
+const debug_print = @import("../../runtime/print.zig");
 
 pub const TypeOps = struct {
     pub fn execTypeCheck(vm: anytype, tc: anytype) !void {

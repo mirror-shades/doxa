@@ -4,7 +4,7 @@ Doxa takes a unique approach to loops. The best way to think about it is that th
 
 ```
 // doxa
-for x while x < 10 do x++ {
+for x while x < 10 do x += 1 {
   ...
 }
 // c
@@ -13,7 +13,7 @@ for(int x, x < 10; x++) {
 }
 ```
 
-Each section of the above the for loop works the same, the key difference being each section is marked by its own keyword. This main advantage this provides is that each section of the for loop becomes decomposable. Doxa allows you to use any combination of loop constructs to add functionality to the loop as needed. Regardless of which construct you use, it will always follow the syntactical precedent of C loops, for -> while -> do.
+Each section of the above the for loop works the same, the key difference being each section is marked by its own keyword. This main advantage this provides is that each section of the for loop becomes decomposable. Doxa allows you to use any combination of loop constructs to add functionality to the loop as needed. Regardless of which construct you use, it will always follow the syntactical precedent of C loops: for -> while -> do.
 
 ## Core Loop Constructs
 
@@ -23,7 +23,7 @@ Each section of the above the for loop works the same, the key difference being 
 
 ```
 for hand {
-  hand += draw_card;
+  hand += draw_card();
   if hand > 21 then bust();
   else if hand > 17 then hold();
   else hit();
@@ -127,12 +127,12 @@ for index while index < tasks.length do index += 1 {
 }
 
 // Explicit initialization with complex do block
-for i is 0 while i < tasks.length do {
+for i is 0 while i < @length(tasks) do {
     // Update: move to next task and log progress
     i += 1
-    "Progress: " + i + "/" + tasks.length?
+    @print("Progress: {i} / {@length(tasks)}\n")
 } {
-    "Now doing: " + tasks[i]?
+    @print("Now doing: tasks[i]\n")
 }
 ```
 
@@ -180,7 +180,7 @@ for i while i < @length(collection) do i++ {
 }
 ```
 
-**Notes**:
+**Each Loop Notes**:
 
 - The `at` variable provides an immutable copy of the current index
 - Nested loops create independent index copies
