@@ -1152,20 +1152,19 @@ pub const VM = struct {
                 .string => |s| s,
                 else => return self.reporter.reportRuntimeError(null, ErrorCode.TYPE_MISMATCH, "build: second argument must be string", .{}),
             };
-            _ = switch (arch_frame.value) {
+            const arch_str = switch (arch_frame.value) {
                 .string => |s| s,
                 else => return self.reporter.reportRuntimeError(null, ErrorCode.TYPE_MISMATCH, "build: third argument (arch) must be string", .{}),
             };
-            _ = switch (os_frame.value) {
+            const os_str = switch (os_frame.value) {
                 .string => |s| s,
                 else => return self.reporter.reportRuntimeError(null, ErrorCode.TYPE_MISMATCH, "build: fourth argument (os) must be string", .{}),
             };
-            const debug_on: bool = switch (debug_frame.value) {
-                .tetra => |t| t == 1 or t == 2,
-                else => false,
+            const debug_val: u8 = switch (debug_frame.value) {
+                .tetra => |t| t,
+                else => 0,
             };
 
-            // Step 1: run `doxa compile <src>`
             var arena = std.heap.ArenaAllocator.init(self.allocator);
             defer arena.deinit();
             const a = arena.allocator();
@@ -1189,84 +1188,35 @@ pub const VM = struct {
                 }
             }
 
-            // Invoke compiler; if debug requested, pass a CLI flag to enable peek lowering
-            var child1 = if (debug_on)
-                std.process.Child.init(&[_][]const u8{ doxa_path, "compile", src_path, "--debug-execution" }, a)
-            else
-                std.process.Child.init(&[_][]const u8{ doxa_path, "compile", src_path }, a);
-            child1.cwd = ".";
-            child1.stdout_behavior = .Inherit;
-            child1.stderr_behavior = .Inherit;
-            // Optionally pass arch/os to downstream build in future
-            const term1 = child1.spawnAndWait() catch {
-                try self.stack.push(HIRFrame.initInt(1));
-                return;
-            };
-            switch (term1) {
-                .Exited => |code| if (code != 0) {
-                    try self.stack.push(HIRFrame.initInt(@intCast(code)));
-                    return;
-                },
-                else => {
-                    try self.stack.push(HIRFrame.initInt(1));
-                    return;
-                },
-            }
-
-            // Derive object file path from src: out/<stem>.o
-            const stem: []const u8 = blk: {
-                var last_slash: usize = 0;
-                for (src_path, 0..) |c, i| {
-                    if (c == '/' or c == '\\') last_slash = i + 1;
-                }
-                const fname = src_path[last_slash..];
-                if (std.mem.lastIndexOfScalar(u8, fname, '.')) |dot| break :blk fname[0..dot];
-                break :blk fname;
-            };
-            var obj_buf: [512]u8 = undefined;
-            const obj_path = std.fmt.bufPrint(&obj_buf, "out/{s}.o", .{stem}) catch {
-                try self.stack.push(HIRFrame.initInt(1));
-                return;
+            // Map tetra to opt level flags: false(0)->-O-1, true(1)->-O0, both(2)->-O1, neither(3)->-O-1
+            const opt_flag = switch (debug_val) {
+                0 => "-O-1",
+                1 => "-O0",
+                2 => "-O1",
+                else => "-O-1",
             };
 
-            // Step 2a: build runtime print object to resolve external symbols
-            var rt_lib_buf: [512]u8 = undefined;
-            const rt_lib_path = std.fmt.bufPrint(&rt_lib_buf, "out/rt_array_print.o", .{}) catch {
-                try self.stack.push(HIRFrame.initInt(1));
-                return;
-            };
-            std.fs.cwd().makeDir("out") catch {};
-            var child_rt = std.process.Child.init(&[_][]const u8{
-                "zig", "build-obj", "src/runtime/rt_array_print.zig", try std.fmt.allocPrint(a, "-femit-bin={s}", .{rt_lib_path}),
-            }, a);
-            child_rt.cwd = ".";
-            child_rt.stdout_behavior = .Inherit;
-            child_rt.stderr_behavior = .Inherit;
-            const term_rt = child_rt.spawnAndWait() catch {
-                try self.stack.push(HIRFrame.initInt(1));
-                return;
-            };
-            switch (term_rt) {
-                .Exited => |code| if (code != 0) {
-                    try self.stack.push(HIRFrame.initInt(@intCast(code)));
-                    return;
-                },
-                else => {
-                    try self.stack.push(HIRFrame.initInt(1));
-                    return;
-                },
-            }
+            // Build CLI args
+            var args_builder = std.array_list.Managed([]const u8).init(a);
+            defer args_builder.deinit();
+            try args_builder.append(doxa_path);
+            try args_builder.append("compile");
+            try args_builder.append(src_path);
+            try args_builder.append("-o");
+            try args_builder.append(out_path);
+            try args_builder.append(opt_flag);
+            if (arch_str.len > 0) try args_builder.append(try std.fmt.allocPrint(a, "--arch={s}", .{arch_str}));
+            if (os_str.len > 0) try args_builder.append(try std.fmt.allocPrint(a, "--os={s}", .{os_str}));
 
-            // Step 2b: run `zig cc <obj> <rt_lib> -o <out>`
-            var child2 = std.process.Child.init(&[_][]const u8{ "zig", "cc", obj_path, rt_lib_path, "-o", out_path }, a);
-            child2.cwd = ".";
-            child2.stdout_behavior = .Inherit;
-            child2.stderr_behavior = .Inherit;
-            const term2 = child2.spawnAndWait() catch {
+            var child = std.process.Child.init(args_builder.items, a);
+            child.cwd = ".";
+            child.stdout_behavior = .Inherit;
+            child.stderr_behavior = .Inherit;
+            const term = child.spawnAndWait() catch {
                 try self.stack.push(HIRFrame.initInt(1));
                 return;
             };
-            switch (term2) {
+            switch (term) {
                 .Exited => |code| {
                     try self.stack.push(HIRFrame.initInt(@intCast(code)));
                     return;

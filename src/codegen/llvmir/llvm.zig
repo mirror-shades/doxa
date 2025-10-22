@@ -78,10 +78,11 @@ pub const LLVMGenerator = struct {
     // Current function being generated
     current_function: ?LLVMTypes.LLVMValueRef,
 
-    // Debug controls
+    // Debug/opt controls
     debug_peek: bool,
+    opt_level: i32,
 
-    pub fn init(allocator: std.mem.Allocator) !*LLVMGenerator {
+    pub fn init(allocator: std.mem.Allocator, opt_level: i32) !*LLVMGenerator {
         // Ensure targets are registered before querying triple
         // Initialize native target and also register all targets/printers for portability
         LLVMTarget.LLVMInitializeAllTargetInfos();
@@ -142,12 +143,20 @@ pub const LLVMGenerator = struct {
         else
             LLVMTypes.LLVMRelocMode.LLVMRelocDefault;
 
+        // Map opt_level to LLVM codegen opt level
+        const llvm_opt: LLVMTypes.LLVMCodeGenOptLevel = blk: {
+            if (opt_level <= -1 or opt_level == 0) break :blk LLVMTypes.LLVMCodeGenOptLevel.LLVMCodeGenLevelNone;
+            if (opt_level == 1) break :blk LLVMTypes.LLVMCodeGenOptLevel.LLVMCodeGenLevelLess;
+            if (opt_level >= 3) break :blk LLVMTypes.LLVMCodeGenOptLevel.LLVMCodeGenLevelAggressive;
+            break :blk LLVMTypes.LLVMCodeGenOptLevel.LLVMCodeGenLevelDefault; // opt_level == 2
+        };
+
         const target_machine = LLVMTargetMachine.LLVMCreateTargetMachine(
             target,
             target_triple,
             cpu,
             features,
-            LLVMTypes.LLVMCodeGenOptLevel.LLVMCodeGenLevelDefault,
+            llvm_opt,
             reloc_mode,
             code_model,
         );
@@ -176,6 +185,7 @@ pub const LLVMGenerator = struct {
             .allocator = allocator,
             .current_function = null,
             .debug_peek = false,
+            .opt_level = opt_level,
         };
 
         return generator;
@@ -782,7 +792,7 @@ pub const LLVMGenerator = struct {
     }
 
     fn optimize(self: *LLVMGenerator) void {
-        // Prototype: skip adding transform passes to avoid extra link deps
+        // Prototype: keep simple mapping; real pass managers can be added later
         _ = self;
     }
 
