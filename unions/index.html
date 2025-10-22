@@ -342,7 +342,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="../soxa/" class="md-tabs__link">
+      <a href="../soxa.md" class="md-tabs__link">
         
   
   
@@ -680,7 +680,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../soxa/" class="md-nav__link">
+      <a href="../soxa.md" class="md-nav__link">
         
   
   
@@ -716,28 +716,28 @@
 <p>Unions are a special type which can represent one type or another. For instance, you can make a value that either returns a number, or a string. A union can only hold a single value, and therefore represent a single type when used.</p>
 <h2 id="syntax">Syntax</h2>
 <p>Unions are declared using pipes:</p>
-<div class="highlight"><pre><span></span><code>var x :: int | float;
-var y :: string | int | float;
+<div class="highlight"><pre><span></span><code>var x :: int | float
+var y :: string | int | float
 </code></pre></div>
 <p>The pipe's only usage in Doxa is to specify a typed union.</p>
 <h2 id="examples">Examples</h2>
 <div class="highlight"><pre><span></span><code>// A union that can be either an integer or a float
-var number :: int | float;
-number is 42;     // Valid - integer
-number is 3.14;   // Valid - float
+var number :: int | float
+number is 42     // Valid - integer
+number is 3.14   // Valid - float
 
 // A union that can be a string, integer, or float
-var value :: string | int | float;
-value is &quot;hello&quot;; // Valid - string
-value is 100;     // Valid - integer
-value is 2.718;   // Valid - float
+var value :: string | int | float
+value is &quot;hello&quot; // Valid - string
+value is 100     // Valid - integer
+value is 2.718   // Valid - float
 
 // Unions default to the first type when not initialized
-var defaulted :: int | float;
-defaulted?;       // Prints 0 (default int value)
+var defaulted :: int | float
+defaulted?       // Prints 0 (default int value)
 
-var float_first :: float | int;
-float_first?;     // Prints 0.0 (default float value)
+var float_first :: float | int
+float_first?     // Prints 0.0 (default float value)
 </code></pre></div>
 <h2 id="default-behavior">Default Behavior</h2>
 <p>When a union is declared without initialization, it defaults to the <strong>first type</strong> in the union with its default value:</p>
@@ -753,18 +753,18 @@ float_first?;     // Prints 0.0 (default float value)
 <h2 id="optional-values">Optional Values</h2>
 <p>A common use case for unions is representing optional values using <code>nothing</code>:</p>
 <div class="highlight"><pre><span></span><code>// Optional integer
-var maybe_name :: string | nothing;
-maybe_name is &quot;Alice&quot;;     // Has a value
-maybe_name is nothing; // No value
+var maybe_name :: string | nothing
+maybe_name is &quot;Alice&quot;     // Has a value
+maybe_name is nothing // No value
 
 // Function that might not return a value
 function findValue(arr :: MyObject[], target :: string) returns(int | nothing) {
     each x in arr {
         if (x.name equals target) then {
-            return x;
+            return x
         }
     }
-    return nothing; // Not found
+    return nothing // Not found
 }
 </code></pre></div>
 <h2 id="why-unions-are-useful">Why unions are useful</h2>
@@ -785,78 +785,88 @@ function findValue(arr :: MyObject[], target :: string) returns(int | nothing) {
 // Match function to process errors
 function handleError(err :: ErrorList) {
     match err {
-        .Overflow =&gt; doSomething(),
-        .Underflow =&gt; doSomethingElse(),
-    };
+        .Overflow then doSomething(),
+        .Underflow then doSomethingElse(),
+    }
 }
 
 // Function returns a union - we won&#39;t know if the value is a number or one of our errors until we check
 function addLimit(a :: int, b :: int) returns( int | ErrorList ) {
-    const result is a + b;
-    if result &gt; 255 then return ErrorList.Overflow;
-    if result &lt; 0 then return ErrorList.Underflow;
-    return result;
+    const result is a + b
+    if result &gt; 255 then return ErrorList.Overflow
+    if result &lt; 0 then return ErrorList.Underflow
+    return result
 }
 
 // All of these return unions
-const unknownBigResult is addLimit(1000, 1000);   // ErrorList.Overflow
-const unknownSmallResult is addLimit(100, -1000); // ErrorList.Underflow
-const unknownRightResult is addLimit(100, -10);   // 90
+const unknownBigResult is addLimit(1000, 1000)   // ErrorList.Overflow
+const unknownSmallResult is addLimit(100, -1000) // ErrorList.Underflow
+const unknownRightResult is addLimit(100, -10)   // 90
 
 // Handle errors - several approaches:
 
 // Approach 1: Pattern matching (cleanest)
 match unknownRightResult {
-    int =&gt; onlyUsesInts(unknownRightResult),  // unknownRightResult is typed as int here
-    ErrorList =&gt; handleError(unknownRightResult),  // unknownRightResult is typed as ErrorList here
+    int then onlyUsesInts(unknownRightResult),  // unknownRightResult is typed as int here
+    ErrorList then handleError(unknownRightResult),  // unknownRightResult is typed as ErrorList here
 }
 
 // Approach 2: Explicit fallback with error handling
-const myInt = unknownRightResult as int else {
-    @panic(&quot;This should never happen in production!&quot;);
-};
-onlyUsesInts(myInt);
+const myInt is unknownRightResult as int else {
+    @panic(&quot;This should never happen in production!&quot;)
+}
+onlyUsesInts(myInt)
 
 // Note type checking in control flow doesn&#39;t implicitly cast unlike match case which is exhaustive
-// this can be done by casting bt it is not as ergonomic as match case
+// this can be done by narrowing within the branch but it is not as ergonomic as match case
 if unknownRightResult @istype int then {
-    onlyUsesInts(unknownRightResult) as int else{};
+    onlyUsesInts(unknownRightResult) as int else{}
 } else if unknownRightResult @istype ErrorList then {
-    handleError(unknownRightResult) as ErrorList else{};
+    handleError(unknownRightResult) as ErrorList else{}
 }
 </code></pre></div>
 <h2 id="type-casting-with-as">Type Casting with <code>as</code></h2>
 <p>The <code>as</code> keyword attempts to cast a union to a specific type. If the cast fails, the <code>else</code> block is executed:</p>
-<div class="highlight"><pre><span></span><code>var value :: int | string;
-value is &quot;hello&quot;;
+<div class="highlight"><pre><span></span><code>var value :: int | string
+value is &quot;hello&quot;
 
 // This will execute the else block since value is currently a string
-const number = value as int else {
-    return error.ExpectedInteger;
-};
+const number is value as int else {
+    return error.ExpectedInteger
+}
 
 // This will succeed since value is now an int
-value is 42;
-const doubled = value as int else {
-    return error.ExpectedInteger;
-}; // doubled is 84
+value is 42
+const doubled is value as int else {
+    return error.ExpectedInteger
+} // doubled is 84
+</code></pre></div>
+<p><code>as</code> can be used for control flow as well, using then blocks:</p>
+<div class="highlight"><pre><span></span><code>// using as like an &#39;istype&#39; style conditional
+asThenUnion as int then {
+    var result is 20 + 30
+    result?
+} else {
+    var result is 30 + 40
+    result?
+} // 50
 </code></pre></div>
 <h3 id="common-patterns">Common Patterns</h3>
 <p><strong>Safe extraction with default:</strong></p>
-<div class="highlight"><pre><span></span><code>const result = someUnion as int else {
-    return 0; // Default value if not an int
-};
+<div class="highlight"><pre><span></span><code>const result is someUnion as int else {
+    return 0 // Default value if not an int
+}
 </code></pre></div>
 <p><strong>Error handling:</strong></p>
-<div class="highlight"><pre><span></span><code>const number = value as int else {
-    @panic(&quot;This should never happen in production!&quot;);
-};
+<div class="highlight"><pre><span></span><code>const number is value as int else {
+    @panic(&quot;This should never happen in production!&quot;)
+}
 </code></pre></div>
 <p><strong>Conditional processing:</strong></p>
-<div class="highlight"><pre><span></span><code>const processed = value as string else {
+<div class="highlight"><pre><span></span><code>const processed is value as string else {
     // Handle non-string case
-    return &quot;default&quot;;
-};
+    return &quot;default&quot;
+}
 </code></pre></div>
 <p>The <code>as</code> keyword is essential for safely working with unions when you need to extract a specific type.</p>
 

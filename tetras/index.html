@@ -342,7 +342,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="../soxa/" class="md-tabs__link">
+      <a href="../soxa.md" class="md-tabs__link">
         
   
   
@@ -518,8 +518,26 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#a-use-case" class="md-nav__link">
+    <span class="md-ellipsis">
+      A use case
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#intentionality" class="md-nav__link">
+    <span class="md-ellipsis">
+      Intentionality
+    </span>
+  </a>
   
 </li>
       
@@ -626,7 +644,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../soxa/" class="md-nav__link">
+      <a href="../soxa.md" class="md-nav__link">
         
   
   
@@ -660,76 +678,69 @@
 <h1 id="doxa-language-reference">Doxa Language Reference</h1>
 <h2 id="tetras">Tetras</h2>
 <h3 id="type-overview">Type overview</h3>
-<p>A tetra is a type which represents four cornered logic as opposed to Booles binary logic. You can think of a tetra a bit like an extended boolean type. Where bools can only exist in only two states, true or false, tetras can exist in four. The four states which tetras can exist in are:</p>
+<p>A tetra is a type which tries to represent four cornered logic rather than traditional binary logic. You can think of a tetra a like an extended boolean type. In its simplest sense, where bools can exist in only two states, true or false, tetras can exist in four:</p>
 <p><code>true</code> - These first two values should be familiar<br />
 <code>false</code><br />
-<code>both</code> - This is equivilant to both true <em>and</em> false<br />
-<code>neither</code> - This is equivilatnt neither to true <em>or</em> false</p>
+<code>both</code> - This is equivalent to both true <em>and</em> false<br />
+<code>neither</code> - This is equivalent neither to true <em>or</em> false</p>
 <h3 id="an-example">An Example</h3>
-<p>Let's start with a condition, in this case, the condition of being alive. In traditional boolean logic there would be only two states for this condition, true or false, or in term of the condition, alive or dead. But a tetra can represent logical conditions outside of this true/false, alive/dead binary.</p>
+<p>Let's start with a condition, in this case, the condition of being alive. In traditional boolean logic there would be only two states for this condition, true or false, alive or dead. But a tetra can represent logical conditions outside of this true/false, alive/dead binary.</p>
 <p>Here are four values to represent the four possible states or corners of a tetra:</p>
-<div class="highlight"><pre><span></span><code>const Bob is true;
-const Shakespere is false;
-const zombie is both;
-const angel is neither;
+<div class="highlight"><pre><span></span><code>const Bob is true
+const Shakespeare is false
+const zombie is both
+const angel is neither
 </code></pre></div>
-<p>Now let's create some conditional logic to understand how a tetra works. Here is a function to discover whether something is alive or not:</p>
-<div class="highlight"><pre><span></span><code>function living(alive :: tetra) {
-    if alive then &quot;I am alive&quot;?;
-    if not alive then &quot;I am dead&quot;?;
+<p>Now let's create some conditional logic to understand how a tetra works. Here is a function to discover whether something is alive or not. It takes a single tetra for input then decides if something is alive or not based on whether it is true or false. it then compares the two flags, isAlive and isDead  in order to determine the state.</p>
+<div class="highlight"><pre><span></span><code>function living(alive :: tetra) returns string {
+    var isAlive is false
+    var isDead is false
+
+    if alive then isAlive is true
+    if not alive then isDead is true
+
+    if isAlive and isDead then return &quot;is alive and dead&quot;
+    if isAlive then return &quot;is alive&quot;
+    if isDead then return &quot;is dead&quot;
+    return &quot;neither alive or dead&quot;
 }
 </code></pre></div>
-<p>Notice that if this function was in another language and was using a boolean, there would only be two possible branches when executed. If you would like to follow along, here is how I ran the values through the function:</p>
-<div class="highlight"><pre><span></span><code>&quot;Bob&quot;?;
-living(Bob);
-&quot;Shakespere&quot;?;
-living(Shakespere);
-&quot;zombie&quot;?;
-living(zombie);
-&quot;angel&quot;?;
-living(angel);
+<p>You might notice this function could be written without the flags, by comparing the state of the tetra itself. We are using flags here to deconstruct it in a way we might parse this to using traditional boolean logic. Here is an execution of the function:</p>
+<div class="highlight"><pre><span></span><code>@print(&quot;Bob {living(Bob)}\n&quot;)
+@print(&quot;Shakespeare {living(Shakespeare)}\n&quot;)
+@print(&quot;zombie {living(zombie)}\n&quot;)
+@print(&quot;angel {living(angel)}\n&quot;)
 </code></pre></div>
-<p>And here is the ouput I received:</p>
-<div class="highlight"><pre><span></span><code>[C:\dev\zig\doxa\test.doxa:11:6] value = &quot;Bob&quot;
-[C:\dev\zig\doxa\test.doxa:7:31] value = &quot;I am alive&quot;
-[C:\dev\zig\doxa\test.doxa:13:13] value = &quot;Shakespere&quot;
-[C:\dev\zig\doxa\test.doxa:8:34] value = &quot;I am dead&quot;
-[C:\dev\zig\doxa\test.doxa:15:9] value = &quot;zombie&quot;
-[C:\dev\zig\doxa\test.doxa:7:31] value = &quot;I am alive&quot;
-[C:\dev\zig\doxa\test.doxa:8:34] value = &quot;I am dead&quot;
-[C:\dev\zig\doxa\test.doxa:17:8] value = &quot;angel&quot;
+<p>And here is the output I received:</p>
+<div class="highlight"><pre><span></span><code>Bob is alive
+Shakespeare is dead
+zombie is alive and dead
+angel neither alive or dead
 </code></pre></div>
-<p>The output here might seems strange but the logic behind it is very simple. True only triggers conditions which are true. False only triggers conditions which are false. Both will trigger both the condition regardless if it is true or false. Neither will never trigger a condition.</p>
-<p>This means zombie triggers both the <code>alive</code> condition and its negation <code>not alive</code>.</p>
-<div class="highlight"><pre><span></span><code>[C:\dev\zig\doxa\test.doxa:15:9] value = &quot;zombie&quot;
-[C:\dev\zig\doxa\test.doxa:7:31] value = &quot;I am alive&quot;
-[C:\dev\zig\doxa\test.doxa:8:34] value = &quot;I am dead&quot;
-</code></pre></div>
-<p>Angel triggers neither and so we see no output from either branch.</p>
-<div class="highlight"><pre><span></span><code>[C:\dev\zig\doxa\test.doxa:17:8] value = &quot;angel&quot;
-</code></pre></div>
-<p>Keep in mind, a tetra is a value. It doesn't actually alter the logic flow of your program, it's purpose is simply to follow the logic flow in ways basic true and false cannot.</p>
-<p>Special attention should (not) be paid to the else clause. The else clause is exactly what it sounds like - "if a condition is ment, then do x, OR ELSE, do y". As we now know, both will always trigger a condition, and neither will never trigger a condition. The effect with else blocks is then as you would assume, both with never trigger an else clause, and neither will always trigger an else clause.</p>
-<div class="highlight"><pre><span></span><code>const zombie is both;
-const angel is neither;
-
-function living(alive :: tetra) {
-    if alive then &quot;I am alive&quot;? else &quot;I am not alive&quot;?;
-    if not alive then &quot;I am dead&quot;? else &quot;I am not dead&quot;?;
+<p>When deconstructed like this we can see the logic is relatively simple. True only triggers conditions which are true. False only triggers conditions which are false. Both will always trigger a condition. Neither will never trigger a condition. </p>
+<p>A purely functional way to imagine this is that both is a true value which cannot be negated, and neither is a false value which cannot be negated.</p>
+<p>Keep in mind, a tetra is a value just like a boolean is. A tetra doesn't alter the flow of conditional branches, rather it provides states which trigger conditionals in a paradoxical way.</p>
+<p>We treat the else clause as exactly what it sounds like: "if a condition is met, then do x, or else do y". Since both will always trigger a condition, and neither will never trigger a condition, both will never trigger the else clause, and neither will always trigger the else clause.</p>
+<h3 id="a-use-case">A use case</h3>
+<p>Where a tetra really excels is dealing with fuzzy or ambigious data. Take a common example of ambigous data, API calls. Here we are fetching data from an API whose validity we may not be sure of. The call will be stored in a struct which uses a tetra called valid: </p>
+<p>true mean the data was valid
+false means the data was invalid
+both means the data was ambigous, possibly valid, possibly not
+neither means no data was returned</p>
+<p>This approach lets us handle ambigous data without using flags or nested if statements:</p>
+<div class="highlight"><pre><span></span><code>struct Call {
+    data :: string
+    valid :: tetra
 }
 
-&quot;zombie&quot;?;
-living(zombie);
-&quot;angel&quot;?;
-living(angel);
+const result :: Call is apiCall()
+
+if not result.valid then log(result) // if the result is not valid or ambigous it is logged 
+if result.valid then serveData(result) // if the result is valid or ambigous it is served
+// if no data the conditionals do not trigger and the result falls through
 </code></pre></div>
-<div class="highlight"><pre><span></span><code>[C:\dev\zig\doxa\test.doxa:9:9] value = &quot;zombie&quot;
-[C:\dev\zig\doxa\test.doxa:5:31] value = &quot;I am alive&quot;
-[C:\dev\zig\doxa\test.doxa:6:34] value = &quot;I am dead&quot;
-[C:\dev\zig\doxa\test.doxa:11:8] value = &quot;angel&quot;
-[C:\dev\zig\doxa\test.doxa:5:55] value = &quot;I am not alive&quot;
-[C:\dev\zig\doxa\test.doxa:6:57] value = &quot;I am not dead&quot;
-</code></pre></div>
+<h2 id="intentionality">Intentionality</h2>
+<p>In order to reduce complexity adding contradition into the system must be intentional. There are two ways of adding contradition (both or neither) into the system. First, you can set a tetra manually as both or neither. Second, you can use a special operator called paradoxical and, which will take the input (true and false) as both. Other than this expect a traditional binary result (true or false). All first order logic in doxa necessarily returns a value of true or false.</p>
 
 
 

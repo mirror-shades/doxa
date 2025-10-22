@@ -342,7 +342,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="../soxa/" class="md-tabs__link">
+      <a href="../soxa.md" class="md-tabs__link">
         
   
   
@@ -557,37 +557,37 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#while" class="md-nav__link">
+  <a href="#core-loop-constructs" class="md-nav__link">
     <span class="md-ellipsis">
-      While
+      Core Loop Constructs
     </span>
   </a>
   
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#for" class="md-nav__link">
-    <span class="md-ellipsis">
-      For
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#each" class="md-nav__link">
-    <span class="md-ellipsis">
-      Each
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Each">
+    <nav class="md-nav" aria-label="Core Loop Constructs">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#each-with-index" class="md-nav__link">
+  <a href="#for-loops" class="md-nav__link">
     <span class="md-ellipsis">
-      Each with Index
+      For Loops
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#while-loops" class="md-nav__link">
+    <span class="md-ellipsis">
+      While Loops
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#do-loops" class="md-nav__link">
+    <span class="md-ellipsis">
+      Do Loops
     </span>
   </a>
   
@@ -595,6 +595,99 @@
         
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#infinite-loops" class="md-nav__link">
+    <span class="md-ellipsis">
+      Infinite Loops
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#loop-combinations" class="md-nav__link">
+    <span class="md-ellipsis">
+      Loop Combinations
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Loop Combinations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#while-do-loop" class="md-nav__link">
+    <span class="md-ellipsis">
+      While Do Loop
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#for-do-loop" class="md-nav__link">
+    <span class="md-ellipsis">
+      For Do Loop
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#for-while-do-loop" class="md-nav__link">
+    <span class="md-ellipsis">
+      For While Do Loop
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#loop-table" class="md-nav__link">
+    <span class="md-ellipsis">
+      Loop Table
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#collection-iteration" class="md-nav__link">
+    <span class="md-ellipsis">
+      Collection Iteration
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Collection Iteration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#each-loops" class="md-nav__link">
+    <span class="md-ellipsis">
+      Each Loops
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#control-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      Control Flow
+    </span>
+  </a>
   
 </li>
       
@@ -635,7 +728,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../soxa/" class="md-nav__link">
+      <a href="../soxa.md" class="md-nav__link">
         
   
   
@@ -667,33 +760,146 @@
 
 
 <h1 id="loops">Loops</h1>
-<p>Doxa provides three types of loops: <code>while</code>, <code>for</code>, and <code>each</code>. While <code>while</code> and <code>for</code> work like traditional loops in most languages, <code>each</code> offers a more modern, collection-focused approach.</p>
-<h2 id="while">While</h2>
-<p>The <code>while</code> loop continues executing as long as a condition remains true:</p>
-<div class="highlight"><pre><span></span><code>var currentNumber is 0;
-while currentNumber &lt;= 100 {
-    currentNumber += 1;
+<p>Doxa takes a unique approach to loops. The best way to think about it is that the loop syntax is fully composible. The structure of the full loop will be similar to anyone familiar to C style loops:</p>
+<div class="highlight"><pre><span></span><code>// doxa
+for x while x &lt; 10 do x += 1 {
+  ...
+}
+// c
+for(int x, x &lt; 10; x++) {
+
 }
 </code></pre></div>
-<h2 id="for">For</h2>
-<p>The <code>for</code> loop uses traditional C-style syntax with initialization, condition, and increment:</p>
-<div class="highlight"><pre><span></span><code>for (var i is 0; i &lt; x; i++) {
-    doSomething(myArray[i]);
+<p>Each section of the above the for loop works the same, the key difference being each section is marked by its own keyword. This main advantage this provides is that each section of the for loop becomes decomposable. Doxa allows you to use any combination of loop constructs to add functionality to the loop as needed. Regardless of which construct you use, it will always follow the syntactical precedent of C loops: for -&gt; while -&gt; do.</p>
+<h2 id="core-loop-constructs">Core Loop Constructs</h2>
+<h3 id="for-loops">For Loops</h3>
+<p><strong>Purpose</strong>: Loop which has a scope-level int which persists between loops. The variable is always an int will be defaulted to 0 if not initialized.</p>
+<div class="highlight"><pre><span></span><code>for hand {
+  hand += draw_card();
+  if hand &gt; 21 then bust();
+  else if hand &gt; 17 then hold();
+  else hit();
 }
 </code></pre></div>
-<h2 id="each">Each</h2>
-<p>The <code>each</code> loop is Doxa's modern iteration construct for collections. It's cleaner and safer than indexed loops:</p>
-<div class="highlight"><pre><span></span><code>each x in arr {
-    doSomething(x);
+<h3 id="while-loops">While Loops</h3>
+<p><strong>Purpose</strong>: Condition-based loop that executes while a condition is true.</p>
+<div class="highlight"><pre><span></span><code>while &lt;condition&gt; { ... }
+</code></pre></div>
+<p><strong>Examples</strong>:</p>
+<div class="highlight"><pre><span></span><code>// With early exit
+while has_next() {
+  const item is next()
+  if item == 0 then break
 }
 </code></pre></div>
-<h3 id="each-with-index">Each with Index</h3>
-<p>You can also access the index using the <code>at</code> keyword:</p>
-<div class="highlight"><pre><span></span><code>each x at i in arr {
-    if i &lt; 3 then doSomething(x);
+<h3 id="do-loops">Do Loops</h3>
+<p><strong>Purpose</strong>: Step-focused loop that executes a step following each iteration. Following C traditions, steps always execute after each iteration of the loop body, before the next condition check.</p>
+<div class="highlight"><pre><span></span><code>do &lt;step&gt; { ... }
+</code></pre></div>
+<p><strong>Examples</strong>:</p>
+<div class="highlight"><pre><span></span><code>// Basic do loop
+const the_time is getTheTime()
+do the_time is getTheTime() {
+  if the_time &gt; expiration_time then break
+}
+
+// complex do block
+do {
+  if getTheTime() &gt; the_time + 100 then {
+    the_time = getTheTime()
+  } else log_too_early()
+} {
+
+  if the_time &gt; expiration_time then {
+    break
+  } else {
+    log_loop()
+  }
 }
 </code></pre></div>
-<p>The <code>each</code> loop eliminates the need for manual index management and reduces the risk of off-by-one errors that are common with traditional <code>for</code> loops.</p>
+<h2 id="infinite-loops">Infinite Loops</h2>
+<p>You can use <code>while true</code> or just <code>do</code> for infinite loops:</p>
+<div class="highlight"><pre><span></span><code>while true { ... }  // Traditional infinite loop
+do { ... }          // Cleaner do-based infinite loop
+</code></pre></div>
+<h2 id="loop-combinations">Loop Combinations</h2>
+<h3 id="while-do-loop">While Do Loop</h3>
+<div class="highlight"><pre><span></span><code>// Countdown from 10 to 1, then liftoff
+var countdown is 10
+while countdown &gt; 0 do {
+    countdown -= 1
+} {
+    &quot;T-minus &quot; + countdown + &quot; seconds&quot;?
+}
+&quot;Liftoff!&quot;?
+</code></pre></div>
+<h3 id="for-do-loop">For Do Loop</h3>
+<div class="highlight"><pre><span></span><code>var sensor_reading is 0
+for reading do reading = get_reading() {
+    if reading &gt; 7 then {
+        @print(&quot;Warning: reading is too high!&quot;)
+        break
+    }
+}
+</code></pre></div>
+<h3 id="for-while-do-loop">For While Do Loop</h3>
+<div class="highlight"><pre><span></span><code>// Default initialization: process tasks until done
+var tasks = [&quot;Write report&quot;, &quot;Submit assignment&quot;, &quot;Attend meeting&quot;]
+var index is 0  // we start at index 0
+for index while index &lt; tasks.length do index += 1 {
+    &quot;Task: &quot; + tasks[index]?
+}
+
+// Explicit initialization with complex do block
+for i is 0 while i &lt; @length(tasks) do {
+    // Update: move to next task and log progress
+    i += 1
+    @print(&quot;Progress: {i} / {@length(tasks)}\n&quot;)
+} {
+    @print(&quot;Now doing: tasks[i]\n&quot;)
+}
+</code></pre></div>
+<h2 id="loop-table">Loop Table</h2>
+<p>Here are all the possible combinations for loops using these constructs. Notice that regardless of which constructs you choose, they will be ordered for -&gt; while -&gt; do.</p>
+<p>Loops with an int exposed:
+<code>for x</code></p>
+<p>Loops while a given condition met<br />
+<code>while y</code></p>
+<p>Loops using a given step<br />
+<code>do z</code></p>
+<p>Loops while a given condition met using a given step<br />
+<code>while y do z</code></p>
+<p>Loops with an index using a given step<br />
+<code>for x do z</code></p>
+<p>Loops with an int exposed while a given condition met using a given step<br />
+<code>for x while y do z</code></p>
+<h2 id="collection-iteration">Collection Iteration</h2>
+<h3 id="each-loops">Each Loops</h3>
+<p><code>each</code> provides syntactic sugar for iterating over collections:</p>
+<div class="highlight"><pre><span></span><code>each item in collection { ... }
+each item at index in collection { ... }
+</code></pre></div>
+<p><strong>Expands to</strong>:</p>
+<div class="highlight"><pre><span></span><code>for i while i &lt; @length(collection) do i++ {
+  item is collection[i]
+  // or with index:
+  const index is i
+  ...
+}
+</code></pre></div>
+<p><strong>Each Loop Notes</strong>:</p>
+<ul>
+<li>The <code>at</code> variable provides an immutable copy of the current index</li>
+<li>Nested loops create independent index copies</li>
+<li>Modifying the collection during iteration may cause undefined behavior</li>
+</ul>
+<h2 id="control-flow">Control Flow</h2>
+<p>All loops support:</p>
+<ul>
+<li><strong><code>break</code></strong>: Exit the loop immediately</li>
+<li><strong><code>continue</code></strong>: Skip to next iteration</li>
+</ul>
+<p>Continues will run any given <code>do</code> step before skipping to the next iteration of the loop.</p>
 
 
 

@@ -342,7 +342,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="../soxa/" class="md-tabs__link">
+      <a href="../soxa.md" class="md-tabs__link">
         
   
   
@@ -506,15 +506,6 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#basic-composition-example" class="md-nav__link">
-    <span class="md-ellipsis">
-      Basic Composition Example
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#maps" class="md-nav__link">
     <span class="md-ellipsis">
       Maps
@@ -581,9 +572,9 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#type-information" class="md-nav__link">
+  <a href="#range-to" class="md-nav__link">
     <span class="md-ellipsis">
-      Type Information
+      Range (to)
     </span>
   </a>
   
@@ -647,9 +638,9 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#trancendental-logic" class="md-nav__link">
+  <a href="#paradoxical-logic" class="md-nav__link">
     <span class="md-ellipsis">
-      Trancendental logic
+      Paradoxical logic
     </span>
   </a>
   
@@ -785,7 +776,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../soxa/" class="md-nav__link">
+      <a href="../soxa.md" class="md-nav__link">
         
   
   
@@ -819,102 +810,41 @@
 <h1 id="doxa-language-reference">Doxa Language Reference</h1>
 <h2 id="core-language-features">Core Language Features</h2>
 <h3 id="primitive-types">Primitive Types</h3>
-<p>Types in Doxa are grouped in three ways, atomic, molecular, and meta. All together there are 14 of these primitive types to represent data in Doxa.</p>
+<p>Doxa has two general catagory of types, atomic and molecular:</p>
 <h3 id="atomic">Atomic</h3>
-<p>Atomic types are the most basic units of data. Currently Doxa has 3 default number types, with plans for optional dynamic number sizing in the future.</p>
-<p>int - i32
+<p>Atomic types are the most basic units of data. Currently Doxa has 3 default number types. Types listed reflect their Zig equivilent. Bigint may be added in the future for increased flexibility.</p>
+<p>int - i64
 float - f64
-byte - u8 hex literal
-string
-tetra - logical value, see page on tetras for more info
-nothing - empty type</p>
+byte - u8 hex
+string - []const u8
+tetra - i2
+nothing - void</p>
+<p>The <code>tetra</code> type represents a four cornered value with the possible states: <code>true</code>, <code>false</code>, <code>both</code>, and <code>neither</code>. For additional information see the tetra page.</p>
 <h3 id="molecular">Molecular</h3>
 <p>Molecular types are constructed out of atomic types. They are</p>
 <p>array - must be homogenous
 struct - no classes, no inheretance, only composition
 enum
-map
-function - user functions, library functions, etc
-union - can be handled with the collapse operator, see page on unions for more info</p>
-<h3 id="basic-composition-example">Basic Composition Example</h3>
-<div class="highlight"><pre><span></span><code>struct Animal {
-    name: string
-}
-
-struct Dog {
-    // Composition instead of inheritance
-    animal: Animal,
-    breed: string,
-
-    fn bark(self) {
-        print(animal.name + &quot; says woof!&quot;);
-    }
-}
-
-var dog is Dog {
-    animal: Animal {
-        name: &quot;Spot&quot;
-        },
-    breed: &quot;Labrador&quot;
-};
-</code></pre></div>
-<p>&lt;!-- ### Modules</p>
-<div class="highlight"><pre><span></span><code>// math.doxa
-export fn add(a :: int, b :: int) -&gt; int {
-    return a + b;
-}
-
-// main.doxa
-import { add } from &quot;./math.doxa&quot;;
-var sum is add(1, 2);
-``` --&gt;
-
-## Data Types
-
-### Basic Types
-
-Standard types include:
-
-- `int`: Integer numbers
-- `float`: Floating point numbers
-- `string`: Text strings
-- `tetra`: Four-valued logic system
-
-The `tetra` type represents a four cornered value with the possible states: `true`, `false`, `both`, and `neither`. For additional information see the tetra page.
-
-````
-
-### Arrays
+union - can be handled with switch statements and type narrowing, see page on unions for more info</p>
+<div class="highlight"><pre><span></span><code>### Arrays
 
 Arrays are homogeneous collections with type inference:
 
 ```doxa
-var nums :: int[] is [1, 2, 3];    // Explicit typing
-var strs is [&quot;a&quot;, &quot;b&quot;];            // Inferred as string[]
+var nums :: int[] is [1, 2, 3]    // Explicit typing
+var strs is [&quot;a&quot;, &quot;b&quot;]            // Inferred as string[]
 
 // Invalid operations
-var mixed is [1, &quot;two&quot;, true];     // Error: mixed types
-nums.push(&quot;four&quot;);                // Error: type mismatch
-````
-
-### Tuples
-
-Fixed-size collections supporting heterogenus types:
-
-```doxa
-var point is (: 10, &quot;hello&quot;, true :);         // Simple tuple
-var nested is (: (: 1, &quot;hello&quot; :), (: 3, true :) :);    // Nested tuple
-
-point[0];                         // Access first element
-nested[1][0];                     // Access nested element
+var mixed is [1, &quot;two&quot;, true]     // Error: mixed types
+@push(nums, &quot;four&quot;)                // Error: type mismatch
 </code></pre></div>
 <h3 id="maps">Maps</h3>
 <p>String-keyed dictionaries:</p>
-<div class="highlight"><pre><span></span><code>var scores is {
-    &quot;alice&quot;: 100,
-    &quot;bob&quot;: 85
-};
-scores[&quot;alice&quot;];                  // Access value
+<div class="highlight"><pre><span></span><code>map scores {
+    &quot;alice&quot; is 100,
+    &quot;bob&quot; is 85
+}
+scores[&quot;alice&quot;]                  // Access value
 </code></pre></div>
 <h2 id="control-flow">Control Flow</h2>
 <h3 id="pattern-matching">Pattern Matching</h3>
@@ -924,66 +854,75 @@ var result is match status {
     .Success =&gt; &quot;all good&quot;,
     .Error =&gt; &quot;failed&quot;,
     else =&gt; &quot;waiting&quot;
-};
+}
 </code></pre></div>
-<div class="admonition warning">
-<p class="admonition-title">Warning</p>
-</div>
 <p>Match expressions must be exhaustive or include an <code>else</code> clause.</p>
 <h3 id="error-handling">Error Handling</h3>
-<div class="highlight"><pre><span></span><code>try {
-    riskyOperation();
-} catch {
-    handleError();
+<p>Errors are best handled with custom enum and type unions.</p>
+<div class="highlight"><pre><span></span><code>enum Error {
+    TOO_BIG,
+    TOO_SMALL,
+}
+
+const res is intOrError()
+res as int then {
+    intsOnly(res) // narrowed to int
+} else {
+    match res { // else blocks do not narrow
+        Error.TOO_BIG then {
+            @print(&quot;result was too big&quot;)
+        }
+        Error.TOO_SMALL then {
+            @print(&quot;result was too small&quot;)
+        }
+        else { // we know this will never be reached
+            @panic(&quot;unreachable&quot;)
+        }
+    }
 }
 </code></pre></div>
 <h2 id="special-operators">Special Operators</h2>
 <h3 id="peek-operator">Peek operator (<code>?</code>)</h3>
-<div class="highlight"><pre><span></span><code>var x is computeValue();
-x?;                              // Prints value with location, name, and type
+<p><div class="highlight"><pre><span></span><code>var x is computeValue()
+x?                              // Prints value with location, name, and type
 </code></pre></div>
-<h3 id="type-information">Type Information</h3>
-<div class="highlight"><pre><span></span><code>typeof(42);                      // &quot;int&quot;
-typeof(&quot;hello&quot;);                 // &quot;string&quot;
-typeof([1,2,3]);                 // &quot;array&quot;
+<div class="highlight"><pre><span></span><code>[./test.doxa:2:2] x :: int is 62
+</code></pre></div></p>
+<h3 id="range-to">Range (<code>to</code>)</h3>
+<p>Ranges are arrays which can be declared between two ints or bytes</p>
+<div class="highlight"><pre><span></span><code>const range is 10 to 15
+@print(&quot;{range}&quot;) // [10, 11, 12, 13, 14, 15]
 </code></pre></div>
 <h3 id="collection-quantifiers">Collection Quantifiers</h3>
+<p>As with all formal logic operations, both symbolic notation and keyword notations are supported.</p>
 <div class="highlight"><pre><span></span><code>(∃x ∈ numbers : x &gt; 10) // Logical notation
 (exists x in numbers where x &gt; 10) // English prose
 (∀x ∈ numbers : x &gt; 0) // Logical notation
 (forall x in numbers where x &gt; 0) // English prose
 </code></pre></div>
 <h2 id="conditional-expressions">Conditional Expressions</h2>
-<p>All conditionals are expressions and return values:</p>
+<p>All conditionals can be used as expressions to assign values:</p>
 <div class="highlight"><pre><span></span><code>var result is if condition then {
     value1
 } else {
     value2
-};
+}
 </code></pre></div>
-<div class="admonition note">
-<p class="admonition-title">Note</p>
-</div>
-<p>Expressions without a value return <code>nothing</code>:
-<code>doxa
-    var x is if (false) { y is 1 };  // x becomes nothing</code></p>
+<p>Be aware assigning an expression without a value will assign <code>nothing</code>:
+<div class="highlight"><pre><span></span><code>    var x is if (false) { y is 1 }  // x becomes nothing
+</code></pre></div></p>
 <h3 id="function-return-types">Function Return Types</h3>
-<p>Functions can specify return types using either <code>-&gt;</code> or <code>returns</code> syntax:</p>
-<div class="highlight"><pre><span></span><code>fn add(a: int, b: int) -&gt; int {
-    return a + b;
-}
-
-// Alternative syntax
-fn add(a: int, b: int) returns(int) {
-    return a + b;
+<p>Functions can specify return types using the <code>returns</code> syntax. Any type can be returned, including molecular types, but only one type at a time. This is one of the places where type unions can come in handy.</p>
+<div class="highlight"><pre><span></span><code>fn add(a: int, b: int) returns int {
+    return a + b
 }
 </code></pre></div>
-<p>return types are optional and inferred by default:</p>
-<div class="highlight"><pre><span></span><code>// Normal Mode - Valid
-fn add(a, b) {
-    return a + b;
+<p>Return types are optional and inferred by default:</p>
+<div class="highlight"><pre><span></span><code>fn add(a :: int, b :: int) {
+    return a + b // inferred as returning an int
 }
 </code></pre></div>
+<p>Explicit typing is encouraged as unions will be inferred if more than one type is returned.</p>
 <h2 id="logic">Logic</h2>
 <h3 id="first-order-logic">First order logic</h3>
 <p>First order logic always produces a true or false value. For more information on tetras see the tetra page.</p>
@@ -991,34 +930,34 @@ fn add(a, b) {
 <div class="highlight"><pre><span></span><code>const arr :: int[] = [1, 2, 3, 4, 5]
 
 // existential quantifier ∃, element of ∈
-∃x ∈ arr : x &gt; 3; // true
+∃x ∈ arr : x &gt; 3 // true
 
 // universal quantifier ∀, where :
-∀x ∈ arr : x &gt; 3; // false
+∀x ∈ arr : x &gt; 3 // false
 
 // NOT ¬
-¬false; // true
+¬false // true
 
 // biconditional ↔
-false ↔ false; // true
+false ↔ false // true
 
 // XOR ⊕
-true ⊕ true; // false
+true ⊕ true // false
 
 // AND ∧
-true ∧ false; // false
+true ∧ false // false
 
 // OR ∨
-true ∨ false; // true
+true ∨ false // true
 
 // NAND ↑
-true ↑ false; // true
+true ↑ false // true
 
 // NOR ↓
-true ↓ false; // false
+true ↓ false // false
 
 // implication →
-true → false; // false
+true → false // false
 </code></pre></div>
 <p>This unicode support is paired with plaintext keywords which act in an identical fashion:</p>
 <div class="highlight"><pre><span></span><code>∃ - exists
@@ -1037,11 +976,11 @@ true → false; // false
 <p>This means formal logical representation can be written in either way:</p>
 <div class="highlight"><pre><span></span><code>const arr :: int[] = [1, 2, 3, 4, 5]
 
-¬(∀x ∈ arr : x &gt; 3); // true
-not (forall x in arr where x &gt; 3); // true
+¬(∀x ∈ arr : x &gt; 3) // true
+not (forall x in arr where x &gt; 3) // true
 </code></pre></div>
-<h3 id="trancendental-logic">Trancendental logic</h3>
-<p>There are currently two trancendental operators, <code>and</code> and <code>not</code>. These can be represented by the following truth tables:</p>
+<h3 id="paradoxical-logic">Paradoxical logic</h3>
+<p>There are currently two paradoxical operators, <code>and</code> and <code>not</code>. These can be represented by the following truth tables:</p>
 <table>
 <thead>
 <tr>

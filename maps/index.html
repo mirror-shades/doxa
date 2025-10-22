@@ -16,7 +16,7 @@
     
     
       
-        <title>Alias - Doxa Docs</title>
+        <title>Maps - Doxa Docs</title>
       
     
     
@@ -67,6 +67,11 @@
     <label class="md-overlay" for="__drawer"></label>
     <div data-md-component="skip">
       
+        
+        <a href="#maps" class="md-skip">
+          Skip to content
+        </a>
+      
     </div>
     <div data-md-component="announce">
       
@@ -97,7 +102,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Alias
+              Maps
             
           </span>
         </div>
@@ -571,57 +576,49 @@
 
 
 
-  <h1>Alias</h1>
-
-<p>Alias Parameters (^)</p>
-<p>Overview
-Alias parameters allow a function to modify a caller’s variable directly, without general-purpose pointers or references. They are opt-in at both the function signature and call site, making mutations explicit and safe. Aliases are stack-bound, cannot escape their defining function, and cannot be taken from partial subfields or array elements.</p>
-<p>Syntax</p>
-<p>fn modify(^param :: int) {
-param += 1 // Directly mutates caller's variable
-}</p>
-<p>var x = 0
-modify(^x) // Caller opts-in to mutation
-// x == 1</p>
-<p>Core Rules</p>
-<div class="highlight"><pre><span></span><code>Parameter-only — ^T may only appear in function parameters, never in locals, returns, or stored types.
-
-Lvalue-only — Only full variables can be aliased no temporaries, expressions, struct fields, or array elements.
-
-Explicit call-site — Caller must pass ^var to grant mutation rights.
-
-No alias duplication — The same variable cannot be passed to more than one alias parameter in the same call.
-
-No alias + by-value mix — A variable cannot be passed aliased and by-value in the same call.
-
-No escaping — Aliases cannot be returned, stored, or captured by closures.
-
-No address-of — Taking &amp; of an alias parameter is forbidden.
-
-No async/threads — Aliases are banned in async functions and cannot be passed to concurrent tasks.
-
-Exclusive borrow — Aliases grant exclusive mutable access for the duration of the call no overlapping borrows allowed.
-
-FFI control — Passing aliases to foreign code requires explicit unsafe or noescape annotation.
-
-Evaluation order — Arguments evaluate left-to-right, but banned alias patterns remain errors.
+<h1 id="maps">Maps</h1>
+<h3 id="simple-mapping-immutable">Simple Mapping (Immutable)</h3>
+<p>Maps can store key-value pairs. By default, using const makes the map immutable.</p>
+<div class="highlight"><pre><span></span><code>const map Entries {
+    1 is &quot;wow&quot;,
+    2 is &quot;cool&quot;,
+}
 </code></pre></div>
-<p>Example: Safe Swap</p>
-<p>fn swap(^a :: int, ^b :: int) {
-let tmp is a
-a is b
-b is tmp
-}</p>
-<p>var x is 1, y is 2
-swap(^x, ^y)
-// x == 2, y == 1</p>
-<p>Example: Compile-time Error Cases</p>
-<p>swap(^x, ^x) // ❌ same variable passed twice
-modify(^(x + 1)) // ❌ temporaries not allowed
-f(^obj.field) // ❌ partial object aliasing not allowed
-g(^x, x) // ❌ aliased and by-value in same call</p>
-<p>Design Intent
-This model offers mutation semantics without full pointers, preserving deterministic lifetime and memory safety under stack-based allocation. By forcing explicit syntax and disallowing escaping or partial aliasing, it avoids common pitfalls of traditional references while retaining enough flexibility for in-place updates.</p>
+<h3 id="mutable-maps">Mutable Maps</h3>
+<p>Using var allows the map data to be updated.</p>
+<div class="highlight"><pre><span></span><code>var map Dict {
+    1 is &quot;first&quot;
+    2 is &quot;third&quot;
+}
+
+Dict[2] is &quot;second&quot;
+</code></pre></div>
+<h3 id="explicit-typing-optional">Explicit Typing (Optional)</h3>
+<p>If types cannot be inferred from the first entry or for empty maps, explicit key and/or value types are required. The syntax mirrors function declarations:</p>
+<div class="highlight"><pre><span></span><code>const map PlayerToData :: Player returns Data {
+    .Main is mainData
+}
+</code></pre></div>
+<h3 id="union-returns">Union Returns</h3>
+<p>Return types can be return unions for more flexibility on value storage.</p>
+<div class="highlight"><pre><span></span><code>var map CarSeats returns string | nothing {
+    1 is &quot;Bob&quot;,
+    2 is nothing,
+    3 is &quot;Sam&quot;
+    4 is nothing
+}
+</code></pre></div>
+<h3 id="accessing-maps">Accessing Maps</h3>
+<div class="highlight"><pre><span></span><code>var entry is MyMap[&quot;troll&quot;]
+var entry is MyMap[.Troll]
+
+// if mutable
+MyMap[&quot;troll&quot;].hp is 100
+</code></pre></div>
+<h3 id="notes-on-inference">Notes on Inference</h3>
+<p>Key type is inferred from the first entry if not explicitly declared.</p>
+<p>Value type is encouraged to be explicit (returns <ValueType>).</p>
+<p>Empty maps cannot be inferred and must have both key and value types declared.</p>
 
 
 

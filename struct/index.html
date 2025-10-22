@@ -16,7 +16,7 @@
     
     
       
-        <title>Alias - Doxa Docs</title>
+        <title>Struct - Doxa Docs</title>
       
     
     
@@ -67,6 +67,11 @@
     <label class="md-overlay" for="__drawer"></label>
     <div data-md-component="skip">
       
+        
+        <a href="#real-world-example" class="md-skip">
+          Skip to content
+        </a>
+      
     </div>
     <div data-md-component="announce">
       
@@ -97,7 +102,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Alias
+              Struct
             
           </span>
         </div>
@@ -571,57 +576,62 @@
 
 
 
-  <h1>Alias</h1>
+  <h1>Struct</h1>
 
-<p>Alias Parameters (^)</p>
-<p>Overview
-Alias parameters allow a function to modify a caller’s variable directly, without general-purpose pointers or references. They are opt-in at both the function signature and call site, making mutations explicit and safe. Aliases are stack-bound, cannot escape their defining function, and cannot be taken from partial subfields or array elements.</p>
-<p>Syntax</p>
-<p>fn modify(^param :: int) {
-param += 1 // Directly mutates caller's variable
-}</p>
-<p>var x = 0
-modify(^x) // Caller opts-in to mutation
-// x == 1</p>
-<p>Core Rules</p>
-<div class="highlight"><pre><span></span><code>Parameter-only — ^T may only appear in function parameters, never in locals, returns, or stored types.
+<p>Since Doxa has a tightly limited number of types, structs are useful for modeling more complex data. Structs are based off composition to avoid pitfalls inherent to inheretance. Variables, functions, and methods are all private unless marked pub.</p>
+<h3 id="real-world-example">Real world example</h3>
+<p>struct Point {<br />
+    x :: int, // unless marked pub, values are private
+    y :: int,</p>
+<div class="highlight"><pre><span></span><code>pub id :: int,
 
-Lvalue-only — Only full variables can be aliased no temporaries, expressions, struct fields, or array elements.
+pub function New(x :: int, y :: int) { // fucntions and methods are private unless marked pub as well
+    return Point {
+        x is x,
+        y is y,
+    }
+}
 
-Explicit call-site — Caller must pass ^var to grant mutation rights.
+function safeSub(a :: int, b :: int) returns int { // normal functions within structs are static
+    result is a - b
+    if result &gt; 255 or result &lt; 0 then return -1
+    return result
+}
 
-No alias duplication — The same variable cannot be passed to more than one alias parameter in the same call.
+pub method get() { // the `method` keyword lets you access 
+    return Point {
+        this.x,
+        this.y
+    }
+}
 
-No alias + by-value mix — A variable cannot be passed aliased and by-value in the same call.
-
-No escaping — Aliases cannot be returned, stored, or captured by closures.
-
-No address-of — Taking &amp; of an alias parameter is forbidden.
-
-No async/threads — Aliases are banned in async functions and cannot be passed to concurrent tasks.
-
-Exclusive borrow — Aliases grant exclusive mutable access for the duration of the call no overlapping borrows allowed.
-
-FFI control — Passing aliases to foreign code requires explicit unsafe or noescape annotation.
-
-Evaluation order — Arguments evaluate left-to-right, but banned alias patterns remain errors.
+pub method getDelta() returns int {
+    return Point.safeSub(this.x, this.y) // static methods can be called within instance methods
+}
 </code></pre></div>
-<p>Example: Safe Swap</p>
-<p>fn swap(^a :: int, ^b :: int) {
-let tmp is a
-a is b
-b is tmp
-}</p>
-<p>var x is 1, y is 2
-swap(^x, ^y)
-// x == 2, y == 1</p>
-<p>Example: Compile-time Error Cases</p>
-<p>swap(^x, ^x) // ❌ same variable passed twice
-modify(^(x + 1)) // ❌ temporaries not allowed
-f(^obj.field) // ❌ partial object aliasing not allowed
-g(^x, x) // ❌ aliased and by-value in same call</p>
-<p>Design Intent
-This model offers mutation semantics without full pointers, preserving deterministic lifetime and memory safety under stack-based allocation. By forcing explicit syntax and disallowing escaping or partial aliasing, it avoids common pitfalls of traditional references while retaining enough flexibility for in-place updates.</p>
+<p>}</p>
+<h3 id="basic-composition-example">Basic Composition Example</h3>
+<div class="highlight"><pre><span></span><code>struct Animal {
+    name: string
+}
+
+struct Dog {
+    // Composition instead of inheritance
+    animal: Animal,
+    breed: string,
+
+    fn bark(self) {
+        print(animal.name + &quot; says woof!&quot;)
+    }
+}
+
+var dog is Dog {
+    animal: Animal {
+        name: &quot;Spot&quot;
+        },
+    breed: &quot;Labrador&quot;
+}
+</code></pre></div>
 
 
 

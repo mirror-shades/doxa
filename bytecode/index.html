@@ -16,7 +16,7 @@
     
     
       
-        <title>Alias - Doxa Docs</title>
+        <title>Bytecode lowering (draft) - Doxa Docs</title>
       
     
     
@@ -67,6 +67,11 @@
     <label class="md-overlay" for="__drawer"></label>
     <div data-md-component="skip">
       
+        
+        <a href="#bytecode-lowering-draft" class="md-skip">
+          Skip to content
+        </a>
+      
     </div>
     <div data-md-component="announce">
       
@@ -97,7 +102,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Alias
+              Bytecode lowering (draft)
             
           </span>
         </div>
@@ -571,57 +576,33 @@
 
 
 
-  <h1>Alias</h1>
+<h1 id="bytecode-lowering-draft">Bytecode lowering (draft)</h1>
+<p>The bytecode layer sits between Soxa HIR and the runtime. Use
+<code>BytecodeGenerator</code> to translate a <code>HIRProgram</code> into a <code>BytecodeModule</code>
+that records canonical opcodes, preserved metadata, and function bounds.</p>
+<div class="highlight"><pre><span></span><code><span class="kr">const</span><span class="w"> </span><span class="n">bc</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">@import</span><span class="p">(</span><span class="s">&quot;../src/codegen/bytecode/generator.zig&quot;</span><span class="p">);</span>
+<span class="kr">const</span><span class="w"> </span><span class="n">writer</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">@import</span><span class="p">(</span><span class="s">&quot;../src/codegen/bytecode/writer.zig&quot;</span><span class="p">);</span>
 
-<p>Alias Parameters (^)</p>
-<p>Overview
-Alias parameters allow a function to modify a caller’s variable directly, without general-purpose pointers or references. They are opt-in at both the function signature and call site, making mutations explicit and safe. Aliases are stack-bound, cannot escape their defining function, and cannot be taken from partial subfields or array elements.</p>
-<p>Syntax</p>
-<p>fn modify(^param :: int) {
-param += 1 // Directly mutates caller's variable
-}</p>
-<p>var x = 0
-modify(^x) // Caller opts-in to mutation
-// x == 1</p>
-<p>Core Rules</p>
-<div class="highlight"><pre><span></span><code>Parameter-only — ^T may only appear in function parameters, never in locals, returns, or stored types.
+<span class="kr">var</span><span class="w"> </span><span class="n">generator</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">bc</span><span class="p">.</span><span class="n">BytecodeGenerator</span><span class="p">.</span><span class="n">init</span><span class="p">(</span><span class="n">allocator</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;out&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;test&quot;</span><span class="p">);</span>
+<span class="kr">var</span><span class="w"> </span><span class="n">module</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">try</span><span class="w"> </span><span class="n">generator</span><span class="p">.</span><span class="n">generate</span><span class="p">(</span><span class="n">hir_program</span><span class="p">);</span>
+<span class="k">defer</span><span class="w"> </span><span class="n">module</span><span class="p">.</span><span class="n">deinit</span><span class="p">();</span>
 
-Lvalue-only — Only full variables can be aliased no temporaries, expressions, struct fields, or array elements.
-
-Explicit call-site — Caller must pass ^var to grant mutation rights.
-
-No alias duplication — The same variable cannot be passed to more than one alias parameter in the same call.
-
-No alias + by-value mix — A variable cannot be passed aliased and by-value in the same call.
-
-No escaping — Aliases cannot be returned, stored, or captured by closures.
-
-No address-of — Taking &amp; of an alias parameter is forbidden.
-
-No async/threads — Aliases are banned in async functions and cannot be passed to concurrent tasks.
-
-Exclusive borrow — Aliases grant exclusive mutable access for the duration of the call no overlapping borrows allowed.
-
-FFI control — Passing aliases to foreign code requires explicit unsafe or noescape annotation.
-
-Evaluation order — Arguments evaluate left-to-right, but banned alias patterns remain errors.
+<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">module</span><span class="p">.</span><span class="n">artifact_path</span><span class="p">)</span><span class="w"> </span><span class="o">|</span><span class="n">path</span><span class="o">|</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">try</span><span class="w"> </span><span class="n">writer</span><span class="p">.</span><span class="n">writeBytecodeModuleToFile</span><span class="p">(</span><span class="o">&amp;</span><span class="n">module</span><span class="p">,</span><span class="w"> </span><span class="n">path</span><span class="p">);</span>
+<span class="p">}</span>
 </code></pre></div>
-<p>Example: Safe Swap</p>
-<p>fn swap(^a :: int, ^b :: int) {
-let tmp is a
-a is b
-b is tmp
-}</p>
-<p>var x is 1, y is 2
-swap(^x, ^y)
-// x == 2, y == 1</p>
-<p>Example: Compile-time Error Cases</p>
-<p>swap(^x, ^x) // ❌ same variable passed twice
-modify(^(x + 1)) // ❌ temporaries not allowed
-f(^obj.field) // ❌ partial object aliasing not allowed
-g(^x, x) // ❌ aliased and by-value in same call</p>
-<p>Design Intent
-This model offers mutation semantics without full pointers, preserving deterministic lifetime and memory safety under stack-based allocation. By forcing explicit syntax and disallowing escaping or partial aliasing, it avoids common pitfalls of traditional references while retaining enough flexibility for in-place updates.</p>
+<p>Key points:
+- The generator mirrors the current HIR instruction set while
+  normalising operands (variable slots, type tags, label ids).
+- Jump targets are resolved to stable label ids; actual instruction
+  offsets can be computed when the VM loads the module.
+- <code>BytecodeModule</code> borrows the HIR constant and string pools—keep the
+  HIR program alive while the bytecode module is in use.
+- Function metadata (<code>start_ip</code>, <code>body_ip</code>, aliases, parameter types)
+  is carried over so the VM can size frames without re-walking HIR.</p>
+<p>This implementation intentionally returns <code>UnsupportedHIRInstruction</code>
+for opcodes that are not yet lowered. Add handling in
+<code>Context.lowerInstruction</code> as new VM features land.</p>
 
 
 

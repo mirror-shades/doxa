@@ -12,8 +12,6 @@
         <link rel="prev" href="../loops/">
       
       
-        <link rel="next" href="../soxa/">
-      
       
       <link rel="icon" href="../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.14">
@@ -342,7 +340,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="../soxa/" class="md-tabs__link">
+      <a href="../soxa.md" class="md-tabs__link">
         
   
   
@@ -579,18 +577,27 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#categories" class="md-nav__link">
+  <a href="#methods-that-should-panic-or-halt-on-failure" class="md-nav__link">
     <span class="md-ellipsis">
-      Categories
+      Methods That Should Panic or Halt on Failure
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#method-documentation-format" class="md-nav__link">
+  <a href="#methods-that-should-return-error-unions" class="md-nav__link">
     <span class="md-ellipsis">
-      Method Documentation Format
+      Methods That Should Return Error Unions
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#no-failure" class="md-nav__link">
+    <span class="md-ellipsis">
+      No Failure
     </span>
   </a>
   
@@ -609,7 +616,7 @@
           <li class="md-nav__item">
   <a href="#length" class="md-nav__link">
     <span class="md-ellipsis">
-      length
+      @length
     </span>
   </a>
   
@@ -618,7 +625,7 @@
           <li class="md-nav__item">
   <a href="#push" class="md-nav__link">
     <span class="md-ellipsis">
-      push
+      @push
     </span>
   </a>
   
@@ -627,7 +634,7 @@
           <li class="md-nav__item">
   <a href="#pop" class="md-nav__link">
     <span class="md-ellipsis">
-      pop
+      @pop
     </span>
   </a>
   
@@ -636,7 +643,7 @@
           <li class="md-nav__item">
   <a href="#insert" class="md-nav__link">
     <span class="md-ellipsis">
-      insert
+      @insert
     </span>
   </a>
   
@@ -645,7 +652,7 @@
           <li class="md-nav__item">
   <a href="#remove" class="md-nav__link">
     <span class="md-ellipsis">
-      remove
+      @remove
     </span>
   </a>
   
@@ -654,67 +661,16 @@
           <li class="md-nav__item">
   <a href="#clear" class="md-nav__link">
     <span class="md-ellipsis">
-      clear
+      @clear
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#index" class="md-nav__link">
+  <a href="#find" class="md-nav__link">
     <span class="md-ellipsis">
-      index
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#clone" class="md-nav__link">
-    <span class="md-ellipsis">
-      clone
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#copy" class="md-nav__link">
-    <span class="md-ellipsis">
-      copy
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#string-methods" class="md-nav__link">
-    <span class="md-ellipsis">
-      String Methods
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="String Methods">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#split" class="md-nav__link">
-    <span class="md-ellipsis">
-      split
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#join" class="md-nav__link">
-    <span class="md-ellipsis">
-      join
+      @find
     </span>
   </a>
   
@@ -723,112 +679,16 @@
           <li class="md-nav__item">
   <a href="#slice" class="md-nav__link">
     <span class="md-ellipsis">
-      slice
+      @slice
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#bytes" class="md-nav__link">
+  <a href="#copy" class="md-nav__link">
     <span class="md-ellipsis">
-      bytes
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#trim" class="md-nav__link">
-    <span class="md-ellipsis">
-      trim
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#lower" class="md-nav__link">
-    <span class="md-ellipsis">
-      lower
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#upper" class="md-nav__link">
-    <span class="md-ellipsis">
-      upper
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#math-methods" class="md-nav__link">
-    <span class="md-ellipsis">
-      Math Methods
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Math Methods">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#abs" class="md-nav__link">
-    <span class="md-ellipsis">
-      abs
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#min" class="md-nav__link">
-    <span class="md-ellipsis">
-      min
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#max" class="md-nav__link">
-    <span class="md-ellipsis">
-      max
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#round" class="md-nav__link">
-    <span class="md-ellipsis">
-      round
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#floor" class="md-nav__link">
-    <span class="md-ellipsis">
-      floor
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#ceil" class="md-nav__link">
-    <span class="md-ellipsis">
-      ceil
+      @copy
     </span>
   </a>
   
@@ -852,7 +712,7 @@
           <li class="md-nav__item">
   <a href="#string" class="md-nav__link">
     <span class="md-ellipsis">
-      string
+      @string
     </span>
   </a>
   
@@ -861,7 +721,7 @@
           <li class="md-nav__item">
   <a href="#int" class="md-nav__link">
     <span class="md-ellipsis">
-      int
+      @int
     </span>
   </a>
   
@@ -870,7 +730,16 @@
           <li class="md-nav__item">
   <a href="#float" class="md-nav__link">
     <span class="md-ellipsis">
-      float
+      @float
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#byte" class="md-nav__link">
+    <span class="md-ellipsis">
+      @byte
     </span>
   </a>
   
@@ -879,7 +748,25 @@
           <li class="md-nav__item">
   <a href="#type" class="md-nav__link">
     <span class="md-ellipsis">
-      type
+      @type
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#time" class="md-nav__link">
+    <span class="md-ellipsis">
+      @time
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#random" class="md-nav__link">
+    <span class="md-ellipsis">
+      @random
     </span>
   </a>
   
@@ -891,166 +778,46 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#io-methods" class="md-nav__link">
+  <a href="#process-methods" class="md-nav__link">
     <span class="md-ellipsis">
-      I/O Methods
+      Process Methods
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="I/O Methods">
+    <nav class="md-nav" aria-label="Process Methods">
       <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#input" class="md-nav__link">
-    <span class="md-ellipsis">
-      input
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#read" class="md-nav__link">
-    <span class="md-ellipsis">
-      read
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#write" class="md-nav__link">
-    <span class="md-ellipsis">
-      write
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#binary-io-and-encoding" class="md-nav__link">
-    <span class="md-ellipsis">
-      Binary I/O and Encoding
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#exec" class="md-nav__link">
-    <span class="md-ellipsis">
-      exec
-    </span>
-  </a>
-  
-</li>
         
           <li class="md-nav__item">
   <a href="#spawn" class="md-nav__link">
     <span class="md-ellipsis">
-      spawn
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#control-flow-methods" class="md-nav__link">
-    <span class="md-ellipsis">
-      Control Flow Methods
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Control Flow Methods">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#assert" class="md-nav__link">
-    <span class="md-ellipsis">
-      assert
+      @spawn
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#panic" class="md-nav__link">
+  <a href="#kill" class="md-nav__link">
     <span class="md-ellipsis">
-      panic
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#method-naming-conventions" class="md-nav__link">
-    <span class="md-ellipsis">
-      Method Naming Conventions
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#error-handling" class="md-nav__link">
-    <span class="md-ellipsis">
-      Error Handling
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Error Handling">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#core-error-types" class="md-nav__link">
-    <span class="md-ellipsis">
-      Core Error Types
+      @kill
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#method-error-types" class="md-nav__link">
+  <a href="#wait" class="md-nav__link">
     <span class="md-ellipsis">
-      Method Error Types
+      @wait
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#error-handling-examples" class="md-nav__link">
+  <a href="#alive" class="md-nav__link">
     <span class="md-ellipsis">
-      Error Handling Examples
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#benefits" class="md-nav__link">
-    <span class="md-ellipsis">
-      Benefits
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#error-categories" class="md-nav__link">
-    <span class="md-ellipsis">
-      Error Categories
+      @alive
     </span>
   </a>
   
@@ -1076,7 +843,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../soxa/" class="md-nav__link">
+      <a href="../soxa.md" class="md-nav__link">
         
   
   
@@ -1108,1068 +875,317 @@
 
 
 <h1 id="built-in-methods">Built-in Methods</h1>
-<p>Doxa provides built-in methods prefixed with <code>@</code> for core operations. These methods are fundamental to the language and don't require imports.</p>
-<h2 id="categories">Categories</h2>
-<ul>
-<li>Array Methods</li>
-<li>String Methods</li>
-<li>Math Methods</li>
-<li>Type Methods</li>
-<li>I/O Methods</li>
-<li>Control Flow Methods</li>
-</ul>
-<h2 id="method-documentation-format">Method Documentation Format</h2>
-<p>Each method is documented with:</p>
-<ul>
-<li>Input: Parameters and their types</li>
-<li>Output: Return value and type</li>
-<li>Modifies: Any side effects</li>
-<li>Errors: Possible error conditions</li>
-<li>Example: Usage example</li>
-</ul>
+<p>Doxa provides built-in methods prefixed with <code>@</code> for core operations.</p>
+<h3 id="methods-that-should-panic-or-halt-on-failure">Methods That Should Panic or Halt on Failure</h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Return</th>
+<th>Panics On</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>PUSH</td>
+<td>nothing</td>
+<td>Array/string corruption if fails</td>
+</tr>
+<tr>
+<td>POP</td>
+<td>any</td>
+<td>Underflow if empty</td>
+</tr>
+<tr>
+<td>INSERT</td>
+<td>nothing</td>
+<td>Array/string corruption if fails</td>
+</tr>
+<tr>
+<td>REMOVE</td>
+<td>any</td>
+<td>Out of bounds index</td>
+</tr>
+<tr>
+<td>ASSERT</td>
+<td>nothing</td>
+<td>False condition</td>
+</tr>
+<tr>
+<td>PANIC</td>
+<td>never</td>
+<td>Always halts</td>
+</tr>
+<tr>
+<td>EXIT</td>
+<td>never</td>
+<td>Always terminates</td>
+</tr>
+</tbody>
+</table>
+<h3 id="methods-that-should-return-error-unions">Methods That Should Return Error Unions</h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Return</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>READ</td>
+<td>string | IOError - file contents or error</td>
+</tr>
+<tr>
+<td>WRITE</td>
+<td>nothing | IOError - writes to file or error</td>
+</tr>
+<tr>
+<td>INPUT</td>
+<td>string | IOError - line from stdin or EOF error</td>
+</tr>
+<tr>
+<td>TOINT</td>
+<td>int | ParseError - parsed integer or parse error</td>
+</tr>
+<tr>
+<td>TOFLOAT</td>
+<td>float | ParseError - parsed float or parse error</td>
+</tr>
+<tr>
+<td>TOBYTE</td>
+<td>byte | ParseError - byte representation or conversion error</td>
+</tr>
+<tr>
+<td>SLICE</td>
+<td>array | IndexError or string | IndexError - based on input type</td>
+</tr>
+<tr>
+<td>SLEEP</td>
+<td>nothing | SysError - sleeps or interruption error</td>
+</tr>
+<tr>
+<td>PRINT</td>
+<td>nothing | IOError - prints to stdout or I/O error</td>
+</tr>
+<tr>
+<td>SPAWN</td>
+<td>int | SysError - PID of spawned process or error</td>
+</tr>
+<tr>
+<td>KILL</td>
+<td>nothing | SysError - kills process or error</td>
+</tr>
+<tr>
+<td>WAIT</td>
+<td>int | Nothing | SysError - exit code or error</td>
+</tr>
+</tbody>
+</table>
+<h3 id="no-failure">No Failure</h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Return</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>TOSTRING</td>
+<td>string</td>
+</tr>
+<tr>
+<td>TYPE</td>
+<td>int</td>
+</tr>
+<tr>
+<td>LENGTH</td>
+<td>int</td>
+</tr>
+<tr>
+<td>OS</td>
+<td>string</td>
+</tr>
+<tr>
+<td>ARCH</td>
+<td>string</td>
+</tr>
+<tr>
+<td>ABI</td>
+<td>string</td>
+</tr>
+<tr>
+<td>TIME</td>
+<td>int</td>
+</tr>
+<tr>
+<td>RANDOM</td>
+<td>float</td>
+</tr>
+<tr>
+<td>ALIVE</td>
+<td>tetra</td>
+</tr>
+</tbody>
+</table>
 <h2 id="array-methods">Array Methods</h2>
-<h3 id="length"><em>length</em></h3>
-<p>Input:</p>
+<h3 id="length">@length</h3>
 <ul>
-<li>x :: string | array // Type checked at compile time</li>
+<li><strong>Input</strong>: <code>string | array</code></li>
+<li><strong>Output</strong>: <code>int</code> - length of input</li>
+<li><strong>Example</strong>: <code>@length("hello")</code> → <code>5</code></li>
 </ul>
-<p>Output:</p>
+<h3 id="push">@push</h3>
 <ul>
-<li>Integer length of the input</li>
+<li><strong>Input</strong>: <code>array | string</code>, <code>value</code></li>
+<li><strong>Output</strong>: <code>nothing</code> - modifies array/string in place by adding value to end</li>
+<li><strong>Example</strong>: <code>@push(arr, 3)</code> // adds 3 to arr, returns nothing</li>
 </ul>
-<p>Modifies:</p>
+<h3 id="pop">@pop</h3>
 <ul>
-<li>No modifications</li>
+<li><strong>Input</strong>: <code>array | string</code></li>
+<li><strong>Output</strong>: <code>any</code> - removes and returns last element</li>
+<li><strong>Example</strong>: <code>var last = @pop(arr)</code></li>
 </ul>
-<p>Example:</p>
+<h3 id="insert">@insert</h3>
 <ul>
-<li>var x = "hello"; @length(x) -&gt; 5</li>
+<li><strong>Input</strong>: <code>array | string</code>, <code>index</code>, <code>value</code></li>
+<li><strong>Output</strong>: <code>nothing</code> - inserts value at index</li>
+<li><strong>Example</strong>: <code>@insert(arr, 1, 5)</code> // inserts 5 at index 1</li>
 </ul>
-<hr />
-<h3 id="push"><em>push</em></h3>
-<p>Input:</p>
+<h3 id="remove">@remove</h3>
 <ul>
-<li>source :: array // Type checked at compile time</li>
-<li>value :: any // Type checked at compile time</li>
+<li><strong>Input</strong>: <code>array | string</code>, <code>index</code></li>
+<li><strong>Output</strong>: <code>any</code> - removes and returns element at index</li>
+<li><strong>Example</strong>: <code>var removed = @remove(arr, 1)</code></li>
 </ul>
-<p>Output:</p>
+<h3 id="clear">@clear</h3>
 <ul>
-<li>nothing</li>
+<li><strong>Input</strong>: <code>array | string</code></li>
+<li><strong>Output</strong>: <code>nothing</code> - removes all elements</li>
+<li><strong>Example</strong>: <code>@clear(arr)</code> // arr becomes []</li>
 </ul>
-<p>Modifies:</p>
+<h3 id="find">@find</h3>
 <ul>
-<li>Adds value to end of source array</li>
+<li><strong>Input</strong>: <code>array | string</code>, <code>value</code></li>
+<li><strong>Output</strong>: <code>int</code> - index of first occurrence, -1 if not found</li>
+<li><strong>Example</strong>: <code>@find([1,2,3], 2)</code> → <code>1</code></li>
 </ul>
-<p>Runtime Errors:</p>
+<h3 id="slice">@slice</h3>
 <ul>
-<li>CapacityExceeded: if array would exceed maximum size</li>
-<li>OutOfMemory: if system cannot allocate memory</li>
+<li><strong>Input</strong>: <code>string | array</code>, <code>int</code> (start), <code>int</code> (length)</li>
+<li><strong>Output</strong>: <code>string OR array | ValueError</code> - substring/subarray</li>
+<li><strong>Example</strong>: <code>@slice("hello", 1, 3)</code> → <code>"ell"</code></li>
 </ul>
-<p>Example:</p>
-<div class="highlight"><pre><span></span><code>var arr = [1, 2];
-@push(arr, 3) else {
-    @panic(&quot;Failed to add element&quot;);
-};
-// arr is now [1, 2, 3]
-</code></pre></div>
-<hr />
-<h3 id="pop"><em>pop</em></h3>
-<p>Input:</p>
+<h3 id="copy">@copy</h3>
 <ul>
-<li>source: array to modify</li>
-</ul>
-<p>Output:</p>
-<ul>
-<li>Last element from array</li>
-</ul>
-<p>Modifies:</p>
-<ul>
-<li>Removes last element from source array</li>
-<li>Original array is modified in place</li>
-<li>Array length decreases by 1</li>
-</ul>
-<p>Errors:</p>
-<ul>
-<li>EmptyArray: if array has no elements</li>
-</ul>
-<p>Notes:</p>
-<ul>
-<li>Modifies the original array</li>
-<li>Cannot be undone (use @copy first if needed)</li>
-<li>Returns the removed element</li>
-</ul>
-<p>Example:</p>
-<div class="highlight"><pre><span></span><code>var arr = [1, 2, 3];
-var last = @pop(arr);     // last is 3
-@length(arr) == 2;        // array now has 2 elements
-arr == [1, 2];           // original array is modified
-
-// Save array before popping
-var backup = @copy(arr);
-var item = @pop(arr);    // only modifies arr, not backup
-</code></pre></div>
-<hr />
-<h3 id="insert"><em>insert</em></h3>
-<p>Input:</p>
-<ul>
-<li>source: array to modify</li>
-<li>index: position to insert at</li>
-<li>value: element to insert</li>
-</ul>
-<p>Output:</p>
-<ul>
-<li>nothing</li>
-</ul>
-<p>Modifies:</p>
-<ul>
-<li>Inserts value at index, shifts existing elements right</li>
-</ul>
-<p>Errors:</p>
-<ul>
-<li>IndexOutOfBounds: if index &lt; 0 or index &gt; array length</li>
-<li>OutOfMemory: if array cannot be expanded</li>
-</ul>
-<p>Example:</p>
-<ul>
-<li>var arr = [1, 2]; @insert(arr, 1, 5); // arr is now [1, 5, 2]</li>
-</ul>
-<hr />
-<h3 id="remove"><em>remove</em></h3>
-<p>Input:</p>
-<ul>
-<li>source: array to modify</li>
-<li>index: position to remove from</li>
-</ul>
-<p>Output:</p>
-<ul>
-<li>Removed element</li>
-</ul>
-<p>Modifies:</p>
-<ul>
-<li>Removes element at index, shifts remaining elements left</li>
-</ul>
-<p>Errors:</p>
-<ul>
-<li>IndexOutOfBounds: if index &lt; 0 or index &gt;= array length</li>
-</ul>
-<p>Example:</p>
-<ul>
-<li>var arr = [1, 2, 3]; var removed = @remove(arr, 1); // removed is 2, arr is [1, 3]</li>
-</ul>
-<hr />
-<h3 id="clear"><em>clear</em></h3>
-<p>Input:</p>
-<ul>
-<li>source: array to clear</li>
-</ul>
-<p>Output:</p>
-<ul>
-<li>nothing</li>
-</ul>
-<p>Modifies:</p>
-<ul>
-<li>Removes all elements from array</li>
-</ul>
-<p>Runtime Errors:</p>
-<ul>
-<li>None</li>
-</ul>
-<p>Example:</p>
-<ul>
-<li>var arr = [1, 2, 3]; @clear(arr); // arr is now []</li>
-</ul>
-<hr />
-<h3 id="index"><em>index</em></h3>
-<p>Input:</p>
-<ul>
-<li>source: array or string to search</li>
-<li>value: element to find</li>
-</ul>
-<p>Output:</p>
-<ul>
-<li>Index of first occurrence, or -1 if not found</li>
-</ul>
-<p>Modifies:</p>
-<ul>
-<li>No modifications</li>
-</ul>
-<p>Runtime Errors:</p>
-<ul>
-<li>None or string</li>
-</ul>
-<p>Example:</p>
-<ul>
-<li>var arr = [1, 2, 3]; var idx = @index(arr, 2); // idx is 1</li>
-</ul>
-<hr />
-<h3 id="clone"><em>clone</em></h3>
-<p>Input:</p>
-<ul>
-<li>value :: array | string | map</li>
-</ul>
-<p>Output:</p>
-<ul>
-<li>Deep copy of the input value (recursively copies all nested structures)</li>
-</ul>
-<p>Modifies:</p>
-<ul>
-<li>No modifications</li>
-</ul>
-<p>Runtime Errors:</p>
-<ul>
-<li>None</li>
-</ul>
-<p>Notes:</p>
-<ul>
-<li>Creates completely independent copy</li>
-<li>Recursively copies all nested arrays and maps</li>
-<li>Nested values have no connection to original</li>
-<li>Safe for circular references</li>
-</ul>
-<p>Example:</p>
-<div class="highlight"><pre><span></span><code>var nested = [1, [2, 3], {&quot;x&quot;: [4, 5]}];
-var deep = @clone(nested);
-deep[1][0] = 9;        // modifies copy only
-nested[1][0] == 2;     // original unchanged
-</code></pre></div>
-<hr />
-<h3 id="copy"><em>copy</em></h3>
-<p>Input:</p>
-<ul>
-<li>value :: array | string | map</li>
-</ul>
-<p>Output:</p>
-<ul>
-<li>Shallow copy of the input value (copies only top-level structure)</li>
-</ul>
-<p>Modifies:</p>
-<ul>
-<li>No modifications</li>
-</ul>
-<p>Runtime Errors:</p>
-<ul>
-<li>None</li>
-</ul>
-<p>Notes:</p>
-<ul>
-<li>Creates new top-level container only</li>
-<li>Nested structures are shared with original</li>
-<li>Modifying nested values affects both copies</li>
-<li>Faster than deep copy for simple structures</li>
-</ul>
-<p>Example:</p>
-<div class="highlight"><pre><span></span><code>var nested = [1, [2, 3]];
-var shallow = @copy(nested);
-shallow[0] = 9;        // modifies copy only
-shallow[1][0] = 9;     // modifies both copies!
-nested[1][0] == 9;     // shared nested array
-</code></pre></div>
-<h2 id="string-methods">String Methods</h2>
-<h3 id="split"><em>split</em></h3>
-<p>Input:</p>
-<ul>
-<li>source :: string</li>
-<li>delimiter :: string</li>
-</ul>
-<p>Output:</p>
-<ul>
-<li>Array of strings split by delimiter</li>
-</ul>
-<p>Modifies:</p>
-<ul>
-<li>No modifications</li>
-</ul>
-<p>Runtime Errors:</p>
-<ul>
-<li>None</li>
-</ul>
-<p>Example:</p>
-<ul>
-<li>var str = "a,b,c"; var parts = @split(str, ","); // parts is ["a", "b", "c"]</li>
-</ul>
-<hr />
-<h3 id="join"><em>join</em></h3>
-<p>Input:</p>
-<ul>
-<li>source :: array</li>
-<li>delimiter :: string</li>
-</ul>
-<p>Output:</p>
-<ul>
-<li>String with array elements joined by delimiter</li>
-</ul>
-<p>Modifies:</p>
-<ul>
-<li>No modifications</li>
-</ul>
-<p>Runtime Errors:</p>
-<ul>
-<li>None or delimiter is not a string</li>
-</ul>
-<p>Example:</p>
-<ul>
-<li>var arr = ["a", "b", "c"]; var str = @join(arr, ","); // str is "a,b,c"</li>
-</ul>
-<hr />
-<h3 id="slice"><em>slice</em></h3>
-<p>Input:</p>
-<ul>
-<li>source: array or string to slice</li>
-<li>start: starting index (inclusive)</li>
-<li>end: ending index (exclusive)</li>
-</ul>
-<p>Output:</p>
-<ul>
-<li>New array or string containing elements from start to end</li>
-</ul>
-<p>Modifies:</p>
-<ul>
-<li>No modifications</li>
-</ul>
-<p>Runtime Errors:</p>
-<ul>
-<li>None or string</li>
-<li>IndexOutOfBounds: if start &lt; 0 or end &gt; length</li>
-<li>InvalidArgument: if start &gt; end</li>
-</ul>
-<p>Example:</p>
-<ul>
-<li>var arr = [1, 2, 3, 4]; var sliced = @slice(arr, 1, 3); // sliced is [2, 3]</li>
-</ul>
-<hr />
-<h3 id="bytes"><em>bytes</em></h3>
-<p>Input:</p>
-<ul>
-<li>value: string to convert</li>
-</ul>
-<p>Output:</p>
-<ul>
-<li>Array of byte values</li>
-</ul>
-<p>Modifies:</p>
-<ul>
-<li>No modifications</li>
-</ul>
-<p>Runtime Errors:</p>
-<ul>
-<li>None</li>
-</ul>
-<p>Example:</p>
-<ul>
-<li>var str = "ABC"; var bytes = @bytes(str); // bytes is [65, 66, 67]</li>
-</ul>
-<hr />
-<h3 id="trim"><em>trim</em></h3>
-<p>Input:</p>
-<ul>
-<li>value :: string</li>
-</ul>
-<p>Output:</p>
-<ul>
-<li>String with leading and trailing whitespace removed</li>
-</ul>
-<p>Modifies:</p>
-<ul>
-<li>No modifications</li>
-</ul>
-<p>Runtime Errors:</p>
-<ul>
-<li>None</li>
-</ul>
-<p>Example:</p>
-<ul>
-<li>var str = " hello "; var trimmed = @trim(str); // trimmed is "hello"</li>
-</ul>
-<hr />
-<h3 id="lower"><em>lower</em></h3>
-<p>Input:</p>
-<ul>
-<li>value :: string</li>
-</ul>
-<p>Output:</p>
-<ul>
-<li>String converted to lowercase</li>
-</ul>
-<p>Modifies:</p>
-<ul>
-<li>No modifications</li>
-</ul>
-<p>Runtime Errors:</p>
-<ul>
-<li>None</li>
-</ul>
-<p>Example:</p>
-<ul>
-<li>var str = "Hello"; var lower = @lower(str); // lower is "hello"</li>
-</ul>
-<hr />
-<h3 id="upper"><em>upper</em></h3>
-<p>Input:</p>
-<ul>
-<li>value :: string</li>
-</ul>
-<p>Output:</p>
-<ul>
-<li>String converted to uppercase</li>
-</ul>
-<p>Modifies:</p>
-<ul>
-<li>No modifications</li>
-</ul>
-<p>Runtime Errors:</p>
-<ul>
-<li>None</li>
-</ul>
-<p>Example:</p>
-<ul>
-<li>var str = "Hello"; var upper = @upper(str); // upper is "HELLO"</li>
-</ul>
-<h2 id="math-methods">Math Methods</h2>
-<h3 id="abs"><em>abs</em></h3>
-<p>Input:</p>
-<ul>
-<li>value :: int | float</li>
-</ul>
-<p>Output:</p>
-<ul>
-<li>Absolute value of the input</li>
-</ul>
-<p>Modifies:</p>
-<ul>
-<li>No modifications</li>
-</ul>
-<p>Runtime Errors:</p>
-<ul>
-<li>None</li>
-</ul>
-<p>Example:</p>
-<ul>
-<li>var x = -5; var abs = @abs(x); // abs is 5</li>
-</ul>
-<hr />
-<h3 id="min"><em>min</em></h3>
-<p>Input:</p>
-<ul>
-<li>a :: int | float</li>
-<li>b :: int | float</li>
-</ul>
-<p>Output:</p>
-<ul>
-<li>Smaller of the two values</li>
-</ul>
-<p>Modifies:</p>
-<ul>
-<li>No modifications</li>
-</ul>
-<p>Runtime Errors:</p>
-<ul>
-<li>None</li>
-</ul>
-<p>Example:</p>
-<ul>
-<li>var min = @min(5, 3); // min is 3</li>
-</ul>
-<hr />
-<h3 id="max"><em>max</em></h3>
-<p>Input:</p>
-<ul>
-<li>a :: int | float</li>
-<li>b :: int | float</li>
-</ul>
-<p>Output:</p>
-<ul>
-<li>Larger of the two values</li>
-</ul>
-<p>Modifies:</p>
-<ul>
-<li>No modifications</li>
-</ul>
-<p>Runtime Errors:</p>
-<ul>
-<li>None</li>
-</ul>
-<p>Example:</p>
-<ul>
-<li>var max = @max(5, 3); // max is 5</li>
-</ul>
-<hr />
-<h3 id="round"><em>round</em></h3>
-<p>Input:</p>
-<ul>
-<li>value :: float</li>
-</ul>
-<p>Output:</p>
-<ul>
-<li>Rounded integer value</li>
-</ul>
-<p>Modifies:</p>
-<ul>
-<li>No modifications</li>
-</ul>
-<p>Runtime Errors:</p>
-<ul>
-<li>None</li>
-</ul>
-<p>Example:</p>
-<ul>
-<li>var x = 3.7; var rounded = @round(x); // rounded is 4</li>
-</ul>
-<hr />
-<h3 id="floor"><em>floor</em></h3>
-<p>Input:</p>
-<ul>
-<li>value :: float</li>
-</ul>
-<p>Output:</p>
-<ul>
-<li>Largest integer less than or equal to value</li>
-</ul>
-<p>Modifies:</p>
-<ul>
-<li>No modifications</li>
-</ul>
-<p>Runtime Errors:</p>
-<ul>
-<li>None</li>
-</ul>
-<p>Example:</p>
-<ul>
-<li>var x = 3.7; var floor = @floor(x); // floor is 3</li>
-</ul>
-<hr />
-<h3 id="ceil"><em>ceil</em></h3>
-<p>Input:</p>
-<ul>
-<li>value :: float</li>
-</ul>
-<p>Output:</p>
-<ul>
-<li>Smallest integer greater than or equal to value</li>
-</ul>
-<p>Modifies:</p>
-<ul>
-<li>No modifications</li>
-</ul>
-<p>Runtime Errors:</p>
-<ul>
-<li>None</li>
-</ul>
-<p>Example:</p>
-<ul>
-<li>var x = 3.2; var ceil = @ceil(x); // ceil is 4</li>
+<li><strong>Input</strong>: <code>array | string | map</code></li>
+<li><strong>Output</strong>: <code>same type</code> - shallow copy</li>
+<li><strong>Example</strong>: <code>var copy = @copy(original)</code></li>
 </ul>
 <h2 id="type-methods">Type Methods</h2>
-<h3 id="string"><em>string</em></h3>
-<p>Input:</p>
+<h3 id="string">@string</h3>
 <ul>
-<li>value: any value to convert</li>
+<li><strong>Input</strong>: <code>any</code></li>
+<li><strong>Output</strong>: <code>string</code> - string representation</li>
+<li><strong>Example</strong>: <code>@string(123)</code> → <code>"123"</code></li>
 </ul>
-<p>Output:</p>
+<h3 id="int">@int</h3>
 <ul>
-<li>String representation of value</li>
+<li><strong>Input</strong>: <code>float | byte | string</code></li>
+<li><strong>Output</strong>: <code>int | ValueError</code> - parsed integer</li>
+<li><strong>Example</strong>: <code>@int("123")</code> → <code>123</code></li>
 </ul>
-<p>Modifies:</p>
+<h3 id="float">@float</h3>
 <ul>
-<li>No modifications</li>
+<li><strong>Input</strong>: <code>int | byte | string</code></li>
+<li><strong>Output</strong>: <code>float | ValueError</code> - parsed float</li>
+<li><strong>Example</strong>: <code>@float("123.45")</code> → <code>123.45</code></li>
 </ul>
-<p>Errors:</p>
+<h3 id="byte">@byte</h3>
 <ul>
-<li>None (all values can be converted to string)</li>
+<li><strong>Input</strong>: <code>int | float | string</code></li>
+<li><strong>Output</strong>: <code>byte | ValueError</code> - byte representation</li>
+<li><strong>Example</strong>: <code>@byte(10)</code> → <code>0x0A</code></li>
 </ul>
-<p>Example:</p>
+<h3 id="type">@type</h3>
 <ul>
-<li>var num = 123; var str = @string(num); // str is "123"</li>
+<li><strong>Input</strong>: <code>any</code></li>
+<li><strong>Output</strong>: <code>string</code> - type name</li>
+<li><strong>Example</strong>: <code>@type([1,2])</code> → <code>"array"</code></li>
 </ul>
-<hr />
-<h3 id="int"><em>int</em></h3>
-<p>Input:</p>
+<h3 id="time">@time</h3>
 <ul>
-<li>value :: string // Type checked at compile time</li>
+<li><strong>Input</strong>: <code>none</code></li>
+<li><strong>Output</strong>: <code>int</code> - current timestamp, -1 sentinel on rare runtime error</li>
+<li><strong>Example</strong>: <code>var now = @time()</code></li>
 </ul>
-<p>Output:</p>
+<h3 id="random">@random</h3>
 <ul>
-<li>Integer value | NumberParseError</li>
+<li><strong>Input</strong>: <code>none</code></li>
+<li><strong>Output</strong>: <code>int</code> - random number, compile-time error if not supported</li>
+<li><strong>Example</strong>: <code>var num = @random()</code></li>
 </ul>
-<p>Modifies:</p>
+<h2 id="process-methods">Process Methods</h2>
+<h3 id="spawn">@spawn</h3>
 <ul>
-<li>No modifications</li>
+<li><strong>Input</strong>: <code>string[]</code> (command and arguments)</li>
+<li><strong>Output</strong>: <code>int | SysError</code> - PID of spawned process, or error</li>
+<li><strong>Example</strong>: <code>var pid = @spawn(["my_program", "arg1"])</code></li>
 </ul>
-<p>Runtime Errors:</p>
+<h3 id="kill">@kill</h3>
 <ul>
-<li>ParseFailed: if string is not a valid number format</li>
-<li>Overflow: if number is too large for int type</li>
-<li>Underflow: if number is too small for int type</li>
+<li><strong>Input</strong>: <code>int</code> (PID)</li>
+<li><strong>Output</strong>: <code>nothing | SysError</code> - kills process, or error</li>
+<li><strong>Example</strong>: <code>@kill(pid)</code></li>
 </ul>
-<p>Example:</p>
-<div class="highlight"><pre><span></span><code>// Basic parsing
-var str = &quot;123&quot;;
-var num = @int(str) else {
-    @panic(&quot;Not a valid number&quot;);
-};
-
-// Handle specific errors
-var result = @int(&quot;-999999999999&quot;) match {
-    int then it,                    // Successfully parsed
-    ParseFailed then 0,            // Not a number
-    Overflow then MaxInt,          // Too large
-    Underflow then MinInt,         // Too small
-    else =&gt; 0
-};
-</code></pre></div>
-<hr />
-<h3 id="float"><em>float</em></h3>
-<p>Input:</p>
+<h3 id="wait">@wait</h3>
 <ul>
-<li>value: string to convert</li>
+<li><strong>Input</strong>: <code>int</code> (PID)</li>
+<li><strong>Output</strong>: <code>int | Nothing | WaitError</code> - exit code, or error</li>
+<li><strong>Example</strong>: <code>var exitCode = @wait(pid)</code></li>
 </ul>
-<p>Output:</p>
+<h3 id="alive">@alive</h3>
 <ul>
-<li>Float value, or 0.0 if conversion fails</li>
+<li><strong>Input</strong>: <code>int</code> (PID)</li>
+<li><strong>Output</strong>: `</li>
 </ul>
-<p>Modifies:</p>
-<ul>
-<li>No modifications</li>
-</ul>
-<p>Runtime Errors:</p>
-<ul>
-<li>None</li>
-</ul>
-<p>Example:</p>
-<ul>
-<li>var str = "123.45"; var num = @float(str); // num is 123.45</li>
-</ul>
-<hr />
-<h3 id="type"><em>type</em></h3>
-<p>Input:</p>
-<ul>
-<li>value: any value to check</li>
-</ul>
-<p>Output:</p>
-<ul>
-<li>String name of value's type</li>
-</ul>
-<p>Modifies:</p>
-<ul>
-<li>No modifications</li>
-</ul>
-<p>Errors:</p>
-<ul>
-<li>None</li>
-</ul>
-<p>Example:</p>
-<ul>
-<li>var arr = [1, 2]; var type = @type(arr); // type is "array"</li>
-</ul>
-<h2 id="io-methods">I/O Methods</h2>
-<h3 id="input"><em>input</em></h3>
-<p>Input:</p>
-<ul>
-<li>none</li>
-</ul>
-<p>Output:</p>
-<ul>
-<li>string containing the line read from standard input</li>
-<li>empty string ("") on EOF or if no data is available</li>
-</ul>
-<p>Modifies:</p>
-<ul>
-<li>Blocks until a line is available or EOF is reached</li>
-</ul>
-<p>Errors:</p>
-<ul>
-<li>IOError: if input stream fails (e.g., terminal disconnected)</li>
-</ul>
-<p>Notes:</p>
-<ul>
-<li>Blocks execution until a complete line is available</li>
-<li>Line includes all characters up to but not including the newline</li>
-<li>Returns empty string on EOF rather than raising an error</li>
-<li>Use in loop to read all lines: <code>while (line = @input()) != "" { ... }</code></li>
-</ul>
-<p>Example:</p>
-<div class="highlight"><pre><span></span><code>// Basic input
-var name = @input(); // blocks until line available
-
-// Reading all lines
-var lines = [];
-var line = &quot;&quot;;
-while (line = @input()) != &quot;&quot; {
-    @push(lines, line);
-}
-</code></pre></div>
-<hr />
-<h3 id="read"><em>read</em></h3>
-<p>Input:</p>
-<ul>
-<li>path :: string - Path to file to read</li>
-</ul>
-<p>Output:</p>
-<ul>
-<li>string containing file contents</li>
-</ul>
-<p>Modifies:</p>
-<ul>
-<li>No modifications</li>
-</ul>
-<p>Errors:</p>
-<ul>
-<li>IOError: if file cannot be read</li>
-<li>PathError: if path is invalid</li>
-</ul>
-<p>Example:</p>
-<ul>
-<li>var content is @read("config.txt");</li>
-</ul>
-<hr />
-<h3 id="write"><em>write</em></h3>
-<p>Input:</p>
-<ul>
-<li>path :: string - Path to file to write</li>
-<li>content :: string - Content to write</li>
-</ul>
-<p>Output:</p>
-<ul>
-<li>tetra indicating success (true) or failure (false)</li>
-</ul>
-<p>Modifies:</p>
-<ul>
-<li>Creates or overwrites file at path</li>
-</ul>
-<p>Errors:</p>
-<ul>
-<li>IOError: if file cannot be written</li>
-<li>PathError: if path is invalid</li>
-</ul>
-<p>Example:</p>
-<ul>
-<li>var success is @write("log.txt", "Hello");</li>
-</ul>
-<hr />
-<h3 id="binary-io-and-encoding">Binary I/O and Encoding</h3>
-<p>Doxa handles binary data through composition of string and byte array operations:</p>
-<p>Reading binary files:</p>
-<div class="highlight"><pre><span></span><code>// Read file as raw bytes
-var raw = @read(&quot;image.png&quot;);    // reads file as-is, no encoding
-var bytes = @bytes(raw);         // convert to byte array
-var firstByte = bytes[0];        // access individual bytes
-
-// Text file with specific encoding
-var text = @read(&quot;text.txt&quot;);    // reads as UTF-8 by default
-var utf8Bytes = @bytes(text);    // get UTF-8 byte representation
-</code></pre></div>
-<p>Writing binary files:</p>
-<div class="highlight"><pre><span></span><code>// Write raw binary data
-var bytes = [0x89, 0x50, 0x4E, 0x47];  // PNG header bytes
-var raw = @string(bytes);               // convert to raw string (preserves bytes)
-var success = @write(&quot;file.png&quot;, raw);  // writes bytes as-is
-
-// Write text with encoding
-var text = &quot;Hello, 世界&quot;;               // UTF-8 text
-var success = @write(&quot;hello.txt&quot;, text); // writes as UTF-8
-</code></pre></div>
-<p>Notes on Binary Data:</p>
-<ul>
-<li><code>@read</code> reads file contents as-is, preserving all bytes</li>
-<li><code>@write</code> writes raw bytes without modification</li>
-<li><code>@bytes</code> converts string to its underlying bytes</li>
-<li><code>@string</code> with byte array preserves raw bytes (no encoding/decoding)</li>
-<li>Text files use UTF-8 encoding by default</li>
-<li>No data loss occurs when converting between bytes and raw strings</li>
-</ul>
-<hr />
-<h3 id="exec"><em>exec</em></h3>
-<p>Input:</p>
-<ul>
-<li>command :: string - Command to execute</li>
-</ul>
-<p>Output:</p>
-<ul>
-<li>string containing command output (stdout and stderr combined)</li>
-</ul>
-<p>Modifies:</p>
-<ul>
-<li>May modify system state depending on command</li>
-<li>Blocks until command completes</li>
-</ul>
-<p>Errors:</p>
-<ul>
-<li>ExecError: if command fails to execute</li>
-<li>SecurityError: if command is not allowed</li>
-</ul>
-<p>Notes:</p>
-<ul>
-<li>Captures both stdout and stderr in output</li>
-<li>Blocks until command completes</li>
-<li>Returns all output as UTF-8 text</li>
-<li>Command runs with same permissions as Doxa program</li>
-<li>Use @spawn for non-blocking execution</li>
-</ul>
-<p>Example:</p>
-<div class="highlight"><pre><span></span><code>// Basic usage
-var status = @exec(&quot;git status&quot;);
-
-// Handle command failure
-var result = @exec(&quot;git push&quot;) else {
-    @panic(&quot;Git push failed&quot;);
-};
-
-// Capture and process output
-var files = @exec(&quot;ls&quot;);
-var count = @length(@split(files, &quot;\n&quot;));
-</code></pre></div>
-<hr />
-<h3 id="spawn"><em>spawn</em></h3>
-<p>Input:</p>
-<ul>
-<li>command :: string - Command to execute asynchronously</li>
-</ul>
-<p>Output:</p>
-<ul>
-<li>tetra indicating if command started successfully (true)</li>
-<li>does NOT indicate process completion or success</li>
-</ul>
-<p>Modifies:</p>
-<ul>
-<li>May modify system state depending on command</li>
-<li>Process continues running after function returns</li>
-<li>No way to get process output or result</li>
-<li>Process may outlive the Doxa program</li>
-</ul>
-<p>Errors:</p>
-<ul>
-<li>ExecError: if command fails to start</li>
-<li>SecurityError: if command is not allowed</li>
-</ul>
-<p>Notes:</p>
-<ul>
-<li>Only indicates if process started, not if it succeeded</li>
-<li>Use @exec if you need the command's output</li>
-<li>Spawned process runs independently</li>
-<li>No built-in way to check process status</li>
-<li>Useful for long-running background tasks</li>
-</ul>
-<p>Example:</p>
-<div class="highlight"><pre><span></span><code>// Start a long process
-var started = @spawn(&quot;long_process&quot;);
-@assert(started, &quot;Process failed to start&quot;);
-
-// Process runs in background while main program continues
-@print(&quot;Main program continues...&quot;);
-</code></pre></div>
-<h2 id="control-flow-methods">Control Flow Methods</h2>
-<h3 id="assert"><em>assert</em></h3>
-<p>Input:</p>
-<ul>
-<li>condition: boolean expression to check</li>
-<li>message: error message if condition is false</li>
-</ul>
-<p>Output:</p>
-<ul>
-<li>nothing if condition is true</li>
-<li>panics with message if condition is false</li>
-</ul>
-<p>Modifies:</p>
-<ul>
-<li>No modifications</li>
-</ul>
-<p>Runtime Errors:</p>
-<ul>
-<li>Panic: if condition is false</li>
-</ul>
-<p>Example:</p>
-<ul>
-<li>var x = 5; @assert(x &gt; 0, "x must be positive");</li>
-</ul>
-<hr />
-<h3 id="panic"><em>panic</em></h3>
-<p>Input:</p>
-<ul>
-<li>message: error message</li>
-</ul>
-<p>Output:</p>
-<ul>
-<li>Halts program with error message</li>
-</ul>
-<p>Modifies:</p>
-<ul>
-<li>Stops program execution</li>
-</ul>
-<p>Runtime Errors:</p>
-<ul>
-<li>None</li>
-</ul>
-<p>Example:</p>
-<ul>
-<li>@panic("Fatal error occurred");</li>
-</ul>
-<h2 id="method-naming-conventions">Method Naming Conventions</h2>
-<ol>
-<li>
-<p>Case:</p>
-</li>
-<li>
-<p>All methods use lowercase</p>
-</li>
-<li>
-<p>No camelCase or PascalCase</p>
-</li>
-<li>
-<p>Type Conversions:</p>
-</li>
-<li>
-<p>Direct names: @string, @int, @float</p>
-</li>
-<li>
-<p>No 'to' prefix</p>
-</li>
-<li>
-<p>Collections:</p>
-</li>
-<li>
-<p>Array operations use verb forms: @push, @pop, @remove</p>
-</li>
-<li>
-<p>Queries use established terms: @length, @index</p>
-</li>
-<li>
-<p>Control Flow:</p>
-</li>
-<li>
-<p>Simple, lowercase forms: @assert, @panic</p>
-</li>
-<li>
-<p>I/O Operations:</p>
-</li>
-<li>Simple verbs: @read, @write, @exec<ul>
-<li>All methods are single words</li>
-<li>Binary I/O uses composition: @bytes and @string with @read/@write</li>
-</ul>
-</li>
-</ol>
-<h2 id="error-handling">Error Handling</h2>
-<p>Doxa uses a systematic approach to error handling through typed error unions:</p>
-<h3 id="core-error-types">Core Error Types</h3>
-<div class="highlight"><pre><span></span><code>// I/O related errors
-enum IOError {
-    FileNotFound,      // File does not exist
-    PermissionDenied,  // Insufficient permissions
-    DeviceError,       // Hardware/device failure
-    Interrupted,       // Operation interrupted
-    UnexpectedEOF,     // Premature end of file
+<div class="highlight"><pre><span></span><code>enum ParseError {        // type conversion failures
+    InvalidFormat,       // e.g., &quot;abc&quot; -&gt; int
+    Overflow,            // too large for target type
+    Underflow,           // too small for target type
 }
 
-// Path and filesystem errors
-enum PathError {
-    InvalidPath,      // Malformed path
-    NotFound,         // Path does not exist
-    AlreadyExists,    // Path already exists
-    IsDirectory,      // Expected file, got directory
-    NotDirectory,     // Expected directory, got file
+enum IndexError {        // array/string/collection bounds issues
+    OutOfBounds,         // index &gt;= length
+    Underflow,           // pop/remove from empty
+    Empty,               // access empty collection
+    InvalidRange         // invalid slice/range
 }
 
-// Runtime value error
-enum ValueError {
-    // Bounds and range errors
-    IndexOutOfRange,  // Array/string index outside valid range
-    EmptyCollection,  // Operation requires non-empty collection
-    InvalidRange,     // Invalid range specification (e.g., start &gt; end)
-
-    // Numeric errors
-    Overflow,         // Number exceeds type capacity
-    Underflow,        // Number below minimum value
-    DivideByZero,    // Division by zero
-
-    // Parse/format errors
-    ParseFailed,      // String-to-number parse failed (e.g., &quot;abc&quot; as int)
-    InvalidFormat,    // Invalid data format (e.g., malformed JSON)
-    InvalidEncoding,  // Invalid string encoding (e.g., invalid UTF-8)
-
-    // Collection errors
-    CapacityExceeded, // Collection would exceed max capacity
-    DuplicateKey,     // Duplicate key in map/set
-    KeyNotFound       // Key not found in map/set
+enum IOError {           // filesystem / I/O issues
+    EOF,                 // end-of-file / input exhausted
+    NotFound,            // file missing
+    PermissionDenied,    // insufficient permissions
+    Failed               // read or write failed
 }
 
-// Resource errors
-enum ResourceError {
-    OutOfMemory,      // Memory allocation failed
-    TooLarge,         // Resource exceeds limits
-    Exhausted,        // Resource pool depleted
+enum SysError {          // system call failures
+    NotFound,            // missing process/resource
+    PermissionDenied,    // lack of privileges
+    Timeout,             // operation timed out
+    Failed               // generic system failure
+}
+
+// enum name reserved for future builtins
+enum NetworkError {
+    Unreachable,      // host/server cannot be reached
+    Timeout,          // request timed out
+    PermissionDenied, // lack of privileges to open socket/port
+    Failed            // generic network failure
 }
 </code></pre></div>
-<h3 id="method-error-types">Method Error Types</h3>
-<p>Methods combine relevant errors into union types:</p>
-<div class="highlight"><pre><span></span><code>// Define specific error combinations for methods
-// Method-specific error types (runtime errors only)
-alias ArrayOpError =
-    | ValueError.EmptyCollection  // Array is empty
-    | ValueError.IndexOutOfRange  // Index out of bounds
-    | ValueError.CapacityExceeded // Can&#39;t grow array further
-    | ResourceError.OutOfMemory;  // System out of memory
-
-alias NumberParseError =
-    | ValueError.ParseFailed  // Invalid number format
-    | ValueError.Overflow     // Number too large
-    | ValueError.Underflow;   // Number too small
-
-alias ReadError =
-    | IOError.FileNotFound
-    | IOError.PermissionDenied
-    | PathError.InvalidPath;
-
-alias WriteError =
-    | IOError.PermissionDenied
-    | PathError.InvalidPath
-    | ResourceError.OutOfMemory;
-
-// Method signatures include error unions
-function @read(path :: string) returns(string | ReadError);
-function @write(path :: string, content :: string) returns(tetra | WriteError);
-</code></pre></div>
-<h3 id="error-handling-examples">Error Handling Examples</h3>
-<div class="highlight"><pre><span></span><code>// Using else for error handling
-var content = @read(&quot;config.txt&quot;) as string else {
-    @panic(&quot;Failed to read config&quot;);
-};
-
-// Pattern matching on specific errors
-var result = @write(&quot;log.txt&quot;, &quot;Hello&quot;) match {
-    true then &quot;Success&quot;,
-    PermissionDenied then &quot;Permission denied&quot;,
-    InvalidPath then &quot;Invalid path&quot;,
-    else =&gt; &quot;Other error&quot;
-};
-
-// Composing error handling
-function readConfig() returns(string | ParseError) {
-    var raw = @read(&quot;config.txt&quot;);
-    var rawString is raw as string else &quot;&quot;;
-    return @parse(rawString);
-}
-</code></pre></div>
-<h3 id="benefits">Benefits</h3>
-<ol>
-<li><strong>Type Safety</strong>: Errors are typed and checked at compile time</li>
-<li><strong>Composability</strong>: Error types can be combined and transformed</li>
-<li><strong>Clarity</strong>: Methods document their exact error cases</li>
-<li><strong>Consistency</strong>: Common errors are reused across methods</li>
-<li><strong>Flexibility</strong>: New error types can be added without breaking changes</li>
-</ol>
-<h3 id="error-categories">Error Categories</h3>
-<ul>
-<li><strong>IOError</strong>: Input/output operations</li>
-<li>
-<p><strong>PathError</strong>: File system paths</p>
-</li>
-<li>
-<p><strong>ResourceError</strong>: System resource management</p>
-</li>
-<li><strong>SecurityError</strong>: Permission and security</li>
-<li><strong>ParseError</strong>: Data parsing and validation</li>
-<li><strong>ExecError</strong>: Process execution</li>
-<li><strong>NetworkError</strong>: Network operations</li>
-</ul>
-<p>Each built-in method documents its specific error types in its signature and documentation.</p>
 
 
 

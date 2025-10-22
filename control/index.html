@@ -342,7 +342,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="../soxa/" class="md-tabs__link">
+      <a href="../soxa.md" class="md-tabs__link">
         
   
   
@@ -541,15 +541,6 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#core-rules" class="md-nav__link">
-    <span class="md-ellipsis">
-      Core rules
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#if-then-else" class="md-nav__link">
     <span class="md-ellipsis">
       if / then / else
@@ -658,7 +649,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../soxa/" class="md-nav__link">
+      <a href="../soxa.md" class="md-nav__link">
         
   
   
@@ -693,47 +684,38 @@
 
 <h2 id="control-flow">Control Flow</h2>
 <p>Doxa unifies conditional branching with a consistent then / else pattern across if, as, and match.</p>
-<h3 id="core-rules">Core rules</h3>
-<ul>
-<li><strong>Expression bodies end with a semicolon</strong>; block bodies <code>{ ... }</code> are self-terminating (no extra semicolon after the closing brace).</li>
-<li><strong>then</strong> attaches the success branch where applicable; <strong>else</strong> attaches the failure/default branch and does not use then.</li>
-<li>These rules apply consistently to if, as, and match.</li>
-</ul>
 <h3 id="if-then-else">if / then / else</h3>
 <ul>
 <li><strong>then required</strong>, <strong>else optional</strong>.</li>
-<li>Body can be an expression (end with <code>;</code>) or a block <code>{ ... }</code> (no trailing <code>;</code>).</li>
 </ul>
 <p>Examples:</p>
-<div class="highlight"><pre><span></span><code>// Block bodies (no trailing semicolons)
-if x &gt; 10 then {
-    &quot;x is greater than 10&quot;?;
+<div class="highlight"><pre><span></span><code>if x &gt; 10 then {
+    @print(&quot;x is greater than 10/n&quot;)
 } else {
-    &quot;x is 10 or less&quot;?;
+    @print(&quot;x is 10 or less/n&quot;)
 }
 
-// Expression body (ends with semicolon)
-var condition is if true then &quot;true&quot; else &quot;false&quot;;
+var condition is if true then &quot;true&quot; else &quot;false&quot;
 </code></pre></div>
 <p>Chaining and statement-style:</p>
-<div class="highlight"><pre><span></span><code>if current % 3 equals 0 and current % 5 equals 0 then &quot;fizzbuzz&quot;?;
-else if current % 3 equals 0 then &quot;fizz&quot;?;
-else if current % 5 equals 0 then &quot;buzz&quot;?;
-else current?;
+<div class="highlight"><pre><span></span><code>if current % 3 equals 0 and current % 5 equals 0 then @print(&quot;fizzbuzz/n&quot;)
+else if current % 3 equals 0 then @print(&quot;fizz/n&quot;)
+else if current % 5 equals 0 then @print(&quot;buzz/n&quot;)
+else @print(current)
 </code></pre></div>
 <h3 id="as-then-else-type-narrowing">as / then / else (type narrowing)</h3>
 <ul>
 <li><strong>else required</strong>, <strong>then optional</strong>.</li>
-<li>Same body rules: expression bodies end with <code>;</code>, block bodies do not.</li>
+<li>Same body rules: expression bodies end with <code></code>, block bodies do not.</li>
 </ul>
 <p>Examples:</p>
 <div class="highlight"><pre><span></span><code>// Success and failure as expressions
-const n_or_zero is value as int else 0;
+const n_or_zero is value as int else 0
 
 // Block failure case
 value as int else {
-    &quot;value is not an int&quot;?;
-};
+    @print(&quot;value is not an int/n&quot;)
+}
 
 // Explicit success block
 value as int then {
@@ -771,15 +753,15 @@ value as int then {
 <p><code>if</code> is a keyword which implicitly requires a success condition, <code>as</code> implicity requires a fail condition, but both use then/else blocks in the same way.</p>
 <p>Examples</p>
 <div class="highlight"><pre><span></span><code>// IF: Truth-driven
-if x &gt; 10 then &quot;big&quot;? else &quot;small&quot;?;
+if x &gt; 10 then @print(&quot;big/n&quot;) else @print(&quot;small/n&quot;)
 
 // AS: Fallback-driven
-value as int else 0;        // If not int, use 0
-value as int then 20 else 0; // If int, use 20; else 0
+value as int else 0         // If not int, use 0
+value as int then 20 else 0  // If int, use 20  else 0
 
 // Both in action
-if isReady then start() else wait();
-data as string then parse(data) else log(&quot;Bad data&quot;);
+if isReady then start() else wait()
+data as string then parse(data) else log(&quot;Bad data/n&quot;)
 </code></pre></div>
 <h3 id="match-values-and-union-types">match (values and union types)</h3>
 <p>Use match to branch on:</p>
@@ -791,57 +773,57 @@ data as string then parse(data) else log(&quot;Bad data&quot;);
 <ul>
 <li><strong>Pattern arms</strong>: <code>pattern then BODY</code></li>
 <li><strong>Else arm</strong>: <code>else BODY</code> (no then)</li>
-<li><strong>Body</strong>: expression (end with <code>;</code>) or block <code>{ ... }</code> (no trailing <code>;</code>)</li>
-<li>Arms are separated by either the semicolon of an expression body, or by the end of a block body</li>
+<li><strong>Body</strong>: expression (end with <code></code>) or block <code>{ ... }</code> (no trailing <code></code>)</li>
 </ul>
 <p>Match on union types:</p>
 <div class="highlight"><pre><span></span><code>fn kind(value :: int | float) returns(string) {
     return match value {
-        int then &quot;integer&quot;?;
-        float then &quot;float&quot;?;
-    };
+        int then @print(&quot;integer/n&quot;)
+        float then @print(&quot;float/n&quot;)
+    }
 }
 </code></pre></div>
 <p>Match on enums and values:</p>
 <div class="highlight"><pre><span></span><code>enum Color { Red, Green, Blue }
 
 var msg1 is match color {
-    .Red then &quot;It&#39;s red&quot;;
-    .Blue then &quot;It&#39;s blue&quot;;
-    else &quot;It&#39;s something else&quot;;
-};
+    .Red then &quot;It&#39;s red&quot;
+    .Blue then &quot;It&#39;s blue&quot;
+    else &quot;It&#39;s something else&quot;
+}
 
-const x is 5;
+const x is 5
 var msg2 is match x {
-    0 then &quot;It&#39;s zero&quot;;
-    5 then &quot;It&#39;s five&quot;;
-    else &quot;It&#39;s something else&quot;;
-};
+    0 then &quot;It&#39;s zero&quot;
+    5 then &quot;It&#39;s five&quot;
+    else &quot;It&#39;s something else&quot;
+}
 
-const s is &quot;big&quot;;
+const s is &quot;big&quot;
 var msg3 is match s {
-    &quot;big&quot; then &quot;It&#39;s big&quot;;
-    &quot;small&quot; then &quot;It&#39;s small&quot;;
-    else &quot;It&#39;s something else&quot;;
-};
+    &quot;big&quot; then &quot;It&#39;s big&quot;
+    &quot;small&quot; then &quot;It&#39;s small&quot;
+    else &quot;It&#39;s something else&quot;
+}
 </code></pre></div>
 <p>Block arms in match:</p>
 <div class="highlight"><pre><span></span><code>var msg is match color {
-    .Red then { &quot;stop&quot;?; &quot;red&quot;; }
-    .Green then &quot;green&quot;;
-    else { &quot;caution&quot;?; &quot;yellowish&quot;; }
-};
+    // semicolons can be used to represent line breaks
+    .Red then { @print(&quot;stop/n&quot;); &quot;red&quot;}
+    .Green then { @print(&quot;go/n&quot;); &quot;green&quot;
+    else { @print(&quot;caution/n&quot;); &quot;yellowish&quot;}
+}
 </code></pre></div>
 <p>Notes:</p>
 <ul>
-<li><strong>Exhaustiveness</strong>: For enums, prefer covering all variants or add an <code>else</code> arm. For unions, cover the needed type arms; <code>else</code> is optional.</li>
+<li><strong>Exhaustiveness</strong>: For enums, prefer covering all variants or add an <code>else</code> arm. For unions, cover the needed type arms <code>else</code> is optional.</li>
 <li><strong>Result type</strong>: All arms must produce a compatible result type. For block arms, the last expression is the arm’s value.</li>
 </ul>
 <h3 id="quick-reference">Quick reference</h3>
 <ul>
-<li><strong>if</strong>: then required; else optional; expression body ends with <code>;</code>, block body does not.</li>
-<li><strong>as</strong>: else required; then optional; same body rules.</li>
-<li><strong>match</strong>: pattern then BODY; else BODY; arm separation via expression <code>;</code> or closing block <code>}</code>.</li>
+<li><strong>if</strong>: then required else optional expression body ends with <code></code>, block body does not.</li>
+<li><strong>as</strong>: else required then optional same body rules.</li>
+<li><strong>match</strong>: pattern then BODY else BODY arm separation via expression <code></code> or closing block <code>}</code>.</li>
 </ul>
 
 

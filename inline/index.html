@@ -16,7 +16,7 @@
     
     
       
-        <title>Alias - Doxa Docs</title>
+        <title>Inline - Doxa Docs</title>
       
     
     
@@ -97,7 +97,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Alias
+              Inline
             
           </span>
         </div>
@@ -571,57 +571,25 @@
 
 
 
-  <h1>Alias</h1>
+  <h1>Inline</h1>
 
-<p>Alias Parameters (^)</p>
-<p>Overview
-Alias parameters allow a function to modify a caller’s variable directly, without general-purpose pointers or references. They are opt-in at both the function signature and call site, making mutations explicit and safe. Aliases are stack-bound, cannot escape their defining function, and cannot be taken from partial subfields or array elements.</p>
-<p>Syntax</p>
-<p>fn modify(^param :: int) {
-param += 1 // Directly mutates caller's variable
-}</p>
-<p>var x = 0
-modify(^x) // Caller opts-in to mutation
-// x == 1</p>
-<p>Core Rules</p>
-<div class="highlight"><pre><span></span><code>Parameter-only — ^T may only appear in function parameters, never in locals, returns, or stored types.
+<p><code>zig</code> inline blocks should be limited in the following ways. 
+1) they can only define functions, no global state (other than imports?)
+2) they must have valid doxa types (i64, f64, u8, []const u8, boolean, void) for all parameters and its return value</p>
+<div class="highlight"><pre><span></span><code>zig ZigOps {
+    fn fast_hash(data: []const u8) -&gt; u64 {
+        return @llvm_external_call(&quot;ZigOps.fast_hash&quot;, data.ptr, data.len);
+    }
 
-Lvalue-only — Only full variables can be aliased no temporaries, expressions, struct fields, or array elements.
+    fn sqrt_approx(x: f64) -&gt; f64 {
+        return @llvm_external_call(&quot;ZigOps.sqrt_approx&quot;, x);
+    }
+}
 
-Explicit call-site — Caller must pass ^var to grant mutation rights.
-
-No alias duplication — The same variable cannot be passed to more than one alias parameter in the same call.
-
-No alias + by-value mix — A variable cannot be passed aliased and by-value in the same call.
-
-No escaping — Aliases cannot be returned, stored, or captured by closures.
-
-No address-of — Taking &amp; of an alias parameter is forbidden.
-
-No async/threads — Aliases are banned in async functions and cannot be passed to concurrent tasks.
-
-Exclusive borrow — Aliases grant exclusive mutable access for the duration of the call no overlapping borrows allowed.
-
-FFI control — Passing aliases to foreign code requires explicit unsafe or noescape annotation.
-
-Evaluation order — Arguments evaluate left-to-right, but banned alias patterns remain errors.
+const zigSqrt is ZigOps.sqrt_approx(10.5)
 </code></pre></div>
-<p>Example: Safe Swap</p>
-<p>fn swap(^a :: int, ^b :: int) {
-let tmp is a
-a is b
-b is tmp
-}</p>
-<p>var x is 1, y is 2
-swap(^x, ^y)
-// x == 2, y == 1</p>
-<p>Example: Compile-time Error Cases</p>
-<p>swap(^x, ^x) // ❌ same variable passed twice
-modify(^(x + 1)) // ❌ temporaries not allowed
-f(^obj.field) // ❌ partial object aliasing not allowed
-g(^x, x) // ❌ aliased and by-value in same call</p>
-<p>Design Intent
-This model offers mutation semantics without full pointers, preserving deterministic lifetime and memory safety under stack-based allocation. By forcing explicit syntax and disallowing escaping or partial aliasing, it avoids common pitfalls of traditional references while retaining enough flexibility for in-place updates.</p>
+<p>within the  is compiled to .o and caches after HIR gen and before the pipeline splits. the object is linked in compilation or accessed jit in vm execution</p>
+<p>with some clairity on rules, molecular types could be provided as well. structs would need to have a matching zig counterpart, and arrays would need to be handled as slices, etc. This can come later.</p>
 
 
 
