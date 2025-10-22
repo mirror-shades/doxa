@@ -4,6 +4,35 @@ const LLVMTypes = llvm.types;
 const LLVMGenerator = @import("../llvm.zig").LLVMGenerator;
 const arrays = @import("arrays.zig");
 
+var peek_info_ty: LLVMTypes.LLVMTypeRef = null;
+var peek_info_ptr_ty: LLVMTypes.LLVMTypeRef = null;
+
+pub fn getPeekInfoType(gen: *LLVMGenerator) LLVMTypes.LLVMTypeRef {
+    if (peek_info_ty != null) return peek_info_ty;
+    const i8_ptr = LLVMCore.LLVMPointerType(LLVMCore.LLVMInt8TypeInContext(gen.context), 0);
+    const i8_ptr_ptr = LLVMCore.LLVMPointerType(i8_ptr, 0);
+    const i32_ty = LLVMCore.LLVMInt32TypeInContext(gen.context);
+    var fields = [_]LLVMTypes.LLVMTypeRef{
+        i8_ptr,
+        i8_ptr,
+        i8_ptr,
+        i8_ptr_ptr,
+        i32_ty,
+        i32_ty,
+        i32_ty,
+        i32_ty,
+        i32_ty,
+    };
+    peek_info_ty = LLVMCore.LLVMStructTypeInContext(gen.context, &fields, fields.len, @intFromBool(false));
+    return peek_info_ty;
+}
+
+pub fn getPeekInfoPtrType(gen: *LLVMGenerator) LLVMTypes.LLVMTypeRef {
+    if (peek_info_ptr_ty != null) return peek_info_ptr_ty;
+    peek_info_ptr_ty = LLVMCore.LLVMPointerType(getPeekInfoType(gen), 0);
+    return peek_info_ptr_ty;
+}
+
 pub fn getOrCreatePrintf(gen: *LLVMGenerator) LLVMTypes.LLVMValueRef {
     const existing = LLVMCore.LLVMGetNamedFunction(gen.module, "printf");
     if (existing != null) return existing;
@@ -61,6 +90,55 @@ pub fn getOrCreateDoxaArraySetI64(gen: *LLVMGenerator) LLVMTypes.LLVMValueRef {
     var params = [_]LLVMTypes.LLVMTypeRef{ hdr_ptr, i64_ty, i64_ty };
     const fn_ty = LLVMCore.LLVMFunctionType(LLVMCore.LLVMVoidTypeInContext(gen.context), &params, 3, @intFromBool(false));
     return LLVMCore.LLVMAddFunction(gen.module, "doxa_array_set_i64", fn_ty);
+}
+
+pub fn getOrCreateDoxaWriteCStr(gen: *LLVMGenerator) LLVMTypes.LLVMValueRef {
+    const existing = LLVMCore.LLVMGetNamedFunction(gen.module, "doxa_write_cstr");
+    if (existing != null) return existing;
+    const void_ty = LLVMCore.LLVMVoidTypeInContext(gen.context);
+    const i8_ptr_ty = LLVMCore.LLVMPointerType(LLVMCore.LLVMInt8TypeInContext(gen.context), 0);
+    var params = [_]LLVMTypes.LLVMTypeRef{i8_ptr_ty};
+    const fn_ty = LLVMCore.LLVMFunctionType(void_ty, &params, 1, @intFromBool(false));
+    return LLVMCore.LLVMAddFunction(gen.module, "doxa_write_cstr", fn_ty);
+}
+
+pub fn getOrCreateDoxaPrintI64(gen: *LLVMGenerator) LLVMTypes.LLVMValueRef {
+    const existing = LLVMCore.LLVMGetNamedFunction(gen.module, "doxa_print_i64");
+    if (existing != null) return existing;
+    const void_ty = LLVMCore.LLVMVoidTypeInContext(gen.context);
+    const i64_ty = LLVMCore.LLVMInt64TypeInContext(gen.context);
+    var params = [_]LLVMTypes.LLVMTypeRef{i64_ty};
+    const fn_ty = LLVMCore.LLVMFunctionType(void_ty, &params, 1, @intFromBool(false));
+    return LLVMCore.LLVMAddFunction(gen.module, "doxa_print_i64", fn_ty);
+}
+
+pub fn getOrCreateDoxaPrintU64(gen: *LLVMGenerator) LLVMTypes.LLVMValueRef {
+    const existing = LLVMCore.LLVMGetNamedFunction(gen.module, "doxa_print_u64");
+    if (existing != null) return existing;
+    const void_ty = LLVMCore.LLVMVoidTypeInContext(gen.context);
+    const i64_ty = LLVMCore.LLVMInt64TypeInContext(gen.context);
+    var params = [_]LLVMTypes.LLVMTypeRef{i64_ty};
+    const fn_ty = LLVMCore.LLVMFunctionType(void_ty, &params, 1, @intFromBool(false));
+    return LLVMCore.LLVMAddFunction(gen.module, "doxa_print_u64", fn_ty);
+}
+
+pub fn getOrCreateDoxaPrintF64(gen: *LLVMGenerator) LLVMTypes.LLVMValueRef {
+    const existing = LLVMCore.LLVMGetNamedFunction(gen.module, "doxa_print_f64");
+    if (existing != null) return existing;
+    const void_ty = LLVMCore.LLVMVoidTypeInContext(gen.context);
+    const f64_ty = LLVMCore.LLVMDoubleTypeInContext(gen.context);
+    var params = [_]LLVMTypes.LLVMTypeRef{f64_ty};
+    const fn_ty = LLVMCore.LLVMFunctionType(void_ty, &params, 1, @intFromBool(false));
+    return LLVMCore.LLVMAddFunction(gen.module, "doxa_print_f64", fn_ty);
+}
+
+pub fn getOrCreateDoxaDebugPeek(gen: *LLVMGenerator) LLVMTypes.LLVMValueRef {
+    const existing = LLVMCore.LLVMGetNamedFunction(gen.module, "doxa_debug_peek");
+    if (existing != null) return existing;
+    const void_ty = LLVMCore.LLVMVoidTypeInContext(gen.context);
+    var params = [_]LLVMTypes.LLVMTypeRef{getPeekInfoPtrType(gen)};
+    const fn_ty = LLVMCore.LLVMFunctionType(void_ty, &params, 1, @intFromBool(false));
+    return LLVMCore.LLVMAddFunction(gen.module, "doxa_debug_peek", fn_ty);
 }
 
 pub fn getOrCreatePuts(gen: *LLVMGenerator) LLVMTypes.LLVMValueRef {

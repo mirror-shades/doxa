@@ -14,14 +14,14 @@ fn currentFunction(gen: *LLVMGenerator) ?LLVMTypes.LLVMValueRef {
 
 fn printTetra(gen: *LLVMGenerator, v: LLVMTypes.LLVMValueRef, next_string_id: *usize) void {
     const i64_ty = LLVMCore.LLVMInt64TypeInContext(gen.context);
+    const void_ty = LLVMCore.LLVMVoidTypeInContext(gen.context);
     const val64 = LLVMCore.LLVMBuildZExt(gen.builder, v, i64_ty, "tetra.zext");
     const func = currentFunction(gen) orelse {
-        // Fallback: print numeric if no active function context
-        const fmt = strings.createStringPtr(gen, "%ld", next_string_id) catch return;
-        var args = [_]LLVMTypes.LLVMValueRef{ fmt, val64 };
-        const printf_fn = externs.getOrCreatePrintf(gen);
-        const printf_ty = getPrintfType(gen);
-        _ = LLVMCore.LLVMBuildCall2(gen.builder, printf_ty, printf_fn, &args, 2, "printf");
+        const print_i64 = externs.getOrCreateDoxaPrintI64(gen);
+        var params = [_]LLVMTypes.LLVMTypeRef{i64_ty};
+        const fn_ty = LLVMCore.LLVMFunctionType(void_ty, &params, 1, @intFromBool(false));
+        var args = [_]LLVMTypes.LLVMValueRef{val64};
+        _ = LLVMCore.LLVMBuildCall2(gen.builder, fn_ty, print_i64, &args, 1, "");
         printNewline(gen, next_string_id);
         return;
     };
@@ -62,39 +62,37 @@ fn printTetra(gen: *LLVMGenerator, v: LLVMTypes.LLVMValueRef, next_string_id: *u
 
     // default: print numeric fallback
     LLVMCore.LLVMPositionBuilderAtEnd(gen.builder, default_block);
-    const fmt = strings.createStringPtr(gen, "%ld", next_string_id) catch return;
-    var args = [_]LLVMTypes.LLVMValueRef{ fmt, val64 };
-    const printf_fn = externs.getOrCreatePrintf(gen);
-    const printf_ty = getPrintfType(gen);
-    _ = LLVMCore.LLVMBuildCall2(gen.builder, printf_ty, printf_fn, &args, 2, "printf");
+    const print_i64 = externs.getOrCreateDoxaPrintI64(gen);
+    var int_params = [_]LLVMTypes.LLVMTypeRef{i64_ty};
+    const int_ty = LLVMCore.LLVMFunctionType(void_ty, &int_params, 1, @intFromBool(false));
+    var int_args = [_]LLVMTypes.LLVMValueRef{val64};
+    _ = LLVMCore.LLVMBuildCall2(gen.builder, int_ty, print_i64, &int_args, 1, "");
     printNewline(gen, next_string_id);
     _ = LLVMCore.LLVMBuildBr(gen.builder, merge_block);
 
     LLVMCore.LLVMPositionBuilderAtEnd(gen.builder, merge_block);
 }
 
-fn getPrintfType(gen: *LLVMGenerator) LLVMTypes.LLVMTypeRef {
-    const i32_ty = LLVMCore.LLVMInt32TypeInContext(gen.context);
+pub fn printStringPtr(gen: *LLVMGenerator, str_ptr: LLVMTypes.LLVMValueRef, next_string_id: *usize) void {
+    _ = next_string_id;
+    const write_fn = externs.getOrCreateDoxaWriteCStr(gen);
+    const void_ty = LLVMCore.LLVMVoidTypeInContext(gen.context);
     const i8_ptr_ty = LLVMCore.LLVMPointerType(LLVMCore.LLVMInt8TypeInContext(gen.context), 0);
     var params = [_]LLVMTypes.LLVMTypeRef{i8_ptr_ty};
-    return LLVMCore.LLVMFunctionType(i32_ty, &params, 1, @intFromBool(true));
-}
-
-pub fn printStringPtr(gen: *LLVMGenerator, str_ptr: LLVMTypes.LLVMValueRef, next_string_id: *usize) void {
-    const printf_fn = externs.getOrCreatePrintf(gen);
-    const printf_ty = getPrintfType(gen);
-    const fmt = strings.createStringPtr(gen, "%s", next_string_id) catch return;
-    var args = [_]LLVMTypes.LLVMValueRef{ fmt, str_ptr };
-    _ = LLVMCore.LLVMBuildCall2(gen.builder, printf_ty, printf_fn, &args, 2, "printf");
+    const fn_ty = LLVMCore.LLVMFunctionType(void_ty, &params, 1, @intFromBool(false));
+    var args = [_]LLVMTypes.LLVMValueRef{str_ptr};
+    _ = LLVMCore.LLVMBuildCall2(gen.builder, fn_ty, write_fn, &args, 1, "");
 }
 
 pub fn printLiteralString(gen: *LLVMGenerator, s: []const u8, next_string_id: *usize) void {
-    const printf_fn = externs.getOrCreatePrintf(gen);
-    const printf_ty = getPrintfType(gen);
-    const fmt = strings.createStringPtr(gen, "%s", next_string_id) catch return;
     const str = strings.createStringPtr(gen, s, next_string_id) catch return;
-    var args = [_]LLVMTypes.LLVMValueRef{ fmt, str };
-    _ = LLVMCore.LLVMBuildCall2(gen.builder, printf_ty, printf_fn, &args, 2, "printf");
+    const write_fn = externs.getOrCreateDoxaWriteCStr(gen);
+    const void_ty = LLVMCore.LLVMVoidTypeInContext(gen.context);
+    const i8_ptr_ty = LLVMCore.LLVMPointerType(LLVMCore.LLVMInt8TypeInContext(gen.context), 0);
+    var params = [_]LLVMTypes.LLVMTypeRef{i8_ptr_ty};
+    const fn_ty = LLVMCore.LLVMFunctionType(void_ty, &params, 1, @intFromBool(false));
+    var args = [_]LLVMTypes.LLVMValueRef{str};
+    _ = LLVMCore.LLVMBuildCall2(gen.builder, fn_ty, write_fn, &args, 1, "");
 }
 
 pub fn printArray(gen: *LLVMGenerator, arr: LLVMTypes.LLVMValueRef, _: *usize) void {
@@ -117,18 +115,19 @@ pub fn printArray(gen: *LLVMGenerator, arr: LLVMTypes.LLVMValueRef, _: *usize) v
 }
 
 pub fn printNewline(gen: *LLVMGenerator, next_string_id: *usize) void {
-    const printf_fn = externs.getOrCreatePrintf(gen);
-    const printf_ty = getPrintfType(gen);
     const nl = strings.createStringPtr(gen, "\n", next_string_id) catch return;
+    const write_fn = externs.getOrCreateDoxaWriteCStr(gen);
+    const void_ty = LLVMCore.LLVMVoidTypeInContext(gen.context);
+    const i8_ptr_ty = LLVMCore.LLVMPointerType(LLVMCore.LLVMInt8TypeInContext(gen.context), 0);
+    var params = [_]LLVMTypes.LLVMTypeRef{i8_ptr_ty};
+    const fn_ty = LLVMCore.LLVMFunctionType(void_ty, &params, 1, @intFromBool(false));
     var args = [_]LLVMTypes.LLVMValueRef{nl};
-    _ = LLVMCore.LLVMBuildCall2(gen.builder, printf_ty, printf_fn, &args, 1, "printf");
+    _ = LLVMCore.LLVMBuildCall2(gen.builder, fn_ty, write_fn, &args, 1, "");
 }
 
 pub fn printValue(gen: *LLVMGenerator, v: LLVMTypes.LLVMValueRef, next_string_id: *usize) void {
     const ty = LLVMCore.LLVMTypeOf(v);
     const kind = LLVMCore.LLVMGetTypeKind(ty);
-    const printf_fn = externs.getOrCreatePrintf(gen);
-    const printf_ty = getPrintfType(gen);
 
     switch (kind) {
         LLVMTypes.LLVMTypeKind.LLVMPointerTypeKind => {
@@ -137,39 +136,54 @@ pub fn printValue(gen: *LLVMGenerator, v: LLVMTypes.LLVMValueRef, next_string_id
             if (is_array_header_ptr) {
                 printArray(gen, v, next_string_id);
             } else {
-                const fmt = strings.createStringPtr(gen, "%s", next_string_id) catch return;
-                var args = [_]LLVMTypes.LLVMValueRef{ fmt, v };
-                _ = LLVMCore.LLVMBuildCall2(gen.builder, printf_ty, printf_fn, &args, 2, "printf");
+                const write_fn = externs.getOrCreateDoxaWriteCStr(gen);
+                const void_ty = LLVMCore.LLVMVoidTypeInContext(gen.context);
+                const i8_ptr_ty = LLVMCore.LLVMPointerType(LLVMCore.LLVMInt8TypeInContext(gen.context), 0);
+                var params = [_]LLVMTypes.LLVMTypeRef{i8_ptr_ty};
+                const fn_ty = LLVMCore.LLVMFunctionType(void_ty, &params, 1, @intFromBool(false));
+                var args = [_]LLVMTypes.LLVMValueRef{v};
+                _ = LLVMCore.LLVMBuildCall2(gen.builder, fn_ty, write_fn, &args, 1, "");
             }
         },
         LLVMTypes.LLVMTypeKind.LLVMDoubleTypeKind, LLVMTypes.LLVMTypeKind.LLVMFloatTypeKind => {
-            const fmt = strings.createStringPtr(gen, "%g", next_string_id) catch return;
             const vf = cast.ensureF64(gen, v);
-            var args = [_]LLVMTypes.LLVMValueRef{ fmt, vf };
-            _ = LLVMCore.LLVMBuildCall2(gen.builder, printf_ty, printf_fn, &args, 2, "printf");
+            const print_fn = externs.getOrCreateDoxaPrintF64(gen);
+            const void_ty = LLVMCore.LLVMVoidTypeInContext(gen.context);
+            const f64_ty = LLVMCore.LLVMDoubleTypeInContext(gen.context);
+            var params = [_]LLVMTypes.LLVMTypeRef{f64_ty};
+            const fn_ty = LLVMCore.LLVMFunctionType(void_ty, &params, 1, @intFromBool(false));
+            var args = [_]LLVMTypes.LLVMValueRef{vf};
+            _ = LLVMCore.LLVMBuildCall2(gen.builder, fn_ty, print_fn, &args, 1, "");
         },
         LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind => {
             const width = LLVMCore.LLVMGetIntTypeWidth(ty);
             if (width == 1) {
-                const fmt = strings.createStringPtr(gen, "%d", next_string_id) catch return;
-                const i32_ty = LLVMCore.LLVMInt32TypeInContext(gen.context);
-                const v32 = LLVMCore.LLVMBuildZExt(gen.builder, v, i32_ty, "zext.i32");
-                var args = [_]LLVMTypes.LLVMValueRef{ fmt, v32 };
-                _ = LLVMCore.LLVMBuildCall2(gen.builder, printf_ty, printf_fn, &args, 2, "printf");
+                const i64_ty = LLVMCore.LLVMInt64TypeInContext(gen.context);
+                const v64 = LLVMCore.LLVMBuildZExt(gen.builder, v, i64_ty, "zext.i64");
+                const print_fn = externs.getOrCreateDoxaPrintI64(gen);
+                var params = [_]LLVMTypes.LLVMTypeRef{i64_ty};
+                const fn_ty = LLVMCore.LLVMFunctionType(LLVMCore.LLVMVoidTypeInContext(gen.context), &params, 1, @intFromBool(false));
+                var args = [_]LLVMTypes.LLVMValueRef{v64};
+                _ = LLVMCore.LLVMBuildCall2(gen.builder, fn_ty, print_fn, &args, 1, "");
             } else if (width == 2) {
                 // Tetra pretty print
                 printTetra(gen, v, next_string_id);
             } else if (width == 8) {
-                const fmt = strings.createStringPtr(gen, "%u", next_string_id) catch return;
-                const i32_ty = LLVMCore.LLVMInt32TypeInContext(gen.context);
-                const v32 = LLVMCore.LLVMBuildZExt(gen.builder, v, i32_ty, "zext.i32");
-                var args = [_]LLVMTypes.LLVMValueRef{ fmt, v32 };
-                _ = LLVMCore.LLVMBuildCall2(gen.builder, printf_ty, printf_fn, &args, 2, "printf");
+                const i64_ty = LLVMCore.LLVMInt64TypeInContext(gen.context);
+                const v64 = LLVMCore.LLVMBuildZExt(gen.builder, v, i64_ty, "zext.u64");
+                const print_fn = externs.getOrCreateDoxaPrintU64(gen);
+                var params = [_]LLVMTypes.LLVMTypeRef{i64_ty};
+                const fn_ty = LLVMCore.LLVMFunctionType(LLVMCore.LLVMVoidTypeInContext(gen.context), &params, 1, @intFromBool(false));
+                var args = [_]LLVMTypes.LLVMValueRef{v64};
+                _ = LLVMCore.LLVMBuildCall2(gen.builder, fn_ty, print_fn, &args, 1, "");
             } else {
-                const fmt = strings.createStringPtr(gen, "%ld", next_string_id) catch return;
                 const v64 = LLVMCore.LLVMBuildSExt(gen.builder, v, LLVMCore.LLVMInt64TypeInContext(gen.context), "sext.i64");
-                var args = [_]LLVMTypes.LLVMValueRef{ fmt, v64 };
-                _ = LLVMCore.LLVMBuildCall2(gen.builder, printf_ty, printf_fn, &args, 2, "printf");
+                const print_fn = externs.getOrCreateDoxaPrintI64(gen);
+                const i64_ty = LLVMCore.LLVMInt64TypeInContext(gen.context);
+                var params = [_]LLVMTypes.LLVMTypeRef{i64_ty};
+                const fn_ty = LLVMCore.LLVMFunctionType(LLVMCore.LLVMVoidTypeInContext(gen.context), &params, 1, @intFromBool(false));
+                var args = [_]LLVMTypes.LLVMValueRef{v64};
+                _ = LLVMCore.LLVMBuildCall2(gen.builder, fn_ty, print_fn, &args, 1, "");
             }
         },
         else => {},

@@ -14,7 +14,6 @@ const TypesImport = @import("./types/types.zig");
 const TokenLiteral = TypesImport.TokenLiteral;
 const Environment = TypesImport.Environment;
 const env = @import("./interpreter/environment.zig");
-const ASTReader = @import("./utils/ast_reader.zig");
 const AST = @import("./ast/ast.zig");
 const ast = AST;
 const SoxaCompiler = @import("./codegen/hir/soxa.zig");
@@ -32,8 +31,6 @@ const BytecodeGenerator = @import("./codegen/bytecode/generator.zig").BytecodeGe
 const BytecodeWriter = @import("./codegen/bytecode/writer.zig");
 const BytecodeModule = @import("./codegen/bytecode/module.zig").BytecodeModule;
 const StructMethodInfo = @import("./analysis/semantic/semantic.zig").StructMethodInfo;
-const LLVMGen = @import("./codegen/llvmir/llvm.zig");
-const toLLVM = @import("./codegen/llvmir/soxa_to_LLVM.zig");
 
 const EXIT_CODE_USAGE = 64;
 const EXIT_CODE_ERROR = 65;
@@ -56,6 +53,19 @@ const CLI = struct {
     reporter_options: ReporterOptions,
     script_path: ?[]const u8,
     profile: bool,
+    output_path: ?[]const u8,
+    target_arch: ?[]const u8,
+    target_os: ?[]const u8,
+    target_abi: ?[]const u8,
+    opt_level: i32, // -1 for debug-peek, 0..3 for optimization
+
+    pub fn deinit(self: *const CLI, allocator: std.mem.Allocator) void {
+        if (self.script_path) |p| allocator.free(p);
+        if (self.output_path) |p| allocator.free(p);
+        if (self.target_arch) |p| allocator.free(p);
+        if (self.target_os) |p| allocator.free(p);
+        if (self.target_abi) |p| allocator.free(p);
+    }
 };
 
 const SourceFile = struct {
@@ -210,6 +220,11 @@ fn parseArgs(allocator: std.mem.Allocator) !CLI {
         .mode = .UNDEFINED,
         .script_path = null,
         .profile = false,
+        .output_path = null,
+        .target_arch = null,
+        .target_os = null,
+        .target_abi = null,
+        .opt_level = 0,
     };
 
     // Handle the mode argument (run or compile)
@@ -231,7 +246,13 @@ fn parseArgs(allocator: std.mem.Allocator) !CLI {
         try options_list.append(arg);
     }
 
+    var expecting_output: bool = false;
     for (options_list.items) |arg| {
+        if (expecting_output) {
+            options.output_path = try allocator.dupe(u8, arg);
+            expecting_output = false;
+            continue;
+        }
         if (stringEquals(arg, "--debug-verbose")) {
             options.reporter_options.debug_verbose = true;
             continue;
@@ -256,6 +277,33 @@ fn parseArgs(allocator: std.mem.Allocator) !CLI {
         } else if (stringEquals(arg, "--profile")) {
             options.profile = true;
             continue;
+        } else if (stringEquals(arg, "-o") or stringEquals(arg, "--output")) {
+            // Set flag to expect output path in next argument
+            expecting_output = true;
+            continue;
+        } else if (std.mem.startsWith(u8, arg, "--arch=")) {
+            options.target_arch = try allocator.dupe(u8, arg[7..]);
+            continue;
+        } else if (std.mem.startsWith(u8, arg, "--os=")) {
+            options.target_os = try allocator.dupe(u8, arg[5..]);
+            continue;
+        } else if (std.mem.startsWith(u8, arg, "--abi=")) {
+            options.target_abi = try allocator.dupe(u8, arg[6..]);
+            continue;
+        } else if (std.mem.startsWith(u8, arg, "--opt=")) {
+            options.opt_level = std.fmt.parseInt(i32, arg[6..], 10) catch {
+                std.debug.print("Error: invalid --opt level: {s}\n", .{arg});
+                std.process.exit(EXIT_CODE_USAGE);
+            };
+            continue;
+        } else if (arg.len >= 3 and arg[0] == '-' and arg[1] == 'O') {
+            // Accept -O-1, -O0..-O3
+            const lvl_str = arg[2..];
+            options.opt_level = std.fmt.parseInt(i32, lvl_str, 10) catch {
+                std.debug.print("Error: invalid optimization flag: {s}\n", .{arg});
+                std.process.exit(EXIT_CODE_USAGE);
+            };
+            continue;
         } else if (stringEquals(arg, "--help") or stringEquals(arg, "-h")) {
             printUsage();
             std.process.exit(0);
@@ -275,21 +323,37 @@ fn parseArgs(allocator: std.mem.Allocator) !CLI {
         std.process.exit(EXIT_CODE_USAGE);
     }
 
+    if (options.mode == .COMPILE and options.output_path == null) {
+        std.debug.print("Error: compile mode requires -o/--output <path>\n", .{});
+        printUsage();
+        std.process.exit(EXIT_CODE_USAGE);
+    }
+
     return options;
 }
 
 fn printUsage() void {
     std.debug.print("Doxa Programming Language\n", .{});
     std.debug.print("\nUsage:\n", .{});
-    std.debug.print("  doxa [run | compile] [options] <file.doxa>        # Execute with HIR VM (explicit)\n", .{});
-    std.debug.print("\nOptions:\n", .{});
+    std.debug.print("  doxa run [general options] <file.doxa>\n", .{});
+    std.debug.print("  doxa compile [general options] <file.doxa> -o <output> [compile options]\n", .{});
+    std.debug.print("\nGeneral options:\n", .{});
+    std.debug.print("  --profile                         # Enable profiling\n", .{});
+    std.debug.print("  --help, -h                        # Show this help message\n", .{});
     std.debug.print("  --debug-[stage]                   # Enable debug output for [stage]\n", .{});
     std.debug.print("                                    # lexer, parser, semantic, hir, bytecode, execution\n", .{});
     std.debug.print("  --debug-verbose                   # Enable all debug output\n", .{});
-    std.debug.print("  --profile                         # Enable profiling\n", .{});
-    std.debug.print("  --help, -h                        # Show this help message\n", .{});
+    std.debug.print("\nCompile options:\n", .{});
+    std.debug.print("  -o, --output <path>               # Output executable path (required)\n", .{});
+    std.debug.print("  --arch=<arch>                     # Target CPU architecture (default: host)\n", .{});
+    std.debug.print("  --os=<os>                         # Target operating system (default: host)\n", .{});
+    std.debug.print("  --abi=<abi>                       # Target ABI (optional)\n", .{});
+    std.debug.print("  -O-1 | --opt=-1                   # Debug-aware codegen (peek dumps)\n", .{});
+    std.debug.print("  -O0..-O3 | --opt=0..3             # LLVM and codegen optimization level\n", .{});
     std.debug.print("\nExamples:\n", .{});
-    std.debug.print("  doxa file_name.doxa               # Execute the script\n", .{});
+    std.debug.print("  doxa run file.doxa\n", .{});
+    std.debug.print("  doxa compile file.doxa -o out/myapp\n", .{});
+    std.debug.print("  doxa compile file.doxa -o out/myapp --arch=x86_64 --os=linux -O2\n", .{});
 }
 
 fn stringEquals(a: []const u8, b: []const u8) bool {
@@ -331,13 +395,10 @@ pub fn main() !void {
     }
 
     const cli_options = try parseArgs(gpa.allocator());
+    defer cli_options.deinit(gpa.allocator());
 
     var reporter = Reporter.init(gpa.allocator(), cli_options.reporter_options);
     defer reporter.deinit();
-
-    defer if (cli_options.script_path) |path| {
-        gpa.allocator().free(path);
-    };
 
     var memoryManager = try MemoryManager.init(gpa.allocator());
     defer memoryManager.deinit();
@@ -428,29 +489,14 @@ pub fn main() !void {
     if (cli_options.mode == .COMPILE) {
         profiler.startPhase(Phase.GENERATE_L);
 
-        var llvm_gen = try LLVMGen.LLVMGenerator.init(memoryManager.getExecutionAllocator());
-        // Propagate debug mode to LLVM generator for peek lowering
-        var debug_peek_env: bool = false;
-        if (std.process.getEnvVarOwned(memoryManager.getExecutionAllocator(), "DOXA_DEBUG_PEEK")) |val| {
-            defer memoryManager.getExecutionAllocator().free(val);
-            debug_peek_env = std.mem.eql(u8, val, "1") or std.ascii.eqlIgnoreCase(val, "true");
-        } else |_| {}
-        llvm_gen.debug_peek = debug_peek_env or reporter.debug_hir or reporter.debug_execution or reporter.debug_verbose;
-        defer llvm_gen.deinit();
-
-        // Lower HIR to LLVM IR (prototype translator builds a minimal main)
-        try toLLVM.translateToLLVM(&hir_program_for_bytecode, llvm_gen);
-
-        // Derive artifact stem
         const artifact_stem = blk: {
+            if (cli_options.output_path) |op| break :blk op;
             var filename_start: usize = 0;
             for (path, 0..) |c, i| {
                 if (c == '/' or c == '\\') filename_start = i + 1;
             }
             const filename = path[filename_start..];
-            if (std.mem.lastIndexOfScalar(u8, filename, '.')) |dot| {
-                break :blk filename[0..dot];
-            }
+            if (std.mem.lastIndexOfScalar(u8, filename, '.')) |dot| break :blk filename[0..dot];
             break :blk filename;
         };
 
@@ -460,29 +506,123 @@ pub fn main() !void {
             else => return err,
         };
 
-        // Emit LLVM IR and object file
-        var ir_path_buf: [256]u8 = undefined;
-        const ir_path = try std.fmt.bufPrint(&ir_path_buf, "out/{s}.ll", .{artifact_stem});
-        _ = try llvm_gen.emitLLVMIR(ir_path);
+        // Normalize output directories and filenames
+        var ir_path_buf: [512]u8 = undefined;
+        var obj_path_buf: [512]u8 = undefined;
+        var exe_path_buf: [512]u8 = undefined;
 
-        var obj_path_buf: [256]u8 = undefined;
-        const obj_path = try std.fmt.bufPrint(&obj_path_buf, "out/{s}.o", .{artifact_stem});
-        try llvm_gen.emitObjectCode(obj_path);
+        // Determine executable path (add .exe on Windows)
+        const raw_exe = blk2: {
+            if (std.fs.path.isAbsolute(artifact_stem)) break :blk2 artifact_stem;
+            // Check if it's a relative path starting with ./ or ../
+            if (std.mem.startsWith(u8, artifact_stem, "./") or std.mem.startsWith(u8, artifact_stem, "../")) {
+                break :blk2 artifact_stem;
+            }
+            // default to out/<stem>
+            break :blk2 try std.fmt.bufPrint(&exe_path_buf, "out/{s}", .{artifact_stem});
+        };
+        const exe_path = blk3: {
+            if (builtin.os.tag == .windows) {
+                if (std.mem.endsWith(u8, raw_exe, ".exe")) break :blk3 raw_exe;
+                var tmp: [520]u8 = undefined;
+                break :blk3 try std.fmt.bufPrint(&tmp, "{s}.exe", .{raw_exe});
+            }
+            break :blk3 raw_exe;
+        };
+
+        // Ensure parent dir exists
+        if (std.fs.path.dirname(exe_path)) |dir| {
+            std.fs.cwd().makePath(dir) catch {};
+        }
+
+        // Derive IR/Object paths - always put intermediate files in out/ directory
+        const stem_for_derivatives = blk4: {
+            // Extract just the filename (without path) for intermediate files
+            var filename_start: usize = 0;
+            for (exe_path, 0..) |c, i| {
+                if (c == '/' or c == '\\') filename_start = i + 1;
+            }
+            const filename = exe_path[filename_start..];
+            if (builtin.os.tag == .windows and std.mem.endsWith(u8, filename, ".exe"))
+                break :blk4 filename[0 .. filename.len - 4];
+            break :blk4 filename;
+        };
+        const ir_path = try std.fmt.bufPrint(&ir_path_buf, "out/{s}.ll", .{stem_for_derivatives});
+        {
+            var printer = @import("./codegen/llvmir/ir_printer.zig").IRPrinter.init(memoryManager.getExecutionAllocator());
+            try printer.emitToFile(&hir_program_for_bytecode, ir_path);
+        }
+
+        const obj_path = try std.fmt.bufPrint(&obj_path_buf, "out/{s}.o", .{stem_for_derivatives});
+        // Compile .ll to .o via zig cc
+        {
+            var args = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
+            defer args.deinit();
+            const ir_filename = try std.fmt.allocPrint(std.heap.page_allocator, "{s}.ll", .{stem_for_derivatives});
+            defer std.heap.page_allocator.free(ir_filename);
+            const obj_filename = try std.fmt.allocPrint(std.heap.page_allocator, "{s}.o", .{stem_for_derivatives});
+            defer std.heap.page_allocator.free(obj_filename);
+            try args.appendSlice(&[_][]const u8{ "zig", "cc", "-c", ir_filename, "-o", obj_filename });
+            if (cli_options.target_arch != null or cli_options.target_os != null or cli_options.target_abi != null) {
+                try args.append("-target");
+                const arch = cli_options.target_arch orelse "";
+                const os = cli_options.target_os orelse "";
+                const abi = cli_options.target_abi orelse "";
+                var triple_buf: [128]u8 = undefined;
+                const triple = try std.fmt.bufPrint(&triple_buf, "{s}{s}{s}{s}{s}", .{ arch, if (os.len > 0) "-" else "", os, if (abi.len > 0) "-" else "", abi });
+                try args.append(triple);
+            }
+            // Map opt level
+            const olvl = cli_options.opt_level;
+            const oflag = if (olvl <= -1) "-O0" else if (olvl >= 3) "-O3" else switch (olvl) {
+                0 => "-O0",
+                1 => "-O1",
+                2 => "-O2",
+                else => "-O0",
+            };
+            try args.append(oflag);
+            var child = std.process.Child.init(args.items, std.heap.page_allocator);
+            child.cwd = "out";
+            child.stdout_behavior = .Inherit;
+            child.stderr_behavior = .Inherit;
+            const term = try child.spawnAndWait();
+            switch (term) {
+                .Exited => |code| if (code != 0) return error.Unexpected,
+                else => return error.Unexpected,
+            }
+        }
 
         // Link final executable with runtime helpers
-        var exe_path_buf: [256]u8 = undefined;
-        const exe_path = try std.fmt.bufPrint(&exe_path_buf, "out/{s}", .{artifact_stem});
 
         // Build runtime print object (relocatable) to avoid archive format issues
         var rt_obj_buf: [256]u8 = undefined;
-        const rt_obj = try std.fmt.bufPrint(&rt_obj_buf, "out/rt_array_print.o", .{});
+        const rt_obj = try std.fmt.bufPrint(&rt_obj_buf, "out/doxa_rt.o", .{});
         {
             std.fs.cwd().makeDir("out") catch {};
             const emit_flag = try std.fmt.allocPrint(std.heap.page_allocator, "-femit-bin={s}", .{rt_obj});
             defer std.heap.page_allocator.free(emit_flag);
-            var child_rt = std.process.Child.init(&[_][]const u8{
-                "zig", "build-obj", "src/runtime/rt_array_print.zig", emit_flag,
-            }, std.heap.page_allocator);
+
+            // Prepare zig build-obj arguments (+ optional target)
+            var args_list = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
+            defer args_list.deinit();
+            try args_list.appendSlice(&[_][]const u8{ "zig", "build-obj", "src/runtime/doxa_rt.zig", emit_flag });
+            if (cli_options.target_arch != null or cli_options.target_os != null or cli_options.target_abi != null) {
+                try args_list.append("-target");
+                const arch = cli_options.target_arch orelse "";
+                const os = cli_options.target_os orelse "";
+                const abi = cli_options.target_abi orelse "";
+                var triple_buf: [128]u8 = undefined;
+                const triple = try std.fmt.bufPrint(&triple_buf, "{s}{s}{s}{s}{s}", .{
+                    arch,
+                    if (os.len > 0) "-" else "",
+                    os,
+                    if (abi.len > 0) "-" else "",
+                    abi,
+                });
+                try args_list.append(triple);
+            }
+
+            var child_rt = std.process.Child.init(args_list.items, std.heap.page_allocator);
             child_rt.cwd = ".";
             child_rt.stdout_behavior = .Inherit;
             child_rt.stderr_behavior = .Inherit;
@@ -501,7 +641,27 @@ pub fn main() !void {
 
         // Link using zig cc (+ static runtime lib)
         {
-            var child_ln = std.process.Child.init(&[_][]const u8{ "zig", "cc", obj_path, rt_obj, "-o", exe_path }, std.heap.page_allocator);
+            // Prepare zig cc arguments (+ optional target)
+            var args_ln = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
+            defer args_ln.deinit();
+            try args_ln.appendSlice(&[_][]const u8{ "zig", "cc", obj_path, rt_obj, "-o", exe_path });
+            if (cli_options.target_arch != null or cli_options.target_os != null or cli_options.target_abi != null) {
+                try args_ln.append("-target");
+                const arch = cli_options.target_arch orelse "";
+                const os = cli_options.target_os orelse "";
+                const abi = cli_options.target_abi orelse "";
+                var triple_buf2: [128]u8 = undefined;
+                const triple2 = try std.fmt.bufPrint(&triple_buf2, "{s}{s}{s}{s}{s}", .{
+                    arch,
+                    if (os.len > 0) "-" else "",
+                    os,
+                    if (abi.len > 0) "-" else "",
+                    abi,
+                });
+                try args_ln.append(triple2);
+            }
+
+            var child_ln = std.process.Child.init(args_ln.items, std.heap.page_allocator);
             child_ln.cwd = ".";
             child_ln.stdout_behavior = .Inherit;
             child_ln.stderr_behavior = .Inherit;
@@ -517,6 +677,22 @@ pub fn main() !void {
                 },
             }
         }
+
+        // Move PDB file from root to out/ directory if it exists
+        const pdb_filename = try std.fmt.allocPrint(std.heap.page_allocator, "{s}.pdb", .{stem_for_derivatives});
+        defer std.heap.page_allocator.free(pdb_filename);
+        const pdb_out_path = try std.fmt.allocPrint(std.heap.page_allocator, "out/{s}.pdb", .{stem_for_derivatives});
+        defer std.heap.page_allocator.free(pdb_out_path);
+
+        // Try to move the PDB file from root to out/
+        std.fs.cwd().rename(pdb_filename, pdb_out_path) catch |err| switch (err) {
+            error.FileNotFound => {
+                // PDB file doesn't exist, that's fine
+            },
+            else => {
+                // Some other error occurred, but we'll continue
+            },
+        };
 
         profiler.stopPhase();
         try profiler.dump();

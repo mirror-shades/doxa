@@ -532,41 +532,79 @@ pub fn translateToLLVM(hir: *const HIR.HIRProgram, generator: *LLVMGenerator) !v
                     continue; // Skip emitting peek but keep translating subsequent instructions
                 }
                 if (stack.items.len > 0) {
-                    // Pop value to peek and print with prefix: [file:line:col] name :: type is value
                     const v = stack.items[stack.items.len - 1];
                     stack.items.len -= 1;
 
-                    // Build prefix
-                    var prefix_buf: [256]u8 = undefined;
-                    var fbs = std.io.fixedBufferStream(&prefix_buf);
-                    var w = fbs.writer();
-                    if (pk.location) |loc| {
-                        const file = loc.file;
-                        const line = loc.range.start_line;
-                        const col = loc.range.start_col;
-                        try w.print("[{s}:{d}:{d}] ", .{ file, line, col });
-                    }
-                    if (pk.name) |nm| {
-                        try w.print("{s} :: ", .{nm});
-                    }
-
-                    // Determine type tag for display
-                    const kind = LLVMCore.LLVMGetTypeKind(LLVMCore.LLVMTypeOf(v));
-                    const type_tag = switch (kind) {
+                    const value_kind = LLVMCore.LLVMGetTypeKind(LLVMCore.LLVMTypeOf(v));
+                    const type_slice = switch (value_kind) {
                         LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind => "int",
                         LLVMTypes.LLVMTypeKind.LLVMDoubleTypeKind, LLVMTypes.LLVMTypeKind.LLVMFloatTypeKind => "float",
                         LLVMTypes.LLVMTypeKind.LLVMPointerTypeKind => "string",
                         else => "value",
                     };
-                    try w.print("{s} is ", .{type_tag});
-                    const prefix_len = fbs.pos;
-                    const prefix_slice = prefix_buf[0..prefix_len];
 
-                    @import("common/print.zig").printLiteralString(generator, prefix_slice, &next_string_id);
+                    const i8_ty = LLVMCore.LLVMInt8TypeInContext(generator.context);
+                    const i8_ptr_ty = LLVMCore.LLVMPointerType(i8_ty, 0);
+                    const i8_ptr_ptr_ty = LLVMCore.LLVMPointerType(i8_ptr_ty, 0);
+                    const null_i8_ptr = LLVMCore.LLVMConstNull(i8_ptr_ty);
+                    const null_members_ptr = LLVMCore.LLVMConstNull(i8_ptr_ptr_ty);
+                    const zero_i32 = LLVMCore.LLVMConstInt(i32_ty, 0, @intFromBool(false));
+
+                    var name_ptr = null_i8_ptr;
+                    if (pk.name) |nm| {
+                        name_ptr = strings.createStringPtr(generator, nm, &next_string_id) catch null_i8_ptr;
+                    }
+
+                    var file_ptr = null_i8_ptr;
+                    var has_location_const = zero_i32;
+                    var line_const = zero_i32;
+                    var col_const = zero_i32;
+                    if (pk.location) |loc| {
+                        file_ptr = strings.createStringPtr(generator, loc.file, &next_string_id) catch null_i8_ptr;
+                        const line_u32 = std.math.cast(u32, loc.range.start_line) catch 0;
+                        const col_u32 = std.math.cast(u32, loc.range.start_col) catch 0;
+                        has_location_const = LLVMCore.LLVMConstInt(i32_ty, 1, @intFromBool(false));
+                        line_const = LLVMCore.LLVMConstInt(i32_ty, line_u32, @intFromBool(false));
+                        col_const = LLVMCore.LLVMConstInt(i32_ty, col_u32, @intFromBool(false));
+                    }
+
+                    var type_ptr = strings.createStringPtr(generator, type_slice, &next_string_id) catch null_i8_ptr;
+
+                    const peek_ty = externs.getPeekInfoType(generator);
+                    const peek_ptr_ty = externs.getPeekInfoPtrType(generator);
+                    const current_block = LLVMCore.LLVMGetInsertBlock(generator.builder);
+                    LLVMCore.LLVMPositionBuilderAtEnd(generator.builder, entry);
+                    const info_alloca = LLVMCore.LLVMBuildAlloca(generator.builder, peek_ty, "peek.info");
+                    LLVMCore.LLVMPositionBuilderAtEnd(generator.builder, current_block);
+
+                    const file_gep = LLVMCore.LLVMBuildStructGEP2(generator.builder, peek_ty, info_alloca, 0, "peek.file");
+                    _ = LLVMCore.LLVMBuildStore(generator.builder, file_ptr, file_gep);
+                    const name_gep = LLVMCore.LLVMBuildStructGEP2(generator.builder, peek_ty, info_alloca, 1, "peek.name");
+                    _ = LLVMCore.LLVMBuildStore(generator.builder, name_ptr, name_gep);
+                    const type_gep = LLVMCore.LLVMBuildStructGEP2(generator.builder, peek_ty, info_alloca, 2, "peek.type");
+                    _ = LLVMCore.LLVMBuildStore(generator.builder, type_ptr, type_gep);
+                    const members_gep = LLVMCore.LLVMBuildStructGEP2(generator.builder, peek_ty, info_alloca, 3, "peek.members");
+                    _ = LLVMCore.LLVMBuildStore(generator.builder, null_members_ptr, members_gep);
+                    const member_count_gep = LLVMCore.LLVMBuildStructGEP2(generator.builder, peek_ty, info_alloca, 4, "peek.member_count");
+                    _ = LLVMCore.LLVMBuildStore(generator.builder, zero_i32, member_count_gep);
+                    const active_index_gep = LLVMCore.LLVMBuildStructGEP2(generator.builder, peek_ty, info_alloca, 5, "peek.active_index");
+                    const neg_one_i32 = LLVMCore.LLVMConstInt(i32_ty, @bitCast(u64, @as(i64, -1)), @intFromBool(true));
+                    _ = LLVMCore.LLVMBuildStore(generator.builder, neg_one_i32, active_index_gep);
+                    const has_loc_gep = LLVMCore.LLVMBuildStructGEP2(generator.builder, peek_ty, info_alloca, 6, "peek.has_location");
+                    _ = LLVMCore.LLVMBuildStore(generator.builder, has_location_const, has_loc_gep);
+                    const line_gep = LLVMCore.LLVMBuildStructGEP2(generator.builder, peek_ty, info_alloca, 7, "peek.line");
+                    _ = LLVMCore.LLVMBuildStore(generator.builder, line_const, line_gep);
+                    const col_gep = LLVMCore.LLVMBuildStructGEP2(generator.builder, peek_ty, info_alloca, 8, "peek.col");
+                    _ = LLVMCore.LLVMBuildStore(generator.builder, col_const, col_gep);
+
+                    const debug_fn = externs.getOrCreateDoxaDebugPeek(generator);
+                    var args = [_]LLVMTypes.LLVMValueRef{info_alloca};
+                    const debug_fn_ty = LLVMCore.LLVMFunctionType(LLVMCore.LLVMVoidTypeInContext(generator.context), &peek_ptr_ty, 1, @intFromBool(false));
+                    _ = LLVMCore.LLVMBuildCall2(generator.builder, debug_fn_ty, debug_fn, &args, 1, "");
+
                     @import("common/print.zig").printValue(generator, v, &next_string_id);
                     @import("common/print.zig").printNewline(generator, &next_string_id);
 
-                    // Push original value back on the stack
                     try stack.append(v);
                 }
             },

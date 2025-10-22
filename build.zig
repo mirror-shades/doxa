@@ -13,15 +13,6 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
-    // Expose local LLVM C-API wrappers as module "llvm" and link system LLVM
-    const llvm_mod = b.createModule(.{
-        .root_source_file = b.path("llvm/llvm-bindings.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    exe.root_module.addImport("llvm", llvm_mod);
-    exe.linkSystemLibrary("LLVM");
-
     // Install the executable first
     b.installArtifact(exe);
 
