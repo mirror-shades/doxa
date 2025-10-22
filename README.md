@@ -16,20 +16,30 @@ Doxa is high level, statically typed, memory managed language. It has a highly r
 
 ```bash
 Usage:
-  doxa [run | compile] [options] <file.doxa>        # Execute with HIR VM (explicit)
+  doxa run [general options] <file.doxa>
+  doxa compile [general options] <file.doxa> -o <output> [compile options]
 
-Options:
+General options:
+  --profile                         # Enable profiling
+  --help, -h                        # Show this help message
   --debug-[stage]                   # Enable debug output for [stage]
                                     # lexer, parser, semantic, hir, bytecode, execution
   --debug-verbose                   # Enable all debug output
-  --profile                         # Enable profiling
-  --help, -h                        # Show this help message
+
+Compile options:
+  -o, --output <path>               # Output executable path (required)
+  --arch=<arch>                     # Target CPU architecture (default: host)
+  --os=<os>                         # Target operating system (default: host)
+  --abi=<abi>                       # Target ABI (optional)
+  -O-1 | --opt=-1                   # Debug-aware codegen (peek dumps)
+  -O0..-O3 | --opt=0..3             # LLVM and codegen optimization level
 
 Examples:
-  doxa run file_name.doxa           # Execute the script
-  doxa compile file_name.doxa       # Compile to object file
+  doxa run file.doxa
+  doxa compile file.doxa -o out/myapp
+  doxa compile file.doxa -o out/myapp --arch=x86_64 --os=linux -O2
 ```
-    
+
 ### Building from source
 
 Current build uses Zig 0.15.1. The only dependancy other than the Zig compiler is the built in runtime modules, at this time currently Raylib. The runtime libraries are installed during the build process. Eventually a real FFI can replace these runtime dependancies altogether.
