@@ -42,7 +42,7 @@ Examples:
 
 ### Building from source
 
-Current build uses Zig 0.15.1. The only dependancy other than the Zig compiler is the built in runtime modules, at this time currently Raylib. The runtime libraries are installed during the build process. Eventually a real FFI can replace these runtime dependancies altogether.
+Current build uses Zig 0.15.1, there are no other dependancies.
 
 compile from source and run a file
 
@@ -50,7 +50,7 @@ compile from source and run a file
 zig build run -- [--debug] ./path/to/file.doxa
 ```
 
-be sure to build before running compiler tests
+for consistent results be sure to build before running compiler tests
 
 ```bash
 zig build

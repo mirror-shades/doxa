@@ -16,4 +16,3 @@ Doxa is a simple to write, highly readible language based on four corned logical
 
 - [Language Syntax](syntax.md) - Complete language reference
 - [Tetras](tetras.md) - Four-cornered logic system
-- [SOXA Format](soxa.md) - Binary intermediate representation and execution format
