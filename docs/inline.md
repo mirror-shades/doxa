@@ -18,7 +18,7 @@ zig ZigOps {
 const zigSqrt is ZigOps.sqrt_approx(10.5)
 ```
 
-within the  is compiled to .o and caches after HIR gen and before the pipeline splits. the object is linked in compilation or accessed jit in vm execution
+the zig within the block is compiled to an object file and caches after HIR gen and before the pipeline splits between VM and compiler. the object can then be both linked in compilation or accessed jit in vm execution. this adds a small amount of overhead for VM execution but only for the first run
 
 with some clairity on rules, molecular types could be provided as well. structs would need to have a matching zig counterpart, and arrays would need to be handled as slices, etc. This can come later.
 

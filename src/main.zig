@@ -554,7 +554,6 @@ pub fn main() !void {
         }
 
         const obj_path = try std.fmt.bufPrint(&obj_path_buf, "out/{s}.o", .{stem_for_derivatives});
-        // Compile .ll to .o via zig cc
         {
             var args = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
             defer args.deinit();
@@ -569,10 +568,15 @@ pub fn main() !void {
                 const os = cli_options.target_os orelse "";
                 const abi = cli_options.target_abi orelse "";
                 var triple_buf: [128]u8 = undefined;
-                const triple = try std.fmt.bufPrint(&triple_buf, "{s}{s}{s}{s}{s}", .{ arch, if (os.len > 0) "-" else "", os, if (abi.len > 0) "-" else "", abi });
+                const triple = try std.fmt.bufPrint(&triple_buf, "{s}{s}{s}{s}{s}", .{
+                    arch,
+                    if (os.len > 0) "-" else "",
+                    os,
+                    if (abi.len > 0) "-" else "",
+                    abi,
+                });
                 try args.append(triple);
             }
-            // Map opt level
             const olvl = cli_options.opt_level;
             const oflag = if (olvl <= -1) "-O0" else if (olvl >= 3) "-O3" else switch (olvl) {
                 0 => "-O0",
@@ -644,7 +648,12 @@ pub fn main() !void {
             // Prepare zig cc arguments (+ optional target)
             var args_ln = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
             defer args_ln.deinit();
-            try args_ln.appendSlice(&[_][]const u8{ "zig", "cc", obj_path, rt_obj, "-o", exe_path });
+            try args_ln.append("zig");
+            try args_ln.append("cc");
+            try args_ln.append(obj_path);
+            try args_ln.append(rt_obj);
+            try args_ln.append("-o");
+            try args_ln.append(exe_path);
             if (cli_options.target_arch != null or cli_options.target_os != null or cli_options.target_abi != null) {
                 try args_ln.append("-target");
                 const arch = cli_options.target_arch orelse "";
