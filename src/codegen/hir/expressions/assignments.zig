@@ -85,28 +85,6 @@ pub const AssignmentsHandler = struct {
             }
         }
 
-        // If assigning result of builtin returning unions, track members
-        if (assign.value) |rhs| {
-            if (rhs.data == .BuiltinCall) {
-                const bc = rhs.data.BuiltinCall;
-                if (std.mem.eql(u8, bc.function.lexeme, "int")) {
-                    if (self.generator.getOrCreateVariable(assign.name.lexeme)) |var_idx| {
-                        const members = try self.generator.allocator.alloc([]const u8, 2);
-                        members[0] = "int";
-                        members[1] = "ValueError";
-                        try self.generator.trackVariableUnionMembersByIndex(var_idx, members);
-                    } else |_| {}
-                } else if (std.mem.eql(u8, bc.function.lexeme, "slice")) {
-                    if (self.generator.getOrCreateVariable(assign.name.lexeme)) |var_idx| {
-                        const members = try self.generator.allocator.alloc([]const u8, 2);
-                        const base_t = if (bc.arguments.len > 0) self.generator.inferTypeFromExpression(bc.arguments[0]) else .Unknown;
-                        members[0] = if (base_t == .String) "string" else "array";
-                        members[1] = "ValueError";
-                        try self.generator.trackVariableUnionMembersByIndex(var_idx, members);
-                    } else |_| {}
-                }
-            }
-        }
 
         // Check if this is an alias parameter
         if (self.generator.symbol_table.isAliasParameter(assign.name.lexeme)) {

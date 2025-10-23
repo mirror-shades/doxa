@@ -182,6 +182,7 @@ pub fn validateStatements(ctx: *ValidationContext, statements: []const ast.Stmt)
                                 .String => TokenLiteral{ .string = "" },
                                 .Tetra => TokenLiteral{ .tetra = .false },
                                 .Byte => TokenLiteral{ .byte = 0 },
+                                .Array => TokenLiteral{ .array = &[_]TokenLiteral{} },
                                 .Union => if (type_info.union_type) |ut|
                                     union_handling.getUnionDefaultValue(ut)
                                 else

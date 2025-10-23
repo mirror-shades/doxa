@@ -14,6 +14,8 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
     switch (stmt.data) {
         .Expression => |expr| {
             if (expr) |e| {
+                // Do not treat a trailing expression as an implicit function return.
+                // Always generate as a regular expression statement here.
                 try self.generateExpression(e, false, true);
             }
         },
@@ -386,17 +388,6 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                 }
             }
 
-            if (decl.initializer) |init_expr_union| {
-                if (init_expr_union.data == .BuiltinCall) {
-                    const bc = init_expr_union.data.BuiltinCall;
-                    if (std.mem.eql(u8, bc.function.lexeme, "int")) {
-                        const members = try self.allocator.alloc([]const u8, 2);
-                        members[0] = "int";
-                        members[1] = "ValueError";
-                        try self.trackVariableUnionMembersByIndex(var_idx, members);
-                    }
-                }
-            }
         },
         .FunctionDecl => {},
         .Return => |ret| {

@@ -6,6 +6,145 @@ const HIRFrame = Core.HIRFrame;
 const Errors = @import("../../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
 const ErrorCode = Errors.ErrorCode;
+const meta = std.meta;
+
+fn runtimePanic(vm: anytype, err: ErrorList, code: []const u8, comptime fmt: []const u8, args: anytype) ErrorList {
+    vm.reporter.reportRuntimeError(null, code, fmt, args);
+    vm.running = false;
+    return err;
+}
+
+fn convertToInt(vm: anytype, value: HIRValue) ErrorList!i64 {
+    return switch (value) {
+        .int => value.int,
+        .byte => |b| @as(i64, @intCast(b)),
+        .float => |f| blk: {
+            if (!std.math.isFinite(f)) {
+                return runtimePanic(vm, ErrorList.FloatOverflow, ErrorCode.INVALID_ARGUMENT, "@int: non-finite float cannot convert to int", .{});
+            }
+            const max = @as(f64, @floatFromInt(std.math.maxInt(i64)));
+            const min = @as(f64, @floatFromInt(std.math.minInt(i64)));
+            if (f > max or f < min) {
+                return runtimePanic(vm, ErrorList.IntegerOverflow, ErrorCode.ARITHMETIC_OVERFLOW, "@int: float {d} outside int range", .{f});
+            }
+            break :blk @as(i64, @intFromFloat(f));
+        },
+        .string => |s_val| blk: {
+            if (s_val.len > 2 and std.mem.eql(u8, s_val[0..2], "0x")) {
+                const hex_str = s_val[2..];
+                const parsed_hex = std.fmt.parseInt(i64, hex_str, 16) catch {
+                    return runtimePanic(vm, ErrorList.InvalidNumber, ErrorCode.INVALID_ARGUMENT, "@int: invalid hex literal '{s}'", .{s_val});
+                };
+                break :blk parsed_hex;
+            }
+
+            const parsed_int_opt: ?i64 = std.fmt.parseInt(i64, s_val, 10) catch null;
+            if (parsed_int_opt) |parsed_int| {
+                break :blk parsed_int;
+            }
+
+            const parsed_float = std.fmt.parseFloat(f64, s_val) catch {
+                return runtimePanic(vm, ErrorList.InvalidNumber, ErrorCode.INVALID_ARGUMENT, "@int: failed to parse '{s}'", .{s_val});
+            };
+            if (!std.math.isFinite(parsed_float)) {
+                return runtimePanic(vm, ErrorList.FloatOverflow, ErrorCode.INVALID_ARGUMENT, "@int: '{s}' is not a finite number", .{s_val});
+            }
+            const max = @as(f64, @floatFromInt(std.math.maxInt(i64)));
+            const min = @as(f64, @floatFromInt(std.math.minInt(i64)));
+            if (parsed_float > max or parsed_float < min) {
+                return runtimePanic(vm, ErrorList.IntegerOverflow, ErrorCode.ARITHMETIC_OVERFLOW, "@int: value '{s}' outside int range", .{s_val});
+            }
+            break :blk @as(i64, @intFromFloat(parsed_float));
+        },
+        else => return runtimePanic(vm, ErrorList.TypeError, ErrorCode.TYPE_MISMATCH, "@int: cannot convert value of type {s}", .{@tagName(meta.activeTag(value))}),
+    };
+}
+
+fn convertToFloat(vm: anytype, value: HIRValue) ErrorList!f64 {
+    return switch (value) {
+        .float => value.float,
+        .int => |i| @as(f64, @floatFromInt(i)),
+        .byte => |b| @as(f64, @floatFromInt(b)),
+        .string => |s_val| blk: {
+            if (s_val.len > 2 and std.mem.eql(u8, s_val[0..2], "0x")) {
+                const hex_str = s_val[2..];
+                const parsed_hex = std.fmt.parseInt(u64, hex_str, 16) catch {
+                    return runtimePanic(vm, ErrorList.InvalidNumber, ErrorCode.INVALID_ARGUMENT, "@float: invalid hex literal '{s}'", .{s_val});
+                };
+                break :blk @as(f64, @floatFromInt(parsed_hex));
+            }
+
+            const parsed = std.fmt.parseFloat(f64, s_val) catch {
+                return runtimePanic(vm, ErrorList.InvalidNumber, ErrorCode.INVALID_ARGUMENT, "@float: failed to parse '{s}'", .{s_val});
+            };
+            if (!std.math.isFinite(parsed)) {
+                return runtimePanic(vm, ErrorList.FloatOverflow, ErrorCode.INVALID_ARGUMENT, "@float: '{s}' is not a finite number", .{s_val});
+            }
+            break :blk parsed;
+        },
+        else => return runtimePanic(vm, ErrorList.TypeError, ErrorCode.TYPE_MISMATCH, "@float: cannot convert value of type {s}", .{@tagName(meta.activeTag(value))}),
+    };
+}
+
+fn convertToByte(vm: anytype, value: HIRValue) ErrorList!u8 {
+    return switch (value) {
+        .byte => value.byte,
+        .int => |i| blk: {
+            if (i >= 0 and i <= 255) {
+                break :blk @as(u8, @intCast(i));
+            }
+            return runtimePanic(vm, ErrorList.byteOverflow, ErrorCode.INVALID_ARGUMENT, "@byte: integer {} out of byte range", .{i});
+        },
+        .float => |f| blk: {
+            if (!std.math.isFinite(f)) {
+                return runtimePanic(vm, ErrorList.FloatOverflow, ErrorCode.INVALID_ARGUMENT, "@byte: non-finite float cannot convert to byte", .{});
+            }
+            const rounded = @as(i64, @intFromFloat(f));
+            if (rounded >= 0 and rounded <= 255) {
+                break :blk @as(u8, @intCast(rounded));
+            }
+            return runtimePanic(vm, ErrorList.byteOverflow, ErrorCode.INVALID_ARGUMENT, "@byte: float {d} out of byte range", .{f});
+        },
+        .string => |s_val| blk: {
+            if (s_val.len == 0) {
+                return runtimePanic(vm, ErrorList.InvalidNumber, ErrorCode.INVALID_ARGUMENT, "@byte: empty string", .{});
+            }
+
+            if (s_val.len == 1) {
+                break :blk s_val[0];
+            }
+
+            if (s_val.len > 2 and std.mem.eql(u8, s_val[0..2], "0x")) {
+                const hex_str = s_val[2..];
+                const parsed_hex_byte = std.fmt.parseInt(u8, hex_str, 16) catch {
+                    return runtimePanic(vm, ErrorList.InvalidNumber, ErrorCode.INVALID_ARGUMENT, "@byte: invalid hex literal '{s}'", .{s_val});
+                };
+                break :blk parsed_hex_byte;
+            }
+
+            const parsed_int_opt: ?i64 = std.fmt.parseInt(i64, s_val, 10) catch null;
+            if (parsed_int_opt) |parsed_int| {
+                if (parsed_int >= 0 and parsed_int <= 255) {
+                    break :blk @as(u8, @intCast(parsed_int));
+                }
+                return runtimePanic(vm, ErrorList.byteOverflow, ErrorCode.INVALID_ARGUMENT, "@byte: integer {d} out of byte range", .{parsed_int});
+            }
+
+            const parsed_float = std.fmt.parseFloat(f64, s_val) catch {
+                return runtimePanic(vm, ErrorList.InvalidNumber, ErrorCode.INVALID_ARGUMENT, "@byte: failed to parse '{s}'", .{s_val});
+            };
+            if (!std.math.isFinite(parsed_float)) {
+                return runtimePanic(vm, ErrorList.FloatOverflow, ErrorCode.INVALID_ARGUMENT, "@byte: '{s}' is not a finite number", .{s_val});
+            }
+            const rounded = @as(i64, @intFromFloat(parsed_float));
+            if (rounded >= 0 and rounded <= 255) {
+                break :blk @as(u8, @intCast(rounded));
+            }
+            return runtimePanic(vm, ErrorList.byteOverflow, ErrorCode.INVALID_ARGUMENT, "@byte: float {d} out of byte range", .{parsed_float});
+        },
+        else => return runtimePanic(vm, ErrorList.TypeError, ErrorCode.TYPE_MISMATCH, "@byte: cannot convert value of type {s}", .{@tagName(meta.activeTag(value))}),
+    };
+}
 
 pub fn exec(vm: anytype, s: anytype) !void {
     const val = try vm.stack.pop();
@@ -35,306 +174,18 @@ pub fn exec(vm: anytype, s: anytype) !void {
     }
 
     if (s.op == .ToInt) {
-        const out: HIRValue = switch (val.value) {
-            .int => val.value,
-            .byte => |u| HIRValue{ .int = @as(i64, u) },
-            .float => |f| blk: {
-                if (f > @as(f64, @floatFromInt(std.math.maxInt(i64)))) {
-                    var variant_index: u32 = 0;
-                    if (vm.custom_type_registry.get("ValueError")) |ct| {
-                        if (ct.enum_variants) |variants| {
-                            for (variants, 0..) |v, i| {
-                                if (std.mem.eql(u8, v.name, "Overflow")) {
-                                    variant_index = @intCast(i);
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    break :blk HIRValue{ .enum_variant = .{ .type_name = "ValueError", .variant_name = "Overflow", .variant_index = variant_index } };
-                }
-                if (f < @as(f64, @floatFromInt(std.math.minInt(i64)))) {
-                    var variant_index: u32 = 0;
-                    if (vm.custom_type_registry.get("ValueError")) |ct| {
-                        if (ct.enum_variants) |variants| {
-                            for (variants, 0..) |v, i| {
-                                if (std.mem.eql(u8, v.name, "Underflow")) {
-                                    variant_index = @intCast(i);
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    break :blk HIRValue{ .enum_variant = .{ .type_name = "ValueError", .variant_name = "Underflow", .variant_index = variant_index } };
-                }
-                break :blk HIRValue{ .int = @as(i64, @intFromFloat(f)) };
-            },
-            .string => |s_val| blk: {
-                if (s_val.len > 2 and std.mem.eql(u8, s_val[0..2], "0x")) {
-                    const hex_str = s_val[2..];
-                    const parsed_hex = std.fmt.parseInt(i64, hex_str, 16) catch {
-                        var variant_index: u32 = 0;
-                        if (vm.custom_type_registry.get("ValueError")) |ct| {
-                            if (ct.enum_variants) |variants| {
-                                for (variants, 0..) |v, i| {
-                                    if (std.mem.eql(u8, v.name, "ParseFailed")) {
-                                        variant_index = @intCast(i);
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                        break :blk HIRValue{ .enum_variant = .{ .type_name = "ValueError", .variant_name = "ParseFailed", .variant_index = variant_index } };
-                    };
-                    break :blk HIRValue{ .int = parsed_hex };
-                }
-
-                const parsed_int_opt: ?i64 = std.fmt.parseInt(i64, s_val, 10) catch null;
-                if (parsed_int_opt) |pi| break :blk HIRValue{ .int = pi };
-
-                const f = std.fmt.parseFloat(f64, s_val) catch {
-                    var variant_index: u32 = 0;
-                    if (vm.custom_type_registry.get("ValueError")) |ct| {
-                        if (ct.enum_variants) |variants| {
-                            for (variants, 0..) |v, i| {
-                                if (std.mem.eql(u8, v.name, "ParseFailed")) {
-                                    variant_index = @intCast(i);
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    break :blk HIRValue{ .enum_variant = .{ .type_name = "ValueError", .variant_name = "ParseFailed", .variant_index = variant_index } };
-                };
-                if (f > @as(f64, @floatFromInt(std.math.maxInt(i64)))) {
-                    var variant_index: u32 = 0;
-                    if (vm.custom_type_registry.get("ValueError")) |ct| {
-                        if (ct.enum_variants) |variants| {
-                            for (variants, 0..) |v, i| {
-                                if (std.mem.eql(u8, v.name, "Overflow")) {
-                                    variant_index = @intCast(i);
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    break :blk HIRValue{ .enum_variant = .{ .type_name = "ValueError", .variant_name = "Overflow", .variant_index = variant_index } };
-                }
-                if (f < @as(f64, @floatFromInt(std.math.minInt(i64)))) {
-                    var variant_index: u32 = 0;
-                    if (vm.custom_type_registry.get("ValueError")) |ct| {
-                        if (ct.enum_variants) |variants| {
-                            for (variants, 0..) |v, i| {
-                                if (std.mem.eql(u8, v.name, "Underflow")) {
-                                    variant_index = @intCast(i);
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    break :blk HIRValue{ .enum_variant = .{ .type_name = "ValueError", .variant_name = "Underflow", .variant_index = variant_index } };
-                }
-                break :blk HIRValue{ .int = @as(i64, @intFromFloat(f)) };
-            },
-            else => HIRValue{ .int = 0 },
-        };
-        try vm.stack.push(HIRFrame.initFromHIRValue(out));
+        const result = try convertToInt(vm, val.value);
+        try vm.stack.push(HIRFrame.initInt(result));
         return;
     }
     if (s.op == .ToFloat) {
-        const out: HIRValue = switch (val.value) {
-            .float => val.value,
-            .int => |i| HIRValue{ .float = @as(f64, @floatFromInt(i)) },
-            .byte => |u| HIRValue{ .float = @as(f64, @floatFromInt(u)) },
-            .string => |s_val| blk: {
-                if (s_val.len > 2 and std.mem.eql(u8, s_val[0..2], "0x")) {
-                    const hex_str = s_val[2..];
-                    const parsed_hex = std.fmt.parseInt(u64, hex_str, 16) catch {
-                        var variant_index: u32 = 0;
-                        if (vm.custom_type_registry.get("ValueError")) |ct| {
-                            if (ct.enum_variants) |variants| {
-                                for (variants, 0..) |v, i| {
-                                    if (std.mem.eql(u8, v.name, "ParseFailed")) {
-                                        variant_index = @intCast(i);
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                        break :blk HIRValue{ .enum_variant = .{ .type_name = "ValueError", .variant_name = "ParseFailed", .variant_index = variant_index } };
-                    };
-                    break :blk HIRValue{ .float = @as(f64, @floatFromInt(parsed_hex)) };
-                }
-
-                const parsed_ok = std.fmt.parseFloat(f64, s_val) catch {
-                    var variant_index: u32 = 0;
-                    if (vm.custom_type_registry.get("ValueError")) |ct| {
-                        if (ct.enum_variants) |variants| {
-                            for (variants, 0..) |v, i| {
-                                if (std.mem.eql(u8, v.name, "ParseFailed")) {
-                                    variant_index = @intCast(i);
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    break :blk HIRValue{ .enum_variant = .{ .type_name = "ValueError", .variant_name = "ParseFailed", .variant_index = variant_index } };
-                };
-                break :blk HIRValue{ .float = parsed_ok };
-            },
-            else => HIRValue{ .float = 0.0 },
-        };
-        try vm.stack.push(HIRFrame.initFromHIRValue(out));
+        const result = try convertToFloat(vm, val.value);
+        try vm.stack.push(HIRFrame.initFloat(result));
         return;
     }
     if (s.op == .ToByte) {
-        const out: HIRValue = switch (val.value) {
-            .byte => |b| HIRValue{ .byte = b },
-            .int => |i| blk: {
-                if (i >= 0 and i <= 255) {
-                    break :blk HIRValue{ .byte = @intCast(i) };
-                }
-                var variant_index: u32 = 0;
-                if (vm.custom_type_registry.get("ValueError")) |ct| {
-                    if (ct.enum_variants) |variants| {
-                        for (variants, 0..) |v, idx| {
-                            if (std.mem.eql(u8, v.name, "OutOfBounds")) {
-                                variant_index = @intCast(idx);
-                                break;
-                            }
-                        }
-                    }
-                }
-                const error_variant = HIRValue{ .enum_variant = .{ .type_name = "ValueError", .variant_name = "OutOfBounds", .variant_index = variant_index, .path = null } };
-                break :blk error_variant;
-            },
-            .float => |f| blk: {
-                const i: i64 = @as(i64, @intFromFloat(f));
-                if (i >= 0 and i <= 255) {
-                    break :blk HIRValue{ .byte = @intCast(i) };
-                }
-                var variant_index: u32 = 0;
-                if (vm.custom_type_registry.get("ValueError")) |ct| {
-                    if (ct.enum_variants) |variants| {
-                        for (variants, 0..) |v, idx| {
-                            if (std.mem.eql(u8, v.name, "OutOfBounds")) {
-                                variant_index = @intCast(idx);
-                                break;
-                            }
-                        }
-                    }
-                }
-                const error_variant = HIRValue{ .enum_variant = .{ .type_name = "ValueError", .variant_name = "OutOfBounds", .variant_index = variant_index, .path = null } };
-                break :blk error_variant;
-            },
-            .string => |s_val| blk: {
-                if (s_val.len == 0) {
-                    var v_idx: u32 = 0;
-                    if (vm.custom_type_registry.get("ValueError")) |ct| {
-                        if (ct.enum_variants) |variants| {
-                            for (variants, 0..) |v, i| {
-                                if (std.mem.eql(u8, v.name, "ParseFailed")) {
-                                    v_idx = @intCast(i);
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    const parse_failed_variant = HIRValue{ .enum_variant = .{ .type_name = "ValueError", .variant_name = "ParseFailed", .variant_index = v_idx, .path = null } };
-                    break :blk parse_failed_variant;
-                }
-
-                if (s_val.len == 1) {
-                    break :blk HIRValue{ .byte = s_val[0] };
-                }
-
-                if (s_val.len > 2 and std.mem.eql(u8, s_val[0..2], "0x")) {
-                    const hex_str = s_val[2..];
-                    const parsed_hex_byte = std.fmt.parseInt(u8, hex_str, 16) catch {
-                        var v_idx: u32 = 0;
-                        if (vm.custom_type_registry.get("ValueError")) |ct| {
-                            if (ct.enum_variants) |variants| {
-                                for (variants, 0..) |v, i| {
-                                    if (std.mem.eql(u8, v.name, "ParseFailed")) {
-                                        v_idx = @intCast(i);
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                        const parse_failed_variant = HIRValue{ .enum_variant = .{ .type_name = "ValueError", .variant_name = "ParseFailed", .variant_index = v_idx, .path = null } };
-                        break :blk parse_failed_variant;
-                    };
-                    break :blk HIRValue{ .byte = parsed_hex_byte };
-                }
-
-                const parsed_opt: ?i64 = std.fmt.parseInt(i64, s_val, 10) catch null;
-                if (parsed_opt) |parsed_int| {
-                    if (parsed_int >= 0 and parsed_int <= 255) {
-                        break :blk HIRValue{ .byte = @intCast(parsed_int) };
-                    }
-                    var v_idx2: u32 = 0;
-                    if (vm.custom_type_registry.get("ValueError")) |ct2| {
-                        if (ct2.enum_variants) |variants| {
-                            for (variants, 0..) |v, i| {
-                                if (std.mem.eql(u8, v.name, "OutOfBounds")) {
-                                    v_idx2 = @intCast(i);
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    break :blk HIRValue{ .enum_variant = .{ .type_name = "ValueError", .variant_name = "OutOfBounds", .variant_index = v_idx2, .path = null } };
-                }
-
-                const f = std.fmt.parseFloat(f64, s_val) catch {
-                    var v_idx_pf: u32 = 0;
-                    if (vm.custom_type_registry.get("ValueError")) |ct| {
-                        if (ct.enum_variants) |variants| {
-                            for (variants, 0..) |v, i| {
-                                if (std.mem.eql(u8, v.name, "ParseFailed")) {
-                                    v_idx_pf = @intCast(i);
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    break :blk HIRValue{ .enum_variant = .{ .type_name = "ValueError", .variant_name = "ParseFailed", .variant_index = v_idx_pf, .path = null } };
-                };
-                const floored: i64 = @as(i64, @intFromFloat(f));
-                if (floored >= 0 and floored <= 255) {
-                    break :blk HIRValue{ .byte = @intCast(floored) };
-                }
-                var v_idx2: u32 = 0;
-                if (vm.custom_type_registry.get("ValueError")) |ct2| {
-                    if (ct2.enum_variants) |variants| {
-                        for (variants, 0..) |v, i| {
-                            if (std.mem.eql(u8, v.name, "OutOfBounds")) {
-                                v_idx2 = @intCast(i);
-                                break;
-                            }
-                        }
-                    }
-                }
-                break :blk HIRValue{ .enum_variant = .{ .type_name = "ValueError", .variant_name = "OutOfBounds", .variant_index = v_idx2, .path = null } };
-            },
-            else => blk_unsupported: {
-                var v_idx: u32 = 0;
-                if (vm.custom_type_registry.get("ValueError")) |ct| {
-                    if (ct.enum_variants) |variants| {
-                        for (variants, 0..) |v, i| {
-                            if (std.mem.eql(u8, v.name, "ParseFailed")) {
-                                v_idx = @intCast(i);
-                                break;
-                            }
-                        }
-                    }
-                }
-                const unsupported_variant = HIRValue{ .enum_variant = .{ .type_name = "ValueError", .variant_name = "ParseFailed", .variant_index = v_idx, .path = null } };
-                break :blk_unsupported unsupported_variant;
-            },
-        };
-        try vm.stack.push(HIRFrame.initFromHIRValue(out));
+        const result = try convertToByte(vm, val.value);
+        try vm.stack.push(HIRFrame.initByte(result));
         return;
     }
 
@@ -377,48 +228,14 @@ pub fn exec(vm: anytype, s: anytype) !void {
                     const start_i: i64 = start.value.int;
                     const len_i: i64 = length.value.int;
                     if (start_i < 0 or len_i < 0) {
-                        var variant_index: u32 = 0;
-                        if (vm.custom_type_registry.get("IndexError")) |ct| {
-                            if (ct.enum_variants) |variants| {
-                                for (variants, 0..) |v, i| {
-                                    if (std.mem.eql(u8, v.name, "OutOfBounds")) {
-                                        variant_index = @intCast(i);
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                        const err_val = HIRValue{ .enum_variant = .{
-                            .type_name = "IndexError",
-                            .variant_name = "OutOfBounds",
-                            .variant_index = variant_index,
-                        } };
-                        try vm.stack.push(HIRFrame.initFromHIRValue(err_val));
-                        return;
+                        return runtimePanic(vm, ErrorList.IndexOutOfBounds, ErrorCode.INDEX_OUT_OF_BOUNDS, "@slice: start and length must be non-negative", .{});
                     }
 
                     const start_idx = @as(usize, @intCast(start_i));
                     const len = @as(usize, @intCast(len_i));
 
                     if (start_idx >= s_val.len or start_idx + len > s_val.len) {
-                        var variant_index: u32 = 0;
-                        if (vm.custom_type_registry.get("IndexError")) |ct| {
-                            if (ct.enum_variants) |variants| {
-                                for (variants, 0..) |v, i| {
-                                    if (std.mem.eql(u8, v.name, "OutOfBounds")) {
-                                        variant_index = @intCast(i);
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                        const err_val = HIRValue{ .enum_variant = .{
-                            .type_name = "IndexError",
-                            .variant_name = "OutOfBounds",
-                            .variant_index = variant_index,
-                        } };
-                        try vm.stack.push(HIRFrame.initFromHIRValue(err_val));
-                        return;
+                        return runtimePanic(vm, ErrorList.IndexOutOfBounds, ErrorCode.INDEX_OUT_OF_BOUNDS, "@slice: range {d}:{d} outside string of length {d}", .{ start_i, len_i, s_val.len });
                     }
                     const end_idx = start_idx + len;
 
@@ -435,23 +252,8 @@ pub fn exec(vm: anytype, s: anytype) !void {
                     try vm.stack.push(HIRFrame.initString(result));
                 },
                 .ToInt => {
-                    const parsed_int = std.fmt.parseInt(i64, s_val, 10) catch {
-                        var variant_index: u32 = 0;
-                        if (vm.custom_type_registry.get("ValueError")) |ct| {
-                            if (ct.enum_variants) |variants| {
-                                for (variants, 0..) |v, i| {
-                                    if (std.mem.eql(u8, v.name, "ParseFailed")) {
-                                        variant_index = @intCast(i);
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                        const hir = HIRValue{ .enum_variant = .{ .type_name = "ValueError", .variant_name = "ParseFailed", .variant_index = variant_index } };
-                        try vm.stack.push(HIRFrame.initFromHIRValue(hir));
-                        return;
-                    };
-                    try vm.stack.push(HIRFrame.initInt(parsed_int));
+                    const converted = try convertToInt(vm, HIRValue{ .string = s_val });
+                    try vm.stack.push(HIRFrame.initInt(converted));
                 },
                 .ToString => {
                     try vm.stack.push(HIRFrame.initString(s_val));

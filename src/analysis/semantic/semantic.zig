@@ -150,7 +150,7 @@ pub const SemanticAnalyzer = struct {
             .Map => .Map,
             .Enum => .Enum,
             .Function => .Function,
-            .Union => |members| HIRType{ .Union = members },
+            .Union => .Union,
             .Unknown => .Nothing, // TODO: This feels hacky
         };
     }
@@ -515,20 +515,7 @@ pub const SemanticAnalyzer = struct {
         for (statements) |stmt| {
             switch (stmt.data) {
                 .FunctionDecl => |func| {
-                    // Create function type
-                    const func_type = try self.allocator.create(ast.FunctionType);
-
-                    // Infer or use explicit return type
-                    var inferred_return_type = func.return_type_info;
-                    if (func.return_type_info.base == .Nothing) {
-                        const inferred = try self.inferFunctionReturnType(func);
-                        inferred_return_type = inferred.*;
-                    } else if (func.return_type_info.base == .Union) {
-                        // Use the union type as-is since flattenUnionType was removed
-                        inferred_return_type = func.return_type_info;
-                    }
-
-                    // Build parameter types and track aliases
+                    // Build parameter types and track aliases FIRST
                     var param_types = try self.allocator.alloc(ast.TypeInfo, func.params.len);
                     var param_aliases = try self.allocator.alloc(bool, func.params.len);
                     for (func.params, 0..) |param, i| {
@@ -595,15 +582,16 @@ pub const SemanticAnalyzer = struct {
                         }
                     }
 
-                    // Set up function type
+                    // Create function type with placeholder return type
+                    const func_type = try self.allocator.create(ast.FunctionType);
                     func_type.* = .{
                         .params = param_types,
                         .return_type = try self.allocator.create(ast.TypeInfo),
                         .param_aliases = param_aliases,
                     };
-                    func_type.return_type.* = inferred_return_type;
+                    func_type.return_type.* = func.return_type_info; // Use declared type if available
 
-                    // Add function to current scope if not already present
+                    // Add function to current scope BEFORE inferring return type (for recursive calls)
                     if (scope.lookupVariable(func.name.lexeme) == null) {
                         const func_type_info = try self.allocator.create(ast.TypeInfo);
                         func_type_info.* = .{ .base = .Function, .function_type = func_type };
@@ -627,8 +615,6 @@ pub const SemanticAnalyzer = struct {
                                 return err;
                             }
                         };
-
-                        try self.function_return_types.put(stmt.base.id, func_type.return_type);
                     }
                 },
                 else => {},
@@ -904,6 +890,34 @@ pub const SemanticAnalyzer = struct {
                 else => {},
             }
         }
+
+        // Third pass: infer return types now that all declarations in this scope have been registered
+        for (statements) |stmt| {
+            switch (stmt.data) {
+                .FunctionDecl => |func| {
+                    const func_var = scope.lookupVariable(func.name.lexeme) orelse continue;
+                    const storage = self.memory.scope_manager.value_storage.get(func_var.storage_id) orelse continue;
+                    const func_type_info = storage.type_info;
+                    if (func_type_info.base != .Function or func_type_info.function_type == null) continue;
+
+                    const func_type = func_type_info.function_type.?;
+
+                    const inferred = try self.inferFunctionReturnType(func);
+                    var inferred_return_type = inferred;
+
+                    if (func.return_type_info.base != .Nothing) {
+                        try self.validateReturnTypeCompatibility(&func.return_type_info, inferred, .{ .location = getLocationFromBase(stmt.base) });
+                        const declared_type = try self.allocator.create(ast.TypeInfo);
+                        declared_type.* = func.return_type_info;
+                        inferred_return_type = declared_type;
+                    }
+
+                    func_type.return_type.* = inferred_return_type.*;
+                    try self.function_return_types.put(stmt.base.id, func_type.return_type);
+                },
+                else => {},
+            }
+        }
     }
 
     pub fn validateStatements(self: *SemanticAnalyzer, statements: []const ast.Stmt) ErrorList!void {
@@ -972,6 +986,7 @@ pub const SemanticAnalyzer = struct {
                                     .String => TokenLiteral{ .string = "" },
                                     .Tetra => TokenLiteral{ .tetra = .false },
                                     .Byte => TokenLiteral{ .byte = 0 },
+                                    .Array => TokenLiteral{ .array = &[_]TokenLiteral{} },
                                     .Union => if (type_info.union_type) |ut|
                                         self.getUnionDefaultValue(ut)
                                     else
@@ -1800,29 +1815,19 @@ pub const SemanticAnalyzer = struct {
         }
 
         // Error cases:
-        // 1. Function expects a return value but none found
-        // Relax: if there is any return (even nested), don't force an implicit-final-expression check here
-        if (expected_return_type.base != .Nothing and !has_return_with_value and !has_return) {
-            // Treat any final expression as an implicit return value
-            if (last_expr) |_| {
-                has_return_with_value = true;
-            }
-        }
-        // 2. Function has no explicit return type but has a value-producing final expression
-        // Only check this if there are explicit return statements that would conflict
-        else if (expected_return_type.base == .Nothing and last_expr != null and has_return_with_value) {
-            const expr_type = try infer_type.inferTypeFromExpr(self, last_expr.?);
-            if (expr_type.base != .Nothing) {
-                self.reporter.reportCompileError(
-                    func_span.location,
-                    ErrorCode.MISSING_RETURN_TYPE,
-                    "Function has no return type specified but final expression produces value of type {s}",
-                    .{@tagName(expr_type.base)},
-                );
-                self.fatal_error = true;
-            }
+        // Enforce explicit returns: do not treat a trailing expression as an implicit function return.
+        // 1. Function expects a return value but none found via explicit return
+        if (expected_return_type.base != .Nothing and !has_return_with_value) {
+            self.reporter.reportCompileError(
+                func_span.location,
+                ErrorCode.MISSING_RETURN_VALUE,
+                "Function expects return value of type {s}; add an explicit return",
+                .{@tagName(expected_return_type.base)},
+            );
+            self.fatal_error = true;
         }
 
+        // 2. Function has no return type (Nothing) but a return statement returns a value
         if (expected_return_type.base == .Nothing and has_return_with_value) {
             self.reporter.reportCompileError(
                 func_span.location,
@@ -1833,9 +1838,8 @@ pub const SemanticAnalyzer = struct {
             self.fatal_error = true;
         }
 
-        // Intentionally do not enforce all-paths return for value-returning
-        // functions. The base scope's final value or any explicit return in
-        // the body is sufficient.
+        // All-paths checking is relaxed: expression blocks and conditionals
+        // may still be used in expressions, but functions must use explicit return.
 
         return has_return;
     }
@@ -2181,26 +2185,131 @@ pub const SemanticAnalyzer = struct {
         const prev_scope = self.current_scope;
         self.current_scope = func_scope;
 
-        // Collect all return statement types
-        try self.collectReturnTypes(func.body, &return_types);
+        // Process function body to add local variables to scope
+        try self.collectDeclarations(func.body, func_scope);
+
+        // NEW APPROACH: Start with Nothing, find terminating returns, collect all returns
+        var terminating_return_type: ?*ast.TypeInfo = null;
+        var all_return_types = std.array_list.Managed(*ast.TypeInfo).init(self.allocator);
+        defer all_return_types.deinit();
+
+        // First pass: Find terminating return statements (outside conditionals)
+        try self.findTerminatingReturns(func.body, &terminating_return_type, &all_return_types);
+
+        // Second pass: Collect all other return types
+        try self.collectReturnTypes(func.body, &all_return_types);
 
         // Restore previous scope
         self.current_scope = prev_scope;
 
-        if (return_types.items.len == 0) {
+        var inferred_return_type: *ast.TypeInfo = undefined;
+        if (terminating_return_type) |term_type| {
+            // Use the terminating return type as the base
+            if (all_return_types.items.len <= 1) {
+                inferred_return_type = term_type;
+            } else {
+                // Create union with terminating type and all other types
+                try all_return_types.append(term_type);
+                inferred_return_type = try helpers.createUnionType(self, all_return_types.items);
+            }
+        } else if (all_return_types.items.len == 0) {
             // No return statements - function returns Nothing
             const type_info = try self.allocator.create(ast.TypeInfo);
             type_info.* = .{ .base = .Nothing, .is_mutable = false };
-            return type_info;
-        }
-
-        if (return_types.items.len == 1) {
+            inferred_return_type = type_info;
+        } else if (all_return_types.items.len == 1) {
             // Single return type - return it directly
-            return return_types.items[0];
+            inferred_return_type = all_return_types.items[0];
+        } else {
+            // Multiple return types - create a union
+            inferred_return_type = try helpers.createUnionType(self, all_return_types.items);
         }
 
-        // Multiple return types - create a union
-        return try helpers.createUnionType(self, return_types.items);
+        return inferred_return_type;
+    }
+
+    fn findTerminatingReturns(self: *SemanticAnalyzer, statements: []ast.Stmt, terminating_return_type: *?*ast.TypeInfo, all_return_types: *std.array_list.Managed(*ast.TypeInfo)) ErrorList!void {
+        for (statements, 0..) |stmt, idx| {
+            const is_last_stmt = idx + 1 == statements.len;
+            switch (stmt.data) {
+                .Return => |return_stmt| {
+                    if (return_stmt.value) |value| {
+                        const return_type = try infer_type.inferTypeFromExpr(self, value);
+                        if (terminating_return_type.* == null) {
+                            terminating_return_type.* = return_type;
+                        }
+                        try all_return_types.append(return_type);
+                    } else {
+                        // Return without value - add Nothing type
+                        const nothing_type = try self.allocator.create(ast.TypeInfo);
+                        nothing_type.* = .{ .base = .Nothing, .is_mutable = false };
+                        if (terminating_return_type.* == null) {
+                            terminating_return_type.* = nothing_type;
+                        }
+                        try all_return_types.append(nothing_type);
+                    }
+                    // Found a terminating return - stop processing
+                    return;
+                },
+                .Block => |block_stmts| {
+                    try self.findTerminatingReturns(block_stmts, terminating_return_type, all_return_types);
+                    // If we found a terminating return in the block, stop processing
+                    if (terminating_return_type.* != null) {
+                        return;
+                    }
+                },
+                .Expression => |expr| {
+                    if (expr) |expression| {
+                        // Check if this is an if expression that might have terminating returns
+                        if (expression.data == .If) {
+                            const if_expr = expression.data.If;
+                            if (if_expr.then_branch) |then_branch| {
+                                if (then_branch.data == .Block) {
+                                    try self.findTerminatingReturns(then_branch.data.Block.statements, terminating_return_type, all_return_types);
+                                }
+                            }
+                            if (if_expr.else_branch) |else_branch| {
+                                if (else_branch.data == .Block) {
+                                    try self.findTerminatingReturns(else_branch.data.Block.statements, terminating_return_type, all_return_types);
+                                }
+                            }
+                            // If we found a terminating return in either branch, stop processing
+                            if (terminating_return_type.* != null) {
+                                return;
+                            }
+                        } else if (expression.data == .ReturnExpr) {
+                            const return_expr = expression.data.ReturnExpr;
+                            if (return_expr.value) |value| {
+                                const return_type = try infer_type.inferTypeFromExpr(self, value);
+                                if (terminating_return_type.* == null) {
+                                    terminating_return_type.* = return_type;
+                                }
+                                try all_return_types.append(return_type);
+                            } else {
+                                const nothing_type = try self.allocator.create(ast.TypeInfo);
+                                nothing_type.* = .{ .base = .Nothing, .is_mutable = false };
+                                if (terminating_return_type.* == null) {
+                                    terminating_return_type.* = nothing_type;
+                                }
+                                try all_return_types.append(nothing_type);
+                            }
+                            return;
+                        } else if (is_last_stmt) {
+                            // Only treat the final expression in a function body as a potential implicit return.
+                            const return_type = try infer_type.inferTypeFromExpr(self, expression);
+                            if (terminating_return_type.* == null) {
+                                terminating_return_type.* = return_type;
+                            }
+                            try all_return_types.append(return_type);
+                            return;
+                        }
+                    }
+                },
+                else => {
+                    // Other statements don't terminate execution
+                },
+            }
+        }
     }
 
     fn collectReturnTypes(self: *SemanticAnalyzer, statements: []ast.Stmt, return_types: *std.array_list.Managed(*ast.TypeInfo)) ErrorList!void {
@@ -2234,9 +2343,11 @@ pub const SemanticAnalyzer = struct {
                                 nothing_type.* = .{ .base = .Nothing, .is_mutable = false };
                                 try return_types.append(nothing_type);
                             }
+                        } else {
+                            // For other expressions (like if expressions), collect their return types
+                            // This handles cases where the function body is just an expression
+                            try self.collectReturnTypesFromExpr(expression, return_types);
                         }
-                        // Don't treat other expressions as return values
-                        // Only explicit return statements should contribute to return type inference
                     }
                 },
                 else => {},

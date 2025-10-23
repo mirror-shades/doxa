@@ -85,9 +85,9 @@ pub const TokenType = enum {
     POP, // @pop         - remove from end of string/array
     PRINT, // @print       - print to stdout
     TOSTRING, // @string      - convert to string
-    TOINT, // @int         - convert to int (returns int | ValueError)
-    TOFLOAT, // @float       - convert to float (returns float | ValueError)
-    TOBYTE, // @byte       - convert to byte (returns byte | ValueError)
+    TOINT, // @int         - convert to int (panics on failure)
+    TOFLOAT, // @float       - convert to float (panics on failure)
+    TOBYTE, // @byte       - convert to byte (panics on failure)
     INSERT, // @insert      - insert into string/array at index
     REMOVE, // @remove      - remove from string/array at index
     SLICE, // @slice       - get substring/subarray
