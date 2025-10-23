@@ -2,11 +2,6 @@
 // mirror-shades
 
 const symbols is [ ">", "<", "+", "-", ".", ",", "[", "]" ]
-var tape :: byte[10]
-var loops :: int is 0
-var loopSpot :: int[]
-var tp :: int is 0
-var ip :: int is 0
 
 function getInput() returns byte {
     @print("Input: ")
@@ -15,7 +10,7 @@ function getInput() returns byte {
     return newByte
 }
 
-function startLoop() {
+function startLoop(^loopSpot :: int[], ^loops :: int, ip :: int) {
     if @length(loopSpot) == loops then {
         @push(loopSpot, ip)
     } else {
@@ -24,7 +19,7 @@ function startLoop() {
     loops += 1
 }
 
-function endLoop() {
+function endLoop(loopSpot :: int[], ^loops :: int, ^ip :: int, tape :: byte[], tp :: int) {
     if loops >= 0 then {
         if tape[tp] == 0 then {
             loops -= 1
@@ -38,17 +33,24 @@ function endLoop() {
 }
 
 function checkClosingBracket(scan :: string) returns tetra {
-    var pointer :: int is 0
-    var openBrackets :: int is 0
+    var pointer :: int
+    var openBrackets :: int
     while(pointer < @length(scan)) {
         if(scan[pointer] == "[") then openBrackets += 1
         if(scan[pointer] == "]") then openBrackets -= 1
         pointer += 1
+        if openBrackets < 0 return false
     }
     return(openBrackets == 0)
 }
 
 function interpret(scan :: string) {
+    var tape :: byte[10] // increase if needed
+    var loops :: int
+    var loopSpot :: int[]
+    var tp :: int
+    var ip :: int
+
     const scanLength is @length(scan)
 
     var closedBrackets :: tetra is checkClosingBracket(scan)
@@ -62,20 +64,9 @@ function interpret(scan :: string) {
         if(currentInstruction == "-") then tape[tp] -= 0x01
         if(currentInstruction == ".") then @print("Output: {tape[tp]}\n")
         if(currentInstruction == ",") then tape[tp] is getInput()
-        if(currentInstruction == "[") then startLoop()
-        if(currentInstruction == "]") then endLoop()
+        if(currentInstruction == "[") then startLoop(^loopSpot, ^loops, ip)
+        if(currentInstruction == "]") then endLoop(loopSpot, ^loops, ^ip, tape, tp)
     }
-    reset()
-}
-
-function reset() {
-    for i while i < @length(tape) do i += 1 {
-        tape[i] is 0x00
-    }
-    loops is 0
-    loopSpot is []
-    tp is 0 
-    ip is 0  
 }
 
 entry function main() {
