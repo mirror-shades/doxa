@@ -133,12 +133,13 @@ function endLoop(loopSpot :: int[], ^loops :: int, ^ip :: int, tape :: byte[], t
 }
 
 function checkClosingBracket(scan :: string) returns tetra {
-    var pointer :: int is 0
-    var openBrackets :: int is 0
+    var pointer :: int
+    var openBrackets :: int
     while(pointer < @length(scan)) {
         if(scan[pointer] == "[") then openBrackets += 1
         if(scan[pointer] == "]") then openBrackets -= 1
         pointer += 1
+        if openBrackets < 0 return false
     }
     return(openBrackets == 0)
 }

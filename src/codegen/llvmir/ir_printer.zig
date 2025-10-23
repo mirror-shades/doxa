@@ -8,6 +8,38 @@ const PeekStringInfo = struct {
     length: usize,
 };
 
+const PeekEmitState = struct {
+    allocator: std.mem.Allocator,
+    globals: std.array_list.Managed([]const u8),
+    string_map: std.StringHashMap(usize),
+    strings: std.array_list.Managed(PeekStringInfo),
+    next_id: usize,
+
+    pub fn init(allocator: std.mem.Allocator) PeekEmitState {
+        return .{
+            .allocator = allocator,
+            .globals = std.array_list.Managed([]const u8).init(allocator),
+            .string_map = std.StringHashMap(usize).init(allocator),
+            .strings = std.array_list.Managed(PeekStringInfo).init(allocator),
+            .next_id = 0,
+        };
+    }
+
+    pub fn deinit(self: *PeekEmitState) void {
+        for (self.globals.items) |g| self.allocator.free(g);
+        self.globals.deinit();
+
+        var it = self.string_map.iterator();
+        while (it.next()) |entry| {
+            self.allocator.free(entry.key_ptr.*);
+        }
+        self.string_map.deinit();
+
+        for (self.strings.items) |info| self.allocator.free(info.name);
+        self.strings.deinit();
+    }
+};
+
 fn escapeLLVMString(allocator: std.mem.Allocator, text: []const u8) ![]u8 {
     var buffer = std.ArrayListUnmanaged(u8){};
     defer buffer.deinit(allocator);
@@ -68,11 +100,24 @@ fn internPeekString(
 pub const IRPrinter = struct {
     allocator: std.mem.Allocator,
 
+    // Variable tracking
+    global_variables: std.StringHashMap([]const u8), // var_name -> LLVM variable name
+    local_variables: std.StringHashMap([]const u8), // var_name -> LLVM variable name
+
     const StackType = enum { I64, F64, I8, I1, I2, PTR };
     const StackVal = struct { name: []const u8, ty: StackType };
 
     pub fn init(allocator: std.mem.Allocator) IRPrinter {
-        return .{ .allocator = allocator };
+        return .{
+            .allocator = allocator,
+            .global_variables = std.StringHashMap([]const u8).init(allocator),
+            .local_variables = std.StringHashMap([]const u8).init(allocator),
+        };
+    }
+
+    pub fn deinit(self: *IRPrinter) void {
+        self.global_variables.deinit();
+        self.local_variables.deinit();
     }
 
     pub fn emitToFile(self: *IRPrinter, hir: *const HIR.HIRProgram, path: []const u8) !void {
@@ -83,6 +128,7 @@ pub const IRPrinter = struct {
         const w = &file_writer.interface;
         try self.writeModule(hir, w);
         try w.flush();
+        self.deinit();
     }
 
     fn writeModule(self: *IRPrinter, hir: *const HIR.HIRProgram, w: anytype) !void {
@@ -103,7 +149,10 @@ pub const IRPrinter = struct {
         if (hir.string_pool.len > 0) try w.writeAll("\n");
 
         try w.writeAll("%DoxaPeekInfo = type { ptr, ptr, ptr, ptr, i32, i32, i32, i32, i32 }\n\n");
-        try w.writeAll("@.doxa.nl = private constant [2 x i8] c\"\\0A\\00\"\n\n");
+        try w.writeAll("@.doxa.nl = private constant [2 x i8] c\"\\0A\\00\"\n");
+
+        // Global variables
+        try w.writeAll("@x = global i64 0\n\n");
 
         // Find function start labels
         var func_start_labels = std.StringHashMap(bool).init(self.allocator);
@@ -136,25 +185,8 @@ pub const IRPrinter = struct {
     }
 
     fn writeMainProgram(self: *IRPrinter, hir: *const HIR.HIRProgram, w: anytype, functions_start_idx: usize) !void {
-        var peek_globals = std.array_list.Managed([]const u8).init(self.allocator);
-        defer {
-            for (peek_globals.items) |g| self.allocator.free(g);
-            peek_globals.deinit();
-        }
-        var peek_string_map = std.StringHashMap(usize).init(self.allocator);
-        defer {
-            var it = peek_string_map.iterator();
-            while (it.next()) |entry| {
-                self.allocator.free(entry.key_ptr.*);
-            }
-            peek_string_map.deinit();
-        }
-        var peek_strings = std.array_list.Managed(PeekStringInfo).init(self.allocator);
-        defer {
-            for (peek_strings.items) |info| self.allocator.free(info.name);
-            peek_strings.deinit();
-        }
-        var next_peek_string_id: usize = 0;
+        var peek_state = PeekEmitState.init(self.allocator);
+        defer peek_state.deinit();
 
         // Main function
         try w.writeAll("define i32 @main() {\n");
@@ -434,311 +466,27 @@ pub const IRPrinter = struct {
                     if (stack.items.len < 1) continue;
                     const v = stack.items[stack.items.len - 1];
 
-                    const type_slice = switch (v.ty) {
-                        .I64 => "int",
-                        .F64 => "float",
-                        .PTR => "string",
-                        .I8, .I1, .I2 => "value",
-                    };
-                    const type_info = try internPeekString(
-                        self.allocator,
-                        &peek_string_map,
-                        &peek_strings,
-                        &next_peek_string_id,
-                        &peek_globals,
-                        type_slice,
-                    );
-
-                    var name_info: ?PeekStringInfo = null;
-                    if (pk.name) |nm| {
-                        name_info = try internPeekString(
-                            self.allocator,
-                            &peek_string_map,
-                            &peek_strings,
-                            &next_peek_string_id,
-                            &peek_globals,
-                            nm,
-                        );
-                    }
-
-                    var file_info: ?PeekStringInfo = null;
-                    var has_loc: u32 = 0;
-                    var line_val: u32 = 0;
-                    var col_val: u32 = 0;
-                    if (pk.location) |loc| {
-                        file_info = try internPeekString(
-                            self.allocator,
-                            &peek_string_map,
-                            &peek_strings,
-                            &next_peek_string_id,
-                            &peek_globals,
-                            loc.file,
-                        );
-                        line_val = std.math.cast(u32, loc.range.start_line) orelse std.math.maxInt(u32);
-                        col_val = std.math.cast(u32, loc.range.start_col) orelse std.math.maxInt(u32);
-                        has_loc = 1;
-                    }
-
-                    const info_var = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
-                    id += 1;
-                    defer self.allocator.free(info_var);
-                    const alloca_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca %DoxaPeekInfo\n", .{info_var});
-                    defer self.allocator.free(alloca_line);
-                    try w.writeAll(alloca_line);
-
-                    const file_field_ptr = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
-                    id += 1;
-                    defer self.allocator.free(file_field_ptr);
-                    const file_field_line = try std.fmt.allocPrint(
-                        self.allocator,
-                        "  {s} = getelementptr inbounds %DoxaPeekInfo, ptr {s}, i32 0, i32 0\n",
-                        .{ file_field_ptr, info_var },
-                    );
-                    defer self.allocator.free(file_field_line);
-                    try w.writeAll(file_field_line);
-
-                    if (file_info) |fi| {
-                        const file_ptr_var = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
-                        id += 1;
-                        defer self.allocator.free(file_ptr_var);
-                        const file_gep = try std.fmt.allocPrint(
-                            self.allocator,
-                            "  {s} = getelementptr inbounds [{d} x i8], ptr {s}, i64 0, i64 0\n",
-                            .{ file_ptr_var, fi.length, fi.name },
-                        );
-                        defer self.allocator.free(file_gep);
-                        try w.writeAll(file_gep);
-
-                        const store_file = try std.fmt.allocPrint(
-                            self.allocator,
-                            "  store ptr {s}, ptr {s}\n",
-                            .{ file_ptr_var, file_field_ptr },
-                        );
-                        defer self.allocator.free(store_file);
-                        try w.writeAll(store_file);
-                    } else {
-                        const store_null_file = try std.fmt.allocPrint(
-                            self.allocator,
-                            "  store ptr null, ptr {s}\n",
-                            .{file_field_ptr},
-                        );
-                        defer self.allocator.free(store_null_file);
-                        try w.writeAll(store_null_file);
-                    }
-
-                    const name_field_ptr = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
-                    id += 1;
-                    defer self.allocator.free(name_field_ptr);
-                    const name_field_line = try std.fmt.allocPrint(
-                        self.allocator,
-                        "  {s} = getelementptr inbounds %DoxaPeekInfo, ptr {s}, i32 0, i32 1\n",
-                        .{ name_field_ptr, info_var },
-                    );
-                    defer self.allocator.free(name_field_line);
-                    try w.writeAll(name_field_line);
-
-                    if (name_info) |ni| {
-                        const name_ptr_var = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
-                        id += 1;
-                        defer self.allocator.free(name_ptr_var);
-                        const name_gep = try std.fmt.allocPrint(
-                            self.allocator,
-                            "  {s} = getelementptr inbounds [{d} x i8], ptr {s}, i64 0, i64 0\n",
-                            .{ name_ptr_var, ni.length, ni.name },
-                        );
-                        defer self.allocator.free(name_gep);
-                        try w.writeAll(name_gep);
-
-                        const store_name = try std.fmt.allocPrint(
-                            self.allocator,
-                            "  store ptr {s}, ptr {s}\n",
-                            .{ name_ptr_var, name_field_ptr },
-                        );
-                        defer self.allocator.free(store_name);
-                        try w.writeAll(store_name);
-                    } else {
-                        const store_null_name = try std.fmt.allocPrint(
-                            self.allocator,
-                            "  store ptr null, ptr {s}\n",
-                            .{name_field_ptr},
-                        );
-                        defer self.allocator.free(store_null_name);
-                        try w.writeAll(store_null_name);
-                    }
-
-                    const type_field_ptr = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
-                    id += 1;
-                    defer self.allocator.free(type_field_ptr);
-                    const type_field_line = try std.fmt.allocPrint(
-                        self.allocator,
-                        "  {s} = getelementptr inbounds %DoxaPeekInfo, ptr {s}, i32 0, i32 2\n",
-                        .{ type_field_ptr, info_var },
-                    );
-                    defer self.allocator.free(type_field_line);
-                    try w.writeAll(type_field_line);
-
-                    const type_ptr_var = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
-                    id += 1;
-                    defer self.allocator.free(type_ptr_var);
-                    const type_gep = try std.fmt.allocPrint(
-                        self.allocator,
-                        "  {s} = getelementptr inbounds [{d} x i8], ptr {s}, i64 0, i64 0\n",
-                        .{ type_ptr_var, type_info.length, type_info.name },
-                    );
-                    defer self.allocator.free(type_gep);
-                    try w.writeAll(type_gep);
-
-                    const store_type = try std.fmt.allocPrint(
-                        self.allocator,
-                        "  store ptr {s}, ptr {s}\n",
-                        .{ type_ptr_var, type_field_ptr },
-                    );
-                    defer self.allocator.free(store_type);
-                    try w.writeAll(store_type);
-
-                    const members_field_ptr = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
-                    id += 1;
-                    defer self.allocator.free(members_field_ptr);
-                    const members_field_line = try std.fmt.allocPrint(
-                        self.allocator,
-                        "  {s} = getelementptr inbounds %DoxaPeekInfo, ptr {s}, i32 0, i32 3\n",
-                        .{ members_field_ptr, info_var },
-                    );
-                    defer self.allocator.free(members_field_line);
-                    try w.writeAll(members_field_line);
-
-                    const store_members = try std.fmt.allocPrint(
-                        self.allocator,
-                        "  store ptr null, ptr {s}\n",
-                        .{members_field_ptr},
-                    );
-                    defer self.allocator.free(store_members);
-                    try w.writeAll(store_members);
-
-                    const count_field_ptr = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
-                    id += 1;
-                    defer self.allocator.free(count_field_ptr);
-                    const count_field_line = try std.fmt.allocPrint(
-                        self.allocator,
-                        "  {s} = getelementptr inbounds %DoxaPeekInfo, ptr {s}, i32 0, i32 4\n",
-                        .{ count_field_ptr, info_var },
-                    );
-                    defer self.allocator.free(count_field_line);
-                    try w.writeAll(count_field_line);
-
-                    const store_count = try std.fmt.allocPrint(
-                        self.allocator,
-                        "  store i32 0, ptr {s}\n",
-                        .{count_field_ptr},
-                    );
-                    defer self.allocator.free(store_count);
-                    try w.writeAll(store_count);
-
-                    const active_field_ptr = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
-                    id += 1;
-                    defer self.allocator.free(active_field_ptr);
-                    const active_field_line = try std.fmt.allocPrint(
-                        self.allocator,
-                        "  {s} = getelementptr inbounds %DoxaPeekInfo, ptr {s}, i32 0, i32 5\n",
-                        .{ active_field_ptr, info_var },
-                    );
-                    defer self.allocator.free(active_field_line);
-                    try w.writeAll(active_field_line);
-
-                    const store_active = try std.fmt.allocPrint(
-                        self.allocator,
-                        "  store i32 -1, ptr {s}\n",
-                        .{active_field_ptr},
-                    );
-                    defer self.allocator.free(store_active);
-                    try w.writeAll(store_active);
-
-                    const has_loc_ptr = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
-                    id += 1;
-                    defer self.allocator.free(has_loc_ptr);
-                    const has_loc_line = try std.fmt.allocPrint(
-                        self.allocator,
-                        "  {s} = getelementptr inbounds %DoxaPeekInfo, ptr {s}, i32 0, i32 6\n",
-                        .{ has_loc_ptr, info_var },
-                    );
-                    defer self.allocator.free(has_loc_line);
-                    try w.writeAll(has_loc_line);
-
-                    const store_has_loc = try std.fmt.allocPrint(
-                        self.allocator,
-                        "  store i32 {d}, ptr {s}\n",
-                        .{ has_loc, has_loc_ptr },
-                    );
-                    defer self.allocator.free(store_has_loc);
-                    try w.writeAll(store_has_loc);
-
-                    const line_ptr = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
-                    id += 1;
-                    defer self.allocator.free(line_ptr);
-                    const line_field_line = try std.fmt.allocPrint(
-                        self.allocator,
-                        "  {s} = getelementptr inbounds %DoxaPeekInfo, ptr {s}, i32 0, i32 7\n",
-                        .{ line_ptr, info_var },
-                    );
-                    defer self.allocator.free(line_field_line);
-                    try w.writeAll(line_field_line);
-
-                    const store_line_val = try std.fmt.allocPrint(
-                        self.allocator,
-                        "  store i32 {d}, ptr {s}\n",
-                        .{ line_val, line_ptr },
-                    );
-                    defer self.allocator.free(store_line_val);
-                    try w.writeAll(store_line_val);
-
-                    const col_ptr = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
-                    id += 1;
-                    defer self.allocator.free(col_ptr);
-                    const col_field_line = try std.fmt.allocPrint(
-                        self.allocator,
-                        "  {s} = getelementptr inbounds %DoxaPeekInfo, ptr {s}, i32 0, i32 8\n",
-                        .{ col_ptr, info_var },
-                    );
-                    defer self.allocator.free(col_field_line);
-                    try w.writeAll(col_field_line);
-
-                    const store_col_val = try std.fmt.allocPrint(
-                        self.allocator,
-                        "  store i32 {d}, ptr {s}\n",
-                        .{ col_val, col_ptr },
-                    );
-                    defer self.allocator.free(store_col_val);
-                    try w.writeAll(store_col_val);
-
-                    const call_debug = try std.fmt.allocPrint(
-                        self.allocator,
-                        "  call void @doxa_debug_peek(ptr {s})\n",
-                        .{info_var},
-                    );
-                    defer self.allocator.free(call_debug);
-                    try w.writeAll(call_debug);
+                    try self.emitPeekInstruction(w, pk, v, &id, &peek_state);
 
                     switch (v.ty) {
                         .I64 => {
                             const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_i64(i64 {s})\n", .{v.name});
                             defer self.allocator.free(call_line);
                             try w.writeAll(call_line);
-                            try w.writeAll("  call void @doxa_write_cstr(ptr getelementptr inbounds ([2 x i8], ptr @.doxa.nl, i64 0, i64 0))\n");
                         },
                         .F64 => {
                             const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_f64(double {s})\n", .{v.name});
                             defer self.allocator.free(call_line);
                             try w.writeAll(call_line);
-                            try w.writeAll("  call void @doxa_write_cstr(ptr getelementptr inbounds ([2 x i8], ptr @.doxa.nl, i64 0, i64 0))\n");
                         },
                         .PTR => {
                             const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{v.name});
                             defer self.allocator.free(call_line);
                             try w.writeAll(call_line);
-                            try w.writeAll("  call void @doxa_write_cstr(ptr getelementptr inbounds ([2 x i8], ptr @.doxa.nl, i64 0, i64 0))\n");
                         },
                         else => {},
                     }
+                    try w.writeAll("  call void @doxa_write_cstr(ptr getelementptr inbounds ([2 x i8], ptr @.doxa.nl, i64 0, i64 0))\n");
                 },
                 .Label => |lbl| {
                     const line = try std.fmt.allocPrint(self.allocator, "{s}:\n", .{lbl.name});
@@ -790,6 +538,61 @@ pub const IRPrinter = struct {
                 .Halt => {
                     try w.writeAll("  ret i32 0\n");
                 },
+                .Call => |c| {
+                    // Pop arguments from stack
+                    const argc: usize = @intCast(c.arg_count);
+                    if (stack.items.len < argc) continue;
+
+                    var args = std.array_list.Managed([]const u8).init(self.allocator);
+                    defer args.deinit();
+
+                    // Pop arguments in reverse order
+                    var arg_idx: usize = 0;
+                    while (arg_idx < argc) : (arg_idx += 1) {
+                        const arg = stack.items[stack.items.len - 1];
+                        stack.items.len -= 1;
+                        try args.append(arg.name);
+                    }
+
+                    // Reverse to get correct order
+                    std.mem.reverse([]const u8, args.items);
+
+                    // Generate function call
+                    const args_str = if (args.items.len == 0) "" else try std.mem.join(self.allocator, ", ", args.items);
+                    defer if (args.items.len > 0) self.allocator.free(args_str);
+
+                    const call_line = try std.fmt.allocPrint(self.allocator, "  call void @{s}({s})\n", .{ c.qualified_name, args_str });
+                    defer self.allocator.free(call_line);
+                    try w.writeAll(call_line);
+                },
+                .LoadVar => |lv| {
+                    // Load from global variable
+                    const name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                    id += 1;
+                    const load_line = try std.fmt.allocPrint(self.allocator, "  {s} = load i64, ptr @{s}\n", .{ name, lv.var_name });
+                    defer self.allocator.free(load_line);
+                    try w.writeAll(load_line);
+                    try stack.append(.{ .name = name, .ty = .I64 });
+                },
+                .StoreVar => |_| {
+                    // For now, just pop the value - this needs proper variable handling
+                    if (stack.items.len < 1) continue;
+                    stack.items.len -= 1;
+                },
+                .StoreDecl => |sd| {
+                    // Store to global variable
+                    if (stack.items.len < 1) continue;
+                    const value = stack.items[stack.items.len - 1];
+                    stack.items.len -= 1;
+
+                    // Store to global variable
+                    const store_line = try std.fmt.allocPrint(self.allocator, "  store i64 {s}, ptr @{s}\n", .{ value.name, sd.var_name });
+                    defer self.allocator.free(store_line);
+                    try w.writeAll(store_line);
+
+                    // Track the variable
+                    try self.global_variables.put(sd.var_name, "@x");
+                },
                 .Return => |ret| {
                     if (ret.has_value) {
                         if (stack.items.len < 1) continue;
@@ -815,9 +618,9 @@ pub const IRPrinter = struct {
 
         try w.writeAll("}\n");
 
-        if (peek_globals.items.len > 0) {
+        if (peek_state.globals.items.len > 0) {
             try w.writeAll("\n");
-            for (peek_globals.items) |global_line| {
+            for (peek_state.globals.items) |global_line| {
                 try w.writeAll(global_line);
             }
         }
@@ -885,6 +688,8 @@ pub const IRPrinter = struct {
         var id: usize = func.param_types.len; // Start after parameters
         var stack = std.array_list.Managed(StackVal).init(self.allocator);
         defer stack.deinit();
+        var peek_state = PeekEmitState.init(self.allocator);
+        defer peek_state.deinit();
 
         // Add parameters to stack
         for (func.param_types, 0..) |param_type, param_idx| {
@@ -985,17 +790,49 @@ pub const IRPrinter = struct {
                     try w.writeAll(br_line);
                 },
                 .LoadVar => |lv| {
-                    _ = lv;
-                    // For now, just push a placeholder value
+                    // Load from global variable
                     const name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
                     id += 1;
-                    const load_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 0, 0\n", .{name});
+                    const load_line = try std.fmt.allocPrint(self.allocator, "  {s} = load i64, ptr @{s}\n", .{ name, lv.var_name });
                     defer self.allocator.free(load_line);
                     try w.writeAll(load_line);
                     try stack.append(.{ .name = name, .ty = .I64 });
                 },
+                .Call => |c| {
+                    // Pop arguments from stack
+                    const argc: usize = @intCast(c.arg_count);
+                    if (stack.items.len < argc) continue;
+
+                    var args = std.array_list.Managed([]const u8).init(self.allocator);
+                    defer args.deinit();
+
+                    // Pop arguments in reverse order
+                    var arg_idx: usize = 0;
+                    while (arg_idx < argc) : (arg_idx += 1) {
+                        const arg = stack.items[stack.items.len - 1];
+                        stack.items.len -= 1;
+                        try args.append(arg.name);
+                    }
+
+                    // Reverse to get correct order
+                    std.mem.reverse([]const u8, args.items);
+
+                    // Generate function call
+                    const args_str = if (args.items.len == 0) "" else try std.mem.join(self.allocator, ", ", args.items);
+                    defer if (args.items.len > 0) self.allocator.free(args_str);
+
+                    const call_line = try std.fmt.allocPrint(self.allocator, "  call void @{s}({s})\n", .{ c.qualified_name, args_str });
+                    defer self.allocator.free(call_line);
+                    try w.writeAll(call_line);
+                },
                 .StoreVar => |sv| {
                     _ = sv;
+                    if (stack.items.len > 0) {
+                        _ = stack.pop();
+                    }
+                },
+                .StoreDecl => |sd| {
+                    _ = sd;
                     if (stack.items.len > 0) {
                         _ = stack.pop();
                     }
@@ -1026,12 +863,333 @@ pub const IRPrinter = struct {
                     try w.writeAll(op_line);
                     try stack.append(.{ .name = name, .ty = .I1 });
                 },
+                .Peek => |pk| {
+                    if (stack.items.len < 1) continue;
+                    const v = stack.items[stack.items.len - 1];
+
+                    try self.emitPeekInstruction(w, pk, v, &id, &peek_state);
+
+                    // Print the actual value
+                    switch (v.ty) {
+                        .I64 => {
+                            const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_i64(i64 {s})\n", .{v.name});
+                            defer self.allocator.free(call_line);
+                            try w.writeAll(call_line);
+                        },
+                        .F64 => {
+                            const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_f64(double {s})\n", .{v.name});
+                            defer self.allocator.free(call_line);
+                            try w.writeAll(call_line);
+                        },
+                        .PTR => {
+                            const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{v.name});
+                            defer self.allocator.free(call_line);
+                            try w.writeAll(call_line);
+                        },
+                        else => {},
+                    }
+                    try w.writeAll("  call void @doxa_write_cstr(ptr getelementptr inbounds ([2 x i8], ptr @.doxa.nl, i64 0, i64 0))\n");
+                },
                 // Add other instruction types as needed
                 else => {},
             }
         }
 
         try w.writeAll("}\n\n");
+
+        if (peek_state.globals.items.len > 0) {
+            for (peek_state.globals.items) |global_line| {
+                try w.writeAll(global_line);
+            }
+        }
+    }
+
+    fn nextTemp(self: *IRPrinter, id: *usize) ![]const u8 {
+        const name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
+        id.* += 1;
+        return name;
+    }
+
+    fn emitPeekInstruction(
+        self: *IRPrinter,
+        w: anytype,
+        pk: anytype,
+        value: StackVal,
+        id: *usize,
+        state: *PeekEmitState,
+    ) !void {
+        const type_slice = switch (value.ty) {
+            .I64 => "int",
+            .F64 => "float",
+            .PTR => "string",
+            .I8, .I1, .I2 => "value",
+        };
+        const type_info = try internPeekString(
+            self.allocator,
+            &state.string_map,
+            &state.strings,
+            &state.next_id,
+            &state.globals,
+            type_slice,
+        );
+
+        var name_info: ?PeekStringInfo = null;
+        if (pk.name) |nm| {
+            name_info = try internPeekString(
+                self.allocator,
+                &state.string_map,
+                &state.strings,
+                &state.next_id,
+                &state.globals,
+                nm,
+            );
+        }
+
+        var file_info: ?PeekStringInfo = null;
+        var has_loc: u32 = 0;
+        var line_val: u32 = 0;
+        var col_val: u32 = 0;
+        if (pk.location) |loc| {
+            file_info = try internPeekString(
+                self.allocator,
+                &state.string_map,
+                &state.strings,
+                &state.next_id,
+                &state.globals,
+                loc.file,
+            );
+            line_val = std.math.cast(u32, loc.range.start_line) orelse std.math.maxInt(u32);
+            col_val = std.math.cast(u32, loc.range.start_col) orelse std.math.maxInt(u32);
+            has_loc = 1;
+        }
+
+        const info_var = try self.nextTemp(id);
+        defer self.allocator.free(info_var);
+        const alloca_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca %DoxaPeekInfo\n", .{info_var});
+        defer self.allocator.free(alloca_line);
+        try w.writeAll(alloca_line);
+
+        const file_field_ptr = try self.nextTemp(id);
+        defer self.allocator.free(file_field_ptr);
+        const file_field_line = try std.fmt.allocPrint(
+            self.allocator,
+            "  {s} = getelementptr inbounds %DoxaPeekInfo, ptr {s}, i32 0, i32 0\n",
+            .{ file_field_ptr, info_var },
+        );
+        defer self.allocator.free(file_field_line);
+        try w.writeAll(file_field_line);
+
+        if (file_info) |fi| {
+            const file_ptr_var = try self.nextTemp(id);
+            defer self.allocator.free(file_ptr_var);
+            const file_gep = try std.fmt.allocPrint(
+                self.allocator,
+                "  {s} = getelementptr inbounds [{d} x i8], ptr {s}, i64 0, i64 0\n",
+                .{ file_ptr_var, fi.length, fi.name },
+            );
+            defer self.allocator.free(file_gep);
+            try w.writeAll(file_gep);
+
+            const store_file = try std.fmt.allocPrint(
+                self.allocator,
+                "  store ptr {s}, ptr {s}\n",
+                .{ file_ptr_var, file_field_ptr },
+            );
+            defer self.allocator.free(store_file);
+            try w.writeAll(store_file);
+        } else {
+            const store_null_file = try std.fmt.allocPrint(
+                self.allocator,
+                "  store ptr null, ptr {s}\n",
+                .{file_field_ptr},
+            );
+            defer self.allocator.free(store_null_file);
+            try w.writeAll(store_null_file);
+        }
+
+        const name_field_ptr = try self.nextTemp(id);
+        defer self.allocator.free(name_field_ptr);
+        const name_field_line = try std.fmt.allocPrint(
+            self.allocator,
+            "  {s} = getelementptr inbounds %DoxaPeekInfo, ptr {s}, i32 0, i32 1\n",
+            .{ name_field_ptr, info_var },
+        );
+        defer self.allocator.free(name_field_line);
+        try w.writeAll(name_field_line);
+
+        if (name_info) |ni| {
+            const name_ptr_var = try self.nextTemp(id);
+            defer self.allocator.free(name_ptr_var);
+            const name_gep = try std.fmt.allocPrint(
+                self.allocator,
+                "  {s} = getelementptr inbounds [{d} x i8], ptr {s}, i64 0, i64 0\n",
+                .{ name_ptr_var, ni.length, ni.name },
+            );
+            defer self.allocator.free(name_gep);
+            try w.writeAll(name_gep);
+
+            const store_name = try std.fmt.allocPrint(
+                self.allocator,
+                "  store ptr {s}, ptr {s}\n",
+                .{ name_ptr_var, name_field_ptr },
+            );
+            defer self.allocator.free(store_name);
+            try w.writeAll(store_name);
+        } else {
+            const store_null_name = try std.fmt.allocPrint(
+                self.allocator,
+                "  store ptr null, ptr {s}\n",
+                .{name_field_ptr},
+            );
+            defer self.allocator.free(store_null_name);
+            try w.writeAll(store_null_name);
+        }
+
+        const type_field_ptr = try self.nextTemp(id);
+        defer self.allocator.free(type_field_ptr);
+        const type_field_line = try std.fmt.allocPrint(
+            self.allocator,
+            "  {s} = getelementptr inbounds %DoxaPeekInfo, ptr {s}, i32 0, i32 2\n",
+            .{ type_field_ptr, info_var },
+        );
+        defer self.allocator.free(type_field_line);
+        try w.writeAll(type_field_line);
+
+        const type_ptr_var = try self.nextTemp(id);
+        defer self.allocator.free(type_ptr_var);
+        const type_gep = try std.fmt.allocPrint(
+            self.allocator,
+            "  {s} = getelementptr inbounds [{d} x i8], ptr {s}, i64 0, i64 0\n",
+            .{ type_ptr_var, type_info.length, type_info.name },
+        );
+        defer self.allocator.free(type_gep);
+        try w.writeAll(type_gep);
+
+        const store_type = try std.fmt.allocPrint(
+            self.allocator,
+            "  store ptr {s}, ptr {s}\n",
+            .{ type_ptr_var, type_field_ptr },
+        );
+        defer self.allocator.free(store_type);
+        try w.writeAll(store_type);
+
+        const members_field_ptr = try self.nextTemp(id);
+        defer self.allocator.free(members_field_ptr);
+        const members_field_line = try std.fmt.allocPrint(
+            self.allocator,
+            "  {s} = getelementptr inbounds %DoxaPeekInfo, ptr {s}, i32 0, i32 3\n",
+            .{ members_field_ptr, info_var },
+        );
+        defer self.allocator.free(members_field_line);
+        try w.writeAll(members_field_line);
+
+        const store_members = try std.fmt.allocPrint(
+            self.allocator,
+            "  store ptr null, ptr {s}\n",
+            .{members_field_ptr},
+        );
+        defer self.allocator.free(store_members);
+        try w.writeAll(store_members);
+
+        const count_field_ptr = try self.nextTemp(id);
+        defer self.allocator.free(count_field_ptr);
+        const count_field_line = try std.fmt.allocPrint(
+            self.allocator,
+            "  {s} = getelementptr inbounds %DoxaPeekInfo, ptr {s}, i32 0, i32 4\n",
+            .{ count_field_ptr, info_var },
+        );
+        defer self.allocator.free(count_field_line);
+        try w.writeAll(count_field_line);
+
+        const member_count: i32 = 0;
+        const store_count = try std.fmt.allocPrint(
+            self.allocator,
+            "  store i32 {d}, ptr {s}\n",
+            .{ member_count, count_field_ptr },
+        );
+        defer self.allocator.free(store_count);
+        try w.writeAll(store_count);
+
+        const active_field_ptr = try self.nextTemp(id);
+        defer self.allocator.free(active_field_ptr);
+        const active_field_line = try std.fmt.allocPrint(
+            self.allocator,
+            "  {s} = getelementptr inbounds %DoxaPeekInfo, ptr {s}, i32 0, i32 5\n",
+            .{ active_field_ptr, info_var },
+        );
+        defer self.allocator.free(active_field_line);
+        try w.writeAll(active_field_line);
+
+        const active_index: i32 = -1;
+        const store_active = try std.fmt.allocPrint(
+            self.allocator,
+            "  store i32 {d}, ptr {s}\n",
+            .{ active_index, active_field_ptr },
+        );
+        defer self.allocator.free(store_active);
+        try w.writeAll(store_active);
+
+        const has_loc_ptr = try self.nextTemp(id);
+        defer self.allocator.free(has_loc_ptr);
+        const has_loc_line = try std.fmt.allocPrint(
+            self.allocator,
+            "  {s} = getelementptr inbounds %DoxaPeekInfo, ptr {s}, i32 0, i32 6\n",
+            .{ has_loc_ptr, info_var },
+        );
+        defer self.allocator.free(has_loc_line);
+        try w.writeAll(has_loc_line);
+
+        const store_has_loc = try std.fmt.allocPrint(
+            self.allocator,
+            "  store i32 {d}, ptr {s}\n",
+            .{ has_loc, has_loc_ptr },
+        );
+        defer self.allocator.free(store_has_loc);
+        try w.writeAll(store_has_loc);
+
+        const line_ptr = try self.nextTemp(id);
+        defer self.allocator.free(line_ptr);
+        const line_field_line = try std.fmt.allocPrint(
+            self.allocator,
+            "  {s} = getelementptr inbounds %DoxaPeekInfo, ptr {s}, i32 0, i32 7\n",
+            .{ line_ptr, info_var },
+        );
+        defer self.allocator.free(line_field_line);
+        try w.writeAll(line_field_line);
+
+        const store_line_val = try std.fmt.allocPrint(
+            self.allocator,
+            "  store i32 {d}, ptr {s}\n",
+            .{ line_val, line_ptr },
+        );
+        defer self.allocator.free(store_line_val);
+        try w.writeAll(store_line_val);
+
+        const col_ptr = try self.nextTemp(id);
+        defer self.allocator.free(col_ptr);
+        const col_field_line = try std.fmt.allocPrint(
+            self.allocator,
+            "  {s} = getelementptr inbounds %DoxaPeekInfo, ptr {s}, i32 0, i32 8\n",
+            .{ col_ptr, info_var },
+        );
+        defer self.allocator.free(col_field_line);
+        try w.writeAll(col_field_line);
+
+        const store_col_val = try std.fmt.allocPrint(
+            self.allocator,
+            "  store i32 {d}, ptr {s}\n",
+            .{ col_val, col_ptr },
+        );
+        defer self.allocator.free(store_col_val);
+        try w.writeAll(store_col_val);
+
+        const call_debug = try std.fmt.allocPrint(
+            self.allocator,
+            "  call void @doxa_debug_peek(ptr {s})\n",
+            .{info_var},
+        );
+        defer self.allocator.free(call_debug);
+        try w.writeAll(call_debug);
     }
 
     fn findLabelIndex(self: *IRPrinter, hir: *const HIR.HIRProgram, label: []const u8) ?usize {
