@@ -39,7 +39,7 @@ function checkClosingBracket(scan :: string) returns tetra {
         if(scan[pointer] == "[") then openBrackets += 1
         if(scan[pointer] == "]") then openBrackets -= 1
         pointer += 1
-        if openBrackets < 0 return false
+        if openBrackets < 0 then return false
     }
     return(openBrackets == 0)
 }
