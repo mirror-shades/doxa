@@ -673,7 +673,10 @@ pub const HIRGenerator = struct {
 
             var needs_implicit_return = true;
 
-            if (self.instructions.items.len > 0) {
+            // Check if we already have a return instruction in the function
+            if (has_returned) {
+                needs_implicit_return = false;
+            } else if (self.instructions.items.len > 0) {
                 const last_instruction = self.instructions.items[self.instructions.items.len - 1];
                 if (last_instruction == .Return) {
                     needs_implicit_return = false;

@@ -983,7 +983,7 @@ pub fn emitFunctionBody(hir: *const HIR.HIRProgram, generator: *LLVMGenerator, f
 
     const insert_block = LLVMCore.LLVMGetInsertBlock(generator.builder);
     const rt = type_map.mapHIRTypeToLLVM(generator, func.return_type);
-    if (insert_block != null and LLVMCore.LLVMGetBasicBlockTerminator(insert_block) == null) {
+    if (insert_block != null and LLVMCore.LLVMGetBasicBlockTerminator(insert_block) == null and !in_dead_code) {
         if (LLVMCore.LLVMGetTypeKind(rt) == LLVMTypes.LLVMTypeKind.LLVMVoidTypeKind) {
             _ = LLVMCore.LLVMBuildRetVoid(generator.builder);
         } else {

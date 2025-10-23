@@ -210,7 +210,7 @@ function forloop(x :: int) {
 
 forloop(5) //660, 726, 732, 798, 864
 
-function precedence(op :: string[]) returns int {
+function precedence(op :: string[]) {
     var list is op
     while @length(list) > 0 {
         var x is @pop(list)

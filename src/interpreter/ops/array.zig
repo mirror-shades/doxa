@@ -285,21 +285,6 @@ fn arrayPop(vm: anytype) !void {
     }
 }
 
-fn makeValueError(vm: anytype, comptime variant_name: []const u8) HIRValue {
-    var variant_index: u32 = 0;
-    if (vm.custom_type_registry.get("ValueError")) |ct| {
-        if (ct.enum_variants) |variants| {
-            for (variants, 0..) |v, i| {
-                if (std.mem.eql(u8, v.name, variant_name)) {
-                    variant_index = @intCast(i);
-                    break;
-                }
-            }
-        }
-    }
-    return HIRValue{ .enum_variant = .{ .type_name = "ValueError", .variant_name = variant_name, .variant_index = variant_index } };
-}
-
 fn arrayInsert(vm: anytype) !void {
     const value = try vm.stack.pop();
     const index_frame = try vm.stack.pop();

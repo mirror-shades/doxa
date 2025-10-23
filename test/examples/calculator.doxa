@@ -56,8 +56,7 @@ function evaluate(rpn :: Token[]) returns int | Error {
     var stack :: int[]
     each t in rpn {
         if t.token_type == TokenType.NUMBER then {
-            const valid_number is @int(t.value) as int else return Error.FailedToEvaluate
-
+            const valid_number is @int(t.value)
             @push(stack, valid_number)
         }
         if t.token_type == TokenType.OPERATOR then {
@@ -68,7 +67,7 @@ function evaluate(rpn :: Token[]) returns int | Error {
             if t.value == "-" then @push(stack, lh - rh)
             if t.value == "/" then {
                 if rh == 0 then return Error.DivisionByZero
-                const result is @int(lh / rh) as int else return Error.FailedToEvaluate
+                const result is @int(lh / rh)
                 @push(stack, result)
             }
             if t.value == "*" then @push(stack, lh * rh)

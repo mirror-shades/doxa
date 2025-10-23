@@ -335,17 +335,7 @@ pub const TypeSystem = struct {
                 if (std.mem.eql(u8, name, "float")) return .Float;
                 if (std.mem.eql(u8, name, "string")) return .String;
                 if (std.mem.eql(u8, name, "byte")) {
-                    var member_types = self.allocator.alloc(*const HIRType, 2) catch return .Unknown;
-
-                    const byte_type = self.allocator.create(HIRType) catch return .Unknown;
-                    byte_type.* = .Byte;
-                    member_types[0] = byte_type;
-
-                    const value_error_type = self.allocator.create(HIRType) catch return .Unknown;
-                    value_error_type.* = HIRType{ .Enum = 1 };
-                    member_types[1] = value_error_type;
-
-                    return HIRType{ .Union = member_types };
+                    return .Byte;
                 }
                 return .Unknown;
             },
@@ -356,17 +346,7 @@ pub const TypeSystem = struct {
                 if (std.mem.eql(u8, name, "float")) return .Float;
                 if (std.mem.eql(u8, name, "string")) return .String;
                 if (std.mem.eql(u8, name, "byte")) {
-                    var member_types = self.allocator.alloc(*const HIRType, 2) catch return .Unknown;
-
-                    const byte_type = self.allocator.create(HIRType) catch return .Unknown;
-                    byte_type.* = .Byte;
-                    member_types[0] = byte_type;
-
-                    const value_error_type = self.allocator.create(HIRType) catch return .Unknown;
-                    value_error_type.* = HIRType{ .Enum = 1 };
-                    member_types[1] = value_error_type;
-
-                    return HIRType{ .Union = member_types };
+                    return .Byte;
                 }
                 if (std.mem.eql(u8, name, "time")) return .Int;
                 if (std.mem.eql(u8, name, "tick")) return .Int;
@@ -400,17 +380,7 @@ pub const TypeSystem = struct {
                         if (std.mem.eql(u8, method.method.lexeme, "int")) return .Int;
                         if (std.mem.eql(u8, method.method.lexeme, "float")) return .Float;
                         if (std.mem.eql(u8, method.method.lexeme, "byte")) {
-                            var member_types = self.allocator.alloc(*const HIRType, 2) catch return .Unknown;
-
-                            const byte_type = self.allocator.create(HIRType) catch return .Unknown;
-                            byte_type.* = .Byte;
-                            member_types[0] = byte_type;
-
-                            const value_error_type = self.allocator.create(HIRType) catch return .Unknown;
-                            value_error_type.* = HIRType{ .Enum = 1 };
-                            member_types[1] = value_error_type;
-
-                            return HIRType{ .Union = member_types };
+                            return .Byte;
                         }
                         if (std.mem.eql(u8, method.method.lexeme, "safeAdd")) return .Int;
                     },
