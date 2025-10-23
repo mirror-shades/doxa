@@ -533,7 +533,8 @@ pub const SemanticAnalyzer = struct {
                                 const base = param_types[i].base;
                                 const loc = getLocationFromBase(stmt.base);
                                 const is_disallowed = switch (base) {
-                                    .Union, .Map, .Function, .Array, .Struct, .Enum => true,
+                                    .Union, .Map, .Function, .Struct, .Enum => true,
+                                    // Arrays are allowed as they're perfect candidates for aliasing (avoid copying)
                                     else => false,
                                 };
                                 if (is_disallowed) {

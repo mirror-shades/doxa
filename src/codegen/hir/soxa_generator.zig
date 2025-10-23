@@ -530,10 +530,10 @@ pub const HIRGenerator = struct {
                         param_type = self.convertTypeInfo(type_info_ptr.*);
 
                         // Semantic validation for alias parameter types
-                        // Disallow aggregate/complex types as alias types here
+                        // Disallow complex types as alias types here
+                        // Arrays are allowed as they're perfect candidates for aliasing (avoid copying)
                         switch (param_type) {
                             .Union, .Map, .Function => return error.InvalidAliasType,
-                            .Array => return error.InvalidAliasType,
                             else => {},
                         }
 

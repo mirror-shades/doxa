@@ -102,20 +102,15 @@ Doxa is based upon a very small number of types with enums, structs, and type un
 // mirror-shades
 
 const symbols is [ ">", "<", "+", "-", ".", ",", "[", "]" ]
-var tape :: byte[10]
-var loops :: int is 0
-var loopSpot :: int[]
-var tp :: int is 0
-var ip :: int is 0
 
 function getInput() returns byte {
     @print("Input: ")
     var userInput :: string is @input()
-    var newByte :: byte is @byte(userInput[0]) as byte else 0x00
+    var newByte :: byte is @byte(userInput[0])
     return newByte
 }
 
-function startLoop() {
+function startLoop(^loopSpot :: int[], ^loops :: int, ip :: int) {
     if @length(loopSpot) == loops then {
         @push(loopSpot, ip)
     } else {
@@ -124,7 +119,7 @@ function startLoop() {
     loops += 1
 }
 
-function endLoop() {
+function endLoop(loopSpot :: int[], ^loops :: int, ^ip :: int, tape :: byte[], tp :: int) {
     if loops >= 0 then {
         if tape[tp] == 0 then {
             loops -= 1
@@ -149,6 +144,12 @@ function checkClosingBracket(scan :: string) returns tetra {
 }
 
 function interpret(scan :: string) {
+    var tape :: byte[10] // increase if needed
+    var loops :: int
+    var loopSpot :: int[]
+    var tp :: int
+    var ip :: int
+
     const scanLength is @length(scan)
 
     var closedBrackets :: tetra is checkClosingBracket(scan)
@@ -162,8 +163,8 @@ function interpret(scan :: string) {
         if(currentInstruction == "-") then tape[tp] -= 0x01
         if(currentInstruction == ".") then @print("Output: {tape[tp]}\n")
         if(currentInstruction == ",") then tape[tp] is getInput()
-        if(currentInstruction == "[") then startLoop()
-        if(currentInstruction == "]") then endLoop()
+        if(currentInstruction == "[") then startLoop(^loopSpot, ^loops, ip)
+        if(currentInstruction == "]") then endLoop(loopSpot, ^loops, ^ip, tape, tp)
     }
 }
 
