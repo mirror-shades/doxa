@@ -2,6 +2,7 @@ const std = @import("std");
 const llvm = @import("llvm");
 const ast = @import("../../ast/ast.zig");
 const Token = @import("../../types/token.zig").Token;
+const TokenType = @import("../../types/token.zig").TokenType;
 const LLVMCore = llvm.core;
 const LLVMTypes = llvm.types;
 const LLVMTargetMachine = llvm.target_machine;
@@ -81,6 +82,7 @@ pub const LLVMGenerator = struct {
     types: std.StringHashMap(LLVMTypes.LLVMTypeRef),
     externs: std.StringHashMap(LLVMTypes.LLVMValueRef),
     functions: std.StringHashMap(FunctionSymbol),
+    string_literals: std.StringHashMap(LLVMTypes.LLVMValueRef),
     allocator: std.mem.Allocator,
 
     // Current function being generated
@@ -191,6 +193,7 @@ pub const LLVMGenerator = struct {
             .types = std.StringHashMap(LLVMTypes.LLVMTypeRef).init(allocator),
             .externs = std.StringHashMap(LLVMTypes.LLVMValueRef).init(allocator),
             .functions = std.StringHashMap(FunctionSymbol).init(allocator),
+            .string_literals = std.StringHashMap(LLVMTypes.LLVMValueRef).init(allocator),
             .allocator = allocator,
             .current_function = null,
             .debug_peek = false,
@@ -210,6 +213,11 @@ pub const LLVMGenerator = struct {
             self.allocator.free(entry.value_ptr.param_alias_flags);
         }
         self.functions.deinit();
+        var str_it = self.string_literals.iterator();
+        while (str_it.next()) |entry| {
+            self.allocator.free(entry.key_ptr.*);
+        }
+        self.string_literals.deinit();
         LLVMCore.LLVMDisposeBuilder(self.builder);
         LLVMCore.LLVMDisposeModule(self.module);
         LLVMCore.LLVMContextDispose(self.context);
@@ -515,40 +523,94 @@ pub const LLVMGenerator = struct {
             .Match => |match_expr| {
                 var cond_val = try self.generateExpr(match_expr.value);
                 const cond_ty = LLVMCore.LLVMTypeOf(cond_val);
-                if (LLVMCore.LLVMGetTypeKind(cond_ty) != LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind) {
-                    return error.UnsupportedExpressionType;
-                }
-                // Normalize to i64 for switch lowering if possible (including i2 tetra)
-                if (LLVMCore.LLVMGetIntTypeWidth(cond_ty) < 64) {
-                    const i64_ty = LLVMCore.LLVMInt64TypeInContext(self.context);
-                    cond_val = LLVMCore.LLVMBuildZExt(self.builder, cond_val, i64_ty, "match.zext");
-                } else if (LLVMCore.LLVMGetIntTypeWidth(cond_ty) > 64) {
-                    const i64_ty = LLVMCore.LLVMInt64TypeInContext(self.context);
-                    cond_val = LLVMCore.LLVMBuildTrunc(self.builder, cond_val, i64_ty, "match.trunc");
-                }
-
-                const default_block = LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "match.default");
-                const merge_block = LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "match.merge");
-
-                const switch_inst = LLVMCore.LLVMBuildSwitch(self.builder, cond_val, default_block, @intCast(match_expr.cases.len));
-
-                // Generate code for each case
-                for (match_expr.cases) |case| {
-                    const case_block = LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "match.case");
-                    const pattern_value = try self.generatePatternValue(case.pattern);
-                    LLVMCore.LLVMAddCase(switch_inst, pattern_value, case_block);
-
-                    LLVMCore.LLVMPositionBuilderAtEnd(self.builder, case_block);
-                    _ = try self.generateExpr(case.body);
+                
+                // Handle string matching with if-else chains instead of switch
+                if (LLVMCore.LLVMGetTypeKind(cond_ty) == LLVMTypes.LLVMTypeKind.LLVMPointerTypeKind) {
+                    // String matching - use if-else chain
+                    const result_type = try self.getLLVMTypeFromTypeInfo(match_expr.type_info);
+                    const result_alloca = self.createEntryAlloca(LLVMCore.LLVMGetInsertBlock(self.builder), result_type, "match.result");
+                    
+                    const default_block = LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "match.default");
+                    const merge_block = LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "match.merge");
+                    
+                    // Generate if-else chain for string matching
+                    var current_block = LLVMCore.LLVMGetInsertBlock(self.builder);
+                    
+                    for (match_expr.cases, 0..) |case, i| {
+                        const case_block = LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "match.case");
+                        const next_block = if (i < match_expr.cases.len - 1) 
+                            LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "match.next")
+                        else 
+                            default_block;
+                        
+                        // Generate string comparison
+                        const pattern_val = try self.generateExpr(case.pattern);
+                        const cmp_result = LLVMCore.LLVMBuildICmp(self.builder, LLVMTypes.LLVMIntPredicate.LLVMIntEQ, cond_val, pattern_val, "str.cmp");
+                        
+                        LLVMCore.LLVMPositionBuilderAtEnd(self.builder, current_block);
+                        _ = LLVMCore.LLVMBuildCondBr(self.builder, cmp_result, case_block, next_block);
+                        
+                        // Generate case body
+                        LLVMCore.LLVMPositionBuilderAtEnd(self.builder, case_block);
+                        const case_result = try self.generateExpr(case.body);
+                        _ = LLVMCore.LLVMBuildStore(self.builder, case_result, result_alloca);
+                        _ = LLVMCore.LLVMBuildBr(self.builder, merge_block);
+                        
+                        current_block = next_block;
+                    }
+                    
+                    // Default path
+                    LLVMCore.LLVMPositionBuilderAtEnd(self.builder, default_block);
+                    const default_value = try self.getDefaultValue(match_expr.type_info);
+                    _ = LLVMCore.LLVMBuildStore(self.builder, default_value, result_alloca);
                     _ = LLVMCore.LLVMBuildBr(self.builder, merge_block);
+                    
+                    LLVMCore.LLVMPositionBuilderAtEnd(self.builder, merge_block);
+                    return LLVMCore.LLVMBuildLoad2(self.builder, result_type, result_alloca, "match.load");
+                } else {
+                    // Integer matching - use switch statement
+                    if (LLVMCore.LLVMGetTypeKind(cond_ty) != LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind) {
+                        return error.UnsupportedExpressionType;
+                    }
+                    // Normalize to i64 for switch lowering if possible (including i2 tetra)
+                    if (LLVMCore.LLVMGetIntTypeWidth(cond_ty) < 64) {
+                        const i64_ty = LLVMCore.LLVMInt64TypeInContext(self.context);
+                        cond_val = LLVMCore.LLVMBuildZExt(self.builder, cond_val, i64_ty, "match.zext");
+                    } else if (LLVMCore.LLVMGetIntTypeWidth(cond_ty) > 64) {
+                        const i64_ty = LLVMCore.LLVMInt64TypeInContext(self.context);
+                        cond_val = LLVMCore.LLVMBuildTrunc(self.builder, cond_val, i64_ty, "match.trunc");
+                    }
+
+                    const default_block = LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "match.default");
+                    const merge_block = LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "match.merge");
+
+                    // Create a result variable to store the match result
+                    const result_type = try self.getLLVMTypeFromTypeInfo(match_expr.type_info);
+                    const result_alloca = self.createEntryAlloca(LLVMCore.LLVMGetInsertBlock(self.builder), result_type, "match.result");
+
+                    const switch_inst = LLVMCore.LLVMBuildSwitch(self.builder, cond_val, default_block, @intCast(match_expr.cases.len));
+
+                    // Generate code for each case
+                    for (match_expr.cases) |case| {
+                        const case_block = LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "match.case");
+                        const pattern_value = try self.generatePatternValue(case.pattern);
+                        LLVMCore.LLVMAddCase(switch_inst, pattern_value, case_block);
+
+                        LLVMCore.LLVMPositionBuilderAtEnd(self.builder, case_block);
+                        const case_result = try self.generateExpr(case.body);
+                        _ = LLVMCore.LLVMBuildStore(self.builder, case_result, result_alloca);
+                        _ = LLVMCore.LLVMBuildBr(self.builder, merge_block);
+                    }
+
+                    // Default path - store default value
+                    LLVMCore.LLVMPositionBuilderAtEnd(self.builder, default_block);
+                    const default_value = try self.getDefaultValue(match_expr.type_info);
+                    _ = LLVMCore.LLVMBuildStore(self.builder, default_value, result_alloca);
+                    _ = LLVMCore.LLVMBuildBr(self.builder, merge_block);
+
+                    LLVMCore.LLVMPositionBuilderAtEnd(self.builder, merge_block);
+                    return LLVMCore.LLVMBuildLoad2(self.builder, result_type, result_alloca, "match.load");
                 }
-
-                // Default path just goes to merge
-                LLVMCore.LLVMPositionBuilderAtEnd(self.builder, default_block);
-                _ = LLVMCore.LLVMBuildBr(self.builder, merge_block);
-
-                LLVMCore.LLVMPositionBuilderAtEnd(self.builder, merge_block);
-                return null;
             },
 
             .Function => |func| {
@@ -624,6 +686,79 @@ pub const LLVMGenerator = struct {
                     return value;
                 }
                 return error.UndefinedVariable;
+            },
+
+            .CompoundAssign => |compound| {
+                const ptr = self.variables.get(compound.name.lexeme) orelse return error.UndefinedVariable;
+                const ptr_ty = LLVMCore.LLVMTypeOf(ptr);
+                if (LLVMCore.LLVMGetTypeKind(ptr_ty) != LLVMTypes.LLVMTypeKind.LLVMPointerTypeKind) {
+                    return LLVMGenError.UnsupportedExpressionType;
+                }
+
+                const elem_ty = LLVMCore.LLVMGetElementType(ptr_ty);
+                const elem_kind = LLVMCore.LLVMGetTypeKind(elem_ty);
+
+                const current_value = LLVMCore.LLVMBuildLoad2(self.builder, elem_ty, ptr, "compound.load");
+                var rhs_value = try self.generateExpr(compound.value.?);
+                rhs_value = try self.coerceValueToType(rhs_value, elem_ty);
+
+                const result: LLVMTypes.LLVMValueRef = switch (compound.operator.type) {
+                    TokenType.PLUS_EQUAL => switch (elem_kind) {
+                        LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind => LLVMCore.LLVMBuildAdd(self.builder, current_value, rhs_value, "compound.add"),
+                        LLVMTypes.LLVMTypeKind.LLVMFloatTypeKind, LLVMTypes.LLVMTypeKind.LLVMDoubleTypeKind => LLVMCore.LLVMBuildFAdd(self.builder, current_value, rhs_value, "compound.fadd"),
+                        else => return LLVMGenError.UnsupportedExpressionType,
+                    },
+                    TokenType.MINUS_EQUAL => switch (elem_kind) {
+                        LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind => LLVMCore.LLVMBuildSub(self.builder, current_value, rhs_value, "compound.sub"),
+                        LLVMTypes.LLVMTypeKind.LLVMFloatTypeKind, LLVMTypes.LLVMTypeKind.LLVMDoubleTypeKind => LLVMCore.LLVMBuildFSub(self.builder, current_value, rhs_value, "compound.fsub"),
+                        else => return LLVMGenError.UnsupportedExpressionType,
+                    },
+                    TokenType.ASTERISK_EQUAL => switch (elem_kind) {
+                        LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind => LLVMCore.LLVMBuildMul(self.builder, current_value, rhs_value, "compound.mul"),
+                        LLVMTypes.LLVMTypeKind.LLVMFloatTypeKind, LLVMTypes.LLVMTypeKind.LLVMDoubleTypeKind => LLVMCore.LLVMBuildFMul(self.builder, current_value, rhs_value, "compound.fmul"),
+                        else => return LLVMGenError.UnsupportedExpressionType,
+                    },
+                    TokenType.SLASH_EQUAL => switch (elem_kind) {
+                        LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind => LLVMCore.LLVMBuildSDiv(self.builder, current_value, rhs_value, "compound.sdiv"),
+                        LLVMTypes.LLVMTypeKind.LLVMFloatTypeKind, LLVMTypes.LLVMTypeKind.LLVMDoubleTypeKind => LLVMCore.LLVMBuildFDiv(self.builder, current_value, rhs_value, "compound.fdiv"),
+                        else => return LLVMGenError.UnsupportedExpressionType,
+                    },
+                    TokenType.POWER_EQUAL => blk: {
+                        const f64_ty = LLVMCore.LLVMDoubleTypeInContext(self.context);
+                        var base = current_value;
+                        var exponent = rhs_value;
+
+                        switch (elem_kind) {
+                            LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind => {
+                                base = LLVMCore.LLVMBuildSIToFP(self.builder, current_value, f64_ty, "compound.pow.base.i2f");
+                                exponent = LLVMCore.LLVMBuildSIToFP(self.builder, rhs_value, f64_ty, "compound.pow.exp.i2f");
+                            },
+                            LLVMTypes.LLVMTypeKind.LLVMFloatTypeKind => {
+                                base = LLVMCore.LLVMBuildFPExt(self.builder, current_value, f64_ty, "compound.pow.base.ext");
+                                exponent = LLVMCore.LLVMBuildFPExt(self.builder, rhs_value, f64_ty, "compound.pow.exp.ext");
+                            },
+                            LLVMTypes.LLVMTypeKind.LLVMDoubleTypeKind => {},
+                            else => return LLVMGenError.UnsupportedExpressionType,
+                        }
+
+                        const pow_fn = externs.getOrCreatePow(self);
+                        var params = [_]LLVMTypes.LLVMTypeRef{ f64_ty, f64_ty };
+                        const pow_ty = LLVMCore.LLVMFunctionType(f64_ty, &params, 2, @intFromBool(false));
+                        var args = [_]LLVMTypes.LLVMValueRef{ base, exponent };
+                        const pow_res = LLVMCore.LLVMBuildCall2(self.builder, pow_ty, pow_fn, &args, 2, "compound.pow");
+
+                        switch (elem_kind) {
+                            LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind => break :blk LLVMCore.LLVMBuildFPToSI(self.builder, pow_res, elem_ty, "compound.pow.to.int"),
+                            LLVMTypes.LLVMTypeKind.LLVMFloatTypeKind => break :blk LLVMCore.LLVMBuildFPTrunc(self.builder, pow_res, elem_ty, "compound.pow.to.float"),
+                            LLVMTypes.LLVMTypeKind.LLVMDoubleTypeKind => break :blk pow_res,
+                            else => unreachable,
+                        }
+                    },
+                    else => return LLVMGenError.UnsupportedExpressionType,
+                };
+
+                _ = LLVMCore.LLVMBuildStore(self.builder, result, ptr);
+                return result;
             },
 
             .FunctionCall => |call| {
@@ -936,6 +1071,41 @@ pub const LLVMGenerator = struct {
     fn getDefaultValue(self: *LLVMGenerator, type_info: ast.TypeInfo) LLVMGenError!LLVMTypes.LLVMValueRef {
         const llvm_type = try self.getLLVMTypeFromTypeInfo(type_info);
         return LLVMCore.LLVMConstNull(llvm_type);
+    }
+
+    fn coerceValueToType(self: *LLVMGenerator, value: LLVMTypes.LLVMValueRef, target_ty: LLVMTypes.LLVMTypeRef) LLVMGenError!LLVMTypes.LLVMValueRef {
+        const target_kind = LLVMCore.LLVMGetTypeKind(target_ty);
+        const value_ty = LLVMCore.LLVMTypeOf(value);
+        const value_kind = LLVMCore.LLVMGetTypeKind(value_ty);
+
+        switch (target_kind) {
+            LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind => {
+                if (value_kind == LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind) {
+                    const target_width = LLVMCore.LLVMGetIntTypeWidth(target_ty);
+                    const value_width = LLVMCore.LLVMGetIntTypeWidth(value_ty);
+                    if (target_width == value_width) return value;
+                    if (value_width > target_width) {
+                        return LLVMCore.LLVMBuildTrunc(self.builder, value, target_ty, "compound.trunc");
+                    }
+                    return LLVMCore.LLVMBuildSExt(self.builder, value, target_ty, "compound.sext");
+                } else if (value_kind == LLVMTypes.LLVMTypeKind.LLVMDoubleTypeKind or value_kind == LLVMTypes.LLVMTypeKind.LLVMFloatTypeKind) {
+                    return LLVMCore.LLVMBuildFPToSI(self.builder, value, target_ty, "compound.fptosi");
+                } else {
+                    return LLVMGenError.UnsupportedExpressionType;
+                }
+            },
+            LLVMTypes.LLVMTypeKind.LLVMDoubleTypeKind, LLVMTypes.LLVMTypeKind.LLVMFloatTypeKind => {
+                if (value_kind == LLVMTypes.LLVMTypeKind.LLVMDoubleTypeKind or value_kind == LLVMTypes.LLVMTypeKind.LLVMFloatTypeKind) {
+                    if (value_ty == target_ty) return value;
+                    return LLVMCore.LLVMBuildFPCast(self.builder, value, target_ty, "compound.fpcast");
+                } else if (value_kind == LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind) {
+                    return LLVMCore.LLVMBuildSIToFP(self.builder, value, target_ty, "compound.sitofp");
+                } else {
+                    return LLVMGenError.UnsupportedExpressionType;
+                }
+            },
+            else => return LLVMGenError.UnsupportedExpressionType,
+        }
     }
 
     fn toF64(self: *LLVMGenerator, v: LLVMTypes.LLVMValueRef) LLVMGenError!LLVMTypes.LLVMValueRef {

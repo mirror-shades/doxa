@@ -339,8 +339,10 @@ pub const ControlFlowHandler = struct {
             try self.generator.instructions.append(.{ .Jump = .{ .label = end_label, .vm_offset = 0 } });
         }
 
-        // End label
+        // End label - the stack should now contain the result from whichever case was taken
         try self.generator.instructions.append(.{ .Label = .{ .name = end_label, .vm_address = 0 } });
+
+        // The match statement result is now on the stack and will be handled by the PHI node logic
     }
 
     /// Generate HIR for loop expressions

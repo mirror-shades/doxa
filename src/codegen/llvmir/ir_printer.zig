@@ -2,6 +2,7 @@ const std = @import("std");
 const HIR = @import("../hir/soxa_types.zig");
 const HIRValue = @import("../hir/soxa_values.zig").HIRValue;
 const HIRInstruction = @import("../hir/soxa_instructions.zig").HIRInstruction;
+const CompareInstruction = std.meta.TagPayload(HIRInstruction, .Compare);
 
 const PeekStringInfo = struct {
     name: []const u8,
@@ -102,7 +103,113 @@ pub const IRPrinter = struct {
     peek_string_counter: usize,
 
     const StackType = enum { I64, F64, I8, I1, I2, PTR };
-    const StackVal = struct { name: []const u8, ty: StackType };
+    const StackVal = struct {
+        name: []const u8,
+        ty: StackType,
+        array_type: ?HIR.HIRType = null,
+    };
+    const VariableInfo = struct {
+        ptr_name: []const u8,
+        stack_type: StackType,
+        array_type: ?HIR.HIRType = null,
+    };
+    const StackIncoming = struct {
+        block: []const u8,
+        value: StackVal,
+    };
+    const StackSlot = std.ArrayListUnmanaged(StackIncoming);
+    const StackMergeState = struct {
+        slots: []StackSlot,
+
+        fn init(allocator: std.mem.Allocator, slot_count: usize) !StackMergeState {
+            var slots = try allocator.alloc(StackSlot, slot_count);
+            var i: usize = 0;
+            while (i < slot_count) : (i += 1) {
+                slots[i] = StackSlot{};
+            }
+            return .{ .slots = slots };
+        }
+
+        fn deinit(self: *StackMergeState, allocator: std.mem.Allocator) void {
+            for (self.slots) |*slot| slot.deinit(allocator);
+            allocator.free(self.slots);
+        }
+    };
+
+    fn recordStackForLabel(
+        self: *IRPrinter,
+        map: *std.StringHashMap(StackMergeState),
+        label: []const u8,
+        stack: []const StackVal,
+        current_block: []const u8,
+    ) !void {
+        var entry = try map.getOrPut(label);
+        if (!entry.found_existing) {
+            entry.value_ptr.* = try StackMergeState.init(self.allocator, stack.len);
+        } else if (entry.value_ptr.slots.len < stack.len) {
+            // Need to grow the slots array
+            const old_len = entry.value_ptr.slots.len;
+            const new_slots = try self.allocator.realloc(entry.value_ptr.slots, stack.len);
+            entry.value_ptr.slots = new_slots;
+            for (old_len..stack.len) |i| {
+                new_slots[i] = StackSlot{};
+            }
+        }
+        // Note: If incoming stack is shorter, we only record up to its length
+
+        for (entry.value_ptr.slots[0..stack.len], stack) |*slot, value| {
+            try slot.append(self.allocator, .{ .block = current_block, .value = value });
+        }
+    }
+
+    fn restoreStackForLabel(
+        self: *IRPrinter,
+        map: *std.StringHashMap(StackMergeState),
+        label: []const u8,
+        stack: *std.array_list.Managed(StackVal),
+        id: *usize,
+        w: anytype,
+    ) !void {
+        if (map.fetchRemove(label)) |removed| {
+            defer @constCast(&removed.value).deinit(self.allocator);
+            stack.items.len = 0;
+
+            for (removed.value.slots) |slot| {
+                if (slot.items.len == 0) continue;
+                if (slot.items.len == 1) {
+                    try stack.append(slot.items[0].value);
+                    continue;
+                }
+
+                const phi_name = try self.nextTemp(id);
+                const type_str = self.stackTypeToLLVMType(slot.items[0].value.ty);
+
+                var incoming = std.array_list.Managed([]const u8).init(self.allocator);
+                defer {
+                    for (incoming.items) |entry_str| self.allocator.free(entry_str);
+                    incoming.deinit();
+                }
+
+                for (slot.items) |incoming_val| {
+                    const pair = try std.fmt.allocPrint(self.allocator, "[ {s}, %{s} ]", .{ incoming_val.value.name, incoming_val.block });
+                    try incoming.append(pair);
+                }
+
+                const joined = if (incoming.items.len == 0) "" else try std.mem.join(self.allocator, ", ", incoming.items);
+                defer if (incoming.items.len > 0) self.allocator.free(joined);
+
+                const phi_line = try std.fmt.allocPrint(self.allocator, "  {s} = phi {s} {s}\n", .{ phi_name, type_str, joined });
+                defer self.allocator.free(phi_line);
+                try w.writeAll(phi_line);
+
+                try stack.append(.{
+                    .name = phi_name,
+                    .ty = slot.items[0].value.ty,
+                    .array_type = slot.items[0].value.array_type,
+                });
+            }
+        }
+    }
 
     pub fn init(allocator: std.mem.Allocator) IRPrinter {
         return .{
@@ -133,6 +240,10 @@ pub const IRPrinter = struct {
         try w.writeAll("declare void @doxa_print_u64(i64)\n");
         try w.writeAll("declare void @doxa_print_f64(double)\n");
         try w.writeAll("declare void @doxa_debug_peek(ptr)\n");
+        try w.writeAll("declare ptr @doxa_array_new(i64, i64, i64)\n");
+        try w.writeAll("declare i64 @doxa_array_len(ptr)\n");
+        try w.writeAll("declare i64 @doxa_array_get_i64(ptr, i64)\n");
+        try w.writeAll("declare void @doxa_array_set_i64(ptr, i64, i64)\n");
         try w.writeAll("declare double @llvm.pow.f64(double, double)\n\n");
 
         // String pool globals
@@ -143,7 +254,8 @@ pub const IRPrinter = struct {
         }
         if (hir.string_pool.len > 0) try w.writeAll("\n");
 
-        try w.writeAll("%DoxaPeekInfo = type { ptr, ptr, ptr, ptr, i32, i32, i32, i32, i32 }\n\n");
+        try w.writeAll("%DoxaPeekInfo = type { ptr, ptr, ptr, ptr, i32, i32, i32, i32, i32 }\n");
+        try w.writeAll("%ArrayHeader = type { ptr, i64, i64, i64, i64 }\n\n");
         try w.writeAll("@.doxa.nl = private constant [2 x i8] c\"\\0A\\00\"\n\n");
 
         // Find function start labels
@@ -156,12 +268,22 @@ pub const IRPrinter = struct {
         // Find where functions section starts
         const functions_start_idx = self.findFunctionsSectionStart(hir, &func_start_labels);
 
+        var peek_state = PeekEmitState.init(self.allocator, &self.peek_string_counter);
+        defer peek_state.deinit();
+
         // Process main program (instructions before functions)
-        try self.writeMainProgram(hir, w, functions_start_idx);
+        try self.writeMainProgram(hir, w, functions_start_idx, &peek_state);
 
         // Process each function
         for (hir.function_table) |func| {
-            try self.writeFunction(hir, w, func, &func_start_labels);
+            try self.writeFunction(hir, w, func, &func_start_labels, &peek_state);
+        }
+
+        if (peek_state.globals.items.len > 0) {
+            try w.writeAll("\n");
+            for (peek_state.globals.items) |global_line| {
+                try w.writeAll(global_line);
+            }
         }
     }
 
@@ -176,10 +298,13 @@ pub const IRPrinter = struct {
         return hir.instructions.len;
     }
 
-    fn writeMainProgram(self: *IRPrinter, hir: *const HIR.HIRProgram, w: anytype, functions_start_idx: usize) !void {
-        var peek_state = PeekEmitState.init(self.allocator, &self.peek_string_counter);
-        defer peek_state.deinit();
-
+    fn writeMainProgram(
+        self: *IRPrinter,
+        hir: *const HIR.HIRProgram,
+        w: anytype,
+        functions_start_idx: usize,
+        peek_state: *PeekEmitState,
+    ) !void {
         // Main function
         try w.writeAll("define i32 @main() {\n");
         try w.writeAll("entry:\n");
@@ -188,8 +313,25 @@ pub const IRPrinter = struct {
         var stack = std.array_list.Managed(StackVal).init(self.allocator);
         defer stack.deinit();
 
-        var variables = std.StringHashMap(StackVal).init(self.allocator);
-        defer variables.deinit();
+        var merge_map = std.StringHashMap(StackMergeState).init(self.allocator);
+        defer {
+            var it_merge = merge_map.iterator();
+            while (it_merge.next()) |entry| {
+                entry.value_ptr.deinit(self.allocator);
+            }
+            merge_map.deinit();
+        }
+
+        var current_block: []const u8 = "entry";
+
+        var variables = std.StringHashMap(VariableInfo).init(self.allocator);
+        defer {
+            var it = variables.iterator();
+            while (it.next()) |entry| {
+                self.allocator.free(entry.value_ptr.ptr_name);
+            }
+            variables.deinit();
+        }
 
         for (hir.instructions[0..functions_start_idx]) |inst| {
             switch (inst) {
@@ -229,23 +371,41 @@ pub const IRPrinter = struct {
                             try stack.append(.{ .name = name, .ty = .I2 });
                         },
                         .string => |s| {
-                            var found: ?usize = null;
-                            for (hir.string_pool, 0..) |sp, si| {
-                                if (std.mem.eql(u8, sp, s)) {
-                                    found = si;
-                                    break;
-                                }
-                            }
-                            const idx = found orelse 0;
+                            const info = try internPeekString(
+                                self.allocator,
+                                &peek_state.*.string_map,
+                                &peek_state.*.strings,
+                                peek_state.*.next_id_ptr,
+                                &peek_state.*.globals,
+                                s,
+                            );
                             const name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
                             id += 1;
-                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds [{d} x i8], ptr @.str.{d}, i64 0, i64 0\n", .{ name, s.len + 1, idx });
+                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds [{d} x i8], ptr {s}, i64 0, i64 0\n", .{ name, info.length, info.name });
                             defer self.allocator.free(line);
                             try w.writeAll(line);
                             try stack.append(.{ .name = name, .ty = .PTR });
                         },
                         else => {},
                     }
+                },
+                .ArrayNew => |a| try self.emitArrayNew(w, &stack, &id, a),
+                .ArraySet => |_| try self.emitArraySet(w, &stack, &id),
+                .ArrayLen => try self.emitArrayLen(w, &stack, &id),
+                .ArrayPop => try self.emitArrayPop(w, &stack, &id),
+                .Dup => {
+                    if (stack.items.len < 1) continue;
+                    const top = stack.items[stack.items.len - 1];
+                    try stack.append(top);
+                },
+                .Pop => {
+                    if (stack.items.len < 1) continue;
+                    stack.items.len -= 1;
+                },
+                .Swap => {
+                    if (stack.items.len < 2) continue;
+                    const top_idx = stack.items.len - 1;
+                    std.mem.swap(StackVal, &stack.items[top_idx], &stack.items[top_idx - 1]);
                 },
                 .Arith => |a| {
                     if (stack.items.len < 2) continue;
@@ -416,7 +576,7 @@ pub const IRPrinter = struct {
                     if (stack.items.len < 1) continue;
                     const v = stack.items[stack.items.len - 1];
 
-                    try self.emitPeekInstruction(w, pk, v, &id, &peek_state);
+                    try self.emitPeekInstruction(w, pk, v, &id, peek_state);
 
                     switch (v.ty) {
                         .I64 => {
@@ -442,48 +602,27 @@ pub const IRPrinter = struct {
                     const line = try std.fmt.allocPrint(self.allocator, "{s}:\n", .{lbl.name});
                     defer self.allocator.free(line);
                     try w.writeAll(line);
+                    current_block = lbl.name;
+                    try self.restoreStackForLabel(&merge_map, lbl.name, &stack, &id, w);
                 },
                 .Jump => |j| {
+                    try self.recordStackForLabel(&merge_map, j.label, stack.items, current_block);
                     const line = try std.fmt.allocPrint(self.allocator, "  br label %{s}\n", .{j.label});
                     defer self.allocator.free(line);
                     try w.writeAll(line);
+                    stack.items.len = 0;
                 },
                 .JumpCond => |jc| {
                     if (stack.items.len < 1) continue;
                     const v = stack.items[stack.items.len - 1];
                     stack.items.len -= 1;
-                    const cnd = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
-                    id += 1;
-                    switch (jc.condition_type) {
-                        .Int => {
-                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = icmp ne i64 {s}, 0\n", .{ cnd, v.name });
-                            defer self.allocator.free(line);
-                            try w.writeAll(line);
-                        },
-                        .Byte => {
-                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = icmp ne i8 {s}, 0\n", .{ cnd, v.name });
-                            defer self.allocator.free(line);
-                            try w.writeAll(line);
-                        },
-                        .Float => {
-                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = fcmp one double {s}, 0.0\n", .{ cnd, v.name });
-                            defer self.allocator.free(line);
-                            try w.writeAll(line);
-                        },
-                        .Tetra => {
-                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = icmp ne i2 and (i2 {s}, 1), 0\n", .{ cnd, v.name });
-                            defer self.allocator.free(line);
-                            try w.writeAll(line);
-                        },
-                        else => {
-                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = icmp ne i64 0, 0\n", .{cnd});
-                            defer self.allocator.free(line);
-                            try w.writeAll(line);
-                        },
-                    }
-                    const br_line = try std.fmt.allocPrint(self.allocator, "  br i1 {s}, label %{s}, label %{s}\n", .{ cnd, jc.label_true, jc.label_false });
+                    const bool_val = try self.ensureBool(w, v, &id);
+                    try self.recordStackForLabel(&merge_map, jc.label_true, stack.items, current_block);
+                    try self.recordStackForLabel(&merge_map, jc.label_false, stack.items, current_block);
+                    const br_line = try std.fmt.allocPrint(self.allocator, "  br i1 {s}, label %{s}, label %{s}\n", .{ bool_val.name, jc.label_true, jc.label_false });
                     defer self.allocator.free(br_line);
                     try w.writeAll(br_line);
+                    stack.items.len = 0;
                 },
                 .Halt => {
                     try w.writeAll("  ret i32 0\n");
@@ -548,7 +687,16 @@ pub const IRPrinter = struct {
                 },
                 .LoadVar => |lv| {
                     if (variables.get(lv.var_name)) |entry| {
-                        try stack.append(entry.*);
+                        const result_name = try self.nextTemp(&id);
+                        const ty_str = self.stackTypeToLLVMType(entry.stack_type);
+                        const line = try std.fmt.allocPrint(
+                            self.allocator,
+                            "  {s} = load {s}, ptr {s}\n",
+                            .{ result_name, ty_str, entry.ptr_name },
+                        );
+                        defer self.allocator.free(line);
+                        try w.writeAll(line);
+                        try stack.append(.{ .name = result_name, .ty = entry.stack_type, .array_type = entry.array_type });
                     } else {
                         const fallback = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
                         id += 1;
@@ -562,15 +710,79 @@ pub const IRPrinter = struct {
                     if (stack.items.len < 1) continue;
                     const value = stack.items[stack.items.len - 1];
                     stack.items.len -= 1;
-                    const stored = StackVal{ .name = value.name, .ty = value.ty };
-                    try variables.put(sv.var_name, stored);
+                    const llvm_ty = self.stackTypeToLLVMType(value.ty);
+                    var info_ptr = variables.getPtr(sv.var_name);
+                    if (info_ptr == null) {
+                        const ptr_name = try std.fmt.allocPrint(self.allocator, "%var.{s}", .{sv.var_name});
+                        const alloca_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca {s}\n", .{ ptr_name, llvm_ty });
+                        defer self.allocator.free(alloca_line);
+                        try w.writeAll(alloca_line);
+                        const info = VariableInfo{ .ptr_name = ptr_name, .stack_type = value.ty, .array_type = value.array_type };
+                        try variables.put(sv.var_name, info);
+                        info_ptr = variables.getPtr(sv.var_name);
+                    } else {
+                        info_ptr.?.stack_type = value.ty;
+                        info_ptr.?.array_type = value.array_type;
+                    }
+                    const store_line = try std.fmt.allocPrint(
+                        self.allocator,
+                        "  store {s} {s}, ptr {s}\n",
+                        .{ llvm_ty, value.name, info_ptr.?.ptr_name },
+                    );
+                    defer self.allocator.free(store_line);
+                    try w.writeAll(store_line);
                 },
                 .StoreDecl => |sd| {
                     if (stack.items.len < 1) continue;
                     const value = stack.items[stack.items.len - 1];
                     stack.items.len -= 1;
-                    const stored = StackVal{ .name = value.name, .ty = value.ty };
-                    try variables.put(sd.var_name, stored);
+                    const llvm_ty = self.stackTypeToLLVMType(value.ty);
+                    var info_ptr = variables.getPtr(sd.var_name);
+                    if (info_ptr == null) {
+                        const ptr_name = try std.fmt.allocPrint(self.allocator, "%var.{s}", .{sd.var_name});
+                        const alloca_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca {s}\n", .{ ptr_name, llvm_ty });
+                        defer self.allocator.free(alloca_line);
+                        try w.writeAll(alloca_line);
+                        const info = VariableInfo{ .ptr_name = ptr_name, .stack_type = value.ty, .array_type = value.array_type };
+                        try variables.put(sd.var_name, info);
+                        info_ptr = variables.getPtr(sd.var_name);
+                    } else {
+                        info_ptr.?.stack_type = value.ty;
+                        info_ptr.?.array_type = value.array_type;
+                    }
+                    const store_line = try std.fmt.allocPrint(
+                        self.allocator,
+                        "  store {s} {s}, ptr {s}\n",
+                        .{ llvm_ty, value.name, info_ptr.?.ptr_name },
+                    );
+                    defer self.allocator.free(store_line);
+                    try w.writeAll(store_line);
+                },
+                .StoreConst => |sc| {
+                    if (stack.items.len < 1) continue;
+                    const value = stack.items[stack.items.len - 1];
+                    stack.items.len -= 1;
+                    const llvm_ty = self.stackTypeToLLVMType(value.ty);
+                    var info_ptr = variables.getPtr(sc.var_name);
+                    if (info_ptr == null) {
+                        const ptr_name = try std.fmt.allocPrint(self.allocator, "%var.{s}", .{sc.var_name});
+                        const alloca_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca {s}\n", .{ ptr_name, llvm_ty });
+                        defer self.allocator.free(alloca_line);
+                        try w.writeAll(alloca_line);
+                        const info = VariableInfo{ .ptr_name = ptr_name, .stack_type = value.ty, .array_type = value.array_type };
+                        try variables.put(sc.var_name, info);
+                        info_ptr = variables.getPtr(sc.var_name);
+                    } else {
+                        info_ptr.?.stack_type = value.ty;
+                        info_ptr.?.array_type = value.array_type;
+                    }
+                    const store_line = try std.fmt.allocPrint(
+                        self.allocator,
+                        "  store {s} {s}, ptr {s}\n",
+                        .{ llvm_ty, value.name, info_ptr.?.ptr_name },
+                    );
+                    defer self.allocator.free(store_line);
+                    try w.writeAll(store_line);
                 },
                 .Return => |ret| {
                     if (ret.has_value) {
@@ -596,16 +808,16 @@ pub const IRPrinter = struct {
         }
 
         try w.writeAll("}\n");
-
-        if (peek_state.globals.items.len > 0) {
-            try w.writeAll("\n");
-            for (peek_state.globals.items) |global_line| {
-                try w.writeAll(global_line);
-            }
-        }
     }
 
-    fn writeFunction(self: *IRPrinter, hir: *const HIR.HIRProgram, w: anytype, func: HIR.HIRProgram.HIRFunction, func_start_labels: *std.StringHashMap(bool)) !void {
+    fn writeFunction(
+        self: *IRPrinter,
+        hir: *const HIR.HIRProgram,
+        w: anytype,
+        func: HIR.HIRProgram.HIRFunction,
+        func_start_labels: *std.StringHashMap(bool),
+        peek_state: *PeekEmitState,
+    ) !void {
         // Find function start and end indices
         const start_idx = self.findLabelIndex(hir, func.start_label) orelse return;
         var end_idx: usize = hir.instructions.len;
@@ -628,6 +840,12 @@ pub const IRPrinter = struct {
             .Byte => "i8",
             .Tetra => "i2",
             .String => "ptr",
+            .Array => "ptr",
+            .Map => "ptr",
+            .Struct => "ptr",
+            .Enum => "ptr",
+            .Function => "ptr",
+            .Union => "ptr",
             .Nothing => "void",
             else => "i64",
         };
@@ -647,6 +865,12 @@ pub const IRPrinter = struct {
                 .Byte => "i8",
                 .Tetra => "i2",
                 .String => "ptr",
+                .Array => "ptr",
+                .Map => "ptr",
+                .Struct => "ptr",
+                .Enum => "ptr",
+                .Function => "ptr",
+                .Union => "ptr",
                 else => "i64",
             };
             const param_str = try std.fmt.allocPrint(self.allocator, "{s} %{d}", .{ param_type_str, param_idx });
@@ -667,17 +891,35 @@ pub const IRPrinter = struct {
         var id: usize = func.param_types.len; // Start after parameters
         var stack = std.array_list.Managed(StackVal).init(self.allocator);
         defer stack.deinit();
-        var peek_state = PeekEmitState.init(self.allocator, &self.peek_string_counter);
-        defer peek_state.deinit();
+        var merge_map = std.StringHashMap(StackMergeState).init(self.allocator);
+        defer {
+            var it_merge = merge_map.iterator();
+            while (it_merge.next()) |entry| {
+                entry.value_ptr.deinit(self.allocator);
+            }
+            merge_map.deinit();
+        }
+
         var last_instruction_was_terminator = false;
-        var variables = std.StringHashMap(StackVal).init(self.allocator);
-        defer variables.deinit();
+        var current_block: []const u8 = "entry";
+        var variables = std.StringHashMap(VariableInfo).init(self.allocator);
+        defer {
+            var it = variables.iterator();
+            while (it.next()) |entry| {
+                self.allocator.free(entry.value_ptr.ptr_name);
+            }
+            variables.deinit();
+        }
 
         // Add parameters to stack
         for (func.param_types, 0..) |param_type, param_idx| {
             const param_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{param_idx});
             const stack_type = self.hirTypeToStackType(param_type);
-            try stack.append(.{ .name = param_name, .ty = stack_type });
+            const array_hint: ?HIR.HIRType = switch (param_type) {
+                .Array => |inner| inner.*,
+                else => null,
+            };
+            try stack.append(.{ .name = param_name, .ty = stack_type, .array_type = array_hint });
         }
 
         // Process function body instructions
@@ -698,6 +940,8 @@ pub const IRPrinter = struct {
                         try w.writeAll(line);
                         last_instruction_was_terminator = false;
                     }
+                    current_block = lbl.name;
+                    try self.restoreStackForLabel(&merge_map, lbl.name, &stack, &id, w);
                 },
                 .Const => |c| {
                     const hv = hir.constant_pool[c.constant_id];
@@ -739,17 +983,17 @@ pub const IRPrinter = struct {
                             last_instruction_was_terminator = false;
                         },
                         .string => |s| {
-                            var found: ?usize = null;
-                            for (hir.string_pool, 0..) |sp, si| {
-                                if (std.mem.eql(u8, sp, s)) {
-                                    found = si;
-                                    break;
-                                }
-                            }
-                            const idx = found orelse 0;
+                            const info = try internPeekString(
+                                self.allocator,
+                                &peek_state.*.string_map,
+                                &peek_state.*.strings,
+                                peek_state.*.next_id_ptr,
+                                &peek_state.*.globals,
+                                s,
+                            );
                             const name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
                             id += 1;
-                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds [{d} x i8], ptr @.str.{d}, i64 0, i64 0\n", .{ name, s.len + 1, idx });
+                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds [{d} x i8], ptr {s}, i64 0, i64 0\n", .{ name, info.length, info.name });
                             defer self.allocator.free(line);
                             try w.writeAll(line);
                             try stack.append(.{ .name = name, .ty = .PTR });
@@ -774,22 +1018,37 @@ pub const IRPrinter = struct {
                 },
                 .JumpCond => |jc| {
                     if (stack.items.len < 1) continue;
-                    const cond = stack.items[stack.items.len - 1];
+                    const v = stack.items[stack.items.len - 1];
                     stack.items.len -= 1;
-                    const br_line = try std.fmt.allocPrint(self.allocator, "  br i1 {s}, label %{s}, label %{s}\n", .{ cond.name, jc.label_true, jc.label_false });
+                    const bool_val = try self.ensureBool(w, v, &id);
+                    try self.recordStackForLabel(&merge_map, jc.label_true, stack.items, current_block);
+                    try self.recordStackForLabel(&merge_map, jc.label_false, stack.items, current_block);
+                    const br_line = try std.fmt.allocPrint(self.allocator, "  br i1 {s}, label %{s}, label %{s}\n", .{ bool_val.name, jc.label_true, jc.label_false });
                     defer self.allocator.free(br_line);
                     try w.writeAll(br_line);
+                    stack.items.len = 0;
                     last_instruction_was_terminator = true;
                 },
                 .Jump => |j| {
+                    try self.recordStackForLabel(&merge_map, j.label, stack.items, current_block);
                     const br_line = try std.fmt.allocPrint(self.allocator, "  br label %{s}\n", .{j.label});
                     defer self.allocator.free(br_line);
                     try w.writeAll(br_line);
+                    stack.items.len = 0;
                     last_instruction_was_terminator = true;
                 },
                 .LoadVar => |lv| {
                     if (variables.get(lv.var_name)) |entry| {
-                        try stack.append(entry.*);
+                        const result_name = try self.nextTemp(&id);
+                        const ty_str = self.stackTypeToLLVMType(entry.stack_type);
+                        const line = try std.fmt.allocPrint(
+                            self.allocator,
+                            "  {s} = load {s}, ptr {s}\n",
+                            .{ result_name, ty_str, entry.ptr_name },
+                        );
+                        defer self.allocator.free(line);
+                        try w.writeAll(line);
+                        try stack.append(.{ .name = result_name, .ty = entry.stack_type, .array_type = entry.array_type });
                     } else {
                         const fallback = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
                         id += 1;
@@ -797,6 +1056,160 @@ pub const IRPrinter = struct {
                         defer self.allocator.free(line);
                         try w.writeAll(line);
                         try stack.append(.{ .name = fallback, .ty = .I64 });
+                    }
+                    last_instruction_was_terminator = false;
+                },
+                .ArrayNew => |a| {
+                    try self.emitArrayNew(w, &stack, &id, a);
+                    last_instruction_was_terminator = false;
+                },
+                .ArraySet => |_| {
+                    try self.emitArraySet(w, &stack, &id);
+                    last_instruction_was_terminator = false;
+                },
+                .ArrayLen => {
+                    try self.emitArrayLen(w, &stack, &id);
+                    last_instruction_was_terminator = false;
+                },
+                .ArrayPop => {
+                    try self.emitArrayPop(w, &stack, &id);
+                    last_instruction_was_terminator = false;
+                },
+                .Dup => {
+                    if (stack.items.len < 1) continue;
+                    const top = stack.items[stack.items.len - 1];
+                    try stack.append(top);
+                    last_instruction_was_terminator = false;
+                },
+                .Pop => {
+                    if (stack.items.len < 1) continue;
+                    stack.items.len -= 1;
+                    last_instruction_was_terminator = false;
+                },
+                .Swap => {
+                    if (stack.items.len < 2) continue;
+                    const top_idx = stack.items.len - 1;
+                    std.mem.swap(StackVal, &stack.items[top_idx], &stack.items[top_idx - 1]);
+                    last_instruction_was_terminator = false;
+                },
+                .Arith => |a| {
+                    if (stack.items.len < 2) continue;
+                    const rhs = stack.items[stack.items.len - 1];
+                    const lhs = stack.items[stack.items.len - 2];
+                    stack.items.len -= 2;
+                    const name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                    id += 1;
+                    switch (a.operand_type) {
+                        .Int => {
+                            switch (a.op) {
+                                .Add => {
+                                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 {s}, {s}\n", .{ name, lhs.name, rhs.name });
+                                    defer self.allocator.free(line);
+                                    try w.writeAll(line);
+                                },
+                                .Sub => {
+                                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = sub i64 {s}, {s}\n", .{ name, lhs.name, rhs.name });
+                                    defer self.allocator.free(line);
+                                    try w.writeAll(line);
+                                },
+                                .Mul => {
+                                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = mul i64 {s}, {s}\n", .{ name, lhs.name, rhs.name });
+                                    defer self.allocator.free(line);
+                                    try w.writeAll(line);
+                                },
+                                .Div => {
+                                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = sdiv i64 {s}, {s}\n", .{ name, lhs.name, rhs.name });
+                                    defer self.allocator.free(line);
+                                    try w.writeAll(line);
+                                },
+                                .Mod => {
+                                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = srem i64 {s}, {s}\n", .{ name, lhs.name, rhs.name });
+                                    defer self.allocator.free(line);
+                                    try w.writeAll(line);
+                                },
+                                .Pow => {
+                                    const lhs_f = try std.fmt.allocPrint(self.allocator, "sitofp i64 {s} to double", .{lhs.name});
+                                    defer self.allocator.free(lhs_f);
+                                    const rhs_f = try std.fmt.allocPrint(self.allocator, "sitofp i64 {s} to double", .{rhs.name});
+                                    defer self.allocator.free(rhs_f);
+                                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = call double @llvm.pow.f64(double {s}, double {s})\n", .{ name, lhs_f, rhs_f });
+                                    defer self.allocator.free(line);
+                                    try w.writeAll(line);
+                                },
+                            }
+                            try stack.append(.{ .name = name, .ty = .I64 });
+                        },
+                        .Float => {
+                            switch (a.op) {
+                                .Add => {
+                                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = fadd double {s}, {s}\n", .{ name, lhs.name, rhs.name });
+                                    defer self.allocator.free(line);
+                                    try w.writeAll(line);
+                                },
+                                .Sub => {
+                                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = fsub double {s}, {s}\n", .{ name, lhs.name, rhs.name });
+                                    defer self.allocator.free(line);
+                                    try w.writeAll(line);
+                                },
+                                .Mul => {
+                                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = fmul double {s}, {s}\n", .{ name, lhs.name, rhs.name });
+                                    defer self.allocator.free(line);
+                                    try w.writeAll(line);
+                                },
+                                .Div => {
+                                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = fdiv double {s}, {s}\n", .{ name, lhs.name, rhs.name });
+                                    defer self.allocator.free(line);
+                                    try w.writeAll(line);
+                                },
+                                .Mod => {
+                                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = frem double {s}, {s}\n", .{ name, lhs.name, rhs.name });
+                                    defer self.allocator.free(line);
+                                    try w.writeAll(line);
+                                },
+                                .Pow => {
+                                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = call double @llvm.pow.f64(double {s}, double {s})\n", .{ name, lhs.name, rhs.name });
+                                    defer self.allocator.free(line);
+                                    try w.writeAll(line);
+                                },
+                            }
+                            try stack.append(.{ .name = name, .ty = .F64 });
+                        },
+                        .Byte => {
+                            switch (a.op) {
+                                .Add => {
+                                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = add i8 {s}, {s}\n", .{ name, lhs.name, rhs.name });
+                                    defer self.allocator.free(line);
+                                    try w.writeAll(line);
+                                },
+                                .Sub => {
+                                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = sub i8 {s}, {s}\n", .{ name, lhs.name, rhs.name });
+                                    defer self.allocator.free(line);
+                                    try w.writeAll(line);
+                                },
+                                .Mul => {
+                                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = mul i8 {s}, {s}\n", .{ name, lhs.name, rhs.name });
+                                    defer self.allocator.free(line);
+                                    try w.writeAll(line);
+                                },
+                                .Div => {
+                                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = udiv i8 {s}, {s}\n", .{ name, lhs.name, rhs.name });
+                                    defer self.allocator.free(line);
+                                    try w.writeAll(line);
+                                },
+                                .Mod => {
+                                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = urem i8 {s}, {s}\n", .{ name, lhs.name, rhs.name });
+                                    defer self.allocator.free(line);
+                                    try w.writeAll(line);
+                                },
+                                .Pow => {
+                                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = call i8 @doxa.byte.pow(i8 {s}, i8 {s})\n", .{ name, lhs.name, rhs.name });
+                                    defer self.allocator.free(line);
+                                    try w.writeAll(line);
+                                },
+                            }
+                            try stack.append(.{ .name = name, .ty = .I8 });
+                        },
+                        else => {},
                     }
                     last_instruction_was_terminator = false;
                 },
@@ -863,16 +1276,81 @@ pub const IRPrinter = struct {
                     if (stack.items.len < 1) continue;
                     const value = stack.items[stack.items.len - 1];
                     stack.items.len -= 1;
-                    const stored = StackVal{ .name = value.name, .ty = value.ty };
-                    try variables.put(sv.var_name, stored);
+                    const llvm_ty = self.stackTypeToLLVMType(value.ty);
+                    var info_ptr = variables.getPtr(sv.var_name);
+                    if (info_ptr == null) {
+                        const ptr_name = try std.fmt.allocPrint(self.allocator, "%var.{s}", .{sv.var_name});
+                        const alloca_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca {s}\n", .{ ptr_name, llvm_ty });
+                        defer self.allocator.free(alloca_line);
+                        try w.writeAll(alloca_line);
+                        const info = VariableInfo{ .ptr_name = ptr_name, .stack_type = value.ty, .array_type = value.array_type };
+                        try variables.put(sv.var_name, info);
+                        info_ptr = variables.getPtr(sv.var_name);
+                    } else {
+                        info_ptr.?.stack_type = value.ty;
+                        info_ptr.?.array_type = value.array_type;
+                    }
+                    const store_line = try std.fmt.allocPrint(
+                        self.allocator,
+                        "  store {s} {s}, ptr {s}\n",
+                        .{ llvm_ty, value.name, info_ptr.?.ptr_name },
+                    );
+                    defer self.allocator.free(store_line);
+                    try w.writeAll(store_line);
                     last_instruction_was_terminator = false;
                 },
                 .StoreDecl => |sd| {
                     if (stack.items.len < 1) continue;
                     const value = stack.items[stack.items.len - 1];
                     stack.items.len -= 1;
-                    const stored = StackVal{ .name = value.name, .ty = value.ty };
-                    try variables.put(sd.var_name, stored);
+                    const llvm_ty = self.stackTypeToLLVMType(value.ty);
+                    var info_ptr = variables.getPtr(sd.var_name);
+                    if (info_ptr == null) {
+                        const ptr_name = try std.fmt.allocPrint(self.allocator, "%var.{s}", .{sd.var_name});
+                        const alloca_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca {s}\n", .{ ptr_name, llvm_ty });
+                        defer self.allocator.free(alloca_line);
+                        try w.writeAll(alloca_line);
+                        const info = VariableInfo{ .ptr_name = ptr_name, .stack_type = value.ty, .array_type = value.array_type };
+                        try variables.put(sd.var_name, info);
+                        info_ptr = variables.getPtr(sd.var_name);
+                    } else {
+                        info_ptr.?.stack_type = value.ty;
+                        info_ptr.?.array_type = value.array_type;
+                    }
+                    const store_line = try std.fmt.allocPrint(
+                        self.allocator,
+                        "  store {s} {s}, ptr {s}\n",
+                        .{ llvm_ty, value.name, info_ptr.?.ptr_name },
+                    );
+                    defer self.allocator.free(store_line);
+                    try w.writeAll(store_line);
+                    last_instruction_was_terminator = false;
+                },
+                .StoreConst => |sc| {
+                    if (stack.items.len < 1) continue;
+                    const value = stack.items[stack.items.len - 1];
+                    stack.items.len -= 1;
+                    const llvm_ty = self.stackTypeToLLVMType(value.ty);
+                    var info_ptr = variables.getPtr(sc.var_name);
+                    if (info_ptr == null) {
+                        const ptr_name = try std.fmt.allocPrint(self.allocator, "%var.{s}", .{sc.var_name});
+                        const alloca_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca {s}\n", .{ ptr_name, llvm_ty });
+                        defer self.allocator.free(alloca_line);
+                        try w.writeAll(alloca_line);
+                        const info = VariableInfo{ .ptr_name = ptr_name, .stack_type = value.ty, .array_type = value.array_type };
+                        try variables.put(sc.var_name, info);
+                        info_ptr = variables.getPtr(sc.var_name);
+                    } else {
+                        info_ptr.?.stack_type = value.ty;
+                        info_ptr.?.array_type = value.array_type;
+                    }
+                    const store_line = try std.fmt.allocPrint(
+                        self.allocator,
+                        "  store {s} {s}, ptr {s}\n",
+                        .{ llvm_ty, value.name, info_ptr.?.ptr_name },
+                    );
+                    defer self.allocator.free(store_line);
+                    try w.writeAll(store_line);
                     last_instruction_was_terminator = false;
                 },
                 .Compare => |cmp| {
@@ -902,7 +1380,7 @@ pub const IRPrinter = struct {
                     if (stack.items.len < 1) continue;
                     const v = stack.items[stack.items.len - 1];
 
-                    try self.emitPeekInstruction(w, pk, v, &id, &peek_state);
+                    try self.emitPeekInstruction(w, pk, v, &id, peek_state);
 
                     // Print the actual value
                     switch (v.ty) {
@@ -932,12 +1410,6 @@ pub const IRPrinter = struct {
         }
 
         try w.writeAll("}\n\n");
-
-        if (peek_state.globals.items.len > 0) {
-            for (peek_state.globals.items) |global_line| {
-                try w.writeAll(global_line);
-            }
-        }
     }
 
     fn nextTemp(self: *IRPrinter, id: *usize) ![]const u8 {
@@ -946,20 +1418,400 @@ pub const IRPrinter = struct {
         return name;
     }
 
+    fn ensurePointer(
+        self: *IRPrinter,
+        w: anytype,
+        value: StackVal,
+        id: *usize,
+    ) !StackVal {
+        if (value.ty == .PTR) return value;
+
+        var current_name = value.name;
+        var current_ty = value.ty;
+
+        switch (current_ty) {
+            .I64 => {},
+            .I1, .I2, .I8 => {
+                const widened = try self.nextTemp(id);
+                const src_ty = self.stackTypeToLLVMType(current_ty);
+                const widen_line = try std.fmt.allocPrint(self.allocator, "  {s} = zext {s} {s} to i64\n", .{ widened, src_ty, current_name });
+                defer self.allocator.free(widen_line);
+                try w.writeAll(widen_line);
+                current_name = widened;
+                current_ty = .I64;
+            },
+            .F64 => {
+                const bitcasted = try self.nextTemp(id);
+                const bitcast_line = try std.fmt.allocPrint(self.allocator, "  {s} = bitcast double {s} to i64\n", .{ bitcasted, current_name });
+                defer self.allocator.free(bitcast_line);
+                try w.writeAll(bitcast_line);
+                current_name = bitcasted;
+                current_ty = .I64;
+            },
+            else => {},
+        }
+
+        if (current_ty != .I64) {
+            const widened = try self.nextTemp(id);
+            const src_ty = self.stackTypeToLLVMType(current_ty);
+            const widen_line = try std.fmt.allocPrint(self.allocator, "  {s} = zext {s} {s} to i64\n", .{ widened, src_ty, current_name });
+            defer self.allocator.free(widen_line);
+            try w.writeAll(widen_line);
+            current_name = widened;
+        }
+
+        const ptr_name = try self.nextTemp(id);
+        const inttoptr_line = try std.fmt.allocPrint(self.allocator, "  {s} = inttoptr i64 {s} to ptr\n", .{ ptr_name, current_name });
+        defer self.allocator.free(inttoptr_line);
+        try w.writeAll(inttoptr_line);
+        return .{ .name = ptr_name, .ty = .PTR, .array_type = value.array_type };
+    }
+
+    const ArrayLenLoad = struct {
+        array: StackVal,
+        len_ptr: []const u8,
+        len_value: StackVal,
+    };
+
+    fn ensureI64(
+        self: *IRPrinter,
+        w: anytype,
+        value: StackVal,
+        id: *usize,
+    ) !StackVal {
+        if (value.ty == .I64) return value;
+
+        switch (value.ty) {
+            .I1, .I2, .I8 => {
+                const widened = try self.nextTemp(id);
+                const src_ty = self.stackTypeToLLVMType(value.ty);
+                const widen_line = try std.fmt.allocPrint(self.allocator, "  {s} = zext {s} {s} to i64\n", .{ widened, src_ty, value.name });
+                defer self.allocator.free(widen_line);
+                try w.writeAll(widen_line);
+                return .{ .name = widened, .ty = .I64 };
+            },
+            .PTR => {
+                const tmp = try self.nextTemp(id);
+                const line = try std.fmt.allocPrint(self.allocator, "  {s} = ptrtoint ptr {s} to i64\n", .{ tmp, value.name });
+                defer self.allocator.free(line);
+                try w.writeAll(line);
+                return .{ .name = tmp, .ty = .I64 };
+            },
+            .F64 => {
+                const tmp = try self.nextTemp(id);
+                const line = try std.fmt.allocPrint(self.allocator, "  {s} = bitcast double {s} to i64\n", .{ tmp, value.name });
+                defer self.allocator.free(line);
+                try w.writeAll(line);
+                return .{ .name = tmp, .ty = .I64 };
+            },
+            else => return value,
+        }
+    }
+
+    fn arrayElementSize(_: *IRPrinter, element_type: HIR.HIRType) u64 {
+        return switch (element_type) {
+            .Int => 8,
+            .Byte => 1,
+            .Float => 8,
+            .String => 8,
+            .Tetra => 1,
+            .Nothing => 0,
+            else => 8,
+        };
+    }
+
+    fn arrayElementTag(_: *IRPrinter, element_type: HIR.HIRType) u64 {
+        return switch (element_type) {
+            .Int => 0,
+            .Byte => 1,
+            .Float => 2,
+            .String => 3,
+            .Tetra => 4,
+            .Nothing => 5,
+            .Array => 6,
+            .Struct => 7,
+            .Enum => 8,
+            else => 255,
+        };
+    }
+
+    fn convertValueToArrayStorage(
+        self: *IRPrinter,
+        w: anytype,
+        value: StackVal,
+        element_type: HIR.HIRType,
+        id: *usize,
+    ) !StackVal {
+        return switch (element_type) {
+            .Int, .Byte, .Tetra => try self.ensureI64(w, value, id),
+            .Float => blk: {
+                if (value.ty != .F64) {
+                    break :blk try self.ensureI64(w, value, id);
+                }
+                const tmp = try self.nextTemp(id);
+                const line = try std.fmt.allocPrint(self.allocator, "  {s} = bitcast double {s} to i64\n", .{ tmp, value.name });
+                defer self.allocator.free(line);
+                try w.writeAll(line);
+                break :blk StackVal{ .name = tmp, .ty = .I64 };
+            },
+            .String, .Array, .Map, .Struct, .Enum, .Function, .Union => blk_ptr: {
+                var ptr_val = value;
+                if (ptr_val.ty != .PTR) {
+                    ptr_val = try self.ensurePointer(w, value, id);
+                }
+                const tmp = try self.nextTemp(id);
+                const line = try std.fmt.allocPrint(self.allocator, "  {s} = ptrtoint ptr {s} to i64\n", .{ tmp, ptr_val.name });
+                defer self.allocator.free(line);
+                try w.writeAll(line);
+                break :blk_ptr StackVal{ .name = tmp, .ty = .I64 };
+            },
+            else => try self.ensureI64(w, value, id),
+        };
+    }
+
+    fn convertArrayStorageToValue(
+        self: *IRPrinter,
+        w: anytype,
+        storage: StackVal,
+        element_type: HIR.HIRType,
+        id: *usize,
+    ) !StackVal {
+        const as_i64 = if (storage.ty == .I64) storage else try self.ensureI64(w, storage, id);
+        return switch (element_type) {
+            .Int => as_i64,
+            .Byte => blk: {
+                const tmp = try self.nextTemp(id);
+                const line = try std.fmt.allocPrint(self.allocator, "  {s} = trunc i64 {s} to i8\n", .{ tmp, as_i64.name });
+                defer self.allocator.free(line);
+                try w.writeAll(line);
+                break :blk StackVal{ .name = tmp, .ty = .I8 };
+            },
+            .Tetra => blk_tetra: {
+                const tmp = try self.nextTemp(id);
+                const line = try std.fmt.allocPrint(self.allocator, "  {s} = trunc i64 {s} to i2\n", .{ tmp, as_i64.name });
+                defer self.allocator.free(line);
+                try w.writeAll(line);
+                break :blk_tetra StackVal{ .name = tmp, .ty = .I2 };
+            },
+            .Float => blk_float: {
+                const tmp = try self.nextTemp(id);
+                const line = try std.fmt.allocPrint(self.allocator, "  {s} = bitcast i64 {s} to double\n", .{ tmp, as_i64.name });
+                defer self.allocator.free(line);
+                try w.writeAll(line);
+                break :blk_float StackVal{ .name = tmp, .ty = .F64 };
+            },
+            .String, .Map, .Struct, .Enum, .Function, .Union => blk_ptr: {
+                const tmp = try self.nextTemp(id);
+                const line = try std.fmt.allocPrint(self.allocator, "  {s} = inttoptr i64 {s} to ptr\n", .{ tmp, as_i64.name });
+                defer self.allocator.free(line);
+                try w.writeAll(line);
+                break :blk_ptr StackVal{ .name = tmp, .ty = .PTR };
+            },
+            .Array => |inner| blk_arr: {
+                const tmp = try self.nextTemp(id);
+                const line = try std.fmt.allocPrint(self.allocator, "  {s} = inttoptr i64 {s} to ptr\n", .{ tmp, as_i64.name });
+                defer self.allocator.free(line);
+                try w.writeAll(line);
+                break :blk_arr StackVal{ .name = tmp, .ty = .PTR, .array_type = inner.* };
+            },
+            else => as_i64,
+        };
+    }
+
+    fn loadArrayLength(
+        self: *IRPrinter,
+        w: anytype,
+        arr: StackVal,
+        id: *usize,
+    ) !ArrayLenLoad {
+        var array_ptr = arr;
+        if (array_ptr.ty != .PTR) {
+            array_ptr = try self.ensurePointer(w, array_ptr, id);
+        }
+        const len_ptr = try self.nextTemp(id);
+        const gep_line = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds %ArrayHeader, ptr {s}, i32 0, i32 1\n", .{ len_ptr, array_ptr.name });
+        defer self.allocator.free(gep_line);
+        try w.writeAll(gep_line);
+
+        const len_reg = try self.nextTemp(id);
+        const load_line = try std.fmt.allocPrint(self.allocator, "  {s} = load i64, ptr {s}\n", .{ len_reg, len_ptr });
+        defer self.allocator.free(load_line);
+        try w.writeAll(load_line);
+
+        return .{
+            .array = array_ptr,
+            .len_ptr = len_ptr,
+            .len_value = .{ .name = len_reg, .ty = .I64 },
+        };
+    }
+
+    fn emitArrayNew(
+        self: *IRPrinter,
+        w: anytype,
+        stack: *std.array_list.Managed(StackVal),
+        id: *usize,
+        inst: std.meta.TagPayload(HIRInstruction, .ArrayNew),
+    ) !void {
+        const elem_size = self.arrayElementSize(inst.element_type);
+        const elem_tag = self.arrayElementTag(inst.element_type);
+        const reg = try self.nextTemp(id);
+        const line = try std.fmt.allocPrint(
+            self.allocator,
+            "  {s} = call ptr @doxa_array_new(i64 {d}, i64 {d}, i64 {d})\n",
+            .{ reg, elem_size, elem_tag, inst.size },
+        );
+        defer self.allocator.free(line);
+        try w.writeAll(line);
+
+        const arr_val = StackVal{ .name = reg, .ty = .PTR, .array_type = inst.element_type };
+        try stack.append(arr_val);
+        try stack.append(arr_val);
+    }
+
+    fn emitArraySet(
+        self: *IRPrinter,
+        w: anytype,
+        stack: *std.array_list.Managed(StackVal),
+        id: *usize,
+    ) !void {
+        if (stack.items.len < 3) return;
+        const value = stack.items[stack.items.len - 1];
+        const idx_val = stack.items[stack.items.len - 2];
+        const hdr_val = stack.items[stack.items.len - 3];
+        stack.items.len -= 3;
+
+        var arr_ptr = hdr_val;
+        if (arr_ptr.ty != .PTR) {
+            arr_ptr = try self.ensurePointer(w, arr_ptr, id);
+        }
+        const element_type = arr_ptr.array_type orelse HIR.HIRType.Int;
+        const idx_i64 = try self.ensureI64(w, idx_val, id);
+        const stored_val = try self.convertValueToArrayStorage(w, value, element_type, id);
+
+        const call_line = try std.fmt.allocPrint(
+            self.allocator,
+            "  call void @doxa_array_set_i64(ptr {s}, i64 {s}, i64 {s})\n",
+            .{ arr_ptr.name, idx_i64.name, stored_val.name },
+        );
+        defer self.allocator.free(call_line);
+        try w.writeAll(call_line);
+
+        try stack.append(.{ .name = arr_ptr.name, .ty = .PTR, .array_type = arr_ptr.array_type });
+    }
+
+    fn emitArrayLen(
+        self: *IRPrinter,
+        w: anytype,
+        stack: *std.array_list.Managed(StackVal),
+        id: *usize,
+    ) !void {
+        if (stack.items.len < 1) return;
+        const hdr_val = stack.items[stack.items.len - 1];
+        stack.items.len -= 1;
+        const len_info = try self.loadArrayLength(w, hdr_val, id);
+        try stack.append(len_info.len_value);
+    }
+
+    fn emitArrayPop(
+        self: *IRPrinter,
+        w: anytype,
+        stack: *std.array_list.Managed(StackVal),
+        id: *usize,
+    ) !void {
+        if (stack.items.len < 1) return;
+        const hdr_val = stack.items[stack.items.len - 1];
+        stack.items.len -= 1;
+        const len_info = try self.loadArrayLength(w, hdr_val, id);
+        const element_type = len_info.array.array_type orelse HIR.HIRType.Int;
+
+        const idx = try self.nextTemp(id);
+        const idx_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 {s}, -1\n", .{ idx, len_info.len_value.name });
+        defer self.allocator.free(idx_line);
+        try w.writeAll(idx_line);
+
+        const elem_reg = try self.nextTemp(id);
+        const call_line = try std.fmt.allocPrint(
+            self.allocator,
+            "  {s} = call i64 @doxa_array_get_i64(ptr {s}, i64 {s})\n",
+            .{ elem_reg, len_info.array.name, idx },
+        );
+        defer self.allocator.free(call_line);
+        try w.writeAll(call_line);
+
+        const store_line = try std.fmt.allocPrint(self.allocator, "  store i64 {s}, ptr {s}\n", .{ idx, len_info.len_ptr });
+        defer self.allocator.free(store_line);
+        try w.writeAll(store_line);
+
+        const stored = StackVal{ .name = elem_reg, .ty = .I64 };
+        const actual = try self.convertArrayStorageToValue(w, stored, element_type, id);
+
+        try stack.append(.{ .name = len_info.array.name, .ty = .PTR, .array_type = len_info.array.array_type });
+        try stack.append(actual);
+    }
+
+    fn ensureBool(
+        self: *IRPrinter,
+        w: anytype,
+        value: StackVal,
+        id: *usize,
+    ) !StackVal {
+        switch (value.ty) {
+            .I1 => return value,
+            .I64 => {
+                const name = try self.nextTemp(id);
+                const line = try std.fmt.allocPrint(self.allocator, "  {s} = icmp ne i64 {s}, 0\n", .{ name, value.name });
+                defer self.allocator.free(line);
+                try w.writeAll(line);
+                return .{ .name = name, .ty = .I1 };
+            },
+            .I8 => {
+                const name = try self.nextTemp(id);
+                const line = try std.fmt.allocPrint(self.allocator, "  {s} = icmp ne i8 {s}, 0\n", .{ name, value.name });
+                defer self.allocator.free(line);
+                try w.writeAll(line);
+                return .{ .name = name, .ty = .I1 };
+            },
+            .F64 => {
+                const name = try self.nextTemp(id);
+                const line = try std.fmt.allocPrint(self.allocator, "  {s} = fcmp one double {s}, 0.0\n", .{ name, value.name });
+                defer self.allocator.free(line);
+                try w.writeAll(line);
+                return .{ .name = name, .ty = .I1 };
+            },
+            .I2 => {
+                const masked = try self.nextTemp(id);
+                const mask_line = try std.fmt.allocPrint(self.allocator, "  {s} = and i2 {s}, 1\n", .{ masked, value.name });
+                defer self.allocator.free(mask_line);
+                try w.writeAll(mask_line);
+                const name = try self.nextTemp(id);
+                const cmp_line = try std.fmt.allocPrint(self.allocator, "  {s} = icmp ne i2 {s}, 0\n", .{ name, masked });
+                defer self.allocator.free(cmp_line);
+                try w.writeAll(cmp_line);
+                return .{ .name = name, .ty = .I1 };
+            },
+            .PTR => {
+                const name = try self.nextTemp(id);
+                const line = try std.fmt.allocPrint(self.allocator, "  {s} = icmp ne ptr {s}, null\n", .{ name, value.name });
+                defer self.allocator.free(line);
+                try w.writeAll(line);
+                return .{ .name = name, .ty = .I1 };
+            },
+        }
+    }
+
     fn emitCompareInstruction(
         self: *IRPrinter,
         w: anytype,
-        cmp: HIRInstruction.Compare,
+        cmp: CompareInstruction,
         lhs: StackVal,
         rhs: StackVal,
         id: *usize,
     ) !StackVal {
-        const result_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
-        id.* += 1;
-
+        var result_name: []const u8 = undefined;
         const line = blk: {
             switch (cmp.operand_type) {
                 .Int => {
+                    result_name = try self.nextTemp(id);
                     const pred = switch (cmp.op) {
                         .Eq => "eq",
                         .Ne => "ne",
@@ -971,6 +1823,7 @@ pub const IRPrinter = struct {
                     break :blk try std.fmt.allocPrint(self.allocator, "  {s} = icmp {s} i64 {s}, {s}\n", .{ result_name, pred, lhs.name, rhs.name });
                 },
                 .Byte => {
+                    result_name = try self.nextTemp(id);
                     const pred = switch (cmp.op) {
                         .Eq => "eq",
                         .Ne => "ne",
@@ -982,6 +1835,7 @@ pub const IRPrinter = struct {
                     break :blk try std.fmt.allocPrint(self.allocator, "  {s} = icmp {s} i8 {s}, {s}\n", .{ result_name, pred, lhs.name, rhs.name });
                 },
                 .Float => {
+                    result_name = try self.nextTemp(id);
                     const pred = switch (cmp.op) {
                         .Eq => "oeq",
                         .Ne => "one",
@@ -993,6 +1847,7 @@ pub const IRPrinter = struct {
                     break :blk try std.fmt.allocPrint(self.allocator, "  {s} = fcmp {s} double {s}, {s}\n", .{ result_name, pred, lhs.name, rhs.name });
                 },
                 .Tetra => {
+                    result_name = try self.nextTemp(id);
                     const pred = switch (cmp.op) {
                         .Eq => "eq",
                         .Ne => "ne",
@@ -1010,12 +1865,17 @@ pub const IRPrinter = struct {
                         else => null,
                     };
                     if (pred) |p| {
-                        break :blk try std.fmt.allocPrint(self.allocator, "  {s} = icmp {s} ptr {s}, {s}\n", .{ result_name, p, lhs.name, rhs.name });
+                        const lhs_ptr = try self.ensurePointer(w, lhs, id);
+                        const rhs_ptr = try self.ensurePointer(w, rhs, id);
+                        result_name = try self.nextTemp(id);
+                        break :blk try std.fmt.allocPrint(self.allocator, "  {s} = icmp {s} ptr {s}, {s}\n", .{ result_name, p, lhs_ptr.name, rhs_ptr.name });
                     }
+                    result_name = try self.nextTemp(id);
                     const false_line = try std.fmt.allocPrint(self.allocator, "  {s} = icmp eq i1 0, 1\n", .{result_name});
                     break :blk false_line;
                 },
                 else => {
+                    result_name = try self.nextTemp(id);
                     const pred = switch (cmp.op) {
                         .Eq => "eq",
                         .Ne => "ne",
