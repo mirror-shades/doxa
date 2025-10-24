@@ -16,6 +16,92 @@ const strings = @import("strings.zig");
 const arrays = @import("arrays.zig");
 const print = @import("print.zig");
 
+const StackIncoming = struct {
+    block: LLVMTypes.LLVMBasicBlockRef,
+    value: LLVMTypes.LLVMValueRef,
+};
+
+const StackSlotList = std.ArrayListUnmanaged(StackIncoming);
+
+const StackMergeState = struct {
+    slots: []StackSlotList,
+
+    fn init(allocator: std.mem.Allocator, slot_count: usize) !StackMergeState {
+        var slots = try allocator.alloc(StackSlotList, slot_count);
+        var i: usize = 0;
+        while (i < slot_count) : (i += 1) {
+            slots[i] = StackSlotList{};
+        }
+        return .{ .slots = slots };
+    }
+
+    fn deinit(self: *StackMergeState, allocator: std.mem.Allocator) void {
+        for (self.slots) |*slot| {
+            slot.deinit(allocator);
+        }
+        allocator.free(self.slots);
+    }
+
+    fn append(self: *StackMergeState, allocator: std.mem.Allocator, block: LLVMTypes.LLVMBasicBlockRef, values: []const LLVMTypes.LLVMValueRef) !void {
+        std.debug.assert(self.slots.len == values.len);
+        for (self.slots, values) |*slot, value| {
+            try slot.append(allocator, .{ .block = block, .value = value });
+        }
+    }
+};
+
+fn recordStackForLabel(
+    map: *std.StringHashMap(StackMergeState),
+    allocator: std.mem.Allocator,
+    label: []const u8,
+    values: []const LLVMTypes.LLVMValueRef,
+    block: LLVMTypes.LLVMBasicBlockRef,
+) !void {
+    var entry = try map.getOrPut(label);
+    if (!entry.found_existing) {
+        entry.value_ptr.* = try StackMergeState.init(allocator, values.len);
+    } else {
+        if (entry.value_ptr.slots.len != values.len) {
+            // Reinitialize if stack depth differs; previous data becomes invalid.
+            entry.value_ptr.deinit(allocator);
+            entry.value_ptr.* = try StackMergeState.init(allocator, values.len);
+        }
+    }
+    try entry.value_ptr.append(allocator, block, values);
+}
+
+fn restoreStackFromMerge(
+    generator: *LLVMGenerator,
+    stack: *std.array_list.Managed(LLVMTypes.LLVMValueRef),
+    state: *StackMergeState,
+) !void {
+    stack.items.len = 0;
+
+    for (state.slots) |slot| {
+        if (slot.items.len == 0) continue;
+
+        const merged_value = if (slot.items.len == 1)
+            slot.items[0].value
+        else blk: {
+            const ty = LLVMCore.LLVMTypeOf(slot.items[0].value);
+            const phi = LLVMCore.LLVMBuildPhi(generator.builder, ty, "stack.merge");
+            const count = @as(c_uint, @intCast(slot.items.len));
+            const values = try generator.allocator.alloc(LLVMTypes.LLVMValueRef, slot.items.len);
+            defer generator.allocator.free(values);
+            const blocks = try generator.allocator.alloc(LLVMTypes.LLVMBasicBlockRef, slot.items.len);
+            defer generator.allocator.free(blocks);
+            for (slot.items, 0..) |incoming, idx| {
+                values[idx] = incoming.value;
+                blocks[idx] = incoming.block;
+            }
+            LLVMCore.LLVMAddIncoming(phi, values.ptr, blocks.ptr, count);
+            break :blk phi;
+        };
+
+        try stack.append(merged_value);
+    }
+}
+
 var next_string_id: usize = 0;
 
 fn findLabelIndex(hir: *const HIR.HIRProgram, label: []const u8) ?usize {
@@ -131,6 +217,15 @@ pub fn emitFunctionBody(hir: *const HIR.HIRProgram, generator: *LLVMGenerator, f
 
     var stack = std.array_list.Managed(LLVMTypes.LLVMValueRef).init(generator.allocator);
     defer stack.deinit();
+
+    var label_stack_map = std.StringHashMap(StackMergeState).init(generator.allocator);
+    defer {
+        var it = label_stack_map.iterator();
+        while (it.next()) |entry| {
+            entry.value_ptr.deinit(generator.allocator);
+        }
+        label_stack_map.deinit();
+    };
 
     var bm = blocks.BlockManager.init(generator.allocator, generator, fnref, next_block_id_ptr);
     defer bm.deinit();
@@ -738,9 +833,16 @@ pub fn emitFunctionBody(hir: *const HIR.HIRProgram, generator: *LLVMGenerator, f
                 } else {
                     try bm.enterLabel(lbl.name);
                 }
+                if (label_stack_map.fetchRemove(lbl.name)) |removed| {
+                    try restoreStackFromMerge(generator, &stack, &removed.value);
+                    removed.value.deinit(generator.allocator);
+                }
             },
             .Jump => |j| {
+                const origin_block = LLVMCore.LLVMGetInsertBlock(generator.builder);
+                try recordStackForLabel(&label_stack_map, generator.allocator, j.label, stack.items, origin_block);
                 try bm.branchTo(j.label);
+                stack.items.len = 0;
             },
             .JumpCond => |jc| {
                 if (stack.items.len < 1) continue;
@@ -755,7 +857,11 @@ pub fn emitFunctionBody(hir: *const HIR.HIRProgram, generator: *LLVMGenerator, f
                     const eq2 = LLVMCore.LLVMBuildICmp(generator.builder, LLVMTypes.LLVMIntPredicate.LLVMIntEQ, c64, LLVMCore.LLVMConstInt(i64_ty, 2, 0), "eq2");
                     cond_i1 = LLVMCore.LLVMBuildOr(generator.builder, eq1, eq2, "tetra.true");
                 }
+                const origin_block = LLVMCore.LLVMGetInsertBlock(generator.builder);
+                try recordStackForLabel(&label_stack_map, generator.allocator, jc.label_true, stack.items, origin_block);
+                try recordStackForLabel(&label_stack_map, generator.allocator, jc.label_false, stack.items, origin_block);
                 try bm.branchCond(cond_i1, jc.label_true, jc.label_false);
+                stack.items.len = 0;
             },
             .StoreVar => |sv| {
                 if (stack.items.len < 1) continue;
@@ -804,14 +910,20 @@ pub fn emitFunctionBody(hir: *const HIR.HIRProgram, generator: *LLVMGenerator, f
                 const v = stack.items[stack.items.len - 1];
                 stack.items.len -= 1;
                 const key = switch (sc.scope_kind) {
+                    .Local => try std.fmt.allocPrint(generator.allocator, "l:{s}", .{sc.var_name}),
                     .GlobalLocal => try std.fmt.allocPrint(generator.allocator, "g:{s}", .{sc.var_name}),
                     .ModuleGlobal => blk: {
                         const mod = sc.module_context orelse "";
                         break :blk try std.fmt.allocPrint(generator.allocator, "m:{s}.{s}", .{ mod, sc.var_name });
                     },
-                    else => try std.fmt.allocPrint(generator.allocator, "g:{s}", .{sc.var_name}),
+                    else => try std.fmt.allocPrint(generator.allocator, "u:{s}", .{sc.var_name}),
                 };
-                try var_store.defineConstGlobal(key, v);
+                if (sc.scope_kind == .Local) {
+                    const elem_ty = LLVMCore.LLVMTypeOf(v);
+                    try var_store.store(key, v, elem_ty, true, sc.var_name);
+                } else {
+                    try var_store.defineConstGlobal(key, v);
+                }
             },
             .StoreDecl => |sd| {
                 if (stack.items.len < 1) continue;
@@ -973,6 +1085,16 @@ pub fn emitFunctionBody(hir: *const HIR.HIRProgram, generator: *LLVMGenerator, f
                     _ = LLVMCore.LLVMBuildRet(generator.builder, v);
                 } else {
                     _ = LLVMCore.LLVMBuildRetVoid(generator.builder);
+                }
+                in_dead_code = true;
+            },
+            .Halt => {
+                const rt = type_map.mapHIRTypeToLLVM(generator, func.return_type);
+                if (LLVMCore.LLVMGetTypeKind(rt) == LLVMTypes.LLVMTypeKind.LLVMVoidTypeKind) {
+                    _ = LLVMCore.LLVMBuildRetVoid(generator.builder);
+                } else {
+                    const zero = LLVMCore.LLVMConstNull(rt);
+                    _ = LLVMCore.LLVMBuildRet(generator.builder, zero);
                 }
                 in_dead_code = true;
             },
