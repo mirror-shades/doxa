@@ -13,15 +13,15 @@ const PeekEmitState = struct {
     globals: std.array_list.Managed([]const u8),
     string_map: std.StringHashMap(usize),
     strings: std.array_list.Managed(PeekStringInfo),
-    next_id: usize,
+    next_id_ptr: *usize,
 
-    pub fn init(allocator: std.mem.Allocator) PeekEmitState {
+    pub fn init(allocator: std.mem.Allocator, next_id_ptr: *usize) PeekEmitState {
         return .{
             .allocator = allocator,
             .globals = std.array_list.Managed([]const u8).init(allocator),
             .string_map = std.StringHashMap(usize).init(allocator),
             .strings = std.array_list.Managed(PeekStringInfo).init(allocator),
-            .next_id = 0,
+            .next_id_ptr = next_id_ptr,
         };
     }
 
@@ -99,10 +99,7 @@ fn internPeekString(
 
 pub const IRPrinter = struct {
     allocator: std.mem.Allocator,
-
-    // Variable tracking
-    global_variables: std.StringHashMap([]const u8), // var_name -> LLVM variable name
-    local_variables: std.StringHashMap([]const u8), // var_name -> LLVM variable name
+    peek_string_counter: usize,
 
     const StackType = enum { I64, F64, I8, I1, I2, PTR };
     const StackVal = struct { name: []const u8, ty: StackType };
@@ -110,14 +107,12 @@ pub const IRPrinter = struct {
     pub fn init(allocator: std.mem.Allocator) IRPrinter {
         return .{
             .allocator = allocator,
-            .global_variables = std.StringHashMap([]const u8).init(allocator),
-            .local_variables = std.StringHashMap([]const u8).init(allocator),
+            .peek_string_counter = 0,
         };
     }
 
     pub fn deinit(self: *IRPrinter) void {
-        self.global_variables.deinit();
-        self.local_variables.deinit();
+        self.peek_string_counter = 0;
     }
 
     pub fn emitToFile(self: *IRPrinter, hir: *const HIR.HIRProgram, path: []const u8) !void {
@@ -149,10 +144,7 @@ pub const IRPrinter = struct {
         if (hir.string_pool.len > 0) try w.writeAll("\n");
 
         try w.writeAll("%DoxaPeekInfo = type { ptr, ptr, ptr, ptr, i32, i32, i32, i32, i32 }\n\n");
-        try w.writeAll("@.doxa.nl = private constant [2 x i8] c\"\\0A\\00\"\n");
-
-        // Global variables
-        try w.writeAll("@x = global i64 0\n\n");
+        try w.writeAll("@.doxa.nl = private constant [2 x i8] c\"\\0A\\00\"\n\n");
 
         // Find function start labels
         var func_start_labels = std.StringHashMap(bool).init(self.allocator);
@@ -185,7 +177,7 @@ pub const IRPrinter = struct {
     }
 
     fn writeMainProgram(self: *IRPrinter, hir: *const HIR.HIRProgram, w: anytype, functions_start_idx: usize) !void {
-        var peek_state = PeekEmitState.init(self.allocator);
+        var peek_state = PeekEmitState.init(self.allocator, &self.peek_string_counter);
         defer peek_state.deinit();
 
         // Main function
@@ -195,6 +187,9 @@ pub const IRPrinter = struct {
         var id: usize = 0;
         var stack = std.array_list.Managed(StackVal).init(self.allocator);
         defer stack.deinit();
+
+        var variables = std.StringHashMap(StackVal).init(self.allocator);
+        defer variables.deinit();
 
         for (hir.instructions[0..functions_start_idx]) |inst| {
             switch (inst) {
@@ -373,53 +368,8 @@ pub const IRPrinter = struct {
                     const rhs = stack.items[stack.items.len - 1];
                     const lhs = stack.items[stack.items.len - 2];
                     stack.items.len -= 2;
-                    const name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
-                    id += 1;
-                    switch (cmp.operand_type) {
-                        .Int => {
-                            const pred = switch (cmp.op) {
-                                .Eq => "eq",
-                                .Ne => "ne",
-                                .Lt => "slt",
-                                .Le => "sle",
-                                .Gt => "sgt",
-                                .Ge => "sge",
-                            };
-                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = icmp {s} i64 {s}, {s}\n", .{ name, pred, lhs.name, rhs.name });
-                            defer self.allocator.free(line);
-                            try w.writeAll(line);
-                            try stack.append(.{ .name = name, .ty = .I1 });
-                        },
-                        .Byte => {
-                            const pred = switch (cmp.op) {
-                                .Eq => "eq",
-                                .Ne => "ne",
-                                .Lt => "ult",
-                                .Le => "ule",
-                                .Gt => "ugt",
-                                .Ge => "uge",
-                            };
-                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = icmp {s} i8 {s}, {s}\n", .{ name, pred, lhs.name, rhs.name });
-                            defer self.allocator.free(line);
-                            try w.writeAll(line);
-                            try stack.append(.{ .name = name, .ty = .I1 });
-                        },
-                        .Float => {
-                            const pred = switch (cmp.op) {
-                                .Eq => "oeq",
-                                .Ne => "one",
-                                .Lt => "olt",
-                                .Le => "ole",
-                                .Gt => "ogt",
-                                .Ge => "oge",
-                            };
-                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = fcmp {s} double {s}, {s}\n", .{ name, pred, lhs.name, rhs.name });
-                            defer self.allocator.free(line);
-                            try w.writeAll(line);
-                            try stack.append(.{ .name = name, .ty = .I1 });
-                        },
-                        else => {},
-                    }
+                    const result = try self.emitCompareInstruction(w, cmp, lhs, rhs, &id);
+                    try stack.append(result);
                 },
                 .LogicalOp => |lop| {
                     if (lop.op == .Not) {
@@ -539,59 +489,88 @@ pub const IRPrinter = struct {
                     try w.writeAll("  ret i32 0\n");
                 },
                 .Call => |c| {
-                    // Pop arguments from stack
                     const argc: usize = @intCast(c.arg_count);
                     if (stack.items.len < argc) continue;
 
-                    var args = std.array_list.Managed([]const u8).init(self.allocator);
-                    defer args.deinit();
+                    var raw_args = std.array_list.Managed(StackVal).init(self.allocator);
+                    defer raw_args.deinit();
 
-                    // Pop arguments in reverse order
                     var arg_idx: usize = 0;
                     while (arg_idx < argc) : (arg_idx += 1) {
                         const arg = stack.items[stack.items.len - 1];
                         stack.items.len -= 1;
-                        try args.append(arg.name);
+                        try raw_args.append(arg);
+                    }
+                    std.mem.reverse(StackVal, raw_args.items);
+
+                    var arg_strings = std.array_list.Managed([]const u8).init(self.allocator);
+                    defer {
+                        for (arg_strings.items) |s| self.allocator.free(s);
+                        arg_strings.deinit();
                     }
 
-                    // Reverse to get correct order
-                    std.mem.reverse([]const u8, args.items);
+                    const func_info = if (c.function_index < hir.function_table.len)
+                        hir.function_table[c.function_index]
+                    else
+                        null;
 
-                    // Generate function call
-                    const args_str = if (args.items.len == 0) "" else try std.mem.join(self.allocator, ", ", args.items);
-                    defer if (args.items.len > 0) self.allocator.free(args_str);
+                    for (raw_args.items, 0..) |arg, i| {
+                        const llvm_ty = blk: {
+                            if (func_info) |info| {
+                                if (i < info.param_types.len) {
+                                    const is_alias = if (i < info.param_is_alias.len) info.param_is_alias[i] else false;
+                                    break :blk self.hirTypeToLLVMType(info.param_types[i], is_alias);
+                                }
+                            }
+                            break :blk self.stackTypeToLLVMType(arg.ty);
+                        };
+                        const arg_str = try std.fmt.allocPrint(self.allocator, "{s} {s}", .{ llvm_ty, arg.name });
+                        try arg_strings.append(arg_str);
+                    }
 
-                    const call_line = try std.fmt.allocPrint(self.allocator, "  call void @{s}({s})\n", .{ c.qualified_name, args_str });
-                    defer self.allocator.free(call_line);
-                    try w.writeAll(call_line);
+                    const args_str = if (arg_strings.items.len == 0) "" else try std.mem.join(self.allocator, ", ", arg_strings.items);
+                    defer if (arg_strings.items.len > 0) self.allocator.free(args_str);
+
+                    if (c.return_type != .Nothing) {
+                        const result_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                        id += 1;
+                        const ret_ty = self.hirTypeToLLVMType(c.return_type, false);
+                        const call_line = try std.fmt.allocPrint(self.allocator, "  {s} = call {s} @{s}({s})\n", .{ result_name, ret_ty, c.qualified_name, args_str });
+                        defer self.allocator.free(call_line);
+                        try w.writeAll(call_line);
+                        const stack_ty = self.hirTypeToStackType(c.return_type);
+                        try stack.append(.{ .name = result_name, .ty = stack_ty });
+                    } else {
+                        const call_line = try std.fmt.allocPrint(self.allocator, "  call void @{s}({s})\n", .{ c.qualified_name, args_str });
+                        defer self.allocator.free(call_line);
+                        try w.writeAll(call_line);
+                    }
                 },
                 .LoadVar => |lv| {
-                    // Load from global variable
-                    const name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
-                    id += 1;
-                    const load_line = try std.fmt.allocPrint(self.allocator, "  {s} = load i64, ptr @{s}\n", .{ name, lv.var_name });
-                    defer self.allocator.free(load_line);
-                    try w.writeAll(load_line);
-                    try stack.append(.{ .name = name, .ty = .I64 });
+                    if (variables.get(lv.var_name)) |entry| {
+                        try stack.append(entry.*);
+                    } else {
+                        const fallback = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                        id += 1;
+                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 0, 0\n", .{fallback});
+                        defer self.allocator.free(line);
+                        try w.writeAll(line);
+                        try stack.append(.{ .name = fallback, .ty = .I64 });
+                    }
                 },
-                .StoreVar => |_| {
-                    // For now, just pop the value - this needs proper variable handling
-                    if (stack.items.len < 1) continue;
-                    stack.items.len -= 1;
-                },
-                .StoreDecl => |sd| {
-                    // Store to global variable
+                .StoreVar => |sv| {
                     if (stack.items.len < 1) continue;
                     const value = stack.items[stack.items.len - 1];
                     stack.items.len -= 1;
-
-                    // Store to global variable
-                    const store_line = try std.fmt.allocPrint(self.allocator, "  store i64 {s}, ptr @{s}\n", .{ value.name, sd.var_name });
-                    defer self.allocator.free(store_line);
-                    try w.writeAll(store_line);
-
-                    // Track the variable
-                    try self.global_variables.put(sd.var_name, "@x");
+                    const stored = StackVal{ .name = value.name, .ty = value.ty };
+                    try variables.put(sv.var_name, stored);
+                },
+                .StoreDecl => |sd| {
+                    if (stack.items.len < 1) continue;
+                    const value = stack.items[stack.items.len - 1];
+                    stack.items.len -= 1;
+                    const stored = StackVal{ .name = value.name, .ty = value.ty };
+                    try variables.put(sd.var_name, stored);
                 },
                 .Return => |ret| {
                     if (ret.has_value) {
@@ -688,8 +667,11 @@ pub const IRPrinter = struct {
         var id: usize = func.param_types.len; // Start after parameters
         var stack = std.array_list.Managed(StackVal).init(self.allocator);
         defer stack.deinit();
-        var peek_state = PeekEmitState.init(self.allocator);
+        var peek_state = PeekEmitState.init(self.allocator, &self.peek_string_counter);
         defer peek_state.deinit();
+        var last_instruction_was_terminator = false;
+        var variables = std.StringHashMap(StackVal).init(self.allocator);
+        defer variables.deinit();
 
         // Add parameters to stack
         for (func.param_types, 0..) |param_type, param_idx| {
@@ -703,10 +685,18 @@ pub const IRPrinter = struct {
             switch (inst) {
                 .Label => |lbl| {
                     // Only process function body labels, skip function start labels and invalid basic block names
-                    if (!std.mem.eql(u8, lbl.name, func.start_label) and !std.mem.startsWith(u8, lbl.name, "func_")) {
+                    const should_print = !std.mem.eql(u8, lbl.name, func.start_label) and !std.mem.startsWith(u8, lbl.name, "func_");
+                    if (should_print and !last_instruction_was_terminator) {
+                        const br_line = try std.fmt.allocPrint(self.allocator, "  br label %{s}\n", .{lbl.name});
+                        defer self.allocator.free(br_line);
+                        try w.writeAll(br_line);
+                        last_instruction_was_terminator = true;
+                    }
+                    if (should_print) {
                         const line = try std.fmt.allocPrint(self.allocator, "{s}:\n", .{lbl.name});
                         defer self.allocator.free(line);
                         try w.writeAll(line);
+                        last_instruction_was_terminator = false;
                     }
                 },
                 .Const => |c| {
@@ -719,6 +709,7 @@ pub const IRPrinter = struct {
                             defer self.allocator.free(line);
                             try w.writeAll(line);
                             try stack.append(.{ .name = name, .ty = .I64 });
+                            last_instruction_was_terminator = false;
                         },
                         .float => |f| {
                             const name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
@@ -727,6 +718,7 @@ pub const IRPrinter = struct {
                             defer self.allocator.free(line);
                             try w.writeAll(line);
                             try stack.append(.{ .name = name, .ty = .F64 });
+                            last_instruction_was_terminator = false;
                         },
                         .byte => |b| {
                             const name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
@@ -735,6 +727,7 @@ pub const IRPrinter = struct {
                             defer self.allocator.free(line);
                             try w.writeAll(line);
                             try stack.append(.{ .name = name, .ty = .I8 });
+                            last_instruction_was_terminator = false;
                         },
                         .tetra => |t| {
                             const name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
@@ -743,6 +736,7 @@ pub const IRPrinter = struct {
                             defer self.allocator.free(line);
                             try w.writeAll(line);
                             try stack.append(.{ .name = name, .ty = .I2 });
+                            last_instruction_was_terminator = false;
                         },
                         .string => |s| {
                             var found: ?usize = null;
@@ -759,6 +753,7 @@ pub const IRPrinter = struct {
                             defer self.allocator.free(line);
                             try w.writeAll(line);
                             try stack.append(.{ .name = name, .ty = .PTR });
+                            last_instruction_was_terminator = false;
                         },
                         else => {},
                     }
@@ -775,6 +770,7 @@ pub const IRPrinter = struct {
                         defer self.allocator.free(ret_line);
                         try w.writeAll(ret_line);
                     }
+                    last_instruction_was_terminator = true;
                 },
                 .JumpCond => |jc| {
                     if (stack.items.len < 1) continue;
@@ -783,72 +779,110 @@ pub const IRPrinter = struct {
                     const br_line = try std.fmt.allocPrint(self.allocator, "  br i1 {s}, label %{s}, label %{s}\n", .{ cond.name, jc.label_true, jc.label_false });
                     defer self.allocator.free(br_line);
                     try w.writeAll(br_line);
+                    last_instruction_was_terminator = true;
                 },
                 .Jump => |j| {
                     const br_line = try std.fmt.allocPrint(self.allocator, "  br label %{s}\n", .{j.label});
                     defer self.allocator.free(br_line);
                     try w.writeAll(br_line);
+                    last_instruction_was_terminator = true;
                 },
                 .LoadVar => |lv| {
-                    // Load from global variable
-                    const name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
-                    id += 1;
-                    const load_line = try std.fmt.allocPrint(self.allocator, "  {s} = load i64, ptr @{s}\n", .{ name, lv.var_name });
-                    defer self.allocator.free(load_line);
-                    try w.writeAll(load_line);
-                    try stack.append(.{ .name = name, .ty = .I64 });
+                    if (variables.get(lv.var_name)) |entry| {
+                        try stack.append(entry.*);
+                    } else {
+                        const fallback = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                        id += 1;
+                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 0, 0\n", .{fallback});
+                        defer self.allocator.free(line);
+                        try w.writeAll(line);
+                        try stack.append(.{ .name = fallback, .ty = .I64 });
+                    }
+                    last_instruction_was_terminator = false;
                 },
                 .Call => |c| {
-                    // Pop arguments from stack
                     const argc: usize = @intCast(c.arg_count);
                     if (stack.items.len < argc) continue;
 
-                    var args = std.array_list.Managed([]const u8).init(self.allocator);
-                    defer args.deinit();
+                    var raw_args = std.array_list.Managed(StackVal).init(self.allocator);
+                    defer raw_args.deinit();
 
-                    // Pop arguments in reverse order
                     var arg_idx: usize = 0;
                     while (arg_idx < argc) : (arg_idx += 1) {
                         const arg = stack.items[stack.items.len - 1];
                         stack.items.len -= 1;
-                        try args.append(arg.name);
+                        try raw_args.append(arg);
+                    }
+                    std.mem.reverse(StackVal, raw_args.items);
+
+                    var arg_strings = std.array_list.Managed([]const u8).init(self.allocator);
+                    defer {
+                        for (arg_strings.items) |s| self.allocator.free(s);
+                        arg_strings.deinit();
                     }
 
-                    // Reverse to get correct order
-                    std.mem.reverse([]const u8, args.items);
+                    const func_info = if (c.function_index < hir.function_table.len)
+                        hir.function_table[c.function_index]
+                    else
+                        null;
 
-                    // Generate function call
-                    const args_str = if (args.items.len == 0) "" else try std.mem.join(self.allocator, ", ", args.items);
-                    defer if (args.items.len > 0) self.allocator.free(args_str);
+                    for (raw_args.items, 0..) |arg, idx| {
+                        const llvm_ty = blk: {
+                            if (func_info) |info| {
+                                if (idx < info.param_types.len) {
+                                    const is_alias = if (idx < info.param_is_alias.len) info.param_is_alias[idx] else false;
+                                    break :blk self.hirTypeToLLVMType(info.param_types[idx], is_alias);
+                                }
+                            }
+                            break :blk self.stackTypeToLLVMType(arg.ty);
+                        };
+                        const arg_str = try std.fmt.allocPrint(self.allocator, "{s} {s}", .{ llvm_ty, arg.name });
+                        try arg_strings.append(arg_str);
+                    }
 
-                    const call_line = try std.fmt.allocPrint(self.allocator, "  call void @{s}({s})\n", .{ c.qualified_name, args_str });
-                    defer self.allocator.free(call_line);
-                    try w.writeAll(call_line);
+                    const args_str = if (arg_strings.items.len == 0) "" else try std.mem.join(self.allocator, ", ", arg_strings.items);
+                    defer if (arg_strings.items.len > 0) self.allocator.free(args_str);
+
+                    if (c.return_type != .Nothing) {
+                        const result_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                        id += 1;
+                        const ret_ty = self.hirTypeToLLVMType(c.return_type, false);
+                        const call_line = try std.fmt.allocPrint(self.allocator, "  {s} = call {s} @{s}({s})\n", .{ result_name, ret_ty, c.qualified_name, args_str });
+                        defer self.allocator.free(call_line);
+                        try w.writeAll(call_line);
+                        const stack_ty = self.hirTypeToStackType(c.return_type);
+                        try stack.append(.{ .name = result_name, .ty = stack_ty });
+                    } else {
+                        const call_line = try std.fmt.allocPrint(self.allocator, "  call void @{s}({s})\n", .{ c.qualified_name, args_str });
+                        defer self.allocator.free(call_line);
+                        try w.writeAll(call_line);
+                    }
+                    last_instruction_was_terminator = false;
                 },
                 .StoreVar => |sv| {
-                    _ = sv;
-                    if (stack.items.len > 0) {
-                        _ = stack.pop();
-                    }
+                    if (stack.items.len < 1) continue;
+                    const value = stack.items[stack.items.len - 1];
+                    stack.items.len -= 1;
+                    const stored = StackVal{ .name = value.name, .ty = value.ty };
+                    try variables.put(sv.var_name, stored);
+                    last_instruction_was_terminator = false;
                 },
                 .StoreDecl => |sd| {
-                    _ = sd;
-                    if (stack.items.len > 0) {
-                        _ = stack.pop();
-                    }
+                    if (stack.items.len < 1) continue;
+                    const value = stack.items[stack.items.len - 1];
+                    stack.items.len -= 1;
+                    const stored = StackVal{ .name = value.name, .ty = value.ty };
+                    try variables.put(sd.var_name, stored);
+                    last_instruction_was_terminator = false;
                 },
                 .Compare => |cmp| {
-                    _ = cmp;
                     if (stack.items.len < 2) continue;
                     const rhs = stack.items[stack.items.len - 1];
                     const lhs = stack.items[stack.items.len - 2];
                     stack.items.len -= 2;
-                    const name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
-                    id += 1;
-                    const cmp_line = try std.fmt.allocPrint(self.allocator, "  {s} = icmp sgt i64 {s}, {s}\n", .{ name, lhs.name, rhs.name });
-                    defer self.allocator.free(cmp_line);
-                    try w.writeAll(cmp_line);
-                    try stack.append(.{ .name = name, .ty = .I1 });
+                    const result = try self.emitCompareInstruction(w, cmp, lhs, rhs, &id);
+                    try stack.append(result);
+                    last_instruction_was_terminator = false;
                 },
                 .LogicalOp => |lop| {
                     _ = lop;
@@ -862,6 +896,7 @@ pub const IRPrinter = struct {
                     defer self.allocator.free(op_line);
                     try w.writeAll(op_line);
                     try stack.append(.{ .name = name, .ty = .I1 });
+                    last_instruction_was_terminator = false;
                 },
                 .Peek => |pk| {
                     if (stack.items.len < 1) continue;
@@ -889,6 +924,7 @@ pub const IRPrinter = struct {
                         else => {},
                     }
                     try w.writeAll("  call void @doxa_write_cstr(ptr getelementptr inbounds ([2 x i8], ptr @.doxa.nl, i64 0, i64 0))\n");
+                    last_instruction_was_terminator = false;
                 },
                 // Add other instruction types as needed
                 else => {},
@@ -910,6 +946,93 @@ pub const IRPrinter = struct {
         return name;
     }
 
+    fn emitCompareInstruction(
+        self: *IRPrinter,
+        w: anytype,
+        cmp: HIRInstruction.Compare,
+        lhs: StackVal,
+        rhs: StackVal,
+        id: *usize,
+    ) !StackVal {
+        const result_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
+        id.* += 1;
+
+        const line = blk: {
+            switch (cmp.operand_type) {
+                .Int => {
+                    const pred = switch (cmp.op) {
+                        .Eq => "eq",
+                        .Ne => "ne",
+                        .Lt => "slt",
+                        .Le => "sle",
+                        .Gt => "sgt",
+                        .Ge => "sge",
+                    };
+                    break :blk try std.fmt.allocPrint(self.allocator, "  {s} = icmp {s} i64 {s}, {s}\n", .{ result_name, pred, lhs.name, rhs.name });
+                },
+                .Byte => {
+                    const pred = switch (cmp.op) {
+                        .Eq => "eq",
+                        .Ne => "ne",
+                        .Lt => "ult",
+                        .Le => "ule",
+                        .Gt => "ugt",
+                        .Ge => "uge",
+                    };
+                    break :blk try std.fmt.allocPrint(self.allocator, "  {s} = icmp {s} i8 {s}, {s}\n", .{ result_name, pred, lhs.name, rhs.name });
+                },
+                .Float => {
+                    const pred = switch (cmp.op) {
+                        .Eq => "oeq",
+                        .Ne => "one",
+                        .Lt => "olt",
+                        .Le => "ole",
+                        .Gt => "ogt",
+                        .Ge => "oge",
+                    };
+                    break :blk try std.fmt.allocPrint(self.allocator, "  {s} = fcmp {s} double {s}, {s}\n", .{ result_name, pred, lhs.name, rhs.name });
+                },
+                .Tetra => {
+                    const pred = switch (cmp.op) {
+                        .Eq => "eq",
+                        .Ne => "ne",
+                        .Lt => "slt",
+                        .Le => "sle",
+                        .Gt => "sgt",
+                        .Ge => "sge",
+                    };
+                    break :blk try std.fmt.allocPrint(self.allocator, "  {s} = icmp {s} i2 {s}, {s}\n", .{ result_name, pred, lhs.name, rhs.name });
+                },
+                .String => {
+                    const pred = switch (cmp.op) {
+                        .Eq => "eq",
+                        .Ne => "ne",
+                        else => null,
+                    };
+                    if (pred) |p| {
+                        break :blk try std.fmt.allocPrint(self.allocator, "  {s} = icmp {s} ptr {s}, {s}\n", .{ result_name, p, lhs.name, rhs.name });
+                    }
+                    const false_line = try std.fmt.allocPrint(self.allocator, "  {s} = icmp eq i1 0, 1\n", .{result_name});
+                    break :blk false_line;
+                },
+                else => {
+                    const pred = switch (cmp.op) {
+                        .Eq => "eq",
+                        .Ne => "ne",
+                        .Lt => "slt",
+                        .Le => "sle",
+                        .Gt => "sgt",
+                        .Ge => "sge",
+                    };
+                    break :blk try std.fmt.allocPrint(self.allocator, "  {s} = icmp {s} i64 {s}, {s}\n", .{ result_name, pred, lhs.name, rhs.name });
+                },
+            }
+        };
+        defer self.allocator.free(line);
+        try w.writeAll(line);
+        return .{ .name = result_name, .ty = .I1 };
+    }
+
     fn emitPeekInstruction(
         self: *IRPrinter,
         w: anytype,
@@ -928,7 +1051,7 @@ pub const IRPrinter = struct {
             self.allocator,
             &state.string_map,
             &state.strings,
-            &state.next_id,
+            state.next_id_ptr,
             &state.globals,
             type_slice,
         );
@@ -939,7 +1062,7 @@ pub const IRPrinter = struct {
                 self.allocator,
                 &state.string_map,
                 &state.strings,
-                &state.next_id,
+                state.next_id_ptr,
                 &state.globals,
                 nm,
             );
@@ -954,7 +1077,7 @@ pub const IRPrinter = struct {
                 self.allocator,
                 &state.string_map,
                 &state.strings,
-                &state.next_id,
+                state.next_id_ptr,
                 &state.globals,
                 loc.file,
             );
@@ -1208,7 +1331,45 @@ pub const IRPrinter = struct {
             .Byte => .I8,
             .Tetra => .I2,
             .String => .PTR,
+            .Array => .PTR,
+            .Map => .PTR,
+            .Struct => .PTR,
+            .Enum => .PTR,
+            .Function => .PTR,
+            .Union => .PTR,
             else => .I64,
+        };
+    }
+
+    fn stackTypeToLLVMType(self: *IRPrinter, stack_type: StackType) []const u8 {
+        _ = self;
+        return switch (stack_type) {
+            .I64 => "i64",
+            .F64 => "double",
+            .I8 => "i8",
+            .I1 => "i1",
+            .I2 => "i2",
+            .PTR => "ptr",
+        };
+    }
+
+    fn hirTypeToLLVMType(self: *IRPrinter, hir_type: HIR.HIRType, as_pointer: bool) []const u8 {
+        _ = self;
+        if (as_pointer) return "ptr";
+        return switch (hir_type) {
+            .Int => "i64",
+            .Float => "double",
+            .Byte => "i8",
+            .Tetra => "i2",
+            .String => "ptr",
+            .Array => "ptr",
+            .Map => "ptr",
+            .Struct => "ptr",
+            .Enum => "ptr",
+            .Function => "ptr",
+            .Union => "ptr",
+            .Nothing => "void",
+            else => "i64",
         };
     }
 };

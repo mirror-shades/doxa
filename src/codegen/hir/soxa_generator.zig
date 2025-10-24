@@ -256,6 +256,7 @@ pub const HIRGenerator = struct {
                         param_types[i] = switch (param_types[i]) {
                             .Int, .Byte, .Float, .String, .Tetra, .Nothing => param_types[i],
                             .Struct, .Enum => param_types[i],
+                            .Array, .Map, .Function, .Union => param_types[i],
                             else => .Int,
                         };
                     }
@@ -316,6 +317,7 @@ pub const HIRGenerator = struct {
                                     param_types[i] = switch (param_types[i]) {
                                         .Int, .Byte, .Float, .String, .Tetra, .Nothing => param_types[i],
                                         .Struct, .Enum => param_types[i],
+                                        .Array, .Map, .Function, .Union => param_types[i],
                                         else => .Int,
                                     };
                                 }

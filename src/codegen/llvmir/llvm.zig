@@ -63,6 +63,13 @@ pub const LLVMGenError = error{
 
 var next_string_id: usize = 0;
 
+const FunctionSymbol = struct {
+    value: LLVMTypes.LLVMValueRef,
+    param_types: []LLVMTypes.LLVMTypeRef,
+    param_alias_flags: []bool,
+    return_type: LLVMTypes.LLVMTypeRef,
+};
+
 pub const LLVMGenerator = struct {
     context: LLVMTypes.LLVMContextRef,
     module: LLVMTypes.LLVMModuleRef,
@@ -73,6 +80,7 @@ pub const LLVMGenerator = struct {
     variables: std.StringHashMap(LLVMTypes.LLVMValueRef),
     types: std.StringHashMap(LLVMTypes.LLVMTypeRef),
     externs: std.StringHashMap(LLVMTypes.LLVMValueRef),
+    functions: std.StringHashMap(FunctionSymbol),
     allocator: std.mem.Allocator,
 
     // Current function being generated
@@ -182,6 +190,7 @@ pub const LLVMGenerator = struct {
             .variables = std.StringHashMap(LLVMTypes.LLVMValueRef).init(allocator),
             .types = std.StringHashMap(LLVMTypes.LLVMTypeRef).init(allocator),
             .externs = std.StringHashMap(LLVMTypes.LLVMValueRef).init(allocator),
+            .functions = std.StringHashMap(FunctionSymbol).init(allocator),
             .allocator = allocator,
             .current_function = null,
             .debug_peek = false,
@@ -195,6 +204,12 @@ pub const LLVMGenerator = struct {
         self.variables.deinit();
         self.types.deinit();
         self.externs.deinit();
+        var func_it = self.functions.iterator();
+        while (func_it.next()) |entry| {
+            self.allocator.free(entry.value_ptr.param_types);
+            self.allocator.free(entry.value_ptr.param_alias_flags);
+        }
+        self.functions.deinit();
         LLVMCore.LLVMDisposeBuilder(self.builder);
         LLVMCore.LLVMDisposeModule(self.module);
         LLVMCore.LLVMContextDispose(self.context);
@@ -593,6 +608,12 @@ pub const LLVMGenerator = struct {
                     }
                     return value;
                 }
+                if (self.functions.get(var_token.lexeme)) |func_symbol| {
+                    return func_symbol.value;
+                }
+                if (self.externs.get(var_token.lexeme)) |extern_value| {
+                    return extern_value;
+                }
                 return error.UndefinedVariable;
             },
 
@@ -603,6 +624,87 @@ pub const LLVMGenerator = struct {
                     return value;
                 }
                 return error.UndefinedVariable;
+            },
+
+            .FunctionCall => |call| {
+                const callee_value = try self.generateExpr(call.callee);
+
+                var symbol_info: ?FunctionSymbol = null;
+                if (call.callee.data == .Variable) {
+                    const var_token = call.callee.data.Variable;
+                    if (self.functions.get(var_token.lexeme)) |fn_symbol| {
+                        symbol_info = fn_symbol;
+                    }
+                }
+
+                var function_type = LLVMCore.LLVMTypeOf(callee_value);
+                if (symbol_info) |info| {
+                    const param_ptr = if (info.param_types.len == 0) null else info.param_types.ptr;
+                    function_type = LLVMCore.LLVMFunctionType(info.return_type, param_ptr, @intCast(info.param_types.len), @intFromBool(false));
+                } else {
+                    if (LLVMCore.LLVMGetTypeKind(function_type) == LLVMTypes.LLVMTypeKind.LLVMPointerTypeKind) {
+                        function_type = LLVMCore.LLVMGetElementType(function_type);
+                    }
+                }
+
+                if (LLVMCore.LLVMGetTypeKind(function_type) != LLVMTypes.LLVMTypeKind.LLVMFunctionTypeKind) {
+                    return LLVMGenError.UnsupportedExpressionType;
+                }
+
+                const arg_count = call.arguments.len;
+                var arg_values = try self.allocator.alloc(LLVMTypes.LLVMValueRef, arg_count);
+                defer self.allocator.free(arg_values);
+
+                if (symbol_info) |info| {
+                    if (info.param_types.len != arg_count) {
+                        return LLVMGenError.UnsupportedExpressionType;
+                    }
+
+                    for (call.arguments, 0..) |argument, i| {
+                        const expect_alias = info.param_alias_flags[i];
+                        const expected_type = info.param_types[i];
+
+                        var arg_value: LLVMTypes.LLVMValueRef = undefined;
+                        if (expect_alias) {
+                            arg_value = try self.getPointerForExpr(argument.expr);
+                            const arg_ty = LLVMCore.LLVMTypeOf(arg_value);
+                            if (arg_ty != expected_type and LLVMCore.LLVMGetTypeKind(arg_ty) == LLVMTypes.LLVMTypeKind.LLVMPointerTypeKind) {
+                                arg_value = LLVMCore.LLVMBuildBitCast(self.builder, arg_value, expected_type, "alias.cast");
+                            }
+                        } else {
+                            arg_value = try self.generateExpr(argument.expr);
+                            const arg_ty = LLVMCore.LLVMTypeOf(arg_value);
+                            if (arg_ty != expected_type) {
+                                if (LLVMCore.LLVMGetTypeKind(arg_ty) == LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind and LLVMCore.LLVMGetTypeKind(expected_type) == LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind) {
+                                    arg_value = LLVMCore.LLVMBuildIntCast2(self.builder, arg_value, expected_type, "arg.intcast", @intFromBool(false));
+                                } else if ((LLVMCore.LLVMGetTypeKind(arg_ty) == LLVMTypes.LLVMTypeKind.LLVMFloatTypeKind or LLVMCore.LLVMGetTypeKind(arg_ty) == LLVMTypes.LLVMTypeKind.LLVMDoubleTypeKind) and (LLVMCore.LLVMGetTypeKind(expected_type) == LLVMTypes.LLVMTypeKind.LLVMDoubleTypeKind or LLVMCore.LLVMGetTypeKind(expected_type) == LLVMTypes.LLVMTypeKind.LLVMFloatTypeKind)) {
+                                    arg_value = LLVMCore.LLVMBuildFPCast(self.builder, arg_value, expected_type, "arg.fpcast");
+                                } else if (LLVMCore.LLVMGetTypeKind(expected_type) == LLVMTypes.LLVMTypeKind.LLVMPointerTypeKind and LLVMCore.LLVMGetTypeKind(arg_ty) == LLVMTypes.LLVMTypeKind.LLVMPointerTypeKind) {
+                                    arg_value = LLVMCore.LLVMBuildBitCast(self.builder, arg_value, expected_type, "arg.ptrcast");
+                                }
+                            }
+                        }
+
+                        arg_values[i] = arg_value;
+                    }
+                } else {
+                    for (call.arguments, 0..) |argument, i| {
+                        if (argument.is_alias) {
+                            arg_values[i] = try self.getPointerForExpr(argument.expr);
+                        } else {
+                            arg_values[i] = try self.generateExpr(argument.expr);
+                        }
+                    }
+                }
+
+                return LLVMCore.LLVMBuildCall2(
+                    self.builder,
+                    function_type,
+                    callee_value,
+                    if (arg_count == 0) null else arg_values.ptr,
+                    @intCast(arg_count),
+                    "calltmp",
+                );
             },
 
             .Block => |block| {
@@ -680,6 +782,8 @@ pub const LLVMGenerator = struct {
                 try self.variables.put(var_decl.name.lexeme, alloca);
             },
 
+            .FunctionDecl => |func_decl| try self.generateFunctionDecl(&func_decl),
+
             .Return => |ret| {
                 if (ret.value) |value| {
                     const ret_val = try self.generateExpr(value);
@@ -691,6 +795,130 @@ pub const LLVMGenerator = struct {
 
             else => return error.UnsupportedStatementType,
         }
+    }
+
+    fn generateFunctionDecl(self: *LLVMGenerator, func_decl: *const ast.Stmt.Data.FunctionDecl) LLVMGenError!void {
+        const previous_block = LLVMCore.LLVMGetInsertBlock(self.builder);
+        defer if (previous_block != null) LLVMCore.LLVMPositionBuilderAtEnd(self.builder, previous_block);
+
+        var name_buffer: [256]u8 = undefined;
+        const name_with_null = std.fmt.bufPrintZ(&name_buffer, "{s}", .{func_decl.name.lexeme}) catch return error.NameTooLong;
+
+        if (self.functions.get(func_decl.name.lexeme) != null) {
+            return LLVMGenError.Unexpected;
+        }
+
+        const param_count = func_decl.params.len;
+        var param_types = std.array_list.Managed(LLVMTypes.LLVMTypeRef).init(self.allocator);
+        defer param_types.deinit();
+        var value_types = std.array_list.Managed(LLVMTypes.LLVMTypeRef).init(self.allocator);
+        defer value_types.deinit();
+        var alias_flags = std.array_list.Managed(bool).init(self.allocator);
+        defer alias_flags.deinit();
+
+        try param_types.ensureTotalCapacity(param_count);
+        try value_types.ensureTotalCapacity(param_count);
+
+        for (func_decl.params) |param| {
+            var type_info_storage = ast.TypeInfo{ .base = .Int };
+            if (param.type_expr) |type_expr| {
+                const type_info_ptr = try ast.typeInfoFromExpr(self.allocator, type_expr);
+                defer self.allocator.destroy(type_info_ptr);
+                type_info_storage = type_info_ptr.*;
+            }
+
+            const llvm_base_type = try self.getLLVMTypeFromTypeInfo(type_info_storage);
+            try value_types.append(llvm_base_type);
+            try alias_flags.append(param.is_alias);
+
+            if (param.is_alias) {
+                try param_types.append(LLVMCore.LLVMPointerType(llvm_base_type, 0));
+            } else {
+                try param_types.append(llvm_base_type);
+            }
+        }
+
+        const return_type = try self.getLLVMTypeFromTypeInfo(func_decl.return_type_info);
+        const func_type = LLVMCore.LLVMFunctionType(
+            return_type,
+            if (param_types.items.len == 0) null else param_types.items.ptr,
+            @intCast(param_types.items.len),
+            @intFromBool(false),
+        );
+
+        const function = LLVMCore.LLVMAddFunction(self.module, name_with_null.ptr, func_type);
+        const stored_param_types = try self.allocator.dupe(LLVMTypes.LLVMTypeRef, param_types.items);
+        errdefer self.allocator.free(stored_param_types);
+        const stored_alias_flags = try self.allocator.dupe(bool, alias_flags.items);
+        errdefer self.allocator.free(stored_alias_flags);
+        try self.functions.put(func_decl.name.lexeme, FunctionSymbol{
+            .value = function,
+            .param_types = stored_param_types,
+            .param_alias_flags = stored_alias_flags,
+            .return_type = return_type,
+        });
+
+        const previous_function = self.current_function;
+        self.current_function = function;
+        defer self.current_function = previous_function;
+
+        const prev_scope = self.pushVariableScope();
+        defer self.popVariableScope(prev_scope);
+
+        const entry_block = LLVMCore.LLVMAppendBasicBlockInContext(self.context, function, "entry");
+        LLVMCore.LLVMPositionBuilderAtEnd(self.builder, entry_block);
+
+        for (func_decl.params, 0..) |param, i| {
+            const param_value = LLVMCore.LLVMGetParam(function, @intCast(i));
+
+            var param_name_buffer: [256]u8 = undefined;
+            const param_name_z = std.fmt.bufPrintZ(&param_name_buffer, "{s}", .{param.name.lexeme}) catch return error.NameTooLong;
+
+            if (param.is_alias) {
+                try self.variables.put(param.name.lexeme, param_value);
+            } else {
+                const alloca = self.createEntryAlloca(entry_block, value_types.items[i], param_name_z.ptr);
+                _ = LLVMCore.LLVMBuildStore(self.builder, param_value, alloca);
+                try self.variables.put(param.name.lexeme, alloca);
+            }
+        }
+
+        for (func_decl.body) |*stmt| {
+            try self.generateStmt(stmt);
+        }
+
+        const insert_block = LLVMCore.LLVMGetInsertBlock(self.builder);
+        if (insert_block != null and LLVMCore.LLVMGetBasicBlockTerminator(insert_block) == null) {
+            if (LLVMCore.LLVMGetTypeKind(return_type) == LLVMTypes.LLVMTypeKind.LLVMVoidTypeKind) {
+                _ = LLVMCore.LLVMBuildRetVoid(self.builder);
+            } else {
+                const default_ret = try self.getDefaultValue(func_decl.return_type_info);
+                _ = LLVMCore.LLVMBuildRet(self.builder, default_ret);
+            }
+        }
+    }
+
+    fn getPointerForExpr(self: *LLVMGenerator, expr: *const ast.Expr) LLVMGenError!LLVMTypes.LLVMValueRef {
+        return switch (expr.data) {
+            .Variable => |token| {
+                if (self.variables.get(token.lexeme)) |ptr| {
+                    return ptr;
+                }
+                return LLVMGenError.UndefinedVariable;
+            },
+            else => LLVMGenError.UnsupportedExpressionType,
+        };
+    }
+
+    fn pushVariableScope(self: *LLVMGenerator) std.StringHashMap(LLVMTypes.LLVMValueRef) {
+        const previous = self.variables;
+        self.variables = std.StringHashMap(LLVMTypes.LLVMValueRef).init(self.allocator);
+        return previous;
+    }
+
+    fn popVariableScope(self: *LLVMGenerator, previous: std.StringHashMap(LLVMTypes.LLVMValueRef)) void {
+        self.variables.deinit();
+        self.variables = previous;
     }
 
     fn getLLVMTypeFromTypeInfo(self: *LLVMGenerator, type_info: ast.TypeInfo) LLVMGenError!LLVMTypes.LLVMTypeRef {
