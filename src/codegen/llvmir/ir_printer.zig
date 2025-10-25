@@ -234,6 +234,7 @@ pub const IRPrinter = struct {
         if (std.mem.eql(u8, name, "int")) return "doxa_int";
         if (std.mem.eql(u8, name, "tick")) return "doxa_tick";
         if (std.mem.eql(u8, name, "string")) return "doxa_string";
+        if (std.mem.eql(u8, name, "dice_roll")) return "doxa_dice_roll";
         return name;
     }
 
@@ -266,7 +267,8 @@ pub const IRPrinter = struct {
         try w.writeAll("declare double @llvm.pow.f64(double, double)\n");
         try w.writeAll("declare double @doxa_random()\n");
         try w.writeAll("declare i64 @doxa_int(double)\n");
-        try w.writeAll("declare i64 @doxa_tick()\n\n");
+        try w.writeAll("declare i64 @doxa_tick()\n");
+        try w.writeAll("declare i64 @doxa_dice_roll()\n\n");
 
         // String pool globals
         for (hir.string_pool, 0..) |s, idx| {

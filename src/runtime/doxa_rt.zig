@@ -42,10 +42,32 @@ pub export fn doxa_print_f64(value: f64) void {
 }
 
 // Built-in functions
+var rng_state: ?std.Random.DefaultPrng = null;
+
 pub export fn doxa_random() f64 {
-    const seed = @as(u64, @intCast(std.time.timestamp()));
-    var rng = std.Random.DefaultPrng.init(seed);
-    return rng.random().float(f64);
+    if (rng_state == null) {
+        const seed = @as(u64, @intCast(std.time.timestamp()));
+        rng_state = std.Random.DefaultPrng.init(seed);
+    }
+    return rng_state.?.random().float(f64);
+}
+
+// Fast integer-only random number generator for dice rolls
+pub export fn doxa_random_int() i64 {
+    if (rng_state == null) {
+        const seed = @as(u64, @intCast(std.time.timestamp()));
+        rng_state = std.Random.DefaultPrng.init(seed);
+    }
+    return rng_state.?.random().intRangeAtMost(i64, 0, 5) + 1;
+}
+
+// Ultra-fast dice roll - single function call, no floating point
+pub export fn doxa_dice_roll() i64 {
+    if (rng_state == null) {
+        const seed = @as(u64, @intCast(std.time.timestamp()));
+        rng_state = std.Random.DefaultPrng.init(seed);
+    }
+    return rng_state.?.random().intRangeAtMost(i64, 1, 6);
 }
 
 pub export fn doxa_int(value: f64) i64 {

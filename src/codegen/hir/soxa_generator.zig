@@ -1578,6 +1578,9 @@ pub const HIRGenerator = struct {
                 if (std.mem.eql(u8, function_name, "random")) {
                     return .Float;
                 }
+                if (std.mem.eql(u8, function_name, "dice_roll")) {
+                    return .Int;
+                }
                 return .String;
             },
             .ModuleFunction => {
