@@ -396,9 +396,24 @@ pub const LLVMGenerator = struct {
                 const rhs = try self.generateExpr(bin.right.?);
 
                 return switch (bin.operator.type) {
-                    .PLUS => LLVMCore.LLVMBuildAdd(self.builder, lhs, rhs, "add"),
-                    .MINUS => LLVMCore.LLVMBuildSub(self.builder, lhs, rhs, "sub"),
-                    .ASTERISK => LLVMCore.LLVMBuildMul(self.builder, lhs, rhs, "mul"),
+                    .PLUS => blk: {
+                        // Promote operands to common type
+                        const L = try self.toF64(lhs);
+                        const R = try self.toF64(rhs);
+                        break :blk LLVMCore.LLVMBuildFAdd(self.builder, L, R, "fadd");
+                    },
+                    .MINUS => blk: {
+                        // Promote operands to common type
+                        const L = try self.toF64(lhs);
+                        const R = try self.toF64(rhs);
+                        break :blk LLVMCore.LLVMBuildFSub(self.builder, L, R, "fsub");
+                    },
+                    .ASTERISK => blk: {
+                        // Promote both operands to f64; perform floating multiplication
+                        const L = try self.toF64(lhs);
+                        const R = try self.toF64(rhs);
+                        break :blk LLVMCore.LLVMBuildFMul(self.builder, L, R, "fmul");
+                    },
                     .SLASH => blk: {
                         // Promote both operands to f64; perform floating division only
                         const L = try self.toF64(lhs);
@@ -523,48 +538,48 @@ pub const LLVMGenerator = struct {
             .Match => |match_expr| {
                 var cond_val = try self.generateExpr(match_expr.value);
                 const cond_ty = LLVMCore.LLVMTypeOf(cond_val);
-                
+
                 // Handle string matching with if-else chains instead of switch
                 if (LLVMCore.LLVMGetTypeKind(cond_ty) == LLVMTypes.LLVMTypeKind.LLVMPointerTypeKind) {
                     // String matching - use if-else chain
                     const result_type = try self.getLLVMTypeFromTypeInfo(match_expr.type_info);
                     const result_alloca = self.createEntryAlloca(LLVMCore.LLVMGetInsertBlock(self.builder), result_type, "match.result");
-                    
+
                     const default_block = LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "match.default");
                     const merge_block = LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "match.merge");
-                    
+
                     // Generate if-else chain for string matching
                     var current_block = LLVMCore.LLVMGetInsertBlock(self.builder);
-                    
+
                     for (match_expr.cases, 0..) |case, i| {
                         const case_block = LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "match.case");
-                        const next_block = if (i < match_expr.cases.len - 1) 
+                        const next_block = if (i < match_expr.cases.len - 1)
                             LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "match.next")
-                        else 
+                        else
                             default_block;
-                        
+
                         // Generate string comparison
                         const pattern_val = try self.generateExpr(case.pattern);
                         const cmp_result = LLVMCore.LLVMBuildICmp(self.builder, LLVMTypes.LLVMIntPredicate.LLVMIntEQ, cond_val, pattern_val, "str.cmp");
-                        
+
                         LLVMCore.LLVMPositionBuilderAtEnd(self.builder, current_block);
                         _ = LLVMCore.LLVMBuildCondBr(self.builder, cmp_result, case_block, next_block);
-                        
+
                         // Generate case body
                         LLVMCore.LLVMPositionBuilderAtEnd(self.builder, case_block);
                         const case_result = try self.generateExpr(case.body);
                         _ = LLVMCore.LLVMBuildStore(self.builder, case_result, result_alloca);
                         _ = LLVMCore.LLVMBuildBr(self.builder, merge_block);
-                        
+
                         current_block = next_block;
                     }
-                    
+
                     // Default path
                     LLVMCore.LLVMPositionBuilderAtEnd(self.builder, default_block);
                     const default_value = try self.getDefaultValue(match_expr.type_info);
                     _ = LLVMCore.LLVMBuildStore(self.builder, default_value, result_alloca);
                     _ = LLVMCore.LLVMBuildBr(self.builder, merge_block);
-                    
+
                     LLVMCore.LLVMPositionBuilderAtEnd(self.builder, merge_block);
                     return LLVMCore.LLVMBuildLoad2(self.builder, result_type, result_alloca, "match.load");
                 } else {

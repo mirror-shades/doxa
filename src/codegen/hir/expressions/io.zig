@@ -78,11 +78,11 @@ pub const IOHandler = struct {
                 // If literal ends with \n, emit explicit newline and strip responsibility lies with frontend; here we just emit as-is
                 try self.generator.instructions.append(.PrintEnd);
             } else {
-                // Second pass: evaluate expressions in reverse order so PrintVal pops in correct left-to-right order
-                var expr_i: usize = expressions.items.len;
-                while (expr_i > 0) {
-                    expr_i -= 1;
-                    try self.generator.generateExpression(expressions.items[expr_i], true, false);
+                // Second pass: evaluate expressions in REVERSE order so PrintVal pops in correct left-to-right order
+                var expr_idx: usize = expressions.items.len;
+                while (expr_idx > 0) {
+                    expr_idx -= 1;
+                    try self.generator.generateExpression(expressions.items[expr_idx], true, false);
                 }
 
                 // Store format parts as constants and get their IDs
@@ -121,11 +121,11 @@ pub const IOHandler = struct {
                     }
                 }
             } else {
-                // Generate code for each argument in reverse order so PrintVal pops in correct left-to-right order
-                var ai: usize = args.len;
-                while (ai > 0) {
-                    ai -= 1;
-                    try self.generator.generateExpression(args[ai], true, false);
+                // Generate code for each argument in REVERSE order so PrintVal pops in correct left-to-right order
+                var arg_idx: usize = args.len;
+                while (arg_idx > 0) {
+                    arg_idx -= 1;
+                    try self.generator.generateExpression(args[arg_idx], true, false);
                 }
 
                 // Store format parts as constants and get their IDs
