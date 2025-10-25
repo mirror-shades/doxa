@@ -30,7 +30,7 @@ void fizzbuzzBenchmark() {
 
 // Run all benchmarks
 int main() {
-    printf("=== C COMPARISON ===\n");
+    printf("=== 1b fizzbuzz loops in C ===\n");
     fizzbuzzBenchmark();
     return 0;
 }

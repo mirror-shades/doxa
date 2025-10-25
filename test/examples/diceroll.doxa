@@ -1,25 +1,11 @@
-const limit :: int is 1_000_000_000;
+const limit :: int is 100_000_000;
 
-
-// FizzBuzz benchmark
-function fizzbuzzBenchmark() {
-    var startTime is @tick()
-    
-    for i is 1 while i <= limit do i += 1 {
-        if i % 15 == 0 then "FizzBuzz"
-        else if i % 3 == 0 then "Fizz" 
-        else if i % 5 == 0 then "Buzz"
-        else @string(i)
-    }
-    
-    var endTime is @tick()
-    @print("FizzBuzz time: {(endTime - startTime) / 1000000000 }s\n")
+function diceRoll() returns int {
+    const randomFloat is @random() * 6 + 1
+    return @int(randomFloat)
 }
 
-
-// Run all benchmarks
-@print("=== DOXA BENCHMARK SUITE ===\n")
-fizzbuzzBenchmark()
+@print("{diceRoll()})?
 
 
 

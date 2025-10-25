@@ -1,0 +1,14 @@
+enum Color {
+    Red,
+    Blue,
+    Green
+}
+
+var map MyMap_enum :: Color returns string {
+    .Red is "red",
+    .Green is "green",
+    .Blue is "blue",
+}
+
+MyMap_enum[.Red]? // red
+MyMap_enum[.Blue]? // blue

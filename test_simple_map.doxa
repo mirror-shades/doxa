@@ -1,0 +1,8 @@
+var map MyMap :: int returns string {
+    1 is "one",
+    2 is "two",
+    3 is "three",
+}
+
+MyMap[1]? // one
+MyMap[2]? // two

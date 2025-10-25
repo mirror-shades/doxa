@@ -902,7 +902,12 @@ pub const Parser = struct {
         return peek_expr;
     }
 
-    pub fn enumMember(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+    pub fn enumMember(self: *Parser, left: ?*ast.Expr, prec: Precedence) ErrorList!?*ast.Expr {
+        // If there's a left object, this is field access, not an enum case
+        if (left != null) {
+            return self.fieldAccess(left, prec);
+        }
+
         self.advance();
 
         if (self.peek().type != .IDENTIFIER) {
@@ -937,17 +942,17 @@ pub const Parser = struct {
             return error.InvalidEnumVariant;
         }
 
-        const enum_member = try self.allocator.create(ast.Expr);
-        enum_member.* = .{
+        const enum_case = try self.allocator.create(ast.Expr);
+        enum_case.* = .{
             .base = .{
                 .id = ast.generateNodeId(),
                 .span = ast.SourceSpan.fromToken(self.peek()),
             },
             .data = .{
-                .EnumMember = member,
+                .EnumCase = member,
             },
         };
-        return enum_member;
+        return enum_case;
     }
 
     pub fn parseMap(self: *Parser) ErrorList!?*ast.Expr {
