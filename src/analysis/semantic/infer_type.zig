@@ -1225,6 +1225,11 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 if (bc.arguments.len != 0) return type_info;
                 type_info.* = .{ .base = .Float };
                 return type_info;
+            } else if (std.mem.eql(u8, fname, "dice_roll")) {
+                requireArity.check(self, expr, bc.arguments.len, 0, fname);
+                if (bc.arguments.len != 0) return type_info;
+                type_info.* = .{ .base = .Int };
+                return type_info;
             } else if (std.mem.eql(u8, fname, "tick")) {
                 requireArity.check(self, expr, bc.arguments.len, 0, fname);
                 if (bc.arguments.len != 0) return type_info;
