@@ -1,8 +1,0 @@
-enum Color {
-    Red,
-    Blue,
-    Green
-}
-
-var c :: Color is .Red
-c?
