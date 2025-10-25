@@ -41,6 +41,21 @@ pub export fn doxa_print_f64(value: f64) void {
     writeStdout(rendered);
 }
 
+// Built-in functions
+pub export fn doxa_random() f64 {
+    const seed = @as(u64, @intCast(std.time.timestamp()));
+    var rng = std.Random.DefaultPrng.init(seed);
+    return rng.random().float(f64);
+}
+
+pub export fn doxa_int(value: f64) i64 {
+    return @intFromFloat(value);
+}
+
+pub export fn doxa_tick() i64 {
+    return @intCast(std.time.nanoTimestamp());
+}
+
 pub const DoxaPeekInfo = extern struct {
     file: ?[*:0]const u8,
     name: ?[*:0]const u8,
@@ -105,15 +120,15 @@ pub export fn doxa_debug_peek(info_ptr: ?*const DoxaPeekInfo) void {
         }
     } else {
         if (union_members.len > 1) {
-        writeStdout(":: ");
-        for (union_members, 0..) |member_ptr, idx| {
-            if (idx != 0) writeStdout(" | ");
-            if (active_index_usize) |active_idx| {
-                if (active_idx == idx) writeStdout(">");
+            writeStdout(":: ");
+            for (union_members, 0..) |member_ptr, idx| {
+                if (idx != 0) writeStdout(" | ");
+                if (active_index_usize) |active_idx| {
+                    if (active_idx == idx) writeStdout(">");
+                }
+                writeStdout(std.mem.span(member_ptr));
             }
-            writeStdout(std.mem.span(member_ptr));
-        }
-        writeStdout(" is ");
+            writeStdout(" is ");
         } else {
             var prefix_buf: [256]u8 = undefined;
             const prefix = std.fmt.bufPrint(&prefix_buf, ":: {s} is ", .{type_slice}) catch return;

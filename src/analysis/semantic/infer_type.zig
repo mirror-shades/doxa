@@ -1620,8 +1620,8 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                                 self.fatal_error = true;
                                 type_info.* = .{ .base = .Nothing };
                                 return type_info;
-                        }
-                        type_info.* = .{ .base = .Nothing };
+                            }
+                            type_info.* = .{ .base = .Nothing };
                         },
 
                         else => unreachable,
