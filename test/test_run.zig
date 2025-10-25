@@ -329,6 +329,7 @@ const expected_bigfile_results = [_]peek_result{
     .{ .type = "string", .value = "\"imported function\"" },
     .{ .type = "int", .value = "60" },
     .{ .type = "int", .value = "100" },
+    .{ .type = "Color", .value = ".Red" },
     .{ .type = "string", .value = "\"It's blue\"" },
     .{ .type = "string", .value = "\"It's something else\"" },
 
