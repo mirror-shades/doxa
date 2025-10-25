@@ -234,7 +234,6 @@ pub const IRPrinter = struct {
         if (std.mem.eql(u8, name, "int")) return "doxa_int";
         if (std.mem.eql(u8, name, "tick")) return "doxa_tick";
         if (std.mem.eql(u8, name, "string")) return "doxa_string";
-        if (std.mem.eql(u8, name, "dice_roll")) return "doxa_dice_roll";
         return name;
     }
 
@@ -259,6 +258,7 @@ pub const IRPrinter = struct {
         try w.writeAll("declare void @doxa_print_i64(i64)\n");
         try w.writeAll("declare void @doxa_print_u64(i64)\n");
         try w.writeAll("declare void @doxa_print_f64(double)\n");
+        try w.writeAll("declare void @doxa_print_enum(i64)\n");
         try w.writeAll("declare void @doxa_debug_peek(ptr)\n");
         try w.writeAll("declare ptr @doxa_array_new(i64, i64, i64)\n");
         try w.writeAll("declare i64 @doxa_array_len(ptr)\n");
@@ -267,8 +267,7 @@ pub const IRPrinter = struct {
         try w.writeAll("declare double @llvm.pow.f64(double, double)\n");
         try w.writeAll("declare double @doxa_random()\n");
         try w.writeAll("declare i64 @doxa_int(double)\n");
-        try w.writeAll("declare i64 @doxa_tick()\n");
-        try w.writeAll("declare i64 @doxa_dice_roll()\n\n");
+        try w.writeAll("declare i64 @doxa_tick()\n\n");
 
         // String pool globals
         for (hir.string_pool, 0..) |s, idx| {
@@ -320,10 +319,10 @@ pub const IRPrinter = struct {
         var peek_state = PeekEmitState.init(self.allocator, &self.peek_string_counter);
         defer peek_state.deinit();
 
-        // Process main program (instructions before functions)
-        try self.writeMainProgram(hir, w, functions_start_idx, &peek_state);
+        // First pass: discover all globals by scanning instructions
+        try self.discoverGlobals(hir, functions_start_idx);
 
-        // Emit discovered globals after scanning main program
+        // Emit discovered globals before main program
         if (self.defined_globals.count() > 0) {
             try w.writeAll("\n");
             var it2 = self.defined_globals.iterator();
@@ -339,6 +338,9 @@ pub const IRPrinter = struct {
             }
             try w.writeAll("\n");
         }
+
+        // Process main program (instructions before functions)
+        try self.writeMainProgram(hir, w, functions_start_idx, &peek_state);
 
         // Process each function
         for (hir.function_table) |func| {
@@ -362,6 +364,30 @@ pub const IRPrinter = struct {
             }
         }
         return hir.instructions.len;
+    }
+
+    fn discoverGlobals(self: *IRPrinter, hir: *const HIR.HIRProgram, functions_start_idx: usize) !void {
+        // Scan through main program instructions to discover all globals
+        for (hir.instructions[0..functions_start_idx]) |inst| {
+            switch (inst) {
+                .StoreDecl => |sd| {
+                    if (sd.scope_kind == .GlobalLocal) {
+                        // Use the declared type from the instruction
+                        const stack_type = self.hirTypeToStackType(sd.declared_type);
+                        _ = try self.global_types.put(sd.var_name, stack_type);
+                        _ = try self.defined_globals.put(sd.var_name, true);
+                    }
+                },
+                .StoreConst => |sc| {
+                    if (sc.scope_kind == .GlobalLocal) {
+                        // Default to i64 for now - type will be determined during processing
+                        _ = try self.global_types.put(sc.var_name, .I64);
+                        _ = try self.defined_globals.put(sc.var_name, true);
+                    }
+                },
+                else => {},
+            }
+        }
     }
 
     fn writeMainProgram(
@@ -435,6 +461,14 @@ pub const IRPrinter = struct {
                             defer self.allocator.free(line);
                             try w.writeAll(line);
                             try stack.append(.{ .name = name, .ty = .I2 });
+                        },
+                        .enum_variant => |enum_val| {
+                            const name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                            id += 1;
+                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 0, {d}\n", .{ name, enum_val.variant_index });
+                            defer self.allocator.free(line);
+                            try w.writeAll(line);
+                            try stack.append(.{ .name = name, .ty = .I64 });
                         },
                         .string => |s| {
                             const info = try internPeekString(
@@ -691,23 +725,36 @@ pub const IRPrinter = struct {
 
                     try self.emitPeekInstruction(w, pk, v, &id, peek_state);
 
-                    switch (v.ty) {
-                        .I64 => {
-                            const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_i64(i64 {s})\n", .{v.name});
+                    // Use HIR type information instead of LLVM type for enum handling
+                    switch (pk.value_type) {
+                        .Enum => {
+                            // For enums, we need to call a special enum debug function
+                            // that can map the index to the variant name
+                            const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_enum(i64 {s})\n", .{v.name});
                             defer self.allocator.free(call_line);
                             try w.writeAll(call_line);
                         },
-                        .F64 => {
-                            const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_f64(double {s})\n", .{v.name});
-                            defer self.allocator.free(call_line);
-                            try w.writeAll(call_line);
+                        else => {
+                            // For other types, use the LLVM type as before
+                            switch (v.ty) {
+                                .I64 => {
+                                    const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_i64(i64 {s})\n", .{v.name});
+                                    defer self.allocator.free(call_line);
+                                    try w.writeAll(call_line);
+                                },
+                                .F64 => {
+                                    const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_f64(double {s})\n", .{v.name});
+                                    defer self.allocator.free(call_line);
+                                    try w.writeAll(call_line);
+                                },
+                                .PTR => {
+                                    const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{v.name});
+                                    defer self.allocator.free(call_line);
+                                    try w.writeAll(call_line);
+                                },
+                                else => {},
+                            }
                         },
-                        .PTR => {
-                            const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{v.name});
-                            defer self.allocator.free(call_line);
-                            try w.writeAll(call_line);
-                        },
-                        else => {},
                     }
                     try w.writeAll("  call void @doxa_write_cstr(ptr getelementptr inbounds ([2 x i8], ptr @.doxa.nl, i64 0, i64 0))\n");
                 },
@@ -863,22 +910,33 @@ pub const IRPrinter = struct {
                     const value = stack.items[stack.items.len - 1];
                     stack.items.len -= 1;
                     const llvm_ty = self.stackTypeToLLVMType(value.ty);
-                    var info_ptr = variables.getPtr(sv.var_name);
-                    if (info_ptr == null) {
-                        // Variable should have been allocated at function entry
-                        // This is an error condition - variable not found
-                        continue;
+                    if (sv.scope_kind == .GlobalLocal) {
+                        // Handle global variable storage
+                        _ = try self.global_types.put(sv.var_name, value.ty);
+                        const gptr = try self.mangleGlobalName(sv.var_name);
+                        defer self.allocator.free(gptr);
+                        const store_line = try std.fmt.allocPrint(self.allocator, "  store {s} {s}, ptr {s}\n", .{ llvm_ty, value.name, gptr });
+                        defer self.allocator.free(store_line);
+                        try w.writeAll(store_line);
                     } else {
-                        info_ptr.?.stack_type = value.ty;
-                        info_ptr.?.array_type = value.array_type;
+                        // Handle local variable storage
+                        var info_ptr = variables.getPtr(sv.var_name);
+                        if (info_ptr == null) {
+                            // Variable should have been allocated at function entry
+                            // This is an error condition - variable not found
+                            continue;
+                        } else {
+                            info_ptr.?.stack_type = value.ty;
+                            info_ptr.?.array_type = value.array_type;
+                        }
+                        const store_line = try std.fmt.allocPrint(
+                            self.allocator,
+                            "  store {s} {s}, ptr {s}\n",
+                            .{ llvm_ty, value.name, info_ptr.?.ptr_name },
+                        );
+                        defer self.allocator.free(store_line);
+                        try w.writeAll(store_line);
                     }
-                    const store_line = try std.fmt.allocPrint(
-                        self.allocator,
-                        "  store {s} {s}, ptr {s}\n",
-                        .{ llvm_ty, value.name, info_ptr.?.ptr_name },
-                    );
-                    defer self.allocator.free(store_line);
-                    try w.writeAll(store_line);
                 },
                 .StoreDecl => |sd| {
                     if (stack.items.len < 1) continue;
@@ -1189,6 +1247,15 @@ pub const IRPrinter = struct {
                             defer self.allocator.free(line);
                             try w.writeAll(line);
                             try stack.append(.{ .name = name, .ty = .I2 });
+                            last_instruction_was_terminator = false;
+                        },
+                        .enum_variant => |enum_val| {
+                            const name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                            id += 1;
+                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 0, {d}\n", .{ name, enum_val.variant_index });
+                            defer self.allocator.free(line);
+                            try w.writeAll(line);
+                            try stack.append(.{ .name = name, .ty = .I64 });
                             last_instruction_was_terminator = false;
                         },
                         .string => |s| {
@@ -2261,11 +2328,25 @@ pub const IRPrinter = struct {
         id: *usize,
         state: *PeekEmitState,
     ) !void {
-        const type_slice = switch (value.ty) {
-            .I64 => "int",
-            .F64 => "float",
-            .PTR => "string",
-            .I8, .I1, .I2 => "value",
+        // Use HIR type information instead of just LLVM type
+        const type_slice = switch (pk.value_type) {
+            .Int => "int",
+            .Float => "float",
+            .String => "string",
+            .Enum => "Error", // Use the actual enum type name
+            .Byte => "byte",
+            .Tetra => "tetra",
+            .Array => "array",
+            .Map => "map",
+            .Struct => "struct",
+            .Union => "union",
+            .Function => "function",
+            else => switch (value.ty) {
+                .I64 => "int",
+                .F64 => "float",
+                .PTR => "string",
+                .I8, .I1, .I2 => "value",
+            },
         };
         const type_info = try internPeekString(
             self.allocator,
@@ -2554,7 +2635,7 @@ pub const IRPrinter = struct {
             .Array => .PTR,
             .Map => .PTR,
             .Struct => .PTR,
-            .Enum => .PTR,
+            .Enum => .I64, // Enums are stored as i64 (variant index)
             .Function => .PTR,
             .Union => .PTR,
             else => .I64,
