@@ -1,0 +1,12 @@
+pub function isAlpha(char :: string) returns tetra {
+    match char[0] {
+        "a", "b" then return true
+    }
+    return false
+}
+
+isAlpha("a")?
+isAlpha("ab")?
+isAlpha("b")?
+isAlpha("A")?
+isAlpha("")?

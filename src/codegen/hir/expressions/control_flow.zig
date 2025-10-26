@@ -222,90 +222,104 @@ pub const ControlFlowHandler = struct {
             }
         }
 
-        // Generate comparison and jumps for each case
         for (match_expr.cases, 0..) |case, i| {
             // Add check label for cases after the first
             if (i > 0) {
                 try self.generator.instructions.append(.{ .Label = .{ .name = check_labels.items[i - 1], .vm_address = 0 } });
             }
 
-            // Duplicate the match value for comparison
-            try self.generator.instructions.append(.Dup);
+            // Handle multiple patterns for this case
+            var pattern_matched = false;
 
-            // Treat both token type .ELSE and identifier "else" as the else-case
-            const is_else_case = case.pattern.type == .ELSE or
-                (case.pattern.type == .IDENTIFIER and std.mem.eql(u8, case.pattern.lexeme, "else"));
+            for (case.patterns, 0..) |pattern, pattern_idx| {
+                // Duplicate the match value for comparison (each pattern needs its own copy)
+                try self.generator.instructions.append(.Dup);
 
-            if (is_else_case) {
-                // Else case - always matches, pop the duplicated value
-                try self.generator.instructions.append(.Pop);
-                try self.generator.instructions.append(.{ .Jump = .{ .label = case_labels.items[i], .vm_offset = 0 } });
-            } else {
-                // Check if this is a type pattern for union matching
-                const is_type_pattern = switch (case.pattern.type) {
-                    .INT_TYPE, .FLOAT_TYPE, .STRING_TYPE, .BYTE_TYPE, .TETRA_TYPE, .NOTHING_TYPE => true,
-                    else => false,
-                };
+                // Treat both token type .ELSE and identifier "else" as the else-case
+                const is_else_case = pattern.type == .ELSE or
+                    (pattern.type == .IDENTIFIER and std.mem.eql(u8, pattern.lexeme, "else"));
 
-                if (is_type_pattern) {
-                    // This is a type pattern - use TypeCheck instruction
-                    const type_name = case.pattern.lexeme;
-                    try self.generator.instructions.append(.{ .TypeCheck = .{ .target_type = type_name } });
-                } else if (match_enum_type) |enum_type_name| {
-                    // Generate the pattern value (enum member with proper context)
-                    const variant_index = if (self.generator.type_system.custom_types.get(enum_type_name)) |custom_type|
-                        custom_type.getEnumVariantIndex(case.pattern.lexeme) orelse 0
-                    else
-                        0;
-
-                    const pattern_value = HIRValue{
-                        .enum_variant = HIREnum{
-                            .type_name = enum_type_name,
-                            .variant_name = case.pattern.lexeme,
-                            .variant_index = variant_index,
-                            .path = null,
-                        },
-                    };
-
-                    const pattern_idx = try self.generator.addConstant(pattern_value);
-                    try self.generator.instructions.append(.{ .Const = .{ .value = pattern_value, .constant_id = pattern_idx } });
-
-                    // Compare and jump if equal (use Enum operand type)
-                    try self.generator.instructions.append(.{ .Compare = .{ .op = .Eq, .operand_type = HIRType{ .Enum = 0 } } });
-                } else if (self.generator.current_enum_type) |enum_type_from_context| {
-                    // Fallback: if we are in an enum context (e.g., inside var decl init), use it
-                    const variant_index2 = if (self.generator.type_system.custom_types.get(enum_type_from_context)) |custom_type|
-                        custom_type.getEnumVariantIndex(case.pattern.lexeme) orelse 0
-                    else
-                        0;
-
-                    const pattern_value2 = HIRValue{
-                        .enum_variant = HIREnum{
-                            .type_name = enum_type_from_context,
-                            .variant_name = case.pattern.lexeme,
-                            .variant_index = variant_index2,
-                            .path = null,
-                        },
-                    };
-                    const pattern_idx2 = try self.generator.addConstant(pattern_value2);
-                    try self.generator.instructions.append(.{ .Const = .{ .value = pattern_value2, .constant_id = pattern_idx2 } });
-                    try self.generator.instructions.append(.{ .Compare = .{ .op = .Eq, .operand_type = HIRType{ .Enum = 0 } } });
+                if (is_else_case) {
+                    // Else case - always matches, pop the duplicated value
+                    try self.generator.instructions.append(.Pop);
+                    try self.generator.instructions.append(.{ .Jump = .{ .label = case_labels.items[i], .vm_offset = 0 } });
+                    pattern_matched = true;
+                    break;
                 } else {
-                    // Regular string literal pattern
-                    const pattern_value = HIRValue{ .string = case.pattern.literal.string };
-                    const pattern_idx = try self.generator.addConstant(pattern_value);
-                    try self.generator.instructions.append(.{ .Const = .{ .value = pattern_value, .constant_id = pattern_idx } });
+                    // Check if this is a type pattern for union matching
+                    const is_type_pattern = switch (pattern.type) {
+                        .INT_TYPE, .FLOAT_TYPE, .STRING_TYPE, .BYTE_TYPE, .TETRA_TYPE, .NOTHING_TYPE => true,
+                        else => false,
+                    };
 
-                    // Compare and jump if equal (use String operand type)
-                    try self.generator.instructions.append(.{ .Compare = .{ .op = .Eq, .operand_type = .String } });
+                    if (is_type_pattern) {
+                        // This is a type pattern - use TypeCheck instruction
+                        const type_name = pattern.lexeme;
+                        try self.generator.instructions.append(.{ .TypeCheck = .{ .target_type = type_name } });
+                    } else if (match_enum_type) |enum_type_name| {
+                        // Generate the pattern value (enum member with proper context)
+                        const variant_index = if (self.generator.type_system.custom_types.get(enum_type_name)) |custom_type|
+                            custom_type.getEnumVariantIndex(pattern.lexeme) orelse 0
+                        else
+                            0;
+
+                        const pattern_value = HIRValue{
+                            .enum_variant = HIREnum{
+                                .type_name = enum_type_name,
+                                .variant_name = pattern.lexeme,
+                                .variant_index = variant_index,
+                                .path = null,
+                            },
+                        };
+
+                        const pattern_value_idx = try self.generator.addConstant(pattern_value);
+                        try self.generator.instructions.append(.{ .Const = .{ .value = pattern_value, .constant_id = pattern_value_idx } });
+
+                        // Compare and jump if equal (use Enum operand type)
+                        try self.generator.instructions.append(.{ .Compare = .{ .op = .Eq, .operand_type = HIRType{ .Enum = 0 } } });
+                    } else if (self.generator.current_enum_type) |enum_type_from_context| {
+                        // Fallback: if we are in an enum context (e.g., inside var decl init), use it
+                        const variant_index2 = if (self.generator.type_system.custom_types.get(enum_type_from_context)) |custom_type|
+                            custom_type.getEnumVariantIndex(pattern.lexeme) orelse 0
+                        else
+                            0;
+
+                        const pattern_value2 = HIRValue{
+                            .enum_variant = HIREnum{
+                                .type_name = enum_type_from_context,
+                                .variant_name = pattern.lexeme,
+                                .variant_index = variant_index2,
+                                .path = null,
+                            },
+                        };
+                        const pattern_idx2 = try self.generator.addConstant(pattern_value2);
+                        try self.generator.instructions.append(.{ .Const = .{ .value = pattern_value2, .constant_id = pattern_idx2 } });
+                        try self.generator.instructions.append(.{ .Compare = .{ .op = .Eq, .operand_type = HIRType{ .Enum = 0 } } });
+                    } else {
+                        // Regular string literal pattern
+                        const pattern_value = HIRValue{ .string = pattern.literal.string };
+                        const pattern_constant_idx = try self.generator.addConstant(pattern_value);
+                        try self.generator.instructions.append(.{ .Const = .{ .value = pattern_value, .constant_id = pattern_constant_idx } });
+
+                        // Compare and jump if equal (use String operand type)
+                        try self.generator.instructions.append(.{ .Compare = .{ .op = .Eq, .operand_type = .String } });
+                    }
+
+                    // For the last pattern in this case, determine where to jump if no match
+                    if (pattern_idx == case.patterns.len - 1) {
+                        // This is the last pattern for this case
+                        const false_label = if (i < match_expr.cases.len - 1)
+                            check_labels.items[i] // Jump to next case check
+                        else
+                            end_label; // Last case - jump to end if no match
+                        try self.generator.instructions.append(.{ .JumpCond = .{ .label_true = case_labels.items[i], .label_false = false_label, .vm_offset = 0, .condition_type = .Tetra } });
+                    } else {
+                        // Not the last pattern - if this doesn't match, continue to next pattern
+                        const next_pattern_label = try self.generator.generateLabel("next_pattern");
+                        try self.generator.instructions.append(.{ .JumpCond = .{ .label_true = case_labels.items[i], .label_false = next_pattern_label, .vm_offset = 0, .condition_type = .Tetra } });
+                        try self.generator.instructions.append(.{ .Label = .{ .name = next_pattern_label, .vm_address = 0 } });
+                    }
                 }
-
-                // FIXED: When condition is false, continue to next case check instead of jumping to end
-                const false_label = if (i < match_expr.cases.len - 1)
-                    check_labels.items[i] // Jump to next case check
-                else
-                    end_label; // Last case - jump to end if no match
-                try self.generator.instructions.append(.{ .JumpCond = .{ .label_true = case_labels.items[i], .label_false = false_label, .vm_offset = 0, .condition_type = .Tetra } });
             }
         }
 

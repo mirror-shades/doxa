@@ -558,12 +558,34 @@ pub const LLVMGenerator = struct {
                         else
                             default_block;
 
-                        // Generate string comparison
-                        const pattern_val = try self.generateExpr(case.pattern);
-                        const cmp_result = LLVMCore.LLVMBuildICmp(self.builder, LLVMTypes.LLVMIntPredicate.LLVMIntEQ, cond_val, pattern_val, "str.cmp");
-
-                        LLVMCore.LLVMPositionBuilderAtEnd(self.builder, current_block);
-                        _ = LLVMCore.LLVMBuildCondBr(self.builder, cmp_result, case_block, next_block);
+                        // Generate comparisons for each pattern in the patterns array
+                        var pattern_matched_block: LLVMCore.LLVMValueRef = undefined;
+                        var pattern_check_block = current_block;
+                        
+                        for (case.patterns, 0..) |pattern, pattern_idx| {
+                            if (pattern_idx > 0) {
+                                // Create intermediate block for pattern checking
+                                pattern_check_block = LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "pattern.check");
+                                LLVMCore.LLVMPositionBuilderAtEnd(self.builder, current_block);
+                                _ = LLVMCore.LLVMBuildBr(self.builder, pattern_check_block);
+                            }
+                            
+                            // Generate string comparison for this pattern
+                            const pattern_val = try self.generateExpr(pattern);
+                            const cmp_result = LLVMCore.LLVMBuildICmp(self.builder, LLVMTypes.LLVMIntPredicate.LLVMIntEQ, cond_val, pattern_val, "str.cmp");
+                            
+                            LLVMCore.LLVMPositionBuilderAtEnd(self.builder, pattern_check_block);
+                            
+                            if (pattern_idx == case.patterns.len - 1) {
+                                // Last pattern - if it doesn't match, go to next case
+                                _ = LLVMCore.LLVMBuildCondBr(self.builder, cmp_result, case_block, next_block);
+                            } else {
+                                // Not last pattern - if it doesn't match, check next pattern
+                                const next_pattern_block = LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "next.pattern");
+                                _ = LLVMCore.LLVMBuildCondBr(self.builder, cmp_result, case_block, next_pattern_block);
+                                current_block = next_pattern_block;
+                            }
+                        }
 
                         // Generate case body
                         LLVMCore.LLVMPositionBuilderAtEnd(self.builder, case_block);
@@ -608,8 +630,12 @@ pub const LLVMGenerator = struct {
                     // Generate code for each case
                     for (match_expr.cases) |case| {
                         const case_block = LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "match.case");
-                        const pattern_value = try self.generatePatternValue(case.pattern);
-                        LLVMCore.LLVMAddCase(switch_inst, pattern_value, case_block);
+                        
+                        // Generate cases for each pattern in the patterns array
+                        for (case.patterns) |pattern| {
+                            const pattern_value = try self.generatePatternValue(pattern);
+                            LLVMCore.LLVMAddCase(switch_inst, pattern_value, case_block);
+                        }
 
                         LLVMCore.LLVMPositionBuilderAtEnd(self.builder, case_block);
                         const case_result = try self.generateExpr(case.body);
