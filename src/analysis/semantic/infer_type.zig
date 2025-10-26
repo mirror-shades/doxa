@@ -266,8 +266,8 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                                 }
                             }
                         }
-                        type_info.* = .{ .base = .Int };
-                        return type_info;
+                        // Use proper module field access instead of hardcoded Int
+                        return helpers.handleModuleFieldAccess(self, object_name, method_name, .{ .location = getLocationFromBase(expr.base) });
                     }
 
                     if (self.custom_types.get(object_name)) |custom_type| {
@@ -288,8 +288,8 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                             if (std.mem.indexOfScalar(u8, ct_name, '.')) |dot_idx| {
                                 const root = ct_name[0..dot_idx];
                                 if (helpers.isModuleNamespace(self, root)) {
-                                    type_info.* = .{ .base = .Int };
-                                    return type_info;
+                                    // Use proper module field access instead of hardcoded Int
+                                    return helpers.handleModuleFieldAccess(self, root, method_name, .{ .location = getLocationFromBase(expr.base) });
                                 }
                             }
                         }
@@ -764,7 +764,18 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
             type_info.* = .{ .base = .Struct, .struct_fields = struct_fields };
         },
         .If => |if_expr| {
-            const condition_type = try infer_type.inferTypeFromExpr(self, if_expr.condition.?);
+            var condition_type = try infer_type.inferTypeFromExpr(self, if_expr.condition.?);
+
+            // If condition is a function, automatically infer its return type as if it were called
+            if (condition_type.base == .Function) {
+                if (condition_type.function_type) |func_type| {
+                    condition_type = func_type.return_type;
+                } else {
+                    condition_type = try self.allocator.create(ast.TypeInfo);
+                    condition_type.* = .{ .base = .Nothing, .is_mutable = false };
+                }
+            }
+
             if (condition_type.base != .Tetra) {
                 self.reporter.reportCompileError(
                     getLocationFromBase(expr.base),

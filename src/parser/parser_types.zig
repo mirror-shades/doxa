@@ -860,6 +860,11 @@ pub const Parser = struct {
             return try self.index(field_access, .NONE);
         }
 
+        // Check if this field access is followed by parentheses - treat as function call
+        if (self.peek().type == .LEFT_PAREN) {
+            return try self.call(field_access, .CALL);
+        }
+
         return field_access;
     }
 

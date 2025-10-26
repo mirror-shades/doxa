@@ -532,21 +532,64 @@ pub fn handleModuleFieldAccess(self: *SemanticAnalyzer, module_name: []const u8,
                 // Return appropriate type based on the imported symbol kind
                 switch (imported_symbol.kind) {
                     .Function => {
-                        // Create return type
-                        const return_type = self.allocator.create(ast.TypeInfo) catch return type_info;
-                        return_type.* = ast.TypeInfo{ .base = .Int, .is_mutable = false };
+                        // Try to find the actual function definition to get its return type
+                        var found_func_type: ?*ast.FunctionType = null;
 
-                        // Create function type
-                        const function_type = self.allocator.create(ast.FunctionType) catch return type_info;
-                        function_type.* = ast.FunctionType{
-                            .params = &[_]ast.TypeInfo{},
-                            .return_type = return_type,
-                        };
+                        // Look through module namespaces to find the actual function
+                        var it = parser.module_namespaces.iterator();
+                        while (it.next()) |entry| {
+                            const module_info = entry.value_ptr.*;
+                            if (module_info.ast) |module_ast| {
+                                if (module_ast.data == .Block) {
+                                    const stmts = module_ast.data.Block.statements;
+                                    for (stmts) |s| {
+                                        switch (s.data) {
+                                            .FunctionDecl => |f| {
+                                                if (!f.is_public) continue;
+                                                if (!std.mem.eql(u8, f.name.lexeme, field_name)) continue;
+
+                                                // Found matching function; construct FunctionType from its params/return
+                                                const ft = self.allocator.create(ast.FunctionType) catch break;
+
+                                                // Duplicate param TypeInfos into a flat slice
+                                                var params_list = std.array_list.Managed(ast.TypeInfo).init(self.allocator);
+                                                errdefer params_list.deinit();
+                                                for (f.params) |p| {
+                                                    const ti_ptr = if (p.type_expr) |texpr| (self.typeExprToTypeInfo(texpr) catch null) else null;
+                                                    const ti = if (ti_ptr) |tmp| tmp.* else ast.TypeInfo{ .base = .Nothing };
+                                                    params_list.append(ti) catch break;
+                                                }
+                                                const params_slice = params_list.toOwnedSlice() catch break;
+
+                                                // Use the actual return type from the function declaration
+                                                const ret_ptr = self.allocator.create(ast.TypeInfo) catch break;
+                                                ret_ptr.* = f.return_type_info;
+
+                                                ft.* = ast.FunctionType{ .params = params_slice, .return_type = ret_ptr };
+                                                found_func_type = ft;
+                                                break;
+                                            },
+                                            else => {},
+                                        }
+                                    }
+                                }
+                            }
+                            if (found_func_type != null) break;
+                        }
+
+                        // Fallback if not found: zero params and nothing return (safer than Int)
+                        if (found_func_type == null) {
+                            const return_type = self.allocator.create(ast.TypeInfo) catch return type_info;
+                            return_type.* = ast.TypeInfo{ .base = .Nothing, .is_mutable = false };
+                            const function_type = self.allocator.create(ast.FunctionType) catch return type_info;
+                            function_type.* = ast.FunctionType{ .params = &[_]ast.TypeInfo{}, .return_type = return_type };
+                            found_func_type = function_type;
+                        }
 
                         type_info.* = ast.TypeInfo{
                             .base = .Function,
                             .is_mutable = false,
-                            .function_type = function_type,
+                            .function_type = found_func_type,
                         };
                     },
                     .Variable => type_info.* = ast.TypeInfo{ .base = .Int, .is_mutable = false },
@@ -641,10 +684,10 @@ pub fn createImportedSymbolVariable(self: *SemanticAnalyzer, name: []const u8, i
                 }
             }
 
-            // Fallback if not found: zero params and int return (legacy behavior)
+            // Fallback if not found: zero params and nothing return (safer than Int)
             if (built_func_type == null) {
                 const return_type = self.allocator.create(ast.TypeInfo) catch return null;
-                return_type.* = ast.TypeInfo{ .base = .Int, .is_mutable = false };
+                return_type.* = ast.TypeInfo{ .base = .Nothing, .is_mutable = false };
                 const function_type = self.allocator.create(ast.FunctionType) catch return null;
                 function_type.* = ast.FunctionType{ .params = &[_]ast.TypeInfo{}, .return_type = return_type };
                 built_func_type = function_type;
