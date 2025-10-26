@@ -796,7 +796,7 @@ pub const Expr = struct {
                 m.value.deinit(allocator);
                 allocator.destroy(m.value);
                 for (m.cases) |*c| {
-                    allocator.free(c.patterns);  // Free the patterns array
+                    allocator.free(c.patterns); // Free the patterns array
                     c.body.deinit(allocator);
                     allocator.destroy(c.body);
                 }

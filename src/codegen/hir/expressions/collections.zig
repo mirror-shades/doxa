@@ -322,61 +322,132 @@ pub const CollectionsHandler = struct {
         // Generate array expression
         try self.generator.generateExpression(forall_data.array, true, false);
 
+        // Add bound variable to symbol table so it can be referenced in the condition
+        const bound_var_name = forall_data.variable.lexeme;
+        _ = try self.generator.symbol_table.getOrCreateVariable(bound_var_name);
+
         // Check if the condition is a simple binary comparison
         if (forall_data.condition.data == .Binary) {
             const binary = forall_data.condition.data.Binary;
-            if (binary.right) |right| {
-                switch (right.data) {
-                    .Literal => |lit| {
-                        // Handle literal comparisons like "e > 3"
-                        const comparison_value = switch (lit) {
-                            .int => |i| HIRValue{ .int = i },
-                            .float => |f| HIRValue{ .float = f },
-                            .string => |s| HIRValue{ .string = s },
-                            else => HIRValue{ .int = 0 },
-                        };
-                        const const_idx = try self.generator.addConstant(comparison_value);
-                        try self.generator.instructions.append(.{ .Const = .{ .value = comparison_value, .constant_id = const_idx } });
-                    },
-                    .Variable => |var_token| {
-                        // Handle variable comparisons like "e > checkAgainst"
-                        // Generate code to load the variable value at runtime
-                        const var_name = var_token.lexeme;
-                        if (self.generator.symbol_table.getVariable(var_name)) |var_index| {
-                            try self.generator.instructions.append(.{
-                                .LoadVar = .{
-                                    .var_index = var_index,
-                                    .var_name = var_name,
-                                    .scope_kind = self.generator.symbol_table.determineVariableScope(var_name),
-                                    .module_context = null,
-                                },
-                            });
-                        } else {
-                            const location = Location{
-                                .file = var_token.file,
-                                .range = .{
-                                    .start_line = var_token.line,
-                                    .start_col = var_token.column,
-                                    .end_line = var_token.line,
-                                    .end_col = var_token.column + var_token.lexeme.len,
-                                },
-                            };
-                            self.generator.reporter.reportCompileError(
-                                location,
-                                ErrorCode.UNDEFINED_VARIABLE,
-                                "Undefined variable in quantifier condition: {s}",
-                                .{var_name},
-                            );
-                            return ErrorList.UndefinedVariable;
+
+            // Check if bound variable is on the left side (e == something)
+            if (binary.left) |left| {
+                if (left.data == .Variable and std.mem.eql(u8, left.data.Variable.lexeme, bound_var_name)) {
+                    // Handle case: bound_var == something
+                    if (binary.right) |right| {
+                        switch (right.data) {
+                            .Literal => |lit| {
+                                // Handle literal comparisons like "e == 3"
+                                const comparison_value = switch (lit) {
+                                    .int => |i| HIRValue{ .int = i },
+                                    .float => |f| HIRValue{ .float = f },
+                                    .string => |s| HIRValue{ .string = s },
+                                    else => HIRValue{ .int = 0 },
+                                };
+                                const const_idx = try self.generator.addConstant(comparison_value);
+                                try self.generator.instructions.append(.{ .Const = .{ .value = comparison_value, .constant_id = const_idx } });
+                            },
+                            .Variable => |var_token| {
+                                // Handle variable comparisons like "e == checkAgainst"
+                                const var_name = var_token.lexeme;
+                                if (self.generator.symbol_table.getVariable(var_name)) |var_index| {
+                                    try self.generator.instructions.append(.{
+                                        .LoadVar = .{
+                                            .var_index = var_index,
+                                            .var_name = var_name,
+                                            .scope_kind = self.generator.symbol_table.determineVariableScope(var_name),
+                                            .module_context = null,
+                                        },
+                                    });
+                                } else {
+                                    const location = Location{
+                                        .file = var_token.file,
+                                        .range = .{
+                                            .start_line = var_token.line,
+                                            .start_col = var_token.column,
+                                            .end_line = var_token.line,
+                                            .end_col = var_token.column + var_token.lexeme.len,
+                                        },
+                                    };
+                                    self.generator.reporter.reportCompileError(
+                                        location,
+                                        ErrorCode.UNDEFINED_VARIABLE,
+                                        "Undefined variable in quantifier condition: {s}",
+                                        .{var_name},
+                                    );
+                                    return ErrorList.UndefinedVariable;
+                                }
+                            },
+                            else => {
+                                // Complex condition - generate the expression
+                                try self.generator.generateExpression(right, true, false);
+                            },
                         }
-                    },
-                    else => {
-                        // Complex condition - generate the expression
-                        try self.generator.generateExpression(right, true, false);
-                    },
+                    }
                 }
-            } else {
-                // No right operand - generate the condition as-is
+            }
+
+            // Check if bound variable is on the right side (something == e)
+            if (binary.right) |right| {
+                if (right.data == .Variable and std.mem.eql(u8, right.data.Variable.lexeme, bound_var_name)) {
+                    // Handle case: something == bound_var
+                    if (binary.left) |left| {
+                        switch (left.data) {
+                            .Literal => |lit| {
+                                // Handle literal comparisons like "3 == e"
+                                const comparison_value = switch (lit) {
+                                    .int => |i| HIRValue{ .int = i },
+                                    .float => |f| HIRValue{ .float = f },
+                                    .string => |s| HIRValue{ .string = s },
+                                    else => HIRValue{ .int = 0 },
+                                };
+                                const const_idx = try self.generator.addConstant(comparison_value);
+                                try self.generator.instructions.append(.{ .Const = .{ .value = comparison_value, .constant_id = const_idx } });
+                            },
+                            .Variable => |var_token| {
+                                // Handle variable comparisons like "checkAgainst == e"
+                                const var_name = var_token.lexeme;
+                                if (self.generator.symbol_table.getVariable(var_name)) |var_index| {
+                                    try self.generator.instructions.append(.{
+                                        .LoadVar = .{
+                                            .var_index = var_index,
+                                            .var_name = var_name,
+                                            .scope_kind = self.generator.symbol_table.determineVariableScope(var_name),
+                                            .module_context = null,
+                                        },
+                                    });
+                                } else {
+                                    const location = Location{
+                                        .file = var_token.file,
+                                        .range = .{
+                                            .start_line = var_token.line,
+                                            .start_col = var_token.column,
+                                            .end_line = var_token.line,
+                                            .end_col = var_token.column + var_token.lexeme.len,
+                                        },
+                                    };
+                                    self.generator.reporter.reportCompileError(
+                                        location,
+                                        ErrorCode.UNDEFINED_VARIABLE,
+                                        "Undefined variable in quantifier condition: {s}",
+                                        .{var_name},
+                                    );
+                                    return ErrorList.UndefinedVariable;
+                                }
+                            },
+                            else => {
+                                // Complex condition - generate the expression
+                                try self.generator.generateExpression(left, true, false);
+                            },
+                        }
+                    }
+                }
+            }
+
+            // If neither side matches the bound variable, generate the condition as-is
+            if (!((binary.left != null and binary.left.?.data == .Variable and std.mem.eql(u8, binary.left.?.data.Variable.lexeme, bound_var_name)) or
+                (binary.right != null and binary.right.?.data == .Variable and std.mem.eql(u8, binary.right.?.data.Variable.lexeme, bound_var_name))))
+            {
                 try self.generator.generateExpression(forall_data.condition, true, false);
             }
         } else {
@@ -385,10 +456,15 @@ pub const CollectionsHandler = struct {
         }
 
         // Use builtin function call with proper predicate
+        const operator_name = if (forall_data.condition.data == .Binary)
+            if (std.mem.eql(u8, forall_data.condition.data.Binary.operator.lexeme, "==")) "forall_quantifier_eq" else "forall_quantifier_gt"
+        else
+            "forall_quantifier_gt";
+
         try self.generator.instructions.append(.{
             .Call = .{
                 .function_index = 0,
-                .qualified_name = "forall_quantifier_gt",
+                .qualified_name = operator_name,
                 .arg_count = 2, // array + comparison value
                 .call_kind = .BuiltinFunction,
                 .target_module = null,
@@ -407,61 +483,132 @@ pub const CollectionsHandler = struct {
         // Generate array expression
         try self.generator.generateExpression(exists_data.array, true, false);
 
+        // Add bound variable to symbol table so it can be referenced in the condition
+        const bound_var_name = exists_data.variable.lexeme;
+        _ = try self.generator.symbol_table.getOrCreateVariable(bound_var_name);
+
         // Check if the condition is a simple binary comparison
         if (exists_data.condition.data == .Binary) {
             const binary = exists_data.condition.data.Binary;
-            if (binary.right) |right| {
-                switch (right.data) {
-                    .Literal => |lit| {
-                        // Handle literal comparisons like "e > 3"
-                        const comparison_value = switch (lit) {
-                            .int => |i| HIRValue{ .int = i },
-                            .float => |f| HIRValue{ .float = f },
-                            .string => |s| HIRValue{ .string = s },
-                            else => HIRValue{ .int = 0 },
-                        };
-                        const const_idx = try self.generator.addConstant(comparison_value);
-                        try self.generator.instructions.append(.{ .Const = .{ .value = comparison_value, .constant_id = const_idx } });
-                    },
-                    .Variable => |var_token| {
-                        // Handle variable comparisons like "e > checkAgainst"
-                        // Generate code to load the variable value at runtime
-                        const var_name = var_token.lexeme;
-                        if (self.generator.symbol_table.getVariable(var_name)) |var_index| {
-                            try self.generator.instructions.append(.{
-                                .LoadVar = .{
-                                    .var_index = var_index,
-                                    .var_name = var_name,
-                                    .scope_kind = self.generator.symbol_table.determineVariableScope(var_name),
-                                    .module_context = null,
-                                },
-                            });
-                        } else {
-                            const location = Location{
-                                .file = var_token.file,
-                                .range = .{
-                                    .start_line = var_token.line,
-                                    .start_col = var_token.column,
-                                    .end_line = var_token.line,
-                                    .end_col = var_token.column + var_token.lexeme.len,
-                                },
-                            };
-                            self.generator.reporter.reportCompileError(
-                                location,
-                                ErrorCode.UNDEFINED_VARIABLE,
-                                "Undefined variable in quantifier condition: {s}",
-                                .{var_name},
-                            );
-                            return ErrorList.UndefinedVariable;
+
+            // Check if bound variable is on the left side (e == something)
+            if (binary.left) |left| {
+                if (left.data == .Variable and std.mem.eql(u8, left.data.Variable.lexeme, bound_var_name)) {
+                    // Handle case: bound_var == something
+                    if (binary.right) |right| {
+                        switch (right.data) {
+                            .Literal => |lit| {
+                                // Handle literal comparisons like "e == 3"
+                                const comparison_value = switch (lit) {
+                                    .int => |i| HIRValue{ .int = i },
+                                    .float => |f| HIRValue{ .float = f },
+                                    .string => |s| HIRValue{ .string = s },
+                                    else => HIRValue{ .int = 0 },
+                                };
+                                const const_idx = try self.generator.addConstant(comparison_value);
+                                try self.generator.instructions.append(.{ .Const = .{ .value = comparison_value, .constant_id = const_idx } });
+                            },
+                            .Variable => |var_token| {
+                                // Handle variable comparisons like "e == checkAgainst"
+                                const var_name = var_token.lexeme;
+                                if (self.generator.symbol_table.getVariable(var_name)) |var_index| {
+                                    try self.generator.instructions.append(.{
+                                        .LoadVar = .{
+                                            .var_index = var_index,
+                                            .var_name = var_name,
+                                            .scope_kind = self.generator.symbol_table.determineVariableScope(var_name),
+                                            .module_context = null,
+                                        },
+                                    });
+                                } else {
+                                    const location = Location{
+                                        .file = var_token.file,
+                                        .range = .{
+                                            .start_line = var_token.line,
+                                            .start_col = var_token.column,
+                                            .end_line = var_token.line,
+                                            .end_col = var_token.column + var_token.lexeme.len,
+                                        },
+                                    };
+                                    self.generator.reporter.reportCompileError(
+                                        location,
+                                        ErrorCode.UNDEFINED_VARIABLE,
+                                        "Undefined variable in quantifier condition: {s}",
+                                        .{var_name},
+                                    );
+                                    return ErrorList.UndefinedVariable;
+                                }
+                            },
+                            else => {
+                                // Complex condition - generate the expression
+                                try self.generator.generateExpression(right, true, false);
+                            },
                         }
-                    },
-                    else => {
-                        // Complex condition - generate the expression
-                        try self.generator.generateExpression(right, true, false);
-                    },
+                    }
                 }
-            } else {
-                // No right operand - generate the condition as-is
+            }
+
+            // Check if bound variable is on the right side (something == e)
+            if (binary.right) |right| {
+                if (right.data == .Variable and std.mem.eql(u8, right.data.Variable.lexeme, bound_var_name)) {
+                    // Handle case: something == bound_var
+                    if (binary.left) |left| {
+                        switch (left.data) {
+                            .Literal => |lit| {
+                                // Handle literal comparisons like "3 == e"
+                                const comparison_value = switch (lit) {
+                                    .int => |i| HIRValue{ .int = i },
+                                    .float => |f| HIRValue{ .float = f },
+                                    .string => |s| HIRValue{ .string = s },
+                                    else => HIRValue{ .int = 0 },
+                                };
+                                const const_idx = try self.generator.addConstant(comparison_value);
+                                try self.generator.instructions.append(.{ .Const = .{ .value = comparison_value, .constant_id = const_idx } });
+                            },
+                            .Variable => |var_token| {
+                                // Handle variable comparisons like "checkAgainst == e"
+                                const var_name = var_token.lexeme;
+                                if (self.generator.symbol_table.getVariable(var_name)) |var_index| {
+                                    try self.generator.instructions.append(.{
+                                        .LoadVar = .{
+                                            .var_index = var_index,
+                                            .var_name = var_name,
+                                            .scope_kind = self.generator.symbol_table.determineVariableScope(var_name),
+                                            .module_context = null,
+                                        },
+                                    });
+                                } else {
+                                    const location = Location{
+                                        .file = var_token.file,
+                                        .range = .{
+                                            .start_line = var_token.line,
+                                            .start_col = var_token.column,
+                                            .end_line = var_token.line,
+                                            .end_col = var_token.column + var_token.lexeme.len,
+                                        },
+                                    };
+                                    self.generator.reporter.reportCompileError(
+                                        location,
+                                        ErrorCode.UNDEFINED_VARIABLE,
+                                        "Undefined variable in quantifier condition: {s}",
+                                        .{var_name},
+                                    );
+                                    return ErrorList.UndefinedVariable;
+                                }
+                            },
+                            else => {
+                                // Complex condition - generate the expression
+                                try self.generator.generateExpression(left, true, false);
+                            },
+                        }
+                    }
+                }
+            }
+
+            // If neither side matches the bound variable, generate the condition as-is
+            if (!((binary.left != null and binary.left.?.data == .Variable and std.mem.eql(u8, binary.left.?.data.Variable.lexeme, bound_var_name)) or
+                (binary.right != null and binary.right.?.data == .Variable and std.mem.eql(u8, binary.right.?.data.Variable.lexeme, bound_var_name))))
+            {
                 try self.generator.generateExpression(exists_data.condition, true, false);
             }
         } else {
@@ -470,10 +617,15 @@ pub const CollectionsHandler = struct {
         }
 
         // Use builtin function call with proper predicate
+        const operator_name = if (exists_data.condition.data == .Binary)
+            if (std.mem.eql(u8, exists_data.condition.data.Binary.operator.lexeme, "==")) "exists_quantifier_eq" else "exists_quantifier_gt"
+        else
+            "exists_quantifier_gt";
+
         try self.generator.instructions.append(.{
             .Call = .{
                 .function_index = 0,
-                .qualified_name = "exists_quantifier_gt",
+                .qualified_name = operator_name,
                 .arg_count = 2, // array + comparison value
                 .call_kind = .BuiltinFunction,
                 .target_module = null,

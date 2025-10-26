@@ -118,10 +118,13 @@ pub const FunctionOps = struct {
             try execBuiltinSafeAdd(vm);
         } else if (std.mem.eql(u8, c.qualified_name, "power") or std.mem.eql(u8, c.qualified_name, "powi")) {
             try execBuiltinPower(vm, c.qualified_name);
-        } else if (std.mem.eql(u8, c.qualified_name, "exists_quantifier_gt")) {
-            try execBuiltinExistsQuantifierGt(vm);
-        } else if (std.mem.eql(u8, c.qualified_name, "forall_quantifier_gt")) {
-            try execBuiltinForallQuantifierGt(vm);
+        } else if (std.mem.eql(u8, c.qualified_name, "exists_quantifier_gt") or
+            std.mem.eql(u8, c.qualified_name, "exists_quantifier_eq") or
+            std.mem.eql(u8, c.qualified_name, "forall_quantifier_gt") or
+            std.mem.eql(u8, c.qualified_name, "forall_quantifier_eq"))
+        {
+            // Quantifier functions are handled directly in VM's execBuiltin function
+            return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Quantifier functions should be handled by VM", .{});
         } else if (std.mem.eql(u8, c.qualified_name, "input")) {
             try execBuiltinInput(vm);
         } else if (std.mem.eql(u8, c.qualified_name, "os")) {
@@ -706,79 +709,6 @@ pub const FunctionOps = struct {
 
         const result = std.math.pow(f64, base_float, exponent_float);
         try vm.stack.push(HIRFrame.initFloat(result));
-    }
-
-    fn execBuiltinExistsQuantifierGt(vm: anytype) !void {
-        const comparison_value = try vm.stack.pop();
-        const array = try vm.stack.pop();
-
-        switch (array.value) {
-            .array => |arr| {
-                var found = false;
-                for (arr.elements) |elem| {
-                    if (std.meta.eql(elem, HIRValue.nothing)) {
-                        break;
-                    }
-                    const satisfies_condition = switch (elem) {
-                        .int => |elem_int| switch (comparison_value.value) {
-                            .int => |comp_int| elem_int > comp_int,
-                            else => false,
-                        },
-                        .float => |elem_float| switch (comparison_value.value) {
-                            .float => |comp_float| elem_float > comp_float,
-                            .int => |comp_int| elem_float > @as(f64, @floatFromInt(comp_int)),
-                            else => false,
-                        },
-                        else => false,
-                    };
-                    if (satisfies_condition) {
-                        found = true;
-                        break;
-                    }
-                }
-                try vm.stack.push(HIRFrame.initTetra(if (found) 1 else 0));
-            },
-            else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "exists_quantifier_gt: argument must be array", .{}),
-        }
-    }
-
-    fn execBuiltinForallQuantifierGt(vm: anytype) !void {
-        const comparison_value = try vm.stack.pop();
-        const array = try vm.stack.pop();
-
-        switch (array.value) {
-            .array => |arr| {
-                var all_satisfy = true;
-                var has_elements = false;
-                for (arr.elements) |elem| {
-                    if (std.meta.eql(elem, HIRValue.nothing)) {
-                        break;
-                    }
-                    has_elements = true;
-                    const satisfies_condition = switch (elem) {
-                        .int => |elem_int| switch (comparison_value.value) {
-                            .int => |comp_int| blk: {
-                                const result = elem_int > comp_int;
-                                break :blk result;
-                            },
-                            else => false,
-                        },
-                        .float => |elem_float| switch (comparison_value.value) {
-                            .float => |comp_float| elem_float > comp_float,
-                            .int => |comp_int| elem_float > @as(f64, @floatFromInt(comp_int)),
-                            else => false,
-                        },
-                        else => false,
-                    };
-                    if (!satisfies_condition) {
-                        all_satisfy = false;
-                        break;
-                    }
-                }
-                try vm.stack.push(HIRFrame.initTetra(if ((!has_elements) or all_satisfy) 1 else 0));
-            },
-            else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "forall_quantifier_gt: argument must be array", .{}),
-        }
     }
 
     fn execBuiltinInput(vm: anytype) !void {
