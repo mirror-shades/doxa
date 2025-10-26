@@ -279,6 +279,7 @@ pub const AssignmentsHandler = struct {
             try self.generator.instructions.append(.{ .Convert = .{ .from_type = .Int, .to_type = .Byte } });
             try self.generator.instructions.append(.{ .Arith = .{ .op = .Add, .operand_type = .Byte } });
         } else if (left_type == .String and right_type == .String) {
+            try self.generator.instructions.append(.Swap);
             try self.generator.instructions.append(.{ .StringOp = .{ .op = .Concat } });
         } else if (left_type == .Array and right_type == .Array) {
             try self.generator.instructions.append(.{ .Arith = .{ .op = .Add, .operand_type = .Unknown } });

@@ -10,9 +10,18 @@ entry function main() {
     ...    hello?\n
     ...}"
     
-    each c in program_src {
+    each c at i in program_src {
         if Helper.isAlpha(c) then {
-
+            var word :: string is c
+            for j is i + 1 do j += 1 {
+                const word_char is program_src[j]
+                if not Helper.isAlpha(word_char) then {
+                    i is j
+                    break
+                }
+                word += word_char
+                @print("{word}\n")
+            }
         } else if Helper.isNumeric(c) {
 
         }

@@ -619,6 +619,8 @@ pub const LexicalAnalyzer = struct {
                     '\\' => try result.append('\\'),
                     'n' => try result.append('\n'),
                     't' => try result.append('\t'),
+                    '{' => try result.append('{'),
+                    '}' => try result.append('}'),
                     'u' => {
                         if (self.peekAt(0) != '{') return error.InvalidUnicodeEscape;
                         self.advance();
